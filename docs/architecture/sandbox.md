@@ -553,6 +553,76 @@ Third-party backends must:
 - `bernstein agents sandbox-backends` lists installed backends.
 - `bernstein run --sandbox <name>` selects a backend explicitly.
 
+## Leaked sessions
+
+The spawner destroys each per-spawn session when its exec resolves and chains
+both ends into the audit log: `sandbox.session_create` (with the backend, the
+agent session, and the `task_ids` the spawn ran) and `sandbox.session_destroy`.
+A create with no later destroy is a session Bernstein never tore down - the
+orchestrator died mid-exec, or the backend's `destroy` raised and was only
+logged - and it keeps holding a container, VM, or hosted sandbox.
+
+```bash
+bernstein sandbox leaks            # sessions whose task finished
+bernstein sandbox leaks --all      # also the ones left out, with the reason
+bernstein sandbox leaks --json
+```
+
+A session is listed as leaked only when **every** task it was provisioned for
+is recorded finished in the task log: `done`, `failed`, `closed`, `cancelled`,
+`abandoned`, or `refused` (`LANE_FINISHED_STATUSES` in
+`core/tasks/lifecycle.py`: every status with no way out, plus `done` and `failed`).
+The log is read through the task store's own replay (latest record wins, so a
+reopened task counts as live). A process-liveness or file-age signal is never used. Every
+other open session is reported as excluded, with the reason:
+
+| Reason | Meaning |
+|---|---|
+| `T-1 is in_progress` (or any other unfinished status, including `orphaned` and `suspended`) | The task can still run; its session is expected to exist. |
+| `no task-store record for T-1` | The task log does not know the task, so nothing proves it finished. |
+| `create record names no owning task` | The create record predates task attribution, or its `task_ids` is malformed. |
+| `session id was created again before this lifetime was destroyed; ...` | A later create reused the id with no destroy in between. The id now names the newer session, so this lifetime is never listed as leaked: acting on it by id would reach the newer one. |
+
+The command is read-only: it destroys nothing, writes nothing, and will not
+create an audit key (it fails with an error when the key the chain was written
+under is not available). It fails rather than listing anything when the task
+log cannot be replayed whole - including a single line the task store would
+skip, such as a torn append or a missing task id, since skipping it would replay that task at an
+older, usually more finished, status - or when an audit segment cannot be read,
+since the lost segment may hold a create or a destroy. The error names the file
+and line. Sessions created before the spawner recorded
+`task_ids` are always excluded. A task can be recorded finished a moment before
+its exec resolves and the session is destroyed, so a session only seconds old
+may still be mid-teardown: check the age column before acting on it.
+
+The sweep reads the audit records without re-verifying their HMAC chain. That
+is a deliberate boundary, not an omission: the listing is advisory - it gates
+nothing and removes nothing - so its cost stays proportional to the sandbox
+records rather than the whole chain. The price is that an unverified record
+can mislead it; a `sandbox.session_destroy` appended by someone without the
+audit key would hide a real leak from the listing. Run `bernstein audit verify`
+before a listing drives a removal; it rejects such a record. Removing a leaked
+session is left to the backend's own tooling (for example `docker rm`) after
+checking it holds nothing you need.
+
+The separate Python API `prepare_sandbox_removal_proposal(workdir,
+sandbox_session_id, create_hmac=...)` prepares read-only evidence for one
+leaked lifetime. It requires `AuditLog.verify_detailed(include_events=True).ok`
+and projects records from the same immutable segment bytes verified by that
+call, without a second journal read. A damaged chain or unreadable archived
+segment refuses the proposal with its reason.
+Acknowledged tears also refuse preparation: acknowledgement does not
+authenticate records from damaged spans.
+It reuses the listing's lifetime pairing and strict task-log replay, including
+`LANE_FINISHED_STATUSES`, so a reopened task or torn task-log line cannot
+produce a proposal. Excluded, superseded, missing and ambiguous selections
+are refused. Supply the create record's HMAC to distinguish reused session
+ids. The immutable proposal binds that HMAC, backend, sandbox session id,
+agent session id and owning task ids. It makes no backend call, grants no
+removal approval and writes no journal. It describes the state at preparation;
+later removal still needs its own approval and fresh checks. The advisory
+`sandbox leaks` command retains its existing output, cost and exit codes.
+
 ## Observability
 
 Sandbox sessions have these Prometheus metrics. `created_total` and

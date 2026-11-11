@@ -1,10 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg">
-  <img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg" width="340">
-</picture>
+<img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-readme.svg" width="380">
 
 <br>
 
@@ -41,11 +37,12 @@
 Bernstein は AI エージェントのためのオープンソース・ガバナンスレイヤーです。policy as code の上で動きます。誰が何をしてよいか・何に承認が要るか・何を記録すべきかをポリシーとして書けば、Bernstein がそれを適用し、検証可能な記録を作ります。決定論的スケジューラ - 調整ループにモデルは入らない - がエージェントを並列に走らせ、成果物をゲートで検査し、全ステップを記録します。だから実行は事後に、オフラインで、アーティファクトだけから検証できます。CLI コーディングエージェントはそのまま動き(Claude Code、Codex、Gemini CLI ほか 50+)、同じレイヤーがあらゆるエージェントワークロードをガバナンスします: 成果物は diff でも、調査レポートでも、データセットでも、監査エビデンスパックでも構いません。エアギャップ用インストールプロファイル同梱。Apache-2.0。
 
 ### 概要
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-他と違う点は 4 つ。以降はすべて詳細である。
+際立つ点は5つ。あとは詳細です。
 
 - **協調ループに LLM がいない。** スケジューリングは素の Python なので、実行は端から端まで再現できる。昨日のプランをリプレイすれば、昨日のタスクグラフが出てくる。
+- **ハードウェア鍵の証拠.** オフラインの PIV 保管証明と FIDO2 承認検証は、信頼先の固定と明示的な時刻を用い、共通のレシートプロトコルに従います。トークンの保管は TRACE の信頼レベルを引き上げません。 [ハードウェア鍵の証拠](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **事後に検証できる。** リプレイジャーナルがすべての実行を記録し、常時稼働のリネージ・スパインがリネージを持つ各ステップを記録する。オプトインの HMAC チェーン監査ログ（`BERNSTEIN_AUDIT=1`）は、オフラインで検証できるレシートを追加する。非決定性は再実行のゆらぎではなく、該当ステップちょうどでのハッシュ不一致として表面化する。コード以外の成果物も同じ扱いを受ける。タスクはアーティファクト契約（レポート、データセット、アクションログ、運用結果）を宣言でき、git コミットではなく署名済みリネージレシートをもって完了する。
 - **構造として隔離されている。** コーディングタスクはそれぞれマージゲートの背後にある自分の git worktree を得る。アーティファクトモードのタスクは `.sdd/workspaces/` 配下の作業ディレクトリを得る。エージェントは既定で可変ワークスペースを共有しない。共有される状態はタスクバックログだけで、これはアトミックに取得される。より厳しいファイルシステム強制はオプトインで、[サンドボックスバックエンド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)から選ぶ。worktree を無効にすれば、すべてのタスクは共有チェックアウトで走る。
 - **広く、そしてローカル。** 53 以上の CLI エージェントアダプタに加え、汎用の `--prompt` ラッパー、ファイルベースの状態、SaaS 経由なし、サードパーティのデータプレーンなし。
@@ -134,7 +131,7 @@ flowchart LR
 各ノードは、フェーズが許可するロールを持つエージェントが取ります。ロールの柵と承認ゲートは、エージェントがタスク内で何をしようと保持されます。コードのノードは自分専用の git worktree でマージゲートの先に完了します。上のノードは違う終わり方をします: [アーティファクト契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)が成果物(レポート、データセット、スキャン、アクションログ)を名指しし、ノードはコミットではなく署名付き lineage レシートで閉じます。同じスケジューラ、同じジャーナル、同じオフライン検証 - グラフが運ぶのがコードでも、調査でも、ops 変更でも、その混在でも。ソフトウェア、リサーチ、ドキュメント、エンタープライズ、コントリビューターワークフロー向けの既製グラフは [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) にあります。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -142,6 +139,8 @@ bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+`bernstein doctor --json` は監査契約に基づく `findings` も出力します。同じインストール観測結果に対して、これらは `bernstein govern audit --only INS --json` の結果と同一です。通常の doctor レポートの表示は変わりません。安定したチェック ID については、[doctor 運用ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)を参照してください。
 
 pipx、pip、brew、dnf、npm、Docker については[インストールガイド](https://docs.bernstein.run/en/latest/getting-started/install/)を参照。エアギャップ環境向けの wheelhouse には専用の[エアギャップガイド](https://docs.bernstein.run/en/latest/installation/air-gap/)がある。
 
@@ -154,7 +153,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI は main への push ごとにコミット済みレシートを再検証し、改竄されたコピーが失敗することも証明する。公開された証拠が飾りのファイルに腐っていかないのはそのためだ。`scripts/record_demo.sh` は録画・レシート・鍵を新しい実際の実行から作り直す。ターミナルの中身に合成されたものはない。
+保存されたレシートは上記のコマンドでいつでも再検証でき、改ざんされたコピーは同じ検証に失敗します。 `scripts/record_demo.sh` は録画・レシート・鍵を新しい実際の実行から作り直す。ターミナルの中身に合成されたものはない。
 
 実行中の様子は、どちらのオペレーター向け画面からも見られる。両者は同じタスク API を読んでいるので、一方が他方の遅れたミラーになることはない。
 
@@ -230,7 +229,7 @@ Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goo
 同じ実行の中でエージェントを混ぜられる。定型作業には安価なローカルモデル、設計には重いクラウドモデルというように。`bernstein integrations list --installed` は自分のマシンで使えるものを表示する。
 
 ### ボランティア計算資源
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 プロジェクトは issue をボランティアに開放されているものとして印を付けられ、誰でもその一つを自分のマシンで実行できます。アカウントも調整役も必要ありません。タスクに何を許すかは `volunteer.json` マニフェストで宣言され — サンドボックスのバックエンド、許可するネットワーク先、実時間とメモリの上限 — 提供者自身の制限はそれを狭めることしかできず、広げることはできません。完了したタスクが生む受領書は、結果をそれが動いた封じ込めの決定に結び付けるため、メンテナは数か月後でも、その作業が実際に何に触れることを許されていたかを確認できます。
 
@@ -239,7 +238,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。
+[提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。 `autopilot` は登録されていますが、`TaskSource` が実装されるまで実行を拒否します。
 
 ### 表紙の先へ
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
@@ -279,6 +278,11 @@ awesome リストの項目、カタログ掲載、先行研究としての引用
 
 </details>
 
+### 管理用の実行
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+`bernstein_run(template="administrative", goal="Weekly sprint")` で、プランナーやエージェントのプロセスを起動せずに監査付きの空のコンテナを作成します。`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` で手動タスクを追加し、`bernstein_run_status(run_id="admin-...")` で状態を確認します。タスクは通常の取得 API から取得できますが、自動オーケストレーションの対象外です。空でない実行は全タスクの状態が `done`、`closed`、または `cancelled` のいずれかになると完了します。空の実行は開いたままです。 [運用手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### コントリビュート、サポート、ライセンス
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -288,6 +292,6 @@ PR を歓迎する。セットアップとコードスタイルは [CONTRIBUTING
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

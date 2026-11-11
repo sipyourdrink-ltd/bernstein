@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.22.0"
-description = "The open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs Claude Code, Codex, Gemini CLI, and 40+ CLI agents; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
+version = "3.24.1"
+description = "The open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs Claude Code, Codex, Gemini CLI, and 50+ CLI agents; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -154,7 +154,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.1.0",
-    "pytest-benchmark>=4.0",
+    "pytest-benchmark>=5.3.1",
     "pytest-timeout>=2.4.0",
     "hypothesis>=6.100",
     "respx>=0.22",
@@ -435,6 +435,9 @@ packages = ["src/bernstein"]
 # .sdd/ MUST stay out of the repo (Repo hygiene CI gate); the operator
 # override path .sdd/eval/golden/<tier>/*.md is still consulted first.
 artifacts = [
+    # Offline hardware trust anchors and their DER fingerprint provenance.
+    "src/bernstein/core/identity/hardware_roots/*.pem",
+    "src/bernstein/core/identity/hardware_roots/manifest.json",
     "src/bernstein/eval/golden_data/**/*.md",
     # Recipe golden traces - YAML fixtures that pin the resolved
     # workflow shape for each bundled recipe.  Loaded by the eval
@@ -879,7 +882,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.1.0",
-    "pytest-benchmark>=4.0",
+    "pytest-benchmark>=5.3.1",
     "pytest-timeout>=2.4.0",
     "hypothesis>=6.100",
     "respx>=0.22",

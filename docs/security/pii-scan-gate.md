@@ -3,8 +3,9 @@
 Before a task's diff can merge, Bernstein scans every changed (or configured)
 file for leaked secrets, credentials, and PII. The scan is regex-only - no
 network calls, no LLM - and is one of the built-in gates in the quality-gate
-pipeline. High-severity findings (leaked credentials) hard-block merge;
-medium-severity findings (PII) are reported but do not block by default.
+pipeline. Leaked credentials and regulated PII (SSNs, card numbers)
+hard-block merge; other PII (emails, phone numbers) is reported but does not
+block.
 
 Source: `src/bernstein/core/security/pii_output_gate.py` (scan engine),
 `src/bernstein/core/quality/quality_gates.py` (`_run_pii_gate` /
@@ -46,14 +47,15 @@ For the surrounding gate framework (pipeline ordering, `required` vs
 | Platform tokens | high | GitHub (`ghp_`/`gho_`/...), Slack (`xox...`), Stripe (`sk_live_`/`sk_test_`) |
 | Private key (PEM) | high | `-----BEGIN ... PRIVATE KEY-----` |
 | Generic API key / secret / high-entropy assignment | high | `api_key = "..."`, `token: "<24+ mixed-case+digit chars>"` |
-| Hardcoded password, DB/service connection string, bearer token, JWT | high | `password = "..."`, `postgres://user:pass@host/db` |
+| Hardcoded password, DB/service connection string, bearer token, JWT | high | `password = "..."`, a `postgres://` / `mysql://` / `mongodb://` URL with credentials |
 | Email address, phone number, SSN, credit-card number | medium | free-text PII in code or comments |
 
-Only **high**-severity findings set `blocked=True` on the gate result
-(`quality_gates.py:834-846`). PII findings (email/phone/SSN/credit-card) are
-all medium severity, so a PII-only diff passes the gate but is still recorded
-in the gate's detail output - the gate hard-blocks on leaked secrets, and
-flags-but-allows on PII.
+The gate blocks on each finding's `block_merge`, not on its severity
+(`_run_pii_gate` in `quality_gates.py`). A finding blocks when it is high
+severity or its rule is in `BLOCKING_PII_RULES` (`ssn`, `credit_card_number`),
+so an SSN or card number hard-blocks although it is reported as medium. Emails
+and phone numbers neither block nor hide: they are still listed in the gate's
+detail output.
 
 Two post-filters reduce false positives before a match is reported:
 
@@ -63,13 +65,33 @@ Two post-filters reduce false positives before a match is reported:
 
 ## What is skipped
 
-- Lines matching a built-in allowlist: `example.com/.org/.net`, addresses
-  starting `test@`/`user@`/`admin@`/`noreply@`/`no-reply@`, values containing
-  `placeholder`/`changeme`/`your-api-key`/`xxxx`, `localhost`/`127.0.0.1`/
-  `0.0.0.0`, and password assignments using known test values
+- Matches that overlap a built-in allowlist value: `example.com/.org/.net`
+  and their subdomains (not a host that merely contains them, such as
+  `counterexample.com` or `example.com.au`), addresses whose local part is
+  exactly `test`/`user`/`admin`/`noreply`/`no-reply` (not `sysadmin@`,
+  `contact.test@`, or a URL password such as `svc:admin@`), the whole
+  names `placeholder`/`changeme` (not `/placeholders`, a
+  `placeholder-proxy` host, an `app-changeme-2` database or a
+  `db.changeme.prod.internal` host: they are bounded like the hosts below,
+  so `-` and `_` join words and a following `.label` continues a host
+  name), fixture values starting `your-api-key`/`your_api_key` (including
+  optional separator spellings, also with operator-configured prefixes).
+  The bare marker is not a DNS label or part of a host or database token,
+  as in `db.your-api-key.prod.internal`, `app_your_api_key`,
+  `your_api_key_db` or `your-api-key-2`. Other built-in markers include masking runs of
+  `xxxx`, the hosts
+  `localhost`/`127.0.0.1`/`0.0.0.0` (not `localhost-proxy`,
+  `localhost.prod.internal`, `app_localhost`, `10.0.0.0` or `127.0.0.10`),
+  and password assignments using known test values
   (`test`/`password`/`changeme`/`secret`/`admin`).
-- Lines whose value carries a configured `pii_allowlist_prefixes` prefix
-  (default: `FAKE`, `TEST`, `EXAMPLE`, `DUMMY`, `PLACEHOLDER`, `LOCALHOST`).
+- Matches that overlap a value carrying a configured `pii_allowlist_prefixes`
+  prefix (default: `FAKE`, `TEST`, `EXAMPLE`, `DUMMY`, `PLACEHOLDER`,
+  `LOCALHOST`).
+
+  The allowlist exempts the value, not the line: `postgres://...@localhost`
+  and `ssn = "FAKE-123-45-6789"` are skipped, but a real token beside a
+  `# placeholder` comment, or an SSN beside a `user@` address, is still
+  reported.
 - Paths matching `pii_ignore_paths` (glob or prefix match).
 - Binary-ish file suffixes: `.pyc .pyo .so .dylib .whl .egg .gz .zip .tar
   .png .jpg .gif .ico .pdf`.

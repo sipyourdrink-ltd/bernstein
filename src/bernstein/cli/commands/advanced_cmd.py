@@ -1232,6 +1232,119 @@ def _ledger_entries_for_entity(sdd_dir: Path, entity_id: str) -> list[tuple[str,
     return found
 
 
+def _collect_follow_entries(
+    traces_path: Path,
+    entity_id: str,
+) -> tuple[list[Any], list[tuple[str, Any]], list[tuple[float, str, dict[str, Any]]]]:
+    """Gather trace and ledger entries referencing ``entity_id``, sorted by timestamp."""
+    from bernstein.core.observability.trace_store import ContentAddressedTraceStore
+
+    store = ContentAddressedTraceStore(traces_path)
+    matches = store.search(text=entity_id)
+    matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
+
+    ledger_entries = _ledger_entries_for_entity(traces_path.parent, entity_id)
+
+    rows: list[tuple[float, str, dict[str, Any]]] = [
+        (entry.started_at, f"trace:{entry.trace_id}", {**entry.to_dict(), "source": "trace"}) for entry in matches
+    ]
+    rows.extend(
+        (entry.ts, f"ledger:{run_id}:{entry.seq}", {**entry.to_dict(), "source": "ledger", "run_id": run_id})
+        for run_id, entry in ledger_entries
+    )
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return matches, ledger_entries, rows
+
+
+def _entry_matches_since(row: tuple[float, str, dict[str, Any]], since_id: str) -> bool:
+    """Return True if the given row matches the journal entry id for ``--since``."""
+    _, row_id, data = row
+    if since_id == row_id:
+        return True
+    source = data.get("source")
+    if source == "trace":
+        # Trace rows carry a content hash (``sha256``) the same way ledger rows
+        # carry ``entry_hash``, and ``trace verify`` proves it, so --since takes
+        # either spelling. Accepting only the id would make "resume from the
+        # hash I was given" work for one of the two sources.
+        if since_id in (data.get("trace_id"), data.get("sha256")):
+            return True
+    elif source == "ledger":
+        run_id = data.get("run_id")
+        seq = data.get("seq")
+        if since_id in (f"{run_id}:{seq}", f"ledger:{run_id}:{seq}", data.get("entry_hash")):
+            return True
+    return False
+
+
+def _is_entity_terminal(sdd_dir: Path, entity_id: str, ledger_entries: list[tuple[str, Any]]) -> bool:
+    """Check if the referenced run or task has reached a closed/terminal state.
+
+    ``task.failed`` is terminal *in the work ledger*. The ledger's task kinds
+    are a one-way lifecycle -- scheduled, started, then completed / failed /
+    abandoned (plus suspended) -- with no retry kind, and ``insights.py`` reads
+    completed and failed as the pair of final outcomes. The ``task_retried``
+    event lives in the trace recorder, a different stream this function does
+    not read, so a retry recorded there does not make a ledger ``task.failed``
+    provisional. That is why the first terminal entry within each run is enough and no
+    latest-state scan is needed.
+
+    Entity may be a run or a task. For a run, terminal means ``run.closed``.
+    For a task, every related run must record one of those task outcomes or
+    close. A task id can recur in another run; a historical occurrence cannot
+    terminate a newer one that is still active.
+    """
+    from bernstein.core.persistence.work_ledger import (
+        KIND_RUN_CLOSED,
+        KIND_TASK_ABANDONED,
+        KIND_TASK_COMPLETED,
+        KIND_TASK_FAILED,
+        LedgerReader,
+    )
+
+    terminal_task_kinds = {KIND_TASK_COMPLETED, KIND_TASK_FAILED, KIND_TASK_ABANDONED}
+    related_runs: set[str] = set()
+    terminal_runs: set[str] = set()
+
+    for run_id, entry in ledger_entries:
+        related_runs.add(run_id)
+        if run_id == entity_id and entry.kind == KIND_RUN_CLOSED:
+            terminal_runs.add(run_id)
+        if entry.task_id == entity_id and entry.kind in terminal_task_kinds:
+            terminal_runs.add(run_id)
+
+    from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
+    ledger_root = sdd_dir / "runtime" / "ledger"
+
+    def _run_dir(name: str) -> Path | None:
+        """The ledger directory for *name*, or None when it is not one.
+
+        ``entity_id`` is an argv value, so joining it raw let `../..` walk out
+        of the ledger root and probe the filesystem through `is_dir`. The
+        containment join is the same one the rest of this file uses for a
+        journal path; a name that escapes is simply not a run directory.
+        """
+        try:
+            return contained_path(ledger_root, name, label="entity id")
+        except PathContainmentError:
+            return None
+
+    if ledger_root.is_dir():
+        entity_dir = _run_dir(entity_id)
+        if entity_dir is not None and entity_dir.is_dir():
+            related_runs.add(entity_id)
+
+        for run_name in related_runs:
+            run_dir = _run_dir(run_name)
+            if run_dir is not None and run_dir.is_dir():
+                reader = LedgerReader(run_dir)
+                if any(e.kind == KIND_RUN_CLOSED for e in reader.entries()):
+                    terminal_runs.add(run_name)
+
+    return bool(related_runs) and related_runs <= terminal_runs
+
+
 @trace_cmd.command("follow")
 @click.argument("entity_id")
 @click.option(
@@ -1241,8 +1354,46 @@ def _ledger_entries_for_entity(sdd_dir: Path, entity_id: str) -> list[tuple[str,
     default=False,
     help="Output the matched index entries as JSON.",
 )
+@click.option(
+    "--since",
+    "since_id",
+    default=None,
+    help="Resume following after this entry id.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Write matched entries to file.",
+)
+@click.option(
+    "--live",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Keep following entries until run terminates.",
+)
+@click.option(
+    "--poll-interval",
+    "poll_interval",
+    default=0.2,
+    hidden=True,
+    # Floored: 0 or a negative interval turns the follow loop into a busy spin
+    # that re-reads the trace store and the ledger as fast as the disk allows.
+    type=click.FloatRange(min=0.01),
+    help="Polling interval in seconds for live mode (minimum 0.01).",
+)
 @click.pass_context
-def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
+def trace_follow_cmd(
+    ctx: click.Context,
+    entity_id: str,
+    as_json: bool,
+    since_id: str | None = None,
+    out_path: str | None = None,
+    live: bool = False,
+    poll_interval: float = 0.2,
+) -> None:
     """Show every trace or ledger entry that references ENTITY_ID, oldest first.
 
     `trace show` globs filenames for one task id and prints whichever file
@@ -1254,95 +1405,261 @@ def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
     Ordering is by timestamp, with a total tie-break, so a finished run
     prints byte-identically on every invocation.
     """
-    from bernstein.core.observability.trace_store import ContentAddressedTraceStore
-
     traces_dir = (ctx.obj or {}).get("traces_dir", ".sdd/traces")
     traces_path = Path(traces_dir)
     if not traces_path.exists():
         console.print(f"[red]Traces directory not found:[/red] {traces_path}")
         raise SystemExit(1)
 
-    store = ContentAddressedTraceStore(traces_path)
-    # `search(text=...)` matches trace_id, task_id or sha256 -- the three
-    # spellings by which an index row can reference an entity.
-    matches = store.search(text=entity_id)
-    # Sorted rather than index order: `reindex` rebuilds by walking the blob
-    # tree, so the file's order is a filesystem artefact and would make the
-    # same finished run print differently after a rebuild.
-    matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
+    matches, ledger_entries, rows = _collect_follow_entries(traces_path, entity_id)
 
-    ledger_entries = _ledger_entries_for_entity(traces_path.parent, entity_id)
+    # Live mode resumes from everything that exists now, not from the --since
+    # window. The poll loop re-collects unfiltered, so seeding seen_ids from the
+    # filtered rows would re-emit every pre-since entry as new on the first
+    # poll -- the exact replay --since exists to avoid. Terminal detection has
+    # the same problem: a run.closed before the resume point is absent from the
+    # filtered ledger list, so the pre-loop check would miss an already-closed
+    # run and poll once before the in-loop check caught it.
+    live_seen_ids = {r[1] for r in rows}
+    unfiltered_ledger_entries = ledger_entries
 
     if not matches and not ledger_entries:
+        # Under --live this used to fall through and poll forever: with no
+        # matching entries the terminal check can never fire, so an entity that
+        # does not exist (a typo, a finished run already pruned) held the
+        # terminal open until it was killed. Refuse absent entities as the
+        # static path does. Trace-only entities can still be followed, but
+        # need an interrupt unless a matching ledger later supplies closure.
         console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
         raise SystemExit(1)
 
+    if since_id:
+        match_idx = None
+        for idx, r in enumerate(rows):
+            if _entry_matches_since(r, since_id):
+                match_idx = idx
+                break
+        if match_idx is None:
+            console.print(f"[yellow]Entry not found for --since:[/yellow] {since_id}")
+            raise SystemExit(1)
+        rows = rows[match_idx + 1 :]
+        retained_row_ids = {r[1] for r in rows}
+        matches = [m for m in matches if f"trace:{m.trace_id}" in retained_row_ids]
+        ledger_entries = [le for le in ledger_entries if f"ledger:{le[0]}:{le[1].seq}" in retained_row_ids]
+
+    # A capture that continues an earlier one appends; a one-shot capture
+    # replaces. `--since` means "carry on from where I stopped", so truncating
+    # the file it is pointed at threw away the part the resume was relative to.
+    _resuming = bool(since_id)
+
+    if as_json and _resuming and out_path and Path(out_path).exists():
+        # A continuation is JSONL. Validate before writing anything: appending
+        # objects to a previous one-shot array or text capture corrupts it.
+        try:
+            with Path(out_path).open(encoding="utf-8") as capture:
+                for line in capture:
+                    if not line.strip():
+                        continue
+                    if line.lstrip().startswith("["):
+                        raise click.ClickException(
+                            "Cannot resume a one-shot JSON array; use a new output file or an existing JSONL capture."
+                        )
+                    if not isinstance(json.loads(line), dict):
+                        raise click.ClickException("Existing capture is not JSONL objects; use a new output file.")
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise click.ClickException("Existing capture is not JSONL objects; use a new output file.") from exc
+
+    def _write_out(target: Path, content: str, *, append: bool = False) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if (_resuming or append) and target.exists():
+            separator = ""
+            if as_json and content:
+                with target.open("rb") as capture:
+                    capture.seek(0, 2)
+                    if capture.tell():
+                        capture.seek(-1, 2)
+                        if capture.read(1) != b"\n":
+                            separator = "\n"
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write(separator + content)
+        else:
+            target.write_text(content, encoding="utf-8")
+
     if as_json:
-        rows: list[tuple[float, str, dict[str, Any]]] = [
-            (entry.started_at, f"trace:{entry.trace_id}", {**entry.to_dict(), "source": "trace"}) for entry in matches
-        ]
-        rows.extend(
-            (entry.ts, f"ledger:{run_id}:{entry.seq}", {**entry.to_dict(), "source": "ledger", "run_id": run_id})
-            for run_id, entry in ledger_entries
-        )
-        rows.sort(key=lambda row: (row[0], row[1]))
-        console.print_json(json.dumps([row[2] for row in rows]))
+        json_output = json.dumps([row[2] for row in rows])
+        if out_path:
+            # The format follows --as-json and --live, never the file suffix.
+            # A completed run is one JSON array; a followed run is JSONL,
+            # because the file is appended to as rows arrive and an array
+            # cannot be extended a line at a time. Mixing the two -- an array
+            # written here and lines appended later -- produces a file no
+            # consumer can read, which is what the suffix rule used to do.
+            # One JSON array only for a complete, one-shot capture. A stream
+            # that continues -- because it is followed, or because it resumes
+            # an earlier capture with --since -- is JSONL: an array cannot be
+            # appended to, and both of those append.
+            if live or _resuming:
+                _write_out(Path(out_path), "".join(json.dumps(row[2]) + "\n" for row in rows))
+            else:
+                _write_out(Path(out_path), json.dumps([row[2] for row in rows], indent=2) + "\n")
+        # stdout follows the same rule as the file. Under --live the stream is
+        # appended to as rows arrive, so it is JSONL on both: printing an array
+        # here and then one loose object per row left stdout unparseable by any
+        # single reader, which is the same defect the file had.
+        if live:
+            # click.echo, not the Rich console: Rich soft-wraps at the terminal
+            # width, which splits a long JSONL row across lines and leaves the
+            # stream unparseable. Machine-readable output must not be laid out.
+            for row in rows:
+                click.echo(json.dumps(row[2]))
+        else:
+            console.print_json(json_output)
+    else:
+        from rich.console import Console
+        from rich.table import Table
+
+        file_console = Console(record=True, width=100) if out_path else None
+
+        if matches:
+            table = Table(
+                title=f"Traces referencing {entity_id}",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            table.add_column("Started")
+            table.add_column("Trace")
+            table.add_column("Task")
+            table.add_column("Model")
+            table.add_column("Bytes", justify="right")
+            for entry in matches:
+                table.add_row(
+                    _trace_timestamp(entry.started_at),
+                    entry.trace_id,
+                    entry.task_id or "-",
+                    entry.model or "-",
+                    str(entry.byte_size),
+                )
+            console.print(table)
+            if file_console:
+                file_console.print(table)
+
+        if ledger_entries:
+            ledger_entries_sorted = sorted(ledger_entries, key=lambda pair: (pair[1].ts, pair[0], pair[1].seq))
+            ledger_table = Table(
+                title=f"Ledger entries referencing {entity_id}",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            ledger_table.add_column("Time")
+            ledger_table.add_column("Run")
+            ledger_table.add_column("Seq", justify="right")
+            ledger_table.add_column("Kind")
+            ledger_table.add_column("Task")
+            for run_id, entry in ledger_entries_sorted:
+                ledger_table.add_row(
+                    _trace_timestamp(entry.ts),
+                    run_id,
+                    str(entry.seq),
+                    entry.kind,
+                    entry.task_id or "-",
+                )
+            console.print(ledger_table)
+            if file_console:
+                file_console.print(ledger_table)
+
+        if ledger_entries:
+            trace_suffix = "y" if len(matches) == 1 else "ies"
+            ledger_suffix = "y" if len(ledger_entries) == 1 else "ies"
+            summary_msg = f"{len(matches)} trace entr{trace_suffix}, {len(ledger_entries)} ledger entr{ledger_suffix}"
+            console.print(f"[dim]{summary_msg}[/dim]")
+            if file_console:
+                file_console.print(summary_msg)
+        elif matches:
+            suffix = "y" if len(matches) == 1 else "ies"
+            summary_msg = f"{len(matches)} entr{suffix}"
+            console.print(f"[dim]{summary_msg}[/dim]")
+            if file_console:
+                file_console.print(summary_msg)
+        elif since_id:
+            msg = f"0 entries (resumed since {since_id})"
+            console.print(f"[dim]{msg}[/dim]")
+            if file_console:
+                file_console.print(msg)
+
+        if out_path and file_console:
+            # Text mode writes the rendered table whatever the file is called.
+            # Inferring JSON from a .json suffix meant `--out trace.json`
+            # without --as-json wrote an array here and then appended text
+            # lines in the live loop below.
+            _write_out(Path(out_path), file_console.export_text())
+
+    if not live:
         return
 
-    from rich.table import Table
+    if _is_entity_terminal(traces_path.parent, entity_id, unfiltered_ledger_entries):
+        return
 
-    if matches:
-        table = Table(
-            title=f"Traces referencing {entity_id}",
-            show_header=True,
-            header_style="bold cyan",
-        )
-        table.add_column("Started")
-        table.add_column("Trace")
-        table.add_column("Task")
-        table.add_column("Model")
-        table.add_column("Bytes", justify="right")
-        for entry in matches:
-            table.add_row(
-                _trace_timestamp(entry.started_at),
-                entry.trace_id,
-                entry.task_id or "-",
-                entry.model or "-",
-                str(entry.byte_size),
-            )
-        console.print(table)
+    seen_ids = live_seen_ids
 
-    if ledger_entries:
-        ledger_entries_sorted = sorted(ledger_entries, key=lambda pair: (pair[1].ts, pair[0], pair[1].seq))
-        ledger_table = Table(
-            title=f"Ledger entries referencing {entity_id}",
-            show_header=True,
-            header_style="bold cyan",
-        )
-        ledger_table.add_column("Time")
-        ledger_table.add_column("Run")
-        ledger_table.add_column("Seq", justify="right")
-        ledger_table.add_column("Kind")
-        ledger_table.add_column("Task")
-        for run_id, entry in ledger_entries_sorted:
-            ledger_table.add_row(
-                _trace_timestamp(entry.ts),
-                run_id,
-                str(entry.seq),
-                entry.kind,
-                entry.task_id or "-",
-            )
-        console.print(ledger_table)
+    def _notice(message: str) -> None:
+        if as_json:
+            click.echo(message, err=True)
+        else:
+            console.print(f"[dim]{message}[/dim]")
 
-    if ledger_entries:
-        trace_suffix = "y" if len(matches) == 1 else "ies"
-        ledger_suffix = "y" if len(ledger_entries) == 1 else "ies"
-        console.print(
-            f"[dim]{len(matches)} trace entr{trace_suffix}, {len(ledger_entries)} ledger entr{ledger_suffix}[/dim]"
-        )
-    else:
-        suffix = "y" if len(matches) == 1 else "ies"
-        console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
+    _notice("--- following (Ctrl+C to stop) ---")
+
+    def _emit_live_row(r: tuple[float, str, dict[str, Any]]) -> None:
+        if as_json:
+            # One compact object per line, unwrapped: this is the
+            # continuation of the JSONL stream the pre-loop write started.
+            click.echo(json.dumps(r[2]))
+            if out_path:
+                # Append one JSON object per line, matching the JSONL the
+                # pre-loop write produced for --live. Rewriting the whole
+                # array on every row was O(n^2) in file writes and raced any
+                # reader tailing the file.
+                _write_out(Path(out_path), json.dumps(r[2]) + "\n", append=True)
+        else:
+            ts_str = _trace_timestamp(r[0])
+            src = r[2].get("source")
+            if src == "trace":
+                line = f"{ts_str} trace {r[2].get('trace_id')} {r[2].get('task_id') or '-'}"
+                console.print(
+                    f"[cyan]{ts_str}[/cyan] [dim]trace[/dim] {r[2].get('trace_id')} {r[2].get('task_id') or '-'}"
+                )
+            else:
+                run_part = r[2].get("run_id")
+                seq_part = r[2].get("seq")
+                kind_part = r[2].get("kind")
+                task_part = r[2].get("task_id") or "-"
+                line = f"{ts_str} ledger {run_part} #{seq_part} {kind_part} {task_part}"
+                console.print(
+                    f"[cyan]{ts_str}[/cyan] [dim]ledger[/dim] {run_part} "
+                    f"#{seq_part} [bold]{kind_part}[/bold] {task_part}"
+                )
+            if out_path:
+                with open(out_path, "a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+
+    try:
+        while True:
+            time.sleep(poll_interval)
+            _matches, cur_ledgers, cur_rows = _collect_follow_entries(traces_path, entity_id)
+            new_rows = [r for r in cur_rows if r[1] not in seen_ids]
+            for r in new_rows:
+                seen_ids.add(r[1])
+                _emit_live_row(r)
+            if _is_entity_terminal(traces_path.parent, entity_id, cur_ledgers):
+                _matches, cur_ledgers, cur_rows = _collect_follow_entries(traces_path, entity_id)
+                final_rows = [r for r in cur_rows if r[1] not in seen_ids]
+                for r in final_rows:
+                    seen_ids.add(r[1])
+                    _emit_live_row(r)
+                _notice("run terminated.")
+                break
+    except KeyboardInterrupt:
+        _notice("\nstopped.")
 
 
 def _trace_timestamp(epoch: float) -> str:

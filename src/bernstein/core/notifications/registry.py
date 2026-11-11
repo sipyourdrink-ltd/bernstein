@@ -27,6 +27,8 @@ import threading
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -79,6 +81,8 @@ class Registry:
     def __init__(self) -> None:
         self._sinks: dict[str, NotificationSink] = {}
         self._driver_factories: dict[str, Any] = {}
+        self._driver_guard = DuplicateGuard("driver kind")
+        self._sink_guard = DuplicateGuard("sink id")
         self._lock = threading.RLock()
         self._builtins_loaded = False
         self._entrypoints_loaded = False
@@ -102,8 +106,10 @@ class Registry:
         if not normalised:
             raise ValueError("driver kind must be non-empty")
         with self._lock:
-            if normalised in self._driver_factories:
-                raise ValueError(f"Duplicate driver kind: {normalised!r}")
+            module_name = caller_module_name()
+            if module_name == __name__:
+                module_name = caller_module_name(depth=2)
+            self._driver_guard.register(normalised, module_name)
             self._driver_factories[normalised] = factory
 
     def get_driver_factory(self, kind: str) -> Any:
@@ -141,14 +147,17 @@ class Registry:
         if not sid:
             raise ValueError("sink.sink_id must be non-empty")
         with self._lock:
-            if sid in self._sinks:
-                raise ValueError(f"Duplicate sink id: {sid!r}")
+            module_name = caller_module_name()
+            if module_name == __name__:
+                module_name = caller_module_name(depth=2)
+            self._sink_guard.register(sid, module_name)
             self._sinks[sid] = sink
 
     def unregister_sink(self, sink_id: str) -> None:
         """Remove ``sink_id`` from the registry if present."""
         with self._lock:
             self._sinks.pop(sink_id, None)
+            self._sink_guard.forget(sink_id)
 
     def get_sink(self, sink_id: str) -> NotificationSink:
         """Return the live sink registered under ``sink_id``.
@@ -188,7 +197,9 @@ class Registry:
             try:
                 module_name, attr_name = target.split(":", 1)
                 module = __import__(module_name, fromlist=[attr_name])
-                self._driver_factories[kind] = getattr(module, attr_name)
+                factory = getattr(module, attr_name)
+                self._driver_guard.register(kind, module_name)
+                self._driver_factories[kind] = factory
             except Exception as exc:
                 logger.warning("Failed to load builtin notification driver %r: %s", kind, exc)
 
@@ -208,6 +219,7 @@ class Registry:
             except Exception as exc:
                 logger.warning("Failed to load notification entry-point %r: %s", kind, exc)
                 continue
+            self._driver_guard.register(kind, ep.module)
             self._driver_factories[kind] = loaded
 
 

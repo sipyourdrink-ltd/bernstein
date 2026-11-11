@@ -34,10 +34,21 @@ from bernstein.core.fleet.config import (
     FleetConfigError,
     ProjectConfig,
 )
+from bernstein.core.tasks.models import DispatchTier, TaskType
 
 DEFAULT_FLEET_ROOT = "~/.bernstein/fleet"
 MANIFEST_FILENAME = "bernstein.yaml"
 DISABLED_FLAG_FILENAME = ".disabled"
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerCapabilitySpec:
+    """One worker's explicitly declared routing eligibility; grants no authority."""
+
+    worker_id: str
+    task_types: list[TaskType]
+    dispatch_tiers: list[DispatchTier]
+    capabilities: list[str] = field(default_factory=list[str])
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +63,7 @@ class InstanceSpec:
             ``directory`` when the manifest omits ``path``.
         task_server_url: Base URL of the task server for this instance.
         disabled: ``True`` when a ``.disabled`` flag file is present.
+        workers: Validated routing matrix; empty means dashboard-only.
     """
 
     name: str
@@ -59,6 +71,7 @@ class InstanceSpec:
     project_path: Path
     task_server_url: str
     disabled: bool = False
+    workers: list[WorkerCapabilitySpec] = field(default_factory=list[WorkerCapabilitySpec])
 
     def to_project_config(self) -> ProjectConfig:
         """Project the spec onto the existing :class:`ProjectConfig` shape.
@@ -127,6 +140,39 @@ def _load_manifest(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     return data, None
 
 
+def _parse_workers(raw: Any) -> list[WorkerCapabilitySpec]:
+    """Validate the entire matrix before returning any eligible workers."""
+    if not isinstance(raw, list):
+        raise ValueError("must be a list")
+    workers: list[WorkerCapabilitySpec] = []
+    seen: set[str] = set()
+    required = {"worker_id", "task_types", "dispatch_tiers"}
+    for index, row in enumerate(raw):
+        if not isinstance(row, dict) or not required <= row.keys() or row.keys() - (required | {"capabilities"}):
+            raise ValueError(f"row {index}: missing required or unknown fields")
+        worker_id = row["worker_id"]
+        if not isinstance(worker_id, str) or not worker_id.strip() or worker_id in seen:
+            raise ValueError(f"row {index}: worker_id must be nonempty and unique")
+        for key in ("task_types", "dispatch_tiers", "capabilities"):
+            values = row.get(key, [])
+            if (
+                not isinstance(values, list)
+                or (key != "capabilities" and not values)
+                or any(not isinstance(value, str) or not value.strip() for value in values)
+            ):
+                raise ValueError(f"row {index}: {key} must contain nonempty strings in a list")
+        workers.append(
+            WorkerCapabilitySpec(
+                worker_id=worker_id,
+                task_types=[TaskType(value) for value in row["task_types"]],
+                dispatch_tiers=[DispatchTier(value) for value in row["dispatch_tiers"]],
+                capabilities=row.get("capabilities", []),
+            )
+        )
+        seen.add(worker_id)
+    return workers
+
+
 def _build_spec(
     index: int,
     directory: Path,
@@ -170,12 +216,19 @@ def _build_spec(
         errors.append(FleetConfigError(index, "task_server_url must be a string"))
         return None, errors
 
+    try:
+        workers = _parse_workers(manifest.get("workers", []))
+    except ValueError as exc:
+        errors.append(FleetConfigError(index, f"workers: {exc}"))
+        workers = []
+
     spec = InstanceSpec(
         name=name,
         directory=directory,
         project_path=project_path,
         task_server_url=url,
         disabled=disabled,
+        workers=workers,
     )
     return spec, errors
 

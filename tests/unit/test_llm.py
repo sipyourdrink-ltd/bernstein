@@ -336,6 +336,18 @@ class TestCallLLM:
             await call_llm("test prompt", "gpt-4", provider="openrouter")
         mock_get_client.assert_called_once_with("openrouter")
 
+    @pytest.mark.asyncio
+    async def test_openai_provider_uses_api_client_not_cli(self) -> None:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=_make_completion_response("ok"))
+        with (
+            patch("bernstein.core.llm.get_client", return_value=mock_client) as mock_get_client,
+            patch("bernstein.core.llm._call_cli_provider", new=AsyncMock(side_effect=AssertionError("CLI path"))),
+        ):
+            result = await call_llm("test prompt", "gpt-4", provider="openai")
+        assert result == "ok"
+        mock_get_client.assert_called_once_with("openai")
+
 
 # ---------------------------------------------------------------------------
 # call_llm - deterministic replay (issue #1832)

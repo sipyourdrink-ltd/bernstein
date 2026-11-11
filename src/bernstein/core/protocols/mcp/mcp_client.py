@@ -41,6 +41,7 @@ import json
 import logging
 import time
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -294,6 +295,7 @@ class MCPClientSession:
     ) -> None:
         self._config = config
         self._tools: list[RemoteTool] = []
+        self._tool_definitions: list[dict[str, Any]] | None = None
         self._initialized: bool = False
         self._request_id: int = 0
         # Stateless call identity (issue #2506): the trace id is run-scoped
@@ -340,6 +342,11 @@ class MCPClientSession:
     def tools(self) -> list[RemoteTool]:
         """List of discovered tools (copy)."""
         return self._tools.copy()
+
+    @property
+    def tool_definitions(self) -> list[dict[str, Any]] | None:
+        """Full discovery definitions (deep copy); None until discovery, [] if empty."""
+        return deepcopy(self._tool_definitions)
 
     @property
     def is_connected(self) -> bool:
@@ -447,6 +454,7 @@ class MCPClientSession:
             )
             self._tools.append(tool)
 
+        self._tool_definitions = deepcopy(tools_list)
         self._manifest_digest = self._compute_manifest_digest(tools_list)
         logger.info(
             "Discovered %d tools from server '%s' (manifest digest %s)",
@@ -801,6 +809,7 @@ class MCPClientSession:
         """Close the MCP session."""
         self._initialized = False
         self._tools = []
+        self._tool_definitions = None
         logger.info("Closed MCP session with server '%s'", self._config.name)
 
     def _next_request_meta(self, method: str, params: dict[str, Any] | None) -> dict[str, Any]:
