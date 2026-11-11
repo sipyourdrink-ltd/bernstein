@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -63,7 +64,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> CheckRegistry:
         (Verdict.MEASURED, None, False, 1),
         (Verdict.MEASURED, None, True, 1),
         (Verdict.NOT_MEASURABLE, None, False, 1),
-        (Verdict.NOT_MEASURABLE, None, True, 3),
+        (Verdict.NOT_MEASURABLE, None, True, 2),
         (Verdict.DECLARED, None, False, 0),
         (Verdict.DECLARED, False, True, 0),
         (Verdict.DECLARED, True, True, 0),
@@ -133,7 +134,11 @@ def test_sarif_carries_finding_ids_and_three_state_kind(registry, measured_verdi
         "not_measurable",
     ]
     for row, finding in zip(run["results"], findings, strict=True):
-        assert row["message"]["text"] == finding.summary
+        expected_message = finding.summary
+        if finding.verdict == Verdict.NOT_MEASURABLE:
+            expected_message = f"{expected_message}: {finding.reason}"
+        assert row["message"]["text"] == expected_message
+        assert row["level"] == "none" or row["kind"] == "fail"
         assert row["properties"]["passed"] == finding.passed
 
 
@@ -143,7 +148,7 @@ def test_sarif_carries_finding_ids_and_three_state_kind(registry, measured_verdi
     [
         (Verdict.MEASURED, True, 0),
         (Verdict.MEASURED, False, 1),
-        (Verdict.NOT_MEASURABLE, None, 3),
+        (Verdict.NOT_MEASURABLE, None, 2),
     ],
 )
 def test_quiet_prints_nothing(registry, output_format, verdict, passed, expected) -> None:
@@ -173,6 +178,10 @@ def test_quiet_empty_selection_prints_nothing(registry: CheckRegistry) -> None:
 def test_crashing_check_fails_closed_and_quiet_suppresses_warning(
     registry: CheckRegistry, caplog: pytest.LogCaptureFixture, strict: bool, quiet: bool, output_format: str
 ) -> None:
+    # A real stderr handler catches warnings even when pytest captures logging.
+    handler = logging.StreamHandler(sys.stderr)
+    logger = logging.getLogger("bernstein.core.checks.registry")
+
     class CrashingCheck:
         check_id = "fixture:crash"
 
@@ -186,11 +195,6 @@ def test_crashing_check_fails_closed_and_quiet_suppresses_warning(
         args.append("--strict")
     if quiet:
         args.append("--quiet")
-    # A real stderr handler catches warnings even when pytest captures logging.
-    import sys
-
-    handler = logging.StreamHandler(sys.stderr)
-    logger = logging.getLogger("bernstein.core.checks.registry")
     logger.addHandler(handler)
     try:
         with caplog.at_level(logging.WARNING, logger=logger.name):
@@ -221,7 +225,7 @@ def test_crashing_check_fails_closed_and_quiet_suppresses_warning(
         ["--list", "--format", "sarif"],
     ],
 )
-def test_usage_errors_are_distinct_from_strict_incomplete(registry: CheckRegistry, args: list[str]) -> None:
+def test_usage_errors_share_strict_incomplete_exit_code(registry: CheckRegistry, args: list[str]) -> None:
     from bernstein.cli.main import cli
 
     result = CliRunner().invoke(cli, ["govern", "audit", *args])
@@ -264,13 +268,16 @@ def test_sarif_validates_offline_and_links_rules_and_locations(
     rules = run["tool"]["driver"]["rules"]
     assert len(rules) == len(list(Verdict)) if not empty else len(rules) == 0
     for row in run["results"]:
+        # SARIF 2.1.0 section 3.27.9 constrains kind/level beyond the schema.
+        assert row["level"] == "none" or row["kind"] == "fail"
         assert rules[row["ruleIndex"]]["id"] == row["ruleId"]
         assert row["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "bernstein.yaml"
         verdict = row["properties"]["verdict"]
         if verdict == "pass":
             assert (row["kind"], row["level"]) == ("pass", "none")
         elif verdict == "not_measurable":
-            assert (row["kind"], row["level"]) == ("review", "warning")
+            assert (row["kind"], row["level"]) == ("review", "none")
+            assert "Missing permission" in row["message"]["text"]
         elif verdict in ("fail", "measured"):
             assert (row["kind"], row["level"]) == ("fail", "error")
         elif verdict == "declared":
@@ -294,7 +301,10 @@ def test_offline_sarif_validation_rejects_invalid_output(registry: CheckRegistry
         _validate_sarif(payload)
 
 
-@pytest.mark.parametrize("locator_kind", ["relative", "absolute", "uri", "opaque", "workspace", "outside"])
+@pytest.mark.parametrize(
+    "locator_kind",
+    ["relative", "absolute", "uri", "opaque", "workspace", "outside", "outside_uri", "traversal", "symlink"],
+)
 def test_sarif_uses_reported_file_or_evaluated_config(
     registry: CheckRegistry, tmp_path: Path, locator_kind: str
 ) -> None:
@@ -306,6 +316,7 @@ def test_sarif_uses_reported_file_or_evaluated_config(
     file.write_text("# Evidence\n")
     outside = tmp_path / "outside.py"
     outside.write_text("# External evidence\n")
+    (root / "link.py").symlink_to(outside)
     locators = {
         "relative": "src/a file.py",
         "absolute": str(file),
@@ -313,6 +324,9 @@ def test_sarif_uses_reported_file_or_evaluated_config(
         "opaque": "env://SETTING",
         "workspace": f"doctor:compliance:{root}",
         "outside": str(outside),
+        "outside_uri": outside.as_uri(),
+        "traversal": "../outside.py",
+        "symlink": "link.py",
     }
     finding = Finding(
         check_id="fixture:location",
@@ -325,9 +339,33 @@ def test_sarif_uses_reported_file_or_evaluated_config(
     payload = json.loads(result.stdout)
     _validate_sarif(payload)
     uri = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
-    if locator_kind in ("opaque", "workspace"):
+    if locator_kind in ("opaque", "workspace", "outside", "outside_uri", "traversal", "symlink"):
         assert uri == "bernstein.yml"
-    elif locator_kind == "outside":
-        assert uri == outside.as_uri()
     else:
         assert uri == "src/a%20file.py"
+    assert str(tmp_path) not in result.stdout
+    assert "file:///" not in result.stdout
+    assert payload["runs"][0]["results"][0]["properties"]["evidence"] == [{"sha256": "a" * 64}]
+
+
+@pytest.mark.parametrize(
+    "local_path", ["/Users/owner/private.py", "file:///tmp/private.py", r"C:\Users\owner\private.py"]
+)
+def test_sarif_redacts_local_paths_in_diagnostics(registry: CheckRegistry, local_path: str) -> None:
+    registry.clear()
+    registry.register(
+        FixtureCheck(
+            Finding(
+                check_id="fixture:private",
+                verdict=Verdict.NOT_MEASURABLE,
+                message=f"Cannot read {local_path}",
+                reason=f"Permission denied: {local_path}",
+                remediation=f"Grant access to {local_path}",
+            )
+        )
+    )
+    result = CliRunner().invoke(audit.govern_audit_cmd, ["--format", "sarif"])
+    payload = json.loads(result.stdout)
+    _validate_sarif(payload)
+    assert local_path not in json.dumps(payload, ensure_ascii=False).replace("\\\\", "\\")
+    assert "[local path]" in payload["runs"][0]["results"][0]["message"]["text"]

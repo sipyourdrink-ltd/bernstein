@@ -209,15 +209,22 @@ is a usage error. `doctor --json` uses the
 same complete finding objects in its `findings` array.
 
 SARIF 2.1.0 includes one rule per check ID and one result per finding, with
-`ruleId = finding.id`, a matching `ruleIndex`, and the complete finding in
-`properties`. Each result has a physical location: a file reported by the
-check's evidence, or the workspace's root `bernstein.yaml` / `bernstein.yml`
+`ruleId = finding.id`, a matching `ruleIndex`, and finding fields in
+`properties`. Evidence retains its SHA-256 hashes but omits source locators,
+and absolute local paths in diagnostic text are redacted. Each result has a
+physical location: a file reported by the check's evidence within the workspace,
+or the workspace's root `bernstein.yaml` / `bernstein.yml`
 configuration for workspace-level evidence. When configuration is missing,
 the location identifies the expected `bernstein.yaml`. Repository paths are
-relative, URI-encoded paths; reported files outside the workspace use file URIs.
+relative, URI-encoded paths; reported files outside the workspace fall back to
+the root configuration. For code-scanning uploads, run the command from the
+repository root and keep `--workdir` at that root so relative paths resolve
+against the checkout correctly. SARIF never includes absolute local paths or
+file URIs.
 Passing results have `kind: pass` and `level: none`, so they are not code-scanning
 findings. Failures have `kind: fail` and `level: error`; unmeasurable results
-have `kind: review` and `level: warning`; declarations are informational with
+have `kind: review` and `level: none`, with the unmeasurable reason in the
+message; declarations are informational with
 `level: none`. `properties.kind` carries `measured`, `declared`, or
 `not_measurable`; legacy `pass`/`fail` verdicts map to `measured` there, while
 the original verdict and `passed` remain available. An offline JSON Schema
@@ -230,12 +237,11 @@ All checks selected by `--only` and `--skip` are required for this gate.
 |---|---|
 | `0` | At least one check ran, all selected measured checks passed, and none was unmeasurable; or a valid `--list` invocation completed. |
 | `1` | A selected check failed or crashed, a measured result had no explicit pass, no checks matched, or a check was unmeasurable without `--strict`. Unexpected tool exceptions also exit `1`. |
-| `2` | Invalid CLI usage, such as an unknown format, nonexistent workdir, or incompatible output flags. |
-| `3` | With `--strict`, a selected check is `not_measurable`, and no check failed or crashed. |
+| `2` | With `--strict`, a selected check is `not_measurable`, and no check failed or crashed. Click usage errors also exit `2`, such as an unknown format, nonexistent workdir, or incompatible output flags. |
 
 Declared findings never affect the exit code. Failures and crashes take
 precedence over strict incompleteness. As on `main`, unmeasurable checks fail
-the default gate; `--strict` distinguishes missing prerequisites with code `3`
+the default gate; `--strict` distinguishes missing prerequisites with code `2`
 without reclassifying check crashes. The registry still reports a crashed
 check as `not_measurable` and continues the remaining checks.
 

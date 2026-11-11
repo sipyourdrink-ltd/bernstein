@@ -8,6 +8,7 @@ three-state verdict vocabulary.
 from __future__ import annotations
 
 import json
+import re
 from inspect import signature
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 
 EXIT_OK = 0
 EXIT_FAILED = 1
-EXIT_NOT_MEASURABLE = 3
+EXIT_NOT_MEASURABLE = 2
 
 
 def _finding_kind(finding: Finding) -> str:
@@ -76,6 +77,8 @@ def _sarif_location(finding: Finding, root: Path) -> dict[str, Any]:
         else:
             continue
         path = (root / path).resolve()
+        if not path.is_relative_to(root):
+            continue
         if path.is_dir() or not (path.is_file() or path.suffix):
             continue
         break
@@ -85,11 +88,24 @@ def _sarif_location(finding: Finding, root: Path) -> dict[str, Any]:
             (root / name for name in ("bernstein.yaml", "bernstein.yml") if (root / name).is_file()),
             root / "bernstein.yaml",
         )
-    try:
-        uri = quote(path.relative_to(root).as_posix(), safe="/")
-    except ValueError:
-        uri = path.as_uri()
+    uri = quote(path.relative_to(root).as_posix(), safe="/")
     return {"physicalLocation": {"artifactLocation": {"uri": uri}}}
+
+
+_LOCAL_PATH = re.compile(
+    r"file://[^\s\"'<>]+|(?<![\w/])/(?!/)[^\s\"'<>]+|(?i:\b[a-z]:[\\/])[^\s\"'<>]+|\\\\[^\s\"'<>]+"
+)
+
+
+def _redact_local_paths(value: Any) -> Any:
+    """Keep local paths from check diagnostics out of uploadable SARIF."""
+    if isinstance(value, str):
+        return _LOCAL_PATH.sub("[local path]", value)
+    if isinstance(value, dict):
+        return {key: _redact_local_paths(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_local_paths(item) for item in value]
+    return value
 
 
 def _sarif(findings: list[Finding], root: Path) -> dict[str, Any]:
@@ -103,38 +119,46 @@ def _sarif(findings: list[Finding], root: Path) -> dict[str, Any]:
         if _measured_failure(finding):
             kind, level = "fail", "error"
         elif finding.verdict == Verdict.NOT_MEASURABLE:
-            kind, level = "review", "warning"
+            kind, level = "review", "none"
         elif finding.verdict == Verdict.DECLARED:
             kind, level = "informational", "none"
         else:
             kind, level = "pass", "none"
+        message = finding.summary or finding.message or finding.reason or finding.id
+        if finding.verdict == Verdict.NOT_MEASURABLE and finding.reason and finding.reason not in message:
+            message = f"{message}: {finding.reason}"
+        properties = {**_finding_dict(finding), "kind": _finding_kind(finding)}
+        # Locators may embed absolute paths in producer-specific identifiers.
+        properties["evidence"] = [{"sha256": evidence.sha256} for evidence in finding.evidence]
         results.append(
             {
                 "ruleId": finding.id,
                 "ruleIndex": rule_indices[finding.id],
                 "kind": kind,
                 "level": level,
-                "message": {"text": finding.summary or finding.message or finding.reason or finding.id},
+                "message": {"text": message},
                 "locations": [_sarif_location(finding, root)],
-                "properties": {**_finding_dict(finding), "kind": _finding_kind(finding)},
+                "properties": properties,
             }
         )
-    return {
-        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-        "version": "2.1.0",
-        "runs": [
-            {
-                "tool": {
-                    "driver": {
-                        "name": "bernstein govern audit",
-                        "informationUri": "https://github.com/sipyourdrink-ltd/bernstein",
-                        "rules": rules,
-                    }
-                },
-                "results": results,
-            }
-        ],
-    }
+    return _redact_local_paths(
+        {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "bernstein govern audit",
+                            "informationUri": "https://github.com/sipyourdrink-ltd/bernstein",
+                            "rules": rules,
+                        }
+                    },
+                    "results": results,
+                }
+            ],
+        }
+    )
 
 
 # Stable installation IDs, in the legacy doctor's display order. Backend
@@ -287,7 +311,7 @@ def _record_sentinel_run(root: Path, findings: list[Finding]) -> None:
     show_default=True,
     help="Output format (SARIF 2.1.0 for code scanning).",
 )
-@click.option("--strict", is_flag=True, help="Exit 3 for unmeasurable checks unless a check fails or crashes (exit 1).")
+@click.option("--strict", is_flag=True, help="Exit 2 for unmeasurable checks unless a check fails or crashes (exit 1).")
 @click.option("--quiet", is_flag=True, help="Print nothing; report the result only through the exit code.")
 @click.option(
     "--json",
@@ -318,8 +342,8 @@ def govern_audit_cmd(
     Exit codes:
       0: Selected measured checks passed; declared findings never affect the code.
       1: A check failed/crashed, no checks matched, or not_measurable without --strict.
-      2: Invalid command-line arguments (Click usage error).
-      3: A check is not measurable with --strict and no check failed or crashed.
+      2: A check is not measurable with --strict and no check failed or crashed,
+         or invalid command-line arguments (Click usage error).
 
     All selected checks are required. Failures and crashes take precedence over
     strict incompleteness. Unexpected tool errors also fail closed with code 1.
