@@ -277,6 +277,9 @@ class DeclarationQuarantineAdapter:
             remediation=fix,
         )
 
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
+
 
 #: The duplication collector's checks, each reported by ``govern audit`` as
 #: ``duplication:<name>`` (#5105). Pinned rather than read from the collector so
