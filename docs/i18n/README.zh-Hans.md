@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 终端仪表盘 | `bernstein gui serve` — 浏览器仪表盘 |
 
 ### 证明一次运行
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
 
 这里的确定性是需要你去核查的东西，而不是凭空相信。启用审计运行一次，然后验证记录的内容：
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 运行收据在一个 Ed25519 签署主体下绑定日志头部、运行写入脊柱条目时的血统脊柱头部，以及可选的审计链范围，并内嵌公钥。持有该文件与操作者公钥的审查者可以确认其中嵌入的动作与链未被改动：无需 HMAC 密钥，无需活跃的 `.sdd/`，篡改时以退出码 `2` 命名第一个分歧步骤。收据标识的是它所嵌入的那一份日志状态；要证明该状态就是完整收尾的日志，还需要一份独立的头部／条数封印。仅凭文件（不钉 `--public-key`）时，检查只是完整性检查：它证明收据内部自洽，而非谁签署的，结论也会如实说明。详见[确定性回放](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)。
 
 同样的可核查性也适用于评估数字。`bernstein bench run <suite> --reliability k`（也写作 `bernstein eval --reliability k`）在固定协调下把每个任务运行 `k` 次，然后报告 `pass^k` 下限（所有 `k` 次尝试都必须通过）以及 `pass@1` 上限。该结果封装在一份签署的收据中，`bernstein bench reliability-verify` 可离线重算，因此伪造的下限会验证失败。详情：[pass^k 可靠性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
+
+使用 `bernstein govern audit --format json` 或 `--format sarif` 输出机器可读的检查结果，使用 `--strict --quiet` 作为 CI 检查门槛。参见 [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
 
 ### 工作原理
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

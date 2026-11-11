@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — টার্মিনাল ড্যাশবোর্ড | `bernstein gui serve` — ব্রাউজার ড্যাশবোর্ড |
 
 ### একটি রান প্রমাণ করুন
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
 
 এখানে ডিটারমিনিজম বিশ্বাস করার জিনিস নয়, যাচাই করার জিনিস। অডিট চালু রেখে একবার চালান, তারপর যা লেখা হলো তা যাচাই করুন:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 একটি রান রসিদ জার্নাল হেড, রানটি স্পাইন এন্ট্রি লিখে থাকলে লিনিয়েজ-স্পাইন হেড, এবং অপ্ট-ইনে অডিট-চেইনের একটি রেঞ্জ — সবকিছু একটিমাত্র Ed25519-স্বাক্ষরিত সাবজেক্টের নিচে বাঁধে, পাবলিক কি ভিতরেই থাকে। ওই ফাইল আর অপারেটরের পাবলিক কি হাতে থাকা একজন রিভিউয়ার নিশ্চিত করতে পারেন যে ভিতরে থাকা অ্যাকশন ও চেইন বদলানো হয়নি: HMAC কি লাগে না, জীবন্ত `.sdd/` লাগে না, আর কারচুপি থাকলে এক্সিট `2` প্রথম অমিল ধাপটির নাম বলে দেয়। ওই রসিদ যে জার্নাল অবস্থাকে ধারণ করে সেটিকেই শনাক্ত করে; ওই অবস্থাই যে সম্পূর্ণ ও সমাপ্ত জার্নাল তা প্রমাণ করতে আলাদা একটি স্বাধীন হেড/কাউন্ট সিল লাগে। শুধু ফাইল নিয়ে, `--public-key` পিন ছাড়া, যাচাইটি কেবল ইন্টিগ্রিটির — এটি প্রমাণ করে রসিদটি নিজের ভিতরে সঙ্গতিপূর্ণ, কে স্বাক্ষর করেছে তা নয়, এবং রায়েও সেটাই লেখা থাকে। বিস্তারিত [ডিটারমিনিস্টিক রিপ্লে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification) এ।
 
 একই যাচাইযোগ্যতা মূল্যায়নের সংখ্যাগুলোর ক্ষেত্রেও খাটে। `bernstein bench run <suite> --reliability k` (একে `bernstein eval --reliability k` ও লেখা যায়) প্রতিটি টাস্ক নির্দিষ্ট কোঅর্ডিনেশনের অধীনে `k` বার চালায়, তারপর `pass@1` সিলিং-এর পাশাপাশি একটি `pass^k` মেঝে (সবগুলো `k` চেষ্টাই পাস করতে হবে) জানায়। ওই ফলাফল একটি স্বাক্ষরিত রসিদে সিল করা হয় যা `bernstein bench reliability-verify` অফলাইনে আবার হিসাব করে, তাই বানানো মেঝে যাচাইয়ে ধরা পড়ে। বিস্তারিত: [pass^k নির্ভরযোগ্যতার মেঝে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)।
+
+মেশিনে পাঠযোগ্য পরীক্ষার ফলের জন্য `bernstein govern audit --format json` বা `--format sarif` এবং CI-তে উত্তীর্ণ হওয়ার শর্ত হিসেবে `--strict --quiet` ব্যবহার করুন। দেখুন: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
 
 ### এটি কীভাবে কাজ করে
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — टर्मिनल डैशबोर्ड | `bernstein gui serve` — ब्राउज़र डैशबोर्ड |
 
 ### रन को साबित कीजिए
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
 
 यहाँ डिटर्मिनिज़्म भरोसे की चीज़ नहीं, जाँचने की चीज़ है। ऑडिट चालू करके एक बार चलाइए, फिर जो दर्ज हुआ उसे सत्यापित कीजिए:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 एक रन रसीद जर्नल हेड को, और अगर रन ने स्पाइन एंट्रियाँ लिखी हों तो लीनिएज-स्पाइन हेड को, और ऑप्ट-इन पर ऑडिट-चेन की एक रेंज को, एक ही Ed25519-हस्ताक्षरित सब्जेक्ट के नीचे बाँधती है, जिसमें पब्लिक की अंतर्निहित होती है। वह फ़ाइल और ऑपरेटर की पब्लिक की रखने वाला समीक्षक पुष्टि कर सकता है कि उसमें दर्ज ऐक्शन और चेन बदले नहीं गए: न HMAC की चाहिए, न ज़िंदा `.sdd/`, और छेड़छाड़ पर एग्ज़िट `2` पहले भिन्न स्टेप का नाम बता देता है। वह रसीद उसी जर्नल अवस्था की पहचान करती है जिसे वह समेटे हुए है; यह साबित करने के लिए कि वह अवस्था पूरा और समाप्त जर्नल है, अलग से एक स्वतंत्र हेड/काउंट सील चाहिए। सिर्फ़ फ़ाइल के साथ और `--public-key` पिन के बिना जाँच केवल इंटीग्रिटी की होती है — यह साबित करती है कि रसीद अपने भीतर संगत है, यह नहीं कि हस्ताक्षर किसने किया, और नतीजा यही कहता भी है। विवरण [डिटर्मिनिस्टिक रिप्ले](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification) में।
 
 यही जाँच-योग्यता मूल्यांकन के आँकड़ों पर भी लागू होती है। `bernstein bench run <suite> --reliability k` (जिसे `bernstein eval --reliability k` भी लिखा जाता है) हर टास्क को तय कोऑर्डिनेशन के तहत `k` बार चलाता है, फिर `pass@1` की ऊपरी सीमा के साथ-साथ `pass^k` निचली सीमा (सभी `k` कोशिशें पास होनी चाहिए) बताता है। वह नतीजा एक हस्ताक्षरित रसीद में सील होता है जिसे `bernstein bench reliability-verify` ऑफ़लाइन दोबारा गिनता है, इसलिए गढ़ी हुई निचली सीमा सत्यापन में गिर जाती है। विवरण: [pass^k विश्वसनीयता की निचली सीमा](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)।
+
+मशीन द्वारा पढ़े जा सकने वाले जाँच परिणामों के लिए `bernstein govern audit --format json` या `--format sarif` और CI में पास या फ़ेल तय करने के लिए `--strict --quiet` इस्तेमाल करें। देखें: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
 
 ### यह काम कैसे करता है
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — لوحة معلومات الطرفية | `bernstein gui serve` — لوحة معلومات المتصفح |
 
 ### إثبات عملية تشغيل
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
 
 الحتمية هنا شيء يمكنك التحقق منه بنفسك، وليست أمراً تسلم به دون دليل. قم بالتشغيل مرة واحدة مع تمكين التدقيق، ثم تحقق مما تم تسجيله:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 يربط إيصال التشغيل رأس السجل، ورأس عمود النسب الفقري عندما يكتب التشغيل إدخالات، واختيارياً نطاق سلسلة التدقيق، تحت كيان واحد موقع بـ Ed25519 مع تضمين المفتاح العام. يمكن للمراجع الذي يمتلك هذا الملف والمفتاح العام للمشغل التأكد من عدم تعديل الإجراءات والسلاسل المضمنة: لا حاجة لمفتاح HMAC، ولا حاجة لمجلد `.sdd/` نشط، ورمز الخروج `2` يحدد أول خطوة متباينة عند التلاعب. يحدد ذلك الإيصال حالة السجل المضمنة؛ وإثبات أن تلك الحالة هي السجل المكتمل بالكامل يتطلب بالإضافة إلى ذلك ختماً مستقلاً للرأس/العدد. مع الملف بمفرده ودون تحديد `--public-key`، يكون الفحص للنزاهة الداخلية فقط. التفاصيل في [إعادة التشغيل الحتمي](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 تنطبق نفس إمكانية التحقق على أرقام التقييم. يقوم `bernstein bench run <suite> --reliability k` (يكتب أيضاً `bernstein eval --reliability k`) بتشغيل كل مهمة `k` من المرات بتنسيق ثابت، ثم يبلغ عن حد أدنى `pass^k` (يجب أن تنجح جميع محاولات `k`) إلى جانب الحد الأقصى `pass@1`. يتم ختم هذه النتيجة في إيصال موقّع يعيد `bernstein bench reliability-verify` حسابه دون اتصال، وبالتالي فإن أي حد أدنى مفتعل يفشل في التحقق. التفاصيل: [الحد الأدنى للموثوقية pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+استخدم `bernstein govern audit --format json` أو `--format sarif` للحصول على نتائج فحص قابلة للقراءة آليًا، و`--strict --quiet` لتحديد اجتياز الفحص في CI. راجع [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
 
 ### كيف يعمل
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
