@@ -118,9 +118,9 @@ def test_wordmarks_carry_the_mark_and_outlined_text(name: str) -> None:
     assert "<text" not in text, "the wordmark is outlines, not a <text> element that needs a font"
 
 
-def test_readme_logo_carries_its_own_background() -> None:
-    """GitHub's prefers-color-scheme follows the OS, not the GitHub theme, so the
-    README header is one image whose ink always sits on its own opaque panel."""
+def test_logo_panel_carries_its_own_background() -> None:
+    """The panel wordmark is for surfaces that cannot choose by colour scheme,
+    so its ink always sits on its own opaque panel."""
     path = ASSETS / "logo-readme.svg"
     root = _svg_root(path)
     text = path.read_text(encoding="utf-8")
@@ -128,9 +128,21 @@ def test_readme_logo_carries_its_own_background() -> None:
     assert first.get("fill") == DARK_BG, "the panel is the first shape and uses the dark token background"
     assert first.get("rx"), "the panel has rounded corners"
     assert "<text" not in text and AMBER in text
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "docs/assets/logo-readme.svg" in readme
-    assert "logo-light.svg" not in readme and "prefers-color-scheme" not in readme.split("</div>")[0]
+
+
+def test_readme_header_starts_with_the_banner() -> None:
+    """GitHub's prefers-color-scheme follows the OS, not the GitHub theme, so the
+    README header carries no theme-switched wordmark: the banner, which has its
+    own opaque background, is the first image and the only identity mark."""
+    readmes = [REPO / "README.md", *sorted((REPO / "docs" / "i18n").glob("README.*.md"))]
+    for readme in readmes:
+        header = readme.read_text(encoding="utf-8").split("</div>")[0]
+        first_image = re.search(r"<img\b[^>]*\bsrc=\"([^\"]+)\"", header)
+        assert first_image, f"{readme.name}: no image in the header"
+        assert first_image.group(1).endswith("docs/assets/banner-readme.webp"), readme.name
+        for wordmark in ("logo-dark.svg", "logo-light.svg", "logo-readme.svg"):
+            assert wordmark not in header, f"{readme.name}: header still shows {wordmark}"
+        assert "prefers-color-scheme" not in header, readme.name
 
 
 def _names_listed_in_guide() -> set[str]:

@@ -23,7 +23,7 @@ Outputs (all overwritten):
     docs/assets/brand/bernstein-social-1280x640.svg     GitHub social preview
     docs/assets/brand/bernstein-og-1200x630.svg         docs site og:image
     docs/assets/logo-dark.svg, docs/assets/logo-light.svg   wordmark (hotlink-stable paths)
-    docs/assets/logo-readme.svg                         wordmark on its own dark panel (README header)
+    docs/assets/logo-readme.svg                         wordmark on its own dark panel (any background)
     packages/vscode/media/bernstein-icon.svg            activity-bar icon (mono)
 
 PNG exports come from scripts/render_brand_assets.sh (rsvg-convert).

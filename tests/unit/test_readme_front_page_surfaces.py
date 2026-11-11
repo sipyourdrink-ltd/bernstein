@@ -45,9 +45,7 @@ SURFACE_COMMANDS = ("bernstein live", "bernstein gui serve")
 #: Identity marks, whose correct alt text is the name of the thing they mark.
 #: Describing a logo in a sentence is worse for a screen reader, not better -
 #: the reader wants "Bernstein", not a description of the artwork.
-IDENTITY_MARKS = frozenset(
-    {"logo-light.svg", "logo-dark.svg", "logo-readme.svg", "banner-readme.webp", "built-with-bernstein.svg"}
-)
+IDENTITY_MARKS = frozenset({"logo-light.svg", "logo-dark.svg", "banner-readme.webp", "built-with-bernstein.svg"})
 
 
 @dataclass(frozen=True)
@@ -207,9 +205,9 @@ def test_no_front_page_render_shows_the_page_through_it(page: FrontPage) -> None
     of thousands. The former is invisible in either theme, the latter is the
     bug this guards.
 
-    The identity marks are exempt: ``logo-readme.svg`` draws its own opaque
-    panel (``test_readme_logo_carries_its_own_background``), and the logo pair
-    is for surfaces that choose by colour scheme themselves.
+    The identity marks are exempt: ``banner-readme.webp`` is opaque by
+    construction, the badge draws its own background, and the logo pair is for
+    surfaces that choose by colour scheme themselves.
     """
     #: Antialiased corners are allowed; a see-through background is not.
     corner_allowance = 0.001
