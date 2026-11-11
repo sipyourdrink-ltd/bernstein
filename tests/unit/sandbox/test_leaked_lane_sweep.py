@@ -820,15 +820,15 @@ def test_dry_run_is_the_default_with_no_flags(
     assert _tree(tmp_path) == before
 
 
-def test_removal_is_journaled_with_task_id(tmp_path: Path, audit_key: bytes, live_worktree: Path) -> None:
+def test_removal_is_journaled_with_task_id(tmp_path: Path, audit_key: bytes, dead_worktree: Path) -> None:
     lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
     remove = _lane_api("remove_leaked_lanes")
     with pytest.raises(PermissionError, match="removal"):
         remove(tmp_path, lanes)
-    assert live_worktree.exists()
+    assert dead_worktree.exists()
     approval = _removal_approval(lanes)
     assert remove(tmp_path, lanes, removal_approval=approval) == 1
-    assert not live_worktree.exists()
+    assert not dead_worktree.exists()
     events = [e for e in _audit(tmp_path, audit_key).query() if e.event_type == "lane.remove"]
     assert events
     assert all(e.details["task_ids"] == ["T-1"] for e in events)
@@ -838,12 +838,12 @@ def test_removal_is_journaled_with_task_id(tmp_path: Path, audit_key: bytes, liv
     assert _audit(tmp_path, audit_key).verify()[0]
 
 
-def test_unsaved_terminal_worktree_is_preserved(tmp_path: Path, audit_key: bytes, live_worktree: Path) -> None:
-    (live_worktree / "unsaved.txt").write_text("only copy")
+def test_unsaved_terminal_worktree_is_preserved(tmp_path: Path, audit_key: bytes, dead_worktree: Path) -> None:
+    (dead_worktree / "unsaved.txt").write_text("only copy")
     lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
     assert len(lanes) == 1
     assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 0
-    assert (live_worktree / "unsaved.txt").read_text() == "only copy"
+    assert (dead_worktree / "unsaved.txt").read_text() == "only copy"
 
 
 def test_reopened_task_is_rechecked_before_removal(tmp_path: Path, audit_key: bytes, live_worktree: Path) -> None:
@@ -971,7 +971,7 @@ def test_audit_failure_prevents_deletion(
     assert live_worktree.exists()
 
 
-def test_cli_applies_exact_removal_plan(tmp_path: Path, audit_key: bytes, live_worktree: Path) -> None:
+def test_cli_applies_exact_removal_plan(tmp_path: Path, audit_key: bytes, dead_worktree: Path) -> None:
     from dataclasses import asdict
 
     from bernstein.cli.commands.worktrees_cmd import worktrees_group
@@ -985,10 +985,10 @@ def test_cli_applies_exact_removal_plan(tmp_path: Path, audit_key: bytes, live_w
     command = ["sweep", "--workdir", str(tmp_path), "--apply", "--removal-approval", str(approval_path)]
     preview = CliRunner().invoke(worktrees_group, [*command, "--dry-run"])
     assert preview.exit_code == 0, preview.output
-    assert live_worktree.exists()
+    assert dead_worktree.exists()
     result = CliRunner().invoke(worktrees_group, command)
     assert result.exit_code == 0, result.output
-    assert not live_worktree.exists()
+    assert not dead_worktree.exists()
 
 
 def test_unknown_worktree_owner_is_excluded(tmp_path: Path, live_worktree: Path) -> None:
@@ -1130,3 +1130,176 @@ def test_acknowledged_audit_tear_prevents_any_lane_removal(
     with pytest.raises(SandboxSweepUnavailableError, match="unverified audit chain"):
         _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
     assert live_worktree.exists()
+
+
+@pytest.fixture
+def dead_worktree(tmp_path: Path, live_worktree: Path) -> Path:
+    (tmp_path / ".sdd/runtime/pids/live.json").write_text(json.dumps({"task_id": "T-1"}))
+    return live_worktree
+
+
+@pytest.mark.parametrize("group", ["worktrees", "sandbox"])
+def test_force_unsaved_cannot_replay_removal_approval(
+    tmp_path: Path, audit_key: bytes, dead_worktree: Path, group: str
+) -> None:
+    from dataclasses import asdict
+
+    from bernstein.cli.commands.worktrees_cmd import worktrees_group
+
+    (dead_worktree / "only-copy.txt").write_text("preserve me")
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    approval = _removal_approval(lanes)
+    approval_path = tmp_path / "approval.json"
+    approval_path.write_text(
+        json.dumps({"request": asdict(approval.request), "responses": [asdict(r) for r in approval.responses]})
+    )
+    command = worktrees_group if group == "worktrees" else sandbox_group
+    result = CliRunner().invoke(
+        command,
+        ["sweep", "--workdir", str(tmp_path), "--apply", "--removal-approval", str(approval_path), "--force-unsaved"],
+    )
+    assert result.exit_code == 2, result.output
+    assert "No such option" in result.output and "--force-unsaved" in result.output
+    assert (dead_worktree / "only-copy.txt").read_text() == "preserve me"
+    assert not any(e.event_type == "lane.remove" for e in _audit(tmp_path, audit_key).query())
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_live_pid_worktree_is_listed_but_never_removed(
+    tmp_path: Path, audit_key: bytes, live_worktree: Path, corrupt: bool
+) -> None:
+    if corrupt:
+        (live_worktree / ".git").unlink()
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    assert len(lanes) == 1
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 0
+    assert live_worktree.exists()
+    event = [e for e in _audit(tmp_path, audit_key).query() if e.event_type == "lane.remove"][-1]
+    assert event.details["phase"] == "skipped"
+    assert event.details["reason"] == "worker PID is alive"
+
+
+def test_pid_becoming_alive_before_apply_is_preserved(tmp_path: Path, audit_key: bytes, dead_worktree: Path) -> None:
+    import os
+
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    approval = _removal_approval(lanes)
+    (tmp_path / ".sdd/runtime/pids/live.json").write_text(json.dumps({"worker_pid": os.getpid(), "task_id": "T-1"}))
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=approval) == 0
+    assert dead_worktree.exists()
+
+
+def test_vanished_worktree_is_controlled_failure(
+    tmp_path: Path, audit_key: bytes, dead_worktree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.worktrees import classifier
+
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    classify = classifier.classify_worktrees
+    calls = 0
+
+    def disappear(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return classify(*args, **kwargs) if calls == 1 else []
+
+    monkeypatch.setattr(classifier, "classify_worktrees", disappear)
+    with pytest.raises(RuntimeError, match="worktree disappeared"):
+        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    assert not any(e.details.get("phase") == "intent" for e in _audit(tmp_path, audit_key).query())
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_partial_apply_reports_every_lane_and_fails(
+    tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch, as_json: bool
+) -> None:
+    from dataclasses import asdict
+    from unittest.mock import MagicMock
+
+    from bernstein.cli.commands.worktrees_cmd import worktrees_group
+    from bernstein.core.sandbox import registry
+
+    _record_task(tmp_path, "T-1", "done")
+    for name in ("first", "second", "third"):
+        _record_create(tmp_path, audit_key, name, task_ids=["T-1"])
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    approval = _removal_approval(lanes)
+    approval_path = tmp_path / "approval.json"
+    approval_path.write_text(
+        json.dumps({"request": asdict(approval.request), "responses": [asdict(r) for r in approval.responses]})
+    )
+    backend = MagicMock()
+    backend.destroy_leaked_session.side_effect = [None, OSError("teardown failed")]
+    monkeypatch.setattr(registry, "get_backend", lambda name: backend)
+    command = ["sweep", "--workdir", str(tmp_path), "--apply", "--removal-approval", str(approval_path)]
+    if as_json:
+        command.append("--json")
+    result = CliRunner().invoke(worktrees_group, command)
+    assert result.exit_code == 1, result.output
+    assert backend.destroy_leaked_session.call_count == 2
+    assert [call.args[0] for call in backend.destroy_leaked_session.call_args_list] == [
+        lanes[0].resource_id,
+        lanes[1].resource_id,
+    ]
+    if as_json:
+        rows = json.loads(result.stdout)
+        assert [row["resource_id"] for row in rows] == [lane.resource_id for lane in lanes]
+        assert [row["removal_status"] for row in rows] == ["removed", "failed", "not_attempted"]
+    else:
+        assert "1 removed" in result.output
+        for lane, status in zip(lanes, ("removed", "failed", "not_attempted"), strict=True):
+            assert lane.resource_id in result.output
+            assert status in result.output
+    assert "teardown failed" in result.stderr
+    remaining = {candidate.session.sandbox_session_id for candidate in sweep_leaked_sandboxes(tmp_path)}
+    assert remaining == {lane.resource_id for lane in lanes[1:]}
+
+
+def test_false_reap_result_is_failure(
+    tmp_path: Path, audit_key: bytes, dead_worktree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.worktrees import classifier
+
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    monkeypatch.setattr(classifier, "reap_worktree", lambda *args, **kwargs: False)
+    with pytest.raises(RuntimeError, match="worktree removal failed"):
+        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    assert dead_worktree.exists()
+    event = [e for e in _audit(tmp_path, audit_key).query() if e.event_type == "lane.remove"][-1]
+    assert event.details["phase"] == "failed"
+
+
+@pytest.mark.parametrize("change", ["unsaved", "pid"])
+def test_worktree_safety_is_rechecked_after_intent(
+    tmp_path: Path, audit_key: bytes, dead_worktree: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    import os
+
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    original_log = AuditLog.log
+
+    def change_after_intent(self, *args, **kwargs):
+        result = original_log(self, *args, **kwargs)
+        if args[0] == "lane.remove" and args[4].get("phase") == "intent":
+            if change == "unsaved":
+                (dead_worktree / "only-copy.txt").write_text("save me")
+            else:
+                (tmp_path / ".sdd/runtime/pids/live.json").write_text(
+                    json.dumps({"worker_pid": os.getpid(), "task_id": "T-1"})
+                )
+        return result
+
+    monkeypatch.setattr(AuditLog, "log", change_after_intent)
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 0
+    assert dead_worktree.exists()
+    events = [event for event in _audit(tmp_path, audit_key).query() if event.event_type == "lane.remove"]
+    assert [event.details["phase"] for event in events] == ["intent", "skipped"]
+    assert events[-1].details["reason"] == ("unsaved work" if change == "unsaved" else "worker PID is alive")
+
+
+def test_unsaved_work_added_after_approval_is_preserved(tmp_path: Path, audit_key: bytes, dead_worktree: Path) -> None:
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    approval = _removal_approval(lanes)
+    (dead_worktree / "only-copy.txt").write_text("save me")
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=approval) == 0
+    assert (dead_worktree / "only-copy.txt").read_text() == "save me"

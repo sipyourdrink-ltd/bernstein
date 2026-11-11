@@ -328,8 +328,12 @@ preview does not authorize this plan. For example, its shape is:
 Under the shared GC lock, removal verifies the source audit chain and rereads
 task status and ownership before each deletion. Sandbox removal also reuses
 the verified proposal API, which rejects every audit tear (even acknowledged
-ones) and binds the exact create event before attaching to a backend. Unsaved work is preserved
-unless `--force-unsaved` explicitly overrides the veto. Every intent, skip
+ones) and binds the exact create event before attaching to a backend. Sweep always
+preserves unsaved work and worktrees whose recorded worker PID is alive, including
+corrupt directories. Both checks run again immediately before removal. These
+lanes remain listed and their skipped outcomes are journaled. Sweep does not
+accept `--force-unsaved`; that flag belongs only to the separate legacy `gc`
+workflow. Every intent, skip
 and result is recorded as `lane.remove`, naming `task_ids`, `approval_class`
 and `removal_approval_id`. An audit append failure before deletion prevents it.
 Successful sandbox deletion also records `sandbox.session_destroy`.
@@ -339,3 +343,12 @@ the exact Bernstein sandbox labels and propagates teardown failures. Other
 backends must implement `destroy_leaked_session(session_id)` to support removal;
 otherwise apply refuses explicitly, leaving that session untouched. The sweep
 never provisions a replacement or uses snapshot resume for cleanup.
+
+Apply reports each lane as `removed`, `skipped`, `failed`, or `not_attempted`.
+JSON keeps the listing shape and adds `removal_status`, plus `removal_reason`
+for a skip or `removal_error` for a failure. If a lane fails, the sweep stops,
+reports earlier removals and all remaining lanes, and exits 1; it does not claim
+an atomic rollback. A failed backend call may have partially affected its
+resource and must be investigated before retrying. If deletion succeeds but
+the following audit append fails, the outcome remains `removed` with its audit
+error, and the command still exits 1.
