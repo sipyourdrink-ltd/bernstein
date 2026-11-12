@@ -66,6 +66,7 @@ on:
       - "scripts/gen_roadmap_*.py"
       - "scripts/generate_benchmark_docs.py"
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       # Documentation & prose
       - "docs/**"
@@ -145,7 +146,8 @@ on:
 #   - merge_group / dispatch: per-SHA group, never cancelled — each queue
 #     batch must test its prospective merged SHA to completion.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && !startsWith(github.event.head_commit.message, 'release:')) && format('branch-{0}', github.ref) || format('branch-{0}-{1}', github.ref, github.sha) }}
+  # Draft events must not cancel the real run started by ready_for_review.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.draft && 'draft' || 'ready') || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && !startsWith(github.event.head_commit.message, 'release:')) && format('branch-{0}', github.ref) || format('branch-{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && !startsWith(github.event.head_commit.message, 'release:')) }}
 
 # Default-deny for the workflow token; individual jobs escalate only
@@ -163,6 +165,7 @@ jobs:
   # the two and refuses to pass on suspicious skips. See #1273.
   determine-changes:
     name: Determine changes
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -427,7 +430,7 @@ jobs:
 
   plan-affected-tests:
     name: Plan affected tests
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -499,6 +502,7 @@ jobs:
 
   repo-hygiene:
     name: Repo hygiene
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -670,6 +674,7 @@ jobs:
 
   lint:
     name: Lint
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -702,6 +707,7 @@ jobs:
 
   spelling:
     name: Spelling (typos)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -718,6 +724,7 @@ jobs:
 
   actionlint:
     name: Workflow lint
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -749,6 +756,7 @@ jobs:
     # lineage fixture and verifies it so the job always exercises the gate
     # logic even when runtime `.sdd/lineage/log.jsonl` is absent.
     name: Lineage Gate
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -868,6 +876,7 @@ jobs:
 
   proto-drift:
     name: Proto codegen drift
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -2169,9 +2178,8 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
         run: |
-          # When the planner wrote a plan (pull requests, and merge groups
-          # whose batch root resolved) it selects this cell's deterministic
-          # shard. Otherwise run_tests.py shards the discovered full-suite list.
+          # The pull request planner selects this cell's deterministic shard
+          # when it writes a plan. Otherwise run_tests.py shards the full suite.
           coverage_args=()
           if { [ "${EVENT_NAME}" = "push" ] || { [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; } && \
              [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
@@ -2601,13 +2609,15 @@ jobs:
   #   * `diff-coverage`  - advisory report until PR coverage artifacts are reliable
   #   * `ci-gate` itself - would deadlock the dependency graph
   ci-gate:
-    name: CI gate
+    # GitHub treats skipped jobs as successful. Keep the draft result out
+    # of the required context, including when readiness changes at the same SHA.
+    name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'CI deferred (draft)' || 'CI gate' }}
     runs-on: ubuntu-latest
     # `always()` ensures the gate fires even when an upstream job is
     # `cancelled`. `!cancelled()` lets the gate itself be cancelled when
     # the user cancels the whole workflow run (so we don't try to
     # report "cancelled" on a manually aborted run).
-    if: always() && !cancelled()
+    if: always() && !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     needs:
       - determine-changes
       - plan-affected-tests
