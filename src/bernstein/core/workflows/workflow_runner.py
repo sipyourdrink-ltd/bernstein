@@ -904,13 +904,18 @@ class WorkflowRunner:
         self._require_trusted_workspace("predicate", "predicate")
         # SECURITY: shell=True required because predicates are manifest-authored
         # bash expressions (e.g. "test -f marker") that rely on shell parsing; not user input.
+        # POSIX pipe EOF preserves the normal completion behavior of a
+        # predicate with foreground or background output producers. On
+        # Windows, use no pipes so a surviving descendant cannot hold a
+        # communicate reader thread open after the deadline.
+        output = subprocess.DEVNULL if IS_WINDOWS else subprocess.PIPE
         with subprocess.Popen(
             predicate,
             shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             cwd=str(self._workdir),
             env=self._env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=output,
+            stderr=output,
             start_new_session=not IS_WINDOWS,
         ) as proc:
             try:

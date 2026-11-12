@@ -8,6 +8,7 @@ behaviour, plus end-to-end agent dispatch through a real
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -221,8 +222,8 @@ nodes:
     assert not (runner_workdir / "gated.txt").exists()
 
 
-@pytest.mark.parametrize("resume", [False, True])
-def test_when_timeout_fails_node_and_skips_dependants(runner_workdir: Path, resume: bool) -> None:
+@pytest.mark.parametrize(("resume", "windows"), [(False, False), (True, False), (False, True)])
+def test_when_timeout_fails_node_and_skips_dependants(runner_workdir: Path, resume: bool, windows: bool) -> None:
     spec = _spec_from(
         """
 name: when-deadline
@@ -242,8 +243,9 @@ nodes:
     process = MagicMock(pid=12345)
     process.communicate.side_effect = subprocess.TimeoutExpired("test -f ready", 30)
     with (
+        patch("bernstein.core.workflows.workflow_runner.IS_WINDOWS", windows),
         patch("bernstein.core.workflows.workflow_runner.subprocess.Popen") as popen,
-        patch("bernstein.core.workflows.workflow_runner.kill_process_group", return_value=True) as kill_group,
+        patch("bernstein.core.workflows.workflow_runner.kill_process_group", return_value=not windows) as kill_group,
     ):
         popen.return_value.__enter__.return_value = process
         if resume:
@@ -254,8 +256,11 @@ nodes:
 
     popen.assert_called_once()
     assert popen.call_args.args == ("test -f ready",)
+    assert popen.call_args.kwargs["stdout"] == (subprocess.DEVNULL if windows else subprocess.PIPE)
+    assert popen.call_args.kwargs["start_new_session"] is not windows
     process.communicate.assert_called_once_with(timeout=30)
     kill_group.assert_called_once_with(process.pid, sig=9)
+    assert process.kill.called is windows
     assert not execution.succeeded
     assert [node.status for node in execution.nodes] == [NodeStatus.FAILED, NodeStatus.SKIPPED]
     failure = execution.nodes[0]
@@ -265,6 +270,7 @@ nodes:
     assert persisted is not None and persisted["status"] == NodeStatus.FAILED
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX shell background syntax")
 def test_when_waits_for_background_output_before_dispatch(runner_workdir: Path) -> None:
     spec = _spec_from(
         """
