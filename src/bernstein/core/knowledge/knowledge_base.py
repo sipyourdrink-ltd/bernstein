@@ -430,7 +430,7 @@ class TaskContextBuilder:
                         lines = grep_result.stdout.strip().split("\n")
                         result[fpath] = [ln for ln in lines if ln]
         except Exception as e:
-            logger.debug(f"import_graph failed for {filename}: {e}")
+            logger.debug("import_graph failed for %s: %s", filename, e)
 
         return result
 
