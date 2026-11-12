@@ -240,7 +240,7 @@ nodes:
     runner = _build_runner(workdir=runner_workdir)
     run_id = "when-deadline-test"
     process = MagicMock(pid=12345)
-    process.wait.side_effect = subprocess.TimeoutExpired("test -f ready", 30)
+    process.communicate.side_effect = subprocess.TimeoutExpired("test -f ready", 30)
     with (
         patch("bernstein.core.workflows.workflow_runner.subprocess.Popen") as popen,
         patch("bernstein.core.workflows.workflow_runner.kill_process_group", return_value=True) as kill_group,
@@ -254,7 +254,7 @@ nodes:
 
     popen.assert_called_once()
     assert popen.call_args.args == ("test -f ready",)
-    process.wait.assert_called_once_with(timeout=30)
+    process.communicate.assert_called_once_with(timeout=30)
     kill_group.assert_called_once_with(process.pid, sig=9)
     assert not execution.succeeded
     assert [node.status for node in execution.nodes] == [NodeStatus.FAILED, NodeStatus.SKIPPED]
@@ -263,6 +263,25 @@ nodes:
     assert not failure.condition_skipped
     persisted = load_node_state(runner_workdir, run_id, "conditional")
     assert persisted is not None and persisted["status"] == NodeStatus.FAILED
+
+
+def test_when_waits_for_background_output_before_dispatch(runner_workdir: Path) -> None:
+    spec = _spec_from(
+        """
+name: when-background
+description: "Wait for a condition's output producer"
+version: "1.0.0"
+nodes:
+  - id: conditional
+    command: "test -f ready"
+    when: "(sleep 0.1; touch ready) &"
+"""
+    )
+
+    execution = _build_runner(workdir=runner_workdir).run(spec)
+
+    assert execution.succeeded
+    assert (runner_workdir / "ready").is_file()
 
 
 def test_when_true_runs_the_node_normally(runner_workdir: Path) -> None:

@@ -909,16 +909,17 @@ class WorkflowRunner:
             shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             cwd=str(self._workdir),
             env=self._env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             start_new_session=not IS_WINDOWS,
         ) as proc:
             try:
-                return proc.wait(timeout=_PREDICATE_TIMEOUT_SECONDS) == 0
+                proc.communicate(timeout=_PREDICATE_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 if not kill_process_group(proc.pid, sig=9):
                     proc.kill()
                 raise
+            return proc.returncode == 0
 
     def _execute_once(
         self,
