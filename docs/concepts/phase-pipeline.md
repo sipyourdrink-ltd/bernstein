@@ -29,6 +29,8 @@ stages:
         phases: [research, plan, implement, verify]
 ```
 
+A stage groups plan steps, while phases subdivide the work within a single step.
+
 The plan loader records the phases in `task.metadata["phases"]`; the
 orchestrator does not yet spawn per-phase agents. A caller that drives
 `PhasedRunner` runs one executor call per phase, and each phase writes a
