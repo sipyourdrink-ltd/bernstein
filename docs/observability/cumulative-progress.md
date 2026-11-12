@@ -1,6 +1,6 @@
 # Cumulative progress tracking
 
-The Bernstein TUI (`bernstein --tui` / the Textual dashboard app) shows two
+The Bernstein Textual dashboard (`bernstein live`) shows two
 completion-percentage bars: a per-task **Progress** column in the task table,
 and an aggregate run-level bar in the status bar showing how much of the
 whole run is done. Both are colour-coded terminal progress bars rendered

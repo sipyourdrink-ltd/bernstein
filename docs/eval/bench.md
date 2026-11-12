@@ -154,7 +154,8 @@ The verifier:
 3. Checks the results cover the suite exactly once: no task missing, repeated
    or unknown to the suite, and at least one result. A bundle that fails
    this is `COVERAGE_MISMATCH` even when every task present replays clean.
-4. Reports **MATCH** or names the exact task whose replay diverged.
+4. Reports **MATCH** when verification succeeds. A mismatch in a replayed
+   verdict or score fails verification and identifies the task.
 
 A bundle file edited after it was written does not load at all; `bench verify`
 reports that (the hash mismatch) and exits 1 rather than printing a verdict
@@ -171,7 +172,7 @@ bernstein bench compare a.json b.json
 ```
 
 `bench compare` ranks two bundles by expected value (see
-[Lambda](#lambda-λ-weight-for-wrong-answers)), but only when they were
+[Lambda](#lambda-weight-for-wrong-answers)), but only when they were
 produced by the **same harness settings**.  Every bundle carries a
 `harness_fingerprint` (see [Bundle format](#bundle-format)) — a SHA-256
 over the canonical JSON of the `scheduler_config` mapping that shaped
@@ -399,7 +400,7 @@ by guessing used to be free.
 crash is not the run being confidently wrong, and counting it as one would move
 the number for something the run did not do.
 
-### Lambda (λ): weight for wrong answers
+### Lambda: weight for wrong answers
 
 This section is about `bench compare` on submission bundles. The rates above are
 defined for the SWE-bench harness, which records abstentions. A **submission

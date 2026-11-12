@@ -5,7 +5,7 @@ workload through Bernstein and three through something else has governance for
 a quarter of their surface, and a verifier reading a receipt cannot tell "this
 did not happen" apart from "this happened where we could not see it".
 
-`bernstein governance ingest` is the boundary that closes the gap. It accepts
+`bernstein govern ingest` is the boundary that closes the gap. It accepts
 OTLP/JSON spans reported by a runtime Bernstein did not schedule, records them
 in the same HMAC audit chain as activity Bernstein drove, and prints a signed
 receipt that states its own coverage.
@@ -13,12 +13,12 @@ receipt that states its own coverage.
 Modules: `src/bernstein/core/observability/otlp_ingest.py` (span parsing),
 `src/bernstein/core/observability/otlp_ingest_receipt.py` (anchoring and
 receipts), `src/bernstein/core/observability/ingest_profiles/` (attribute
-mapping). CLI group: `bernstein governance`.
+mapping). CLI group: `bernstein govern`.
 
 ## CLI
 
 ```
-bernstein governance ingest --spans <file|-> --source <label> [--profile <name>] [--workdir <path>] [--json]
+bernstein govern ingest --spans <file|-> --source <label> [--profile <name>] [--workdir <path>] [--json]
 ```
 
 | Option | Meaning |
@@ -33,10 +33,10 @@ Exit codes: `0` anchored, `1` payload rejected.
 
 ```bash
 # From a file the collector wrote.
-bernstein governance ingest --spans spans.json --source otel-collector-prod
+bernstein govern ingest --spans spans.json --source otel-collector-prod
 
 # Straight off a pipe.
-your-exporter --format otlp-json | bernstein governance ingest --spans - --source agent-host-7
+your-exporter --format otlp-json | bernstein govern ingest --spans - --source agent-host-7
 ```
 
 ## What the receipt says, and what it refuses to say
