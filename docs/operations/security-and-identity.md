@@ -81,7 +81,7 @@ modified by admins via `PUT /auth/group-mappings`
 (`routes/auth.py:443-491`). They map IdP group claims (e.g.
 `bernstein-admins`) to one of the three Bernstein roles.
 
-A fourth path - **legacy bearer tokens** - exists for backwards
+The server also accepts **legacy bearer tokens** for backwards
 compatibility (`auth_middleware.py:7`). It accepts a single shared secret
 configured by `BERNSTEIN_AUTH_TOKEN`. Treat it as a transitional
 mechanism; SSO + JWT is the supported deployment.
