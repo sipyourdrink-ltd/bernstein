@@ -4,13 +4,14 @@ ISO/IEC 42005:2025 provides guidance for performing an impact assessment.
 The pack supplies evidence for the operator's own assessment and makes
 no compliance or certification claim.
 
-## What this is not
+## Exporting evidence
 
-This documentation slice of #6222 records decisions D1 and D2; it does not
-add an `iso-42005` exporter. Current export selectors are informational and
-statuses inherit catalogue values without checking the selected records.
-Capability therefore differs from evidence present in an export window.
-See the [ISO/IEC 42001 mapping](iso42001-mapping.md) for the existing pack.
+`bernstein audit export --standard iso-42005` exports a deterministic projection
+of the same filtered chain window as `iso-42001`. Use identical `--since` and
+`--task` values to compare the shared audit, lineage and cost members: their
+bytes are unchanged. The assessment mapping, README and manifest differ.
+Capability still differs from evidence present in an export window.
+See the [ISO/IEC 42001 mapping](iso42001-mapping.md) for the companion pack.
 
 ## Coverage
 

@@ -77,7 +77,7 @@ See [Evidence envelope](../security/evidence-envelope.md).
 
 ### `attestations/govern-apply-receipt/v1` {#attestations-govern-apply-receipt-v1}
 
-Receipt type binding the outcome of `bernstein govern apply` to the reviewed plan it executed.
+Receipt type binding an apply operation to the reviewed plan it executed. The Python API issues this receipt.
 Emitted by `bernstein.core.govern.apply`.
 
 ### `attestations/key-succession/v1` {#attestations-key-succession-v1}

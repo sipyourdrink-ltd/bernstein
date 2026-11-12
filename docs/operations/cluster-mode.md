@@ -496,7 +496,7 @@ A workload that drops the label reports `opted_out`; a workload that is gone fro
 the cluster reports `withdrawn`. The two are distinct, and neither is a row that
 quietly stops appearing.
 
-The inventory document is in the shape `bernstein governance plan` consumes, so
+The inventory document is in the shape `bernstein govern plan` consumes, so
 the same file feeds the posture diff without a second format. `inventory_hash`
 is a pure function of the listing's contents, not its order: two operators
 running against the same cluster get the same hash.

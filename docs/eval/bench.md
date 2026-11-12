@@ -181,13 +181,9 @@ overall     : MATCH
 
 ### 3. Submit to the leaderboard
 
-```bash
-bernstein bench submit my-bundle.json
-```
-
-The submission gate runs `bench verify` first.  A bundle whose replayed
-runs do not reproduce the claimed per-task outcomes is **rejected** before
-any leaderboard entry is written.
+Verify the bundle offline with `bernstein bench verify` before proposing a
+leaderboard entry. A bundle whose replayed runs fail to reproduce the claimed
+per-task outcomes fails verification.
 
 The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
 each row linking its bundle hash so anyone can re-verify.
@@ -199,7 +195,7 @@ bernstein bench compare a.json b.json
 ```
 
 `bench compare` ranks two bundles by expected value (see
-[Lambda](#lambda-λ-weight-for-wrong-answers)), but only when they were
+[Lambda](#lambda-weight-for-wrong-answers)), but only when they were
 produced by the **same harness settings**.  Every bundle carries a
 `harness_fingerprint` (see [Bundle format](#bundle-format)) — a SHA-256
 over the canonical JSON of the `scheduler_config` mapping that shaped
@@ -427,7 +423,7 @@ by guessing used to be free.
 crash is not the run being confidently wrong, and counting it as one would move
 the number for something the run did not do.
 
-### Lambda (λ): weight for wrong answers
+### Lambda: weight for wrong answers
 
 This section is about `bench compare` on submission bundles. The rates above are
 defined for the SWE-bench harness, which records abstentions. A **submission
