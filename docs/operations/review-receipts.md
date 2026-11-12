@@ -27,6 +27,8 @@ embedded public key, and confirms the record's spine anchor. Exit codes:
 `0` verified, `1` no receipt found (or bad input), `2` mismatch (tamper).
 Verification results go to stdout on success. Missing receipts or chains,
 unreadable inputs, and mismatch diagnostics go to stderr.
+Command-line usage errors, including a file argument that does not exist,
+also exit with status `2` and print a diagnostic to stderr.
 
 The tracker comment posted on a PR is a *projection* of the receipt — a
 short verdict plus the `verify` invocation a reviewer can run — never the

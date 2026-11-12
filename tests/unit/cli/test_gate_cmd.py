@@ -88,7 +88,7 @@ def test_gate_verify_detects_mismatch(tmp_path: Path, monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     ("payload", "diagnostic"),
-    [(b"{}", "NO RECORD"), (b"{", "Cannot read JSON"), (b"\xff", "Cannot read JSON")],
+    [(b"{}", "NO RECORD"), (b"{", "Invalid JSON"), (b"\xff", "Invalid JSON")],
     ids=["missing-record", "invalid-json", "invalid-utf8"],
 )
 def test_gate_verify_bad_input_or_no_record(
@@ -108,3 +108,31 @@ def test_gate_verify_bad_input_or_no_record(
     assert diagnostic in result.stderr
     assert result.stdout == ""
     assert isinstance(result.exception, SystemExit)
+
+
+def test_gate_verify_rejects_non_utf8_json_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.commands.gate_cmd import gate_group
+
+    _write_key(tmp_path, monkeypatch)
+    _emit_record(tmp_path, "run-1", {"diff": "abc"})
+    inputs_file = tmp_path / "inputs.json"
+    inputs_file.write_text(r'{"diff":"\ud800"}', encoding="utf-8")
+    result = CliRunner().invoke(
+        gate_group,
+        ["verify", "run-1", "--inputs", str(inputs_file), "--workdir", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Invalid JSON" in result.stderr
+    assert result.stdout == ""
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_gate_verify_missing_input_path_is_usage_error(tmp_path: Path) -> None:
+    from bernstein.cli.commands.gate_cmd import gate_group
+
+    result = CliRunner().invoke(gate_group, ["verify", "run-1", "--inputs", str(tmp_path / "missing.json")])
+
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.stderr
+    assert result.stdout == ""

@@ -189,7 +189,7 @@ def review_receipt_verify_cmd(
     fix-until-green sequence is walked: every pass must recompute, carry the
     previous pass's anchor, and name the same ruleset, and ``--diff`` is
     checked against the last pass. Exit codes: 0 = verified, 1 = no receipt /
-    bad input, 2 = mismatch (tamper).
+    bad input, 2 = mismatch (tamper) or command-line usage error.
     """
     from bernstein.core.review.receipt import verify_review_receipt
 

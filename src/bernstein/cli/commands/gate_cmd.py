@@ -11,7 +11,8 @@ that itself verifies:
 
     bernstein gate verify <run> --inputs inputs.json
 
-Exit codes: 0 = verified, 1 = no record / bad input, 2 = mismatch.
+Exit codes: 0 = verified, 1 = no record / bad input, 2 = mismatch or
+command-line usage error.
 """
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ def gate_verify_cmd(run_id: str, inputs_file: str, workdir: str) -> None:
     record for the run matches the claimed inputs, the command exits non-zero.
     """
     from bernstein.core.quality.adjudication import (
+        _canonical_json,
         read_records,
         verify_adjudication,
     )
@@ -73,8 +75,11 @@ def gate_verify_cmd(run_id: str, inputs_file: str, workdir: str) -> None:
     root = Path(workdir).resolve()
     try:
         claimed = json.loads(Path(inputs_file).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise click.ClickException(f"Cannot read JSON from --inputs: {exc}") from exc
+        # JSON escapes can decode to lone surrogates, which the inputs hash
+        # cannot encode as UTF-8. Check the claim before reading records.
+        _canonical_json(claimed)
+    except (OSError, ValueError, RecursionError) as exc:
+        raise click.ClickException(f"Invalid JSON in --inputs: {exc}") from exc
 
     key = load_or_create_audit_key()
     lineage_root = _lineage_root(root)

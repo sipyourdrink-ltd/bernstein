@@ -239,3 +239,12 @@ def test_verify_chain_invalid_rules_encoding(project: Path) -> None:
     assert "Cannot read --rules" in result.stderr
     assert result.stdout == ""
     assert isinstance(result.exception, SystemExit)
+
+
+def test_verify_chain_missing_rules_path_is_usage_error(project: Path) -> None:
+    _emit_chain(project)
+    result = _verify_chain(project, rules=project / "missing-rules.md")
+
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.stderr
+    assert result.stdout == ""
