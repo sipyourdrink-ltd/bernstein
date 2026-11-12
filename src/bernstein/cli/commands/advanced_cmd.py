@@ -1465,13 +1465,9 @@ def trace_follow_cmd(
                             "Cannot resume a one-shot JSON array; use a new output file or an existing JSONL capture."
                         )
                     if not isinstance(json.loads(line), dict):
-                        raise click.ClickException(
-                            "The existing capture must contain one JSON object per line. Use a new output file."
-                        )
+                        raise click.ClickException("Existing capture is not JSONL objects; use a new output file.")
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise click.ClickException(
-                "The existing capture must contain one JSON object per line. Use a new output file."
-            ) from exc
+            raise click.ClickException("Existing capture is not JSONL objects; use a new output file.") from exc
 
     def _write_out(target: Path, content: str, *, append: bool = False) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
