@@ -2543,7 +2543,7 @@ def verify_hmac_cmd() -> None:
     "--standard",
     "standard",
     default=None,
-    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai"]),
+    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills", "iso-42001", "iso-42005", "cosai"]),
     help=(
         "Emit a one-command compliance evidence pack mapped to the chosen "
         "control catalogue, anchored on the operator's own HMAC-chained "
@@ -2551,7 +2551,8 @@ def verify_hmac_cmd() -> None:
         "'owasp-asi' maps the OWASP Top 10 for Agentic Applications "
         "(ASI01-ASI10); 'owasp-skills' maps the Agentic Skills Top 10 "
         "(AST01-AST10); 'iso-42001' maps the records-derivable subset of "
-        "ISO/IEC 42001 Annex A controls; 'cosai' maps the CoSAI Secure-by-Design "
+        "ISO/IEC 42001 Annex A controls; 'iso-42005' supplies impact-assessment "
+        "evidence, not certification; 'cosai' maps the CoSAI Secure-by-Design "
         "principles and Risk Map controls. DORA and FINOS AIGF are tracked "
         "under #1316 and will be added once their clause maps are validated."
     ),

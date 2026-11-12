@@ -19,7 +19,8 @@ so an auditor can re-derive the SHA-256 of the bundle and compare.
 The mapping from regulatory ``control_id`` to a record selector is
 declarative and lives inside this module (see ``_STANDARD_MAPS``) or,
 for ``owasp-asi``, ``owasp-skills``, ``iso-42001`` and ``cosai``, in a dedicated
-module registered below. DORA and FINOS AIGF control maps are tracked
+module registered below. ``iso-42005`` projects impact-assessment evidence from
+that same window without claiming a completed assessment. DORA and FINOS AIGF control maps are tracked
 under issue #1316 and are not selectable until the underlying clause
 mappings are reviewed by subject-matter experts; attempting to build a
 pack for an unsupported standard raises ``ValueError``.
@@ -75,9 +76,16 @@ SCHEMA_VERSION: str = "1.0.0"
 #: FINOS AIGF are tracked under #1316 and are not selectable until their
 #: clause maps are reviewed by subject-matter experts; emitting
 #: TODO-only bundles would mislead operators.
-Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai"]
+Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001", "iso-42005", "cosai"]
 
-SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai")
+SUPPORTED_STANDARDS: tuple[str, ...] = (
+    "ai-act",
+    "owasp-asi",
+    "owasp-skills",
+    "iso-42001",
+    "iso-42005",
+    "cosai",
+)
 
 #: Fixed mtime for every entry in the produced zip - required for
 #: byte-deterministic output. Zip cannot store dates before 1980.
@@ -174,6 +182,89 @@ _STANDARD_MAPS[_owasp_asi.STANDARD_ID] = _owasp_asi.control_map()
 _STANDARD_MAPS[_owasp_skills.STANDARD_ID] = _owasp_skills.control_map()
 _STANDARD_MAPS[_iso42001.STANDARD_ID] = _iso42001.control_map()
 _STANDARD_MAPS[_cosai.STANDARD_ID] = _cosai.control_map()
+
+# These are Bernstein assessment-element IDs, not ISO clause numbers.
+# Verdicts are capability ceilings; the projection below checks actual records.
+_STANDARD_MAPS["iso-42005"] = {
+    "regulation": "ISO/IEC 42005:2025, AI system impact assessment guidance",
+    "controls": [
+        {
+            "control_id": "impact.intended-use",
+            "requirement": (
+                "Operator-owned purpose, deployment context and use boundaries must be "
+                "documented; the compliance preset does not state intended use."
+            ),
+            "artefact": "n/a",
+            "selector": "n/a",
+            "verdict": "Not-covered",
+            "status": "organisational",
+        },
+        {
+            "control_id": "impact.affected-parties",
+            "requirement": (
+                "Operator-owned stakeholder identification and consultation are required; "
+                "actor attribution and lineage receipts do not identify affected groups."
+            ),
+            "artefact": "n/a",
+            "selector": "n/a",
+            "verdict": "Not-covered",
+            "status": "organisational",
+        },
+        {
+            "control_id": "impact.foreseeable-misuse",
+            "requirement": (
+                "Recorded capability refusals identify observed hazardous tool combinations. "
+                "The guardrail inventory and incident pack inform, but do not replace, "
+                "operator analysis of foreseeable misuse scenarios and impacts."
+            ),
+            "artefact": "audit-chain/events.jsonl",
+            "selector": "capability_matrix_refusal",
+            "verdict": "Partial",
+            "status": "partial",
+        },
+        {
+            "control_id": "impact.mitigations",
+            "requirement": (
+                "Recorded enforced capability refusals evidence a protective action. "
+                "The compliance preset, guardrail inventory and lineage receipts alone "
+                "do not establish effectiveness, residual impacts or links to assessed harms."
+            ),
+            "artefact": "audit-chain/events.jsonl",
+            "selector": "capability_matrix_refusal",
+            "verdict": "Partial",
+            "status": "partial",
+        },
+        {
+            "control_id": "impact.review-cadence",
+            "requirement": (
+                "Operator-owned review schedule, accountable owners and reassessment "
+                "decisions are required; incident packs and timestamps establish no cadence."
+            ),
+            "artefact": "n/a",
+            "selector": "n/a",
+            "verdict": "Not-covered",
+            "status": "organisational",
+        },
+    ],
+    "deferred": [
+        "The operator's impact assessment narrative and validation; no certification claim.",
+    ],
+}
+
+_ISO42005_IDS = frozenset(
+    {
+        "impact.intended-use",
+        "impact.affected-parties",
+        "impact.foreseeable-misuse",
+        "impact.mitigations",
+        "impact.review-cadence",
+    }
+)
+# Details emitted by AgentSpawner._emit_capability_matrix_refusal_audit_event.
+_ISO42005_RULE_FIELDS = {
+    "impact.foreseeable-misuse": "offending_tools",
+    "impact.mitigations": "chain",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +558,109 @@ def _read_text_directory(directory: Path) -> dict[str, bytes]:
     return out
 
 
+def _iso42005_matches(control_id: str, member: str, entry: dict[str, Any]) -> bool:
+    """Recognise recorded refusal context, not inventories or provenance alone.
+
+    Fields come from SpawnerCore._emit_capability_matrix_refusal_audit_event.
+    These records inform misuse analysis and demonstrate an applied protection;
+    neither establishes a complete assessment or mitigation effectiveness.
+    """
+    if control_id not in _ISO42005_RULE_FIELDS:
+        raise ValueError(f"unknown ISO 42005 matching rule: {control_id!r}")
+    if member != "audit-chain/events.jsonl" or entry.get("event_type") != "capability_matrix_refusal":
+        return False
+    details = entry.get("details")
+    if not isinstance(details, dict) or details.get("mode") != "enforce":
+        return False
+    reason = details.get("reason")
+    context = details.get(_ISO42005_RULE_FIELDS[control_id])
+    return (
+        isinstance(reason, str)
+        and bool(reason.strip())
+        and isinstance(context, list)
+        and bool(context)
+        and all(isinstance(value, str) and bool(value.strip()) for value in context)
+    )
+
+
+def _validate_iso42005_refs(
+    control_id: str,
+    refs: list[str],
+    records: dict[str, dict[str, Any]],
+) -> None:
+    """Fail closed on malformed, dangling or element-inappropriate references."""
+    if not isinstance(refs, list) or not all(isinstance(ref, str) for ref in refs):
+        raise ValueError("ISO 42005 evidence_refs must be a list of strings")
+    if refs != sorted(set(refs)):
+        raise ValueError("ISO 42005 evidence_refs must be sorted and deduplicated")
+    for ref in refs:
+        if ref not in records or not _iso42005_matches(control_id, ref.split(":", 1)[0], records[ref]):
+            raise ValueError(f"invalid or nonmatching ISO 42005 evidence reference: {ref!r}")
+
+
+def _project_iso42005_controls(
+    controls: list[dict[str, Any]],
+    members: dict[str, bytes],
+) -> list[dict[str, Any]]:
+    """Project catalogue ceilings onto the final serialized chain window only."""
+    ids = [control.get("control_id") for control in controls if isinstance(control, dict)]
+    if (
+        len(ids) != len(controls)
+        or not all(isinstance(control_id, str) for control_id in ids)
+        or len(ids) != len(_ISO42005_IDS)
+        or set(ids) != _ISO42005_IDS
+    ):
+        raise ValueError("ISO 42005 catalogue has missing, duplicate or unknown IDs")
+
+    records = {
+        f"{member}:{line_number}": json.loads(line)
+        for member in ("audit-chain/events.jsonl", "lineage/log.jsonl")
+        for line_number, line in enumerate(members[member].splitlines(), 1)
+    }
+    projected = []
+    for control in controls:
+        row = dict(control)
+        control_id = row["control_id"]
+        status = row.setdefault("status", "todo")
+        verdict = row.setdefault("verdict", "Not-covered")
+        if (
+            not isinstance(verdict, str)
+            or not isinstance(status, str)
+            or (verdict, status)
+            not in {
+                ("Covered", "mapped"),
+                ("Partial", "partial"),
+                ("Not-covered", "todo"),
+                ("Not-covered", "organisational"),
+            }
+        ):
+            raise ValueError(f"invalid ISO 42005 verdict/status for {control_id}")
+        if any(
+            not isinstance(row.get(key), str) or not row[key].strip() for key in ("requirement", "artefact", "selector")
+        ):
+            raise ValueError(f"incomplete ISO 42005 catalogue row: {control_id}")
+        if row.get("evidence_refs", []) != []:
+            raise ValueError("ISO 42005 catalogue cannot supply window evidence_refs")
+        refs: list[str] = []
+        if status == "organisational":
+            if row["artefact"] != "n/a" or row["selector"] != "n/a":
+                raise ValueError(f"organisational ISO 42005 row cites chain evidence: {control_id}")
+        elif status in {"mapped", "partial"}:
+            if control_id not in _ISO42005_RULE_FIELDS:
+                raise ValueError(f"unknown ISO 42005 matching rule: {control_id!r}")
+            if row["artefact"] != "audit-chain/events.jsonl" or row["selector"] != "capability_matrix_refusal":
+                raise ValueError(f"unsupported ISO 42005 selector: {control_id}")
+            refs = sorted(
+                ref for ref, entry in records.items() if _iso42005_matches(control_id, ref.split(":", 1)[0], entry)
+            )
+            _validate_iso42005_refs(control_id, refs, records)
+            if not refs:
+                row["status"] = "todo"
+        row["evidence_refs"] = refs
+        projected.append(row)
+    return projected
+
+
 def _readme_for(standard: str, mapping: dict[str, Any]) -> bytes:
     """Operator-facing README explaining the bundle layout for ``standard``."""
     lines = [
@@ -502,6 +696,15 @@ def _readme_for(standard: str, mapping: dict[str, Any]) -> bytes:
         "separately, citing the artefacts in this bundle.",
         "",
     ]
+    if standard == "iso-42005":
+        lines.extend(
+            [
+                "ISO/IEC 42005:2025 is guidance for performing an impact assessment.",
+                "This pack supports the operator's own assessment; it makes no compliance or certification claim.",
+                "Evidence references establish record presence, not chain authentication or assessment completeness.",
+                "",
+            ]
+        )
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -597,11 +800,17 @@ def build_evidence_pack(
     costs_bytes = _serialise_jsonl(cost_entries)
 
     mapping = _STANDARD_MAPS[standard]
+    controls = mapping["controls"]
+    if standard == "iso-42005":
+        controls = _project_iso42005_controls(
+            controls,
+            {"audit-chain/events.jsonl": events_bytes, "lineage/log.jsonl": lineage_bytes},
+        )
     controls_payload = {
         "schema_version": SCHEMA_VERSION,
         "standard": standard,
         "regulation": mapping.get("regulation", ""),
-        "controls": mapping["controls"],
+        "controls": controls,
         "deferred": mapping.get("deferred", []),
     }
     controls_bytes = _canonical_json(controls_payload)
@@ -634,7 +843,6 @@ def build_evidence_pack(
 
     artefact_hashes = {name: hashlib.sha256(payload).hexdigest() for name, payload in artefacts.items()}
 
-    controls = mapping["controls"]
     controls_mapped = sum(1 for c in controls if c.get("status") == "mapped")
     controls_partial = sum(1 for c in controls if c.get("status") == "partial")
     controls_todo = sum(1 for c in controls if c.get("status") == "todo")
