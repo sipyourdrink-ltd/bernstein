@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from pathlib import Path
 
 import pytest
 from bernstein.core.auth import verify_jwt
 
-from bernstein.core.identity.agent_jwt import AgentIdentityStore
+from bernstein.core.identity.agent_jwt import _LEGACY_JWT_SECRET_NAME, AgentIdentityStore, _retire_legacy_jwt_secret
 from tests.unit._identity_record_helpers import seal
 
 
@@ -18,6 +19,27 @@ def _token_hash(token: str) -> str:
     """Return the SHA-256 hash used by the identity store."""
 
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("removable", [True, False])
+def test_retirement_logs_status_without_file_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, removable: bool
+) -> None:
+    retired_file = tmp_path / _LEGACY_JWT_SECRET_NAME
+    if removable:
+        retired_file.touch()
+    else:
+        retired_file.mkdir()
+
+    with caplog.at_level(logging.INFO, logger="bernstein.core.identity.agent_jwt"):
+        _retire_legacy_jwt_secret(tmp_path)
+
+    (record,) = [entry for entry in caplog.records if entry.name == "bernstein.core.identity.agent_jwt"]
+    message = record.getMessage()
+    assert str(tmp_path) not in message
+    assert _LEGACY_JWT_SECRET_NAME not in message
+    assert record.levelno == (logging.INFO if removable else logging.WARNING)
+    assert retired_file.exists() is not removable
 
 
 def test_create_identity_returns_jwt_with_expected_claims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
