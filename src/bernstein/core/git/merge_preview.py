@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_basic import run_git
+from bernstein.core.log_safe import for_log
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -75,8 +76,12 @@ class MergePreviewConflict(MergePreviewError):
     def __init__(self, branch: str, conflicting_files: list[str]) -> None:
         self.branch = branch
         self.conflicting_files = conflicting_files
-        listed = ", ".join(conflicting_files) if conflicting_files else "<unknown>"
-        super().__init__(f"{branch} conflicts with the run branch in: {listed}")
+        super().__init__(f"{branch} conflicts with the run branch in: {self.display_paths}")
+
+    @property
+    def display_paths(self) -> str:
+        """Format paths for diagnostics while keeping the recorded paths intact."""
+        return ", ".join(for_log(path, escape_nonprintable=True) for path in self.conflicting_files) or "<unknown>"
 
 
 def preview_worktree_path(repo_root: Path, *, session_id: str, task_id: str) -> Path:
@@ -101,10 +106,10 @@ def preview_worktree_path(repo_root: Path, *, session_id: str, task_id: str) -> 
 
 def _conflicting_files(preview: Path) -> list[str]:
     """Return the unmerged paths inside a preview whose merge just failed."""
-    result = run_git(["diff", "--name-only", "--diff-filter=U"], preview, timeout=30)
+    result = run_git(["diff", "--name-only", "--diff-filter=U", "-z"], preview, timeout=30)
     if not result.ok:
         return []
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return [path for path in result.stdout.split("\0") if path]
 
 
 def _discard_preview(repo_root: Path, preview: Path) -> None:
