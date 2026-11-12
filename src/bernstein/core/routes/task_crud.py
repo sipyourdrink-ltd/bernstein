@@ -599,12 +599,11 @@ def _run_auto_commit_pre_complete(
             session_id,
             label="session id",
         )
-    except PathContainmentError as exc:
-        logger.info(
-            "auto_commit_pre_complete: task=%s session=%s reason=unsafe_session_path error=%s",
+    except PathContainmentError:
+        logger.warning(
+            "auto_commit_pre_complete: task=%s session=%s reason=unsafe_session_path",
             sanitize_log(str(task.id)),
             sanitize_log(str(session_id)),
-            sanitize_log(str(exc)),
         )
         return
 
