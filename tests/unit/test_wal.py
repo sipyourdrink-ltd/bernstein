@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import threading
 from typing import TYPE_CHECKING, Any
@@ -1033,34 +1034,46 @@ class TestWALRecoveryClosedMarker:
 class TestWALStreaming:
     """Streaming reads: _load_tail, verify_chain, iter_entries are O(1) memory."""
 
-    def test_load_tail_fast_on_large_wal(self, tmp_path: Path) -> None:
-        """_load_tail on a sizeable WAL resumes without reading the whole file.
-
-        We build a WAL with 5k entries (keeps unit-test wall-time low),
-        close and re-open a writer, and assert that appending a new
-        entry picks up the correct seq/prev_hash chain.
-        """
-        import time as _time
-
+    def test_load_tail_reads_a_bounded_suffix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Reopening a large healthy WAL reads a bounded suffix and resumes its chain."""
         writer = _make_writer(tmp_path)
         for i in range(5000):
             writer.append(f"d{i}", {"i": i}, {"r": i}, "a")
-
         last = writer.append("last", {}, {}, "a")
 
-        # Re-open; _load_tail must return the final entry's seq & hash
-        # without re-reading every line.
-        start = _time.monotonic()
-        writer2 = _make_writer(tmp_path)
-        elapsed = _time.monotonic() - start
+        wal_path = _wal_path(tmp_path)
+        suffix_limit = 64 * 1024
+        assert wal_path.stat().st_size > suffix_limit * 10
+        bytes_read = 0
+        original_open = type(wal_path).open
 
+        class CountingRaw(io.FileIO):
+            def readinto(self, buffer: Any) -> int | None:
+                nonlocal bytes_read
+                count = super().readinto(buffer)
+                bytes_read += count or 0
+                return count
+
+            def readall(self) -> bytes:
+                nonlocal bytes_read
+                data = super().readall()
+                bytes_read += len(data)
+                return data
+
+        def count_wal_reads(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            if path != wal_path or mode not in {"r", "rb"}:
+                return original_open(path, mode, *args, **kwargs)
+            stream = io.BufferedReader(CountingRaw(path, "rb"))
+            return stream if mode == "rb" else io.TextIOWrapper(stream, encoding=kwargs.get("encoding", "utf-8"))
+
+        with monkeypatch.context() as patch:
+            patch.setattr(type(wal_path), "open", count_wal_reads)
+            writer2 = _make_writer(tmp_path)
+
+        assert 0 < bytes_read <= suffix_limit, f"read {bytes_read} bytes to recover the WAL tail"
         next_entry = writer2.append("after_reopen", {}, {}, "a")
         assert next_entry.seq == last.seq + 1
         assert next_entry.prev_hash == last.entry_hash
-        # Generous bound - streaming backward read should be < 100ms even
-        # on slow CI.  Old implementation materialized ~5k lines into a
-        # list on every construction.
-        assert elapsed < 0.5, f"_load_tail too slow: {elapsed:.3f}s"
 
     def test_iter_entries_skips_malformed_trailing_line(self, tmp_path: Path) -> None:
         """iter_entries logs+skips a malformed trailing line instead of raising."""

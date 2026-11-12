@@ -10,24 +10,17 @@ The fix switches to ``defusedxml.ElementTree``, which refuses DTDs,
 external entities, and internal entity definitions outright. These tests
 assert that:
 
-* a nested-entity-bomb SAML payload is rejected *quickly* (well under
-  the time it would take to actually expand it);
-* a malformed XML document still gets a polite ``None`` return instead
-  of crashing;
-* a well-formed, entity-free payload still parses successfully (so the
-  defusedxml swap is a true drop-in).
-
-Time-based assertions use a generous upper bound to tolerate slow CI
-runners while still catching a regression where the entities are
-actually expanded (which would take seconds to minutes).
+* the defused parser rejects entity declarations before expanding them;
+* a malformed XML document still gets a polite ``None`` return;
+* a well-formed, entity-free payload still parses successfully.
 """
 
 # pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
+from xml.etree import ElementTree as StdlibET
 
 import pytest
 
@@ -112,30 +105,16 @@ def svc(tmp_path: Path) -> AuthService:
 class TestSAMLXXEDefense:
     """audit-054: internal-entity expansion must be refused, not expanded."""
 
-    def test_billion_laughs_is_rejected_quickly(self, svc: AuthService) -> None:
-        """Nested entity bomb must be refused before expansion can blow up.
+    @pytest.mark.parametrize("assertion_xml", [_BILLION_LAUGHS_SAML, _QUADRATIC_BLOWUP_SAML], ids=["nested", "single"])
+    def test_entity_declarations_are_rejected_before_expansion(
+        self, svc: AuthService, assertion_xml: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def unexpected_parser(*_args: object, **_kwargs: object) -> None:
+            pytest.fail("SAML assertions must not reach the stdlib XML parser")
 
-        If this ever regresses to stdlib ``xml.etree``, the call would
-        either OOM the test runner or take many seconds expanding
-        ~10**9 "lol" tokens. defusedxml raises immediately.
-        """
-        start = time.monotonic()
-        result = svc.parse_saml_assertion(_BILLION_LAUGHS_SAML)
-        elapsed = time.monotonic() - start
-
-        assert result is None, "billion-laughs payload must be refused"
-        # 2s is deliberately generous for slow CI; a regression would take
-        # orders of magnitude longer.
-        assert elapsed < 2.0, f"parse took {elapsed:.2f}s - entities may be expanding"
-
-    def test_quadratic_blowup_is_rejected(self, svc: AuthService) -> None:
-        """Even a shallow DTD with one entity must be refused."""
-        start = time.monotonic()
-        result = svc.parse_saml_assertion(_QUADRATIC_BLOWUP_SAML)
-        elapsed = time.monotonic() - start
-
-        assert result is None
-        assert elapsed < 2.0
+        monkeypatch.setattr(StdlibET, "fromstring", unexpected_parser)
+        assert svc.parse_saml_assertion(assertion_xml) is None
+        assert "Rejecting unsafe SAML assertion XML: EntitiesForbidden" in caplog.messages
 
     def test_malformed_xml_returns_none(self, svc: AuthService) -> None:
         """Classic ParseError path still degrades gracefully."""
