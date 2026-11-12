@@ -16,7 +16,8 @@ name: Required-check name canary
 #
 # Invariants asserted:
 #   1. `.github/workflows/ci.yml` has a job whose key is `ci-gate`.
-#   2. That job's `name:` is exactly `CI gate`.
+#   2. That job's name is `CI gate` except on draft pull requests,
+#      where it is `CI deferred (draft)`.
 #   3. Exactly two workflow files emit a check-run named `CI gate`:
 #      `ci.yml::ci-gate` (real aggregator) and
 #      `ci-gate-stub.yml::ci-gate` (synthetic emitter for PRs whose diff
