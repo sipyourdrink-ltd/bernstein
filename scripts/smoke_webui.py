@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from capture_webui_renders import gui_server, resolve_bernstein
-from playwright.sync_api import Locator, Page, Request, expect, sync_playwright
+from playwright.sync_api import Locator, Page, Request, Route, expect, sync_playwright
 
 from bernstein.core.approval.models import PendingApproval
 from bernstein.core.approval.queue import ApprovalQueue
@@ -277,9 +277,22 @@ def check_approvals(
     expect(page.get_by_role("alert").filter(has_text="This approval is no longer current")).to_be_visible()
     expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_hidden()
 
-    pending = approvals[3]
-    expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_visible()
+    pointer_approval, pending = approvals[3:5]
+    expect(page.get_by_text(f"APPROVAL · {pointer_approval.id}", exact=True)).to_be_visible()
     expect(tasks_link).to_be_focused()
+
+    url = f"{base}/api/v1/approvals/{pointer_approval.id}/resolve"
+    deferred: list[Route] = []
+    page.route(url, lambda route: deferred.append(route), times=1)
+    with page.expect_request(url):
+        queue_row(pointer_approval).press("d")
+    page.get_by_text("Why this needs review", exact=True).click()
+    assert page.evaluate("() => document.activeElement === document.body")
+    with page.expect_response(url) as pointer_reply:
+        deferred[0].continue_()
+    assert pointer_reply.value.ok
+    expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_visible()
+    assert page.evaluate("() => document.activeElement === document.body")
     page.evaluate("() => { const now = Date.now; Date.now = () => now() + 180_000; }")
     url = f"{base}/api/v1/approvals/{pending.id}/resolve"
     expect(approve).to_be_enabled()
@@ -293,7 +306,7 @@ def check_approvals(
 
     expect(page.get_by_role("heading", name="Approvals queue")).to_be_focused()
 
-    expired = approvals[4]
+    expired = approvals[5]
     expect(page.get_by_text(f"APPROVAL · {expired.id}", exact=True)).to_be_hidden()
     reply = page.request.post(
         f"{base}/api/v1/approvals/{expired.id}/resolve",
@@ -321,10 +334,10 @@ def main() -> None:
                     agent_role="qa",
                     tool_name="read_file",
                     tool_args={"path": f"docs/check-{index}.md"},
-                    ttl_seconds=0 if index == 4 else 120,
+                    ttl_seconds=0 if index == 5 else 120,
                 )
             )
-            for index in range(5)
+            for index in range(6)
         ]
         env = {"BERNSTEIN_AUDIT_KEY_PATH": str(project / "audit.key")}
         with (

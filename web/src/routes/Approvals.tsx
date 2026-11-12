@@ -164,7 +164,7 @@ export default function Approvals() {
   const decisionInFlight = useRef(false);
   const queueHeading = useRef<HTMLHeadingElement>(null);
   const queueList = useRef<HTMLUListElement>(null);
-  const decisionRow = useRef<HTMLButtonElement | null>(null);
+  const decisionFocus = useRef<{ row: HTMLButtonElement; restore: boolean } | null>(null);
   // Re-render once a second so wait timers tick without refetching.
   const [now, setNow] = useState<number>(() => Date.now());
 
@@ -245,15 +245,37 @@ export default function Approvals() {
   });
 
   useEffect(() => {
-    const row = decisionRow.current;
-    if (!row) return;
-    if (row.isConnected) {
-      if (!isResolving) decisionRow.current = null;
+    const trackFocus = ({ target }: FocusEvent) => {
+      const focus = decisionFocus.current;
+      if (focus?.row.isConnected && target instanceof Node && target !== document.body) {
+        focus.restore = focus.row.contains(target);
+      }
+    };
+    // Clicking non-focusable content can leave focus on the body before refresh.
+    const trackPointer = ({ target }: PointerEvent) => {
+      const focus = decisionFocus.current;
+      if (focus && target instanceof Node && !focus.row.contains(target)) {
+        focus.restore = false;
+      }
+    };
+    document.addEventListener('focusin', trackFocus, true);
+    document.addEventListener('pointerdown', trackPointer, true);
+    return () => {
+      document.removeEventListener('focusin', trackFocus, true);
+      document.removeEventListener('pointerdown', trackPointer, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const focus = decisionFocus.current;
+    if (!focus) return;
+    if (focus.row.isConnected) {
+      if (!isResolving) decisionFocus.current = null;
       return;
     }
 
-    decisionRow.current = null;
-    if (document.activeElement !== document.body) return;
+    decisionFocus.current = null;
+    if (!focus.restore || document.activeElement !== document.body) return;
     const nextRow = queueList.current?.querySelector<HTMLButtonElement>('button[data-approval-id]');
     (nextRow ?? queueHeading.current)?.focus();
   }, [isResolving, pending]);
@@ -263,7 +285,7 @@ export default function Approvals() {
       return;
     }
     decisionInFlight.current = true;
-    decisionRow.current = row ?? null;
+    decisionFocus.current = row ? { row, restore: true } : null;
     resolve({ approval: selected, decision });
   }, [queueQ.isError, isResolving, selected, resolve]);
 
