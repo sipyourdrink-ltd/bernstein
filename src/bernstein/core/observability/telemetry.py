@@ -26,7 +26,12 @@ from __future__ import annotations
 import contextlib
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from opentelemetry.trace import Span
 
 _SERVICE_NAME_ATTR = "service.name"
 
@@ -380,7 +385,7 @@ def get_meter() -> Any:
 
 
 @contextlib.contextmanager
-def start_span(name: str, attributes: dict[str, Any] | None = None):
+def start_span(name: str, attributes: dict[str, Any] | None = None) -> Iterator[Span | None]:
     """Context manager for an OpenTelemetry span.
 
     Args:
