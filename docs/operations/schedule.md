@@ -195,6 +195,8 @@ Not supported (out of scope for #1798; revisit if operators ask):
 Cron evaluation runs in UTC. The host timezone is not part of the
 deterministic contract; keeping evaluation in UTC means two operators
 on different timezones still fire at the same instant.
+Schedules on February 29 continue at the next leap day, including across
+century years that are not leap years.
 
 ## Fire as a hash, not a trigger (#2302)
 

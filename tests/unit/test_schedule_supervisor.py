@@ -308,6 +308,22 @@ class TestSupervisorTickCatchUpPolicy:
         assert len(counterfactuals[0].skipped_windows) > 0
 
 
+@pytest.mark.parametrize(("previous_year", "next_year"), [(2024, 2028), (2096, 2104)])
+def test_leap_day_schedule_resumes_after_previous_fire(tmp_path: Path, previous_year: int, next_year: int) -> None:
+    store = ScheduleStore(tmp_path)
+    schedule = store.add(cron="0 9 29 2 *", goal="Leap day")
+    previous_fire = datetime(previous_year, 2, 29, 9, tzinfo=UTC).timestamp()
+    expected_fire = int(datetime(next_year, 2, 29, 9, tzinfo=UTC).timestamp())
+    store.update_last_fire(schedule.id, previous_fire)
+    fired: list[Any] = []
+    supervisor = ScheduleSupervisor(store, fired.append, _StubAuditLog())
+
+    receipts = supervisor.tick(now=expected_fire)
+
+    assert [receipt.fire_time for receipt in receipts if receipt.dispatched] == [expected_fire]
+    assert len(fired) == 1
+
+
 class TestSupervisorAuditChain:
     def test_each_fire_chains(self, tmp_path: Path) -> None:
         store = ScheduleStore(tmp_path)

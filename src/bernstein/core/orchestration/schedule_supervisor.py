@@ -33,6 +33,7 @@ import json
 import logging
 import math
 import time
+from bisect import bisect_left
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
@@ -138,10 +139,9 @@ def collision_inputs_hash(
 def _next_fire_after(parsed: ParsedCron, anchor_epoch: int) -> int:
     """Return the next fire epoch strictly greater than ``anchor_epoch``.
 
-    Iterates minute by minute starting from ``anchor_epoch + 60`` rounded
-    down to the minute. Bounded scan: we never look more than 2 years
-    ahead, which catches the worst case ``"0 0 29 2 *"`` (Feb 29) without
-    spinning forever on an unsatisfiable expression.
+    Search calendar days and only consider matching hours and minutes.
+    The scan covers an eight-year gap between leap days at a non-leap
+    century boundary and remains bounded for impossible dates.
 
     The supervisor calls this with an anchor of either ``last_fire_at``
     or ``now`` depending on whether the schedule has fired before. UTC
@@ -149,26 +149,20 @@ def _next_fire_after(parsed: ParsedCron, anchor_epoch: int) -> int:
     keeping cron evaluation in UTC means two operators on different
     timezones still fire on the same instant.
     """
-    # Two-year scan cap (in minutes).
-    max_minutes = 2 * 366 * 24 * 60
+    # Start at the first minute boundary strictly after the anchor.
+    candidate = datetime.fromtimestamp((anchor_epoch // 60 + 1) * 60, tz=UTC)
+    hours = sorted(parsed.hours)
+    minutes = sorted(parsed.minutes)
+    for _ in range(8 * 366 + 1):
+        if candidate.month in parsed.months and _matches_day(parsed, candidate):
+            for hour in hours[bisect_left(hours, candidate.hour) :]:
+                first_minute = candidate.minute if hour == candidate.hour else 0
+                minute_index = bisect_left(minutes, first_minute)
+                if minute_index < len(minutes):
+                    return int(candidate.replace(hour=hour, minute=minutes[minute_index]).timestamp())
+        candidate = candidate.replace(hour=0, minute=0) + timedelta(days=1)
 
-    # Round the anchor down to the minute, then step one minute forward
-    # so "strictly greater than anchor" semantics hold even when the
-    # anchor itself is already on a minute boundary.
-    start_minute = (anchor_epoch // 60 + 1) * 60
-    start_dt = datetime.fromtimestamp(start_minute, tz=UTC)
-
-    for offset in range(max_minutes):
-        candidate = start_dt + timedelta(minutes=offset)
-        if (
-            candidate.minute in parsed.minutes
-            and candidate.hour in parsed.hours
-            and candidate.month in parsed.months
-            and _matches_day(parsed, candidate)
-        ):
-            return int(candidate.timestamp())
-
-    raise RuntimeError(f"No fire instant found in 2 years for cron expression {parsed.raw!r}")
+    raise RuntimeError(f"No fire instant found in 8 years for cron expression {parsed.raw!r}")
 
 
 def _last_processed_window(schedule: Schedule) -> float:
