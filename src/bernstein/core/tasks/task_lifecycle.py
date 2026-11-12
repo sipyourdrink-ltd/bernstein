@@ -2233,7 +2233,7 @@ def _claim_task_with_conflict_retry(
         if session_id is not None:
             params["claimed_by_session"] = session_id
         resp = orch._client.post(f"{base}/tasks/{current_task.id}/claim", params=params)
-        logger.info(
+        logger.debug(
             "claim attempt %d/%d task=%s sent_version=%s -> HTTP %d",
             attempts,
             _CLAIM_CONFLICT_MAX_ATTEMPTS,
@@ -2298,7 +2298,7 @@ def _claim_task_with_conflict_retry(
 
         # Still OPEN. Whether or not the version actually moved, retry with
         # the freshest known version rather than resubmitting stale data.
-        logger.info(
+        logger.debug(
             "claim conflict for task %s: re-fetch shows status=OPEN, version %s -> %s -- retrying (attempt %d/%d)",
             current_task.id,
             current_task.version,
