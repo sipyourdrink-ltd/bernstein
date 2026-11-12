@@ -121,6 +121,9 @@ def check_governance_receipt(page: Page, base: str) -> None:
         file_input.press("Enter")
     chooser.value.set_files(valid)
     expect(panel.get_by_text(valid.name, exact=True)).to_be_visible()
+    expect(file_input).to_have_accessible_description(
+        f"Drop a receipt here or choose a file. Selected file {valid.name}"
+    )
     assert page.evaluate("window.receiptRequests.length") == 0, "Selecting a receipt must not submit it"
     with page.expect_response(endpoint) as passed:
         submit.press("Enter")
@@ -142,6 +145,9 @@ def check_governance_receipt(page: Page, base: str) -> None:
     )
     panel.get_by_text("Drop a receipt here or choose a file.", exact=True).dispatch_event(
         "drop", {"dataTransfer": data_transfer}
+    )
+    expect(file_input).to_have_accessible_description(
+        "Drop a receipt here or choose a file. Selected file tampered.json"
     )
     expect(panel.get_by_text("Receipt integrity verified", exact=True)).to_be_hidden()
     with page.expect_response(endpoint) as failed:

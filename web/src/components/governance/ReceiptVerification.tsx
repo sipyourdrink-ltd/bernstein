@@ -76,7 +76,7 @@ export function ReceiptVerification() {
             type="file"
             className="sr-only"
             aria-labelledby="receipt-file-label"
-            aria-describedby="receipt-file-instructions"
+            aria-describedby={file ? 'receipt-file-instructions receipt-file-selection' : 'receipt-file-instructions'}
             disabled={verification.isPending}
             onChange={(event) => {
               const selected = event.currentTarget.files?.[0];
@@ -87,7 +87,9 @@ export function ReceiptVerification() {
           <span id="receipt-file-instructions" className="block text-muted-foreground">
             Drop a receipt here or choose a file.
           </span>
-          {file && <span className="block break-all font-mono">{file.name}</span>}
+          <span id="receipt-file-selection" role="status" className="block break-all font-mono">
+            {file && <><span className="sr-only">Selected file </span><span>{file.name}</span></>}
+          </span>
         </label>
         <button
           type="submit"

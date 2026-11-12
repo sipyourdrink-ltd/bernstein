@@ -90,6 +90,11 @@ recomputes offline from `.sdd` alone.
 
 ## Verifying a dropped receipt
 
+In the web UI, open **Governance** and choose or drop a file under
+**Verify a receipt**. Confirm the selected filename and select **Verify
+receipt** to send the original bytes to the server. A successful check shows
+the integrity-only tier and its trust caveat beside the verdict.
+
 ```
 POST /governance/verify-receipt
 ```
