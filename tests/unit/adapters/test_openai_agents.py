@@ -2038,13 +2038,38 @@ class TestRunnerHeartbeat:
 
     def test_heartbeat_stops_after_event_set(self, tmp_path: Path) -> None:
         hb_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
-        stop_event = _start_heartbeat("hb-stop", hb_dir, interval_s=0.05)
+        threads: list[threading.Thread] = []
+        events: list[threading.Event] = []
+
+        def capture_thread(**kwargs: Any) -> threading.Thread:
+            thread = threading.Thread(**kwargs)
+            threads.append(thread)
+            return thread
+
+        def capture_event() -> threading.Event:
+            event = threading.Event()
+            events.append(event)
+            return event
+
         hb_file = hb_dir / "hb-stop.json"
-        _await_heartbeat_payload(hb_file)
-        stop_event.set()
-        time.sleep(0.15)
+        try:
+            with patch.object(runner_module, "threading", wraps=threading) as runner_threads:
+                runner_threads.Event.side_effect = capture_event
+                runner_threads.Thread.side_effect = capture_thread
+                stop_event = _start_heartbeat("hb-stop", hb_dir, interval_s=60.0)
+            (thread,) = threads
+            _await_heartbeat_payload(hb_file)
+            assert thread.is_alive()
+            stop_event.set()
+            thread.join(timeout=5.0)
+            assert not thread.is_alive(), "setting the stop event must wake and stop the heartbeat writer"
+        finally:
+            for event in events:
+                event.set()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(timeout=5.0)
         hb_file.unlink()
-        time.sleep(0.15)
         assert not hb_file.exists()
 
     def test_resolve_heartbeat_dir_prefers_manifest_field(self) -> None:
