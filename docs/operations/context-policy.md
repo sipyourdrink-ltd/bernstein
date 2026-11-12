@@ -93,9 +93,9 @@ bernstein context verify <task_id>
 bernstein context verify <task_id> --json --workdir /path/to/project
 ```
 
-The exit code is `0` when the capsule verifies, `1` when the task has no
-capsule, and `2` on a mismatch, a mock capsule or tampering. The command
-takes one task at a time; there is no run-wide form.
+The exit code is `0` when the capsule verifies, `1` when the command finds no
+readable capsule, and `2` for a mock capsule or a failed verification check.
+The command takes one task at a time.
 
 The result is one of `OK`, `NO CAPSULE`, `MOCK` or `MISMATCH`, with the
 reason. `--json` adds the separate checks: `signature_ok`, `chain_ok` and
