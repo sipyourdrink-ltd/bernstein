@@ -160,7 +160,7 @@ Käynnissä olevaa ajoa voidaan seurata kummasta tahansa käyttöliittymästä. 
 | `bernstein live` — terminaalinäkymä | `bernstein gui serve` — selainnäkymä |
 
 ### ajon todistaminen
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Deterministiikka on täällä ominaisuus, jonka voit tarkistaa, ei asia jota pitäisi uskoa sokeasti. Aja kerran auditointi päällä ja vahvista tallennetut tiedot:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Loki kirjoitetaan jokaisella ajolla; alkuperärunko on aina aktiivinen ja saa merkinnän jokaisesta jäljitettävästä vaiheesta, joten lyhyt ajo voi päättyä kelvolliseen, tyhjään runkoon. `bernstein audit verify` tarkistaa ketjun vain silloin, kun ajo käynnistettiin parametrilla `BERNSTEIN_AUDIT=1`, vaatimustenmukaisuusprofiililla tai komennolla `bernstein run --audit`. Valitsin `--audit` kuuluu komentoon `bernstein run`; yllä olevassa `bernstein -g` -muodossa aseta ympäristömuuttuja.
 
 Ajokuitti sitoo lokin kärjen, alkuperärungon kärjen (jos merkintöjä tallennettiin) ja valinnaisesti audit-ketjun aikavälin yhden Ed25519-allekirjoitetun kohteen alle sisäänrakennetulla julkisella avaimella. Tarkastaja, jolla on tämä tiedosto ja ylläpitäjän julkinen avain, voi varmistaa, että tallennettuja toimintoja ja ketjuja ei ole muutettu: ei HMAC-avainta, ei aktiivista `.sdd/`-hakemistoa, ja poistumiskoodi `2` nimeää ensimmäisen poikkeavan vaiheen peukaloinnin yhteydessä. Tämä kuitti yksilöi sisältämänsä lokitilan; sen todistaminen, että tämä tila on täydellinen valmis loki, vaatii lisäksi riippumattoman kärki/lukumääräsinetin. Pelkällä tiedostolla ilman `--public-key`-avainta tarkistus vahvistaa vain sisäisen eheyden. Yksityiskohdat osiossa [deterministinen toisto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+Avaa verkkokäyttöliittymässä **Governance** ja tarkista ajokuitti palvelimella valitsemalla **Verify a receipt**. Selain näyttää pelkän eheystarkistuksen tuloksen ja avaimen lähteen. Katso [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Sama todennettavuus koskee arviointituloksia. `bernstein bench run <suite> --reliability k` (myös muodossa `bernstein eval --reliability k`) ajaa jokaisen tehtävän `k` kertaa kiinteällä koordinoinnilla ja raportoi alarajan `pass^k` (kaikkien `k` yrityksen on onnistuttava) ylärajan `pass@1` rinnalla. Tulos sinetöidään allekirjoitettuun kuittiin, jonka `bernstein bench reliability-verify` laskee uudelleen offline-tilassa, jolloin väärennetty alaraja hylätään tarkistuksessa. Lisätietoja: [pass^k-luotettavuuden alaraja](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

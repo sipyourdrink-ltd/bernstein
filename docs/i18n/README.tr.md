@@ -160,7 +160,7 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 | `bernstein live` — terminal kontrol paneli | `bernstein gui serve` — tarayıcı kontrol paneli |
 
 ### bir çalıştırmayı kanıtlayın
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Buradaki determinizm, inanca dayalı kabul ettiğiniz bir şey değil, bizzat kontrol ettiğiniz bir şeydir. Denetim etkinleştirilmiş olarak bir kez çalıştırın, ardından kaydedilenleri doğrulayın:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Günlük her çalıştırmada yazılır; soy kütüğü omurgası her zaman açıktır ve soy kütüğü taşıyan her adım için bir girdi kazanır, böylece kısa bir çalıştırma geçerli, boş bir omurga ile tamamlanabilir. `bernstein audit verify`, yalnızca çalıştırma `BERNSTEIN_AUDIT=1`, bir uyumluluk ön ayarı veya `bernstein run --audit` ile başlatıldığında kontrol edilecek bir zincire sahiptir. `--audit` bayrağı `bernstein run` komutuna aittir; yukarıdaki `bernstein -g` biçiminde ortam değişkenini ayarlayın.
 
 Bir çalıştırma makbuzu, gömülü genel anahtarla birlikte Ed25519 ile imzalanmış tek bir özne altında günlük başlığını, çalıştırma omurga girdileri yazdığında soy kütüğü omurgası başlığını ve isteğe bağlı olarak bir denetim zinciri aralığını bağlar. Bu dosyaya ve operatörün genel anahtarına sahip bir denetçi, gömülü eylemlerin ve zincirlerin değiştirilmediğini doğrulayabilir: HMAC anahtarı yok, canlı `.sdd/` yok ve tahrifat durumunda ilk sapan adımı adlandıran `2` çıkış kodu. Bu makbuz, içine yerleştirdiği günlük durumunu tanımlar; bu durumun eksiksiz tamamlanmış günlük olduğunu kanıtlamak ayrıca bağımsız bir başlık/sayım mührü gerektirir. Yalnızca dosya ile ve `--public-key` sabitlemesi olmadan kontrol yalnızca bütünlük içindir. Ayrıntılar [deterministik yeniden oynatma](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification) bölümündedir.
+
+Web arayüzünde **Governance** bölümünü açın ve çalıştırma makbuzunu sunucuda denetlemek için **Verify a receipt** seçeneğini kullanın. Tarayıcı yalnızca bütünlük denetiminin sonucunu ve anahtarın kaynağını gösterir. Bkz. [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Aynı doğrulanabilirlik değerlendirme sayıları için de geçerlidir. `bernstein bench run <suite> --reliability k` (ayrıca `bernstein eval --reliability k` olarak da yazılır), her görevi sabit koordinasyon altında `k` kez çalıştırır ve ardından `pass@1` tavanının yanında bir `pass^k` tabanı (tüm `k` denemeler başarılı olmalıdır) raporlar. Bu sonuç, `bernstein bench reliability-verify` komutunun çevrimdışı olarak yeniden hesapladığı imzalı bir makbuzda mühürlenir, böylece uydurma bir taban doğrulamadan geçemez. Ayrıntılar: [pass^k güvenilirlik tabanı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

@@ -30,6 +30,7 @@
 // is already closed as of this list's writing, so ``resolved: true`` on
 // it is this property demonstrated with real data, not a hypothetical.
 
+import { ReceiptVerification } from '@/components/governance/ReceiptVerification';
 import { Pill, SectionLabel } from '@/lib/states';
 import fixture from './governance-coverage.fixture.json';
 import notCoveredFixture from './governance-not-covered.json';
@@ -275,5 +276,12 @@ export function GovernancePanel({
 }
 
 export default function Governance() {
-  return <GovernancePanel coverage={coverageFixture} />;
+  return (
+    <>
+      <div className="px-6 pt-6">
+        <ReceiptVerification />
+      </div>
+      <GovernancePanel coverage={coverageFixture} />
+    </>
+  );
 }

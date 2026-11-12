@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — টার্মিনাল ড্যাশবোর্ড | `bernstein gui serve` — ব্রাউজার ড্যাশবোর্ড |
 
 ### একটি রান প্রমাণ করুন
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 এখানে ডিটারমিনিজম বিশ্বাস করার জিনিস নয়, যাচাই করার জিনিস। অডিট চালু রেখে একবার চালান, তারপর যা লেখা হলো তা যাচাই করুন:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 জার্নাল প্রতিটি রানেই লেখা হয়; লিনিয়েজ স্পাইন সবসময় চালু থাকে এবং প্রতিটি লিনিয়েজ-বাহী ধাপে একটি এন্ট্রি পায়, তাই ছোট একটি রান বৈধ কিন্তু খালি স্পাইন নিয়েও শেষ হতে পারে। `bernstein audit verify` এর কাছে যাচাই করার মতো চেইন তখনই থাকে যখন রানটি `BERNSTEIN_AUDIT=1`, কোনো কমপ্লায়েন্স প্রিসেট, বা `bernstein run --audit` দিয়ে শুরু হয়েছে। `--audit` ফ্ল্যাগটি `bernstein run` এর; উপরের `bernstein -g` রূপে এনভায়রনমেন্ট ভেরিয়েবলটি সেট করুন।
 
 একটি রান রসিদ জার্নাল হেড, রানটি স্পাইন এন্ট্রি লিখে থাকলে লিনিয়েজ-স্পাইন হেড, এবং অপ্ট-ইনে অডিট-চেইনের একটি রেঞ্জ — সবকিছু একটিমাত্র Ed25519-স্বাক্ষরিত সাবজেক্টের নিচে বাঁধে, পাবলিক কি ভিতরেই থাকে। ওই ফাইল আর অপারেটরের পাবলিক কি হাতে থাকা একজন রিভিউয়ার নিশ্চিত করতে পারেন যে ভিতরে থাকা অ্যাকশন ও চেইন বদলানো হয়নি: HMAC কি লাগে না, জীবন্ত `.sdd/` লাগে না, আর কারচুপি থাকলে এক্সিট `2` প্রথম অমিল ধাপটির নাম বলে দেয়। ওই রসিদ যে জার্নাল অবস্থাকে ধারণ করে সেটিকেই শনাক্ত করে; ওই অবস্থাই যে সম্পূর্ণ ও সমাপ্ত জার্নাল তা প্রমাণ করতে আলাদা একটি স্বাধীন হেড/কাউন্ট সিল লাগে। শুধু ফাইল নিয়ে, `--public-key` পিন ছাড়া, যাচাইটি কেবল ইন্টিগ্রিটির — এটি প্রমাণ করে রসিদটি নিজের ভিতরে সঙ্গতিপূর্ণ, কে স্বাক্ষর করেছে তা নয়, এবং রায়েও সেটাই লেখা থাকে। বিস্তারিত [ডিটারমিনিস্টিক রিপ্লে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification) এ।
+
+ওয়েব ইন্টারফেসে **Governance** খুলে **Verify a receipt** দিয়ে সার্ভারে রান রসিদ যাচাই করুন। ব্রাউজার শুধু অখণ্ডতা যাচাইয়ের ফল ও কী-এর উৎস দেখায়। দেখুন [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt)।
 
 একই যাচাইযোগ্যতা মূল্যায়নের সংখ্যাগুলোর ক্ষেত্রেও খাটে। `bernstein bench run <suite> --reliability k` (একে `bernstein eval --reliability k` ও লেখা যায়) প্রতিটি টাস্ক নির্দিষ্ট কোঅর্ডিনেশনের অধীনে `k` বার চালায়, তারপর `pass@1` সিলিং-এর পাশাপাশি একটি `pass^k` মেঝে (সবগুলো `k` চেষ্টাই পাস করতে হবে) জানায়। ওই ফলাফল একটি স্বাক্ষরিত রসিদে সিল করা হয় যা `bernstein bench reliability-verify` অফলাইনে আবার হিসাব করে, তাই বানানো মেঝে যাচাইয়ে ধরা পড়ে। বিস্তারিত: [pass^k নির্ভরযোগ্যতার মেঝে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)।
 

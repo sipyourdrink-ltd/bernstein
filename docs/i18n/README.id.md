@@ -160,7 +160,7 @@ Eksekusi yang sedang berjalan dapat dipantau dari salah satu antarmuka operator.
 | `bernstein live` — dasbor terminal | `bernstein gui serve` — dasbor peramban |
 
 ### buktikan eksekusi
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Determinisme di sini adalah sesuatu yang Anda buktikan sendiri, bukan diterima atas dasar keyakinan semata. Jalankan sekali dengan audit aktif, lalu verifikasi apa yang tercatat:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Jurnal dicatat pada setiap eksekusi; tulang punggung silsilah selalu aktif dan menambah entri untuk setiap langkah yang memiliki silsilah, sehingga eksekusi singkat dapat berakhir dengan tulang punggung valid yang kosong. `bernstein audit verify` hanya memiliki rantai untuk diperiksa jika eksekusi dimulai dengan `BERNSTEIN_AUDIT=1`, preset kepatuhan, atau `bernstein run --audit`. Flag `--audit` milik `bernstein run`; pada format `bernstein -g` di atas, atur variabel lingkungan.
 
 Tanda terima eksekusi mengikat kepala jurnal, kepala tulang punggung silsilah (jika ada entri tercatat), dan rentang rantai audit opsional di bawah satu subjek bertanda tangan Ed25519 dengan kunci publik tersemat. Peninjau yang memegang berkas tersebut beserta kunci publik operator dapat memastikan tindakan dan rantai tidak diubah: tanpa kunci HMAC, tanpa direktori `.sdd/` aktif, dan kode keluar `2` yang menyebutkan langkah penyimpangan pertama jika terjadi manipulasi. Tanda terima tersebut mengidentifikasi status jurnal di dalamnya; membuktikan status tersebut adalah jurnal lengkap yang selesai membutuhkan segel kepala/jumlah independen. Tanpa menyematkan `--public-key`, pemeriksaan hanya untuk integritas internal. Detail di [pemutaran ulang deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+Di antarmuka web, buka **Governance** dan gunakan **Verify a receipt** untuk memeriksa tanda terima eksekusi di server. Browser menampilkan hasil pemeriksaan integritas saja dan sumber kunci. Lihat [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Verifikasi yang sama berlaku untuk angka evaluasi. `bernstein bench run <suite> --reliability k` (juga ditulis `bernstein eval --reliability k`) menjalankan setiap tugas `k` kali di bawah koordinasi tetap, lalu melaporkan batas bawah `pass^k` (semua `k` percobaan harus berhasil) di samping batas atas `pass@1`. Hasil tersebut disegel dalam tanda terima bertanda tangan yang dihitung ulang secara offline oleh `bernstein bench reliability-verify`, sehingga batas bawah palsu akan gagal diverifikasi. Detail: [batas keandalan pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

@@ -160,7 +160,7 @@ En pågående körning kan följas från båda operatörsgränssnitten. Båda l�
 | `bernstein live` — terminalpanelen | `bernstein gui serve` — webbläsarpanelet |
 
 ### bevisa en körning
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Determinism är här något du verifierar, inte något du accepterar på god tro. Kör en gång med granskning aktiverad och kontrollera sedan vad som loggades:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Journalen skrivs vid varje körning; lineage-ryggraden är alltid aktiv och lägger till en post för varje spårbart steg, så att en kort körning kan avslutas med en giltig, tom ryggrad. `bernstein audit verify` har bara en kedja att kontrollera när körningen startades med `BERNSTEIN_AUDIT=1`, en regelefterlevnadsprofil eller `bernstein run --audit`. Flaggan `--audit` tillhör `bernstein run`; i `bernstein -g`-formen ovan anger du miljövariabeln.
 
 Ett körkvitto binder samman journalens topp, lineage-ryggradens topp (om poster sparats) och valfritt ett granskningskedjeintervall under ett enda Ed25519-signerat objekt med inbäddad offentlig nyckel. En granskare med den filen och operatörens offentliga nyckel kan bekräfta att åtgärder och kedjor är oförvanskade: ingen HMAC-nyckel krävs, ingen aktiv `.sdd/`, och slutkod `2` med angivelse av det första avvikande steget vid manipulation. Kvittot identifierar det inbäddade journaltillståndet; att bevisa att tillståndet utgör hela den färdiga journalen kräver dessutom ett oberoende kontrollsigill. Utan `--public-key` kontrolleras endast intern integritet. Detaljer i [deterministisk återuppspelning](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+Öppna **Governance** i webbgränssnittet och använd **Verify a receipt** för att kontrollera ett körkvitto på servern. Webbläsaren visar resultatet av enbart integritetskontrollen och nyckelns källa. Se [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Samma verifierbarhet gäller för utvärderingsresultat. `bernstein bench run <suite> --reliability k` (även `bernstein eval --reliability k`) kör varje uppgift `k` gånger under fast koordinering och rapporterar ett `pass^k`-golv (alla `k` försök måste lyckas) tillsammans med `pass@1`-taket. Resultatet förseglas i ett signerat kvitto som `bernstein bench reliability-verify` räknar om offline, så att ett manipulerat golv underkänns. Detaljer: [pass^k tillförlitlighetsgolv](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

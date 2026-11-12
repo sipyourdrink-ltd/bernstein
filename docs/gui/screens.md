@@ -64,6 +64,12 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 - The screen polls `GET /api/v1/approvals/queue` and sends the selected request's nonce with the `allow` or `reject` decision to `POST /api/v1/approvals/{approval_id}/resolve`.
 - **Replaces TUI widget:** `approval_panel.py`.
 
+## Governance (`/ui/governance`)
+
+- **Source:** `web/src/routes/Governance.tsx`.
+- Choose or drop a run receipt and select **Verify receipt**. The browser sends the original file to `POST /api/v1/governance/verify-receipt`.
+- The screen shows the server's verdict and any errors. A successful check uses the key embedded in the receipt and displays the `integrity-only` tier.
+
 ## Audit (`/ui/audit`)
 
 - **Source:** `web/src/routes/Audit.tsx`.
