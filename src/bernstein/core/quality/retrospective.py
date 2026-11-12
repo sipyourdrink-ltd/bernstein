@@ -1372,7 +1372,7 @@ def append_to_project_memory(
     try:
         memory_file.write_text(json.dumps(entries, indent=2), encoding="utf-8")
     except OSError as e:
-        logger.error(f"Failed to write project memory: {e}")
+        logger.error("Failed to write project memory: %s", e)
 
 
 def get_recent_project_memory_from_json(
