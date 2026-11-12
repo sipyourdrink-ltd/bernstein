@@ -78,12 +78,11 @@ class TestQueueDepthTracking:
         # Flush to file
         collector._flush_buffer()  # type: ignore[reportPrivateUsage]
 
-        # Read back and verify
-        queue_depth_file = _get_queue_depth_file(tmp_path)
-        content = queue_depth_file.read_text(encoding="utf-8")
-        lines = content.strip().splitlines()
-
-        assert len(lines) == 5
+        # A flush spanning midnight can place snapshots in two daily files.
+        record_count = sum(
+            len(path.read_text(encoding="utf-8").splitlines()) for path in tmp_path.glob("queue_depth_*.jsonl")
+        )
+        assert record_count == 5
 
     def test_queue_depth_metric_type(self) -> None:
         """Test QUEUE_DEPTH metric type exists."""
