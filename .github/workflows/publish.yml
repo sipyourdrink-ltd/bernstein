@@ -413,7 +413,7 @@ jobs:
       !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Dispatch Homebrew after PyPI publication
     runs-on: ubuntu-latest
-    needs: [trusted-source, publish, github-release]
+    needs: [publish, github-release]
     timeout-minutes: 5
     environment: release-channels
     permissions:
