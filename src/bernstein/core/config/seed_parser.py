@@ -2539,6 +2539,8 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
         raw_text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise SeedError(f"Cannot read seed file {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise SeedError(f"Seed file {path} must be encoded as UTF-8") from exc
 
     try:
         data_raw: object = yaml.safe_load(raw_text)
