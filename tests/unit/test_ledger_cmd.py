@@ -25,6 +25,7 @@ from bernstein.core.persistence.work_ledger import (
     KIND_TASK_COMPLETED,
     KIND_TASK_SCHEDULED,
     KIND_TASK_STARTED,
+    LedgerError,
     LedgerReader,
     WorkLedger,
     run_ledger_dir,
@@ -163,6 +164,19 @@ class TestFetchAndResume:
         entries = list(LedgerReader(run_ledger_dir(project / ".sdd", "run-a")).entries())
         assert entries[-1].kind == KIND_RUN_RESUMED
 
+    def test_resume_append_failure_keeps_json_parseable(self, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _seed(project)
+
+        def fail_append(*_args: object, **_kwargs: object) -> None:
+            raise LedgerError("write failed")
+
+        monkeypatch.setattr(WorkLedger, "append", fail_append)
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+
+        assert result.exit_code == 2, result.output
+        assert json.loads(result.stdout)["run_id"] == "run-a"
+        assert "Failed to record the resume entry: write failed" in result.stderr
+
     def test_resume_missing_ledger(self, project: Path) -> None:
         result = CliRunner().invoke(ledger_group, ["resume", "run-x", "--workdir", str(project)])
         assert result.exit_code == 1, result.output
@@ -240,6 +254,13 @@ class TestGcAndRuns:
         assert result.exit_code == 0, result.output
         history = _git(project, "rev-list", ledger_ref("run-a")).splitlines()
         assert len(history) == 1
+
+    def test_gc_missing_ledger_reports_stderr(self, project: Path) -> None:
+        result = CliRunner().invoke(ledger_group, ["gc", "run-x", "--workdir", str(project)])
+
+        assert result.exit_code == 1, result.output
+        assert "no anchored ledger" in result.stderr
+        assert result.stdout == ""
 
     def test_runs_lists_anchored_ledgers(self, project: Path) -> None:
         _seed(project)

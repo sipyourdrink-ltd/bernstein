@@ -387,7 +387,7 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
             },
         )
     except LedgerError as exc:
-        console.print(f"[red]Failed to record the resume entry:[/red] {exc}")
+        click.echo(f"Failed to record the resume entry: {exc}", err=True)
         raise SystemExit(EXIT_VERIFY_FAILED) from None
 
     signals = _write_resume_signals(root, run_id, state)
@@ -414,7 +414,7 @@ def ledger_runs_cmd(workdir: Path | None, output_json: bool) -> None:
     try:
         runs = list_ledger_runs(root)
     except LedgerGitError as exc:
-        console.print(f"[red]Failed to list ledger refs:[/red] {exc}")
+        click.echo(f"Failed to list ledger refs: {exc}", err=True)
         raise SystemExit(EXIT_VERIFY_FAILED) from None
     if output_json:
         console.print_json(json.dumps({"runs": runs}))
@@ -451,7 +451,7 @@ def ledger_gc_cmd(run_id: str, workdir: Path | None, output_json: bool) -> None:
     try:
         result = gc_ledger_ref(root, run_id)
     except LedgerGitError as exc:
-        console.print(f"[red]gc failed:[/red] {exc}")
+        click.echo(f"gc failed: {exc}", err=True)
         raise SystemExit(EXIT_NO_LEDGER) from None
     if output_json:
         console.print_json(json.dumps({"run_id": run_id, **result.to_dict()}))
