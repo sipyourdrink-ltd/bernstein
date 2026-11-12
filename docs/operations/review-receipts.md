@@ -25,6 +25,10 @@ plan from stdin.
 and `--diff` files, checks the Ed25519 signature against the receipt's
 embedded public key, and confirms the record's spine anchor. Exit codes:
 `0` verified, `1` no receipt found (or bad input), `2` mismatch (tamper).
+Verification results go to stdout on success. Missing receipts or chains,
+unreadable inputs, and mismatch diagnostics go to stderr.
+Command-line usage errors, including a file argument that does not exist,
+also exit with status `2` and print a diagnostic to stderr.
 
 The tracker comment posted on a PR is a *projection* of the receipt — a
 short verdict plus the `verify` invocation a reviewer can run — never the
@@ -48,7 +52,7 @@ carry a valid Ed25519 signature over its own binding, re-anchor against the
 spine, and record the previous pass's anchor; all passes must name the same
 ruleset, and `--rules` checks that ruleset against the file presented. The
 `--diff` is checked against the last pass. Exit codes match the single-receipt
-form: `0` verified, `1` no chain found, `2` mismatch.
+form: `0` verified, `1` no chain found (or bad input), `2` mismatch.
 
 Editing a stored `diff_hash` or `ruleset_digest` breaks that pass's signature,
 so a receipt cannot be re-pointed at a different diff or a laxer standard.
