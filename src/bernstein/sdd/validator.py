@@ -358,8 +358,20 @@ def validate_ticket(
     - a YAML file with the same ``---`` fences;
     - a YAML file containing a single mapping (no fences).
 
-    On a parse error or a missing/empty file the returned report has
-    ``ok=False`` and a single error.
+    Args:
+        path: Path to the ticket Markdown or YAML file.
+        schema_version: Ticket schema version. Defaults to ``"v1"``.
+        strict: Promote missing recommended-key warnings to errors.
+            Defaults to False.
+
+    Returns:
+        A validation report. A missing or non-file path, an OS error while
+        reading the file, or unparseable frontmatter produces one error.
+
+    Raises:
+        OSError: If checking the path metadata raises an OS error.
+        SchemaNotFoundError: If the requested schema version cannot be loaded.
+        UnicodeDecodeError: If the file is not valid UTF-8.
     """
     target = Path(path)
     if not target.exists():

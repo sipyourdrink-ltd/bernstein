@@ -229,9 +229,9 @@ class CrossTaskKB:
             ``kb.fact_published`` lifecycle event out to plugins. The
             facade fires this best-effort; failures are swallowed so a
             misbehaving hook cannot break the publish path.
-        counter: Counter for run-summary aggregation. Defaults to the
+        counter: Counter for run-summary aggregation. None uses the
             process-global instance.
-        clock_ns: Indirection point for tests to pin ``ts_ns``.
+        clock_ns: Clock supplying ``ts_ns``. None uses ``time.time_ns``.
     """
 
     def __init__(

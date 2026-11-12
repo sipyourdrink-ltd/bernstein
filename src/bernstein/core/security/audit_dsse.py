@@ -363,10 +363,11 @@ def wrap_bundle(
             input is an :class:`Article12Bundle` whose ``archive_path`` is
             ``None`` (in-memory build); :class:`TenantScopedExport` always
             carries ``bundle_bytes`` so this can be omitted.
-        keyid: Optional override; defaults to
-            ``keyid_from_public_key(public_key)``.
-        subject_name: Optional override; defaults to the bundle's archive
-            filename or :data:`_DEFAULT_SUBJECT_NAME`.
+        keyid: Optional override. None or an empty string derives the ID
+            from the signing key's public key.
+        subject_name: Optional override. None or an empty string uses the
+            archive filename if present, or a name derived from the
+            Article 12 bundle ID or the tenant ID.
 
     Returns:
         A signed :class:`Envelope` ready to be persisted via

@@ -181,6 +181,9 @@ def parse_spiffe_id(uri: str) -> SpiffeId:
     shape raises so a caller cannot mistake an arbitrary SPIFFE ID for one this
     system minted.
 
+    Args:
+        uri: SPIFFE URI to parse.
+
     Raises:
         SpiffeIdError: If the URI is not a well-formed Bernstein SPIFFE ID.
     """
