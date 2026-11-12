@@ -4912,7 +4912,7 @@ def _verify_against_merge_preview(
             )
             return cast("tuple[bool, list[str]]", verify_fn(task, merged_tree, *extra_args))
     except MergePreviewConflict as exc:
-        files = ", ".join(exc.conflicting_files) or "<unknown>"
+        files = exc.display_paths
         logger.warning(
             "merge_preview: task=%s session=%s branch=%s verdict=conflict files=%s -- "
             "held on a merge conflict with the run branch, not on a failing check",
