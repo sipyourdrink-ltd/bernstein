@@ -162,6 +162,36 @@ class TestCompactSmallTasks:
         assert len(result) == 1
         assert {t.id for t in result[0]} == {"t1", "t2"}
 
+    def test_interleaved_roles_skip_incompatible_candidate_comparisons(self, monkeypatch) -> None:
+        """Only same-role candidates reach the existing compatibility check."""
+        tasks = [
+            self._small_task("backend-1", role="backend"),
+            self._small_task("qa-1", role="qa"),
+            self._small_task("frontend-1", role="frontend"),
+            self._small_task("backend-2", role="backend"),
+            self._small_task("qa-2", role="qa"),
+            self._small_task("frontend-2", role="frontend"),
+        ]
+        batches = [[task] for task in tasks]
+        can_merge = compact_small_tasks.__globals__["_can_merge_batches"]
+        comparisons = 0
+
+        def counting_can_merge(batch, candidate, effective_max):
+            nonlocal comparisons
+            comparisons += 1
+            return can_merge(batch, candidate, effective_max)
+
+        monkeypatch.setitem(compact_small_tasks.__globals__, "_can_merge_batches", counting_can_merge)
+
+        result = compact_small_tasks(batches, max_per_batch=3)
+
+        assert comparisons == 3
+        assert [[task.id for task in batch] for batch in result] == [
+            ["backend-1", "backend-2"],
+            ["qa-1", "qa-2"],
+            ["frontend-1", "frontend-2"],
+        ]
+
     def test_no_compaction_different_roles(self) -> None:
         """Same-small tasks but different roles should NOT merge."""
         t1 = self._small_task("t1", role="backend")
