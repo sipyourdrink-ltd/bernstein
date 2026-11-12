@@ -56,12 +56,6 @@ jobs:
           npm test
           npm run test:components
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: webui-playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
-
       - name: Install GUI and browser dependencies
         run: |
           uv sync --locked --extra gui
