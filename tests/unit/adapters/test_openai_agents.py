@@ -1831,14 +1831,14 @@ class TestRunnerRun:
             prompt="hello",
             workdir="/workspace",
             model="deepseek/deepseek-chat",
-            base_url="https://openrouter.ai/api/v1",
+            base_url="https://openrouter.ai/api/v1?key=synthetic-endpoint-secret",
             api_key_env="OPENROUTER_API_KEY",
         )
         client_sentinel = object()
         explicit_model_sentinel = object()
         fake_agent_cls = MagicMock()
         fake_runner = MagicMock()
-        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_runner.run_sync.return_value = _FakeResult(summary="synthetic-provider-output")
         fake_chat_model_cls = MagicMock(return_value=explicit_model_sentinel)
         fake_sdk = MagicMock(
             Agent=fake_agent_cls,
@@ -1849,7 +1849,7 @@ class TestRunnerRun:
         with (
             patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
             patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
-            caplog.at_level("INFO"),
+            caplog.at_level("DEBUG", logger="bernstein.adapters.openai_agents_runner"),
         ):
             rc = run(manifest)
         assert rc == EXIT_OK
@@ -1861,10 +1861,10 @@ class TestRunnerRun:
             openai_client=client_sentinel,
         )
         assert fake_agent_cls.call_args.kwargs["model"] is explicit_model_sentinel
-        assert any(
-            "deepseek/deepseek-chat" in rec.message and "https://openrouter.ai/api/v1" in rec.message
-            for rec in caplog.records
-        )
+        assert fake_openai.AsyncOpenAI.call_args.kwargs["base_url"] == manifest.base_url
+        assert "routing model='deepseek/deepseek-chat'" in caplog.text
+        assert "synthetic-endpoint-secret" not in caplog.text
+        assert "synthetic-provider-output" not in caplog.text
 
     def test_run_uses_bare_model_string_without_base_url(self) -> None:
         """No ``base_url`` override: existing behavior (bare model string,
