@@ -1,74 +1,56 @@
-# `bernstein install-hooks`
+# Local Git hooks
 
-Installs local git pre-commit and pre-push hooks so common checks run
-before code leaves your machine, instead of failing for the first time
-in CI.
+From the root of a fresh clone, follow the
+[contributor setup](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md#quick-start)
+before installing optional Git hooks.
 
-This is unrelated to the [lifecycle hooks contract](hooks.md)
-(`pre_task`/`post_task`/`pre_merge`/etc., driven by `bernstein.yaml` and
-run by the orchestrator against agent activity) and to the
-[hook permission-rule prefilter](../operations/hooks.md) (the `if:`
-filter on those lifecycle hooks). `install-hooks` writes plain git
-hooks into `.git/hooks/` for the contributor's own commits.
+## Pre-commit
 
-## Usage
+Run the checks from `.pre-commit-config.yaml` against staged files:
 
 ```bash
-bernstein install-hooks
-bernstein install-hooks --force   # -f: overwrite hooks that already exist
+uvx --python 3.13 pre-commit run
 ```
 
-| Flag | Meaning |
-|---|---|
-| `--force`, `-f` | Overwrite an existing `pre-commit` or `pre-push` hook. Without it, an existing hook is left untouched and skipped. |
-
-The command exits with an error if run outside a git repository (no
-`.git/hooks` directory).
-
-## What it installs
-
-Two scripts are written to `.git/hooks/` and made executable
-(`chmod 755`):
-
-**`pre-commit`**
+For a persistent hook, install the tool outside the uv cache and then
+install the hook from the repository root:
 
 ```bash
-#!/bin/bash
-set -e
-uv run ruff check --fix .
-uv run pytest tests/unit -x -q
+uv tool install --python 3.13 pre-commit
+pre-commit install
 ```
 
-Runs `ruff check --fix` and the unit test suite (stopping at the first
-failure) before a commit is allowed to complete.
+If the command is not on your PATH, run `uv tool update-shell` and open a
+new shell before installing the hook. Run these commands on each clone
+where you want the hook.
 
-**`pre-push`**
+The checks may edit staged files for formatting and whitespace. Review
+and stage those edits before retrying the commit. To check explicit
+paths, pass `run --files` followed by the paths.
+
+## Pre-push
+
+Install the versioned hook on a standard clone:
 
 ```bash
-#!/bin/bash
-# Check for unmerged PRs or blocked status before push
-exit 0
+ln -s ../../scripts/git-hooks/pre-push .git/hooks/pre-push
 ```
 
-Currently a placeholder that always exits `0` (i.e. never blocks a
-push).
+The hook blocks pushes for Ruff lint and import-contract failures.
+Pyright results are advisory. Run Git with `UV_PYTHON=3.13` to match
+the contributor environment.
 
-For each of the two hooks, if the target file already exists and
-`--force` was not passed, the command prints a note and leaves that
-hook untouched — it does not overwrite silently and does not merge
-with an existing hook script.
+## Existing `bernstein install-hooks` installations
 
-## Limitations
+This command writes its own `pre-commit` and `pre-push` scripts under
+`.git/hooks/`. Its pre-commit runs Ruff with fixes and runs
+`pytest tests/unit` in one process. Its pre-push is a no-op. The
+recommended hooks above use the repository's check configuration and
+keep the full unit suite in the isolated test runner. If migrating,
+inspect and back up any existing hooks before replacing them.
+`bernstein install-hooks --force` writes through a pre-push symlink and
+can overwrite the tracked `scripts/git-hooks/pre-push` file.
 
-- The installed `pre-commit` hook runs the full `tests/unit` suite on
-  every commit; on a large working tree this can be slower than
-  committing without it.
-- Hooks are written to `.git/hooks/`, which git does not version —
-  each clone/worktree must run `bernstein install-hooks` again to get
-  them.
-- There is no `uninstall-hooks` command; remove the files from
-  `.git/hooks/` directly to revert.
-
-## Source
-
-- `src/bernstein/cli/commands/advanced_cmd.py` — `install_hooks` (registered as `bernstein install-hooks` in `cli/main.py`)
+These local checks are separate from the
+[lifecycle hooks contract](hooks.md) and the
+[hook permission-rule prefilter](../operations/hooks.md).
