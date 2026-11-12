@@ -282,14 +282,14 @@ def _load_trusted_keys(entries: tuple[str, ...]) -> dict[str, bytes]:
     "--trajectory",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
-    help="Path to trajectory JSON file (events and diff).",
+    help="Path to the trajectory JSON file (events and diff).",
 )
 @click.option(
     "--diff",
     "diff_file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
-    help="Path to git diff file for goal-drift suite.",
+    help="Path to the git diff file for the goal-drift suite.",
 )
 @click.option(
     "--threshold",

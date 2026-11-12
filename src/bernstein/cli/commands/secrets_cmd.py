@@ -27,13 +27,13 @@ __all__ = ["secrets_group"]
 def _load_secrets_block(config_path: Path) -> dict[str, Any]:
     """Load and validate the ``security.secrets`` block from a YAML file."""
     if not config_path.exists():
-        raise click.ClickException(f"config not found: {config_path}")
+        raise click.ClickException(f"Configuration file not found: {config_path}")
     try:
         raw: object = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
-        raise click.ClickException(f"invalid YAML in {config_path}: {exc}") from exc
+        raise click.ClickException(f"Invalid YAML in {config_path}: {exc}") from exc
     if not isinstance(raw, dict):
-        raise click.ClickException(f"top-level YAML in {config_path} must be a mapping")
+        raise click.ClickException(f"The top-level YAML in {config_path} must be a mapping.")
     security: object = raw.get("security") or {}
     if not isinstance(security, dict):
         raise click.ClickException("security block must be a mapping")

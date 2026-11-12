@@ -43,7 +43,7 @@ def _safe_name(name: str) -> str:
     """
     candidate = name.strip()
     if not candidate:
-        raise click.BadParameter("name must not be empty")
+        raise click.BadParameter("Name must not be empty.")
     if candidate in {".", ".."} or any(ch in _UNSAFE_NAME_CHARS for ch in candidate):
         raise click.BadParameter(f"name is not a safe path component: {name!r}")
     return candidate

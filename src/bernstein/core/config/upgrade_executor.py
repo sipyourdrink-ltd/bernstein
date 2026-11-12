@@ -549,7 +549,7 @@ class UpgradeExecutor:
             return False
 
         if transaction.status not in (UpgradeStatus.COMPLETED, UpgradeStatus.FAILED):
-            logger.warning("Cannot rollback upgrade in status %s", transaction.status)
+            logger.warning("Cannot roll back upgrade in status %s", transaction.status)
             return False
 
         self._rollback_upgrade(transaction)

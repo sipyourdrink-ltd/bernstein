@@ -824,9 +824,7 @@ def ladder_cmd(
     No side effects: no patch is applied, no comment is posted.
     """
     if not dry_run:
-        raise click.ClickException(
-            "ladder MVP only supports --dry-run; rerun with --dry-run to see the rung that would fire."
-        )
+        raise click.ClickException("Use --dry-run to see which escalation rung would run.")
 
     failure = _build_failure_from_payload(
         repo=repo_slug,
