@@ -44,7 +44,7 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 | `-t, --task PATTERN` | none | Run only backlog tasks matching PATTERN. |
 | `--sandbox BACKEND` | none | Override the sandbox backend selected for the run. |
 | `--allow-paid` | off | Allow selection of paid sandbox backends. |
-| `--refine SPEC` | none | Set the iterative refinement loop configuration. |
+| `--refine SPEC` | none | Parse and validate an iterative refinement spec. The root runner does not consume it yet. |
 | `--auto-pr` | off | Auto-open a GitHub PR when all tasks complete. |
 | `--activity-log [PATH]` | off | Write activity to a log file. Default path `.sdd/logs/activity.log`. |
 
