@@ -45,10 +45,6 @@ interface QueuedApprovalsResponse {
 
 type Decision = 'allow' | 'reject';
 
-function isExpired(approval: QueuedApproval, now: number): boolean {
-  return now >= (approval.created_at + approval.ttl_seconds) * 1000;
-}
-
 // ---------------------------------------------------------------------------
 // Pure helpers - derive design-only fields from generic tool_args.
 // ---------------------------------------------------------------------------
@@ -246,7 +242,7 @@ export default function Approvals() {
   });
 
   const submitDecision = useCallback((decision: Decision) => {
-    if (queueQ.isError || isResolving || decisionInFlight.current || !selected?.nonce || isExpired(selected, Date.now())) {
+    if (queueQ.isError || isResolving || decisionInFlight.current || !selected?.nonce) {
       return;
     }
     decisionInFlight.current = true;
@@ -506,8 +502,7 @@ function SelectedApproval({
   const target = approvalTarget(approval);
   const waitS = waitSeconds(approval.created_at, now);
 
-  const expired = isExpired(approval, now);
-  const disabled = pending || !approval.nonce || expired;
+  const disabled = pending || !approval.nonce;
 
   return (
     <>
@@ -643,11 +638,7 @@ function SelectedApproval({
             Deny
           </button>
         </div>
-        {expired ? (
-          <p role="alert" className="text-body text-muted-foreground">
-            This approval has expired.
-          </p>
-        ) : !approval.nonce && (
+        {!approval.nonce && (
           <p role="alert" className="text-body text-muted-foreground">
             This request has no approval nonce. Reload the queue before deciding.
           </p>

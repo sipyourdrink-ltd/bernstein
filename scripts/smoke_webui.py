@@ -136,15 +136,21 @@ def check_approvals(
     expect(page.get_by_role("alert").filter(has_text="This approval is no longer current")).to_be_visible()
     expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_hidden()
 
-    expiring = approvals[3]
-    expect(page.get_by_text(f"APPROVAL · {expiring.id}", exact=True)).to_be_visible()
+    pending = approvals[3]
+    expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_visible()
     page.evaluate("() => { const now = Date.now; Date.now = () => now() + 180_000; }")
-    expect(approve).to_be_disabled()
-    expect(page.get_by_text("This approval has expired.", exact=True)).to_be_visible()
-    page.keyboard.press("a")
-    assert len(attempts) == 3
+    url = f"{base}/api/v1/approvals/{pending.id}/resolve"
+    expect(approve).to_be_enabled()
+    with page.expect_response(url) as skewed:
+        page.keyboard.press("a")
+    assert skewed.value.ok
+    resolution = ApprovalQueue(base_dir=queue_dir).get_resolution(pending.id)
+    assert resolution is not None and resolution.decision.value == "allow"
+    expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_hidden()
+    assert attempts.count(url) == 1
 
     expired = approvals[4]
+    expect(page.get_by_text(f"APPROVAL · {expired.id}", exact=True)).to_be_hidden()
     reply = page.request.post(
         f"{base}/api/v1/approvals/{expired.id}/resolve",
         data={"decision": "allow", "nonce": expired.nonce_hex},
