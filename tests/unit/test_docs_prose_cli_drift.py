@@ -405,8 +405,24 @@ def test_reverting_slice1_fix_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Corpus test: the gate over the pages a new reader lands on first.
+# Corpus tests: check narrative pages against the CLI.
 # ---------------------------------------------------------------------------
+
+
+def test_benchmark_docs_use_registered_bench_subcommands() -> None:
+    page = REPO_ROOT / "docs" / "eval" / "bench.md"
+    commands = extract(page.read_text(encoding="utf-8"))
+    # Suite names are bare positional arguments. Check only the command path.
+    bench_commands = Extraction(
+        checked=[
+            Invocation(line=inv.line, tokens=inv.tokens[:2])
+            for inv in commands.checked
+            if len(inv.tokens) >= 2 and inv.tokens[0] == "bench"
+        ]
+    )
+    assert bench_commands.checked, "extractor found no bench subcommands"
+    failures = check(bench_commands, _surface(), "docs/eval/bench.md")
+    assert not failures, "\n".join(failures)
 
 
 def test_narrative_docs_have_no_cli_drift() -> None:

@@ -1,6 +1,6 @@
 # `bernstein-bench`: runnable, reproducibility-gated evaluation harness
 
-> Every number on the leaderboard carries its own proof.
+> Every bundle score carries its own proof.
 > A score that ships without a replayable receipt is indistinguishable from a hand-typed number.
 
 ---
@@ -24,7 +24,7 @@ machine), `bernstein-bench` is designed so that:
    conclusion that is only ever green over a baseline that was signed, from
    the same suite, and re-verified (#5458).
 
-The primary artefact is not a leaderboard row — it is a **submission bundle** whose
+The primary artefact is a **submission bundle** whose
 score is recomputable from the replayable run receipts it embeds.
 
 ---
@@ -47,12 +47,8 @@ bernstein bench run <suite>
                                          ▼
                               bernstein bench verify
                                          │
-                              MATCH  ────┤
-                            DIVERGED ────┘
-                                         │
                                          ▼
-                                    Leaderboard
-                              (only verified bundles)
+                                  MATCH or divergence
 ```
 
 ### Key invariants
@@ -65,7 +61,6 @@ bernstein bench run <suite>
 | No missing receipts | An empty/absent receipt fails the entire bundle |
 | Whole suite, once | The bundle must hold exactly one result for every suite task. An empty bundle, a subset, a repeated task or a task the suite does not define is `COVERAGE_MISMATCH`, however clean each present task replays |
 | Settings and ranking weight are attested | `lambda_value` is part of `bundle_hash` (so of the signature) whenever it is not the default, and `bench verify` recomputes `harness_fingerprint` from `scheduler_config` |
-| Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
 | Attributable | The bundle carries a detached Ed25519 JWS over its hash, made with the install identity. `bench verify` checks it against a key you supply with `--trusted-key FINGERPRINT=PATH` |
 
 Every hash above can be recomputed by whoever rebuilt the bundle, so they answer
@@ -140,8 +135,12 @@ per-task receipts** — this is the empirical determinism property.
 ### 2. Verify the bundle
 
 ```bash
-bernstein bench verify my-bundle.json
+bernstein bench verify my-bundle.json --suite gate-evasion-v1 \
+  --trusted-key FINGERPRINT=public-key.pem
 ```
+
+Use the suite from the run and replace `FINGERPRINT` and `public-key.pem`
+with the signer's fingerprint and a trusted copy of the signer's public key.
 
 The verifier:
 
@@ -179,20 +178,7 @@ overall     : MATCH
   ✓ doc_update_docstring                     MATCH
 ```
 
-### 3. Submit to the leaderboard
-
-```bash
-bernstein bench submit my-bundle.json
-```
-
-The submission gate runs `bench verify` first.  A bundle whose replayed
-runs do not reproduce the claimed per-task outcomes is **rejected** before
-any leaderboard entry is written.
-
-The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
-each row linking its bundle hash so anyone can re-verify.
-
-### 4. Compare two bundles
+### 3. Compare two bundles
 
 ```bash
 bernstein bench compare a.json b.json
@@ -245,7 +231,7 @@ the report and the harness verdict goes to stderr. The harness check
 gates every format: a cost delta across differing harness settings is
 as meaningless as a score delta.
 
-### 5. Report into CI (`--ci`, `--sarif-out`, `--baseline`)
+### 4. Report into CI (`--ci`, `--sarif-out`, `--baseline`)
 
 ```bash
 bernstein bench run gate-evasion-v1 --out run.json \
