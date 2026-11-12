@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from http.client import IncompleteRead
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -236,8 +237,13 @@ def generate_sdk_from_app(base_url: str = "http://127.0.0.1:8052") -> str:
     # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
     with urllib.request.urlopen(url, timeout=_OPENAPI_TIMEOUT_SECONDS) as resp:
         payload = resp.read(_MAX_OPENAPI_BYTES + 1)
-    if len(payload) > _MAX_OPENAPI_BYTES:
-        raise ValueError(f"OpenAPI document exceeds the {_MAX_OPENAPI_BYTES}-byte limit")
+        if len(payload) > _MAX_OPENAPI_BYTES:
+            raise ValueError(f"OpenAPI document exceeds the {_MAX_OPENAPI_BYTES}-byte limit")
+        # A sized HTTPResponse.read may return early without raising on an
+        # incomplete Content-Length response. Keep the original framing check.
+        remaining = getattr(resp, "length", None)
+        if isinstance(remaining, int) and remaining > 0:
+            raise IncompleteRead(payload, remaining)
     return generate_sdk(json.loads(payload.decode("utf-8")))
 
 

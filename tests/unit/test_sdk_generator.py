@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from http.client import HTTPResponse, IncompleteRead
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from bernstein.core.sdk_generator import (
@@ -329,3 +330,13 @@ def test_sdk_fetch_reads_only_one_byte_past_the_limit() -> None:
 
     read.assert_called_once_with(65)
     assert response.closed
+
+
+def test_sdk_fetch_rejects_truncated_http_response_with_complete_json() -> None:
+    socket = Mock()
+    socket.makefile.return_value = BytesIO(b'HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{"paths": {}}')
+    response = HTTPResponse(socket)
+    response.begin()
+
+    with patch("urllib.request.urlopen", return_value=response), pytest.raises(IncompleteRead):
+        generate_sdk_from_app()
