@@ -55,6 +55,7 @@ _CONNECT_TIMEOUT_SECONDS = 10
 _SERVER_ALIVE_INTERVAL_SECONDS = 30
 _CONTROL_PERSIST_SECONDS = 600
 _DEFAULT_TIMEOUT_SLACK = 5
+_CONTROL_COMMAND_TIMEOUT_SECONDS = 30
 
 #: A remote-path segment (session id / worktree dir name) must match this so it
 #: can never escape the remote worktree root or be read as an ``ssh`` flag.
@@ -210,7 +211,7 @@ class _SubprocessSSHTransport:
     """
 
     def run_blocking(self, argv: list[str]) -> RemoteExec:
-        proc = subprocess.run(argv, capture_output=True, check=False)
+        proc = subprocess.run(argv, capture_output=True, check=False, timeout=_CONTROL_COMMAND_TIMEOUT_SECONDS)
         return RemoteExec(returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
 
     async def run_async(
@@ -573,7 +574,10 @@ class SSHSandboxBackend:
             self._remote_target(),
         ]
         logger.debug("ssh: opening ControlMaster socket %s", self._control_socket)
-        result = self._transport.run_blocking(argv)
+        try:
+            result = self._transport.run_blocking(argv)
+        except subprocess.TimeoutExpired as exc:
+            raise SandboxConnectionError(host=self._host, reason="control connection timed out") from exc
         if result.returncode != 0:
             stderr = result.stderr.decode("utf-8", errors="replace")
             classified = _classify_ssh_failure(self._host, stderr)
@@ -600,7 +604,7 @@ class SSHSandboxBackend:
         ]
         try:
             self._transport.run_blocking(argv)
-        except OSError as exc:
+        except (OSError, subprocess.TimeoutExpired) as exc:
             logger.debug("ssh -O exit: %s", exc)
         # Best-effort socket removal - OpenSSH usually clears it itself.
         try:

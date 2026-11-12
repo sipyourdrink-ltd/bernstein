@@ -119,7 +119,11 @@ class TestCloneMissing:
 
     @patch("bernstein.core.persistence.workspace.subprocess.run")
     def test_clones_missing_repo(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        def clone_stub(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            Path(args[-1]).mkdir()
+            return subprocess.CompletedProcess(args=args, returncode=0)
+
+        mock_run.side_effect = clone_stub
         ws = Workspace(
             root=tmp_path,
             repos=[
@@ -139,6 +143,7 @@ class TestCloneMissing:
         assert args[1] == "clone"
         assert "--branch" in args
         assert "main" in args
+        assert (tmp_path / "repos" / "new-repo").is_dir()
 
     @patch("bernstein.core.persistence.workspace.subprocess.run")
     def test_skips_existing_repo(self, mock_run: MagicMock, tmp_path: Path) -> None:
