@@ -2,6 +2,7 @@
 
 Markers never expire. Only an explicit, journaled re-enable releases them.
 Workspace writes are atomic and serialized through the audit chain transaction.
+The store and entry design follows the one proposed in #5750.
 """
 
 from __future__ import annotations
