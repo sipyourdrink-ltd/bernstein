@@ -426,21 +426,38 @@ def test_benchmark_docs_use_registered_bench_subcommands() -> None:
     assert not failures, "\n".join(failures)
 
 
-def test_gate_evasion_docs_verify_signed_bundles() -> None:
+def test_benchmark_docs_verify_signed_bundles() -> None:
     page = REPO_ROOT / "docs" / "eval" / "bench.md"
     examples = extract(page.read_text(encoding="utf-8").replace("\\\n", " "))
-    bundles = {"my-bundle.json", "gate-evasion-bundle.json"}
+    suite_by_bundle: dict[str, str] = {}
+    for invocation in examples.checked:
+        tokens = invocation.tokens
+        if tokens[:2] != ("bench", "run") or "--stub-signer" in tokens:
+            continue
+        for option, value in pairwise(tokens[2:]):
+            if option == "--out":
+                suite_by_bundle[value] = tokens[2]
+
+    without_install_signature = {"--help", "-h", "--no-signature", "--stub-signer"}
     verification_commands = [
-        invocation.tokens
+        invocation.tokens[2:]
         for invocation in examples.checked
-        if len(invocation.tokens) >= 3
-        and invocation.tokens[:2] == ("bench", "verify")
-        and invocation.tokens[2] in bundles
+        if invocation.tokens[:2] == ("bench", "verify")
+        and not all(_is_placeholder(token) for token in invocation.tokens[2:])
+        and without_install_signature.isdisjoint(invocation.tokens)
     ]
-    assert {tokens[2] for tokens in verification_commands} == bundles
+    assert verification_commands, "extractor found no signed bundle verification examples"
     for tokens in verification_commands:
-        assert ("--suite", "gate-evasion-v1") in pairwise(tokens), tokens
-        assert "--trusted-key" in tokens, f"{tokens[2]}: use --trusted-key FINGERPRINT=PATH"
+        bundle = tokens[0]
+        options = list(pairwise(tokens))
+        if bundle in suite_by_bundle:
+            assert ("--suite", suite_by_bundle[bundle]) in options, tokens
+        trusted_keys = [value for option, value in options if option == "--trusted-key"]
+        message = f"{bundle}: use --trusted-key FINGERPRINT=PATH"
+        assert len(trusted_keys) == tokens.count("--trusted-key") > 0, message
+        for key in trusted_keys:
+            fingerprint, _, path = key.partition("=")
+            assert fingerprint.strip(" '\"") and path.strip(" '\""), message
 
 
 def test_narrative_docs_have_no_cli_drift() -> None:

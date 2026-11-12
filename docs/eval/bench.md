@@ -112,7 +112,7 @@ follows the same rule: without `--stub-signer` it refuses.
 
 ```bash
 # A mock-scored, stub-signed bundle (plumbing and tests only)
-bernstein bench run golden-v1 --out my-bundle.json --stub-signer
+bernstein bench run golden-v1 --out mock-bundle.json --stub-signer
 ```
 
 With `--budget <usd>`, the runner checks the cumulative spend before each
@@ -903,7 +903,19 @@ The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canarie
 | `pr_title_and_body` | `build_evidence_projection()` of an evidence bundle whose producer carried the canaries | clean — the projection references the bundle without embedding evidence |
 | `journal`, `receipts`, `telemetry_export` | a governed run | not exercised |
 
-Run it with `bernstein bench run leakage-v1 --out leakage.json` and verify with `bernstein bench verify leakage.json --suite leakage-v1`. The nonce is fresh per run, so two bundles differ by design; a canary that survived one run must not match the next.
+Run the suite and verify the resulting bundle offline:
+
+```bash
+bernstein bench run leakage-v1 --out leakage.json
+bernstein bench verify leakage.json --suite leakage-v1 \
+  --trusted-key FINGERPRINT=public-key.pem
+```
+
+Set `FINGERPRINT` to the bundle signer's fingerprint and `public-key.pem` to the
+path to a trusted copy of the signer's public key in SPKI PEM format.
+
+The nonce is fresh per run, so two bundles differ by design. A canary that
+survived one run must not match the next.
 
 ### What the suite does not cover, and says so
 
