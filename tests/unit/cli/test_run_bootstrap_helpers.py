@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
+import httpx
 import pytest
 
 from bernstein.cli.run_bootstrap import (
@@ -313,13 +314,42 @@ def test_save_plan_markdown_writes_under_runtime_plans(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_dry_run_tasks_plan_load_error_exits_one(tmp_path: Path) -> None:
+def test_load_dry_run_tasks_plan_load_error_exits_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A malformed plan file surfaces SystemExit(1), not a raw traceback."""
     bad_plan = tmp_path / "broken.yaml"
     bad_plan.write_text("this: is: not: valid: yaml: [unclosed\n")
     with pytest.raises(SystemExit) as exc:
         _load_dry_run_tasks(bad_plan)
     assert exc.value.code == 1
+
+    output = capsys.readouterr()
+    assert "Plan load error" in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize(
+    ("failure", "diagnostic"),
+    [
+        (httpx.ConnectError("offline"), "Task server not running"),
+        (httpx.ReadTimeout("timed out"), "Failed to fetch tasks"),
+    ],
+)
+def test_load_dry_run_tasks_server_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: httpx.RequestError,
+    diagnostic: str,
+) -> None:
+    def fail_get(*_args: object, **_kwargs: object) -> httpx.Response:
+        raise failure
+
+    monkeypatch.setattr(httpx, "get", fail_get)
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(None)
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert diagnostic in output.err
+    assert output.out == ""
 
 
 class TestLoadPlanGoalFromYaml:

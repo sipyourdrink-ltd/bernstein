@@ -194,7 +194,7 @@ def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
     try:
         config, _tasks = load_plan(plan_path)
     except PlanLoadError as exc:
-        console.print(f"[red]Failed to load plan file:[/red] {exc}")
+        click.echo(f"Failed to load plan file: {exc}", err=True)
         raise SystemExit(1) from exc
 
     unapplied = [name for name in _UNAPPLIED_PLAN_SETTINGS if getattr(config, name)]
@@ -288,7 +288,7 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
             _plan_config, tasks = load_plan(plan_file)
             return tasks
         except PlanLoadError as exc:
-            console.print(f"[red]Plan load error:[/red] {exc}")
+            click.echo(f"Plan load error: {exc}", err=True)
             raise SystemExit(1) from exc
 
     _headers: dict[str, str] = {}
@@ -304,11 +304,14 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         resp.raise_for_status()
         tasks_data = resp.json()
     except httpx.ConnectError as err:
-        console.print("[red]Task server not running. Start with `bernstein run` first,[/red]")
-        console.print("[red]or pass a plan file: `bernstein run --dry-run plan.yaml`[/red]")
+        click.echo(
+            "Task server not running. Start with `bernstein run` first,\n"
+            "or pass a plan file: `bernstein run --dry-run plan.yaml`",
+            err=True,
+        )
         raise SystemExit(1) from err
     except Exception as exc:
-        console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
+        click.echo(f"Failed to fetch tasks: {exc}", err=True)
         raise SystemExit(1) from exc
 
     return [Task.from_dict(td) for td in tasks_data]
@@ -2911,7 +2914,7 @@ def _run_impl(
                 except Exception:
                     loaded_goal = str(plan_file)
             except Exception as exc:
-                console.print(f"[red]Failed to load plan file:[/red] {exc}")
+                click.echo(f"Failed to load plan file: {exc}", err=True)
                 raise SystemExit(1) from exc
 
             console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
@@ -2991,7 +2994,7 @@ def _run_impl(
             # into a generic "failed to load plan file" message.
             raise
         except Exception as exc:
-            console.print(f"[red]Failed to load plan file:[/red] {exc}")
+            click.echo(f"Failed to load plan file: {exc}", err=True)
             raise SystemExit(1) from exc
 
     # --from-plan: load goal from saved plan file, override inline goal

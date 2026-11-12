@@ -90,6 +90,9 @@ bernstein skills list    # discoverable skill packs (progressive disclosure)
 bernstein skills show <name>  # print a skill body with its references
 ```
 
+`bernstein run --dry-run` exits with status `1` and writes a diagnostic to
+stderr if it cannot load its plan or fetch tasks from the task server.
+
 ```bash
 bernstein fingerprint build --corpus-dir ~/oss-corpus  # build local similarity index
 bernstein fingerprint check src/foo.py                 # check generated code against the index
