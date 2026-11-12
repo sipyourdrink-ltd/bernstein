@@ -155,15 +155,7 @@ def _subsystem_context(rel_path: str, workdir: Path) -> str:
 
 
 def _find_importers(_rel_path: str, _workdir: Path) -> list[str]:
-    """Find files that import the given file.
-
-    Args:
-        rel_path: Relative path to the file.
-        workdir: Project root directory.
-
-    Returns:
-        List of relative paths to importing files.
-    """
+    """Return an empty importer list until dependency discovery is implemented."""
     # Simplified implementation for now
     return []
 

@@ -31,18 +31,24 @@ class EvidenceError(ValueError):
 
 
 class PinPolicy(IntEnum):
+    """PIN policies encoded in Yubico attestation certificates."""
+
     NEVER = 1
     ONCE = 2
     ALWAYS = 3
 
 
 class TouchPolicy(IntEnum):
+    """Touch policies encoded in Yubico attestation certificates."""
+
     NEVER = 1
     ALWAYS = 2
     CACHED = 3
 
 
 class FormFactor(IntEnum):
+    """Device form factors encoded in Yubico attestation certificates."""
+
     USB_A_KEYCHAIN = 1
     USB_A_NANO = 2
     USB_C_KEYCHAIN = 3
@@ -54,6 +60,8 @@ class FormFactor(IntEnum):
 
 @dataclass(frozen=True)
 class YubicoExtensions:
+    """Parsed Yubico certificate extensions describing the attested device."""
+
     firmware: tuple[int, int, int]
     serial: int
     pin: PinPolicy
@@ -74,6 +82,8 @@ class YubicoExtensions:
 
 @dataclass(frozen=True)
 class EvidenceVerdict:
+    """Offline evidence verification outcome with diagnostic details."""
+
     ok: bool
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -140,6 +150,7 @@ def _cert(value: Any) -> x509.Certificate:
 
 
 def certificate_sha256(cert: x509.Certificate) -> str:
+    """Return the hexadecimal SHA-256 fingerprint of a certificate."""
     return cert.fingerprint(hashes.SHA256()).hex()
 
 

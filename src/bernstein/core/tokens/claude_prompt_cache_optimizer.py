@@ -24,6 +24,8 @@ def _hash_text(text: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class CacheableSegment:
+    """A reusable prompt segment with its estimated caching benefit."""
+
     segment_id: str
     content: str
     token_estimate: int
@@ -43,6 +45,8 @@ class CacheableSegment:
 
 @dataclass(frozen=True, slots=True)
 class CacheOptimizationPlan:
+    """Proposed reusable prompt segments and their estimated savings."""
+
     segments: list[CacheableSegment]
     total_cacheable_tokens: int
     estimated_savings_per_run_usd: float
@@ -59,6 +63,8 @@ class CacheOptimizationPlan:
 
 @dataclass
 class PromptCacheOptimizer:
+    """Identify repeated prompt segments and estimate reuse across agent roles."""
+
     agent_prompts: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     segments: list[CacheableSegment] = field(default_factory=list[CacheableSegment])
 

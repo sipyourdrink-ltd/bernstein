@@ -137,6 +137,7 @@ class CrossTaskAdmission:
 
 
 def run_cross_task_gate(candidate_effects: list[TaskEffects]) -> CrossTaskAdmission:
+    """Evaluate cross-task effects and report evidence gaps alongside the verdict."""
     started = time.perf_counter()
     verdict = cross_task_check(candidate_effects)
     duration_ms = max(0, int((time.perf_counter() - started) * 1000))

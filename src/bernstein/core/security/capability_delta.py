@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 
 class GrantDirection(str, Enum):  # noqa: UP042
+    """Classify a permission change by its effect on access."""
+
     WIDENING = "WIDENING"
     NARROWING = "NARROWING"
     UNCHANGED = "UNCHANGED"
@@ -19,6 +21,8 @@ class GrantDirection(str, Enum):  # noqa: UP042
 
 @dataclass(frozen=True)
 class GrantChange:
+    """Describe one permission difference and the axis it affects."""
+
     path: str
     direction: GrantDirection
     axis: str
@@ -28,6 +32,8 @@ class GrantChange:
 
 @dataclass(frozen=True)
 class GrantDelta:
+    """A run-scoped set of permission changes for one role."""
+
     role: str
     run_id: str
     changes: tuple[GrantChange, ...]
@@ -88,6 +94,7 @@ def compute_grant_delta(
     run_id: str,
     timestamp_ns: int = 0,
 ) -> GrantDelta:
+    """Describe changes in permissions between two snapshots for a role."""
     changes: list[GrantChange] = []
 
     old_allowed = set(old.allowed_paths)

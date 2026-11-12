@@ -60,6 +60,8 @@ def _jws_kid(detached_jws: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AnchoredRunIdentity:
+    """Evidence binding an agent card and run journal head to a run."""
+
     run_id: str
     agent_id: str
     agent_card_kid: str
@@ -74,6 +76,8 @@ class AnchoredRunIdentity:
 
 @dataclass(slots=True)
 class IdentitySpawnAnchor:
+    """Record and reconstruct a run's identity binding in the audit chain."""
+
     chain: AuditChainStore
     trusted_public_keys: Mapping[str, bytes]
     clock: Callable[[], float] = time.time

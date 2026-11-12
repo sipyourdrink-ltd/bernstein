@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class StopTier(IntEnum):
+    """Ordered signal tiers for a cooperative stop."""
+
     NOTIFY = 0
     INT = 1
     TERM = 2
@@ -33,6 +35,8 @@ class StopTier(IntEnum):
 
 
 class StopOutcome(StrEnum):
+    """Progress and terminal outcomes for a tracked process-group stop."""
+
     PENDING = "pending"
     GONE = "gone"
     UNVERIFIED = "unverified"
@@ -41,6 +45,8 @@ class StopOutcome(StrEnum):
 
 @dataclass(frozen=True)
 class StopEscalationPolicy:
+    """Grace periods, retry limits, and heartbeat settings for stop escalation."""
+
     notify_grace_s: float = 5.0
     int_grace_s: float = 10.0
     term_grace_s: float = 15.0
@@ -84,6 +90,8 @@ class StopEscalationPolicy:
 
 @dataclass
 class StopEntry:
+    """Track a task's process group, signal attempts, and stop outcome."""
+
     task_id: str
     session_id: str
     pgid: int
@@ -101,11 +109,15 @@ class StopEntry:
 
 
 class StopOps(Protocol):
+    """Injectable process-group signaling and liveness checks."""
+
     def send(self, pgid: int, sig: int) -> bool: ...
     def alive(self, pgid: int) -> bool: ...
 
 
 class PlatformOps:
+    """Operating system implementation of the stop reaper's process operations."""
+
     def send(self, pgid: int, sig: int) -> bool:
         return platform_compat.kill_process_group(pgid, sig)
 
@@ -118,6 +130,7 @@ def _own_pgid() -> int:
 
 
 def advance(entry: StopEntry, now: float, policy: StopEscalationPolicy, ops: StopOps) -> StopEntry:
+    """Advance one tracked stop through its grace period or next signal tier."""
     if entry.outcome != StopOutcome.PENDING:
         return entry
     if entry.pgid <= 1 or entry.pgid == _own_pgid():
@@ -150,6 +163,7 @@ def advance(entry: StopEntry, now: float, policy: StopEscalationPolicy, ops: Sto
 
 
 def heartbeat_age_s(workdir: Path, now: float) -> float | None:
+    """Return the age in seconds of the stop reaper heartbeat, if available."""
     try:
         ts = float(json.loads((workdir / ".sdd/runtime/stop_reaper.heartbeat.json").read_text())["ts"])
         return max(0.0, now - ts) if math.isfinite(ts) else None
@@ -158,6 +172,8 @@ def heartbeat_age_s(workdir: Path, now: float) -> float | None:
 
 
 class StopReaper:
+    """Track cooperative stops and advance them on orchestrator ticks."""
+
     def __init__(
         self,
         workdir: Path,
@@ -249,6 +265,7 @@ class _SessionOps(PlatformOps):
 
 
 def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]) -> None:
+    """Advance pending cooperative stops and reconcile their task state."""
     from bernstein.core.agents.agent_lifecycle import _propagate_abort_to_children, _release_file_ownership
     from bernstein.core.agents.spawner_core import emit_process_reap_receipt
 

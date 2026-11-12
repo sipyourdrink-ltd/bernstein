@@ -166,7 +166,7 @@ class EncryptedFile:
         """Read and decrypt file contents.
 
         Args:
-            size: Max bytes to read (-1 for all).
+            _size: Reserved parameter.
 
         Returns:
             Decrypted plaintext bytes.

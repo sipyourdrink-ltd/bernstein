@@ -177,8 +177,7 @@ class ApiUsageTracker:
 
         Args:
             tier: Tier name (e.g., 'fast', 'opus').
-            task_id: Task ID that used this tier.
-            cost_usd: Cost for the task.
+            _task_id: Reserved parameter.
         """
         if tier not in self.tier_consumption:
             self.tier_consumption[tier] = TierConsumption(tier=tier)

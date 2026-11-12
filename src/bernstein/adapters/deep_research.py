@@ -95,6 +95,7 @@ def read_gateway(slug: str, environ: Mapping[str, str]) -> GatewayConfig:
 
 
 def require_env(name: str, environ: Mapping[str, str], why: str) -> str:
+    """Read a required environment value and reject missing or blank input."""
     value = (environ.get(name) or "").strip()
     if not value:
         raise GatewayConfigError(f"set {name} ({why})")

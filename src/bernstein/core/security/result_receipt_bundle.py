@@ -155,6 +155,8 @@ class GateResult:
 
 @dataclass(frozen=True, slots=True)
 class TaskRef:
+    """Repository, base commit, and optional issue bound into a task receipt."""
+
     repo: str
     commit_sha: str
     issue_number: int | None = None
