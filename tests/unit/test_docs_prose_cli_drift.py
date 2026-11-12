@@ -441,3 +441,9 @@ def test_volunteer_docs_have_no_cli_drift() -> None:
         assert examples.checked, f"{name}: no CLI examples found"
         failures = check(examples, surface, f"volunteer/{name}")
         assert not failures, "\n".join(failures)
+
+        for invocation in examples.checked:
+            if invocation.tokens[:2] == ("volunteer", "browse"):
+                assert {"--index", "--help"} & set(invocation.flags), (
+                    f"{name}:{invocation.line}: volunteer browse examples need --index"
+                )

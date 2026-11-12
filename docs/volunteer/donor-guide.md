@@ -2,7 +2,7 @@
 
 ## How to Join
 
-The CLI supports manifest verification and issue browsing. Launching a task
+The CLI supports manifest verification and project browsing. Launching a task
 from an issue URL remains unimplemented.
 
 A bare `bernstein volunteer` invocation explains onboarding and exits before
@@ -20,16 +20,17 @@ and sandbox profile.
    ```
    Run this on the project you want to donate to (or current directory) to validate its volunteer manifest and get the digest.
 
-3. **Browse Available Issues**
+3. **Browse Volunteer Projects**
    ```bash
-   bernstein volunteer browse
+   bernstein volunteer browse --index https://example.test/index.json
    ```
-   List all issues labeled for volunteers across all indexes (donor needs to configure indexes first).
+   Replace the example URL with your HTTPS index. The command lists eligible
+   projects and their manifest metadata.
 
 ## Federated index discovery (Python API)
 
-Federation is an explicit opt-in for Python callers. The existing
-`bernstein volunteer browse` command and unconfigured `browse_indexes()`
+Federation is an explicit opt-in for Python callers. The CLI project browser
+and unconfigured `browse_indexes()`
 keep their flat-index behavior; CLI donor-configuration support is not included.
 
 ```python
@@ -88,9 +89,8 @@ The resolver does not fetch project manifests or distribute keys.
 ### Wall-Clock Budget
 - Each task has a configured maximum runtime (default: 24 hours = 1440 minutes)
 - Projects can set stricter limits in their `volunteer.json`
-- `bernstein volunteer browse --budget <minutes>` already filters the offered
-  projects to what fits the wall clock you are willing to give; the same figure
-  becomes the runner's own limit once it lands
+- Pass `--budget <minutes>` to the project browser to filter projects by
+  their declared runtime limits.
 - Exceeding the budget results in automatic task termination
 
 ### Memory Limits
