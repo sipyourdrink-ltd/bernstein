@@ -6,8 +6,8 @@ deployment.
 ## Overview
 
 Bernstein's security model has two axes. The **human axis** authenticates
-operators against an identity provider (OIDC, SAML, or local username +
-password) and enforces RBAC on the FastAPI surface; tokens are JWT, sessions
+operators against an OIDC or SAML identity provider and enforces RBAC on
+the FastAPI surface; tokens are JWT, sessions
 are persisted to `.sdd/auth/`, and every privileged action is recorded in an
 HMAC-chained tamper-evident audit log. The **agent axis** treats every spawned
 agent as a first-class identity: the orchestrator issues a per-agent JWT
@@ -66,14 +66,15 @@ general request limits continue to apply as well.
 
 ## Auth providers
 
-`AuthService` supports OIDC, SAML, and local users. Set
+`AuthService` supports OIDC and SAML login. Set
 `BERNSTEIN_AUTH_ENABLED=true` to enable the authentication service.
 
 | Provider | Configuration |
 |----------|---------------|
 | **OIDC** | `BERNSTEIN_OIDC_ENABLED`, `BERNSTEIN_OIDC_ISSUER_URL`, `BERNSTEIN_OIDC_CLIENT_ID`, `BERNSTEIN_OIDC_CLIENT_SECRET`, `BERNSTEIN_OIDC_SCOPES`, `BERNSTEIN_OIDC_REDIRECT_URI` |
 | **SAML 2.0** | `BERNSTEIN_SAML_ENABLED`, `BERNSTEIN_SAML_IDP_ENTITY_ID`, `BERNSTEIN_SAML_IDP_SSO_URL`, `BERNSTEIN_SAML_IDP_X509_CERT`, `BERNSTEIN_SAML_SP_ENTITY_ID`, `BERNSTEIN_SAML_SP_ACS_URL` |
-| **Local users** | Managed by an administrator through `/auth/users` |
+
+Administrators can list stored users with `GET /auth/users`.
 
 Group-to-role mappings are surfaced via `GET /auth/group-mappings` and
 modified by admins via `PUT /auth/group-mappings`
