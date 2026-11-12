@@ -230,6 +230,16 @@ def _ensure_repo(cwd: Path) -> None:
         raise SnapshotError(f"{cwd} is not inside a git work tree: {result.stderr.strip()}")
 
 
+def _git_directory(cwd: Path, *, shared: bool = False) -> Path:
+    """Resolve a Git admin directory, including for linked worktrees."""
+    option = "--git-common-dir" if shared else "--git-dir"
+    result = _run_git(["rev-parse", "--path-format=absolute", option], cwd)
+    path = Path(result.stdout.rstrip("\n"))
+    if not result.ok or not path.is_absolute():
+        raise SnapshotError(f"git rev-parse {option} failed: {result.stderr.strip()}")
+    return path
+
+
 def _write_tree(cwd: Path) -> str:
     """Write the current work tree as a git tree and return its sha.
 
@@ -241,12 +251,12 @@ def _write_tree(cwd: Path) -> str:
     The temp index is seeded from HEAD (when one exists) so untracked
     deletions are recorded as removals against the parent tree; we
     then ``git add -A`` to capture every other tracked/untracked
-    change. The throwaway index lives in ``.git`` and is unlinked in
-    the ``finally`` block whether or not the plumbing succeeded.
+    change. The throwaway index lives in the worktree's Git admin directory
+    and is unlinked whether or not the plumbing succeeded.
     """
     import os
 
-    tmp_index = cwd / ".git" / f"bernstein-snapshot-index.{time.time_ns()}"
+    tmp_index = _git_directory(cwd) / f"bernstein-snapshot-index.{time.time_ns()}"
     merged_env = os.environ | {"GIT_INDEX_FILE": str(tmp_index)}
     try:
         # Seed the temp index from HEAD when one exists. Without HEAD
@@ -258,11 +268,11 @@ def _write_tree(cwd: Path) -> str:
             if seed.returncode != 0:
                 raise SnapshotError(f"git read-tree HEAD failed: {seed.stderr.strip()}")
         # Stage everything (tracked + untracked + deletes) into the
-        # temp index. We pass ``--`` to defend against pathological
-        # filenames starting with a dash.
+        # temp index. No pathspec: Git stages the whole work tree even
+        # when the caller is in a subdirectory.
         # ``git add -A`` walks the whole work tree, so it gets the longer
         # bound: a large repository is slow, not stuck.
-        add = _run_git(["add", "-A", "--", "."], cwd, env=merged_env, timeout=_GIT_ADD_TIMEOUT_S)
+        add = _run_git(["add", "-A"], cwd, env=merged_env, timeout=_GIT_ADD_TIMEOUT_S)
         if add.returncode != 0:
             raise SnapshotError(f"git add -A failed: {add.stderr.strip()}")
         write = _run_git(["write-tree"], cwd, env=merged_env, timeout=_GIT_TIMEOUT_S)
@@ -306,27 +316,26 @@ def _resolve_ref(cwd: Path, ref: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def _metadata_path(cwd: Path, snapshot_id: str) -> Path:
+def _snapshot_metadata_dir(cwd: Path) -> Path:
     """Filesystem location for the snapshot's metadata JSON.
 
-    Storing the metadata as a tracked-by-git side file inside
-    ``.git/bernstein/snapshots/`` keeps it inside the repo's
-    ``.git`` directory so ``git clone`` of a worktree does not copy
-    snapshot state to the cloner. The directory is created lazily.
+    The shared Git directory keeps sidecars visible wherever the refs
+    are visible, even after the creating worktree is removed. A clone
+    does not copy these sidecars. The directory is created lazily.
     """
-    base = cwd / ".git" / "bernstein" / "snapshots"
-    base.mkdir(parents=True, exist_ok=True)
-    return base / f"{snapshot_id}.json"
+    return _git_directory(cwd, shared=True) / "bernstein" / "snapshots"
 
 
 def _write_metadata(cwd: Path, snapshot: Snapshot) -> None:
-    _metadata_path(cwd, snapshot.snapshot_id).write_text(
+    directory = _snapshot_metadata_dir(cwd)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{snapshot.snapshot_id}.json").write_text(
         json.dumps(snapshot.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
     )
 
 
-def _read_metadata(cwd: Path, snapshot_id: str) -> Snapshot | None:
-    path = _metadata_path(cwd, snapshot_id)
+def _read_metadata(directory: Path, snapshot_id: str) -> Snapshot | None:
+    path = directory / f"{snapshot_id}.json"
     if not path.exists():
         return None
     try:
@@ -355,7 +364,7 @@ def _stack_ref(task_id: str, index: int) -> str:
 
 
 def _stack_metadata_path(cwd: Path, task_id: str, index: int) -> Path:
-    base = cwd / ".git" / "bernstein" / "stacks" / task_id
+    base = _git_directory(cwd, shared=True) / "bernstein" / "stacks" / task_id
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{index:03d}.json"
 
@@ -458,12 +467,17 @@ class SnapshotStore:
         record from the ref alone so an operator can still ``undo``
         when the sidecar was purged manually.
         """
+        return self._get(snapshot_id)
+
+    def _get(self, snapshot_id: str, metadata_dir: Path | None = None) -> Snapshot | None:
         _validate_snapshot_id(snapshot_id)
         ref = f"{SNAPSHOT_REF_PREFIX}{snapshot_id}"
         tree_sha = _resolve_ref(self.cwd, ref)
         if tree_sha is None:
             return None
-        meta = _read_metadata(self.cwd, snapshot_id)
+        if metadata_dir is None:
+            metadata_dir = _snapshot_metadata_dir(self.cwd)
+        meta = _read_metadata(metadata_dir, snapshot_id)
         if meta is not None:
             return meta
         # Sidecar was purged; synthesise a record so undo still works.
@@ -494,15 +508,16 @@ class SnapshotStore:
             ["for-each-ref", "--format=%(refname)", SNAPSHOT_REF_PREFIX],
             self.cwd,
         )
-        if not result.ok:
+        if not result.ok or not result.stdout.strip():
             return []
+        metadata_dir = _snapshot_metadata_dir(self.cwd)
         snapshots: list[Snapshot] = []
         for line in result.stdout.strip().splitlines():
             ref = line.strip()
             if not ref.startswith(SNAPSHOT_REF_PREFIX):
                 continue
             snapshot_id = ref[len(SNAPSHOT_REF_PREFIX) :]
-            snap = self.get(snapshot_id)
+            snap = self._get(snapshot_id, metadata_dir)
             if snap is None:
                 continue
             if task_id is not None and snap.task_id != task_id:
@@ -598,7 +613,7 @@ class SnapshotStore:
         ref = f"{SNAPSHOT_REF_PREFIX}{snapshot_id}"
         existed = _resolve_ref(self.cwd, ref) is not None
         _delete_ref(self.cwd, ref)
-        meta_path = _metadata_path(self.cwd, snapshot_id)
+        meta_path = _snapshot_metadata_dir(self.cwd) / f"{snapshot_id}.json"
         if meta_path.exists():
             try:
                 meta_path.unlink()

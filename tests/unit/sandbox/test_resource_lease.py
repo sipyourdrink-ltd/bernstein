@@ -267,6 +267,52 @@ def test_release_never_raises_when_the_lease_file_is_already_gone(store: LeaseSt
     lease.release()
 
 
+def test_stale_release_preserves_fresh_claimant_before_payload_write(
+    store: LeaseStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pause a real claimant after O_EXCL, before it writes its lease token."""
+    stale = store.acquire("gpu-0", ttl_s=-1.0)
+    open_exclusive = store._open_exclusive
+
+    def release_after_create(name: str, path: Path) -> int:
+        fd = open_exclusive(name, path)
+        try:
+            created = os.fstat(fd)
+            assert path.read_bytes() == b""
+            stale.release()
+            assert path.exists(), "stale release deleted the fresh claimant's empty file"
+            assert path.stat().st_ino == created.st_ino
+            with pytest.raises(LeaseConflictError):
+                LeaseStore(store.root).acquire(name)
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    monkeypatch.setattr(store, "_open_exclusive", release_after_create)
+    fresh = store.acquire("gpu-0")
+    try:
+        assert fresh.lease_id != stale.lease_id
+        assert json.loads(fresh.path.read_text())["lease_id"] == fresh.lease_id
+        stale.release()
+        assert fresh.path.exists()
+    finally:
+        fresh.release()
+    assert not fresh.path.exists()
+
+
+@pytest.mark.parametrize("payload", [b"{not json", b"[]", b"{}", b"\xff", b'{"lease_id": "another-holder"}'])
+def test_release_preserves_records_without_its_lease_id(store: LeaseStore, payload: bytes) -> None:
+    """Missing, unreadable and foreign tokens never authorize an unlink."""
+    lease = store.acquire("gpu-0")
+    lease.path.write_bytes(payload)
+
+    lease.release()
+
+    assert lease.released
+    assert lease.path.read_bytes() == payload
+
+
 # ---------------------------------------------------------------------------
 # Named locks
 # ---------------------------------------------------------------------------

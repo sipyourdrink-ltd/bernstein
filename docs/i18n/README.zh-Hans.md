@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 智能体的开源治理层
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -16,7 +16,7 @@
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/sipyourdrink-ltd/bernstein?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/sipyourdrink-ltd/bernstein)
 ![built with Bernstein](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/built-with-bernstein.svg)
 
-[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [deepwiki](https://deepwiki.com/sipyourdrink-ltd/bernstein) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [deepwiki](https://deepwiki.com/sipyourdrink-ltd/bernstein) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -123,7 +123,7 @@ flowchart LR
 每个节点由角色被该阶段允许的智能体认领;无论智能体在任务内做什么,角色围栏和审批门禁始终生效。代码节点在自己的 git worktree 里、合并门禁之后完成。上面这些节点的完成方式不同:[工件契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(报告、数据集、扫描、操作日志),节点以签名的 lineage 回执而非提交收尾。同一个调度器、同一份日志、同样的离线验证 - 无论图里装的是代码、研究、运维变更,还是三者混合。面向软件、研究、文档、企业和贡献者工作流的现成图都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安装
-<!-- l10n: en="install in 30 seconds" hash="sha256:345e77a973c1" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` 还会输出审计契约的 `findings`；对于相同的安装观测结果，它们与 `bernstein govern audit --only INS --json` 的结果完全相同。常规 doctor 报告的显示保持不变。有关稳定的检查 ID，请参阅 [doctor 运维指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)。
 
 pipx、pip、brew、dnf、npm 和 Docker 都涵盖在[安装指南](https://docs.bernstein.run/en/latest/getting-started/install/)中；离线 wheelhouse 有单独的 [air-gap 指南](https://docs.bernstein.run/en/latest/installation/air-gap/)。
+
+技能初始化失败时会被[隔离](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)，并持久保存原因和审计事件。`bernstein status` 显示数量；`doctor` 和 `govern audit` 报告被禁用的声明。修复原因后，使用 `bernstein quarantine re-enable DECLARATION_ID` 显式解除标记。
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -156,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 终端仪表盘 | `bernstein gui serve` — 浏览器仪表盘 |
 
 ### 证明一次运行
-<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 这里的确定性是需要你去核查的东西，而不是凭空相信。启用审计运行一次，然后验证记录的内容：
 
@@ -178,7 +180,9 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 同样的可核查性也适用于评估数字。`bernstein bench run <suite> --reliability k`（也写作 `bernstein eval --reliability k`）在固定协调下把每个任务运行 `k` 次，然后报告 `pass^k` 下限（所有 `k` 次尝试都必须通过）以及 `pass@1` 上限。该结果封装在一份签署的收据中，`bernstein bench reliability-verify` 可离线重算，因此伪造的下限会验证失败。详情：[pass^k 可靠性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 
-`bernstein delegation verify RUN` 将回执链与运行清单中声明的最终链头和跳数进行比较，从而检测链尾截断。没有该声明的运行是不完整的（退出码 `3`），绝不会被判定为有效。请参阅[委派验证工作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
+使用 `bernstein govern audit --format json` 或 `--format sarif` 输出机器可读的检查结果，使用 `--strict --quiet` 作为 CI 检查门槛。参见 [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` 将回执链与运行清单中使用审计密钥的 HMAC 封存的最终链头和跳数进行比较，从而检测尾部删除、替换和关闭后的链增长，包括在没有密钥的情况下改写声明。删除声明会使运行处于未完成状态（退出码 `3`），绝不会被判定为有效。这无法检测重放较早的真实快照，也无法防范持有审计密钥的写入者。参见[委托验证流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
 
 ### 工作原理
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
@@ -280,9 +284,9 @@ Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目�
 使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 创建经过审计的空容器，不启动规划器或代理进程。通过 `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` 添加手动任务，并用 `bernstein_run_status(run_id="admin-...")` 查询状态。成员任务可通过常规认领 API 领取，但不会自动编排。非空运行在所有成员的状态均为 `done`、`closed` 或 `cancelled` 时结束；空运行保持开放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### 贡献、支持与许可
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
-欢迎 PR；[CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) 有环境搭建和代码风格。安全报告通过 [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) 提交。如果 Bernstein 为你节省了时间：[GitHub Sponsors](https://github.com/sponsors/chernistry)。联系：[forte@bernstein.run](mailto:forte@bernstein.run)。
+欢迎 PR；[CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) 有环境搭建和代码风格。安全报告通过 [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) 提交。联系：[forte@bernstein.run](mailto:forte@bernstein.run)。
 
 引用元数据位于 [CITATION.cff](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CITATION.cff)。许可：[Apache-2.0](https://github.com/sipyourdrink-ltd/bernstein/blob/main/LICENSE)；项目名在 [TRADEMARKS.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) 中单独说明。
 

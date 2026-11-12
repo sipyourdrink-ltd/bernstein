@@ -215,6 +215,7 @@ def test_plan_uses_llm_output_and_posts_created_tasks(monkeypatch: pytest.Monkey
         _client: object, _server_url: str, task: Task, *, plan_mode: bool = False
     ) -> str:
         await asyncio.sleep(0)  # Async interface requirement
+        assert task.dispatch_tier.value == "sandbox"
         posted_titles.append(task.title)
         return f"server-{len(posted_titles)}"
 
