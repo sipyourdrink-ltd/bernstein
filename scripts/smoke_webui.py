@@ -11,6 +11,9 @@ from unittest.mock import patch
 from capture_webui_renders import gui_server, resolve_bernstein
 from playwright.sync_api import Page, expect, sync_playwright
 
+from bernstein.core.approval.models import PendingApproval
+from bernstein.core.approval.queue import ApprovalQueue
+
 ROUTES = {
     "tasks": "Tasks",
     "agents": "Agents",
@@ -71,12 +74,62 @@ def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> 
     assert task.json()["status"] == "cancelled"
 
 
+def check_approvals(
+    page: Page,
+    base: str,
+    headers: dict[str, str],
+    approvals: list[PendingApproval],
+    queue_dir: Path,
+) -> None:
+    page.goto(f"{base}/ui/approvals")
+    expect(page.get_by_role("button", name="Approve once")).to_be_visible()
+    expect(page.get_by_role("button", name="Always deny", exact=False)).to_have_count(0)
+
+    for approval, decision in zip(approvals[:2], ("allow", "reject"), strict=True):
+        url = f"{base}/api/v1/approvals/{approval.id}/resolve"
+        with page.expect_response(url) as reply:
+            if decision == "allow":
+                page.get_by_role("button", name="Approve once").click()
+            else:
+                page.keyboard.press("d")
+        assert reply.value.ok, f"Approval resolution returned HTTP {reply.value.status}"
+        assert reply.value.request.post_data_json == {"decision": decision, "nonce": approval.nonce_hex}
+        resolution = ApprovalQueue(base_dir=queue_dir).get_resolution(approval.id)
+        assert resolution is not None and resolution.decision.value == decision
+        expect(page.get_by_text(f"APPROVAL · {approval.id}", exact=True)).to_be_hidden()
+
+    stale = approvals[2]
+    expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_visible()
+    url = f"{base}/api/v1/approvals/{stale.id}/resolve"
+    settled = page.request.post(url, data={"decision": "reject", "nonce": stale.nonce_hex}, headers=headers)
+    expect(settled).to_be_ok()
+    with page.expect_response(url) as reply:
+        page.get_by_role("button", name="Approve once").click()
+    assert reply.value.status == 410
+    expect(page.get_by_role("alert").filter(has_text="This approval is no longer current")).to_be_visible()
+    expect(page.get_by_role("button", name="Approve once")).to_be_hidden()
+
+
 def main() -> None:
     token = secrets.token_urlsafe(32)
     dashboard_password = secrets.token_urlsafe(32)
     headers = {"Authorization": f"Bearer {token}"}
     with tempfile.TemporaryDirectory(prefix="bernstein-ui-smoke-") as directory:
         project = Path(directory)
+        queue_dir = project / ".sdd/runtime/approvals"
+        queue = ApprovalQueue(base_dir=queue_dir)
+        approvals = [
+            queue.push(
+                PendingApproval(
+                    session_id=f"smoke-{index}",
+                    agent_role="qa",
+                    tool_name="read_file",
+                    tool_args={"path": f"docs/check-{index}.md"},
+                    ttl_seconds=120,
+                )
+            )
+            for index in range(3)
+        ]
         env = {"BERNSTEIN_AUDIT_KEY_PATH": str(project / "audit.key")}
         with (
             patch.dict("os.environ", env),
@@ -105,6 +158,7 @@ def main() -> None:
 
             check_routes(page, base, dashboard_password, headers)
             check_task(page, base, created.json()["id"], headers)
+            check_approvals(page, base, headers, approvals, queue_dir)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()
     print("Web UI route, drawer, authentication and cancellation smoke passed", flush=True)
