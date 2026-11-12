@@ -59,18 +59,18 @@ Each **entry** corresponds to one context section included in the agent prompt:
 - `token_estimate`: estimated token count
 - `char_count`: raw UTF-8 character count
 
-## Deterministic replay
+## Comparing section receipts
 
-When replaying a run:
+The [receipt schema](../reference/context-receipt.md#using-the-receipt-for-verification)
+defines the recorded values for comparing two context receipts:
 
-1. **Recompute** the context receipt from the current on-disk context sections
-2. **Compare hashes** — each `content_sha256` must match the recorded hash
-3. **Compare totals** — `total_token_estimate`, `total_chars`, `section_count`
-   must match
-4. **Check policy** — `policy_id` and `policy_version` must match
+- The `content_sha256` of each section
+- The totals `total_token_estimate`, `total_chars`, and `section_count`
+- The `policy_id` and `policy_version`
 
-A mismatch indicates context drift. Strict replay mode refuses to proceed;
-audit mode flags the divergence with a named list of changed fields.
+A mismatch indicates a difference in the recorded context or policy. For
+the fields enforced by the replay command, see
+[Deterministic replay](../operations/deterministic-replay.md).
 
 ## Scope to agents-md
 
@@ -82,10 +82,11 @@ documentation entry, making the context structure auditable.
 ## Storage and verification
 
 - **On-disk**: receipts are stored in the run journal and audit chain
-- **Verification**: `bernstein context verify --task-id <id>` recomputes the
-  receipt and checks for drift
-- **Replay**: deterministic replay uses the receipt to detect context changes
-  and refuses or flags according to policy
+- **Capsule verification**: an `OK` result from `bernstein context verify
+  <task_id>` covers only the signed capsule and its audit-chain and run-journal
+  bindings.
+- **Section receipt**: the [receipt schema](../reference/context-receipt.md#using-the-receipt-for-verification)
+  defines the comparison of section hashes, totals and policy metadata.
 
 ## Related documentation
 
