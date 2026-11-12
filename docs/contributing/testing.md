@@ -34,7 +34,7 @@ locally without waiting for the cloud runner.
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
-| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes, the access-token prompt | local only (`cd web && npm test`; not run in CI) |
+| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes, the access-token prompt | Web UI regression workflow and local (`cd web && npm test`) |
 
 ## Web UI tests
 
@@ -55,6 +55,21 @@ server or make network requests.
 installed before React loads, and drives it with real DOM events: the 401
 path in `src/lib/api.ts` and the shell's access-token prompt. `fetch` is
 stubbed; nothing listens on a port.
+
+Run the Vitest and Testing Library component tests with
+`cd web && npm run test:components`.
+
+The Playwright smoke starts a real GUI server in a temporary project and
+exercises the shipped bundle, including token recovery and task cancellation
+with backend readback. From the repository root, install Chromium and run it:
+
+```bash
+uv run --locked --extra gui python -m playwright install chromium
+uv run --locked --extra gui python scripts/smoke_webui.py
+```
+
+The Web UI regression workflow runs all three test layers on relevant pull
+requests.
 
 Test-count drop vs merge base (#4873)
 
