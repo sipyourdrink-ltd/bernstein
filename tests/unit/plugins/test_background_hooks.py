@@ -1,5 +1,4 @@
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -79,20 +78,17 @@ def test_background_hook_is_non_blocking(tmp_path: Path):
 
 class SyncSpec:
     @hookspec(background=False)
-    def on_sync_hook(self, duration: float) -> None:
-        """A hook that blocks."""
+    def on_sync_hook(self) -> None:
+        """A hook that runs on the calling thread."""
 
 
 class BlockingPlugin:
-    def __init__(self):
-        self.called = False
-        self.finished = False
+    def __init__(self) -> None:
+        self.executions: list[threading.Thread] = []
 
     @hookimpl
-    def on_sync_hook(self, duration: float) -> None:
-        self.called = True
-        time.sleep(duration)
-        self.finished = True
+    def on_sync_hook(self) -> None:
+        self.executions.append(threading.current_thread())
 
 
 def test_sync_hook_blocks(tmp_path: Path):
@@ -102,13 +98,6 @@ def test_sync_hook_blocks(tmp_path: Path):
     plugin = BlockingPlugin()
     pm.register(plugin, name="blocking_plugin")
 
-    # ``time.monotonic`` rather than ``time.time``: this is a duration, and a
-    # clock step (NTP, suspend/resume) must not be able to shorten it.
-    start_time = time.monotonic()
-    pm._safe_call("on_sync_hook", duration=0.2)
-    end_time = time.monotonic()
+    pm._safe_call("on_sync_hook")
 
-    elapsed = end_time - start_time
-    assert elapsed >= 0.2, f"Sync hook call took {elapsed}s, expected it to block"
-    assert plugin.called
-    assert plugin.finished
+    assert plugin.executions == [threading.current_thread()]
