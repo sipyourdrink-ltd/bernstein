@@ -22,8 +22,6 @@ rather than as its own attribution is exempted by hand there, with the reason.
   ([#7029](https://github.com/sipyourdrink-ltd/bernstein/pull/7029))
 - Let MCP gateways explicitly opt in to recording capability observations.
   ([#7036](https://github.com/sipyourdrink-ltd/bernstein/pull/7036))
-- Accept `--trusted-key` when comparing a signed benchmark baseline with `bench run --baseline`.
-  ([#7041](https://github.com/sipyourdrink-ltd/bernstein/pull/7041))
 - Export ISO/IEC 42005 impact-assessment evidence with `bernstein audit export --standard iso-42005`.
   ([#7085](https://github.com/sipyourdrink-ltd/bernstein/pull/7085))
 - Find the first changed or missing property in a pair of receipt render captures.
@@ -51,7 +49,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
   ([#7016](https://github.com/sipyourdrink-ltd/bernstein/pull/7016))
 - Report the coordinator version separately from the bridge version in MCP status.
   ([#7023](https://github.com/sipyourdrink-ltd/bernstein/pull/7023))
-- Implement a standard callable interface contract for quarantine validation checks.
+- Make the declaration quarantine check callable through the audit check registry.
   ([#7033](https://github.com/sipyourdrink-ltd/bernstein/pull/7033))
 - Classify and assign dispatch tiers to generated tasks based on runtime requirements.
   ([#7034](https://github.com/sipyourdrink-ltd/bernstein/pull/7034))
@@ -59,7 +57,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
   ([#7040](https://github.com/sipyourdrink-ltd/bernstein/pull/7040))
 - Cache snapshot metadata directory resolution once per listing for improved performance.
   ([#7048](https://github.com/sipyourdrink-ltd/bernstein/pull/7048))
-- Assign distinct names to dual audit check implementations to clarify check registration.
+- Report both implementation modules when a duplicate audit check is registered.
   ([#7051](https://github.com/sipyourdrink-ltd/bernstein/pull/7051))
 - Update `agents` dependency to `^0.33.0` in the Cloudflare MCP server template.
   ([#6950](https://github.com/sipyourdrink-ltd/bernstein/pull/6950))
@@ -86,8 +84,6 @@ rather than as its own attribution is exempted by hand there, with the reason.
   ([#6907](https://github.com/sipyourdrink-ltd/bernstein/pull/6907))
 - Fix datasource query receipt recording on Windows by sanitizing directory paths containing colons in
   agent IDs. ([#6928](https://github.com/sipyourdrink-ltd/bernstein/pull/6928))
-- Verify benchmark scorecard baseline signatures against trusted install keys.
-  ([#6702](https://github.com/sipyourdrink-ltd/bernstein/pull/6702))
 - Omit unsupported sampling parameters when the OpenAI Agents adapter uses GPT-5 mini with the Responses
   API. ([#6975](https://github.com/sipyourdrink-ltd/bernstein/pull/6975))
 - Complete clean orphaned tasks when their verification gates already pass on the base commit.
