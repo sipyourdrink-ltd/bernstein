@@ -12,6 +12,7 @@ import yaml
 from bernstein.core.models import CompletionSignal, Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.planning.signal_contract import parse_completion_signal
 from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecError, parse_artifact_spec
+from bernstein.core.tasks.models import DispatchTier
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -474,6 +475,9 @@ def _parse_step(
         owned_files=owned_files,
         completion_signals=signals,
         artifact_spec=artifact_spec,
+        dispatch_tier=_parse_enum_field(
+            DispatchTier, step.get("dispatch_tier", DispatchTier.LOCAL.value), "dispatch_tier", stage_name, step_index
+        ),
         model=str(model_raw) if model_raw else None,
         effort=str(effort_raw) if effort_raw else None,
         cli=str(cli_raw) if cli_raw else None,

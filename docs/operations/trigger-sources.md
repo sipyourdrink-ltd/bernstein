@@ -73,6 +73,18 @@ matches an incoming `TriggerEvent` against each enabled rule's `source` and
 list (`bernstein[bot]`, `github-actions[bot]`), then returns task payloads
 for the caller to submit.
 
+### GitLab task routing
+
+After GitLab authentication and event mapping, `POST /webhooks/gitlab`
+applies the first matching `source: gitlab_webhook` rule before creating
+tasks. Use `filters.events` for event kinds such as `pipeline` or
+`merge_request` and `filters.branches` for branch globs. The GitLab mapper
+still determines task content. With no matching rule, the existing mapper
+behavior applies. Matching rules use the same cooldown and deduplication
+gate as GitHub push handling, scoped to the GitLab request tenant. Both created and suppressed deliveries
+appear in trigger history. A delivery with a reserved deduplication key and
+no confirmed task outcome receives HTTP 503.
+
 ## CLI
 
 ```

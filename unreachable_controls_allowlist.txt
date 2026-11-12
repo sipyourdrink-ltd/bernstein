@@ -188,7 +188,6 @@ src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.epsilon_remain
 src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.epsilon_spent                # exercised by tests only; no production caller
 src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.queries_remaining            # exercised by tests only; no production caller
 src/bernstein/core/security/dual_approval.py::create_approval_request                          # exercised by tests only; no production caller
-src/bernstein/core/security/dual_approval.py::evaluate_approval                                # exercised by tests only; no production caller
 src/bernstein/core/security/dual_approval.py::format_approval_prompt                           # exercised by tests only; no production caller
 src/bernstein/core/security/dual_approval.py::is_destructive                                   # exercised by tests only; no production caller
 src/bernstein/core/security/engagement_mandate.py::EngagementMandate.is_valid_at               # exercised by tests only; no production caller

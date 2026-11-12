@@ -63,14 +63,17 @@ logger = logging.getLogger(__name__)
 _FINISHED: frozenset[str] = frozenset(status.value for status in LANE_FINISHED_STATUSES)
 
 __all__ = [
+    "LeakedLane",
     "OpenSandboxSession",
     "SandboxLeakCandidate",
     "SandboxLeakVerdict",
     "SandboxRemovalProposal",
     "SandboxSweepUnavailableError",
     "classify_open_session",
+    "lane_removal_operation",
     "open_sandbox_sessions",
     "prepare_sandbox_removal_proposal",
+    "sweep_leaked_lanes",
     "sweep_leaked_sandboxes",
 ]
 
@@ -403,6 +406,123 @@ def sweep_leaked_sandboxes(workdir: Path, *, now: float | None = None) -> list[S
     candidates = [classify_open_session(s, task_status, now=clock) for s in sessions]
     candidates.sort(key=lambda c: (not c.is_leaked, -(c.age_seconds or 0.0), c.session.sandbox_session_id))
     return candidates
+
+
+@dataclass(frozen=True, slots=True)
+class LeakedLane:
+    """A task-terminal lane; unknown remote disk usage is explicitly ``None``."""
+
+    kind: str
+    resource_id: str
+    task_ids: tuple[str, ...]
+    age_seconds: float | None
+    size_bytes: int | None
+    path: Path | None = None
+    backend: str = "worktree"
+    created_at: str = ""
+    has_unsaved_work: bool | None = None
+    create_hmac: str = ""
+
+    @property
+    def removal_eligible(self) -> bool:
+        """Only worktrees are removable; sandbox removal belongs to #6571."""
+        return self.kind == "worktree"
+
+    def to_dict(self) -> dict[str, object]:
+        from dataclasses import asdict
+
+        row = {**asdict(self), "path": str(self.path) if self.path is not None else None}
+        if not self.removal_eligible:
+            row.update(removal_status="report_only", removal_reason="report only (removal: #6571)")
+        return row
+
+
+def sweep_leaked_lanes(
+    workdir: Path,
+    *,
+    now: float | None = None,
+    measure_disk: bool = False,
+) -> list[LeakedLane]:
+    """Read-only inventory keyed on the latest task-store status, never a PID.
+
+    ``measure_disk`` allows read-only backend probes for remote disk usage.
+    Missing metrics are unknown, never zero. Missing task records are unknown,
+    not terminal. The worktree classifier's display states remain unchanged;
+    even its ACTIVE rows can be leaked.
+    """
+    from bernstein.core.worktrees.classifier import (
+        WorktreeState,
+        _probe_unsaved_work,
+        _read_pid_record,
+        classify_worktrees,
+    )
+
+    task_status = _load_task_statuses(workdir / ".sdd")
+    lanes = []
+    for row in classify_worktrees(workdir, now=now):
+        if row.path.is_symlink():
+            continue
+        # The classifier deliberately leaves corrupt directories unattributed.
+        # Recover their PID-record owner without changing list's display rules.
+        record = _read_pid_record(workdir, row.session_id)
+        task_id = row.task_id or (record or {}).get("task_id")
+        if not isinstance(task_id, str) or task_status(task_id) not in _FINISHED:
+            continue
+        stat = row.path.stat()
+        lanes.append(
+            LeakedLane(
+                kind="worktree",
+                resource_id=row.session_id,
+                task_ids=(task_id,),
+                age_seconds=row.age_seconds,
+                size_bytes=row.size_bytes,
+                path=row.path,
+                created_at=str((stat.st_dev, stat.st_ino)),
+                has_unsaved_work=(
+                    row.has_unsaved_work
+                    if row.state is WorktreeState.CORRUPT
+                    else _probe_unsaved_work(row.path, workdir)
+                ),
+            )
+        )
+    for candidate in sweep_leaked_sandboxes(workdir, now=now):
+        if not candidate.is_leaked:
+            continue
+        session = candidate.session
+        size_bytes = None
+        if measure_disk:
+            from bernstein.core.sandbox.registry import get_backend
+
+            measure = getattr(get_backend(session.backend), "leaked_session_size_bytes", None)
+            if callable(measure):
+                size_bytes = measure(session.sandbox_session_id)
+        lanes.append(
+            LeakedLane(
+                kind="sandbox",
+                resource_id=session.sandbox_session_id,
+                task_ids=session.task_ids,
+                age_seconds=candidate.age_seconds,
+                size_bytes=size_bytes,
+                backend=session.backend,
+                created_at=session.created_at,
+                create_hmac=session.create_hmac,
+            )
+        )
+    return sorted(lanes, key=lambda lane: (-(lane.age_seconds or 0), lane.kind, lane.resource_id))
+
+
+def lane_removal_operation(lanes: Iterable[LeakedLane]) -> str:
+    """Bind approval to exact worktrees, owners and lifetimes, excluding sandboxes."""
+    import hashlib
+    import json
+
+    identities = sorted(
+        (lane.kind, lane.backend, lane.resource_id, lane.task_ids, str(lane.path), lane.created_at, lane.create_hmac)
+        for lane in lanes
+        if lane.removal_eligible
+    )
+    digest = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
+    return f"lane.remove:{digest}"
 
 
 def prepare_sandbox_removal_proposal(

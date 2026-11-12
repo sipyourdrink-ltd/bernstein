@@ -3523,6 +3523,7 @@ class Orchestrator:
         self._mark_finalization_started()
         try:
             self._record_run_quiescence()
+            self._finalize_delegation_manifest()
             self._seal_journal_into_lineage_spine()
             if self._otel_stream is not None:
                 self._otel_stream.finalize()
@@ -3534,6 +3535,20 @@ class Orchestrator:
             self._recorder.path,
             self._recorder.fingerprint()[:16] + "...",
         )
+
+    def _finalize_delegation_manifest(self) -> None:
+        """Declare the delegation tail after cleanup, before final run receipts.
+
+        A failed atomic write leaves the startup manifest incomplete; it must
+        never be presented as a complete delegation chain by the verifier.
+        """
+        try:
+            from bernstein.core.identity.delegation import default_ledger
+
+            sdd_dir = self._workdir / ".sdd"
+            default_ledger(sdd_dir / "audit").finalize_manifest(sdd_dir, self._run_id)
+        except Exception as exc:
+            logger.warning("Delegation manifest not finalized for run %s: %s", self._run_id, sanitize_log(str(exc)))
 
     def _record_run_quiescence(self) -> None:
         """Record whether every process the run started had exited.

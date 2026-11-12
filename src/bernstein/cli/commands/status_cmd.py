@@ -208,6 +208,10 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     # the dedicated supervisor command to spot a wedged worker.
     data["supervisor"] = _supervisor_status_summary(Path.cwd())
 
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+
+    data["quarantined_declarations"] = len(DeclarationQuarantineStore(Path.cwd()).load())
+
     if as_json or is_json():
         print_json(data)
         return
@@ -223,6 +227,7 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     con = make_console(no_color=force_no_color)
 
     render_status(data, console=con, view_config=vc)
+    con.print(f"Quarantined declarations: {data['quarantined_declarations']}")
 
     supervisor_line = _supervisor_summary_line(Path.cwd())
     if supervisor_line:
@@ -1277,12 +1282,26 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     findings.append(_doctor_check_readiness(checks))
 
     findings.append(_doctor_check_context_and_plugins(checks, workdir))
+    from bernstein.core.security.declaration_quarantine import quarantine_summary
+
+    _add_check(checks, *quarantine_summary(workdir))
     findings.append(_doctor_check_commit_attribution(checks, workdir))
     findings.append(_doctor_check_compliance(checks, workdir))
     findings.append(_doctor_check_schedule_supervisor(checks, workdir))
     findings.append(_doctor_check_eval_gate_power(checks, workdir))
     findings.append(_doctor_check_otel_export(checks))
     findings.append(_doctor_check_audit_anchoring(checks, workdir))
+
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+
+    leak_check = check_leaked_lanes(workdir)
+    _add_check(
+        checks,
+        leak_check["name"],
+        True,
+        ("WARNING: " if leak_check["status"] == "WARN" else "") + leak_check["detail"],
+        leak_check["fix"],
+    )
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)

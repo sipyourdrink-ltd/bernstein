@@ -257,6 +257,30 @@ class ComplianceEncryptionAtRestAdapter:
         return self.run(workdir)
 
 
+class DeclarationQuarantineAdapter:
+    """Expose the same persisted quarantine finding as doctor."""
+
+    check_id = "doctor:declaration-quarantine"
+    title = "Declaration quarantine"
+    description = "Report declarations disabled after initialization failure."
+
+    def run(self, workdir: Path | None = None) -> Finding:
+        from bernstein.core.security.declaration_quarantine import quarantine_summary
+
+        path = workdir or Path.cwd()
+        _name, ok, detail, fix = quarantine_summary(path)
+        return Finding(
+            check_id=self.check_id,
+            verdict=Verdict.PASS if ok else Verdict.FAIL,
+            evidence=(Evidence.from_payload(locator=f"{self.check_id}:{path}", payload={"detail": detail}),),
+            message=detail,
+            remediation=fix,
+        )
+
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
+
+
 #: The duplication collector's checks, each reported by ``govern audit`` as
 #: ``duplication:<name>`` (#5105). Pinned rather than read from the collector so
 #: a check id cannot appear or vanish from the audit without this list, and the

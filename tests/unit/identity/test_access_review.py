@@ -15,6 +15,7 @@ import json
 import pytest
 
 from bernstein.core.identity import access_review, delegation, grants
+from tests.support.delegation import close_manifest
 
 KEY = b"k" * 32
 
@@ -98,6 +99,7 @@ def seeded(tmp_path, signer):
         act="task.spawn",
         created=AFTER,
     )
+    close_manifest(hops, "run-a")
     return tmp_path
 
 
@@ -256,3 +258,15 @@ class TestSignoff:
         assert not chain.valid
         assert chain.errors
         assert not access_review.verify_signoff(root=seeded, key=KEY, envelope_bytes=review.envelope_bytes()).ok
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_unclosed_or_truncated_delegation_is_not_a_verified_source(seeded, signer, closed):
+    if not closed:
+        (seeded.parent / "runtime" / "manifests" / "run-a.json").unlink()
+    if closed:
+        path = seeded / "delegation" / "run-a.jsonl"
+        path.write_text("\n".join(path.read_text().splitlines()[:-1]) + "\n")
+    review = _review(seeded, signer)
+    assert not any(source["chain"] == "delegation" for source in review.document["sources"])
+    assert any(source["chain"] == "delegation" for source in review.document["unverified"])
