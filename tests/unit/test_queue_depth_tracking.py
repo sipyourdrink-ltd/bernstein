@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import json
-import time
-from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from bernstein.core.metric_collector import MetricsCollector, MetricType
+
+from bernstein.core.observability import metric_collector
+from bernstein.core.observability.metric_collector import MetricsCollector, MetricType
 
 
 def _get_queue_depth_file(tmp_path: Path) -> Path:
-    """Get queue depth file path for today."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    return tmp_path / f"queue_depth_{today}.jsonl"
+    """Find the single queue depth file written by the collector."""
+    files = list(tmp_path.glob("queue_depth_*.jsonl"))
+    assert len(files) == 1, files
+    return files[0]
 
 
 class TestQueueDepthTracking:
@@ -49,7 +51,6 @@ class TestQueueDepthTracking:
 
         # Read back and verify
         queue_depth_file = _get_queue_depth_file(tmp_path)
-        assert queue_depth_file.exists()
 
         content = queue_depth_file.read_text(encoding="utf-8")
         lines = content.strip().splitlines()
@@ -88,17 +89,17 @@ class TestQueueDepthTracking:
         """Test QUEUE_DEPTH metric type exists."""
         assert MetricType.QUEUE_DEPTH.value == "queue_depth"
 
-    def test_queue_depth_timestamp(self, tmp_path: Path) -> None:
-        """Test queue depth record has timestamp."""
+    def test_queue_depth_timestamp(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that the queue depth record stores the collector clock reading."""
+        timestamp = 1_700_000_000.125
+        monkeypatch.setattr(metric_collector, "time", SimpleNamespace(time=lambda: timestamp))
         collector = MetricsCollector(metrics_dir=tmp_path)
 
-        before = time.time()
         collector.record_queue_depth(
             queue_depth_open=5,
             queue_depth_claimed=2,
             queue_depth_failed=0,
         )
-        after = time.time()
 
         # Flush to file
         collector._flush_buffer()  # type: ignore[reportPrivateUsage]
@@ -108,7 +109,7 @@ class TestQueueDepthTracking:
         content = queue_depth_file.read_text(encoding="utf-8")
         record = json.loads(content.strip().splitlines()[0])
 
-        assert before <= record["timestamp"] <= after
+        assert record["timestamp"] == timestamp
 
     def test_queue_depth_zero_values(self, tmp_path: Path) -> None:
         """Test recording zero queue depth."""
