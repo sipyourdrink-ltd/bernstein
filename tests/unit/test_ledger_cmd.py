@@ -79,6 +79,8 @@ class TestVerify:
     def test_verify_missing_ledger(self, project: Path) -> None:
         result = CliRunner().invoke(ledger_group, ["verify", "run-x", "--workdir", str(project)])
         assert result.exit_code == 1, result.output
+        assert "No work ledger" in result.stderr
+        assert result.stdout == ""
 
     def test_verify_tamper_names_exact_position(self, project: Path) -> None:
         ledger = _seed(project)
@@ -91,7 +93,15 @@ class TestVerify:
 
         result = CliRunner().invoke(ledger_group, ["verify", "run-a", "--workdir", str(project)])
         assert result.exit_code == 2, result.output
-        assert "entry 2" in result.output
+        assert "entry 2" in result.stderr
+        assert result.stdout == ""
+
+        json_result = CliRunner().invoke(ledger_group, ["verify", "run-a", "--workdir", str(project), "--json"])
+        assert json_result.exit_code == 2, json_result.output
+        assert json_result.stderr == ""
+        payload = json.loads(json_result.stdout)
+        assert payload["ok"] is False
+        assert any("entry 2" in message for message in payload["errors"])
 
     def test_verify_json(self, project: Path) -> None:
         ledger = _seed(project)
@@ -169,7 +179,8 @@ class TestFetchAndResume:
 
         result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project)])
         assert result.exit_code == 2, result.output
-        assert "entry 4" in result.output
+        assert "entry 4" in result.stderr
+        assert result.stdout == ""
 
     def test_divergent_resumes_refused_with_operator_message(self, project: Path, tmp_path: Path) -> None:
         """AC: two divergent resumes are detected and refused."""
@@ -195,8 +206,9 @@ class TestFetchAndResume:
         # must refuse, naming the exact fork position.
         result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project)])
         assert result.exit_code == 3, result.output
-        assert "diverge" in result.output.lower()
-        assert "entry 6" in result.output
+        assert "diverge" in result.stderr.lower()
+        assert "entry 6" in result.stderr
+        assert result.stdout == ""
 
 
 class TestTopLevelResumeHint:
