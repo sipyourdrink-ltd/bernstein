@@ -4,7 +4,7 @@
 
 ### Available CLI commands
 
-Use `bernstein volunteer browse` to list opt-in projects, `verify` to
+Use `bernstein volunteer browse --index URL` to list opt-in projects, `verify` to
 validate a project manifest, and `budget` to set donor limits. The CLI also
 provides `hub` and `verify-bundle`.
 
@@ -25,11 +25,12 @@ task from an issue URL.
    ```
    Run this on the project you want to donate to (or current directory) to validate its volunteer manifest and get the digest.
 
-3. **Browse Available Issues**
+3. **Browse Participating Projects**
    ```bash
-   bernstein volunteer browse
+   bernstein volunteer browse --index https://registry.example/index.json
    ```
-   List all issues labeled for volunteers across all indexes (donor needs to configure indexes first).
+   Replace the example URL with your volunteer index. Repeat `--index` to
+   browse multiple indexes.
 
 4. **Set Donor Limits**
    ```bash

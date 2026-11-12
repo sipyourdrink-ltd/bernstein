@@ -30,7 +30,7 @@ inputs and current enforcement.
 
 ```bash
 bernstein volunteer budget --budget-tasks 10 --budget-hours 6 --max-size m
-bernstein volunteer browse
+bernstein volunteer browse --index https://registry.example/index.json
 bernstein volunteer verify /path/to/checkout   # check a project's manifest
 ```
 
@@ -43,7 +43,7 @@ submission verifies against the policy the project actually declared.
 
 ```bash
 bernstein volunteer verify
-bernstein volunteer browse            # list issues open to volunteers
+bernstein volunteer browse --index https://registry.example/index.json
 ```
 
 ## CLI surface
@@ -51,7 +51,7 @@ bernstein volunteer browse            # list issues open to volunteers
 | Command | Purpose |
 | --- | --- |
 | `bernstein volunteer verify [repo]` | Validate a manifest and print its digest. |
-| `bernstein volunteer browse` | List issues labeled for volunteers. |
+| `bernstein volunteer browse --index URL` | List projects from a volunteer index. |
 | `bernstein volunteer budget` | Set or inspect persistent donor limits and usage. |
 | `bernstein volunteer autopilot` | Load an autopilot profile. Running tasks requires a Python task-source implementation. |
 | `bernstein volunteer hub` | Serve the lease store and the hub's own task board over HTTP. |
