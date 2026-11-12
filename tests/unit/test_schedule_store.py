@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier, Lock
 
 import pytest
 
@@ -188,6 +191,36 @@ class TestScheduleStoreUpdateLastFire:
         reloaded = store.get(schedule.id)
         assert reloaded is not None
         assert reloaded.last_fire_at == pytest.approx(1_700_000_000.0)
+
+    def test_concurrent_fire_updates_both_commit(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="0 9 * * *", goal="Daily digest")
+        target = store.directory / f"{schedule.id}.json"
+        ready = Barrier(2, timeout=5)
+        rename_lock = Lock()
+        real_replace = os.replace
+
+        def replace_together(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst) == target:
+                # Both writers have staged their payloads before either publishes.
+                ready.wait()
+                with rename_lock:
+                    real_replace(src, dst)
+            else:
+                real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace_together)
+        fire_time = 1_700_000_000.0
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(store.update_last_fire, schedule.id, fire_time)
+            second = pool.submit(ScheduleStore(tmp_path).update_last_fire, schedule.id, fire_time)
+            first.result(timeout=10)
+            second.result(timeout=10)
+
+        reloaded = store.get(schedule.id)
+        assert reloaded is not None
+        assert reloaded.last_fire_at == fire_time
+        assert list(store.directory.iterdir()) == [target]
 
 
 class TestScheduleStoreLoadCorrupt:
