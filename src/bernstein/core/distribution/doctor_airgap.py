@@ -31,6 +31,7 @@ from bernstein.core.security.network_policy import (
 
 
 class CheckStatus(StrEnum):
+    """Possible outcomes of an air-gap readiness check."""
     PASS = "PASS"
     FAIL = "FAIL"
     WARN = "WARN"

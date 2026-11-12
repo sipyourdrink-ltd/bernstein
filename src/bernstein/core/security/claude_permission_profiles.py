@@ -183,7 +183,7 @@ class PermissionProfileManager:
 
         Args:
             role: Agent role name.
-            workdir: Project directory (for writing settings.json).
+            _workdir: Reserved parameter.
 
         Returns:
             Dict suitable for .claude/settings.json.

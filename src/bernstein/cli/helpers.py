@@ -99,6 +99,7 @@ def adapter_cli_choice() -> click.Choice[str]:
 
 
 def print_banner() -> None:
+    """Print the Bernstein banner to the configured console."""
     console.print(f"[blue]{BANNER}[/blue]")
 
 
@@ -280,6 +281,7 @@ def require_server_reachable() -> None:
 
 
 def read_pid(path: str) -> int | None:
+    """Read a numeric PID from a file, returning None if unavailable."""
     p = Path(path)
     if p.exists():
         try:
@@ -290,14 +292,17 @@ def read_pid(path: str) -> int | None:
 
 
 def write_pid(path: str, pid: int) -> None:  # type: ignore[reportUnusedFunction]
+    """Write a process ID to its PID file."""
     Path(path).write_text(str(pid))
 
 
 def is_alive(pid: int) -> bool:
+    """Return whether the shared process probe reports the PID alive."""
     return _shared_is_process_alive(pid)
 
 
 def kill_pid(path: str, label: str) -> None:
+    """Signal the process in a PID file if it is alive, then remove the file."""
     pid = read_pid(path)
     if pid is None:
         console.print(f"[dim]No PID file found for {label}.[/dim]")

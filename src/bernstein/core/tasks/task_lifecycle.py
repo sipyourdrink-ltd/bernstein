@@ -1752,7 +1752,7 @@ def should_auto_decompose(
     Args:
         task: The task to check.
         decomposed_task_ids: Set of already-decomposed task IDs.
-        _workdir: Repository root for coupling analysis (part of interface).
+        workdir: Repository root for coupling analysis (part of interface).
         force_parallel: If True, enable decomposition logic.
 
     Returns:
@@ -2459,7 +2459,7 @@ def claim_and_spawn_batches(
         batches: Role-grouped task batches from group_by_role.
         alive_count: Current number of alive agents (used to enforce max_agents cap).
         assigned_task_ids: Task IDs already owned by active agents (mutated in-place).
-        _done_ids: IDs of already-completed tasks (part of interface).
+        done_ids: IDs of already-completed tasks (part of interface).
         result: TickResult accumulator for spawned/error lists.
     """
     _ = done_ids  # Part of interface; used for overlap detection by callers

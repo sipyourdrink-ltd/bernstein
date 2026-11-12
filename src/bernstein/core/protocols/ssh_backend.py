@@ -264,7 +264,7 @@ class SSHBackend:
             workdir: Local workdir (used to resolve relative paths only;
                 the command runs in the remote session directory).
             log_path: Optional local file to capture combined stdout/stderr.
-            _timeout_seconds: Process timeout (part of interface, tracked
+            timeout_seconds: Process timeout (part of interface, tracked
                 externally by the caller).
 
         Returns:

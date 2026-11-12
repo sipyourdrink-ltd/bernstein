@@ -775,12 +775,12 @@ def _show_dry_run_plan(
     running task server.
 
     Args:
-        _workdir: Project root directory.
+        workdir: Project root directory.
         plan_file: Optional plan file path.
-        _goal: Optional goal string.
-        _seed_file: Optional seed file path.
+        goal: Optional goal string.
+        seed_file: Optional seed file path.
         model_override: Optional model override.
-        _cli: Optional CLI override.
+        cli: Optional CLI override.
     """
     _ = cli  # Part of interface: --cli is validated by its click.Choice
     from rich.table import Table

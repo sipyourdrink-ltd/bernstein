@@ -125,9 +125,12 @@ def ticket_cmd(
 def verify_cmd(archive: Path, signature: Path, card_path: Path) -> None:
     """Verify a ticket bundle against an Agent Card.
 
-    Exits 0 on success, 1 on any verification failure. Never raises on
-    malformed input; a tampered archive simply prints an error and exits
-    non-zero.
+    Click exits with status 0 on success. It reports verification errors
+    and exits with status 1.
+
+    Raises:
+        click.ClickException: If the Agent Card cannot be read or parsed,
+            or if bundle verification fails.
     """
     try:
         card_payload = json.loads(card_path.read_text(encoding="utf-8"))

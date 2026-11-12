@@ -92,7 +92,7 @@ def _extract_job_name(_clean_log: str) -> str:
     """Attempt to extract the job name from the log.
 
     Args:
-        clean_log: ANSI-stripped log text.
+        _clean_log: Reserved parameter.
 
     Returns:
         Extracted job name, or ``"gitlab_ci"`` as fallback.

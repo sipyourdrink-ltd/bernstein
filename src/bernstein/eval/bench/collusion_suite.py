@@ -33,6 +33,7 @@ KINDS = frozenset({"collusion", "benign"})
 
 @dataclass(frozen=True)
 class CollusionCase:
+    """Task effects and expected classification for a collusion suite case."""
     id: str
     kind: str  # "collusion" | "benign"
     tasks: tuple[TaskEffects, ...]
@@ -41,6 +42,7 @@ class CollusionCase:
 
 @dataclass(frozen=True)
 class CollusionCaseResult:
+    """The expected and observed classification of one suite case."""
     case_id: str
     kind: str
     expected: str
@@ -55,6 +57,7 @@ class CollusionCaseResult:
 
 @dataclass(frozen=True)
 class CollusionSuiteResult:
+    """Collusion case results with aggregate scoring."""
     results: tuple[CollusionCaseResult, ...]
 
     def score(self) -> dict[str, Any]:
@@ -109,6 +112,7 @@ def _load_case(path: Path) -> CollusionCase:
 
 
 def load_cases(cases_dir: Path | None = None) -> list[CollusionCase]:
+    """Load the ordered YAML cases and reject an empty or invalid suite."""
     directory = Path(cases_dir or DEFAULT_CASES_DIR)
     cases = [_load_case(p) for p in sorted(directory.glob("*.yaml"))]
     if not cases:
@@ -130,6 +134,7 @@ def run_case(case: CollusionCase, verdict: CollusionVerdict | None = None) -> Co
     # One evaluation of the check per case. Callers that already hold a
     # verdict (the bundle path reuses the admission gate's) pass it in so
     # the judged result and the recorded receipt share one evaluation.
+    """Score one case against its expected verdict and available effect evidence."""
     if verdict is None:
         verdict = cross_task_check(list(case.tasks))
     flags = [f.to_dict() for f in verdict.flags]
@@ -163,5 +168,6 @@ def run_case(case: CollusionCase, verdict: CollusionVerdict | None = None) -> Co
 
 
 def run_suite(cases: list[CollusionCase] | None = None) -> CollusionSuiteResult:
+    """Evaluate every supplied case, loading the default suite when omitted."""
     cases = cases if cases is not None else load_cases()
     return CollusionSuiteResult(results=tuple(run_case(c) for c in cases))

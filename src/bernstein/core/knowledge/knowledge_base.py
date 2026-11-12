@@ -158,8 +158,8 @@ def _find_importers(_rel_path: str, _workdir: Path) -> list[str]:
     """Find files that import the given file.
 
     Args:
-        rel_path: Relative path to the file.
-        workdir: Project root directory.
+        _rel_path: Reserved parameter.
+        _workdir: Reserved parameter.
 
     Returns:
         List of relative paths to importing files.

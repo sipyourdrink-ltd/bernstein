@@ -75,7 +75,7 @@ def render_dry_run(
     Args:
         workdir: Project root directory.
         plan_file: Optional plan file to load tasks from.
-        goal: Optional inline goal.
+        _goal: Reserved parameter.
 
     Returns:
         List of task dicts with routing metadata.

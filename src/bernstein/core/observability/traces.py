@@ -787,7 +787,7 @@ def score_patch_match(
         original: Original file content before the patch.
         patched: File content after the patch was applied.
         file_path: Path label for the result.
-        context_lines: Lines of context to include in snippets.
+        _context_lines: Reserved parameter.
 
     Returns:
         :class:`PatchMatchResult` with confidence score and diff metadata.

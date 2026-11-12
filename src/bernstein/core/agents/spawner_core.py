@@ -7105,11 +7105,11 @@ class AgentSpawner:
         a command-line argument (which can hit ARG_MAX limits).
 
         Args:
-            _prompt_file: Path to the prompt file (part of interface;
+            prompt_file: Path to the prompt file (part of interface;
                 the container path is reconstructed from session_id).
             model_config: Model and effort config.
             session_id: Session ID for the worker wrapper.
-            _mcp_config: MCP configuration dict (part of interface).
+            mcp_config: MCP configuration dict (part of interface).
 
         Returns:
             Command argument list.
