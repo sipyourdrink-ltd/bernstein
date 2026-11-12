@@ -383,7 +383,7 @@ def status_cmd() -> None:
 def maybe_run_background_check(*, on_serve_startup: bool = False) -> dict[str, Any]:
     """Trigger a non-blocking background catalog check.
 
-    Called by ``bernstein mcp serve`` startup, which runs once per agent
+    Called when ``bernstein mcp`` starts the server, which runs once per agent
     session. The check honours the cache revalidation window, so a fresh
     cache answers it with no request and a stale one costs a conditional
     request. Returns a small summary dict so the caller can log without

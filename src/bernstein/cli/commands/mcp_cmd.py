@@ -64,7 +64,7 @@ def mcp_server(
         return
 
     # Release 1.9: non-blocking background catalog upgrade check on
-    # `bernstein mcp serve` startup. Surfaced via `mcp catalog status`.
+    # `bernstein mcp` (server) startup. Surfaced via `mcp catalog status`.
     with suppress(Exception):
         from bernstein.cli.commands.mcp_catalog_cmd import maybe_run_background_check
 
