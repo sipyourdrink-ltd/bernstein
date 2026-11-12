@@ -274,7 +274,9 @@ class BenchSuite:
         ]
         holdout_hash = raw.get("holdout_hash", "")
         measurement_control_ids = (
-            validate_measurement_control_ids(raw["measurement_control_ids"]) if "measurement_control_ids" in raw else None
+            validate_measurement_control_ids(raw["measurement_control_ids"])
+            if "measurement_control_ids" in raw
+            else None
         )
         suite = cls(
             version=raw["version"],
