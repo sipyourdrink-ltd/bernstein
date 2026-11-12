@@ -2,27 +2,12 @@
 
 ## How to Join
 
-### One-Liner CLI Command
+The CLI supports manifest verification and issue browsing. Launching a task
+from an issue URL remains unimplemented.
 
-> **Not available yet.** `bernstein volunteer run` is the intended entry point
-> and lands with the one-command onboarding work (#3889). Today the shipped
-> subcommands are `bernstein volunteer verify`, `browse` and `hub`; the rest of
-> this guide describes the shape the runner is being built to, so a donor can
-> tell in advance what it will and will not be allowed to do on their machine.
->
-> Bare `bernstein volunteer` explains the flow and exits non-zero without
-> recording consent. A consent receipt binds your key to one project's manifest
-> digest and sandbox profile digest, so it is written once a task source exists
-> to pick a project - not before.
-
-```bash
-bernstein volunteer run https://github.com/owner/project/issues/123
-```
-
-This is the command a donor will run to start a volunteer task. It takes a
-GitHub issue URL and begins the execution process.
-
-### Complete Join Process
+A bare `bernstein volunteer` invocation explains onboarding and exits before
+recording consent. A consent receipt binds the donor to a project's manifest
+and sandbox profile.
 
 1. **Install Bernstein**
    ```bash
@@ -40,12 +25,6 @@ GitHub issue URL and begins the execution process.
    bernstein volunteer browse
    ```
    List all issues labeled for volunteers across all indexes (donor needs to configure indexes first).
-
-4. **Run a Task**
-   ```bash
-   bernstein volunteer run <issue-url>
-   ```
-   Replace `<issue-url>` with the exact GitHub issue URL you want to work on.
 
 ## Federated index discovery (Python API)
 
@@ -177,10 +156,7 @@ The resolver does not fetch project manifests or distribute keys.
 
 **Task Release**
 
-Interrupting the worker process abandons the task and the lease it holds
-expires on its own. `bernstein volunteer release <task-id> "<reason>"`, which
-records the reason against the lease instead of waiting for the timeout, lands
-with the runner (#3889) and is not available yet.
+Interrupting the worker leaves its lease to expire.
 
 ### Cleanup
 
