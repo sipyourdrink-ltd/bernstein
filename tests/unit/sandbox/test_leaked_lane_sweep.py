@@ -1225,6 +1225,7 @@ def test_partial_apply_reports_every_lane_and_fails(
     from bernstein.cli.commands.worktrees_cmd import worktrees_group
     from bernstein.core.worktrees import classifier
 
+    monkeypatch.setenv("COLUMNS", "80")
     # Keep partial-apply coverage on the only removable resource: worktrees.
     for name in ("second", "third"):
         path = dead_worktree.parent / name
@@ -1264,11 +1265,37 @@ def test_partial_apply_reports_every_lane_and_fails(
     else:
         assert "1 removed" in result.output
         for lane, status in zip(lanes, ("removed", "failed", "not_attempted"), strict=True):
-            assert lane.resource_id in result.output
-            assert status in result.output
+            assert f"{lane.kind} {lane.resource_id}: {status}" in result.output.splitlines()
     assert "teardown failed" in result.stderr
     assert not lanes[0].path.exists()
     assert all(lane.path.exists() for lane in lanes[1:])
+
+
+@pytest.mark.parametrize("group", ["worktrees", "sandbox"])
+def test_sweep_reports_full_resource_ids_in_narrow_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, group: str
+) -> None:
+    from bernstein.cli.commands.worktrees_cmd import worktrees_group
+    from bernstein.core.sandbox import leak_sweep
+
+    monkeypatch.setenv("COLUMNS", "80")
+    lanes = [
+        leak_sweep.LeakedLane(
+            kind=kind,
+            resource_id=f"{kind}-" + "long-resource-id-" * 8,
+            task_ids=("T-1",),
+            age_seconds=60,
+            size_bytes=None,
+        )
+        for kind in ("worktree", "sandbox")
+    ]
+    monkeypatch.setattr(leak_sweep, "sweep_leaked_lanes", lambda *args, **kwargs: lanes)
+    command = worktrees_group if group == "worktrees" else sandbox_group
+    result = CliRunner().invoke(command, ["sweep", "--workdir", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    for lane, status in zip(lanes, ("approval required", "report only (removal: #6571)"), strict=True):
+        assert f"{lane.kind} {lane.resource_id}: {status}" in result.output.splitlines()
 
 
 def test_false_reap_result_is_failure(

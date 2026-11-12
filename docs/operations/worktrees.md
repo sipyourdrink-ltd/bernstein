@@ -296,6 +296,8 @@ gc` also accepts `--dry-run` as an alias of `--dry`; its CLI preview now makes
 no audit writes. Its existing `--yes` deletion opt-in remains supported.
 
 Rows include task ids, age and disk bytes. Worktree bytes are measured locally.
+Text output also prints each lane's full resource id and removal status on a
+plain line after the table, so narrow terminals do not split or truncate ids.
 Sandbox disk usage is `null` (`?` in the table) unless `--measure-disk` is passed
 and the backend implements `leaked_session_size_bytes(session_id)`. Docker
 reports writable-layer bytes, excluding shared images and external volumes.

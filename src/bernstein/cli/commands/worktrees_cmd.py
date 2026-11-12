@@ -831,22 +831,29 @@ def sweep_cmd(
     table = Table(title="Leaked lanes", header_style="bold cyan")
     for column in ("Kind", "Resource", "Tasks", "Age", "Size", "Unsaved", "Removal"):
         table.add_column(column, overflow="fold")
+    removal_statuses: list[str] = []
     for i, lane in enumerate(lanes):
+        unsaved = "?"
+        if lane.has_unsaved_work is not None:
+            unsaved = "yes" if lane.has_unsaved_work else "no"
+        removal_status = "report only (removal: #6571)"
+        if lane.removal_eligible:
+            removal_status = str(outcomes[i]["removal_status"]) if outcomes else "approval required"
+        removal_statuses.append(removal_status)
         table.add_row(
             lane.kind,
             str(lane.path or lane.resource_id),
             ", ".join(lane.task_ids),
             "?" if lane.age_seconds is None else format_age(lane.age_seconds),
             "?" if lane.size_bytes is None else format_size(lane.size_bytes),
-            "?" if lane.has_unsaved_work is None else ("yes" if lane.has_unsaved_work else "no"),
-            (
-                "report only (removal: #6571)"
-                if not lane.removal_eligible
-                else (str(outcomes[i]["removal_status"]) if outcomes else "approval required")
-            ),
+            unsaved,
+            removal_status,
         )
     console = Console()
     console.print(table)
+    # Keep exact IDs and outcomes available even when the table folds a path.
+    for lane, status in zip(lanes, removal_statuses, strict=True):
+        click.echo(f"{lane.kind} {lane.resource_id}: {status}")
     click.echo(f"Removal operation: {operation}")
     click.echo(f"{removed} removed." if apply_changes and not dry_run else "Dry run - nothing was written or deleted.")
     if error is not None:
