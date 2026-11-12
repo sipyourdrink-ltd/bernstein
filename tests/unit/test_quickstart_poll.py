@@ -33,7 +33,7 @@ def test_quickstart_poll_exits_early_on_the_dict_shaped_status_payload():
     ]
     clock = PollClock()
     with (
-        patch.object(quickstart_cmd.httpx, "get", return_value=_resp(items)) as get,
+        patch.object(quickstart_cmd.httpx, "get", side_effect=[_resp(items)]) as get,
         patch.object(quickstart_cmd, "time", clock),
     ):
         quickstart_cmd._poll_until_done("http://127.0.0.1:1", 6.0, expected_total=2)
@@ -50,7 +50,7 @@ def test_quickstart_poll_keeps_waiting_while_a_failed_lineage_may_retry():
     ]
     clock = PollClock()
     with (
-        patch.object(quickstart_cmd.httpx, "get", return_value=_resp(items)) as get,
+        patch.object(quickstart_cmd.httpx, "get", side_effect=[_resp(items)] * 2) as get,
         patch.object(quickstart_cmd, "time", clock),
     ):
         quickstart_cmd._poll_until_done("http://127.0.0.1:1", 3.0, expected_total=2)
@@ -71,7 +71,7 @@ def test_quickstart_poll_ignores_an_incomplete_snapshot():
     ]
     clock = PollClock()
     with (
-        patch.object(quickstart_cmd.httpx, "get", return_value=_resp(items)) as get,
+        patch.object(quickstart_cmd.httpx, "get", side_effect=[_resp(items)] * 2) as get,
         patch.object(quickstart_cmd, "time", clock),
     ):
         quickstart_cmd._poll_until_done("http://127.0.0.1:1", 3.0, expected_total=3)

@@ -487,7 +487,7 @@ def test_poll_exits_early_on_the_dict_shaped_status_payload():
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
     clock = PollClock()
-    with patch.object(run_confirm.httpx, "get", return_value=resp) as get, patch.object(run_confirm, "time", clock):
+    with patch.object(run_confirm.httpx, "get", side_effect=[resp]) as get, patch.object(run_confirm, "time", clock):
         run_confirm._poll_demo_completion("http://127.0.0.1:1", 6.0)
     assert clock.sleeps == []
     assert get.call_count == 1
@@ -531,7 +531,10 @@ def test_poll_keeps_waiting_while_a_failed_task_may_still_be_retried():
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
     clock = PollClock()
-    with patch.object(run_confirm.httpx, "get", return_value=resp) as get, patch.object(run_confirm, "time", clock):
+    with (
+        patch.object(run_confirm.httpx, "get", side_effect=[resp] * 2) as get,
+        patch.object(run_confirm, "time", clock),
+    ):
         run_confirm._poll_demo_completion("http://127.0.0.1:1", 3.0, expected_total=2)
     assert clock.sleeps == [2.0, 2.0]
     assert get.call_count == 2
@@ -557,7 +560,7 @@ def test_poll_exits_once_the_seeded_count_is_done_despite_failed_rows():
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
     clock = PollClock()
-    with patch.object(run_confirm.httpx, "get", return_value=resp) as get, patch.object(run_confirm, "time", clock):
+    with patch.object(run_confirm.httpx, "get", side_effect=[resp]) as get, patch.object(run_confirm, "time", clock):
         run_confirm._poll_demo_completion("http://127.0.0.1:1", 6.0, expected_total=2)
     assert clock.sleeps == []
     assert get.call_count == 1
@@ -594,7 +597,10 @@ def test_poll_counts_done_lineages_not_done_rows():
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
     clock = PollClock()
-    with patch.object(run_confirm.httpx, "get", return_value=resp) as get, patch.object(run_confirm, "time", clock):
+    with (
+        patch.object(run_confirm.httpx, "get", side_effect=[resp] * 2) as get,
+        patch.object(run_confirm, "time", clock),
+    ):
         run_confirm._poll_demo_completion("http://127.0.0.1:1", 3.0, expected_total=2)
     assert clock.sleeps == [2.0, 2.0]
     assert get.call_count == 2
