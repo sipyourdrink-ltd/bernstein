@@ -123,7 +123,7 @@ flowchart LR
 हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` ऑडिट अनुबंध के `findings` भी दिखाता है, जो इंस्टॉलेशन के समान अवलोकनों के लिए `bernstein govern audit --only INS --json` के परिणामों के समान हैं। doctor की सामान्य रिपोर्ट का मौजूदा प्रदर्शन अपरिवर्तित रहता है। स्थिर जाँच आईडी के लिए [doctor संचालन मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) देखें।
 
 pipx, pip, brew, dnf, npm और Docker [इंस्टॉल गाइड](https://docs.bernstein.run/en/latest/getting-started/install/) में हैं; एयर-गैप्ड wheelhouse की अपनी अलग [एयर-गैप गाइड](https://docs.bernstein.run/en/latest/installation/air-gap/) है।
+
+`bernstein worktrees sweep` पूरे हो चुके कार्यों के बचे हुए वर्कट्री और सैंडबॉक्स सत्रों का पूर्वावलोकन उनकी आयु और डिस्क उपयोग के साथ दिखाता है। केवल वर्कट्री हटाए जा सकते हैं, जिसके लिए `--apply` और अलग हटाने की स्वीकृति चाहिए। सैंडबॉक्स केवल रिपोर्ट में दिखाए जाते हैं (हटाना: #6571); `doctor` पुराने बचे संसाधनों की चेतावनी देता है। [सफ़ाई प्रक्रिया](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep) देखें।
 
 स्किल के प्रारंभ में विफलता होने पर उसे [क्वारंटीन](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) किया जाता है और कारण तथा ऑडिट इवेंट स्थायी रूप से दर्ज होते हैं। `bernstein status` संख्या दिखाता है; `doctor` और `govern audit` निष्क्रिय घोषणाओं की रिपोर्ट देते हैं। कारण ठीक करने के बाद `bernstein quarantine re-enable DECLARATION_ID` से मार्कर स्पष्ट रूप से हटाएँ।
 

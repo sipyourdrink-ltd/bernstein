@@ -123,7 +123,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json`, denetim sözleşmesinin `findings` bulgularını da sunar; aynı kurulum gözlemleri için bunlar `bernstein govern audit --only INS --json` sonuçlarıyla aynıdır. Normal doctor raporunun mevcut görünümü korunur. Kararlı kontrol kimlikleri için [doctor işletim kılavuzuna](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) bakın.
 
 pipx, pip, brew, dnf, npm ve Docker [kurulum kılavuzunda](https://docs.bernstein.run/en/latest/getting-started/install/) ele alınmıştır; yalıtılmış paket kendi [air-gap kılavuzuna](https://docs.bernstein.run/en/latest/installation/air-gap/) sahiptir.
+
+`bernstein worktrees sweep`, tamamlanan görevlerin geride bıraktığı çalışma ağaçlarını ve sandbox oturumlarını yaşları ve disk kullanımlarıyla önizler. Yalnızca çalışma ağaçları, `--apply` ve ayrı bir silme onayı ile silinebilir. Sandbox ortamları yalnızca raporda gösterilir (silme: #6571); `doctor` uzun süredir kalan kaynaklar için uyarır. [Temizleme akışına](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep) bakın.
 
 Beceri başlatma hataları, nedeni ve denetim olayı kalıcı olarak kaydedilerek [karantinaya](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) alınır. `bernstein status` sayıyı gösterir; `doctor` ve `govern audit` devre dışı bırakılan bildirimleri raporlar. Nedeni düzelttikten sonra `bernstein quarantine re-enable DECLARATION_ID` ile işareti açıkça kaldırın.
 

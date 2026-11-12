@@ -123,7 +123,7 @@ flowchart LR
 Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i bramki zatwierdzeń trzymają niezależnie od tego, co agent robi w zadaniu. Węzeł kodowy kończy się za merge gates we własnym git worktree. Węzły powyżej kończą się inaczej: [kontrakt artefaktu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nazywa rezultat (raport, dataset, skan, log działań), a węzeł zamyka podpisany kwit lineage zamiast commita. Ten sam scheduler, ten sam journal, ta sama weryfikacja offline - niezależnie czy graf niesie kod, badania, zmianę ops czy miks wszystkich trzech. Gotowe grafy dla softu, badań, dokumentacji, enterprise i procesów kontrybutorskich leżą w [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` udostępnia również wyniki kontraktu audytu (`findings`), identyczne z wynikami `bernstein govern audit --only INS --json` przy tych samych obserwacjach instalacji. Zwykły raport doctor zachowuje dotychczasowy wygląd. Stałe identyfikatory kontroli opisano w [podręczniku obsługi doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
 pipx, pip, brew, dnf, npm oraz Docker zostały opisane w [przewodniku instalacji](https://docs.bernstein.run/en/latest/getting-started/install/); izolowany pakiet instalacyjny posiada dedykowany [przewodnik air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+`bernstein worktrees sweep` wyświetla podgląd drzew roboczych i sesji sandbox pozostawionych przez zakończone zadania, wraz z ich wiekiem i zużyciem dysku. Usuwać można tylko drzewa robocze, z użyciem `--apply` i osobnej zgody na usunięcie. Sandboxy są jedynie uwzględniane w raporcie (usuwanie: #6571); `doctor` ostrzega o zasobach pozostawionych od dawna. Zobacz [procedurę sprzątania](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 Błędy inicjalizacji umiejętności powodują objęcie ich [kwarantanną](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), z trwałym zapisem przyczyny i zdarzenia audytu. `bernstein status` pokazuje liczbę; `doctor` i `govern audit` informują o wyłączonych deklaracjach. Po usunięciu przyczyny jawnie usuń znacznik poleceniem `bernstein quarantine re-enable DECLARATION_ID`.
 
