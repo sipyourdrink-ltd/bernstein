@@ -94,6 +94,8 @@ def check_approvals(
     page.on("request", record_resolution)
 
     for approval, decision in zip(approvals[:2], ("allow", "reject"), strict=True):
+        expect(page.get_by_text(f"APPROVAL · {approval.id}", exact=True)).to_be_visible()
+        expect(approve).to_be_enabled()
         url = f"{base}/api/v1/approvals/{approval.id}/resolve"
         with page.expect_response(url) as reply:
             if decision == "allow":
