@@ -248,6 +248,10 @@ class CachingAdapter(CLIAdapter):
         """
         return getattr(self._inner, "model_vendor", "") or ""
 
+    @model_vendor.setter
+    def model_vendor(self, vendor: str) -> None:
+        self._inner.model_vendor = vendor
+
     def plugin_info(self) -> AdapterPluginInfo:
         """Delegate plugin metadata to the wrapped adapter.
 
