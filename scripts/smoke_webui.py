@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from capture_webui_renders import gui_server, resolve_bernstein
-from playwright.sync_api import Page, Request, expect, sync_playwright
+from playwright.sync_api import Locator, Page, Request, expect, sync_playwright
 
 from bernstein.core.approval.models import PendingApproval
 from bernstein.core.approval.queue import ApprovalQueue
@@ -201,18 +201,38 @@ def check_approvals(
 
     page.on("request", record_resolution)
 
+    queue = page.get_by_role("list", name="Pending approvals")
+
+    def queue_row(approval: PendingApproval) -> Locator:
+        return queue.get_by_role("button").filter(has_text=approval.session_id)
+
+    first, second = map(queue_row, approvals[:2])
+    expect(first).to_have_attribute("aria-current", "true")
+    approve.press("d")
+    second.press("d")
+    expect(first).to_have_attribute("aria-current", "true")
+    assert not attempts
+    first.press("ArrowDown")
+    expect(second).to_be_focused()
+    expect(second).to_have_attribute("aria-current", "true")
+    second.press("ArrowUp")
+    expect(first).to_be_focused()
+    expect(first).to_have_attribute("aria-current", "true")
+
     for approval, decision in zip(approvals[:2], ("allow", "reject"), strict=True):
         expect(page.get_by_text(f"APPROVAL · {approval.id}", exact=True)).to_be_visible()
         expect(approve).to_be_enabled()
+        row = queue_row(approval)
+        row.focus()
         url = f"{base}/api/v1/approvals/{approval.id}/resolve"
         with page.expect_response(url) as reply:
             if decision == "allow":
                 approve.evaluate("""button => {
                     button.click();
-                    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+                    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
                 }""")
             else:
-                page.keyboard.press("d")
+                row.press("d")
         assert reply.value.ok, f"Approval resolution returned HTTP {reply.value.status}"
         assert reply.value.request.post_data_json == {"decision": decision, "nonce": approval.nonce_hex}
         resolution = ApprovalQueue(base_dir=queue_dir).get_resolution(approval.id)
@@ -222,6 +242,8 @@ def check_approvals(
 
     stale = approvals[2]
     expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_visible()
+    expect(queue_row(stale)).to_be_focused()
+    expect(queue_row(stale)).to_have_attribute("aria-current", "true")
     queue_url = f"{base}/api/v1/approvals/queue"
     nav = page.get_by_role("navigation")
     nav.get_by_role("link", name="Tasks", exact=True).click()
@@ -240,24 +262,36 @@ def check_approvals(
     url = f"{base}/api/v1/approvals/{stale.id}/resolve"
     settled = page.request.post(url, data={"decision": "reject", "nonce": stale.nonce_hex}, headers=headers)
     expect(settled).to_be_ok()
+    tasks_link = nav.get_by_role("link", name="Tasks", exact=True)
+    stale_row = queue_row(stale)
+    stale_row.focus()
     with page.expect_response(url) as reply:
-        approve.click()
+        stale_row.evaluate(
+            """(row, next) => {
+                row.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+                next.focus();
+            }""",
+            tasks_link.element_handle(),
+        )
     assert reply.value.status == 410
     expect(page.get_by_role("alert").filter(has_text="This approval is no longer current")).to_be_visible()
     expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_hidden()
 
     pending = approvals[3]
     expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_visible()
+    expect(tasks_link).to_be_focused()
     page.evaluate("() => { const now = Date.now; Date.now = () => now() + 180_000; }")
     url = f"{base}/api/v1/approvals/{pending.id}/resolve"
     expect(approve).to_be_enabled()
     with page.expect_response(url) as skewed:
-        page.keyboard.press("a")
+        queue_row(pending).press("a")
     assert skewed.value.ok
     resolution = ApprovalQueue(base_dir=queue_dir).get_resolution(pending.id)
     assert resolution is not None and resolution.decision.value == "allow"
     expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_hidden()
     assert attempts.count(url) == 1
+
+    expect(page.get_by_role("heading", name="Approvals queue")).to_be_focused()
 
     expired = approvals[4]
     expect(page.get_by_text(f"APPROVAL · {expired.id}", exact=True)).to_be_hidden()
