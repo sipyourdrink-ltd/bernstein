@@ -525,10 +525,12 @@ def _sdd_dir(*, create: bool = False) -> Path:
     an ``bernstein init`` hint, matching the schedule surface.
     """
     sdd = Path.cwd() / ".sdd"
+    if sdd.exists() and not sdd.is_dir():
+        raise click.ClickException(f"Cannot use {sdd} as a workspace: it is not a directory.")
     if create:
         sdd.mkdir(parents=True, exist_ok=True)
         return sdd
-    if not sdd.exists():
+    if not sdd.is_dir():
         raise click.ClickException("No .sdd/ directory found. Run 'bernstein init' first.")
     return sdd
 

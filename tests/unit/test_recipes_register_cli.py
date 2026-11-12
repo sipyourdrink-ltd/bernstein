@@ -208,6 +208,17 @@ class TestRegisterFlow:
         assert "bernstein init" in result.stderr
         assert result.stdout == ""
 
+    @pytest.mark.parametrize("command", ["register", "repair-lineage"])
+    def test_registry_rejects_file_in_place_of_workspace(self, workdir: Path, command: str) -> None:
+        obstruction = workdir / ".sdd"
+        obstruction.write_text("preserve me", encoding="utf-8")
+        result = CliRunner().invoke(recipes_group, [command, "nightly-triage"])
+
+        assert result.exit_code == 1, result.output
+        assert "not a directory" in result.stderr
+        assert result.stdout == ""
+        assert obstruction.read_text(encoding="utf-8") == "preserve me"
+
     def test_plan_is_reproducible(self, workdir: Path) -> None:
         first = _run(["plan", "nightly-triage"])
         second = _run(["plan", "nightly-triage"])
