@@ -118,7 +118,7 @@ class _PartitionProxy:
             sock.listen(64)
             sock.settimeout(0.25)
             self._server_sock = sock
-            thread = threading.Thread(target=self._accept_loop, daemon=True)
+            thread = threading.Thread(target=self._accept_loop, args=(sock,), daemon=True)
             thread.start()
         except BaseException:
             self._server_sock = None
@@ -157,9 +157,7 @@ class _PartitionProxy:
         """Resume forwarding."""
         self._partitioned = False
 
-    def _accept_loop(self) -> None:
-        server_sock = self._server_sock
-        assert server_sock is not None
+    def _accept_loop(self, server_sock: socket.socket) -> None:
         while not self._stopping:
             try:
                 client, _addr = server_sock.accept()
@@ -455,7 +453,10 @@ class ClusterHandle:
 
     def restart_central(self) -> None:
         """SIGTERM central, wait for exit, then re-launch + wait for ready."""
-        _terminate(self.central_proc)
+        previous = self.central_proc
+        _terminate(previous)
+        if previous is not None and previous.poll() is None:
+            raise RuntimeError("Central did not stop before restart")
         self.central_proc = _start_central(
             workdir=self.workdir,
             listener=self.central_socket,
