@@ -23,7 +23,7 @@ features - there is no separate "enterprise edition" toggle.
 ## Request rate limits
 
 Request limits apply to both canonical routes and their `/api/v1` aliases.
-Seed-configured `rate_limit.buckets` share their counters across both forms.
+Named buckets under the seed’s `rate_limit` mapping share counters across both forms.
 Canonical rules take precedence; versioned-only rules remain supported when
 no canonical rule matches.
 The `/events`, `/events/cost` and `/events/thread` routes and their versioned
@@ -66,15 +66,14 @@ general request limits continue to apply as well.
 
 ## Auth providers
 
-Three provider families are supported, configured under `auth.*` in
-`bernstein.yaml` and exposed by `core/security/auth.py:923-...`
-(`AuthService`).
+`AuthService` supports OIDC, SAML, and local users. Set
+`BERNSTEIN_AUTH_ENABLED=true` to enable the authentication service.
 
-| Provider         | Config keys                                              | Code                                                      |
-| ---------------- | -------------------------------------------------------- | --------------------------------------------------------- |
-| **OIDC**         | `auth.oidc.{enabled,issuer,client_id,client_secret,scopes,redirect_uri}` | `core/security/sso_oidc.py`, `routes/auth.py:172-261`     |
-| **SAML 2.0**     | `auth.saml.{enabled,sp_entity_id,idp_metadata_url,...}`  | `core/security/auth.py` (SAML helpers), `routes/auth.py:269-316` |
-| **Local users**  | `auth.users[]` (admin-managed via `/auth/users`)         | `core/security/auth.py` (`AuthUserStore`), `routes/auth.py:494-520` |
+| Provider | Configuration |
+|----------|---------------|
+| **OIDC** | `BERNSTEIN_OIDC_ENABLED`, `BERNSTEIN_OIDC_ISSUER_URL`, `BERNSTEIN_OIDC_CLIENT_ID`, `BERNSTEIN_OIDC_CLIENT_SECRET`, `BERNSTEIN_OIDC_SCOPES`, `BERNSTEIN_OIDC_REDIRECT_URI` |
+| **SAML 2.0** | `BERNSTEIN_SAML_ENABLED`, `BERNSTEIN_SAML_IDP_ENTITY_ID`, `BERNSTEIN_SAML_IDP_SSO_URL`, `BERNSTEIN_SAML_IDP_X509_CERT`, `BERNSTEIN_SAML_SP_ENTITY_ID`, `BERNSTEIN_SAML_SP_ACS_URL` |
+| **Local users** | Managed by an administrator through `/auth/users` |
 
 Group-to-role mappings are surfaced via `GET /auth/group-mappings` and
 modified by admins via `PUT /auth/group-mappings`

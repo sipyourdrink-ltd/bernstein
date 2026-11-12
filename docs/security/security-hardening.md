@@ -17,8 +17,8 @@ separate from approval of individual tool calls.
 ## Policy-as-code engine
 
 Run `bernstein policy check` from the project directory to evaluate the committed branch diff
-against `main` using YAML or Rego policies in `.sdd/policies/`. Include this command
-in your CI checks if the policy should gate a merge.
+against `main` using YAML or Rego policies in `.sdd/policies/`. For CI, fetch the intended base into a local `main` ref before running
+the command.
 
 ### YAML policies
 
@@ -69,8 +69,9 @@ A `warn` violation alone leaves the exit status successful.
 ### Rego policies (OPA)
 
 For more expressive policies, write Rego rules and place them in `.sdd/policies/`.
-Bernstein invokes the `opa` binary if it is available on `$PATH`; if not, Rego policies
-are skipped with a log warning.
+Install `opa` on `$PATH` before using Rego in CI and validate that OPA can
+load your policy. Bernstein skips Rego evaluation when OPA is absent and
+logs OPA execution errors without reporting a policy violation.
 
 ```rego
 # .sdd/policies/test-coverage.rego

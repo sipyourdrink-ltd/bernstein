@@ -88,7 +88,7 @@ bootstrap. The orchestrator resolves the effective cap from
 the following precedence chain:
 
 1. `BERNSTEIN_MAX_COST_USD` env var (set by the CLI flag).
-2. `.sdd/runtime/run_config.json` (`per_run_max_cost_usd`).
+2. `.sdd/runtime/run_config.json` (`budget_usd`).
 3. `budget` in `bernstein.yaml` (parsed into `SeedConfig.budget_usd`).
 4. Default `0.0` (= unlimited).
 

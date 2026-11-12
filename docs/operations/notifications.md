@@ -283,9 +283,9 @@ The dispatcher keeps an LRU + on-disk window keyed by `event_id`
 - `dedup_lru_size`: 2048 entries (in-memory)
 - `dedup_window_seconds`: 21600 (6 hours)
 
-Both knobs live under `notifications:` at top level in `bernstein.yaml`. A
-restart re-seeds the LRU from `.sdd/runtime/notifications/dedup.jsonl` so a
-crash loop is throttled too.
+Set both knobs under `notifications:` in the YAML supplied to the driver
+command with `--config`, or load that section when constructing the bridge.
+A restart re-seeds the LRU from `.sdd/runtime/notifications/dedup.jsonl`.
 
 ### Retry policy
 
