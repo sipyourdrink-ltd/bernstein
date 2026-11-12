@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -49,15 +50,17 @@ def _get_suite(name: str):
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     _BUILTIN = {
-        "gate-evasion-v1": build_gate_evasion_suite_v1,
-        "goal-drift-v1": build_goal_drift_suite,
-        "golden-v1": build_golden_suite_v1,
-        "tool-surface-v1": build_tool_surface_suite,
-        "leakage-v1": build_leakage_suite_v1,
+        "gate-evasion-v1": (build_gate_evasion_suite_v1, ("CTL-SEC-04",)),
+        "goal-drift-v1": (build_goal_drift_suite, ("CTL-ROB-02",)),
+        "golden-v1": (build_golden_suite_v1, ("CTL-ROB-01",)),
+        "tool-surface-v1": (build_tool_surface_suite, ("CTL-SEC-02",)),
+        "leakage-v1": (build_leakage_suite_v1, ("CTL-SEC-03",)),
     }
 
     if name in _BUILTIN:
-        return _BUILTIN[name]()
+        builder, control_ids = _BUILTIN[name]
+        # Reconstruction validates the declaration and starts with an uncached hash.
+        return replace(builder(), measurement_control_ids=control_ids)
 
     path = Path(name)
     if path.suffix == ".json" and path.exists():
