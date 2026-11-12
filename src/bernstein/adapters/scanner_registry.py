@@ -140,14 +140,6 @@ def selectable_scanner_names() -> frozenset[str]:
     return frozenset(name for name, _ in iter_scanner_specs() if name not in _NON_ANALYZER_STUBS)
 
 
-def _registered_scanner_name(name: str) -> str | None:
-    """Return *name* if it is a scanner registry key, else ``None``."""
-    _load_entrypoint_scanners()
-    if name in _SCANNERS:
-        return name
-    return None
-
-
 def scanner_name_for_provider(provider_name: str | None, model: str) -> str | None:
     """Resolve a scanner registry name from a provider name and/or model string.
 

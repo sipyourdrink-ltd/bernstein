@@ -83,14 +83,6 @@ def _canonical_bytes(payload: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def _verdict_is_match(verdict: FindingVerifyVerdict) -> bool:
-    return verdict is FindingVerifyVerdict.MATCH
-
-
-def _verdict_is_drift(verdict: FindingVerifyVerdict) -> bool:
-    return verdict.name.startswith("DRIFT_")
-
-
 @dataclass(frozen=True, slots=True)
 class FindingVerifyResult:
     """Outcome of a single finding re-verification.
