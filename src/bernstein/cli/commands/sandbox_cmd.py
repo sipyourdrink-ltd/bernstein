@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import click
 
+from bernstein.cli.commands.worktrees_cmd import sweep_cmd
 from bernstein.cli.helpers import console
 from bernstein.core.sandbox.playwright_runner import (
     PlaywrightRunner,
@@ -731,6 +732,9 @@ def leaks_cmd(workdir: Path, show_all: bool, as_json: bool) -> None:
     console.print(f"{len(leaked)} leaked, {excluded} excluded (nothing was destroyed).")
     if excluded and not show_all:
         console.print("[dim]Re-run with --all to see why sessions were excluded.[/dim]")
+
+
+sandbox_group.add_command(sweep_cmd, "sweep")
 
 
 __all__ = [

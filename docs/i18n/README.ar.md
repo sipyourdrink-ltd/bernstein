@@ -123,7 +123,7 @@ flowchart LR
 كل عقدة يأخذها وكيل تسمح المرحلة بدوره؛ وتبقى أسوار الأدوار وبوابات الموافقة قائمة مهما فعل الوكيل داخل المهمة. عقدة الكود تكتمل خلف بوابات الدمج في git worktree خاص بها. العقد أعلاه تكتمل بشكل مختلف: [عقد المخرجات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) يسمّي الناتج (تقرير، مجموعة بيانات، فحص، سجل إجراءات)، وتُغلق العقدة بإيصال lineage موقّع بدل commit. المجدوِل نفسه، السجل نفسه، التحقق دون اتصال نفسه - سواء حمل المخطط كودًا أو بحثًا أو تغيير عمليات أو مزيجًا من الثلاثة. مخططات جاهزة للبرمجيات والبحث والوثائق والمؤسسات ومسارات المساهمين في [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### التثبيت في 30 ثانية
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 يعرض `bernstein doctor --json` أيضًا مخرجات عقد التدقيق `findings`، وهي مطابقة لمخرجات `bernstein govern audit --only INS --json` عند استخدام ملاحظات التثبيت نفسها. يظل عرض تقرير doctor المعتاد كما هو. راجع [دليل تشغيل doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) للاطلاع على معرّفات الفحوصات الثابتة.
 
 تمت تغطية pipx وpip وbrew وdnf وnpm وDocker في [دليل التثبيت](https://docs.bernstein.run/en/latest/getting-started/install/)؛ وحزمة التثبيت المعزولة لها [دليل air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) الخاص بها.
+
+يعرض `bernstein worktrees sweep` معاينة لأشجار العمل وجلسات البيئة المعزولة التي تركتها المهام المكتملة، مع عمرها واستخدامها للقرص. يمكن حذف أشجار العمل فقط، باستخدام `--apply` وموافقة منفصلة على الحذف. أما البيئات المعزولة فيقتصر التعامل معها على عرض التقارير (الحذف: #6571)؛ ويحذر `doctor` من الموارد المتروكة منذ وقت طويل. راجع [خطوات التنظيف](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 تُوضَع المهارات التي تفشل تهيئتها في [الحجر](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)، مع حفظ السبب وحدث التدقيق بشكل دائم. يعرض `bernstein status` العدد، ويُبلّغ `doctor` و`govern audit` عن التعريفات المعطّلة. بعد إصلاح السبب، أزل العلامة صراحةً باستخدام `bernstein quarantine re-enable DECLARATION_ID`.
 
@@ -158,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — لوحة معلومات الطرفية | `bernstein gui serve` — لوحة معلومات المتصفح |
 
 ### إثبات عملية تشغيل
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 الحتمية هنا شيء يمكنك التحقق منه بنفسك، وليست أمراً تسلم به دون دليل. قم بالتشغيل مرة واحدة مع تمكين التدقيق، ثم تحقق مما تم تسجيله:
 
@@ -181,6 +183,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 تنطبق نفس إمكانية التحقق على أرقام التقييم. يقوم `bernstein bench run <suite> --reliability k` (يكتب أيضاً `bernstein eval --reliability k`) بتشغيل كل مهمة `k` من المرات بتنسيق ثابت، ثم يبلغ عن حد أدنى `pass^k` (يجب أن تنجح جميع محاولات `k`) إلى جانب الحد الأقصى `pass@1`. يتم ختم هذه النتيجة في إيصال موقّع يعيد `bernstein bench reliability-verify` حسابه دون اتصال، وبالتالي فإن أي حد أدنى مفتعل يفشل في التحقق. التفاصيل: [الحد الأدنى للموثوقية pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 استخدم `bernstein govern audit --format json` أو `--format sarif` للحصول على نتائج فحص قابلة للقراءة آليًا، و`--strict --quiet` لتحديد اجتياز الفحص في CI. راجع [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` يقارن سلسلة الإيصالات بالقيمة النهائية لرأس السلسلة وعدد خطوات التفويض المختومين في بيان التشغيل باستخدام HMAC بمفتاح التدقيق، فيكشف حذف ذيل السلسلة والاستبدال والإضافة بعد الإغلاق، بما في ذلك إعادة كتابة الإعلان دون امتلاك المفتاح. إزالة الإعلان تترك التشغيل غير مكتمل (رمز الخروج `3`)، ولا يُعدّ صالحًا أبدًا. لا يكشف هذا إعادة تشغيل لقطة أصلية أقدم، ولا يحمي من كاتب يمتلك مفتاح التدقيق. راجع [سير عمل التحقق من التفويض](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### كيف يعمل
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

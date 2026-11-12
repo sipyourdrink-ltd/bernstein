@@ -123,7 +123,7 @@ flowchart LR
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` cũng hiển thị các kết quả `findings` của hợp đồng kiểm toán, giống hệt kết quả của `bernstein govern audit --only INS --json` khi dùng cùng các quan sát về cài đặt. Báo cáo doctor thông thường giữ nguyên cách hiển thị. Xem [hướng dẫn vận hành doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) để biết các mã kiểm tra ổn định.
 
 pipx, pip, brew, dnf, npm và Docker được trình bày trong [hướng dẫn cài đặt](https://docs.bernstein.run/en/latest/getting-started/install/); gói cài đặt cách ly mạng có [hướng dẫn air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) riêng.
+
+`bernstein worktrees sweep` xem trước các cây làm việc và phiên sandbox do tác vụ đã hoàn tất để lại, kèm thời gian tồn tại và dung lượng đĩa. Chỉ có thể xóa cây làm việc, bằng `--apply` và với phê duyệt xóa riêng. Sandbox chỉ được liệt kê trong báo cáo (xóa: #6571); `doctor` cảnh báo về tài nguyên bị bỏ lại lâu ngày. Xem [quy trình dọn dẹp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 Khi khởi tạo kỹ năng thất bại, kỹ năng được [cách ly](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), đồng thời lưu bền vững nguyên nhân và sự kiện kiểm toán. `bernstein status` hiển thị số lượng; `doctor` và `govern audit` báo cáo các khai báo bị vô hiệu hóa. Sau khi sửa nguyên nhân, hãy gỡ dấu cách ly một cách tường minh bằng `bernstein quarantine re-enable DECLARATION_ID`.
 
@@ -158,7 +160,7 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 | `bernstein live` — bảng điều khiển terminal | `bernstein gui serve` — bảng điều khiển trình duyệt |
 
 ### chứng minh một phiên chạy
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Tính tất định ở đây là điều bạn có thể tự kiểm chứng, không phải điều bạn chấp nhận dựa trên niềm tin. Chạy một lần với tính năng kiểm toán được bật, sau đó xác minh những gì đã ghi lại:
 
@@ -181,6 +183,8 @@ Biên lai phiên chạy liên kết phần đầu nhật ký, phần đầu tr�
 Khả năng kiểm chứng tương tự cũng áp dụng cho các chỉ số đánh giá. `bernstein bench run <suite> --reliability k` (còn viết là `bernstein eval --reliability k`) chạy mỗi nhiệm vụ `k` lần dưới sự điều phối cố định, sau đó báo cáo mức sàn `pass^k` (tất cả `k` lần thử phải thành công) bên cạnh mức trần `pass@1`. Kết quả đó được niêm phong trong biên lai có chữ ký mà `bernstein bench reliability-verify` tính toán lại ngoại tuyến, khiến mọi mức sàn giả mạo đều không vượt qua kiểm định. Chi tiết: [mức sàn độ tin cậy pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Dùng `bernstein govern audit --format json` hoặc `--format sarif` để xuất kết quả kiểm tra cho máy đọc, và `--strict --quiet` làm điều kiện vượt qua CI. Xem [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` so sánh chuỗi biên nhận với đầu chuỗi cuối cùng và số bước chuyển đã được niêm phong trong bản kê khai lần chạy bằng HMAC với khóa kiểm toán, qua đó phát hiện việc xóa phần đuôi, thay thế và nối dài chuỗi sau khi đóng, kể cả việc viết lại khai báo mà không có khóa. Xóa khai báo sẽ khiến lần chạy ở trạng thái chưa hoàn tất (mã thoát `3`), không bao giờ được coi là hợp lệ. Cơ chế này không phát hiện việc sử dụng lại một bản chụp xác thực cũ hơn và không bảo vệ trước người ghi nắm giữ khóa kiểm toán. Xem [quy trình xác minh ủy quyền](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cơ chế hoạt động
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

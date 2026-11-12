@@ -12,6 +12,7 @@ from bernstein.core.task_splitter import TaskSplitter
 from bernstein.core.task_store import TaskStore
 
 from bernstein.core.server import TaskCreate
+from bernstein.core.tasks.models import DispatchTier
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -76,6 +77,8 @@ def test_split_creates_subtasks_and_marks_parent_waiting() -> None:
         _task("draft-2", description="Add tests", estimated_minutes=25),
     ]
     subtasks[0].title = "Implement parser"
+    subtasks[0].dispatch_tier = DispatchTier.EDGE
+    subtasks[0].metadata = {"dispatch_hints": {"estimated_changed_lines": 9, "requires_shell": False}, "private": "x"}
     subtasks[1].title = "Add tests"
     manager.decompose_sync.return_value = subtasks
     client.post.side_effect = [
@@ -89,6 +92,9 @@ def test_split_creates_subtasks_and_marks_parent_waiting() -> None:
     assert created == ["sub-1", "sub-2"]
     create_body = client.post.call_args_list[0].kwargs["json"]
     assert create_body["parent_task_id"] == "parent"
+    posted = TaskCreate.model_validate(create_body)
+    assert posted.dispatch_tier == "edge"
+    assert posted.metadata == {"dispatch_hints": {"estimated_changed_lines": 9, "requires_shell": False}}
     assert "[subtask of parent]" in create_body["description"]
     wait_call = client.post.call_args_list[-1]
     assert wait_call.args[0] == "https://server/tasks/parent/wait-for-subtasks"

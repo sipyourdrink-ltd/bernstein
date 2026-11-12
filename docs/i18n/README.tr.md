@@ -123,7 +123,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json`, denetim sözleşmesinin `findings` bulgularını da sunar; aynı kurulum gözlemleri için bunlar `bernstein govern audit --only INS --json` sonuçlarıyla aynıdır. Normal doctor raporunun mevcut görünümü korunur. Kararlı kontrol kimlikleri için [doctor işletim kılavuzuna](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) bakın.
 
 pipx, pip, brew, dnf, npm ve Docker [kurulum kılavuzunda](https://docs.bernstein.run/en/latest/getting-started/install/) ele alınmıştır; yalıtılmış paket kendi [air-gap kılavuzuna](https://docs.bernstein.run/en/latest/installation/air-gap/) sahiptir.
+
+`bernstein worktrees sweep`, tamamlanan görevlerin geride bıraktığı çalışma ağaçlarını ve sandbox oturumlarını yaşları ve disk kullanımlarıyla önizler. Yalnızca çalışma ağaçları, `--apply` ve ayrı bir silme onayı ile silinebilir. Sandbox ortamları yalnızca raporda gösterilir (silme: #6571); `doctor` uzun süredir kalan kaynaklar için uyarır. [Temizleme akışına](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep) bakın.
 
 Beceri başlatma hataları, nedeni ve denetim olayı kalıcı olarak kaydedilerek [karantinaya](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) alınır. `bernstein status` sayıyı gösterir; `doctor` ve `govern audit` devre dışı bırakılan bildirimleri raporlar. Nedeni düzelttikten sonra `bernstein quarantine re-enable DECLARATION_ID` ile işareti açıkça kaldırın.
 
@@ -158,7 +160,7 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 | `bernstein live` — terminal kontrol paneli | `bernstein gui serve` — tarayıcı kontrol paneli |
 
 ### bir çalıştırmayı kanıtlayın
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Buradaki determinizm, inanca dayalı kabul ettiğiniz bir şey değil, bizzat kontrol ettiğiniz bir şeydir. Denetim etkinleştirilmiş olarak bir kez çalıştırın, ardından kaydedilenleri doğrulayın:
 
@@ -181,6 +183,8 @@ Bir çalıştırma makbuzu, gömülü genel anahtarla birlikte Ed25519 ile imzal
 Aynı doğrulanabilirlik değerlendirme sayıları için de geçerlidir. `bernstein bench run <suite> --reliability k` (ayrıca `bernstein eval --reliability k` olarak da yazılır), her görevi sabit koordinasyon altında `k` kez çalıştırır ve ardından `pass@1` tavanının yanında bir `pass^k` tabanı (tüm `k` denemeler başarılı olmalıdır) raporlar. Bu sonuç, `bernstein bench reliability-verify` komutunun çevrimdışı olarak yeniden hesapladığı imzalı bir makbuzda mühürlenir, böylece uydurma bir taban doğrulamadan geçemez. Ayrıntılar: [pass^k güvenilirlik tabanı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Makine tarafından okunabilir denetim sonuçları için `bernstein govern audit --format json` veya `--format sarif`, CI geçiş koşulu için `--strict --quiet` kullanın. Bkz. [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN`, makbuz zincirini çalıştırma manifestinde denetim anahtarıyla HMAC kullanılarak mühürlenmiş son başlık ve atlama sayısıyla karşılaştırır. Böylece kuyruğun silinmesini, değiştirmeyi ve kapanış sonrası zincirin uzatılmasını, bildirimin anahtar olmadan yeniden yazılması dahil, tespit eder. Bildirimin kaldırılması çalıştırmayı eksik bırakır (çıkış kodu `3`); çalıştırma hiçbir zaman geçerli sayılmaz. Bu denetim, eski ve özgün bir anlık görüntünün yeniden kullanılmasını tespit etmez ve denetim anahtarını elinde tutan bir yazara karşı koruma sağlamaz. Bkz. [yetki devri doğrulama iş akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### nasıl çalışır
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

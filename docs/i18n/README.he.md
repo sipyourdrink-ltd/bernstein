@@ -123,7 +123,7 @@ flowchart LR
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` מציג גם את ממצאי חוזה הביקורת, `findings`, הזהים לממצאי `bernstein govern audit --only INS --json` עבור אותן תצפיות התקנה. התצוגה הרגילה של דוח doctor נשארת ללא שינוי. למזהי הבדיקות היציבים, ראו את [מדריך התפעול של doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
 pipx, pip, brew, dnf, npm ו-Docker מכוסים ב[מדריך ההתקנה](https://docs.bernstein.run/en/latest/getting-started/install/); לחבילה המבודדת יש [מדריך air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) ייעודי.
+
+`bernstein worktrees sweep` מציג תצוגה מקדימה של עצי עבודה וסשנים של סביבת בדיקה שנותרו אחרי משימות שהסתיימו, עם הגיל והשימוש בדיסק. אפשר למחוק רק עצי עבודה, באמצעות `--apply` ואישור מחיקה נפרד. סביבות הבדיקה מופיעות בדוח בלבד (מחיקה: #6571); `doctor` מזהיר על משאבים שנותרו זמן רב. ראו [תהליך הניקוי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 כשאתחול מיומנות נכשל, היא מועברת ל[הסגר](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) עם שמירה מתמשכת של הסיבה ושל אירוע ביקורת. `bernstein status` מציג את הכמות; `doctor` ו־`govern audit` מדווחים על ההצהרות שהושבתו. לאחר תיקון הסיבה, הסירו את הסימון במפורש באמצעות `bernstein quarantine re-enable DECLARATION_ID`.
 
@@ -158,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — לוח הבקרה במסוף | `bernstein gui serve` — לוח הבקרה בדפדפן |
 
 ### הוכחת ריצה
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 דטרמיניזם כאן הוא מאפיין שאתה בודק בעצמך, לא משהו שמקבלים כמובן מאליו. הרץ פעם אחת עם ביקורת מופעלת, ואז אמת את מה שתועד:
 
@@ -181,6 +183,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 אותה יכולת בדיקה חלה על מספרי הערכה. הפקודה `bernstein bench run <suite> --reliability k` (הנכתבת גם `bernstein eval --reliability k`) מריצה כל משימה `k` פעמים תחת תיאום קבוע, ומדווחת על רצפת `pass^k` (כל `k` הניסיונות חייבים לעבור) לצד תקרת `pass@1`. תוצאה זו נחתמת בקבלה חתומה אותה `bernstein bench reliability-verify` מחשב מחדש באופן לא מקוון, כך שרצפה מפוברקת תיכשל באימות. פרטים: [רצפת מהימנות pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 לתוצאות בדיקה קריאות למכונה, השתמשו ב־`bernstein govern audit --format json` או ב־`--format sarif`, וב־`--strict --quiet` כתנאי מעבר ב־CI. ראו [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+הפקודה `bernstein delegation verify RUN` משווה את שרשרת הקבלות לערך הראש הסופי ולמספר שלבי ההאצלה, שנחתמו במניפסט הריצה באמצעות HMAC עם מפתח הביקורת. כך היא מזהה מחיקה של סוף השרשרת, החלפה והארכת השרשרת לאחר סגירת הריצה, לרבות שכתוב ההצהרה ללא המפתח. הסרת ההצהרה משאירה את הריצה לא שלמה (קוד יציאה `3`), והיא לעולם אינה נחשבת תקינה. הבדיקה אינה מזהה שימוש חוזר בתמונת מצב אותנטית ישנה יותר ואינה מגינה מפני גורם כותב המחזיק במפתח הביקורת. ראו את [תהליך אימות ההאצלה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### איך זה עובד
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

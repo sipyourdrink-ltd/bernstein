@@ -15,6 +15,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.identity_cmd import identity_group
 from bernstein.core.identity import access_review, delegation, grants
+from tests.support.delegation import close_manifest
 
 KEY = b"k" * 32
 INSIDE = 1_700_100_000
@@ -40,7 +41,8 @@ def audit_root(tmp_path, monkeypatch):
         grant_id="g-1",
         created=INSIDE,
     )
-    delegation.DelegationLedger(root=tmp_path, key=KEY).record_hop(
+    hops = delegation.DelegationLedger(root=tmp_path, key=KEY)
+    hops.record_hop(
         run_id="run-a",
         issuer="principal:alex",
         subject="orchestrator",
@@ -48,6 +50,8 @@ def audit_root(tmp_path, monkeypatch):
         act="task.spawn",
         created=INSIDE,
     )
+    # A review lists only sealed, complete chains; close the run as the access-review tests do.
+    close_manifest(hops, "run-a")
     return tmp_path
 
 

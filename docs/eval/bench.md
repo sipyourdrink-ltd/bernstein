@@ -298,8 +298,10 @@ signers, wrong keys and invalid signatures produce **neutral** with the reason
 in the summary; a valid signature still requires receipt verification and replay.
 The scorecard does not choose or discover trusted keys.
 
-`bench run --baseline` does not currently accept trusted keys, so install-identity
-baselines remain **neutral** through that CLI path. Stub baselines require the
+`bench run --baseline` accepts repeatable `--trusted-key FINGERPRINT=PATH`
+options. Supply public PEM files from a trusted source separate from the
+baseline bundle. Without a matching key, an install-identity baseline remains
+**neutral**. Stub baselines require the
 existing `--stub-signer` opt-in and must come from a channel you trust (the
 default branch's own artefact, not an upload): the stub key is public and proves
 no origin. The current run's bundle is not re-verified — it was produced

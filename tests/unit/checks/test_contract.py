@@ -237,6 +237,38 @@ def test_ids_are_unique_and_namespaced() -> None:
     assert registered_ids == ["security:rbac_check", "doctor:auth_status"]
 
 
+def test_duplicate_check_reports_both_implementations_and_preserves_registration() -> None:
+    registry = CheckRegistry()
+    first = DoctorComplianceAdapter()
+    second = _DummyCheck(first.check_id, RuntimeError("unused"))
+    registry.register(first)
+
+    with pytest.raises(ValueError, match="already registered") as duplicate:
+        registry.register(second)
+
+    assert type(first).__module__ in str(duplicate.value)
+    assert type(second).__module__ in str(duplicate.value)
+    assert registry.get_check(first.check_id) is first
+    registry.unregister(first.check_id)
+    registry.register(second)
+    registry.clear()
+    registry.register(first)
+    assert registry.get_check(first.check_id) is first
+
+
+def test_duplicate_check_without_module_keeps_first_registration(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = CheckRegistry()
+    first = _DummyCheck("test:missing_module", RuntimeError("unused"))
+    second = _DummyCheck(first.check_id, RuntimeError("unused"))
+    monkeypatch.setattr(_DummyCheck, "__module__", None)
+    registry.register(first)
+
+    with pytest.raises(ValueError, match="<unknown>"):
+        registry.register(second)
+
+    assert registry.get_check(first.check_id) is first
+
+
 def test_register_non_string_check_id_raises() -> None:
     """Registering a check with a non-string check_id raises TypeError."""
     registry = CheckRegistry()

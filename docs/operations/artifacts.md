@@ -187,8 +187,10 @@ adapter can drive both a coding task and a report task.
 
 The receipt is signed by a stable identity, `agent:artifact-completion`,
 provisioned on first use under `.sdd/artifacts/identity/` and published as an
-Agent Card at `.sdd/agents/agent:artifact-completion/card.json` where the
-lineage gate reads it. The `agent_id` and `kid` are constants and the private
+Agent Card at `.sdd/agents/<sha256 of the agent id>/card.json` where the
+lineage gate reads it. The directory is hashed because `:` is not a legal
+Windows path component; the gate matches cards by the `agent_id` inside the
+JSON, so the directory name carries no meaning. The `agent_id` and `kid` are constants and the private
 key signs a detached sidecar, so two installs holding different keys still
 produce the identical entry hash for the same artifact.
 

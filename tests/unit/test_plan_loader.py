@@ -311,6 +311,33 @@ def test_step_with_description(tmp_path: Path) -> None:
     assert tasks[0].description == "Detailed instructions here"
 
 
+@pytest.mark.parametrize("tier", ["local", "edge", "search", "research", "sandbox"])
+def test_step_dispatch_tier_reaches_task_create_payload(tmp_path: Path, tier: str) -> None:
+    from bernstein.core.planning.plan_schema import validate_plan
+    from bernstein.core.tasks.models import DispatchTier
+    from bernstein.core.tasks.task_body import build_task_body
+
+    plan = {
+        "name": "P",
+        "stages": [{"name": "S", "steps": [{"title": "Default"}, {"title": "Pinned", "dispatch_tier": tier}]}],
+    }
+    assert validate_plan(plan) == []
+    default, pinned = load_plan_from_yaml(_write_plan(tmp_path, plan))
+    assert default.dispatch_tier is DispatchTier.LOCAL
+    assert pinned.dispatch_tier is DispatchTier(tier)
+    assert build_task_body(pinned)["dispatch_tier"] == tier
+
+
+@pytest.mark.parametrize("tier", [None, False, 1, ["edge"], "", "EDGE", "unknown"])
+def test_step_rejects_invalid_dispatch_tier(tmp_path: Path, tier: object) -> None:
+    from bernstein.core.planning.plan_schema import validate_plan
+
+    plan = {"name": "P", "stages": [{"name": "S", "steps": [{"title": "T", "dispatch_tier": tier}]}]}
+    assert any(".dispatch_tier:" in error for error in validate_plan(plan))
+    with pytest.raises(PlanLoadError, match="dispatch_tier"):
+        load_plan_from_yaml(_write_plan(tmp_path, plan))
+
+
 def test_step_model_and_effort(tmp_path: Path) -> None:
     plan_file = _write_plan(
         tmp_path,

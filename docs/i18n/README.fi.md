@@ -123,7 +123,7 @@ flowchart LR
 Jokaisen solmun ottaa agentti, jonka roolin vaihe sallii; rooliaidat ja hyväksyntäportit pitävät riippumatta siitä, mitä agentti tekee tehtävän sisällä. Koodisolmu päättyy merge-porttien taakse omassa git worktreessään. Yllä olevat solmut päättyvät toisin: [artefaktisopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nimeää tuloksen (raportti, datasetti, skannaus, toimiloki), ja solmu sulkeutuu allekirjoitetulla lineage-kuitilla commitin sijaan. Sama skeduloija, sama journal, sama offline-verifiointi - kantoi graafi sitten koodia, tutkimusta, ops-muutosta tai näiden sekoitusta. Valmiit graafit ohjelmistoille, tutkimukselle, dokumentaatiolle, enterprise-käyttöön ja kontribuutiovirroille ovat [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### asennus 30 sekunnissa
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` näyttää myös auditointisopimuksen `findings`-havainnot, jotka ovat samoilla asennushavainnoilla samat kuin komennon `bernstein govern audit --only INS --json` tulokset. Tavallisen doctor-raportin esitystapa ei muutu. Pysyvät tarkistustunnisteet löytyvät [doctorin käyttöoppaasta](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
 pipx, pip, brew, dnf, npm ja Docker käsitellään [asennusoppaassa](https://docs.bernstein.run/en/latest/getting-started/install/); eristetyllä paketilla on oma [air-gap-oppaansa](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+`bernstein worktrees sweep` näyttää esikatselun valmistuneiden tehtävien jättämistä työpuista ja sandbox-istunnoista sekä niiden iän ja levytilan käytön. Vain työpuita voi poistaa, ja siihen tarvitaan `--apply`-valitsin ja erillinen poistohyväksyntä. Sandboxit sisällytetään vain raporttiin (poistaminen: #6571); `doctor` varoittaa pitkään jäljelle jääneistä resursseista. Katso [siivousohje](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 Taidon alustuksen epäonnistuessa se siirretään [karanteeniin](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), ja syy sekä auditointitapahtuma tallennetaan pysyvästi. `bernstein status` näyttää määrän; `doctor` ja `govern audit` raportoivat käytöstä poistetut määrittelyt. Korjaa syy ja poista sitten merkintä nimenomaisesti komennolla `bernstein quarantine re-enable DECLARATION_ID`.
 
@@ -158,7 +160,7 @@ Käynnissä olevaa ajoa voidaan seurata kummasta tahansa käyttöliittymästä. 
 | `bernstein live` — terminaalinäkymä | `bernstein gui serve` — selainnäkymä |
 
 ### ajon todistaminen
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Deterministiikka on täällä ominaisuus, jonka voit tarkistaa, ei asia jota pitäisi uskoa sokeasti. Aja kerran auditointi päällä ja vahvista tallennetut tiedot:
 
@@ -181,6 +183,8 @@ Ajokuitti sitoo lokin kärjen, alkuperärungon kärjen (jos merkintöjä tallenn
 Sama todennettavuus koskee arviointituloksia. `bernstein bench run <suite> --reliability k` (myös muodossa `bernstein eval --reliability k`) ajaa jokaisen tehtävän `k` kertaa kiinteällä koordinoinnilla ja raportoi alarajan `pass^k` (kaikkien `k` yrityksen on onnistuttava) ylärajan `pass@1` rinnalla. Tulos sinetöidään allekirjoitettuun kuittiin, jonka `bernstein bench reliability-verify` laskee uudelleen offline-tilassa, jolloin väärennetty alaraja hylätään tarkistuksessa. Lisätietoja: [pass^k-luotettavuuden alaraja](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Käytä `bernstein govern audit --format json`- tai `--format sarif`-valintaa koneluettaviin tarkistustuloksiin ja `--strict --quiet`-valintaa CI:n hyväksymisehtona. Katso [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` vertaa kuittiketjua lopulliseen ketjun päähän ja hyppyjen määrään, jotka on sinetöity ajon manifestiin auditointiavaimella lasketulla HMAC-tunnisteella. Se havaitsee ketjun loppuosan poistamisen, korvaamisen ja ketjun kasvattamisen sulkemisen jälkeen sekä ilmoituksen uudelleenkirjoittamisen ilman avainta. Ilmoituksen poistaminen jättää ajon keskeneräiseksi (paluukoodi `3`), eikä ajoa koskaan pidetä kelvollisena. Tämä ei havaitse vanhemman aidon tilannekuvan uudelleenkäyttöä eikä suojaa kirjoittajalta, jolla on auditointiavain. Katso [delegoinnin tarkistuksen työnkulku](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### miten se toimii
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

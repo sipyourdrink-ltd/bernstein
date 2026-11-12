@@ -135,6 +135,12 @@ The normal doctor report keeps its existing display. See the
 
 pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://docs.bernstein.run/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
+`bernstein worktrees sweep` previews worktrees and sandbox sessions left behind
+by finished tasks, with age and disk usage. Only worktrees can be removed, using
+`--apply` and a separate removal approval. Sandboxes are report-only (removal:
+#6571); `doctor` warns about aged leaks. See the
+[lane cleanup workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+
 Skill initialization failures are [quarantined](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) with a persisted reason and audit event. `bernstein status` shows the count; `doctor` and `govern audit` report the disabled declarations. After fixing the cause, explicitly release the marker with `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
@@ -179,6 +185,14 @@ One run receipt binds the journal head, the lineage-spine head when the run wrot
 The same checkability applies to evaluation numbers. `bernstein bench run <suite> --reliability k` (also spelled `bernstein eval --reliability k`) runs every task `k` times under fixed coordination, then reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling. That result is sealed in a signed receipt which `bernstein bench reliability-verify` recomputes offline, so a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Use `bernstein govern audit --format json` or `--format sarif` for machine-readable findings and `--strict --quiet` for a CI gate. See [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` compares the receipt chain with the final
+head and hop count sealed in the run manifest with the audit-key HMAC, detecting
+tail deletion, substitution and post-close growth, including keyless rewrites of
+the declaration. Removing the declaration leaves the run incomplete (exit `3`),
+never valid. This does not detect replay of an older authentic snapshot or protect
+against a writer holding the audit key. See the
+[delegation verification workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### how it works
 

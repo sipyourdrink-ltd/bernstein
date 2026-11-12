@@ -41,6 +41,7 @@ from bernstein.core.identity.delegation_scope import (
     HopVerdict,
     grade_chain,
 )
+from tests.support.delegation import verify_declared_chain
 
 KEY = b"k" * 32
 GENESIS = delegation.GENESIS_HMAC
@@ -137,7 +138,7 @@ class TestLegacyChainIsUnproven:
                 audience=f"p{i + 1}",
                 act="task.delegate",
             )
-        result = delegation.verify_run_chain(root=tmp_path, run_id="legacy", key=KEY)
+        result = verify_declared_chain(root=tmp_path, run_id="legacy", key=KEY)
         assert result.valid is True
         assert result.verdict.verdict == VERDICT_UNPROVEN
         assert REASON_NO_SCOPE_RECORDED in result.verdict.reasons
@@ -433,7 +434,7 @@ class TestAdditiveSurface:
                 act="task.delegate",
                 scope=scope,
             )
-        return delegation.verify_run_chain(root=tmp_path, run_id="widen", key=KEY)
+        return verify_declared_chain(root=tmp_path, run_id="widen", key=KEY)
 
     def test_valid_is_unchanged_for_a_widening_chain(self, widening):
         assert widening.valid is False
@@ -450,7 +451,7 @@ class TestAdditiveSurface:
                 audience=f"p{i + 1}",
                 act="task.delegate",
             )
-        result = delegation.verify_run_chain(root=tmp_path, run_id="plain", key=KEY)
+        result = verify_declared_chain(root=tmp_path, run_id="plain", key=KEY)
         assert result.authority.violations == []
         assert result.authority.scope_coverage == "none"
         assert result.verdict.verdict == VERDICT_UNPROVEN

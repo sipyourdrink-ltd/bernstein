@@ -9,7 +9,7 @@ delegation verify` and `bernstein delegation verify-token` check each trail
 with no network call, no live coordinator, and no registry lookup.
 
 The two surfaces are deliberately not coupled. A receipt may later reference
-a token hash, but each verifies from its own bytes alone.
+a token hash, and the receipt chain uses the run manifest for its final head declaration.
 
 ## `bernstein delegation verify` — the per-hop receipt chain
 
@@ -30,7 +30,7 @@ Human output prints one line per hop (`issuer -> audience (act)`) followed by
 a pass/fail summary. `--json` emits:
 
 ```json
-{"run": "...", "valid": true, "hops": 2, "errors": [], "receipts": [
+{"run": "...", "valid": true, "incomplete": false, "hops": 2, "errors": [], "receipts": [
   {"hop_index": 0, "issuer": "...", "subject": "...", "audience": "...", "act": "..."}
 ], "verdict": {"verdict": "pass", "ok": true, "unproven_hops": 0, "reasons": [],
   "hops": [{"hop_index": 0, "verdict": "pass", "is_root": true,
@@ -38,11 +38,13 @@ a pass/fail summary. `--json` emits:
     "parent_hop_index": null, "ancestor_hop_index": null, "principal": "..."}]}}
 ```
 
-Exit codes: `0` when the chain is intact and narrowing was checked and held;
+Exit codes: `0` when the chain matches the manifest-declared final head/count
+and narrowing was checked and held;
 `1` when there are zero receipts for the run, or any hop fails (HMAC mismatch
 from a tampered field, a deleted hop, the wrong key, or a hop that widened its
-parent's grant); `3` when the chain verifies but the receipts carry too little
-to decide whether authority narrowed. `2` is left to click for usage errors.
+parent's grant), the declaration or its audit-key seal is malformed, missing from a declared
+head, or invalid, or the final digest/count disagrees; `3` when no final head was declared (`incomplete: true`,
+`valid: false`), or the receipts carry too little to decide whether authority narrowed. `2` is left to click for usage errors.
 
 **Compatibility note (issue #2554).** A chain that records no effective scope
 at any hop used to exit `0`, which read the same as a chain whose narrowing was
@@ -73,7 +75,7 @@ set, so a consumer can fail closed on exact matches.
 
 What a pass does not establish: that runtime enforcement matched the recorded
 scope, including consumption state such as remaining uses; that any grant was
-appropriate policy; that the supplied receipt set is complete, or that no
+appropriate policy; that no earlier authentic snapshot was replayed, or that no
 alternate delegation path exists; that an unresolved reference would have
 matched; anything about execution outcomes. unproven is not a pass, and pass is
 the only positive claim.
@@ -106,10 +108,57 @@ session and the reason. Every other identity failure keeps its previous
 log-and-continue behaviour, so a token that cannot be issued still does not stop
 a run.
 
-**Known limit:** deleting the *final* receipt of a chain leaves a shorter chain
-that still verifies, because no receipt records how many hops a run should have
-had. Detecting that needs a terminal hop or the chain head recorded at close,
-which is tracked separately.
+At run close, after the agent/executor drain and cleanup, the orchestrator
+commits `delegation_head_hmac`, `delegation_hop_count` and `delegation_seal` to
+the existing run manifest. The seal is HMAC-SHA256 under the install audit key,
+with a `bernstein.delegation.manifest.v1` domain prefix and canonical JSON of all
+manifest fields except `manifest_hash` and `delegation_seal`. It binds the run
+ID, head, count, run-root identity and configuration. The public `manifest_hash`
+covers the resulting fields too, but is a checksum, not authentication. The
+startup checksum is checked before finalization; it cannot authenticate changes
+made before sealing by a writer who can also recompute that checksum.
+
+Tail recovery and atomic manifest replacement share the per-run append lock;
+readers see either the startup manifest or the complete declaration. A crash
+before close or a failed write leaves the run incomplete. Repeating close
+requires the same tail/count and a valid existing seal; it cannot bless a
+shorter or longer chain or silently upgrade an unsigned declaration.
+
+Crew trace imports also commit a sealed final head and count after recording all
+validated handoffs, under the same per-run append lock. Their declaration is
+derived from the complete input trace. Re-importing the same trace is idempotent;
+a different final head or count cannot replace an existing declaration.
+
+Every run-delegation verifier reads the manifest and compares the authenticated
+head/count with the reconstructed chain, detecting tail deletion, substitution
+with another validly keyed receipt, post-close appends and interior deletion.
+A keyless rewrite of both head/count and the public checksum fails the seal
+check. Altering other sealed manifest fields, including the run-root identity,
+also fails. Missing manifests and manifests without a final declaration are
+incomplete, never valid. A declaration without a valid seal fails verification.
+
+For incomplete runs, `chain_ok` reports only the integrity of the available
+sequence and `authority` reports scope checks on those receipts; neither proves
+completeness. The overall `verdict` is `unproven` (or `fail` if a check failed),
+never `pass`. Access reviews mark incomplete and mismatched chains unverified.
+The agent registry retains intact, authority-checked scopes from open and legacy
+runs, reporting their IDs in `incomplete_runs`. This is an inventory of observed
+authority, not a claim that all delegations are present. Pre-upgrade version-1
+registry snapshots without this marker still verify against all original fields.
+
+When exporting with `--root X`, preserve this exact relative layout:
+`X/delegation/<run>.jsonl` and `X/../runtime/manifests/<run>.json`. Verify with the
+original install audit key. The HMAC is shared-key authentication, not a
+publicly verifiable signature: a holder of that key can forge both artifacts.
+Deleting the declaration yields incomplete, never a verified complete chain.
+Replaying an earlier authentic manifest and its matching ledger is not detected;
+freshness needs an independently retained latest head. The seal also does not
+prove that every runtime action was recorded or that imported traces were honest.
+
+Runs closed before this change have no authenticated final declaration. There
+is no automatic backfill: sealing whatever receipts remain would not establish
+their historical completeness. Retain those runs as incomplete; a fresh run or
+independently authenticated historical evidence is needed for a completeness claim.
 
 ## `bernstein delegation verify-token` — the capability-token chain
 

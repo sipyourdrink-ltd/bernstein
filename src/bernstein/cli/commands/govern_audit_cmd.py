@@ -276,6 +276,46 @@ def _record_sentinel_run(root: Path, findings: list[Finding]) -> None:
     asyncio.run(dispatch())
 
 
+def _compare_audit_reports(root: Path, since: str, against: str, *, output_format: str, quiet: bool) -> None:
+    from bernstein.cli.helpers import load_verify_only_key
+    from bernstein.core.govern.audit_report import diff_reports, read_audit_report, verify_audit_report
+    from bernstein.core.security.audit import AuditKeyPermissionError
+
+    lineage_root = root / ".sdd" / "lineage"
+    inputs = (("--since", since), ("--against", against))
+    for option, digest in inputs:
+        if re.fullmatch(r"(?:sha256:)?[0-9a-fA-F]{64}", digest) is None:
+            raise click.BadParameter("expected a full SHA-256 report hash", param_hint=option)
+
+    reports = []
+    try:
+        for option, digest in inputs:
+            report = read_audit_report(lineage_root, digest)
+            if report is None:
+                raise click.ClickException(f"Stored report for {option} was not found.")
+            reports.append(report)
+
+        key = load_verify_only_key()
+        for (option, _), report in zip(inputs, reports, strict=True):
+            verified = verify_audit_report(lineage_root=lineage_root, hmac_key=key, report=report)
+            if not verified.ok:
+                raise click.ClickException(f"Cannot verify report for {option}: {verified.reason}")
+    except (OSError, AuditKeyPermissionError) as exc:
+        raise click.ClickException(f"Cannot read audit report evidence: {exc}") from exc
+
+    before, after = reports
+    drift = diff_reports(before, after)
+    if quiet:
+        return
+    if output_format == "json":
+        click.echo(json.dumps([row.to_dict() for row in drift], indent=2))
+        return
+    for row in drift:
+        click.echo(f"{row.finding_id}: {row.change}")
+    if not drift:
+        click.echo("No finding drift.")
+
+
 @click.command("audit")
 @click.option(
     "--list",
@@ -313,6 +353,8 @@ def _record_sentinel_run(root: Path, findings: list[Finding]) -> None:
 )
 @click.option("--strict", is_flag=True, help="Exit 2 for unmeasurable checks unless a check fails or crashes (exit 1).")
 @click.option("--quiet", is_flag=True, help="Print nothing; report the result only through the exit code.")
+@click.option("--since", help="Compare from this stored audit report hash.")
+@click.option("--against", help="Compare against this stored audit report hash.")
 @click.option(
     "--json",
     "--json-output",
@@ -330,6 +372,8 @@ def govern_audit_cmd(
     strict: bool = False,
     quiet: bool = False,
     registry: CheckRegistry | None = None,
+    since: str | None = None,
+    against: str | None = None,
 ) -> None:
     """Run registered governance audit checks across the workspace.
 
@@ -348,15 +392,25 @@ def govern_audit_cmd(
     All selected checks are required. Failures and crashes take precedence over
     strict incompleteness. Unexpected tool errors also fail closed with code 1.
     """
+    if as_json and output_format == "sarif":
+        raise click.UsageError("--json/--json-output cannot be combined with --format sarif")
+    if as_json:
+        output_format = "json"
+
+    root = Path(workdir).resolve()
+    if since is not None or against is not None:
+        if since is None or against is None:
+            raise click.UsageError("--since and --against must be supplied together")
+        if list_checks or only_areas or skip_ids or strict or output_format == "sarif":
+            raise click.UsageError("Report comparison supports text or JSON without check execution options")
+        _compare_audit_reports(root, since, against, output_format=output_format, quiet=quiet)
+        return
+
     reg = DEFAULT_REGISTRY if registry is None else registry
     populate_default_checks(reg)
     populate_installation_checks(reg)
-    if as_json and output_format == "sarif":
-        raise click.UsageError("--json/--json-output cannot be combined with --format sarif")
     if list_checks and output_format == "sarif":
         raise click.UsageError("--list does not support --format sarif")
-    if as_json:
-        output_format = "json"
 
     if list_checks:
         if quiet:
@@ -388,7 +442,6 @@ def govern_audit_cmd(
         console.print(f"\n[bold]{len(checks)}[/bold] check(s) matched.")
         raise SystemExit(0)
 
-    root = Path(workdir).resolve()
     from bernstein.core.checks.adapters import AuditSentinelCheck
 
     if AuditSentinelCheck().active and not quiet:

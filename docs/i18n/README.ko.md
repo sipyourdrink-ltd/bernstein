@@ -123,7 +123,7 @@ flowchart LR
 각 노드는 페이즈가 허용하는 역할의 에이전트가 가져갑니다. 역할 울타리와 승인 게이트는 에이전트가 태스크 안에서 무엇을 하든 유지됩니다. 코드 노드는 자기만의 git worktree에서 머지 게이트 뒤로 완료됩니다. 위의 노드들은 다르게 끝납니다: [아티팩트 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)이 결과물(보고서, 데이터셋, 스캔, 액션 로그)을 지정하고, 노드는 커밋 대신 서명된 lineage 영수증으로 닫힙니다. 같은 스케줄러, 같은 저널, 같은 오프라인 검증 - 그래프가 코드를 나르든, 리서치든, ops 변경이든, 셋의 혼합이든. 소프트웨어, 리서치, 문서, 엔터프라이즈, 컨트리뷰터 워크플로용 기성 그래프는 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)에 있습니다.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json`은 감사 계약의 `findings`도 출력하며, 동일한 설치 관측 결과에 대해 `bernstein govern audit --only INS --json`의 결과와 일치합니다. 일반 doctor 보고서의 표시는 그대로 유지됩니다. 안정적인 검사 ID는 [doctor 운영 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)를 참조하세요.
 
 pipx, pip, brew, dnf, npm, Docker는 [설치 가이드](https://docs.bernstein.run/en/latest/getting-started/install/)를 보라. 에어갭 환경용 wheelhouse는 별도의 [에어갭 가이드](https://docs.bernstein.run/en/latest/installation/air-gap/)가 있다.
+
+`bernstein worktrees sweep`는 완료된 작업이 남긴 워크트리와 샌드박스 세션을 경과 시간 및 디스크 사용량과 함께 미리 보여 줍니다. 워크트리만 삭제할 수 있으며, `--apply`와 별도의 삭제 승인이 필요합니다. 샌드박스는 보고서에만 표시됩니다(삭제: #6571). `doctor`는 오래 남아 있는 리소스에 대해 경고합니다. [정리 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)를 참조하세요.
 
 스킬 초기화에 실패하면 원인과 감사 이벤트를 영구 기록하고 [격리](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)합니다. `bernstein status`는 개수를 표시하고, `doctor`와 `govern audit`는 비활성화된 선언을 보고합니다. 원인을 수정한 후 `bernstein quarantine re-enable DECLARATION_ID`로 표시를 명시적으로 해제하세요.
 
@@ -158,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 터미널 대시보드 | `bernstein gui serve` — 브라우저 대시보드 |
 
 ### 실행을 증명하기
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 여기서 결정성은 믿는 것이 아니라 확인하는 것이다. 감사를 켜고 한 번 실행한 뒤, 기록된 내용을 검증하라:
 
@@ -181,6 +183,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 같은 검증 가능성이 평가 수치에도 적용된다. `bernstein bench run <suite> --reliability k`(`bernstein eval --reliability k`로도 쓴다)는 각 태스크를 고정된 협조 아래 `k`번 실행하고, `pass^k` 하한(`k`번 모두 통과)을 `pass@1` 상한과 나란히 보고한다. 그 결과는 서명된 영수증에 봉인되며 `bernstein bench reliability-verify`가 오프라인에서 다시 계산하므로, 조작된 하한은 검증에서 떨어진다. 자세한 내용: [pass^k 신뢰도 하한](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 기계가 읽을 수 있는 검사 결과에는 `bernstein govern audit --format json` 또는 `--format sarif`를, CI 통과 여부 판단에는 `--strict --quiet`를 사용하세요. 자세한 내용: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN`은 감사 키를 사용한 HMAC으로 실행 매니페스트에 봉인된 최종 헤드 및 홉 수와 영수증 체인을 비교하여 꼬리 삭제, 대체, 종료 후 체인 확장을 탐지합니다. 키 없이 선언을 다시 쓰는 행위도 탐지합니다. 선언을 제거하면 실행은 미완료 상태(종료 코드 `3`)로 남으며, 유효한 것으로 판정되지 않습니다. 이전의 진본 스냅샷을 재사용하는 것은 탐지하지 못하며, 감사 키를 가진 작성자로부터 보호하지도 못합니다. [위임 검증 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)를 참조하세요.
 
 ### 동작 방식
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

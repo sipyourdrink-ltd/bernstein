@@ -123,7 +123,7 @@ flowchart LR
 Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los gates de aprobación se mantienen haga lo que haga el agente dentro de la tarea. Un nodo de código termina tras merge gates en su propio git worktree. Los nodos de arriba terminan distinto: un [contrato de artefacto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nombra el entregable (informe, dataset, escaneo, registro de acciones) y el nodo se cierra con un recibo de lineage firmado en lugar de un commit. Mismo planificador, mismo journal, misma verificación offline - ya lleve el grafo código, investigación, un cambio de ops o una mezcla de los tres. Hay grafos listos para software, investigación, documentación, enterprise y flujos de contribución en [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` también expone los hallazgos del contrato de auditoría (`findings`), idénticos a los de `bernstein govern audit --only INS --json` para las mismas observaciones de instalación. El informe habitual de doctor conserva su presentación actual. Consulta la [guía de operaciones de doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) para conocer los identificadores estables de las comprobaciones.
 
 pipx, pip, brew, dnf, npm y Docker están cubiertos en la [guía de instalación](https://docs.bernstein.run/en/latest/getting-started/install/); el wheelhouse air-gap tiene su propia [guía air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+`bernstein worktrees sweep` muestra una vista previa de los árboles de trabajo y sesiones sandbox que dejaron las tareas terminadas, con su antigüedad y uso de disco. Solo se pueden eliminar los árboles de trabajo, con `--apply` y una aprobación de eliminación independiente. Los entornos sandbox solo se incluyen en el informe (eliminación: #6571); `doctor` avisa de los recursos abandonados antiguos. Consulta el [procedimiento de limpieza](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 Los fallos de inicialización de habilidades se ponen en [cuarentena](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), con el motivo y un evento de auditoría guardados de forma persistente. `bernstein status` muestra la cantidad; `doctor` y `govern audit` informan de las declaraciones deshabilitadas. Tras corregir la causa, retira explícitamente la marca con `bernstein quarantine re-enable DECLARATION_ID`.
 
@@ -158,7 +160,7 @@ Una ejecución en curso se puede observar desde cualquiera de las dos interfaces
 | `bernstein live` — el panel de terminal | `bernstein gui serve` — el panel de navegador |
 
 ### probar una ejecución
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 El determinismo aquí es algo que verificas, no algo que aceptas por fe. Ejecuta una vez con auditoría habilitada y luego verifica lo que se registró:
 
@@ -181,6 +183,8 @@ Un recibo de ejecución vincula el encabezado del journal, el encabezado de la c
 La misma verificabilidad se aplica a los números de evaluación. `bernstein bench run <suite> --reliability k` (también escrito como `bernstein eval --reliability k`) ejecuta cada tarea `k` veces bajo coordinación fija, luego reporta un límite inferior `pass^k` (todos los `k` intentos deben pasar) junto con el límite superior `pass@1`. Ese resultado queda sellado en un recibo firmado que `bernstein bench reliability-verify` recalcula offline, de modo que un límite inferior fabricado falla la verificación. Detalles: [límite de fiabilidad pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Usa `bernstein govern audit --format json` o `--format sarif` para obtener resultados legibles por máquina y `--strict --quiet` para decidir si pasa la comprobación de CI. Consulta [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` compara la cadena de recibos con la cabecera final y el número de saltos sellados en el manifiesto de ejecución mediante un HMAC con la clave de auditoría, y detecta la eliminación del tramo final, la sustitución y la ampliación después del cierre, incluida la reescritura de la declaración sin la clave. Eliminar la declaración deja la ejecución incompleta (código de salida `3`), nunca válida. Esto no detecta la reutilización de una instantánea auténtica anterior ni protege frente a quien escribe teniendo la clave de auditoría. Consulta el [flujo de verificación de delegaciones](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cómo funciona
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

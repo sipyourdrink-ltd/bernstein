@@ -1292,6 +1292,17 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     findings.append(_doctor_check_otel_export(checks))
     findings.append(_doctor_check_audit_anchoring(checks, workdir))
 
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+
+    leak_check = check_leaked_lanes(workdir)
+    _add_check(
+        checks,
+        leak_check["name"],
+        True,
+        ("WARNING: " if leak_check["status"] == "WARN" else "") + leak_check["detail"],
+        leak_check["fix"],
+    )
+
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
 
