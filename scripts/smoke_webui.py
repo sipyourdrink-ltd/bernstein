@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import tempfile
 from pathlib import Path
@@ -84,6 +85,94 @@ def check_governance(page: Page, base: str) -> None:
     page.goto(f"{base}/ui/governance?run_id=ui-smoke-unverified")
     expect(page.get_by_role("alert").filter(has_text="Run chain verification failed")).to_be_visible()
     expect(page.locator("[data-metric]")).to_have_count(0)
+
+
+def check_governance_receipt(page: Page, base: str) -> None:
+    page.goto(f"{base}/ui/governance")
+    panel = page.get_by_role("region", name="Verify a receipt")
+    file_input = panel.get_by_label("Receipt file")
+    submit = panel.get_by_role("button", name="Verify receipt", exact=True)
+    endpoint = f"{base}/api/v1/governance/verify-receipt"
+    vectors = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "receipt-vectors"
+    valid = vectors / "valid-run-receipt.json"
+    tampered = (vectors / "tampered-run-receipt.json").read_bytes()
+    # Chromium's inspector omits File upload bytes. Observe the browser fetch
+    # arguments and clone its real response without changing the request.
+    page.evaluate(
+        """() => {
+            const fetch = window.fetch.bind(window);
+            window.receiptRequests = [];
+            window.fetch = (url, init) => {
+                const response = fetch(url, init);
+                if (typeof url === 'string' && url.endsWith('/governance/verify-receipt')) {
+                    const hash = new Response(init.body).arrayBuffer()
+                        .then(bytes => crypto.subtle.digest('SHA-256', bytes))
+                        .then(bytes => Array.from(
+                            new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')
+                        ).join(''));
+                    window.receiptRequests.push(Promise.all([hash, response.then(reply => reply.clone().json())]));
+                }
+                return response;
+            };
+        }"""
+    )
+    expect(submit).to_be_disabled()
+    with page.expect_file_chooser() as chooser:
+        file_input.press("Enter")
+    chooser.value.set_files(valid)
+    expect(panel.get_by_text(valid.name, exact=True)).to_be_visible()
+    assert page.evaluate("window.receiptRequests.length") == 0, "Selecting a receipt must not submit it"
+    with page.expect_response(endpoint) as passed:
+        submit.press("Enter")
+    assert passed.value.ok
+    digest, verdict = page.evaluate("() => Promise.all(window.receiptRequests)")[-1]
+    assert digest == hashlib.sha256(valid.read_bytes()).hexdigest()
+    assert verdict["tier"] == "integrity-only"
+    expect(panel.get_by_text("Receipt integrity verified", exact=True)).to_be_visible()
+    expect(panel.get_by_text(verdict["caveat"], exact=True)).to_be_visible()
+    expect(panel.get_by_text(verdict["run_id"], exact=True)).to_be_visible()
+
+    data_transfer = page.evaluate_handle(
+        """bytes => {
+            const transfer = new DataTransfer();
+            transfer.items.add(new File([new Uint8Array(bytes)], 'tampered.json'));
+            return transfer;
+        }""",
+        list(tampered),
+    )
+    panel.get_by_text("Drop a receipt here or choose a file.", exact=True).dispatch_event(
+        "drop", {"dataTransfer": data_transfer}
+    )
+    expect(panel.get_by_text("Receipt integrity verified", exact=True)).to_be_hidden()
+    with page.expect_response(endpoint) as failed:
+        submit.click()
+    assert failed.value.ok
+    digest, failed_verdict = page.evaluate("() => Promise.all(window.receiptRequests)")[-1]
+    assert digest == hashlib.sha256(tampered).hexdigest()
+    assert failed_verdict["status"] == "tampered"
+    expect(panel.get_by_text("Receipt did not verify", exact=True)).to_be_visible()
+    expect(panel.get_by_text("tampered", exact=True)).to_be_visible()
+    expect(panel.get_by_text(verdict["caveat"], exact=True)).to_be_hidden()
+
+    file_input.set_input_files({"name": "empty.json", "mimeType": "application/json", "buffer": b""})
+    page.route(endpoint, lambda route: route.fulfill(status=503, json={"detail": "Verifier unavailable"}))
+    try:
+        with page.expect_response(endpoint) as unavailable:
+            submit.click()
+        assert unavailable.value.status == 503
+        expect(panel.get_by_role("alert")).to_contain_text("Could not verify the receipt")
+    finally:
+        page.unroute(endpoint)
+    with page.expect_response(endpoint) as malformed:
+        panel.get_by_role("button", name="Retry verification", exact=True).click()
+    assert malformed.value.ok
+    receipts = page.evaluate("() => Promise.all(window.receiptRequests)")
+    digest, malformed_verdict = receipts[-1]
+    assert digest == hashlib.sha256(b"").hexdigest()
+    assert malformed_verdict["status"] == "malformed"
+    expect(panel.get_by_text("malformed", exact=True)).to_be_visible()
+    expect(panel.get_by_role("alert")).to_have_count(0)
+    assert len(receipts) == 4
 
 
 def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> None:
@@ -223,7 +312,7 @@ def main() -> None:
             sync_playwright() as playwright,
         ):
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page = browser.new_page(viewport={"width": 1440, "height": 900}, service_workers="block")
             page.set_default_timeout(8_000)
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))
@@ -247,6 +336,7 @@ def main() -> None:
             check_approvals(page, base, headers, approvals, queue_dir)
             check_task_creation(page, base, headers)
             check_governance(page, base)
+            check_governance_receipt(page, base)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()
     print("Web UI route, drawer, auth, task, approval and governance smoke passed", flush=True)

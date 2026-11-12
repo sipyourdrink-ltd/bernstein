@@ -3,6 +3,7 @@ import { type FormEvent } from 'react';
 import { useSearchParams } from 'react-router';
 import { apiGet } from '@/lib/api';
 import { EmptyState, ErrorState, LoadingState } from '@/lib/states';
+import { ReceiptVerification } from '@/components/governance/ReceiptVerification';
 
 export type CoverageMetric = {
   id: string;
@@ -229,6 +230,7 @@ export default function Governance() {
         </button>
       </form>
       {content}
+      <ReceiptVerification />
     </div>
   );
 }

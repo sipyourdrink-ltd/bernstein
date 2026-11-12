@@ -76,6 +76,12 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 - **Endpoints:** `GET /api/v1/audit?event_type=&search=&from=&to=&page=&page_size=` → `{items,total,page,page_size}`. Export: `POST /api/v1/audit/export?format=csv|jsonl`.
 - **Replaces TUI widget:** none - audit chain inspection had no TUI surface.
 
+## Governance (`/ui/governance`)
+
+Enter a run ID to inspect the coverage recorded for that run. To check a receipt, choose or drop the file, then select **Verify receipt**. The browser sends the original file to `POST /api/v1/governance/verify-receipt`.
+
+The screen shows the server's verdict and any errors. A successful check has the `integrity-only` tier because it uses the key embedded in the receipt. The verdict explains what this establishes and how to pin a key for a provenance check.
+
 ## Costs (`/ui/costs`)
 
 - **Source:** `web/src/routes/Costs.tsx`.
