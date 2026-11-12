@@ -132,11 +132,14 @@ def _hint_body(category: ErrorCategory, context: HintContext | None) -> tuple[st
             "",
         )
     if category is ErrorCategory.MODEL_UNREACHABLE:
-        provider = _ctx_get(context, "provider", "the model provider")
-        # BERNSTEIN_OFFLINE only makes the doctor skip its network probes; it switches no adapter.
+        provider = _ctx_get(context, "provider")
+        target = provider or "the model provider"
+        command = "bernstein doctor extended"
+        if provider.isascii() and provider.isalpha():
+            command = f"{command} --provider {provider}"
         return (
-            f"Could not reach `{provider}`. Check the network; the extended doctor probes the provider's endpoint.",
-            f"bernstein doctor extended --provider {provider}",
+            f"Could not reach `{target}`. Check the network with the extended doctor.",
+            command,
         )
     if category is ErrorCategory.TIMEOUT:
         adapter = _ctx_get(context, "adapter", "the adapter")
