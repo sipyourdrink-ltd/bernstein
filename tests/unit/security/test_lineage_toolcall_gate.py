@@ -19,7 +19,11 @@ from bernstein.core.security.agent_card_signer import generate_ed25519_keypair, 
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.identity_spawn_anchor import IdentitySpawnAnchor
 from bernstein.core.security.native_toolcall_evidence import NativeToolCallEvidenceProvider
-from bernstein.core.security.toolcall_identity import LineageToolCallIdentitySigner
+from bernstein.core.security.toolcall_identity import (
+    LineageToolCallIdentitySigner,
+    ToolCallIdentityAttestation,
+    identity_envelope,
+)
 from bernstein.core.security.toolcall_interlock import ToolCallIntent, verified_tool_call_ids
 
 _AUDIT_KEY = b"a" * 32
@@ -41,11 +45,14 @@ def _seed(
     *,
     lineage_tool_call_id: str = "tc-1",
     attested_ids: tuple[str, ...] = ("tc-1",),
+    keys_out: dict[str, str] | None = None,
 ) -> AuditChainStore:
     sdd = tmp_path / ".sdd"
     chain = AuditChainStore(sdd / "audit", key=_AUDIT_KEY)
     card_private, card_public = generate_ed25519_keypair()
     tool_private, tool_public = generate_ed25519_keypair()
+    if keys_out is not None:
+        keys_out["tool_private"] = tool_private.decode()
     identity_card = AgentIdentityCard(
         agent_id="agent-1",
         role="coder",
@@ -153,6 +160,37 @@ def test_unsigned_attestation_and_reordered_dispatch_do_not_authorize(tmp_path: 
     mismatched[dispatch_index]["details"] = dict(mismatched[dispatch_index]["details"])
     mismatched[dispatch_index]["details"]["intent_digest"] = "sha256:mismatch"
     assert "tc-1" not in verified_tool_call_ids(mismatched)
+
+
+def test_envelope_signed_over_another_journal_head_does_not_authorize(tmp_path: Path) -> None:
+    """The projection checks the signed journal head against the anchor (#7013).
+
+    The honest writer cannot produce this envelope: it refuses to sign once the
+    head moves. It is forged here with the run's real tool key, so the envelope
+    verifies against the anchored key and every other binding (call index,
+    predecessor, intent, adjacent dispatch) still holds. Only the signed head
+    differs from the head the run anchor froze.
+    """
+    keys: dict[str, str] = {}
+    chain = _seed(tmp_path, keys_out=keys)
+    events = [_event_dict(event) for event in chain.query(include_archived=True)]
+    assert "tc-1" in verified_tool_call_ids(events), "the honest chain must authorize first"
+
+    attestation_index = next(i for i, event in enumerate(events) if event["event_type"] == "toolcall.attestation")
+    dispatch_index = next(i for i, event in enumerate(events) if event["event_type"] == "toolcall.enforced_dispatch")
+    honest = events[attestation_index]["details"]["identity_envelope"]
+    record = ToolCallIdentityAttestation(**{**honest["record"], "run_journal_head": "journal:moved"})
+    signature = LineageToolCallIdentitySigner(keys["tool_private"], "tool-key").sign(record.signing_bytes())
+    forged = identity_envelope(record, signature)
+
+    tampered = [dict(event) for event in events]
+    for index in (attestation_index, dispatch_index):
+        tampered[index] = {**tampered[index], "details": dict(tampered[index]["details"])}
+    tampered[attestation_index]["details"]["identity_envelope"] = forged
+    tampered[attestation_index]["details"]["attestation_ref"] = forged["attestation_ref"]
+    tampered[dispatch_index]["details"]["attestation_ref"] = forged["attestation_ref"]
+
+    assert "tc-1" not in verified_tool_call_ids(tampered)
 
 
 def test_duplicate_request_id_is_ambiguous_and_blocks(tmp_path: Path) -> None:

@@ -1,0 +1,1 @@
+The LineageGate's tool-call projection (`verified_tool_call_ids`) now checks that an identity envelope's signed run journal head equals the head the run anchor froze, as the attestation verdict walk already did. An envelope signed over any other head no longer authorizes a lineage write; before, only the writer's own refusal to sign after the head moved kept such envelopes out.
