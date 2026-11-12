@@ -22,7 +22,7 @@ provenance from install to artifact.
 `bernstein-run` teaches an agent session the three-step operator loop:
 
 ```bash
-bernstein run -g "<goal>"          # submit
+bernstein run --goal "<goal>"          # submit
 bernstein status                   # monitor
 bernstein lineage verify <run_id>  # verify the run journal
 bernstein audit verify             # verify the workspace audit chain

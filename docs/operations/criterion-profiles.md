@@ -60,7 +60,7 @@ vector. Child tasks inherit the parent profile unless they override.
 ```bash
 bernstein criterion-profile list                  # bundled presets + paths
 bernstein criterion-profile show <task_id>        # resolved weights + preset name
-bernstein criterion-profile show <task_id> --json # machine-readable
+bernstein --json criterion-profile show <task_id> # machine-readable
 ```
 
 `show` returns the resolved weight vector plus the named preset (or
