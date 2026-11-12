@@ -512,8 +512,8 @@ def _fetch_remote_agent_branch(
     workdir = _get_workdir(request)
     if not agent_branch.startswith("agent/"):
         logger.warning(
-            "fetch_remote_agent_branch: refusing non-agent branch %r",
-            agent_branch,
+            "fetch_remote_agent_branch: refusing non-agent branch %s",
+            for_log(agent_branch),
         )
         return
     try:
@@ -526,9 +526,9 @@ def _fetch_remote_agent_branch(
         )
         if result.returncode != 0:
             logger.warning(
-                "fetch_remote_agent_branch: fetch failed for %s: %s",
-                agent_branch,
-                result.stderr.strip(),
+                "fetch_remote_agent_branch: fetch failed for %s: exit %d",
+                for_log(agent_branch),
+                result.returncode,
             )
             return
         local_sha = subprocess.run(
@@ -542,18 +542,18 @@ def _fetch_remote_agent_branch(
         if local != agent_sha:
             logger.warning(
                 "fetch_remote_agent_branch: SHA mismatch for %s: expected %s, got %s",
-                agent_branch,
-                agent_sha[:12],
-                local[:12],
+                for_log(agent_branch),
+                for_log(agent_sha[:12]),
+                for_log(local[:12]),
             )
         else:
             logger.info(
                 "fetch_remote_agent_branch: fetched %s (%s)",
-                agent_branch,
-                agent_sha[:12],
+                for_log(agent_branch),
+                for_log(agent_sha[:12]),
             )
     except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("fetch_remote_agent_branch: %s: %s", agent_branch, exc)
+        logger.warning("fetch_remote_agent_branch: %s: %s", for_log(agent_branch), type(exc).__name__)
 
 
 def _run_auto_commit_pre_complete(
