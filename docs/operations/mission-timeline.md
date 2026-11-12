@@ -6,6 +6,9 @@ pure deterministic projection over the mission's work-ledger chain plus the
 evidence bundles its phase receipts reference (see the
 [work ledger](work-ledger.md) and the review board's projection discipline).
 
+Unlike a mission's multi-day sequence of ordered phases, a run is a single
+orchestration of a goal.
+
 Two surfaces render that projection so operators do not have to reverse-engineer
 overnight progress from task lists and logs.
 
