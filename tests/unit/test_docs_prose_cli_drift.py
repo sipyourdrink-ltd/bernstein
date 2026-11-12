@@ -423,9 +423,7 @@ def test_landing_page_is_in_the_narrative_corpus() -> None:
 def test_landing_page_drift_reports_repository_path_and_line() -> None:
     page = "Welcome.\nUse `bernstein narrative-docs-stale-command` to begin.\n"
     failures = check(extract(page), _surface(), "docs/index.md")
-    assert failures == [
-        "docs/index.md:2: command 'bernstein narrative-docs-stale-command' does not exist"
-    ]
+    assert failures == ["docs/index.md:2: command 'bernstein narrative-docs-stale-command' does not exist"]
 
 
 def test_narrative_docs_have_no_cli_drift() -> None:
