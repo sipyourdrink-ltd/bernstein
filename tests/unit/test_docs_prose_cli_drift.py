@@ -412,14 +412,12 @@ def test_reverting_slice1_fix_fails() -> None:
 
 
 def test_benchmark_docs_examples_parse_and_verify_signed_bundles(monkeypatch: pytest.MonkeyPatch) -> None:
-    from bernstein.cli.main import cli
+    from bernstein.eval.bench.bench_cli import bench_group
 
     page = REPO_ROOT / "docs" / "eval" / "bench.md"
     markdown = page.read_text(encoding="utf-8").replace("\\\n", " ")
     markdown = re.sub(r"(?m)^UV_PYTHON=\S+ uv run --no-sync (?=bernstein bench )", "", markdown)
     lines = markdown.splitlines()
-    bench = cli.commands["bench"]
-    assert isinstance(bench, click.Group)
     # The example paths are placeholders. Parse options without checking the filesystem.
     monkeypatch.setattr(click.Path, "convert", lambda _self, value, _param, _ctx: value)
 
@@ -430,7 +428,7 @@ def test_benchmark_docs_examples_parse_and_verify_signed_bundles(monkeypatch: py
             continue
         name = tokens[1]
         example = f"bernstein {' '.join(tokens)}"
-        command = bench.commands.get(name)
+        command = bench_group.commands.get(name)
         assert command is not None, f"{example}: unknown bench subcommand"
         args = tokens[2:]
         # Inline command names and signatures also appear as prose references.
@@ -452,16 +450,13 @@ def test_benchmark_docs_examples_parse_and_verify_signed_bundles(monkeypatch: py
     conflicts = stub_bundles.intersection(suite_by_bundle)
     assert not conflicts, f"stub runs would overwrite signed bundles: {sorted(conflicts)}"
 
-    verifications = [
-        context.params
-        for context in parsed.get("verify", [])
-        if not context.params["stub_signer"] and not context.params["no_signature"]
-    ]
+    verifications = [context.params for context in parsed.get("verify", [])]
     assert verifications, "extractor found no signed bundle verification examples"
     for params in verifications:
         bundle = params["bundle"]
-        if bundle in suite_by_bundle:
-            assert params["suite"] == suite_by_bundle[bundle], f"{bundle}: use the suite that produced the bundle"
+        assert bundle in suite_by_bundle, f"{bundle}: verify an output from a documented signed run"
+        assert not params["stub_signer"] and not params["no_signature"], f"{bundle}: require the install signature"
+        assert params["suite"] == suite_by_bundle[bundle], f"{bundle}: use the suite that produced the bundle"
         message = f"{bundle}: use --trusted-key FINGERPRINT=PATH"
         assert params["trusted_keys"], message
         for key in params["trusted_keys"]:
