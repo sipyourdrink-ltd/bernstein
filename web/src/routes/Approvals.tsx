@@ -4,8 +4,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldCheck, AlertTriangle, Check, X } from 'lucide-react';
-import { apiGet, apiPost } from '@/lib/api';
+import { ShieldCheck, Check, X } from 'lucide-react';
+import { ApiError, apiGet, apiPost } from '@/lib/api';
 import { useEventStream } from '@/lib/sse';
 import { formatDuration } from '@/lib/format';
 import {
@@ -22,8 +22,6 @@ import { cn } from '@/lib/utils';
 // Types
 // ---------------------------------------------------------------------------
 
-type RiskClass = 'low' | 'moderate' | 'elevated' | 'high';
-
 interface ApprovalReason {
   text: string;
   severity?: 'info' | 'warning' | 'danger';
@@ -38,13 +36,14 @@ interface QueuedApproval {
   tool_args: Record<string, unknown>;
   created_at: number;
   ttl_seconds: number;
+  nonce: string;
 }
 
 interface QueuedApprovalsResponse {
   pending: QueuedApproval[];
 }
 
-type Decision = 'allow' | 'reject' | 'always';
+type Decision = 'allow' | 'reject';
 
 // ---------------------------------------------------------------------------
 // Pure helpers - derive design-only fields from generic tool_args.
@@ -58,14 +57,6 @@ function pickString(args: Record<string, unknown>, ...keys: string[]): string {
   return '';
 }
 
-function pickNumber(args: Record<string, unknown>, ...keys: string[]): number | null {
-  for (const k of keys) {
-    const v = args[k];
-    if (typeof v === 'number' && !Number.isNaN(v)) return v;
-  }
-  return null;
-}
-
 function pickStringList(args: Record<string, unknown>, ...keys: string[]): string[] {
   for (const k of keys) {
     const v = args[k];
@@ -75,28 +66,6 @@ function pickStringList(args: Record<string, unknown>, ...keys: string[]): strin
   }
   return [];
 }
-
-function classifyRisk(score: number | null): RiskClass {
-  if (score == null) return 'moderate';
-  if (score >= 0.75) return 'high';
-  if (score >= 0.45) return 'elevated';
-  if (score >= 0.25) return 'moderate';
-  return 'low';
-}
-
-const RISK_PILL_KIND: Record<RiskClass, 'success' | 'warning' | 'danger'> = {
-  low: 'success',
-  moderate: 'warning',
-  elevated: 'warning',
-  high: 'danger',
-};
-
-const RISK_LABEL: Record<RiskClass, string> = {
-  low: 'low',
-  moderate: 'moderate',
-  elevated: 'elevated',
-  high: 'high',
-};
 
 const REASON_DOT_KIND: Record<NonNullable<ApprovalReason['severity']>, 'failed' | 'stalled' | 'idle'> = {
   danger: 'failed',
@@ -116,24 +85,6 @@ function approvalTarget(a: QueuedApproval): string {
     Object.keys(a.tool_args).slice(0, 3).join(' · ') ||
     '-'
   );
-}
-
-/** Derive task id label, e.g. T-0419 from `task_id` or `task`. */
-function approvalTaskId(a: QueuedApproval): string {
-  return pickString(a.tool_args, 'task_id', 'task') || a.session_id.slice(0, 8);
-}
-
-/** Risk score 0..1; defaults to 0.5 if backend hasn't enriched the payload.
- *
- * Backends may emit either a 0..1 float (`risk: 0.74`) or a 0..100 integer
- * (`risk_score: 74`). Anything > 1.5 is assumed to be a percent and divided
- * by 100 before clamping. Negative values clamp to 0.
- */
-function approvalRisk(a: QueuedApproval): number {
-  const r = pickNumber(a.tool_args, 'risk', 'risk_score', 'score');
-  if (r == null) return 0.5;
-  const normalized = r > 1.5 ? r / 100 : r;
-  return Math.max(0, Math.min(1, normalized));
 }
 
 function approvalReasons(a: QueuedApproval): ApprovalReason[] {
@@ -212,12 +163,6 @@ export default function Approvals() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Re-render once a second so wait timers tick without refetching.
   const [now, setNow] = useState<number>(() => Date.now());
-  // Track approvals optimistically removed by an in-flight mutation so the
-  // queue length, badge, and keyboard navigation stay accurate during the
-  // network round-trip. Cleared on settle (success or rollback on error).
-  const [optimisticallyResolved, setOptimisticallyResolved] = useState<Set<string>>(
-    () => new Set(),
-  );
 
   const queueQ = useQuery<QueuedApprovalsResponse>({
     queryKey: QUEUE_KEY,
@@ -225,14 +170,11 @@ export default function Approvals() {
     refetchInterval: 10_000,
   });
 
-  // Drop optimistically-resolved rows from the displayed list so badges and
-  // keyboard navigation stay in sync with the user's last action. Defensive
-  // against missing/malformed `pending`; backends sometimes wrap the list.
-  const pending: QueuedApproval[] = useMemo(() => {
-    const raw = Array.isArray(queueQ.data?.pending) ? queueQ.data!.pending : [];
-    if (optimisticallyResolved.size === 0) return raw;
-    return raw.filter((a) => !optimisticallyResolved.has(a.id));
-  }, [queueQ.data?.pending, optimisticallyResolved]);
+  const pending = useMemo(
+    () => (Array.isArray(queueQ.data?.pending) ? queueQ.data.pending : []),
+    [queueQ.data?.pending],
+  );
+  const selected = pending.find((approval) => approval.id === selectedId);
 
   // Auto-select the first row whenever the queue changes and the current
   // selection has fallen out of the list.
@@ -278,65 +220,22 @@ export default function Approvals() {
     [],
   );
 
-  const resolveMutation = useMutation({
-    mutationFn: ({
-      approvalId,
-      decision,
-      reason,
-    }: {
-      approvalId: string;
-      decision: Decision;
-      reason?: string;
-    }) =>
-      apiPost<{ status: string; id: string; decision: string }>(
-        `/approvals/${encodeURIComponent(approvalId)}/resolve`,
-        reason ? { decision, reason } : { decision },
+  const { mutate: resolve, isPending: isResolving } = useMutation({
+    mutationFn: ({ approval, decision }: { approval: QueuedApproval; decision: Decision }) =>
+      apiPost<{ status: 'resolved'; id: string; decision: Decision }>(
+        `/approvals/${encodeURIComponent(approval.id)}/resolve`,
+        { decision, nonce: approval.nonce },
       ),
-    // Optimistically drop the row so the badge count, keyboard navigation, and
-    // selection auto-advance immediately. We track the id locally instead of
-    // mutating the cached query to keep React Query's refetch in charge of the
-    // canonical list - the optimistic id is rolled back on error.
-    onMutate: ({ approvalId }) => {
-      setOptimisticallyResolved((prev) => {
-        const next = new Set(prev);
-        next.add(approvalId);
-        return next;
-      });
-      return { approvalId };
+    onSuccess: ({ id, decision }) => {
+      showToast(`${decision === 'allow' ? 'Approved' : 'Denied'} ${id}`);
+      return queryClient.invalidateQueries({ queryKey: QUEUE_KEY });
     },
-    onSuccess: (_data, vars) => {
-      // Force a refetch so we converge on the server's canonical list and the
-      // optimistic id naturally drops out below.
-      queryClient.invalidateQueries({ queryKey: QUEUE_KEY });
-      queryClient.invalidateQueries({ queryKey: ['approvals'] });
-      const verb =
-        vars.decision === 'allow'
-          ? 'Approved'
-          : vars.decision === 'reject'
-            ? 'Denied'
-            : 'Saved always-rule for';
-      showToast(`${verb} ${vars.approvalId}`);
-    },
-    onError: (err: unknown, vars) => {
-      // Roll the optimistic removal back so the row reappears.
-      setOptimisticallyResolved((prev) => {
-        if (!prev.has(vars.approvalId)) return prev;
-        const next = new Set(prev);
-        next.delete(vars.approvalId);
-        return next;
-      });
-      const msg = err instanceof Error ? err.message : 'Could not resolve approval';
-      showToast(msg, 'error');
-    },
-    onSettled: (_data, _err, vars) => {
-      // Clear the optimistic id once the cache has had a chance to refetch so
-      // we don't accidentally hide a still-pending row if the server kept it.
-      setOptimisticallyResolved((prev) => {
-        if (!prev.has(vars.approvalId)) return prev;
-        const next = new Set(prev);
-        next.delete(vars.approvalId);
-        return next;
-      });
+    onError: (error: unknown) => {
+      if (error instanceof ApiError && (error.status === 409 || error.status === 410)) {
+        showToast('This approval is no longer current. Review the refreshed queue.', 'error');
+        return queryClient.invalidateQueries({ queryKey: QUEUE_KEY });
+      }
+      showToast(error instanceof Error ? error.message : 'Could not resolve approval', 'error');
     },
   });
 
@@ -365,20 +264,17 @@ export default function Approvals() {
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         moveSelection(-1);
-      } else if (e.key === 'a' || e.key === 'A') {
-        if (!selectedId || resolveMutation.isPending) return;
+      } else {
+        const key = e.key.toLowerCase();
+        if ((key !== 'a' && key !== 'd') || e.repeat || !selected?.nonce || isResolving) return;
         e.preventDefault();
-        resolveMutation.mutate({ approvalId: selectedId, decision: 'allow' });
-      } else if (e.key === 'd' || e.key === 'D') {
-        if (!selectedId || resolveMutation.isPending) return;
-        e.preventDefault();
-        resolveMutation.mutate({ approvalId: selectedId, decision: 'reject' });
+        resolve({ approval: selected, decision: key === 'a' ? 'allow' : 'reject' });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, pending, resolveMutation.isPending]);
+  }, [selectedId, pending, selected, resolve, isResolving]);
 
   // -------------------------------------------------------------------------
   // Top-level state branches
@@ -418,8 +314,6 @@ export default function Approvals() {
     pending.length > 0
       ? Math.max(...pending.map((a) => waitSeconds(a.created_at, now)))
       : 0;
-
-  const selected = pending.find((a) => a.id === selectedId) ?? null;
 
   return (
     <div className="grid h-full grid-cols-1 overflow-hidden md:grid-cols-[440px_1fr]">
@@ -470,10 +364,8 @@ export default function Approvals() {
           <SelectedApproval
             approval={selected}
             now={now}
-            pending={resolveMutation.isPending}
-            onDecision={(decision, reason) =>
-              resolveMutation.mutate({ approvalId: selected.id, decision, reason })
-            }
+            pending={isResolving}
+            onDecision={(decision) => resolve({ approval: selected, decision })}
           />
         ) : (
           <EmptyState
@@ -518,10 +410,7 @@ interface QueueRowProps {
 }
 
 function QueueRow({ approval, selected, waitS, onClick }: QueueRowProps) {
-  const risk = approvalRisk(approval);
-  const rclass = classifyRisk(risk);
   const target = approvalTarget(approval);
-  const taskId = approvalTaskId(approval);
   // Scroll the keyboard-focused row into view and surface a visible focus ring
   // so arrow-key navigation is observable. We focus the inner button rather
   // than the <li> because buttons get the platform-native focus ring.
@@ -563,17 +452,9 @@ function QueueRow({ approval, selected, waitS, onClick }: QueueRowProps) {
             <span className="font-mono text-[10.5px] text-meta-foreground">
               {approval.session_id}
             </span>
-            <span className="size-[3px] rounded-full bg-meta-foreground" />
-            <span className="font-mono text-[10.5px] text-meta-foreground">
-              {taskId}
-            </span>
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <Pill kind={RISK_PILL_KIND[rclass]}>
-            <AlertTriangle className="size-2.5" strokeWidth={1.75} />
-            <span className="tabular-nums">{risk.toFixed(2)}</span>
-          </Pill>
           <div className="mt-1.5 font-mono text-[10.5px] tabular-nums text-meta-foreground">
             {formatDuration(waitS, 's')}
           </div>
@@ -591,7 +472,7 @@ interface SelectedApprovalProps {
   approval: QueuedApproval;
   now: number;
   pending: boolean;
-  onDecision: (decision: Decision, reason?: string) => void;
+  onDecision: (decision: Decision) => void;
 }
 
 function SelectedApproval({
@@ -600,8 +481,6 @@ function SelectedApproval({
   pending,
   onDecision,
 }: SelectedApprovalProps) {
-  const risk = approvalRisk(approval);
-  const rclass = classifyRisk(risk);
   const reasons = approvalReasons(approval);
   const diffPayload = approvalDiff(approval);
   // Only count +/- from real diff text; JSON-args fallback would otherwise
@@ -609,21 +488,10 @@ function SelectedApproval({
   const { plus, minus } =
     diffPayload.kind === 'diff' ? diffCounts(diffPayload.text) : { plus: 0, minus: 0 };
   const filename = diffFilename(approval);
-  const taskId = approvalTaskId(approval);
   const target = approvalTarget(approval);
-  const sloS = approval.ttl_seconds;
   const waitS = waitSeconds(approval.created_at, now);
 
-  // Destructive policy actions get a confirmation step. We use window.confirm
-  // to avoid pulling in @radix-ui/react-alert-dialog as a new dep.
-  const confirmAndDecide = (
-    decision: Decision,
-    reason: string,
-    confirmMessage: string,
-  ) => {
-    if (typeof window !== 'undefined' && !window.confirm(confirmMessage)) return;
-    onDecision(decision, reason);
-  };
+  const disabled = pending || !approval.nonce;
 
   return (
     <>
@@ -644,18 +512,11 @@ function SelectedApproval({
           </div>
           <div className="mt-1.5 font-mono text-[12px] text-muted-foreground">
             <span className="truncate">{target}</span>
-            {' · task '}
-            <span className="text-foreground">{taskId}</span>
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <Pill kind={RISK_PILL_KIND[rclass]}>
-            <AlertTriangle className="size-3" strokeWidth={1.75} />
-            risk · <span className="tabular-nums">{risk.toFixed(2)}</span>{' '}
-            {RISK_LABEL[rclass]}
-          </Pill>
           <div className="mt-1.5 font-mono text-[11px] tabular-nums text-meta-foreground">
-            waiting {formatDuration(waitS, 's')} · SLO {formatDuration(sloS, 's')}
+            waiting {formatDuration(waitS, 's')} · expires after {formatDuration(approval.ttl_seconds, 's')}
           </div>
         </div>
       </div>
@@ -667,7 +528,7 @@ function SelectedApproval({
           <span className="text-body-md text-foreground">Why this needs review</span>
           <span className="flex-1" />
           <span className="font-mono text-[10.5px] text-meta-foreground">
-            {reasons.length} {reasons.length === 1 ? 'reason' : 'reasons'} · 1 mitigation
+            {reasons.length} {reasons.length === 1 ? 'reason' : 'reasons'}
           </span>
         </div>
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
@@ -741,7 +602,7 @@ function SelectedApproval({
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            disabled={pending}
+            disabled={disabled}
             onClick={() => onDecision('allow')}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-body-md text-primary-foreground transition-colors',
@@ -754,7 +615,7 @@ function SelectedApproval({
           </button>
           <button
             type="button"
-            disabled={pending}
+            disabled={disabled}
             onClick={() => onDecision('reject')}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md border border-destructive bg-transparent px-3 py-1.5 text-body-md text-destructive transition-colors',
@@ -766,49 +627,11 @@ function SelectedApproval({
             Deny
           </button>
         </div>
-        <div className="mx-1 h-5 w-px bg-border-subtle" />
-        <div className="flex flex-1 flex-wrap items-center gap-1.5">
-          <GhostAction
-            disabled={pending}
-            onClick={() =>
-              confirmAndDecide(
-                'always',
-                `policy:always_allow:tool:${approval.tool_name}`,
-                `Always allow tool "${approval.tool_name}" without future review?`,
-              )
-            }
-          >
-            Always allow · this tool
-          </GhostAction>
-          <GhostAction
-            disabled={pending}
-            onClick={() =>
-              confirmAndDecide(
-                'always',
-                `policy:always_allow:agent:${approval.agent_role}`,
-                `Always allow agent "${approval.agent_role}" without future review?`,
-              )
-            }
-          >
-            Always allow · this agent
-          </GhostAction>
-          <GhostAction
-            disabled={pending}
-            onClick={() =>
-              confirmAndDecide(
-                // Distinguish always-deny from a one-off Deny so the backend
-                // can persist a deny rule when policy support lands. The
-                // structured `policy:always_deny:*` reason survives even when
-                // the API still treats `decision` as the leading signal.
-                'always',
-                `policy:always_deny:tool:${approval.tool_name}`,
-                `Always deny tool "${approval.tool_name}" for future calls? This is destructive.`,
-              )
-            }
-          >
-            Always deny · this tool
-          </GhostAction>
-        </div>
+        {!approval.nonce && (
+          <p role="alert" className="text-body text-muted-foreground">
+            This request has no approval nonce. Reload the queue before deciding.
+          </p>
+        )}
         <div className="font-mono text-[10.5px] text-meta-foreground">
           <kbd className="mr-1 rounded-sm border border-border-subtle px-1.5 py-px">
             A
@@ -821,34 +644,5 @@ function SelectedApproval({
         </div>
       </div>
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Local primitives
-// ---------------------------------------------------------------------------
-
-function GhostAction({
-  children,
-  onClick,
-  disabled,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        'rounded-md border border-transparent bg-transparent px-2.5 py-1 text-[12px] text-muted-foreground transition-colors',
-        'hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-        'disabled:opacity-60',
-      )}
-    >
-      {children}
-    </button>
   );
 }
