@@ -14,12 +14,19 @@ Covers:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from bernstein.core.cost.spend_ledger import CallTags, SpendLedger
+from bernstein.core.memory.compaction import micro, time_based
+from bernstein.core.memory.compaction.tiers import (
+    COMPACTION_POLICY_VERSION,
+    TierContext,
+    TierResult,
+)
 from bernstein.core.persistence.journal import Journal, JournalReader
 from bernstein.core.security.audit_chain import (
     EVENT_COMPACTION_RECEIPT,
@@ -229,6 +236,44 @@ class TestVerifyCompactionReceipts:
             chain,
             journal_reader=JournalReader(tmp_path / "journal" / "sess-1"),
         )
+        assert ok, errors
+
+    @pytest.mark.parametrize("compact", [micro.compact, time_based.compact], ids=["micro", "time_based"])
+    def test_structural_tier_policy_version_round_trips(
+        self, tmp_path: Path, compact: Callable[[TierContext], TierResult]
+    ) -> None:
+        ctx = TierContext(
+            session_id="sess-1",
+            context_text="```tool_result\n" + "output " * 200 + "\n```\n[age:99] stale context\n",
+        )
+        result = compact(ctx)
+        assert result.policy_version == COMPACTION_POLICY_VERSION
+        assert result.compacted_text != ctx.context_text
+        receipt = build_receipt(
+            task_id="T-1",
+            worker_id=ctx.session_id,
+            trigger="proactive",
+            pre_text=ctx.context_text,
+            post_text=result.compacted_text,
+            tokens_before=result.before_tokens,
+            tokens_after=result.after_tokens,
+            verdicts=(),
+            retry_count=0,
+            correlation_id=result.correlation_id,
+            policy_version=result.policy_version,
+        )
+        chain = _chain(tmp_path)
+        record_compaction_receipt(chain=chain, receipt=receipt)
+        journal_path = tmp_path / "journal" / ctx.session_id
+        journal = Journal.open(journal_path)
+        record_compaction_journal_step(journal, receipt)
+
+        [restored] = load_receipts(chain)
+        reader = JournalReader(journal_path)
+        [step] = find_compaction_steps(reader)
+        assert restored == receipt
+        assert restored.policy_version == step.tool_call["policy_version"] == result.policy_version
+        ok, errors = verify_compaction_receipts(chain, journal_reader=reader)
         assert ok, errors
 
     def test_compaction_without_receipt_fails_verification(self, tmp_path: Path) -> None:
