@@ -104,7 +104,9 @@ def test_excludes_other_agent_and_wholly_outside_runs(two_runs: tuple[ConductPro
 
 def test_reversed_input_has_identical_canonical_bytes(two_runs: tuple[ConductProjection, ConductProjection]) -> None:
     forward = aggregate_conduct(two_runs, principal_id=_PRINCIPAL, period_start=100.0, period_end=200.0)
-    backward = aggregate_conduct(tuple(reversed(two_runs)), principal_id=_PRINCIPAL, period_start=100.0, period_end=200.0)
+    backward = aggregate_conduct(
+        tuple(reversed(two_runs)), principal_id=_PRINCIPAL, period_start=100.0, period_end=200.0
+    )
 
     assert forward.canonical_bytes() == backward.canonical_bytes()
 
