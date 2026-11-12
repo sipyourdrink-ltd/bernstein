@@ -121,6 +121,8 @@ def test_module_imports_when_the_windows_import_overruns_its_timeout(
 
     assert module._PROMETHEUS_AVAILABLE is False
     schedule.finish()
+    assert module._import_error is None
+    assert module._import_result["Counter"].__module__.startswith("prometheus_client")
     assert module._PROMETHEUS_AVAILABLE is False
 
 
@@ -140,6 +142,8 @@ def test_a_late_windows_import_does_not_replace_the_stub_metric_classes(
     counter_at_import = module.Counter
 
     schedule.finish()
+    assert module._import_error is None
+    assert module._import_result["Counter"].__module__.startswith("prometheus_client")
 
     assert module.Counter is counter_at_import
     assert module.Counter.__module__ == MODULE, "a real prometheus class was adopted late"
@@ -158,6 +162,8 @@ def test_stub_metrics_still_record_without_raising(
 
     module.tasks_total.labels(status="done", role="backend").inc()
     schedule.finish()
+    assert module._import_error is None
+    assert module._import_result["Counter"].__module__.startswith("prometheus_client")
     assert module.generate_latest(module.registry) == b""
 
 

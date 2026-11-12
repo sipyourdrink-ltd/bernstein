@@ -17,6 +17,13 @@ def fake_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run bootstrap with no server, planning requests, or child processes."""
     for name, result in {
         "preflight_checks": None,
+        "_acquire_pid_lock": None,
+        "_clean_stale_runtime": None,
+        "_reconcile_dead_owner_before_runtime_cleanup": None,
+        "_run_git_hygiene": None,
+        "_discover_catalog": None,
+        "_index_codebase_with_timeout": None,
+        "_build_codebase_index": None,
         "_resolve_auth_token": "bootstrap-test-token",
         "supervised_server": 101,
         "_wait_for_server": True,
