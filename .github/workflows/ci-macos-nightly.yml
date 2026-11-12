@@ -120,7 +120,11 @@ jobs:
     # ad-hoc runs.
     name: Open / update macOS nightly failure issue
     needs: [test-macos-nightly]
-    if: failure() && github.event_name != 'workflow_dispatch'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (failure() && github.event_name != 'workflow_dispatch')
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     permissions:

@@ -33,10 +33,13 @@ jobs:
     # the 'deep-review' label, so ordinary PR pushes skip it. The manual
     # workflow_dispatch path stays unconditional so an operator can summarise
     # any PR on demand.
-    if: >
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'deep-review')) ||
-      github.event_name == 'workflow_dispatch'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      ((github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'deep-review')) ||
+       github.event_name == 'workflow_dispatch')
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2

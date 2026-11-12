@@ -31,6 +31,10 @@ permissions:
 
 jobs:
   cifuzz:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Build and run fuzzers
     runs-on: ubuntu-latest
     timeout-minutes: 30

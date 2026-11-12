@@ -26,9 +26,10 @@ jobs:
     # the User-Agent on the API call. Validate both the bot type and the
     # immutable Dependabot user id (49699333). See zizmor `bot-conditions`.
     if: >-
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.user.id == 49699333 &&
-      github.event.pull_request.user.type == 'Bot'
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.user.id == 49699333 && github.event.pull_request.user.type == 'Bot')
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2

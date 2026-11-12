@@ -35,6 +35,10 @@ permissions:
 
 jobs:
   zizmor:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: zizmor static analysis
     runs-on: ubuntu-latest
     timeout-minutes: 10

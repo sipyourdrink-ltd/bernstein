@@ -79,9 +79,9 @@ def plan_requests(
     per_reviewer_cap: int = OPEN_REQUESTS_PER_REVIEWER,
 ) -> list[str]:
     """Who to ask for a review on this pull request, in order. Empty means nobody."""
-    if pr.is_draft or pr.author == roster.maintainer or pr.author in roster.automation:
+    if pr.is_draft or pr.author == roster.maintainer:
         return []
-    if pr.author == qc.GITHUB_ACTIONS_BOT:
+    if pr.bot_authored and pr.author in roster.automation | {qc.GITHUB_ACTIONS_BOT}:
         return []
 
     standing = qc.standing_reviews(pr.reviews)
@@ -129,7 +129,7 @@ def needs_a_look(raw: dict[str, Any], roster: Any) -> bool:
     author = (raw.get("user") or {}).get("login") or ""
     if raw.get("draft") or not author:
         return False
-    return author != roster.maintainer and author not in roster.automation and author != qc.GITHUB_ACTIONS_BOT
+    return author != roster.maintainer
 
 
 def request_load(open_prs: list[dict[str, Any]]) -> dict[str, int]:

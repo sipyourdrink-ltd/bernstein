@@ -21,6 +21,10 @@ permissions: {}
 
 jobs:
   dispatch:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Dispatch full main CI if needed
     runs-on: ubuntu-latest
     timeout-minutes: 5

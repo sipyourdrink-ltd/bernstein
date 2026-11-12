@@ -46,8 +46,10 @@ jobs:
     environment: automation
     timeout-minutes: 10
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     permissions:
       contents: write
       pull-requests: write

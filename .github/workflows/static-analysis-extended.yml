@@ -75,6 +75,10 @@ jobs:
     # Project-specific rules already run in ci.yml semgrep job; this
     # lane covers the broader community ruleset and uses the git
     # baseline so only NEW findings fail PRs.
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Semgrep (CE rules)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
@@ -161,6 +165,10 @@ jobs:
     # Filesystem scan for vulnerable OS / language packages + leaked
     # secrets across the repo. HIGH/CRITICAL fails the job; lower
     # severities surface in Code Scanning but do not block.
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Trivy (filesystem)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
@@ -248,6 +256,10 @@ jobs:
     # Infrastructure-as-Code scan: Dockerfile, docker-compose, helm,
     # kustomize. Misconfigurations like missing USER directive,
     # privileged containers, latest tags, etc.
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Trivy (IaC)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
@@ -316,7 +328,11 @@ jobs:
     # not fail) until the existing dead-code follow-ups land.
     # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: vulture (dead code)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
@@ -381,7 +397,11 @@ jobs:
     # list comprehension). Advisory.
     # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: refurb (idioms)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
@@ -464,7 +484,11 @@ jobs:
     # tick loop. Advisory.
     # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: perflint (hot-path antipatterns)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:

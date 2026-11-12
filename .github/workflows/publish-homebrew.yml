@@ -20,7 +20,23 @@ permissions:
   contents: read
 
 jobs:
+  trusted-source:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-trusted-main-ref.yml
+    with:
+      ref: ${{ github.sha }}
+
   update-formula:
+    needs: trusted-source
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Update Homebrew formula
     runs-on: ubuntu-latest
     # Approval lives on publish.yml's `publish` job (PyPI trusted
@@ -45,6 +61,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
 
       - name: Get version and SHA

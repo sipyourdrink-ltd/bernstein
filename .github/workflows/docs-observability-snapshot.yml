@@ -12,6 +12,10 @@ permissions:
 
 jobs:
   snapshot:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Capture snapshot
     runs-on: [self-hosted, linux, vps]
     environment: automation

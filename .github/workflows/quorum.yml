@@ -97,7 +97,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: Check the review quorum
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           INPUT_PR: ${{ inputs.pr }}
         run: |
           set -euo pipefail

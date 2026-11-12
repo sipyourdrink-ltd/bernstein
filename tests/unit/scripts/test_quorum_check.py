@@ -70,6 +70,7 @@ def _pr(
     reviews: list | None = None,
     contributors: set[str] | None = None,
     pushed_hours_ago: float = 1.0,
+    bot_authored: bool = False,
 ):
     return qc.PullRequest(
         number=1,
@@ -81,6 +82,7 @@ def _pr(
         reviews=reviews or [],
         contributors=contributors if contributors is not None else {author},
         last_push=NOW - timedelta(hours=pushed_hours_ago),
+        bot_authored=bot_authored,
     )
 
 
@@ -350,7 +352,7 @@ def test_paths_are_grouped_by_the_owner_set_of_their_line(qc: ModuleType, roster
 
 
 def test_automation_merges_its_own_ordinary_change(qc: ModuleType, roster) -> None:
-    verdict = _evaluate(qc, roster, _pr(qc, author="the-conductor[bot]", contributors=set()))
+    verdict = _evaluate(qc, roster, _pr(qc, author="the-conductor[bot]", bot_authored=True))
     assert verdict.passed
     assert any("section 1" in note for note in verdict.notes)
 
@@ -366,23 +368,38 @@ def test_automation_merges_its_own_ordinary_change(qc: ModuleType, roster) -> No
     ],
 )
 def test_automation_needs_the_maintainer_on_a_path_it_must_not_land_alone(qc: ModuleType, roster, path: str) -> None:
-    pr = _pr(qc, author="renovate[bot]", paths=[path], contributors=set())
+    pr = _pr(qc, author="renovate[bot]", paths=[path], bot_authored=True)
     assert not _evaluate(qc, roster, pr).passed
     approved = _pr(
         qc,
         author="renovate[bot]",
         paths=[path],
-        contributors=set(),
+        bot_authored=True,
         reviews=[_review(qc, "owner", "APPROVED")],
     )
     assert _evaluate(qc, roster, approved).passed
 
 
+def test_bot_pr_with_contributor_commits_needs_full_quorum(qc: ModuleType, roster) -> None:
+    bot = "the-conductor[bot]"
+    pr = _pr(qc, author=bot, contributors={bot, "core2"}, reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+    pr.reviews = [_review(qc, "core2", "APPROVED"), _review(qc, "comm1", "APPROVED")]
+    assert not _evaluate(qc, roster, pr).passed
+    pr.reviews.append(_review(qc, "core1", "APPROVED"))
+    assert _evaluate(qc, roster, pr).passed
+
+
 def test_a_pull_request_from_the_workflow_account_needs_the_maintainer(qc: ModuleType, roster) -> None:
-    pr = _pr(qc, author="github-actions[bot]", contributors=set())
+    pr = _pr(qc, author="github-actions[bot]", bot_authored=True)
     verdict = _evaluate(qc, roster, pr)
     assert not verdict.passed
     assert "workflow account" in verdict.requirements[0].text
+
+
+def test_workflow_account_with_unverified_authorship_needs_full_quorum(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, author="github-actions[bot]", reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
 
 
 def test_the_maintainers_own_change_merges_without_approvals(qc: ModuleType, roster) -> None:
@@ -942,6 +959,51 @@ class FakeGitHub:
 
 def _fetch(qc: ModuleType, fake: FakeGitHub):
     return qc.fetch_pull_request(REPO, 1, api=fake)
+
+
+@pytest.mark.parametrize(
+    ("authors", "signatures", "reported_count", "expected"),
+    [
+        (("bot[bot]", "bot[bot]"), (42, 42), 2, True),
+        (("bot[bot]", "outsider"), (42, 42), 2, False),
+        (("bot[bot]", ""), (42, 42), 2, False),
+        (("bot[bot]", "bot[bot]"), (42, 99), 2, False),
+        (("bot[bot]", "bot[bot]"), (42, None), 2, False),
+        (("bot[bot]", "bot[bot]"), (42, 42), 3, False),
+    ],
+)
+def test_bot_authorship_uses_the_complete_verified_commit_list(qc, authors, signatures, reported_count, expected):
+    bot = "bot[bot]"
+    commits = [
+        _raw_commit("a" * 40, authors[0], hours_ago=2),
+        _raw_commit("b" * 40, authors[1], parents=("a" * 40,)),
+    ]
+    fake = FakeGitHub(commits=commits, compares={}, author=bot)
+
+    def api(*args):
+        if args[1] == "graphql" and "signature" in args[3]:
+            assert "a" * 40 in args[3] and "b" * 40 in args[3]
+            return {
+                "data": {
+                    "repository": {
+                        f"c{i}": {
+                            "signature": {
+                                "isValid": signer is not None,
+                                "signer": {"databaseId": signer},
+                            }
+                        }
+                        for i, signer in enumerate(signatures)
+                    }
+                }
+            }
+        result = fake(*args)
+        if args[1] == f"repos/{REPO}/pulls/1":
+            result["user"]["type"] = "Bot"
+            result["user"]["id"] = 42
+            result["commits"] = reported_count
+        return result
+
+    assert qc.fetch_pull_request(REPO, 1, api=api).bot_authored is expected
 
 
 def _merged_main(*, merger: str = "owner", neutral: bool = True, reviews: list[dict] | None = None) -> FakeGitHub:

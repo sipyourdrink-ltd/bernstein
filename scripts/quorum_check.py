@@ -430,6 +430,9 @@ class PullRequest:
     # rules above fell back to the commit itself wherever one of these was
     # consulted, and the verdict says so.
     uncompared: tuple[str, ...] = ()
+    # The complete PR commit list is attributable to the bot that opened it.
+    # Git author metadata alone is not evidence of the author's identity.
+    bot_authored: bool = False
 
     def is_current(self, sha: str) -> bool:
         """Whether a review given on `sha` was given on what is about to merge."""
@@ -767,6 +770,36 @@ class NetDiff:
         return None
 
 
+def _bot_authored(repo: str, author: str, actor_id: int, history: dict[str, Commit], api: Callable[..., Any]) -> bool:
+    """Prove the PR opener authored every commit using GitHub's verification."""
+    if not history or any(commit.author != author or commit.co_authors - {author} for commit in history.values()):
+        return False
+    shas = list(history)
+    if any(not re.fullmatch(r"[0-9a-f]{40}", sha) for sha in shas):
+        return False
+    owner, _, name = repo.partition("/")
+    for start in range(0, len(shas), 50):
+        batch = shas[start : start + 50]
+        fields = " ".join(
+            f'c{i}:object(oid:"{sha}"){{... on Commit{{signature{{isValid signer{{databaseId}}}}}}}}'
+            for i, sha in enumerate(batch)
+        )
+        query = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){" + fields + "}}"
+        try:
+            reply = api("api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"name={name}")
+            if reply.get("errors"):
+                return False
+            objects = reply["data"]["repository"]
+            for i in range(len(batch)):
+                signature = (objects[f"c{i}"] or {}).get("signature") or {}
+                signer = (signature.get("signer") or {}).get("databaseId")
+                if signature.get("isValid") is not True or signer != actor_id:
+                    return False
+        except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
+            return False
+    return True
+
+
 def fetch_pull_request(
     repo: str,
     number: int,
@@ -794,7 +827,8 @@ def fetch_pull_request(
             moment = datetime.fromisoformat(date.replace("Z", "+00:00"))
             pushed_at = moment if pushed_at is None or moment > pushed_at else pushed_at
 
-    author = (raw.get("user") or {}).get("login", "")
+    actor = raw.get("user") or {}
+    author = actor.get("login", "")
     head_sha = (raw.get("head") or {}).get("sha", "")
     paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
     reviews = [
@@ -822,6 +856,14 @@ def fetch_pull_request(
     # The contributor rule and the window read the branch's whole history; a
     # list GitHub cut short leaves both where they were.
     history = _history(commits) if len(commits) < PR_COMMIT_LIMIT else None
+    bot_authored = bool(
+        history
+        and actor.get("type") == "Bot"
+        and type(actor.get("id")) is int
+        and raw.get("commits") == len(commits) == len(history)
+        and head_sha in history
+        and _bot_authored(repo, author, actor["id"], history, call)
+    )
     update_only: frozenset[str] = frozenset()
     diff_changed_at = None
     if history is not None:
@@ -845,6 +887,7 @@ def fetch_pull_request(
         update_only=update_only,
         diff_changed_at=diff_changed_at,
         uncompared=tuple(diffs.uncompared),
+        bot_authored=bot_authored,
     )
 
 
@@ -968,7 +1011,9 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             )
         )
 
-    adoption_open = now < ADOPTION_ENDS and adoptable(pr, owners)
+    automation = pr.author in roster.automation
+    bot_pr = automation or pr.author == GITHUB_ACTIONS_BOT
+    adoption_open = not bot_pr and now < ADOPTION_ENDS and adoptable(pr, owners)
     adopted = (
         adoption_open
         and roster.maintainer in pr.contributors
@@ -978,7 +1023,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         )
     )
 
-    if pr.author in roster.automation:
+    if automation and pr.bot_authored:
         stops = sorted(
             p
             for p in pr.paths
@@ -996,7 +1041,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             )
         else:
             verdict.notes.append("Automation merging its own change on green CI (charter, section 1).")
-    elif pr.author == GITHUB_ACTIONS_BOT:
+    elif pr.author == GITHUB_ACTIONS_BOT and pr.bot_authored:
         verdict.requirements.append(
             Requirement(
                 "maintainer approval: a pull request opened by the workflow account",
@@ -1032,7 +1077,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         text = f"{need_total} approvals, {need_core} from a core reviewer ({reason})"
         met = len(approving) >= need_total and len(approving_core) >= need_core
         who = _names(eligible - approving)
-        if need_total == 2 and now < BACKLOG_WINDOW_ENDS:
+        if not bot_pr and need_total == 2 and now < BACKLOG_WINDOW_ENDS:
             text += f", or the maintainer's alone until {BACKLOG_WINDOW_ENDS:%Y-%m-%d}"
             met = met or roster.maintainer in approving
             if roster.maintainer not in approving:

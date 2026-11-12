@@ -95,7 +95,11 @@ jobs:
     # skipped, to keep operator-driven ad-hoc runs quiet.
     name: Open / update RPM smoke nightly failure issue
     needs: [install-smoke-rpm-nightly]
-    if: failure() && github.event_name != 'workflow_dispatch'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (failure() && github.event_name != 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

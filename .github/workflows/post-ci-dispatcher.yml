@@ -75,7 +75,7 @@ jobs:
   meta:
     name: Resolve upstream metadata
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     # Do not boot a runner for an upstream conclusion no route can act on.
     #
     # Every job in auto-release.yml gates on `inputs.conclusion == 'success'`
@@ -99,6 +99,7 @@ jobs:
       github.event.workflow_run.conclusion != 'skipped'
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       head_sha: ${{ steps.out.outputs.head_sha }}
       short_sha: ${{ steps.out.outputs.short_sha }}
@@ -111,6 +112,7 @@ jobs:
       display_title: ${{ steps.out.outputs.display_title }}
       actor_login: ${{ steps.out.outputs.actor_login }}
       event: ${{ steps.out.outputs.event }}
+      trusted_queue_source: ${{ steps.queue-source.outputs.trusted }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -140,10 +142,42 @@ jobs:
             echo "run_id=${RUN_ID}"
             echo "run_name=${RUN_NAME}"
             echo "html_url=${HTML_URL}"
-            echo "display_title=${DISPLAY_TITLE}"
+            printf 'display_title=%s\n' "$(printf '%s' "$DISPLAY_TITLE" | tr -d '\r\n')"
             echo "actor_login=${ACTOR_LOGIN}"
             echo "event=${EVENT}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Qualify the source and landed SHA of a queue run
+        id: queue-source
+        if: >-
+          github.event.workflow_run.event == 'merge_group' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/main/') &&
+          github.event.workflow_run.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_BRANCH" =~ ^gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]+$ ]] || exit 0
+          number="${BASH_REMATCH[1]}"
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 0
+          source_branch="$(gh api "repos/$REPO/pulls/$number" --jq '.head.ref // empty')"
+          source_branch="$(printf '%s' "$source_branch" | tr '[:upper:]' '[:lower:]')"
+          [[ -n "$source_branch" && "$source_branch" != fleet/carry-* ]] || exit 0
+          # The queue ref names the last PR, but may contain earlier carry
+          # entries too. Keep the entire group outside write-capable jobs
+          # until the exact tested SHA is an ancestor of main.
+          for ((attempt=1; attempt<=10; attempt++)); do
+            status="$(gh api "repos/$REPO/compare/main...$HEAD_SHA" --jq '.status')"
+            if [[ "$status" == behind || "$status" == identical ]]; then
+              echo "trusted=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if ((attempt < 10)); then sleep 15; fi
+          done
 
   auto-release:
     name: Auto-release
@@ -159,8 +193,11 @@ jobs:
     # a commit that never shipped. The main-branch path stays ungated here
     # so auto-release.yml's own conclusion checks keep applying.
     if: >-
-      needs.meta.outputs.head_branch == 'main' ||
+      (needs.meta.outputs.head_branch == 'main' &&
+       needs.meta.outputs.head_repo == github.repository &&
+       (needs.meta.outputs.event == 'push' || needs.meta.outputs.event == 'workflow_dispatch')) ||
       (startsWith(needs.meta.outputs.head_branch, 'gh-readonly-queue/main/') &&
+       needs.meta.outputs.trusted_queue_source == 'true' &&
        needs.meta.outputs.conclusion == 'success')
     # Union of permissions the called workflow's jobs request: it tags
     # the release commit (contents:write), opens / closes the
@@ -197,6 +234,7 @@ jobs:
       needs.meta.outputs.conclusion == 'failure' &&
       needs.meta.outputs.head_branch == 'main' &&
       needs.meta.outputs.head_repo == github.repository &&
+      (needs.meta.outputs.event == 'push' || needs.meta.outputs.event == 'workflow_dispatch') &&
       !startsWith(needs.meta.outputs.display_title, 'fix(ci-heal-v2):') &&
       !startsWith(needs.meta.outputs.display_title, 'fix(ci-heal):') &&
       (needs.meta.outputs.actor_login != 'github-actions[bot]' ||
@@ -235,7 +273,9 @@ jobs:
     needs: meta
     if: >-
       needs.meta.outputs.conclusion == 'failure' &&
-      needs.meta.outputs.head_branch == 'main'
+      needs.meta.outputs.head_branch == 'main' &&
+      needs.meta.outputs.head_repo == github.repository &&
+      (needs.meta.outputs.event == 'push' || needs.meta.outputs.event == 'workflow_dispatch')
     # Union of permissions the called workflow's jobs request: it reads
     # the failing commit's git history (contents:read) and posts the
     # culprit comment on the suspected PR plus opens a bisect-on-red
