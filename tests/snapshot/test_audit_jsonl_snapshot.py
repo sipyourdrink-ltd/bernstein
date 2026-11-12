@@ -23,7 +23,6 @@ updated ``.ambr`` files alongside the source change.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -80,7 +79,7 @@ def test_lineage_record_dict_shape(snapshot: SnapshotAssertion) -> None:
     assert record_to_dict(record) == snapshot
 
 
-def test_lineage_writer_signed_roundtrip(snapshot: SnapshotAssertion) -> None:
+def test_lineage_writer_signed_roundtrip(snapshot: SnapshotAssertion, tmp_path: Path) -> None:
     """Signed lineage record's wire form must match the stored snapshot.
 
     The signature itself is non-deterministic (Ed25519 is randomised),
@@ -89,7 +88,7 @@ def test_lineage_writer_signed_roundtrip(snapshot: SnapshotAssertion) -> None:
     schema_version, the inputs/output split, and the ``producer``
     nested-dict shape.
     """
-    sdd = Path(tempfile.mkdtemp(prefix="bernstein-snap-"))
+    sdd = tmp_path
     private = Ed25519PrivateKey.generate()
     key_path = sdd / "key"
     key_path.write_bytes(private.private_bytes_raw())
@@ -105,17 +104,16 @@ def test_lineage_writer_signed_roundtrip(snapshot: SnapshotAssertion) -> None:
     assert payload == snapshot
 
 
-def test_audit_log_event_structure(snapshot: SnapshotAssertion) -> None:
+def test_audit_log_event_structure(snapshot: SnapshotAssertion, tmp_path: Path) -> None:
     """AuditLog.log() must keep its on-disk JSONL field layout stable.
 
     Mask the timestamp + hmac fields (non-deterministic) so the
     snapshot covers field set + order + values for the deterministic
     fields (event_type, actor, resource_type, resource_id, details).
     """
-    tmp = Path(tempfile.mkdtemp(prefix="bernstein-snap-audit-"))
-    audit_dir = tmp / "audit"
+    audit_dir = tmp_path / "audit"
     audit_dir.mkdir()
-    key_path = tmp / "key"
+    key_path = tmp_path / "key"
     key_path.write_bytes(b"x" * 40)
     key_path.chmod(0o600)
     log = AuditLog(audit_dir=audit_dir, key_path=key_path)
