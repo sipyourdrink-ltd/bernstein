@@ -47,11 +47,12 @@ Design decisions (the extractor is the whole design problem; see #3620):
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
-from itertools import pairwise
 from pathlib import Path
 
 import click
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -410,54 +411,62 @@ def test_reverting_slice1_fix_fails() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_benchmark_docs_use_registered_bench_subcommands() -> None:
-    page = REPO_ROOT / "docs" / "eval" / "bench.md"
-    commands = extract(page.read_text(encoding="utf-8"))
-    # Suite names are bare positional arguments. Check only the command path.
-    bench_commands = Extraction(
-        checked=[
-            Invocation(line=inv.line, tokens=inv.tokens[:2])
-            for inv in commands.checked
-            if len(inv.tokens) >= 2 and inv.tokens[0] == "bench"
-        ]
-    )
-    assert bench_commands.checked, "extractor found no bench subcommands"
-    failures = check(bench_commands, _surface(), "docs/eval/bench.md")
-    assert not failures, "\n".join(failures)
+def test_benchmark_docs_examples_parse_and_verify_signed_bundles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.main import cli
 
-
-def test_benchmark_docs_verify_signed_bundles() -> None:
     page = REPO_ROOT / "docs" / "eval" / "bench.md"
-    examples = extract(page.read_text(encoding="utf-8").replace("\\\n", " "))
-    suite_by_bundle: dict[str, str] = {}
-    for invocation in examples.checked:
+    markdown = page.read_text(encoding="utf-8").replace("\\\n", " ")
+    markdown = re.sub(r"(?m)^UV_PYTHON=\S+ uv run --no-sync (?=bernstein bench )", "", markdown)
+    lines = markdown.splitlines()
+    bench = cli.commands["bench"]
+    assert isinstance(bench, click.Group)
+    # The example paths are placeholders. Parse options without checking the filesystem.
+    monkeypatch.setattr(click.Path, "convert", lambda _self, value, _param, _ctx: value)
+
+    parsed: dict[str, list[click.Context]] = {}
+    for invocation in extract(markdown).checked:
         tokens = invocation.tokens
-        if tokens[:2] != ("bench", "run") or "--stub-signer" in tokens:
+        if len(tokens) < 2 or tokens[0] != "bench":
             continue
-        for option, value in pairwise(tokens[2:]):
-            if option == "--out":
-                suite_by_bundle[value] = tokens[2]
+        name = tokens[1]
+        example = f"bernstein {' '.join(tokens)}"
+        command = bench.commands.get(name)
+        assert command is not None, f"{example}: unknown bench subcommand"
+        args = tokens[2:]
+        # Inline command names and signatures also appear as prose references.
+        is_shell_example = lines[invocation.line - 1].lstrip().startswith("bernstein ")
+        if not is_shell_example and all(_is_placeholder(token) for token in args):
+            continue
+        try:
+            # Context creation parses arguments without invoking the command.
+            with command.make_context(name, shlex.split(" ".join(args))) as context:
+                parsed.setdefault(name, []).append(context)
+        except click.UsageError as exc:
+            pytest.fail(f"{example}: {exc.format_message()}")
+        except click.exceptions.Exit as exc:
+            assert exc.exit_code == 0 and "--help" in args, example
 
-    without_install_signature = {"--help", "-h", "--no-signature", "--stub-signer"}
-    verification_commands = [
-        invocation.tokens[2:]
-        for invocation in examples.checked
-        if invocation.tokens[:2] == ("bench", "verify")
-        and not all(_is_placeholder(token) for token in invocation.tokens[2:])
-        and without_install_signature.isdisjoint(invocation.tokens)
+    runs = [context.params for context in parsed.get("run", [])]
+    suite_by_bundle = {run["out"]: run["suite"] for run in runs if not run["stub_signer"]}
+    stub_bundles = {run["out"] for run in runs if run["stub_signer"]}
+    conflicts = stub_bundles.intersection(suite_by_bundle)
+    assert not conflicts, f"stub runs would overwrite signed bundles: {sorted(conflicts)}"
+
+    verifications = [
+        context.params
+        for context in parsed.get("verify", [])
+        if not context.params["stub_signer"] and not context.params["no_signature"]
     ]
-    assert verification_commands, "extractor found no signed bundle verification examples"
-    for tokens in verification_commands:
-        bundle = tokens[0]
-        options = list(pairwise(tokens))
+    assert verifications, "extractor found no signed bundle verification examples"
+    for params in verifications:
+        bundle = params["bundle"]
         if bundle in suite_by_bundle:
-            assert ("--suite", suite_by_bundle[bundle]) in options, tokens
-        trusted_keys = [value for option, value in options if option == "--trusted-key"]
+            assert params["suite"] == suite_by_bundle[bundle], f"{bundle}: use the suite that produced the bundle"
         message = f"{bundle}: use --trusted-key FINGERPRINT=PATH"
-        assert len(trusted_keys) == tokens.count("--trusted-key") > 0, message
-        for key in trusted_keys:
+        assert params["trusted_keys"], message
+        for key in params["trusted_keys"]:
             fingerprint, _, path = key.partition("=")
-            assert fingerprint.strip(" '\"") and path.strip(" '\""), message
+            assert fingerprint.strip() and path.strip(), message
 
 
 def test_narrative_docs_have_no_cli_drift() -> None:

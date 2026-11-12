@@ -94,11 +94,11 @@ per-task run receipts, scores them, records each task's tokens, USD cost
 and duration as the adapter reports them, and writes a signed
 `SubmissionBundle` to `my-bundle.json`.
 
-**Which suites have a production adapter.** Only `gate-evasion-v1` and
-`tool-surface-v1`. `golden-v1` and any `.json` suite you supply have no
-production adapter yet: they are scored by `MockReplayAdapter`, which passes
-every task with score 1.0 without evaluating any assertion. A mock-scored run
-therefore:
+**Which suites have a production adapter.** The harness uses production
+adapters for the `gate-evasion-v1`, `tool-surface-v1`, `goal-drift-v1`, and
+`leakage-v1` suite versions. Other versions, including `golden-v1`, use
+`MockReplayAdapter`, which passes every task with score 1.0 without evaluating
+any assertion. A mock-scored run therefore:
 
 - is **refused** unless you pass `--stub-signer`. The install identity will not
   sign a bundle whose verdicts nothing produced;
@@ -163,20 +163,6 @@ table.
 For a suite scored by the mock adapter (see above) the replay is itself
 synthetic, so MATCH covers receipt integrity, coverage and the signature, and
 `bench verify` says so. It does not show that any task passed.
-
-Example output:
-
-```
-bundle_hash : 3f9a2c1d…
-suite_hash  : a7e4b82f…
-overall     : MATCH
-
-  ✓ file_io_read_write                       MATCH
-  ✓ refactor_rename_symbol                   MATCH
-  ✓ test_generation_happy_path               MATCH
-  ✓ lint_fix_unused_import                   MATCH
-  ✓ doc_update_docstring                     MATCH
-```
 
 ### 3. Compare two bundles
 
