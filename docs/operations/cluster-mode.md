@@ -365,6 +365,13 @@ Operationally, drain is the right primitive for a planned restart: cordon →
 drain → wait for `active_agents = 0` → unregister. Cordon is the right
 primitive for an unhealthy host you want to investigate without rebooting.
 
+## Cluster heartbeat settings
+
+Set `cluster.node_heartbeat_interval_s` and `cluster.node_timeout_s` to integer
+values in seconds. The defaults are `15` and `60`, respectively. To set the
+server's listening address, use `bernstein serve --host` or
+`BERNSTEIN_BIND_HOST`.
+
 ## Failure modes
 
 Bernstein's cluster recovery is conservative - there is no global lock
