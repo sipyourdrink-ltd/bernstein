@@ -100,3 +100,17 @@ def test_compile_empty_spec_exits_nonzero(tmp_path: Path, monkeypatch: pytest.Mo
     spec.write_text("# Heading only\n\nProse without any acceptance clause.\n", encoding="utf-8")
     result = CliRunner().invoke(plan_compile, [str(spec)])
     assert result.exit_code == 1
+    assert "No EARS-shaped acceptance lines" in result.stderr
+    assert result.stdout == ""
+
+
+def test_compile_invalid_utf8_spec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    spec = tmp_path / "invalid.md"
+    spec.write_bytes(b"\xff")
+    result = CliRunner().invoke(plan_compile, [str(spec), "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "Cannot read spec" in result.stderr
+    assert result.stdout == ""
+    assert not (tmp_path / ".sdd" / "spec").exists()

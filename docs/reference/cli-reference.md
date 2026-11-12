@@ -253,7 +253,10 @@ pipeline with at most one model call: draft (structured requirement
 extraction), approve (the requirement-set hash is bound into the audit
 chain), and compile (a deterministic, model-free transformation to a task
 graph). Each task node carries the content hashes of the requirement lines it
-implements, so every artefact traces back to spec lines through lineage.
+implements, so every artefact traces back to spec lines through lineage. An
+unreadable spec or a spec with no EARS-shaped requirements exits with status
+`1` and a diagnostic on stderr. Command-line usage errors exit with status
+`2`.
 
 | Flag | Default | Meaning |
 |---|---|---|
