@@ -3,6 +3,8 @@
 Release history lives in [`docs/release-notes/`](docs/release-notes/): one page
 per tagged version, written when the version is cut.
 
+## [Unreleased]
+
 Changes merged to `main` since the newest tag are in
 [`docs/release-notes/unreleased.md`](docs/release-notes/unreleased.md).
 
