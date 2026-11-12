@@ -15,8 +15,7 @@ scoped to specific tasks and permissions, the API middleware validates that
 scope on every mutating request, and revocation is one POST.
 
 Authentication is required by default (`auth_middleware.py:14-19`). The only
-path to "no auth" is an explicit opt-out (`BERNSTEIN_AUTH_DISABLED=1` or
-`auth.enabled: false` in `bernstein.yaml`), which logs a loud warning on
+path to "no auth" is an explicit opt-out (`BERNSTEIN_AUTH_DISABLED=1`), which logs a loud warning on
 startup. SSO providers, RBAC route mapping, identity issuance, audit
 integrity, drain/export endpoints, and SBOM generation are all in-tree
 features - there is no separate "enterprise edition" toggle.
