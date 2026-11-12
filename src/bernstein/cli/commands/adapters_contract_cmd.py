@@ -60,7 +60,7 @@ def contract_check_cmd(name: str | None, as_json: bool, list_only: bool) -> None
         return
 
     if not name:
-        raise click.UsageError("provide an adapter NAME or use --list")
+        raise click.UsageError("Provide an adapter NAME or use --list.")
 
     try:
         spec = ContractSpec.load(name)

@@ -59,7 +59,7 @@ def _parse_scope(scope_str: str) -> InstallScope:
     try:
         return InstallScope(scope_str)
     except ValueError as exc:
-        raise click.BadParameter(f"unknown scope {scope_str!r}; expected project or user") from exc
+        raise click.BadParameter(f"Unknown scope {scope_str!r}. Use 'project' or 'user'.") from exc
 
 
 def _build_service(scope_str: str) -> SkillCatalogService:
@@ -392,11 +392,12 @@ def verify_cmd(refresh: bool, scope: str) -> None:
         console.print(f"[red]revoked installs:[/red] {', '.join(report.revoked)}")
 
     if report.ok:
-        console.print(f"[green]verified[/green] {report.entries_checked} entr(y/ies) offline")
+        entry_label = "entry" if report.entries_checked == 1 else "entries"
+        console.print(f"[green]verified[/green] {report.entries_checked} {entry_label} offline")
     else:
-        raise click.ClickException(
-            f"catalog verification failed: {len(report.failures())} entr(y/ies) did not verify",
-        )
+        failed_count = len(report.failures())
+        entry_label = "entry" if failed_count == 1 else "entries"
+        raise click.ClickException(f"Catalog verification failed for {failed_count} {entry_label}.")
 
 
 @catalog_group.command("status")

@@ -1633,7 +1633,7 @@ def anchor_cmd(print_request: bool, rfc3161_token: str | None, rfc3161_tsa_url: 
     if not AUDIT_DIR.is_dir():
         raise click.ClickException(f"audit directory not found: {AUDIT_DIR}")
     if print_request == bool(rfc3161_token):
-        raise click.ClickException("pass exactly one of --print-request or --rfc3161-token")
+        raise click.ClickException("Pass exactly one of --print-request or --rfc3161-token.")
 
     try:
         key = load_audit_key()
@@ -1644,7 +1644,7 @@ def anchor_cmd(print_request: bool, rfc3161_token: str | None, rfc3161_tsa_url: 
     except CheckpointFileError as exc:
         raise click.ClickException(str(exc)) from None
     if checkpoint is None:
-        raise click.ClickException("no checkpoint recorded yet; run 'bernstein audit seal' first")
+        raise click.ClickException("No checkpoint has been recorded. Run 'bernstein audit seal' first.")
 
     digest = checkpoint_digest(checkpoint).hex()
     if print_request:
@@ -1744,7 +1744,7 @@ def _newest_checkpoint() -> dict[str, object]:
     except CheckpointFileError as exc:
         raise click.ClickException(str(exc)) from None
     if checkpoint is None:
-        raise click.ClickException("no checkpoint recorded yet; run 'bernstein audit seal' first")
+        raise click.ClickException("No checkpoint has been recorded. Run 'bernstein audit seal' first.")
     return checkpoint
 
 
@@ -1840,7 +1840,7 @@ def witness_cosign_cmd(
     except (OSError, ValueError) as exc:
         raise click.ClickException(f"cannot read checkpoint payload: {exc}") from None
     if not isinstance(checkpoint, dict):
-        raise click.ClickException("checkpoint payload is not a JSON object")
+        raise click.ClickException("The checkpoint payload is not a JSON object.")
     checkpoint = cast("dict[str, Any]", checkpoint)
 
     try:
@@ -1908,7 +1908,7 @@ def witness_record_cmd(cosignature_path: str, witness_key_path: str) -> None:
     except (OSError, ValueError) as exc:
         raise click.ClickException(f"cannot read co-signature: {exc}") from None
     if not isinstance(doc, dict):
-        raise click.ClickException("co-signature is not a JSON object")
+        raise click.ClickException("The co-signature is not a JSON object.")
     try:
         cosignature = parse_cosignature(cast("dict[str, Any]", doc))
     except ValueError as exc:

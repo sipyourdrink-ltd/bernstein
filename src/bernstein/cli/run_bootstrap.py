@@ -2330,7 +2330,7 @@ def exec_restart() -> None:
     is_flag=False,
     flag_value=".sdd/logs/activity.log",
     default=None,
-    help="Write activity to log file (default: .sdd/logs/activity.log).",
+    help="Write activity to a log file (default: .sdd/logs/activity.log).",
 )
 @click.option(
     "--max-cost-usd",

@@ -601,8 +601,7 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
         console.print(f"[red]tampered:[/red] snapshot blob present but hash-mismatched: {digest}")
     for digest in result.unreadable:
         console.print(
-            f"[yellow]unreadable:[/yellow] snapshot blob present but not readable on this host: "
-            f"{digest} (a permissions problem here, not a claim about the record)",
+            f"[yellow]unreadable:[/yellow] could not read snapshot blob on this host: {digest}",
         )
     for digest in result.absent:
         console.print(
