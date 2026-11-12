@@ -199,6 +199,15 @@ class TestRegisterFlow:
         result = _run(["fire", "does-not-exist", "--at", "1"])
         assert result.exit_code == 1
 
+    def test_fire_reports_missing_workspace_on_stderr(self, workdir: Path) -> None:
+        assert not (workdir / ".sdd").exists()
+        result = CliRunner().invoke(recipes_group, ["fire", "nightly-triage", "--at", "1"])
+
+        assert result.exit_code == 1, result.output
+        assert "No .sdd/ directory found" in result.stderr
+        assert "bernstein init" in result.stderr
+        assert result.stdout == ""
+
     def test_plan_is_reproducible(self, workdir: Path) -> None:
         first = _run(["plan", "nightly-triage"])
         second = _run(["plan", "nightly-triage"])

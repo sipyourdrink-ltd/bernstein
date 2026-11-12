@@ -529,10 +529,7 @@ def _sdd_dir(*, create: bool = False) -> Path:
         sdd.mkdir(parents=True, exist_ok=True)
         return sdd
     if not sdd.exists():
-        from rich.console import Console
-
-        Console().print("[red]error:[/red] no .sdd/ directory found. Run 'bernstein init' first.")
-        raise SystemExit(1)
+        raise click.ClickException("No .sdd/ directory found. Run 'bernstein init' first.")
     return sdd
 
 

@@ -252,11 +252,19 @@ def show_cache_policy(policy_file: Path, as_json: bool) -> None:
     policy plus its ``sha256`` policy hash - the value bound into every cache
     hit, miss, dedup, and eviction audit event for tasks under this policy.
     """
-    policy = CachePolicy.from_dict(json.loads(policy_file.read_text(encoding="utf-8")))
+    try:
+        data = json.loads(policy_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object.")
+        policy = CachePolicy.from_dict(data)
+        policy_hash = policy.policy_hash()
+    except (OSError, ValueError, TypeError, OverflowError, RecursionError) as exc:
+        raise click.ClickException(f"Invalid cache policy {policy_file}: {exc}") from exc
+
     if as_json:
-        click.echo(json.dumps({"policy": policy.to_dict(), "policy_hash": policy.policy_hash()}, indent=2))
+        click.echo(json.dumps({"policy": policy.to_dict(), "policy_hash": policy_hash}, indent=2))
         return
-    console.print(f"[bold]Policy hash:[/bold] {policy.policy_hash()}")
+    console.print(f"[bold]Policy hash:[/bold] {policy_hash}")
     console.print(f"[bold]Ingredients:[/bold] {', '.join(policy.ingredients) or '(mandatory only)'}")
     console.print(f"[bold]Expiry mode:[/bold] {policy.expiry_mode} (drift window={policy.drift_window})")
     console.print(f"[bold]TTL seconds:[/bold] {policy.ttl_seconds}")
