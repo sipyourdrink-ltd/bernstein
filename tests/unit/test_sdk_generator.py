@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from bernstein.core.sdk_generator import (
     _method_name_from_operation,
     _python_type,
     _ts_type,
     generate_sdk,
+    generate_sdk_from_app,
     generate_sdk_to_file,
     generate_typescript_sdk,
     generate_typescript_sdk_to_file,
@@ -299,3 +303,29 @@ class TestGenerateTypeScriptSDKToFile:
         generate_typescript_sdk_to_file(str(output), spec)
         content = output.read_text()
         assert "export class" in content
+
+
+def test_sdk_fetch_sets_timeout_and_accepts_document_at_limit() -> None:
+    payload = b'{"paths": {}}'
+    with (
+        patch("bernstein.core.plugins_core.sdk_generator._MAX_OPENAPI_BYTES", len(payload)),
+        patch("urllib.request.urlopen", return_value=BytesIO(payload)) as open_url,
+    ):
+        sdk = generate_sdk_from_app("http://127.0.0.1:8052/")
+
+    open_url.assert_called_once_with("http://127.0.0.1:8052/openapi.json", timeout=15)
+    assert "class BernsteinClient" in sdk
+
+
+def test_sdk_fetch_reads_only_one_byte_past_the_limit() -> None:
+    response = BytesIO(b" " * 1000)
+    with (
+        patch("bernstein.core.plugins_core.sdk_generator._MAX_OPENAPI_BYTES", 64),
+        patch("urllib.request.urlopen", return_value=response),
+        patch.object(response, "read", wraps=response.read) as read,
+        pytest.raises(ValueError, match="OpenAPI document exceeds the 64-byte limit"),
+    ):
+        generate_sdk_from_app()
+
+    read.assert_called_once_with(65)
+    assert response.closed
