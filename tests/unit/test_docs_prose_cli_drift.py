@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 import click
@@ -423,6 +424,23 @@ def test_benchmark_docs_use_registered_bench_subcommands() -> None:
     assert bench_commands.checked, "extractor found no bench subcommands"
     failures = check(bench_commands, _surface(), "docs/eval/bench.md")
     assert not failures, "\n".join(failures)
+
+
+def test_gate_evasion_docs_verify_signed_bundles() -> None:
+    page = REPO_ROOT / "docs" / "eval" / "bench.md"
+    examples = extract(page.read_text(encoding="utf-8").replace("\\\n", " "))
+    bundles = {"my-bundle.json", "gate-evasion-bundle.json"}
+    verification_commands = [
+        invocation.tokens
+        for invocation in examples.checked
+        if len(invocation.tokens) >= 3
+        and invocation.tokens[:2] == ("bench", "verify")
+        and invocation.tokens[2] in bundles
+    ]
+    assert {tokens[2] for tokens in verification_commands} == bundles
+    for tokens in verification_commands:
+        assert ("--suite", "gate-evasion-v1") in pairwise(tokens), tokens
+        assert "--trusted-key" in tokens, f"{tokens[2]}: use --trusted-key FINGERPRINT=PATH"
 
 
 def test_narrative_docs_have_no_cli_drift() -> None:

@@ -786,8 +786,12 @@ Every way an agent change previously fooled or evaded a quality gate becomes a f
 bernstein bench run gate-evasion-v1 --out gate-evasion-bundle.json
 
 # Verify the evasion evaluation offline
-bernstein bench verify gate-evasion-bundle.json --suite gate-evasion-v1
+bernstein bench verify gate-evasion-bundle.json --suite gate-evasion-v1 \
+  --trusted-key FINGERPRINT=public-key.pem
 ```
+
+Set `FINGERPRINT` to the bundle signer's fingerprint and `public-key.pem` to the
+path to a trusted copy of the signer's public key in SPKI PEM format.
 
 ### Discovery & Corpus Structure
 
