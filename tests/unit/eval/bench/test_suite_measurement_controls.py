@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from bernstein.compliance.controls import Control, ControlRegistry
+from bernstein.eval.bench.bench_cli import _get_suite, _is_synthetic, _resolve_adapter
 from bernstein.eval.bench.suite import BenchSuite, BenchTask, validate_measurement_control_ids
 
 if TYPE_CHECKING:
@@ -55,6 +56,60 @@ def synthetic_suite(legacy_manifest: dict[str, Any]) -> BenchSuite:
             )
         ],
     )
+
+
+def test_golden_lookup_declares_control_and_remains_synthetic() -> None:
+    suite = _get_suite("golden-v1")
+
+    assert suite.measurement_control_ids == ("CTL-ROB-01",)
+    assert suite.to_dict()["measurement_control_ids"] == ["CTL-ROB-01"]
+    assert _is_synthetic(_resolve_adapter(suite))
+
+
+@pytest.mark.parametrize(
+    ("name", "control_ids"),
+    [
+        ("golden-v1", ("CTL-ROB-01",)),
+        ("goal-drift-v1", ("CTL-ROB-02",)),
+        ("tool-surface-v1", ("CTL-SEC-02",)),
+        ("gate-evasion-v1", ("CTL-SEC-04",)),
+        ("leakage-v1", ("CTL-SEC-03",)),
+    ],
+)
+def test_builtin_lookups_serialize_stable_declarations(name: str, control_ids: tuple[str, ...]) -> None:
+    first = _get_suite(name)
+    second = _get_suite(name)
+
+    assert first.version == name
+    assert first.measurement_control_ids == second.measurement_control_ids == control_ids
+    assert first.to_dict()["measurement_control_ids"] == list(control_ids)
+    assert json.dumps(first.to_dict(), sort_keys=True) == json.dumps(second.to_dict(), sort_keys=True)
+    assert first.suite_hash == _digest(
+        {
+            "version": first.version,
+            "task_hashes": [task.content_hash() for task in first.tasks],
+            "measurement_control_ids": list(control_ids),
+        }
+    )
+
+
+@pytest.mark.parametrize("version", ["synthetic-v1", "golden-v1"])
+def test_custom_manifest_lookup_preserves_own_declaration(
+    version: str, synthetic_suite: BenchSuite, tmp_path: Path
+) -> None:
+    suite = BenchSuite(
+        version=version,
+        tasks=synthetic_suite.tasks,
+        measurement_control_ids=KNOWN_IDS,
+    )
+    path = tmp_path / "custom.json"
+    suite.save(path)
+
+    loaded = _get_suite(str(path))
+
+    assert loaded.measurement_control_ids == KNOWN_IDS
+    assert loaded.to_dict()["measurement_control_ids"] == list(KNOWN_IDS)
+    assert loaded.to_dict() == suite.to_dict()
 
 
 def test_known_declaration_round_trips(synthetic_suite: BenchSuite, tmp_path: Path) -> None:
