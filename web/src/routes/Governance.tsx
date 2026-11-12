@@ -1,38 +1,8 @@
-// Governance coverage panel (#5068, slice 1 of #5067).
-//
-// The question an operator arrives with is "what can this installation prove
-// about what its agents did?". A single summary number cannot answer it: it
-// hides which population it was taken over and it reads the same whether a
-// control was measured and failed or never measured at all. So the screen
-// answers with coverage, under three rules:
-//
-//   * every number is a fraction over a denominator that is named on screen,
-//     so "34%" can never mean "34% of something we did not say";
-//   * a metric with no data is rendered as absent - the words "not measured"
-//     plus the reason - never as a measured 0%. The two failures are
-//     different and the screen must not blur them;
-//   * no bar is coloured by its own value. There is no score, no grade and no
-//     traffic light: a colour that turns green would assert a threshold this
-//     screen has no evidence for.
-//
-// This slice renders a checked-in fixture. Computing the fractions from the
-// chain is #5067 slice 2; the "not covered" list and receipt verification are
-// slices 3 and 4. The fixture is shaped exactly like the projection those
-// slices will serve, so the panel does not change when the data becomes real.
-//
-// The "not covered" list below (#5069, slice 3 of #5067) is data, not markup:
-// a new gap is one entry in ``governance-not-covered.json``, not a new
-// component. Each entry carries its own ``resolved`` flag rather than
-// checking GitHub issue state live - the panel has no backend and no network
-// call, so "self-maintaining" here means the whole maintenance action is
-// flipping one boolean in the data file when the linked issue closes, not
-// writing a live status check. One of the six checked-in gaps (#5047)
-// is already closed as of this list's writing, so ``resolved: true`` on
-// it is this property demonstrated with real data, not a hypothetical.
-
-import { Pill, SectionLabel } from '@/lib/states';
-import fixture from './governance-coverage.fixture.json';
-import notCoveredFixture from './governance-not-covered.json';
+import { useQuery } from '@tanstack/react-query';
+import { type FormEvent } from 'react';
+import { useSearchParams } from 'react-router';
+import { apiGet } from '@/lib/api';
+import { EmptyState, ErrorState, LoadingState } from '@/lib/states';
 
 export type CoverageMetric = {
   id: string;
@@ -47,31 +17,59 @@ export type CoverageMetric = {
   unmeasured_reason: string | null;
 };
 
-export type CoverageReport = {
+type ChainStatus = 'ok' | 'no_entries' | 'seal_only' | 'tampered';
+
+type MetricCounts = { covered: number; total: number };
+
+type CoverageDocument = {
+  v: number;
   run_id: string;
-  captured_at: string;
-  /** Where these numbers came from. Shown so the panel never implies more than it has. */
-  source_note?: string;
+  chain_status: ChainStatus;
+  recorded_actions: number;
+  recorded_decisions: number;
+  metrics: {
+    attributable_action_ratio: MetricCounts;
+    decision_coverage: MetricCounts;
+  };
+};
+
+type CoverageReport = {
+  run_id: string;
+  chain_status?: Exclude<ChainStatus, 'tampered'>;
+  recorded_actions?: number;
+  recorded_decisions?: number;
   metrics: CoverageMetric[];
 };
 
-export const coverageFixture: CoverageReport = fixture;
-
-export type CoverageGap = {
-  id: string;
-  /** Short, plain-language name of the gap (e.g. "tool calls"). */
-  label: string;
-  /** The consequence, in one line an operator understands without more context. */
-  consequence: string;
-  /** GitHub issue number that would close this gap, or ``null`` when the fix is a setting, not code. */
-  issue: number | null;
-  /** ``true`` once the linked issue has closed. The row stays, rendered differently, rather than vanishing. */
-  resolved: boolean;
+const CHAIN_LABELS = {
+  ok: 'Run chain verified',
+  no_entries: 'No run chain entries',
+  seal_only: 'Run chain contains only a journal seal',
 };
 
-export const notCoveredFixtureGaps: CoverageGap[] = notCoveredFixture.gaps;
+const METRIC_LABELS = [
+  ['attributable_action_ratio', 'Actions attributable to a principal'],
+  ['decision_coverage', 'Actions covered by an allow decision'],
+] as const;
 
-const ISSUE_BASE_URL = 'https://github.com/sipyourdrink-ltd/bernstein/issues/';
+function projectCoverage(document: CoverageDocument & { chain_status: Exclude<ChainStatus, 'tampered'> }): CoverageReport {
+  return {
+    run_id: document.run_id,
+    chain_status: document.chain_status,
+    recorded_actions: document.recorded_actions,
+    recorded_decisions: document.recorded_decisions,
+    metrics: METRIC_LABELS.map(([id, label]) => {
+      const counts = document.metrics[id];
+      return {
+        id,
+        label,
+        denominator_label: 'agent actions recorded in this run',
+        ...counts,
+        unmeasured_reason: counts.total === 0 ? 'This run has no recorded agent actions.' : null,
+      };
+    }),
+  };
+}
 
 type MeasuredMetric = CoverageMetric & { covered: number; total: number };
 
@@ -159,121 +157,78 @@ function MetricRow({ metric }: { metric: CoverageMetric }) {
   );
 }
 
-function GapRow({ gap }: { gap: CoverageGap }) {
+export function GovernancePanel({ coverage }: { coverage: CoverageReport }) {
   return (
-    <div
-      data-gap={gap.id}
-      data-gap-state={gap.resolved ? 'resolved' : 'open'}
-      className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border-subtle py-3 last:border-0"
-    >
-      <div className="min-w-0">
-        <span
-          className={
-            gap.resolved
-              ? 'text-body text-muted-foreground line-through'
-              : 'text-body text-foreground'
-          }
-        >
-          {gap.label}
-        </span>
-        <p className="mt-0.5 text-body text-muted-foreground">{gap.consequence}</p>
-      </div>
-      {gap.resolved ? (
-        <Pill kind="ghost">resolved</Pill>
-      ) : gap.issue !== null ? (
-        <a
-          href={`${ISSUE_BASE_URL}${gap.issue}`}
-          target="_blank"
-          rel="noreferrer"
-          className="shrink-0 font-mono text-log text-meta-foreground underline decoration-dotted hover:text-foreground"
-        >
-          {`#${gap.issue}`}
-        </a>
-      ) : (
-        <span className="shrink-0 font-mono text-log text-meta-foreground">settings</span>
-      )}
-    </div>
-  );
-}
-
-/**
- * The "not covered" list: every gap this checked-in list knows about, each
- * one linked to what would close it. An empty list is rendered explicitly
- * ("nothing known to be uncovered") rather than as an absent section, which
- * would read the same as "nothing was checked" - a very different claim this
- * panel must never make by omission.
- */
-function NotCoveredSection({ gaps }: { gaps: CoverageGap[] }) {
-  const openCount = gaps.filter((gap) => !gap.resolved).length;
-  return (
-    <section>
-      <SectionLabel
-        trailing={<Pill kind="ghost">{`${openCount} open of ${gaps.length}`}</Pill>}
-      >
-        not covered in this run
-      </SectionLabel>
-      {gaps.length === 0 ? (
-        <p
-          data-testid="not-covered-empty"
-          className="mt-2 rounded-md border border-dashed border-border-subtle p-4 text-body text-muted-foreground"
-        >
-          Nothing known to be uncovered - not the same claim as nothing having been checked.
-        </p>
-      ) : (
-        <div className="mt-2 rounded-md border border-border bg-card px-4 py-1">
-          {gaps.map((gap) => (
-            <GapRow key={gap.id} gap={gap} />
-          ))}
+    <div className="space-y-3">
+      {coverage.chain_status && (
+        <div className="space-y-1" role="status">
+          <p className="text-body-md text-foreground">{CHAIN_LABELS[coverage.chain_status]}</p>
+          <p className="break-all font-mono text-log text-meta-foreground">Run {coverage.run_id}</p>
+          <p className="font-mono text-log text-meta-foreground">
+            {coverage.recorded_actions} recorded actions · {coverage.recorded_decisions} recorded decisions
+          </p>
         </div>
       )}
-    </section>
-  );
-}
-
-export function GovernancePanel({
-  coverage,
-  notCoveredGaps = notCoveredFixtureGaps,
-}: {
-  coverage: CoverageReport;
-  notCoveredGaps?: CoverageGap[];
-}) {
-  const measuredCount = coverage.metrics.filter(isMeasured).length;
-  return (
-    <div className="space-y-6 p-6">
-      <header className="space-y-2">
-        <SectionLabel
-          trailing={
-            <Pill kind="ghost">
-              {`${measuredCount} of ${coverage.metrics.length} measured`}
-            </Pill>
-          }
-        >
-          governance coverage
-        </SectionLabel>
-        <p className="max-w-3xl text-body text-muted-foreground">
-          What this run can attribute, decide and recompute - as fractions over named
-          populations. A metric with no evidence behind it is shown as not measured
-          rather than as zero.
-        </p>
-        <p className="font-mono text-log text-meta-foreground">
-          {`run ${coverage.run_id} · captured ${coverage.captured_at}`}
-        </p>
-        {coverage.source_note ? (
-          <p className="text-body text-muted-foreground">{coverage.source_note}</p>
-        ) : null}
-      </header>
-
-      <section className="rounded-md border border-border bg-card px-4 py-1">
-        {coverage.metrics.map((metric) => (
-          <MetricRow key={metric.id} metric={metric} />
-        ))}
+      <section aria-label="Coverage by metric" className="rounded-md border border-border bg-card px-4 py-1">
+        {coverage.metrics.map((metric) => <MetricRow key={metric.id} metric={metric} />)}
       </section>
-
-      <NotCoveredSection gaps={notCoveredGaps} />
     </div>
   );
 }
 
 export default function Governance() {
-  return <GovernancePanel coverage={coverageFixture} />;
+  const [params, setParams] = useSearchParams();
+  const runId = params.get('run_id')?.trim() ?? '';
+  const coverage = useQuery({
+    queryKey: ['governance', 'coverage', runId],
+    queryFn: async () => {
+      const data = await apiGet<CoverageDocument>(`/governance/coverage?${new URLSearchParams({ run_id: runId })}`);
+      if (data?.v !== 1 || data.run_id !== runId) throw new Error('Coverage response did not identify the requested run.');
+      return data;
+    },
+    enabled: Boolean(runId),
+  });
+
+  function selectRun(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const id = String(new FormData(event.currentTarget).get('run_id') ?? '').trim();
+    const next = new URLSearchParams(params);
+    if (id) next.set('run_id', id);
+    else next.delete('run_id');
+    setParams(next);
+  }
+
+  let content;
+  if (!runId) {
+    content = <EmptyState title="Select a run" description="Enter a run ID to load its governance coverage." />;
+  } else if (coverage.isPending) {
+    content = <LoadingState label="Loading run coverage" rows={2} />;
+  } else if (coverage.isError) {
+    content = <ErrorState title="Could not load coverage" message={coverage.error.message} retry={() => coverage.refetch()} />;
+  } else if (coverage.data.chain_status === 'tampered') {
+    content = <ErrorState title="Run chain verification failed" message="The run chain did not verify. Coverage is unavailable for this run." />;
+  } else {
+    content = <GovernancePanel coverage={projectCoverage({ ...coverage.data, chain_status: coverage.data.chain_status })} />;
+  }
+
+  return (
+    <div className="space-y-5 p-6">
+      <h1 className="text-h2 text-foreground">governance coverage</h1>
+      <form onSubmit={selectRun} className="flex flex-wrap items-end gap-2">
+        <label className="block min-w-0 space-y-1 text-body-md">
+          <span>Run ID</span>
+          <input
+            key={runId}
+            name="run_id"
+            defaultValue={runId}
+            className="block w-80 max-w-full rounded-md border border-meta-foreground bg-background px-3 py-2 font-mono text-body text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </label>
+        <button type="submit" className="rounded-md border border-meta-foreground bg-card px-3 py-2 text-body-md text-foreground hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring">
+          Load coverage
+        </button>
+      </form>
+      {content}
+    </div>
+  );
 }

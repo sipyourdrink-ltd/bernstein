@@ -13,6 +13,8 @@ from playwright.sync_api import Page, expect, sync_playwright
 
 from bernstein.core.approval.models import PendingApproval
 from bernstein.core.approval.queue import ApprovalQueue
+from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.audit import load_or_create_audit_key
 
 ROUTES = {
     "tasks": "Tasks",
@@ -51,6 +53,37 @@ def check_routes(page: Page, base: str, dashboard_password: str, headers: dict[s
 
     page.goto(f"{base}/ui/unknown-smoke-route")
     expect(page.get_by_role("heading", name="Route not found")).to_be_visible()
+
+
+def check_governance(page: Page, base: str) -> None:
+    page.goto(f"{base}/ui/governance")
+    expect(page.get_by_text("Select a run", exact=True)).to_be_visible()
+    expect(page.locator("[data-metric]")).to_have_count(0)
+
+    page.get_by_label("Run ID", exact=True).fill("ui-smoke-run")
+    coverage_url = f"{base}/api/v1/governance/coverage?run_id=ui-smoke-run"
+    with page.expect_response(coverage_url) as response:
+        page.get_by_role("button", name="Load coverage", exact=True).click()
+    assert response.value.ok
+    document = response.value.json()
+    assert document["recorded_actions"] == 1
+    expect(page).to_have_url(f"{base}/ui/governance?run_id=ui-smoke-run")
+    expect(page.get_by_text("Run chain verified", exact=True)).to_be_visible()
+    for metric, counts in document["metrics"].items():
+        row = page.locator(f'[data-metric="{metric}"]')
+        fraction = f"{counts['covered']} / {counts['total']} agent actions recorded in this run"
+        expect(row.get_by_text(fraction, exact=True)).to_be_visible()
+
+    page.reload()
+    expect(page.get_by_text("Run chain verified", exact=True)).to_be_visible()
+    page.get_by_label("Run ID", exact=True).fill("ui-smoke-empty")
+    page.get_by_role("button", name="Load coverage", exact=True).click()
+    expect(page.get_by_text("No run chain entries", exact=True)).to_be_visible()
+    expect(page.locator('[data-metric-state="not-measured"]')).to_have_count(2)
+
+    page.goto(f"{base}/ui/governance?run_id=ui-smoke-unverified")
+    expect(page.get_by_role("alert").filter(has_text="Run chain verification failed")).to_be_visible()
+    expect(page.locator("[data-metric]")).to_have_count(0)
 
 
 def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> None:
@@ -169,7 +202,21 @@ def main() -> None:
             )
             for index in range(3)
         ]
-        env = {"BERNSTEIN_AUDIT_KEY_PATH": str(project / "audit.key")}
+        audit_key = project / "audit.key"
+        for run_id, key in (
+            ("ui-smoke-run", load_or_create_audit_key(audit_key)),
+            ("ui-smoke-unverified", secrets.token_bytes(32)),
+        ):
+            spine = LineageSpine(project / ".sdd/lineage", run_id=run_id, hmac_key=key)
+            spine.record(
+                artifact_path="docs/demo.md",
+                content=b"Smoke evidence",
+                actor="smoke",
+                step_id="read",
+                model="none",
+                timestamp=1,
+            )
+        env = {"BERNSTEIN_AUDIT_KEY_PATH": str(audit_key)}
         with (
             patch.dict("os.environ", env),
             gui_server(resolve_bernstein(None), project, token, dashboard_password) as base,
@@ -199,9 +246,10 @@ def main() -> None:
             check_task(page, base, created.json()["id"], headers)
             check_approvals(page, base, headers, approvals, queue_dir)
             check_task_creation(page, base, headers)
+            check_governance(page, base)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()
-    print("Web UI route, drawer, auth, task and approval smoke passed", flush=True)
+    print("Web UI route, drawer, auth, task, approval and governance smoke passed", flush=True)
 
 
 if __name__ == "__main__":
