@@ -735,7 +735,7 @@ export BERNSTEIN_SECURITY_CMD="trivy fs . --exit-code 1 --severity HIGH,CRITICAL
 writes routing hints that the orchestrator reads on each scheduling tick.
 
 This is the plugin pattern for influencing **model selection** without touching
-`bernstein/core/router.py`.  The orchestrator reads
+`bernstein/core/routing/router.py`.  The orchestrator reads
 `.sdd/runtime/routing_hints.json` at startup and on each tick; if the file
 does not exist, routing falls back to the standard tier-aware algorithm.
 

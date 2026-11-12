@@ -227,7 +227,7 @@ For the complete command-line interface and exit codes, see [`bernstein verify c
 | `src/bernstein/core/quality/verification_nudge.py`         | `VerificationNudgeTracker`, `VerificationRecord`, `NudgeSummary`, `load_nudge_summary()` |
 | `src/bernstein/core/quality/merge_receipt.py`              | `MergeAdmissionReceipt`, `compute_coverage_sets()`, `read_merge_receipt()` |
 | `src/bernstein/cli/commands/verify_cmd.py`                 | `bernstein verify coverage` subcommand |
-| `src/bernstein/core/models.py`                             | `Task.verification_count`, `Task.flagged_unverified` fields |
+| `src/bernstein/core/tasks/models.py`                       | `Task.verification_count`, `Task.flagged_unverified` fields |
 | `src/bernstein/core/quality/janitor.py`                    | `verify_task()` - supplies the `completion_signals_checked` evidence |
 | `tests/unit/test_verification_nudge.py`                    | 44 tests across 8 classes (record, persistence, summary, alert thresholds) |
 | `tests/unit/test_verify_coverage_cmd.py`                   | Unit tests for CLI coverage verification |
