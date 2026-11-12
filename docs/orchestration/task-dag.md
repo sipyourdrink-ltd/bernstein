@@ -54,7 +54,7 @@ Render a DAG plan for review:
 
 ```
 bernstein plan dag --file specs/mvp-tasks.md
-bernstein tasks plan dag --file specs/mvp-tasks.md  # alias
+bernstein tasks dag --file specs/mvp-tasks.md  # alias
 ```
 
 Output marks each batch as `SERIAL` or `PARALLEL` and lists user-story
