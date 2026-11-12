@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
-import time
+from types import SimpleNamespace
 
+import pytest
 from bernstein.core.tick_budget import PhaseRecord, TickBudget, TickBudgetSummary
+
+from bernstein.core.orchestration import tick_budget
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    clock = SimpleNamespace(now_ns=1_000_000_000)
+    monkeypatch.setattr(tick_budget, "time", SimpleNamespace(monotonic_ns=lambda: clock.now_ns))
+    return clock
 
 
 class TestTickBudget:
@@ -16,12 +26,18 @@ class TestTickBudget:
         assert budget.phases == []
         assert budget.skipped_phases == []
 
-    def test_start_resets_state(self) -> None:
+    def test_start_resets_state(self, clock: SimpleNamespace) -> None:
         budget = TickBudget(budget_ms=2000.0)
         budget.start()
-        # Elapsed should be very small
-        assert budget.elapsed_ms() < 100.0
+        budget.record_skip("metrics")
+        clock.now_ns += 200_000_000
+        assert budget.elapsed_ms() == 200.0
+
+        budget.start()
+        assert budget.elapsed_ms() == 0.0
         assert budget.has_remaining() is True
+        assert budget.phases == []
+        assert budget.skipped_phases == []
 
     def test_phase_tracking(self) -> None:
         budget = TickBudget(budget_ms=5000.0)
@@ -47,10 +63,10 @@ class TestTickBudget:
         assert len(budget.phases) == 1
         assert budget.phases[0].skipped is True
 
-    def test_has_remaining_false_when_exceeded(self) -> None:
+    def test_has_remaining_false_when_exceeded(self, clock: SimpleNamespace) -> None:
         budget = TickBudget(budget_ms=0.0)  # zero budget
         budget.start()
-        time.sleep(0.001)  # ensure some time passes
+        clock.now_ns += 1_000_000
         assert budget.has_remaining() is False
 
     def test_summary(self) -> None:
@@ -95,9 +111,9 @@ class TestPhaseRecord:
 
 
 class TestTickBudgetSummary:
-    def test_over_budget_flag(self) -> None:
+    def test_over_budget_flag(self, clock: SimpleNamespace) -> None:
         budget = TickBudget(budget_ms=0.0)
         budget.start()
-        time.sleep(0.001)
+        clock.now_ns += 1_000_000
         summary = budget.summary()
         assert summary.over_budget is True
