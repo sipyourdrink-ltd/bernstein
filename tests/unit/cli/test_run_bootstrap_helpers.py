@@ -34,6 +34,7 @@ from bernstein.cli.run_bootstrap import (
     _load_plan_goal,
     _parse_budget_spec,
     _save_plan_markdown,
+    _stage_yaml_from_plan,
     is_codespace_runtime,
 )
 
@@ -349,6 +350,52 @@ def test_load_dry_run_tasks_server_error(
     assert exc.value.code == 1
     output = capsys.readouterr()
     assert diagnostic in output.err
+    assert output.out == ""
+
+
+def test_load_dry_run_tasks_invalid_encoding(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan = tmp_path / "invalid.yaml"
+    plan.write_bytes(b"\xff")
+
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(plan)
+
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert "Plan load error" in output.err
+    assert output.out == ""
+
+
+def test_load_dry_run_tasks_rejects_malformed_server_response(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_get(url: str, **_kwargs: object) -> httpx.Response:
+        return httpx.Response(200, request=httpx.Request("GET", url), json=[None])
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(None)
+
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert "Expected a JSON list of task objects" in output.err
+    assert output.out == ""
+
+
+def test_staged_plan_unsupported_settings_go_to_stderr(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan = tmp_path / "staged.yaml"
+    plan.write_text(
+        "name: Example\nmax_agents: 3\nstages:\n  - name: build\n    steps:\n      - title: Add feature\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _stage_yaml_from_plan(plan)
+
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert "Cannot run" in output.err
+    assert "max_agents" in output.err
     assert output.out == ""
 
 

@@ -193,17 +193,18 @@ def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
     """
     try:
         config, _tasks = load_plan(plan_path)
-    except PlanLoadError as exc:
+    except (PlanLoadError, OSError, UnicodeError) as exc:
         click.echo(f"Failed to load plan file: {exc}", err=True)
         raise SystemExit(1) from exc
 
     unapplied = [name for name in _UNAPPLIED_PLAN_SETTINGS if getattr(config, name)]
     if unapplied:
-        console.print(
-            f"[red]Cannot run {plan_path} with --from-plan:[/red] it sets "
+        click.echo(
+            f"Cannot run {plan_path} with --from-plan: it sets "
             f"{', '.join(unapplied)}, which `bernstein run` does not apply, so the run "
             "would not match the plan. Remove the setting(s) (configure agent count in "
-            "bernstein.yaml) and run again."
+            "bernstein.yaml) and run again.",
+            err=True,
         )
         raise SystemExit(1)
     return config
@@ -287,7 +288,7 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         try:
             _plan_config, tasks = load_plan(plan_file)
             return tasks
-        except PlanLoadError as exc:
+        except (PlanLoadError, OSError, UnicodeError) as exc:
             click.echo(f"Plan load error: {exc}", err=True)
             raise SystemExit(1) from exc
 
@@ -303,6 +304,9 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         )
         resp.raise_for_status()
         tasks_data = resp.json()
+        if not isinstance(tasks_data, list) or not all(isinstance(task, dict) for task in tasks_data):
+            raise ValueError("Expected a JSON list of task objects.")
+        return [Task.from_dict(task) for task in tasks_data]
     except httpx.ConnectError as err:
         click.echo(
             "Task server not running. Start with `bernstein run` first,\n"
@@ -313,8 +317,6 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
     except Exception as exc:
         click.echo(f"Failed to fetch tasks: {exc}", err=True)
         raise SystemExit(1) from exc
-
-    return [Task.from_dict(td) for td in tasks_data]
 
 
 def _confirm_run(
@@ -2931,7 +2933,7 @@ def _run_impl(
                     console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
                     console.print(f"[dim]Goal:[/dim] {goal[:100]}")
                 except (ValueError, OSError) as exc:
-                    console.print(f"[red]Failed to load plan:[/red] {exc}")
+                    click.echo(f"Failed to load plan: {exc}", err=True)
                     raise SystemExit(1) from exc
             effective_goal, team = _resolve_goal_and_team(workdir, goal, seed_file)
             plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
@@ -3004,7 +3006,7 @@ def _run_impl(
             console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
             console.print(f"[dim]Goal:[/dim] {goal[:100]}")
         except (ValueError, OSError) as exc:
-            console.print(f"[red]Failed to load plan:[/red] {exc}")
+            click.echo(f"Failed to load plan: {exc}", err=True)
             raise SystemExit(1) from exc
 
     # Confirmation prompt before execution (skip with --auto-approve)
