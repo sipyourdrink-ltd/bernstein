@@ -517,38 +517,15 @@ class OpenAIAgentsAdapter(PluginAdapter):
         _max_tokens_val = manifest.get("max_tokens")
         _max_tokens_str = "default:200000" if _max_tokens_val is None else str(_max_tokens_val)
         logger.info(
-            "openai_agents spawn_manifest_summary session=%s: model=%s, base_url=%s, "
+            "openai_agents spawn_manifest_summary session=%s: model=%s, custom_endpoint=%s, "
             "credential env var=%s, max_tokens=%s, tool_source=%s, tool_count=%d",
             session_id,
             manifest.get("model"),
-            manifest.get("base_url") or "<default>",
+            bool(manifest.get("base_url")),
             key_env_name,
             _max_tokens_str,
             manifest["tool_source"],
             len(manifest["tools"]),
-        )
-
-        # [DEEPSEEK-DEBUG] Unconditional diagnostic for the
-        # deepseek/deepseek-chat-via-OpenRouter empty-completion / malformed
-        # tool-call investigation (2026-07-03). Confirms at the SPAWN side
-        # (before the runner subprocess even starts) that: (1) the model
-        # string is forwarded to the runner byte-for-byte with no name
-        # mapping/rewriting anywhere in this adapter, and (2) bernstein never
-        # sets any OpenRouter-recommended extra headers (HTTP-Referer,
-        # X-Title) anywhere in ``_build_manifest``/``spawn`` - grep this repo's
-        # ``src/bernstein/adapters/openai_agents*.py`` for "extra_headers" /
-        # "HTTP-Referer" / "X-Title" to confirm; there are none. If OpenRouter
-        # routing/model behavior depends on those headers being present, this
-        # is the log line proving they are absent for this spawn.
-        logger.info(
-            "[DEEPSEEK-DEBUG] spawn session=%s: model string forwarded verbatim (no "
-            "name mapping) model=%r, base_url=%r, credential env var=%r (value never logged), "
-            "extra_headers_configured=False (bernstein sets no HTTP-Referer/X-Title/"
-            "any custom header anywhere in this adapter or the runner)",
-            session_id,
-            manifest.get("model"),
-            manifest.get("base_url") or "<default>",
-            key_env_name,
         )
 
         cmd = [*self._runner_command(), "--manifest", str(manifest_path)]
