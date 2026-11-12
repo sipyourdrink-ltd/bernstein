@@ -553,9 +553,7 @@ def test_first_property_difference_equal_ignores_insertion_order(base: dict[tupl
 
 @pytest.mark.parametrize("reverse_base", [False, True])
 @pytest.mark.parametrize("reverse_head", [False, True])
-def test_first_property_difference_selects_changed_key_in_stable_order(
-    reverse_base: bool, reverse_head: bool
-) -> None:
+def test_first_property_difference_selects_changed_key_in_stable_order(reverse_base: bool, reverse_head: bool) -> None:
     base = {
         ("root.z", "style.color"): "red",
         ("root.a", "style.display"): "block",
@@ -581,9 +579,7 @@ def test_first_property_difference_selects_changed_key_in_stable_order(
 
 @pytest.mark.parametrize("missing_from_base", [False, True])
 @pytest.mark.parametrize("whole_element", [False, True])
-def test_first_property_difference_reports_missing_properties(
-    missing_from_base: bool, whole_element: bool
-) -> None:
+def test_first_property_difference_reports_missing_properties(missing_from_base: bool, whole_element: bool) -> None:
     present = {("root.a", "style.display"): "block", ("root.a", "style.color"): ""}
     missing = {} if whole_element else {("root.a", "style.display"): "block"}
     base, head = (missing, present) if missing_from_base else (present, missing)
