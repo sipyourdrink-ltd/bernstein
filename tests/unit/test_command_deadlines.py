@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import errno
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -197,3 +198,24 @@ def test_workspace_preserves_empty_destination_created_during_clone(tmp_path: Pa
     assert inode is not None
     assert destination.stat().st_ino == inode
     assert list(destination.iterdir()) == []
+
+
+def test_workspace_can_retry_after_publish_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    repo = RepoConfig(name="example", path=Path("example"), url="https://example.invalid/repo.git")
+    workspace = Workspace(root=tmp_path, repos=[repo])
+
+    def clone(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        Path(args[-1]).mkdir()
+        return subprocess.CompletedProcess(args, 0)
+
+    with patch("bernstein.core.persistence.workspace.subprocess.run", side_effect=clone):
+        with patch(
+            "bernstein.core.persistence.workspace._publish_clone",
+            side_effect=OSError(errno.ENOTSUP, "Exclusive directory rename is unavailable"),
+        ):
+            assert workspace.clone_missing() == []
+        assert list(tmp_path.iterdir()) == []
+        assert workspace.clone_missing() == ["example"]
+
+    assert "Could not publish clone 'example'" in caplog.text
+    assert list(tmp_path.iterdir()) == [tmp_path / "example"]

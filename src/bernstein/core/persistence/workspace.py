@@ -7,9 +7,13 @@ the correct working directory.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import json as _json
 import logging
+import os
 import subprocess
+import sys
 import tempfile
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -24,6 +28,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_AT_FDCWD = -100  # Linux: resolve relative paths from the working directory.
+_RENAME_NOREPLACE = 1  # Linux
+_RENAME_EXCL = 4  # macOS
+
 
 def _publish_clone(staged: Path, destination: Path) -> bool:
     """Install a staged checkout without replacing a concurrently created path."""
@@ -35,22 +43,29 @@ def _publish_clone(staged: Path, destination: Path) -> bool:
             return False
         return True
 
-    # POSIX rename may replace an empty destination. Reserve it with an
-    # exclusive mkdir, so another clone or directory creator wins cleanly.
+    # POSIX rename can replace an empty directory. Use the platform's exclusive
+    # operation so publication never leaves a placeholder or replaces a checkout.
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_name, destination_name = os.fsencode(staged), os.fsencode(destination)
     try:
-        destination.mkdir()
-    except FileExistsError:
+        if sys.platform == "darwin":
+            rename = libc.renamex_np
+            rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+            result = rename(source_name, destination_name, _RENAME_EXCL)
+        elif sys.platform.startswith("linux"):
+            rename = libc.renameat2
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            result = rename(_AT_FDCWD, source_name, _AT_FDCWD, destination_name, _RENAME_NOREPLACE)
+        else:
+            raise OSError(errno.ENOTSUP, "Exclusive directory rename is unavailable", destination)
+    except AttributeError as exc:
+        raise OSError(errno.ENOTSUP, "Exclusive directory rename is unavailable", destination) from exc
+    if result == 0:
+        return True
+    error = ctypes.get_errno()
+    if error == errno.EEXIST:
         return False
-    reserved = destination.stat()
-    try:
-        staged.rename(destination)
-    except BaseException:
-        with suppress(OSError):
-            current = destination.stat()
-            if (current.st_dev, current.st_ino) == (reserved.st_dev, reserved.st_ino):
-                destination.rmdir()
-        raise
-    return True
+    raise OSError(error, os.strerror(error), destination)
 
 
 def _topological_sort(
@@ -227,7 +242,12 @@ class Workspace:
                         check=True,
                         timeout=120,
                     )
-                    if not _publish_clone(staged_repo, abs_path):
+                    try:
+                        published = _publish_clone(staged_repo, abs_path)
+                    except OSError as exc:
+                        logger.warning("Could not publish clone '%s': %s", repo.name, exc)
+                        continue
+                    if not published:
                         logger.debug("Repo '%s' appeared during clone", repo.name)
                         continue
                 cloned.append(repo.name)
