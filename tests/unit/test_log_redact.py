@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from bernstein.core.log_redact import (
     PiiRedactingFilter,
     install_pii_filter,
@@ -168,7 +169,7 @@ class TestFilterMsg:
         assert "alice@example.com" not in rec.msg
         assert "[REDACTED]" in rec.msg
 
-    def test_non_string_msg_ignored(self) -> None:
+    def test_non_string_msg_formatted(self) -> None:
         f = PiiRedactingFilter()
         rec = logging.LogRecord(
             name="test",
@@ -180,7 +181,7 @@ class TestFilterMsg:
             exc_info=None,
         )
         assert f.filter(rec) is True
-        assert rec.msg == 42  # type: ignore[comparison-overlap]
+        assert rec.getMessage() == "42"
 
 
 class TestFilterArgs:
@@ -196,9 +197,7 @@ class TestFilterArgs:
             exc_info=None,
         )
         f.filter(rec)
-        assert isinstance(rec.args, tuple)
-        assert "alice@example.com" not in rec.args[0]
-        assert rec.args[1] == 8052  # int untouched
+        assert rec.getMessage() == "Login from [REDACTED] on port 8052"
 
     def test_redacts_dict_args(self) -> None:
         f = PiiRedactingFilter()
@@ -213,8 +212,7 @@ class TestFilterArgs:
         )
         rec.args = {"email": "bob@acme.com"}
         f.filter(rec)
-        assert isinstance(rec.args, dict)
-        assert "bob@acme.com" not in rec.args["email"]
+        assert rec.getMessage() == "Login from [REDACTED]"
 
     def test_none_args_ok(self) -> None:
         f = PiiRedactingFilter()
@@ -236,22 +234,17 @@ class TestFilterArgs:
 
 
 class TestInstall:
-    def test_installs_on_root(self) -> None:
+    def test_installs_on_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
         root = logging.getLogger()
-        # Remove any existing filter from prior test runs
-        for f in root.filters.copy():
-            if isinstance(f, PiiRedactingFilter):
-                root.removeFilter(f)
-        if hasattr(root, "_bernstein_pii_filter"):
+        with monkeypatch.context() as isolated:
+            isolated.setattr(root, "filters", [])
+            isolated.setattr(root, "handlers", [])
+            isolated.delattr(root, "_bernstein_pii_filter", raising=False)
+            filt = install_pii_filter()
+            assert isinstance(filt, PiiRedactingFilter)
+            assert filt in root.filters
+            root.removeFilter(filt)
             delattr(root, "_bernstein_pii_filter")
-
-        filt = install_pii_filter()
-        assert isinstance(filt, PiiRedactingFilter)
-        assert filt in root.filters
-
-        # Cleanup
-        root.removeFilter(filt)
-        delattr(root, "_bernstein_pii_filter")
 
     def test_idempotent(self) -> None:
         test_logger = logging.getLogger("test.idempotent")
@@ -301,7 +294,8 @@ class TestEndToEnd:
 
         handler.emit = capture_emit  # type: ignore[assignment]
 
-        test_logger.info("User %s has SSN %s", "alice@corp.com", "123-45-6789")
+        child = logging.getLogger("test.e2e.child")
+        child.info("User %s has SSN %s", "alice@corp.com", "123-45-6789")
 
         assert len(records) == 1
         assert "alice@corp.com" not in records[0]
