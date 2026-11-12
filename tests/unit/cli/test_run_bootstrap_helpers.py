@@ -274,6 +274,14 @@ def test_load_plan_goal_from_json(tmp_path: Path) -> None:
     assert _load_plan_goal(plan_file) == "Refactor the auth layer"
 
 
+def test_load_plan_goal_rejects_scalar_json(tmp_path: Path) -> None:
+    plan = tmp_path / "scalar.json"
+    plan.write_text("null", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Could not extract goal"):
+        _load_plan_goal(plan)
+
+
 def test_load_plan_goal_from_markdown(tmp_path: Path) -> None:
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n\n**Goal:** Add retry logic\n\n- task 1\n")
@@ -356,6 +364,25 @@ def test_load_dry_run_tasks_server_error(
 def test_load_dry_run_tasks_invalid_encoding(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     plan = tmp_path / "invalid.yaml"
     plan.write_bytes(b"\xff")
+
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(plan)
+
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert "Plan load error" in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("setting", ["max_agents: two", "repos: 2"])
+def test_load_dry_run_tasks_invalid_staged_settings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], setting: str
+) -> None:
+    plan = tmp_path / "invalid.yaml"
+    plan.write_text(
+        f"name: Example\n{setting}\nstages:\n  - name: build\n    steps:\n      - title: Add feature\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(SystemExit) as exc:
         _load_dry_run_tasks(plan)

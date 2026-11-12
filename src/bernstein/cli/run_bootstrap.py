@@ -193,7 +193,7 @@ def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
     """
     try:
         config, _tasks = load_plan(plan_path)
-    except (PlanLoadError, OSError, UnicodeError) as exc:
+    except (PlanLoadError, OSError, TypeError, ValueError, OverflowError) as exc:
         click.echo(f"Failed to load plan file: {exc}", err=True)
         raise SystemExit(1) from exc
 
@@ -233,7 +233,7 @@ def _load_plan_goal(plan_path: Path) -> str:
     if plan_path.suffix == ".json":
         with suppress(json.JSONDecodeError):
             data = json.loads(content)
-            if "goal" in data:
+            if isinstance(data, dict) and "goal" in data:
                 return str(data["goal"])
 
     if plan_path.suffix.lower() in _YAML_PLAN_SUFFIXES:
@@ -288,7 +288,7 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         try:
             _plan_config, tasks = load_plan(plan_file)
             return tasks
-        except (PlanLoadError, OSError, UnicodeError) as exc:
+        except (PlanLoadError, OSError, TypeError, ValueError, OverflowError) as exc:
             click.echo(f"Plan load error: {exc}", err=True)
             raise SystemExit(1) from exc
 
