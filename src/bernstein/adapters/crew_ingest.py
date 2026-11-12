@@ -14,22 +14,26 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from bernstein.core.config.manifest import RunManifest, load_manifest
 from bernstein.core.identity.delegation import (
     GENESIS_HMAC,
     ChainResult,
     DelegationLedger,
     DelegationReceipt,
     _compute_hmac,
+    _valid_manifest_seal,
+    verify_run,
     verify_run_chain,
 )
 from bernstein.core.observability.ingest_contract import (
     INGEST_EVENT_TYPES,
     IngestAdapterDeclaration,
 )
+from bernstein.core.persistence.atomic_write import write_atomic_json
 from bernstein.plugins import hookimpl
 
 
@@ -416,6 +420,20 @@ class CrewIngestAdapter:
         # in the handoff content, so they identify the exact recorded chain.
         path = ledger.receipt_path(run.run_id)
         with ledger._append_lock(run.run_id):
+            # Bind completeness to the validated input, never to whatever tail
+            # happens to remain when verification is requested later.
+            head = hmacs[-1] if hmacs else GENESIS_HMAC
+            manifest = load_manifest(ledger.root.parent, run.run_id)
+            if manifest is not None:
+                if manifest.run_id != run.run_id or manifest.manifest_hash != manifest.compute_hash():
+                    raise ValueError("invalid delegation manifest")
+                if (manifest.delegation_head_hmac is not None or manifest.delegation_hop_count is not None) and (
+                    manifest.delegation_head_hmac,
+                    manifest.delegation_hop_count,
+                ) != (head, len(hmacs)):
+                    raise ValueError("declared delegation head mismatch at repeated ingest")
+                if manifest.delegation_head_hmac is not None and not _valid_manifest_seal(manifest, ledger._key):
+                    raise ValueError("invalid delegation manifest seal")
             existing: list[DelegationReceipt] = []
             if path.is_file():
                 for line in path.read_text(encoding="utf-8").splitlines():
@@ -430,15 +448,18 @@ class CrewIngestAdapter:
                     )
                 if [r.hmac for r in existing] != hmacs:
                     raise ValueError(f"Existing receipts for run {run.run_id!r} do not reproduce the trace content")
-                result = verify_run_chain(root=ledger.root, run_id=run.run_id, key=ledger._key)
-                if not result.valid:
+                result = verify_run_chain(
+                    root=ledger.root,
+                    run_id=run.run_id,
+                    key=ledger._key,
+                )
+                if not result.chain_ok or not result.authority.ok:
                     raise ValueError(
                         f"Existing receipts for run {run.run_id!r} fail verification: {'; '.join(result.errors)}"
                     )
-                return existing
 
-            recorded: list[DelegationReceipt] = []
-            for idx, handoff in enumerate(run.handoffs):
+            recorded: list[DelegationReceipt] = list(existing)
+            for idx, handoff in enumerate(run.handoffs if not existing else ()):
                 recorded_body: dict[str, Any] = {
                     "run_id": run.run_id,
                     "hop_index": idx,
@@ -457,6 +478,14 @@ class CrewIngestAdapter:
                     fh.write(json.dumps(entry, sort_keys=True) + "\n")
                 recorded.append(DelegationReceipt(**entry))
 
+            finalized = replace(
+                manifest or RunManifest(run_id=run.run_id),
+                delegation_head_hmac=head,
+                delegation_hop_count=len(hmacs),
+            )
+            finalized = replace(finalized, delegation_seal=finalized.compute_delegation_seal(ledger._key))
+            finalized = replace(finalized, manifest_hash=finalized.compute_hash())
+            write_atomic_json(ledger.root.parent / "runtime" / "manifests" / f"{run.run_id}.json", finalized.to_dict())
             return recorded
 
     def verify_run(
@@ -467,7 +496,7 @@ class CrewIngestAdapter:
         key: bytes,
     ) -> ChainResult:
         """Verify the cryptographic delegation chain and authority of *run_id*."""
-        return verify_run_chain(root=ledger.root, run_id=run_id, key=key)
+        return verify_run(run_id, root=ledger.root, key=key)
 
 
 class CrewCallbackHandler:

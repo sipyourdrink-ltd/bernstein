@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — לוח הבקרה במסוף | `bernstein gui serve` — לוח הבקרה בדפדפן |
 
 ### הוכחת ריצה
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 דטרמיניזם כאן הוא מאפיין שאתה בודק בעצמך, לא משהו שמקבלים כמובן מאליו. הרץ פעם אחת עם ביקורת מופעלת, ואז אמת את מה שתועד:
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 אותה יכולת בדיקה חלה על מספרי הערכה. הפקודה `bernstein bench run <suite> --reliability k` (הנכתבת גם `bernstein eval --reliability k`) מריצה כל משימה `k` פעמים תחת תיאום קבוע, ומדווחת על רצפת `pass^k` (כל `k` הניסיונות חייבים לעבור) לצד תקרת `pass@1`. תוצאה זו נחתמת בקבלה חתומה אותה `bernstein bench reliability-verify` מחשב מחדש באופן לא מקוון, כך שרצפה מפוברקת תיכשל באימות. פרטים: [רצפת מהימנות pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 לתוצאות בדיקה קריאות למכונה, השתמשו ב־`bernstein govern audit --format json` או ב־`--format sarif`, וב־`--strict --quiet` כתנאי מעבר ב־CI. ראו [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+הפקודה `bernstein delegation verify RUN` משווה את שרשרת הקבלות לערך הראש הסופי ולמספר שלבי ההאצלה, שנחתמו במניפסט הריצה באמצעות HMAC עם מפתח הביקורת. כך היא מזהה מחיקה של סוף השרשרת, החלפה והארכת השרשרת לאחר סגירת הריצה, לרבות שכתוב ההצהרה ללא המפתח. הסרת ההצהרה משאירה את הריצה לא שלמה (קוד יציאה `3`), והיא לעולם אינה נחשבת תקינה. הבדיקה אינה מזהה שימוש חוזר בתמונת מצב אותנטית ישנה יותר ואינה מגינה מפני גורם כותב המחזיק במפתח הביקורת. ראו את [תהליך אימות ההאצלה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### איך זה עובד
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

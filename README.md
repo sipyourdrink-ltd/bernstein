@@ -180,6 +180,14 @@ The same checkability applies to evaluation numbers. `bernstein bench run <suite
 
 Use `bernstein govern audit --format json` or `--format sarif` for machine-readable findings and `--strict --quiet` for a CI gate. See [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
 
+`bernstein delegation verify RUN` compares the receipt chain with the final
+head and hop count sealed in the run manifest with the audit-key HMAC, detecting
+tail deletion, substitution and post-close growth, including keyless rewrites of
+the declaration. Removing the declaration leaves the run incomplete (exit `3`),
+never valid. This does not detect replay of an older authentic snapshot or protect
+against a writer holding the audit key. See the
+[delegation verification workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
 ### how it works
 
 Each goal moves through four stages:

@@ -158,7 +158,7 @@ Uma execução em andamento pode ser assistida a partir de qualquer uma das inte
 | `bernstein live` — o dashboard no terminal | `bernstein gui serve` — o dashboard no navegador |
 
 ### comprovar uma execução
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 O determinismo aqui é algo que você confere, não algo que você aceita por fé. Execute uma vez com auditoria habilitada e depois verifique o que foi registrado:
 
@@ -181,6 +181,8 @@ Um recibo de execução vincula o cabeçalho do journal, o cabeçalho da espinha
 A mesma verificabilidade se aplica a números de benchmark. `bernstein bench run <suite> --reliability k` (também escrito `bernstein eval --reliability k`) executa cada tarefa `k` vezes sob coordenação fixa, e então relata um piso `pass^k` (todas as `k` tentativas devem passar) ao lado do teto `pass@1`. Esse resultado é selado em um recibo assinado que `bernstein bench reliability-verify` recalcula offline, de modo que um piso forjado falha na verificação. Detalhes: [piso de confiabilidade pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Use `bernstein govern audit --format json` ou `--format sarif` para obter resultados legíveis por máquina e `--strict --quiet` para determinar a aprovação na CI. Consulte [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` compara a cadeia de recibos com a cabeça final e o número de saltos selados no manifesto da execução por um HMAC com a chave de auditoria, detectando a exclusão do trecho final, a substituição e a extensão após o encerramento, incluindo a reescrita da declaração sem a chave. Remover a declaração deixa a execução incompleta (código de saída `3`), nunca válida. Isso não detecta a reutilização de um snapshot autêntico mais antigo nem protege contra quem escreve possuindo a chave de auditoria. Consulte o [fluxo de verificação de delegação](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### como funciona
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

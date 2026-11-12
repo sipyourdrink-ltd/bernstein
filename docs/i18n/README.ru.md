@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — терминальный дашборд | `bernstein gui serve` — браузерный дашборд |
 
 ### проверить прогон
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Детерминизм здесь — то, что проверяют, а не то, что принимают на веру. Прогони один раз с включённым аудитом, потом проверь записанное:
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Та же проверяемость распространяется на цифры оценки. `bernstein bench run <suite> --reliability k` (то же самое пишется как `bernstein eval --reliability k`) прогоняет каждую задачу `k` раз при фиксированной координации и выдаёт нижнюю границу `pass^k` (должны пройти все `k` попыток) рядом с потолком `pass@1`. Результат запечатан в подписанной квитанции, которую `bernstein bench reliability-verify` пересчитывает офлайн, так что выдуманная нижняя граница проверку не проходит. Подробности: [нижняя граница надёжности pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Для машиночитаемых результатов проверок используй `bernstein govern audit --format json` или `--format sarif`, а для проверки в CI — `--strict --quiet`. Подробнее: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` сравнивает цепочку квитанций с конечным хешем и числом переходов, запечатанными в манифесте прогона с помощью HMAC на ключе аудита. Проверка обнаруживает удаление хвоста, подмену и наращивание цепочки после закрытия, включая переписывание объявления без ключа. Удаление объявления оставляет прогон незавершённым (код выхода `3`), и он никогда не считается действительным. Это не обнаруживает повторное предъявление более старого подлинного снимка и не защищает от автора записи, владеющего ключом аудита. См. [порядок проверки делегирования](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### как это работает
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 터미널 대시보드 | `bernstein gui serve` — 브라우저 대시보드 |
 
 ### 실행을 증명하기
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 여기서 결정성은 믿는 것이 아니라 확인하는 것이다. 감사를 켜고 한 번 실행한 뒤, 기록된 내용을 검증하라:
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 같은 검증 가능성이 평가 수치에도 적용된다. `bernstein bench run <suite> --reliability k`(`bernstein eval --reliability k`로도 쓴다)는 각 태스크를 고정된 협조 아래 `k`번 실행하고, `pass^k` 하한(`k`번 모두 통과)을 `pass@1` 상한과 나란히 보고한다. 그 결과는 서명된 영수증에 봉인되며 `bernstein bench reliability-verify`가 오프라인에서 다시 계산하므로, 조작된 하한은 검증에서 떨어진다. 자세한 내용: [pass^k 신뢰도 하한](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 기계가 읽을 수 있는 검사 결과에는 `bernstein govern audit --format json` 또는 `--format sarif`를, CI 통과 여부 판단에는 `--strict --quiet`를 사용하세요. 자세한 내용: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN`은 감사 키를 사용한 HMAC으로 실행 매니페스트에 봉인된 최종 헤드 및 홉 수와 영수증 체인을 비교하여 꼬리 삭제, 대체, 종료 후 체인 확장을 탐지합니다. 키 없이 선언을 다시 쓰는 행위도 탐지합니다. 선언을 제거하면 실행은 미완료 상태(종료 코드 `3`)로 남으며, 유효한 것으로 판정되지 않습니다. 이전의 진본 스냅샷을 재사용하는 것은 탐지하지 못하며, 감사 키를 가진 작성자로부터 보호하지도 못합니다. [위임 검증 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)를 참조하세요.
 
 ### 동작 방식
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

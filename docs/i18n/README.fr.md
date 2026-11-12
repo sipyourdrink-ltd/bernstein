@@ -158,7 +158,7 @@ Une exécution en cours est observable depuis l'une ou l'autre des interfaces op
 | `bernstein live` — le tableau de bord terminal | `bernstein gui serve` — le tableau de bord navigateur |
 
 ### prouver une exécution
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Le déterminisme est ici un élément vérifiable, non un acte de foi. Lancez une exécution avec audit activé, puis vérifiez les enregistrements :
 
@@ -181,6 +181,8 @@ Un reçu d'exécution lie la tête du journal, la tête de lignage (si des entr�
 La même vérifiabilité s'applique aux métriques d'évaluation. `bernstein bench run <suite> --reliability k` (aussi disponible sous `bernstein eval --reliability k`) exécute chaque tâche `k` fois sous coordination fixe, puis rapporte le plancher `pass^k` (les `k` tentatives doivent réussir) ainsi que le plafond `pass@1`. Ce résultat est scellé dans un reçu signé recalculé hors ligne par `bernstein bench reliability-verify`, invalidant toute valeur falsifiée. Détails : [plancher de fiabilité pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Utilisez `bernstein govern audit --format json` ou `--format sarif` pour des résultats lisibles par machine, et `--strict --quiet` pour conditionner la validation en CI. Voir [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` compare la chaîne de reçus à la tête finale et au nombre de sauts scellés dans le manifeste d’exécution par un HMAC utilisant la clé d’audit. La vérification détecte la suppression de la fin de la chaîne, la substitution et l’allongement après clôture, y compris la réécriture de la déclaration sans la clé. Supprimer la déclaration laisse l’exécution incomplète (code de sortie `3`), jamais valide. Cela ne détecte pas la réutilisation d’un ancien instantané authentique et ne protège pas contre un auteur qui détient la clé d’audit. Voir le [processus de vérification des délégations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### comment ça marche
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

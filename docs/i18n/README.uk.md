@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — панель у терміналі | `bernstein gui serve` — панель у браузері |
 
 ### підтвердження виконання
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Детермінізм тут — це властивість, яку ви перевіряєте, а не те, що приймається на віру. Запустіть один раз з увімкненим аудитом, а потім перевірте збережені записи:
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Така ж перевірюваність застосовується до оціночних показників. `bernstein bench run <suite> --reliability k` (також записується як `bernstein eval --reliability k`) запускає кожне завдання `k` разів за фіксованої координації, а потім звітує про нижню межу `pass^k` (усі `k` спроб мають бути успішними) разом із верхньою межею `pass@1`. Цей результат запечатується в підписаній квитанції, яку `bernstein bench reliability-verify` перераховує офлайн, тому сфальсифікована нижня межа не пройде верифікацію. Подробиці: [нижня межа надійності pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Для машинозчитуваних результатів перевірок використовуйте `bernstein govern audit --format json` або `--format sarif`, а для перевірки в CI — `--strict --quiet`. Докладніше: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` порівнює ланцюжок квитанцій із кінцевим хешем і кількістю переходів, запечатаними в маніфесті запуску за допомогою HMAC із ключем аудиту. Перевірка виявляє видалення хвоста, підміну й нарощування ланцюжка після закриття, зокрема переписування оголошення без ключа. Видалення оголошення залишає запуск незавершеним (код виходу `3`), і він ніколи не вважається дійсним. Це не виявляє повторного пред’явлення старішого справжнього знімка й не захищає від автора запису, який володіє ключем аудиту. Див. [порядок перевірки делегування](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### як це працює
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

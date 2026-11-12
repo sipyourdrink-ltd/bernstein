@@ -158,7 +158,7 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 | `bernstein live` — bảng điều khiển terminal | `bernstein gui serve` — bảng điều khiển trình duyệt |
 
 ### chứng minh một phiên chạy
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Tính tất định ở đây là điều bạn có thể tự kiểm chứng, không phải điều bạn chấp nhận dựa trên niềm tin. Chạy một lần với tính năng kiểm toán được bật, sau đó xác minh những gì đã ghi lại:
 
@@ -181,6 +181,8 @@ Biên lai phiên chạy liên kết phần đầu nhật ký, phần đầu tr�
 Khả năng kiểm chứng tương tự cũng áp dụng cho các chỉ số đánh giá. `bernstein bench run <suite> --reliability k` (còn viết là `bernstein eval --reliability k`) chạy mỗi nhiệm vụ `k` lần dưới sự điều phối cố định, sau đó báo cáo mức sàn `pass^k` (tất cả `k` lần thử phải thành công) bên cạnh mức trần `pass@1`. Kết quả đó được niêm phong trong biên lai có chữ ký mà `bernstein bench reliability-verify` tính toán lại ngoại tuyến, khiến mọi mức sàn giả mạo đều không vượt qua kiểm định. Chi tiết: [mức sàn độ tin cậy pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Dùng `bernstein govern audit --format json` hoặc `--format sarif` để xuất kết quả kiểm tra cho máy đọc, và `--strict --quiet` làm điều kiện vượt qua CI. Xem [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` so sánh chuỗi biên nhận với đầu chuỗi cuối cùng và số bước chuyển đã được niêm phong trong bản kê khai lần chạy bằng HMAC với khóa kiểm toán, qua đó phát hiện việc xóa phần đuôi, thay thế và nối dài chuỗi sau khi đóng, kể cả việc viết lại khai báo mà không có khóa. Xóa khai báo sẽ khiến lần chạy ở trạng thái chưa hoàn tất (mã thoát `3`), không bao giờ được coi là hợp lệ. Cơ chế này không phát hiện việc sử dụng lại một bản chụp xác thực cũ hơn và không bảo vệ trước người ghi nắm giữ khóa kiểm toán. Xem [quy trình xác minh ủy quyền](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cơ chế hoạt động
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

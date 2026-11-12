@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 終端機儀表板 | `bernstein gui serve` — 瀏覽器儀表板 |
 
 ### 證明一次執行
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 這裡的確定性是你要去核查的東西，而不是憑空相信。啟用稽核執行一次，然後驗證記錄的內容：
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 同樣的可核查性也適用於評估數字。`bernstein bench run <suite> --reliability k`（也寫作 `bernstein eval --reliability k`）在固定協調下把每個任務執行 `k` 次，然後報告 `pass^k` 下限（所有 `k` 次嘗試都必須通過）以及 `pass@1` 上限。該結果封裝在一份簽署的收據中，`bernstein bench reliability-verify` 可離線重算，因此偽造的下限會驗證失敗。詳情：[pass^k 可靠性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 
 使用 `bernstein govern audit --format json` 或 `--format sarif` 輸出機器可讀的檢查結果，使用 `--strict --quiet` 作為 CI 檢查門檻。請參閱 [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` 將收據鏈與執行資訊清單中使用稽核金鑰的 HMAC 封存的最終鏈頭及跳數進行比較，從而偵測尾端刪除、替換及關閉後的鏈增長，包括在沒有金鑰的情況下改寫宣告。刪除宣告會使執行處於未完成狀態（結束碼 `3`），絕不會被判定為有效。這無法偵測重放較早的真實快照，也無法防範持有稽核金鑰的寫入者。請參閱[委派驗證流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
 
 ### 運作原理
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

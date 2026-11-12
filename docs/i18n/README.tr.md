@@ -158,7 +158,7 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 | `bernstein live` — terminal kontrol paneli | `bernstein gui serve` — tarayıcı kontrol paneli |
 
 ### bir çalıştırmayı kanıtlayın
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Buradaki determinizm, inanca dayalı kabul ettiğiniz bir şey değil, bizzat kontrol ettiğiniz bir şeydir. Denetim etkinleştirilmiş olarak bir kez çalıştırın, ardından kaydedilenleri doğrulayın:
 
@@ -181,6 +181,8 @@ Bir çalıştırma makbuzu, gömülü genel anahtarla birlikte Ed25519 ile imzal
 Aynı doğrulanabilirlik değerlendirme sayıları için de geçerlidir. `bernstein bench run <suite> --reliability k` (ayrıca `bernstein eval --reliability k` olarak da yazılır), her görevi sabit koordinasyon altında `k` kez çalıştırır ve ardından `pass@1` tavanının yanında bir `pass^k` tabanı (tüm `k` denemeler başarılı olmalıdır) raporlar. Bu sonuç, `bernstein bench reliability-verify` komutunun çevrimdışı olarak yeniden hesapladığı imzalı bir makbuzda mühürlenir, böylece uydurma bir taban doğrulamadan geçemez. Ayrıntılar: [pass^k güvenilirlik tabanı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Makine tarafından okunabilir denetim sonuçları için `bernstein govern audit --format json` veya `--format sarif`, CI geçiş koşulu için `--strict --quiet` kullanın. Bkz. [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN`, makbuz zincirini çalıştırma manifestinde denetim anahtarıyla HMAC kullanılarak mühürlenmiş son başlık ve atlama sayısıyla karşılaştırır. Böylece kuyruğun silinmesini, değiştirmeyi ve kapanış sonrası zincirin uzatılmasını, bildirimin anahtar olmadan yeniden yazılması dahil, tespit eder. Bildirimin kaldırılması çalıştırmayı eksik bırakır (çıkış kodu `3`); çalıştırma hiçbir zaman geçerli sayılmaz. Bu denetim, eski ve özgün bir anlık görüntünün yeniden kullanılmasını tespit etmez ve denetim anahtarını elinde tutan bir yazara karşı koruma sağlamaz. Bkz. [yetki devri doğrulama iş akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### nasıl çalışır
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

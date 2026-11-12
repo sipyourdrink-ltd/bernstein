@@ -15,6 +15,7 @@ import pytest
 
 from bernstein.core.identity import agent_registry, delegation, grants
 from bernstein.core.identity.delegation_scope import DelegationScope
+from tests.support.delegation import close_manifest
 
 KEY = b"k" * 32
 NOW = 1_800_000_000
@@ -59,6 +60,7 @@ def chain_root(tmp_path, signer):
         created=NOW - 80,
         scope=DelegationScope(permissions=frozenset({"tasks:read"})),
     )
+    close_manifest(deleg, "run-1")
     return root
 
 
@@ -262,3 +264,85 @@ class TestIdentityAgentsCommand:
         )
         assert result.exit_code == 2, result.output
         assert "sub-agent-ghost" in result.output
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_incomplete_runs_retain_delegated_ceilings(chain_root, legacy):
+    from bernstein.core.config.manifest import RunManifest, save_manifest
+
+    path = chain_root.parent / "runtime" / "manifests" / "run-1.json"
+    if legacy:
+        path.unlink()  # A pre-upgrade run may have no manifest at all.
+    else:
+        manifest = RunManifest(run_id="run-1")
+        object.__setattr__(manifest, "manifest_hash", manifest.compute_hash())
+        save_manifest(manifest, chain_root.parent)
+    projection = _project(chain_root)
+    assert projection.errors == ()
+    assert projection.incomplete_runs == ("run-1",)
+    assert projection.agent("orchestrator").capability_ceiling == ("files:write", "tasks:read")
+    assert "tasks:read" in projection.agent("sub-agent-backend").capability_ceiling
+
+
+def test_pre_upgrade_snapshot_still_verifies(tmp_path):
+    """Build the old version-1 wire format directly, without the new projector."""
+    root = tmp_path / "audit"
+    ledger = delegation.DelegationLedger(root, KEY)
+    receipt = ledger.record_hop(
+        run_id="legacy",
+        issuer="owner",
+        subject="worker",
+        audience="worker",
+        act="spawn",
+        created=NOW,
+        scope=DelegationScope(permissions=frozenset({"tasks:read"})),
+    )
+
+    def event(role):
+        return {
+            "source": "delegation",
+            "run_id": "legacy",
+            "index": 0,
+            "kind": "spawn",
+            "role": role,
+            "anchor": receipt.hmac,
+        }
+
+    snapshot = {
+        "version": 1,
+        "as_of": NOW,
+        "errors": [],
+        "agents": [
+            {
+                "agent_id": "owner",
+                "capability_ceiling": [],
+                "chain_events": [event("issuer")],
+                "delegations": ["legacy#0"],
+                "grants": [],
+                "spiffe_id": None,
+            },
+            {
+                "agent_id": "worker",
+                "capability_ceiling": ["tasks:read"],
+                "chain_events": [event("audience"), event("subject")],
+                "delegations": [],
+                "grants": [],
+                "spiffe_id": None,
+            },
+        ],
+    }
+    path = tmp_path / "pre-upgrade.json"
+    path.write_text(json.dumps(snapshot))
+    assert agent_registry.verify_registry(path, root=root, key=KEY, now=NOW).ok
+    # Compatibility must not forgive an altered authority ceiling.
+    snapshot["agents"][1]["capability_ceiling"].append("files:write")
+    path.write_text(json.dumps(snapshot))
+    assert not agent_registry.verify_registry(path, root=root, key=KEY, now=NOW).ok
+
+
+def test_truncated_closed_run_contributes_no_delegated_ceilings(chain_root):
+    path = chain_root / "delegation" / "run-1.jsonl"
+    path.write_text(path.read_text().splitlines()[0] + "\n")
+    projection = _project(chain_root)
+    assert projection.agent("orchestrator") is None
+    assert any("mismatch" in error for error in projection.errors)

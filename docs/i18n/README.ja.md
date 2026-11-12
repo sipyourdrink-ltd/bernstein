@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — ターミナルダッシュボード | `bernstein gui serve` — ブラウザダッシュボード |
 
 ### 実行を証明する
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 ここでの決定性は、信じるものではなく確かめるものである。監査を有効にして一度走らせ、記録された内容を検証する:
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 同じ検証可能性は評価の数値にも当てはまる。`bernstein bench run <suite> --reliability k`（`bernstein eval --reliability k` とも書ける）は各タスクを固定された協調のもとで `k` 回実行し、`pass^k` の下限（`k` 回すべてが通ること）を `pass@1` の上限と並べて報告する。その結果は署名済みレシートに封じられ、`bernstein bench reliability-verify` がオフラインで再計算するので、捏造された下限は検証に落ちる。詳細: [pass^k 信頼性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 
 機械可読な検査結果には `bernstein govern audit --format json` または `--format sarif` を、CI の判定には `--strict --quiet` を使います。詳しくは [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` は、監査キーを使った HMAC によって実行マニフェストに封印された最終ヘッドとホップ数をレシートチェーンと比較し、末尾の削除、置き換え、終了後のチェーンの延長を検出します。キーを持たずに宣言を書き換える行為も検出対象です。宣言を削除すると、実行は未完了（終了コード `3`）となり、有効とは判定されません。古い真正なスナップショットの再利用は検出できず、監査キーを持つ書き手からの保護も提供しません。詳しくは[委任の検証手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)を参照してください。
 
 ### 仕組み
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — แดชบอร์ดในเทอร์มินัล | `bernstein gui serve` — แดชบอร์ดในเบราว์เซอร์ |
 
 ### พิสูจน์รอบการทำงาน
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 การกำหนดผลลัพธ์แน่นอนในที่นี้คือสิ่งที่คุณตรวจสอบได้จริง ไม่ใช่สิ่งที่ต้องยอมรับด้วยความเชื่อ รันหนึ่งครั้งโดยเปิดใช้งานการตรวจสอบ แล้วตรวจดูสิ่งที่บันทึกไว้:
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 ความสามารถในการตรวจสอบแบบเดียวกันนี้ใช้กับตัวเลขการประเมินผล `bernstein bench run <suite> --reliability k` (เขียนว่า `bernstein eval --reliability k` ได้เช่นกัน) จะรันแต่ละงาน `k` ครั้งภายใต้การประสานงานคงที่ จากนั้นรายงานขอบเขตล่าง `pass^k` (การทดสอบทั้ง `k` ครั้งต้องผ่านทั้งหมด) ควบคู่กับขอบเขตบน `pass@1` ผลลัพธ์นี้จะถูกประทับตราในใบเสร็จที่มีลายเซ็นกำกับซึ่ง `bernstein bench reliability-verify` คำนวณใหม่แบบออฟไลน์ ทำให้ขอบเขตล่างที่สร้างขึ้นปลอมๆ ไม่ผ่านการตรวจสอบ รายละเอียด: [ขอบเขตล่างความน่าเชื่อถือ pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)
 
 ใช้ `bernstein govern audit --format json` หรือ `--format sarif` เพื่อแสดงผลการตรวจสอบที่เครื่องอ่านได้ และใช้ `--strict --quiet` เป็นเงื่อนไขผ่าน CI ดู [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` เปรียบเทียบสายโซ่ใบรับกับค่าเฮดสุดท้ายและจำนวนฮอปที่ผนึกไว้ในแมนิเฟสต์การรันด้วย HMAC โดยใช้คีย์ตรวจสอบ จึงตรวจพบการลบส่วนท้าย การแทนที่ และการต่อสายโซ่หลังปิดการรัน รวมถึงการเขียนคำประกาศใหม่โดยไม่มีคีย์ การลบคำประกาศทำให้การรันยังไม่สมบูรณ์ (รหัสออก `3`) และไม่ถือว่าถูกต้อง การตรวจสอบนี้ไม่สามารถตรวจพบการนำสแนปช็อตแท้ที่เก่ากว่ามาใช้ซ้ำ และไม่ป้องกันผู้เขียนที่ถือคีย์ตรวจสอบ ดู[ขั้นตอนการตรวจสอบการมอบหมาย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)
 
 ### การทำงานของระบบ
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

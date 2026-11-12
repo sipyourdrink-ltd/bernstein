@@ -158,7 +158,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — टर्मिनल डैशबोर्ड | `bernstein gui serve` — ब्राउज़र डैशबोर्ड |
 
 ### रन को साबित कीजिए
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 यहाँ डिटर्मिनिज़्म भरोसे की चीज़ नहीं, जाँचने की चीज़ है। ऑडिट चालू करके एक बार चलाइए, फिर जो दर्ज हुआ उसे सत्यापित कीजिए:
 
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 यही जाँच-योग्यता मूल्यांकन के आँकड़ों पर भी लागू होती है। `bernstein bench run <suite> --reliability k` (जिसे `bernstein eval --reliability k` भी लिखा जाता है) हर टास्क को तय कोऑर्डिनेशन के तहत `k` बार चलाता है, फिर `pass@1` की ऊपरी सीमा के साथ-साथ `pass^k` निचली सीमा (सभी `k` कोशिशें पास होनी चाहिए) बताता है। वह नतीजा एक हस्ताक्षरित रसीद में सील होता है जिसे `bernstein bench reliability-verify` ऑफ़लाइन दोबारा गिनता है, इसलिए गढ़ी हुई निचली सीमा सत्यापन में गिर जाती है। विवरण: [pass^k विश्वसनीयता की निचली सीमा](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)।
 
 मशीन द्वारा पढ़े जा सकने वाले जाँच परिणामों के लिए `bernstein govern audit --format json` या `--format sarif` और CI में पास या फ़ेल तय करने के लिए `--strict --quiet` इस्तेमाल करें। देखें: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` रसीदों की शृंखला की तुलना अंतिम हेड और हॉप की संख्या से करता है, जिन्हें रन मैनिफेस्ट में ऑडिट कुंजी वाले HMAC से सील किया गया है। इससे शृंखला का अंतिम हिस्सा हटाना, प्रतिस्थापन और रन बंद होने के बाद शृंखला बढ़ाना पकड़ा जाता है, जिसमें कुंजी के बिना घोषणा को दोबारा लिखना भी शामिल है। घोषणा हटाने पर रन अधूरा रहता है (एग्ज़िट कोड `3`), उसे कभी वैध नहीं माना जाता। यह किसी पुराने प्रामाणिक स्नैपशॉट के दोबारा इस्तेमाल का पता नहीं लगाता और ऑडिट कुंजी रखने वाले लेखक से सुरक्षा नहीं देता। देखें [डेलिगेशन सत्यापन कार्यप्रवाह](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)।
 
 ### यह काम कैसे करता है
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

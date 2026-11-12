@@ -158,7 +158,7 @@ Trwający przebieg można obserwować w dowolnym interfejsie operatora. Oba korz
 | `bernstein live` — panel w terminalu | `bernstein gui serve` — panel w przeglądarce |
 
 ### udowodnij poprawność przebiegu
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Determinizm w tym projekcie można sprawdzić, zamiast przyjmować go na wiarę. Uruchom zadanie z włączonym audytem, a następnie zweryfikuj zarejestrowane dane:
 
@@ -181,6 +181,8 @@ Pokwitowanie przebiegu łączy nagłówek dziennika, nagłówek pochodzenia (je�
 Taka sama weryfikowalność dotyczy wyników benchmarków. Polecenie `bernstein bench run <suite> --reliability k` (dostępne także jako `bernstein eval --reliability k`) uruchamia każde zadanie `k` razy przy stałej koordynacji, raportując dolny próg `pass^k` (wszystkie `k` prób musi zakończyć się sukcesem) obok górnego `pass@1`. Wynik zostaje przypieczętowany w podpisanym pokwitowaniu przeliczanym offline przez `bernstein bench reliability-verify`, co uniemożliwia sfałszowanie wskaźników. Szczegóły: [próg niezawodności pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Użyj `bernstein govern audit --format json` lub `--format sarif`, aby uzyskać wyniki czytelne maszynowo, oraz `--strict --quiet` jako warunku zaliczenia kontroli CI. Zobacz [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` porównuje łańcuch potwierdzeń z końcową głową i liczbą kroków delegacji zapieczętowanymi w manifeście uruchomienia za pomocą HMAC z kluczem audytu. Wykrywa usunięcie końca łańcucha, podmianę i wydłużenie po zamknięciu, w tym przepisanie deklaracji bez klucza. Usunięcie deklaracji pozostawia uruchomienie niekompletne (kod wyjścia `3`), nigdy poprawne. Nie wykrywa to ponownego użycia starszej autentycznej migawki ani nie chroni przed osobą zapisującą dane, która ma klucz audytu. Zobacz [procedurę weryfikacji delegacji](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### jak to działa
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

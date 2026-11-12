@@ -158,7 +158,7 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 | `bernstein live` — het terminaldashboard | `bernstein gui serve` — het browserdashboard |
 
 ### een run bewijzen
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Determinisme is hier iets wat u controleert, niet iets wat u op goed vertrouwen aanneemt. Voer eenmaal uit met audit ingeschakeld en controleer wat is vastgelegd:
 
@@ -181,6 +181,8 @@ Een run-receipt bindt de journaalkop, de lineage-kop (als er stappen zijn vastge
 Dezelfde controleerbaarheid geldt voor evaluatiecijfers. `bernstein bench run <suite> --reliability k` (ook geschreven als `bernstein eval --reliability k`) voert elke taak `k` keer uit onder vaste coördinatie en rapporteert een `pass^k`-ondergrens (alle `k` pogingen moeten slagen) naast het `pass@1`-plafond. Dat resultaat wordt verzegeld in een ondertekend ontvangstbewijs dat `bernstein bench reliability-verify` offline herberekenen kan, zodat een gemanipuleerde ondergrens faalt bij verificatie. Details: [pass^k betrouwbaarheidsondergrens](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Gebruik `bernstein govern audit --format json` of `--format sarif` voor machineleesbare controleresultaten en `--strict --quiet` als goedkeuringscriterium in CI. Zie [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` vergelijkt de keten van ontvangstbewijzen met de definitieve ketenkop en het aantal delegatiestappen, die in het uitvoeringsmanifest met een HMAC op basis van de auditsleutel zijn verzegeld. Zo worden het verwijderen van het keteneinde, vervanging en uitbreiding na afsluiting gedetecteerd, inclusief het herschrijven van de declaratie zonder sleutel. Als de declaratie wordt verwijderd, blijft de uitvoering onvolledig (exitcode `3`) en geldt deze nooit als geldig. Dit detecteert geen hergebruik van een oudere authentieke momentopname en biedt geen bescherming tegen een schrijver die de auditsleutel bezit. Zie de [werkwijze voor delegatieverificatie](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### hoe het werkt
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

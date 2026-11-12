@@ -52,6 +52,7 @@ class _VerifyPayload(TypedDict):
     run: str
     valid: bool
     chain_ok: bool
+    incomplete: bool
     hops: int
     errors: list[str]
     authority: dict[str, object]
@@ -72,46 +73,18 @@ def delegation_group() -> None:
 
 
 def _verify_exit_code(result: delegation.ChainResult) -> int:
-    """0 pass, 1 fail, 3 unproven. 2 belongs to click's usage errors.
+    """0 complete pass, 1 fail, 3 incomplete or unproven; 2 is click usage.
 
-    ``valid`` still decides the failing case on its own, so nothing that
-    exited 1 before this graded surface existed exits 0 now. The one changed
-    outcome is the reverse: a chain that recorded no scope to check used to
-    exit 0 and now exits 3.
+    Incomplete is never valid, but keeps its own non-success exit code so an
+    unclosed run is distinguishable from a declared head that disagrees.
     """
+    if result.incomplete and result.chain_ok and result.authority.ok and result.verdict.verdict != VERDICT_FAIL:
+        return 3
     if not result.valid or result.verdict.verdict == VERDICT_FAIL:
         return 1
     if result.verdict.verdict == VERDICT_UNPROVEN:
         return 3
     return 0
-
-
-def _declared_root_issuers(run: str, root: Path | None) -> frozenset[str]:
-    """Return the run's declared chain-root identities, read from its manifest.
-
-    The run manifest (``.sdd/runtime/manifests/<run-id>.json``) records the
-    identity the orchestrator minted as the run root, and every top-level agent
-    is minted under it (#5047). Naming it here is what lets several agents
-    spawned by one run each grade as a root: the name arrives from outside the
-    receipts, so a receipt still cannot promote itself out of a narrowing check.
-
-    Read-only and best effort. No manifest, no field, or an unreadable file
-    means an empty set and the positional root rule exactly as before -- the
-    identity store is never consulted, which is the point of recording the id in
-    the manifest at all.
-    """
-    from bernstein.core.config.manifest import load_manifest
-
-    sdd = (root.parent if root is not None else Path(".sdd/audit")).resolve(strict=False)
-    if root is None:
-        sdd = Path(".sdd")
-    try:
-        manifest = load_manifest(sdd, run)
-    except (OSError, ValueError, KeyError):
-        return frozenset()
-    if manifest is None or not manifest.run_root_identity_id:
-        return frozenset()
-    return frozenset({manifest.run_root_identity_id})
 
 
 @delegation_group.command("verify")
@@ -133,10 +106,11 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
     the charter version in force at decision time.
 
     Exits 0 when the chain is intact and narrowing was checked and held, 1
-    when a check failed, and 3 when the receipts carry too little to decide.
+    when a check failed, and 3 when no final head was declared or the receipts
+    carry too little to decide.
     Unproven is not a pass: a chain that recorded no scope reaches 3, not 0.
     """
-    result = delegation.verify_run(run, root=root, root_issuers=_declared_root_issuers(run, root))
+    result = delegation.verify_run(run, root=root)
     authority = result.authority
 
     if as_json:
@@ -157,6 +131,7 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
             "run": run,
             "valid": result.valid,
             "chain_ok": result.chain_ok,
+            "incomplete": result.incomplete,
             "hops": result.hops,
             "errors": result.errors,
             "authority": authority.to_dict(),
@@ -190,6 +165,12 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
     if code == 0:
         console.print(f"[green]delegation chain intact[/green] ({result.hops} hop(s))")
         raise SystemExit(0)
+    if code == 3 and result.incomplete:
+        console.print(
+            "[yellow]delegation chain incomplete[/yellow]: no final head declared in the run manifest; "
+            "pre-upgrade runs cannot be backfilled from the remaining receipts"
+        )
+        raise SystemExit(3)
     if code == 3:
         detail = f", {', '.join(result.verdict.reasons)}" if result.verdict.reasons else ""
         console.print(
