@@ -281,8 +281,8 @@ class AgentCardKeystore:
                     },
                 )
             except Exception as exc:
-                # Rotation is already on disk. Report the missing audit event.
-                logger.warning("Agent-card rotation audit event was not recorded (%s)", type(exc).__name__)
+                # Rotation is already on disk, but the audit outcome is uncertain.
+                logger.warning("Agent-card rotation could not confirm its audit event (%s)", type(exc).__name__)
 
             # Drop what the grace window has already stopped publishing.
             # Done after the audit append so a prune failure (or a

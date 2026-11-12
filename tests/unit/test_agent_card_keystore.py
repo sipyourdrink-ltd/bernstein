@@ -320,7 +320,7 @@ class TestRotation:
 
         assert current != previous
         assert ks.load_or_generate()[1] == current
-        assert "rotation audit event was not recorded (OSError)" in caplog.text
+        assert "rotation could not confirm its audit event (OSError)" in caplog.text
         assert "private diagnostic" not in caplog.text
 
 
