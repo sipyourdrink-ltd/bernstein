@@ -253,7 +253,7 @@ class LettaCodeAdapter(CLIAdapter):
             try:
                 digest = export_memory_digest(workdir, agent_id, export_path)
             except Exception as exc:
-                logger.warning(f"Letta memory export failed for agent {agent_id}: {exc}")
+                logger.warning("Letta memory export failed for agent %s: %s", agent_id, exc)
                 spawn_result.finish_reason = MEMORY_EXPORT_FAILURE
             else:
                 export_sha256_path.write_text(digest)
@@ -269,7 +269,7 @@ class LettaCodeAdapter(CLIAdapter):
                 json.dump(meta_data, f, indent=2)
 
         except Exception as e:
-            logger.warning(f"Failed to post-process Letta Code session for {session_id}: {e}")
+            logger.warning("Failed to post-process Letta Code session for %s: %s", session_id, e)
             spawn_result.finish_reason = f"Post-processing failed: {e}"
 
     def name(self) -> str:

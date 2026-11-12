@@ -5892,7 +5892,7 @@ def handle_permission_denied_error(error_message: str, task_id: str, role: str, 
     hint = get_permission_hint(error_message)
 
     if hint:
-        logger.warning(f"Permission denied for task {task_id} ({role}): {error_message}\nHint: {hint}")
+        logger.warning("Permission denied for task %s (%s): %s\nHint: %s", task_id, role, error_message, hint)
 
         # Determine if we should retry
         should_retry = retry_count < 2  # Max 2 retries for permission issues
@@ -5906,7 +5906,7 @@ def handle_permission_denied_error(error_message: str, task_id: str, role: str, 
             "max_retries": 2,
         }
     else:
-        logger.warning(f"Permission denied for task {task_id} ({role}): {error_message}")
+        logger.warning("Permission denied for task %s (%s): %s", task_id, role, error_message)
 
         return {
             "permission_denied": True,
