@@ -38,45 +38,53 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
     orch._approval_gate = None
     orch._incident_manager.auto_pause = False
 
-    with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+    lock_file = integration_sdd.parent / ".git" / "index.lock"
+    owns_lock = False
 
-        def _inject_lock_on_completion(tasks_data):
-            """CHAOS: Lock the git index when tasks have DONE markers."""
-            for t in tasks_data:
-                slug = t["title"].lower().replace(" ", "-")
-                marker = integration_sdd / "runtime" / f"DONE_{slug}"
-                if marker.exists():
-                    lock_file = integration_sdd.parent / ".git" / "index.lock"
-                    lock_file.write_text("locked")
+    try:
+        with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
 
-        from tests.integration.conftest import make_proxy_handler
+            def _inject_lock_on_completion(tasks_data):
+                """CHAOS: Lock the git index when tasks have DONE markers."""
+                nonlocal owns_lock
+                if owns_lock:
+                    return
+                for t in tasks_data:
+                    slug = t["title"].lower().replace(" ", "-")
+                    marker = integration_sdd / "runtime" / f"DONE_{slug}"
+                    if marker.exists():
+                        with lock_file.open("x", encoding="utf-8") as handle:
+                            owns_lock = True
+                            handle.write("locked")
+                        break
 
-        handler = make_proxy_handler(
-            test_client,
-            integration_sdd,
-            on_tasks_fetched=_inject_lock_on_completion,
-        )
-        respx_mock.route().mock(side_effect=handler)
+            from tests.integration.conftest import make_proxy_handler
 
-        # Run ticks
-        for _ in range(20):
-            orch.tick()
+            handler = make_proxy_handler(
+                test_client,
+                integration_sdd,
+                on_tasks_fetched=_inject_lock_on_completion,
+            )
+            respx_mock.route().mock(side_effect=handler)
 
-            # Manually purge dead agents
-            dead_ids = [sid for sid, s in orch._agents.items() if s.status == "dead"]
-            for sid in dead_ids:
-                del orch._agents[sid]
+            # Run ticks
+            for _ in range(20):
+                orch.tick()
 
-            resp = test_client.get("/tasks")
-            if any(t["status"] == "done" for t in resp.json()):
-                break
-            await asyncio.sleep(0.5)
+                # Manually purge dead agents
+                dead_ids = [sid for sid, s in orch._agents.items() if s.status == "dead"]
+                for sid in dead_ids:
+                    del orch._agents[sid]
 
-        # 3. Verify
-        # The task should be done on server, but changes NOT on main because merge failed
-        assert not (integration_sdd.parent / "chaos.txt").exists()
+                resp = test_client.get("/tasks")
+                if any(t["status"] == "done" for t in resp.json()):
+                    break
+                await asyncio.sleep(0.5)
 
-        # Cleanup lock so next tests can run
-        lock_file = integration_sdd.parent / ".git" / "index.lock"
-        if lock_file.exists():
-            lock_file.unlink()
+            # 3. Verify
+            # The task should be done on server, but changes NOT on main because merge failed
+            assert not (integration_sdd.parent / "chaos.txt").exists()
+
+    finally:
+        if owns_lock:
+            lock_file.unlink(missing_ok=True)

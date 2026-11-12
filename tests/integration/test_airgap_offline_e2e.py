@@ -30,8 +30,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import zipfile
 from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path
 from typing import Final
 
@@ -204,38 +206,41 @@ def gpg_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """
     if not _HAS_GPG:
         pytest.skip("gpg not installed -- skipping real-gpg integration")
-    import shutil as _sh
-    import tempfile
-
-    short_root = Path(tempfile.mkdtemp(prefix="bgpg-", dir="/tmp"))
-    home = short_root / "h"
-    home.mkdir(mode=0o700)
-    monkeypatch.setenv("GNUPGHOME", str(home))
-    batch = home / "key.batch"
-    batch.write_text(
-        "%no-protection\n"
-        "Key-Type: RSA\n"
-        "Key-Length: 2048\n"
-        "Subkey-Type: RSA\n"
-        "Subkey-Length: 2048\n"
-        "Name-Real: Bernstein Test\n"
-        "Name-Email: test@example.com\n"
-        "Expire-Date: 0\n"
-        "%commit\n"
-    )
-    result = subprocess.run(
-        ["gpg", "--batch", "--pinentry-mode=loopback", "--gen-key", str(batch)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        _sh.rmtree(short_root, ignore_errors=True)
-        pytest.skip(f"gpg key generation failed in test env: {result.stderr}")
-    try:
-        yield home
-    finally:
-        _sh.rmtree(short_root, ignore_errors=True)
+    # Unix agents use a socket under the keyring path. Prefer the short system
+    # path where it exists, and use the platform temp directory elsewhere.
+    socket_root = "/tmp" if os.name == "posix" and Path("/tmp").is_dir() else None
+    with tempfile.TemporaryDirectory(prefix="bgpg-", dir=socket_root) as short_root:
+        home = Path(short_root) / "h"
+        home.mkdir(mode=0o700)
+        monkeypatch.setenv("GNUPGHOME", str(home))
+        batch = home / "key.batch"
+        batch.write_text(
+            "%no-protection\n"
+            "Key-Type: RSA\n"
+            "Key-Length: 2048\n"
+            "Subkey-Type: RSA\n"
+            "Subkey-Length: 2048\n"
+            "Name-Real: Bernstein Test\n"
+            "Name-Email: test@example.com\n"
+            "Expire-Date: 0\n"
+            "%commit\n",
+            encoding="utf-8",
+        )
+        try:
+            result = subprocess.run(
+                ["gpg", "--batch", "--pinentry-mode=loopback", "--gen-key", str(batch)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                pytest.skip(f"gpg key generation failed in test env: {result.stderr}")
+            yield home
+        finally:
+            # Target only the agent started for this fixture's GNUPGHOME.
+            if gpgconf := shutil.which("gpgconf"):
+                with suppress(OSError, subprocess.TimeoutExpired):
+                    subprocess.run([gpgconf, "--kill", "gpg-agent"], capture_output=True, timeout=5, check=False)
 
 
 # ---------------------------------------------------------------------------

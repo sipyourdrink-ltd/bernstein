@@ -31,6 +31,12 @@ def _respx_proxy(test_client: TestClient):
     return handler
 
 
+async def _wait_for_oom_exit(orch: Orchestrator, task_id: str) -> None:
+    (session_id,) = (sid for sid, session in orch._agents.items() if task_id in session.task_ids)
+    proc = orch._spawner._procs[session_id]
+    assert await asyncio.to_thread(proc.wait, timeout=10.0) == 137
+
+
 @pytest.mark.asyncio
 async def test_oom_agent_slot_reclaimed(
     test_client: TestClient,
@@ -70,7 +76,7 @@ async def test_oom_agent_slot_reclaimed(
         assert session_id is not None, "Agent session for OOM task not found"
 
         # Wait for the script to exit with code 137
-        await asyncio.sleep(2)
+        await _wait_for_oom_exit(orch, task_id)
 
         # Tick 1: Detect the dead agent, reclaim the slot
         orch.tick()
@@ -118,7 +124,7 @@ async def test_oom_agent_task_requeued(
         orch.tick()
 
         # Wait for the OOM-exit script to finish
-        await asyncio.sleep(2)
+        await _wait_for_oom_exit(orch, task_id)
 
         # Tick 1: Detect agent death and handle orphaned task
         orch.tick()
@@ -147,12 +153,7 @@ async def test_oom_agent_worktree_preserved(
     When the orchestrator is configured with recovery='resume', crashed agent
     worktrees should be preserved so partial work can be resumed.
     """
-    desc = (
-        "```python\n# INTEGRATION-MOCK\nimport sys, time\n"
-        "print('OOM in worktree test')\n"
-        "time.sleep(0.5)\n"
-        "sys.exit(137)\n```"
-    )
+    desc = "```python\n# INTEGRATION-MOCK\nimport sys\nprint('OOM in worktree test')\nsys.exit(137)\n```"
     resp = test_client.post(
         "/tasks",
         json={"title": "OOM Worktree", "description": desc, "role": "backend"},
@@ -191,7 +192,7 @@ async def test_oom_agent_worktree_preserved(
         _worktree_path = orch._spawner.get_worktree_path(session_id)
 
         # Wait for OOM exit
-        await asyncio.sleep(2)
+        await _wait_for_oom_exit(orch, task_id)
 
         # Tick 1: Detect death
         orch.tick()
@@ -242,7 +243,7 @@ async def test_oom_agent_metrics_recorded(
         assert session_id is not None
 
         # Wait for OOM exit
-        await asyncio.sleep(2)
+        await _wait_for_oom_exit(orch, task_id)
 
         # Tick 1: Detect death and record metrics
         orch.tick()
