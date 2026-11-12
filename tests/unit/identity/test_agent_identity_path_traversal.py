@@ -77,5 +77,22 @@ def test_hostile_identity_id_cannot_authorize_another_record(
         )
 
 
+def test_identity_record_link_outside_store_is_ignored(
+    tmp_path: Path,
+) -> None:
+    store = AgentIdentityStore(tmp_path)
+    sample = tmp_path / "sample.json"
+    sample.write_text("{}", encoding="utf-8")
+    link = store._identities_dir / sample.name
+    try:
+        link.symlink_to(sample)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symbolic links unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="outside its base directory"):
+        store._identity_path(sample.stem)
+    assert store.get(sample.stem) is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
