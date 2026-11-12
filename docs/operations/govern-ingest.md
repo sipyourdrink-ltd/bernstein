@@ -13,7 +13,7 @@ receipt that states its own coverage.
 Modules: `src/bernstein/core/observability/otlp_ingest.py` (span parsing),
 `src/bernstein/core/observability/otlp_ingest_receipt.py` (anchoring and
 receipts), `src/bernstein/core/observability/ingest_profiles/` (attribute
-mapping). CLI group: `bernstein governance`.
+mapping). CLI group: `bernstein govern`.
 
 ## CLI
 
