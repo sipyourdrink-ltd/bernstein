@@ -301,13 +301,13 @@ evolve:
     rollback_window_hours: 48
 ```
 
-To run it yourself:
+To preview proposals with the current CLI:
 
 ```bash
 pip install bernstein
 cd your-project
 bernstein init
-bernstein --evolve --budget 5.00
+bernstein evolve run --dry-run
 ```
 
 Source: https://github.com/sipyourdrink-ltd/bernstein

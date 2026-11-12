@@ -2017,7 +2017,10 @@ example widening `viewer` to `operator`) breaks its signature and the token
 stops validating. Every issue and revoke is mirrored onto the audit chain
 (`dashboard.token_grant`), and every login and write authorization is a
 signed governance decision in the `dashboard-auth` lineage run - recompute
-them offline with `bernstein govern verify` and the signed dashboard role bindings.
+them offline with `bernstein govern verify dashboard-auth --bindings FILE`,
+where `FILE` contains the signed role bindings produced by
+`dashboard_role_bindings` in `bernstein.core.server.dashboard_tokens`.
+The dashboard generates these bindings in memory.
 
 | Subcommand | Purpose |
 |---|---|
@@ -2032,7 +2035,6 @@ root containing `.sdd/`.
 bernstein auth dashboard-token issue --principal alice --scope viewer
 bernstein auth dashboard-token list
 bernstein auth dashboard-token revoke 3f1a9c2d5e7b0a41
-bernstein govern verify dashboard-auth --bindings <dashboard-bindings.json>
 ```
 
 Startup posture: `bernstein gui serve` on a loopback host without any

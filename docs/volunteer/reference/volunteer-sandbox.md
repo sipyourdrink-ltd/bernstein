@@ -1,6 +1,12 @@
 # Volunteer sandbox profile
 
-The sandbox profile is the containment boundary derived from the project's manifest and the donor's resource limits. It is a pure function — the same manifest always produces the same `sandbox_sha256` on any compliant donor.
+The sandbox profile records a containment decision derived from the project
+manifest, the donor's limits and available backends. The same inputs produce
+the same `sandbox_sha256`.
+
+The current claimed-task runner starts a host process in a Git worktree with
+a filtered environment and a wall-clock cap. The profile records the selected
+backend and resource settings for callers that integrate a sandbox backend.
 
 ## Derivation
 
@@ -15,28 +21,18 @@ Inputs to the derivation:
 - `manifest.max_wall_clock_minutes`
 - Optional donor memory and wall-clock ceilings supplied through the runner API
 
-The tighter ceiling applies. An empty `egress_allowlist` disables network access.
+The tighter ceiling applies. The effective egress allowlist includes the
+manifest entries and the built-in package registries.
 
-## Sandbox types
+## Profile settings
 
-### `container` (rootless)
-
-Linux namespace isolation using `unshare`. The worker runs as a non-root user inside a new PID, mount, network, and IPC namespace. No capabilities are retained.
-
-| Resource | Restriction |
-|----------|-------------|
-| Filesystem | chroot to repo root; read/write limited to `allowed_paths` globs |
-| Network | New namespace; no host network unless `egress_allowlist` is populated |
-| PIDs | Separate PID namespace |
-| Memory | Profile ceiling of 2 GiB, lowered by an optional donor memory limit |
-| CPU | CPU quota set by the sandbox profile |
-| Time | `max_wall_clock_minutes` enforced via `RLIMIT_CPU` |
-
-### `none`
-
-No containment applied. The task runs in the donor's ordinary environment. Only `allowed_paths` file restrictions apply.
-
-> **Warning:** `sandbox: "none"` is only appropriate for fully trusted communities. Use only with `local_ok: true` in the manifest.
+| Setting | Profile value |
+|---------|---------------|
+| Backend | Selected from the available backends subject to the manifest and donor consent |
+| Network | Effective egress allowlist |
+| Memory | Ceiling of 2 GiB, lowered by an optional donor memory limit |
+| CPU | Default quota supplied by the profile |
+| Time | Lower of the manifest and optional donor wall-clock limits |
 
 ## Receipt fields
 
