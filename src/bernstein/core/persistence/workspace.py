@@ -10,6 +10,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import subprocess
+import tempfile
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -182,11 +183,28 @@ class Workspace:
                 continue
 
             abs_path.parent.mkdir(parents=True, exist_ok=True)
-            cmd = ["git", "clone", "--branch", repo.branch, repo.url, str(abs_path)]
             logger.info("Cloning %s -> %s", repo.url, abs_path)
             try:
-                subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+                # Stage the clone beside the destination. An interrupted clone
+                # must not leave a directory that later runs mistake for a repo.
+                with tempfile.TemporaryDirectory(prefix=".bernstein-clone-", dir=abs_path.parent) as staging:
+                    staged_repo = Path(staging) / "repo"
+                    subprocess.run(
+                        ["git", "clone", "--branch", repo.branch, repo.url, str(staged_repo)],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=True,
+                        timeout=120,
+                    )
+                    if abs_path.exists() or abs_path.is_symlink():
+                        logger.debug("Repo '%s' appeared during clone", repo.name)
+                        continue
+                    staged_repo.rename(abs_path)
                 cloned.append(repo.name)
+            except subprocess.TimeoutExpired:
+                logger.warning("Timed out cloning '%s' after 120s", repo.name)
             except subprocess.CalledProcessError as exc:
                 logger.warning("Failed to clone '%s': %s", repo.name, exc.stderr.strip())
 
@@ -287,9 +305,10 @@ class Workspace:
                 encoding="utf-8",
                 errors="replace",
                 check=True,
+                timeout=30,
             )
             return result.stdout.strip()
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.SubprocessError, OSError):
             return "unknown"
 
     @staticmethod
@@ -304,15 +323,16 @@ class Workspace:
                 encoding="utf-8",
                 errors="replace",
                 check=True,
+                timeout=30,
             )
             return result.stdout.strip() == ""
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.SubprocessError, OSError):
             return False
 
     @staticmethod
     def _git_ahead_behind(repo_path: Path) -> tuple[int, int]:
         """Return (ahead, behind) counts relative to upstream."""
-        with suppress(subprocess.CalledProcessError, OSError, ValueError):
+        with suppress(subprocess.SubprocessError, OSError, ValueError):
             result = subprocess.run(
                 ["git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
                 cwd=str(repo_path),
@@ -321,6 +341,7 @@ class Workspace:
                 encoding="utf-8",
                 errors="replace",
                 check=True,
+                timeout=30,
             )
             parts = result.stdout.strip().split()
             if len(parts) == 2:

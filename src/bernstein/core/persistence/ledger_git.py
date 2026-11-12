@@ -219,13 +219,25 @@ def list_ledger_runs(repo_dir: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _run_git_bytes(
+    repo_dir: Path, args: list[str], *, input_data: bytes | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    """Run ledger plumbing that reads or writes raw bytes."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo_dir,
+            input=input_data,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LedgerGitError(f"git {args[0]} timed out after {exc.timeout}s") from exc
+
+
 def _read_blob(repo_dir: Path, sha: str) -> bytes:
-    result = subprocess.run(
-        ["git", "cat-file", "blob", sha],
-        cwd=repo_dir,
-        capture_output=True,
-        check=False,
-    )
+    result = _run_git_bytes(repo_dir, ["cat-file", "blob", sha])
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         msg = f"git cat-file blob {sha[:12]} failed: {stderr}"
@@ -322,13 +334,7 @@ def _verify_anchored(rows: list[dict[str, Any]], meta: dict[str, Any], run_id: s
 
 
 def _hash_blob(repo_dir: Path, payload: bytes) -> str:
-    result = subprocess.run(
-        ["git", "hash-object", "-w", "--stdin"],
-        cwd=repo_dir,
-        input=payload,
-        capture_output=True,
-        check=False,
-    )
+    result = _run_git_bytes(repo_dir, ["hash-object", "-w", "--stdin"], input_data=payload)
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         msg = f"git hash-object failed: {stderr}"
@@ -339,13 +345,7 @@ def _hash_blob(repo_dir: Path, payload: bytes) -> str:
 def _mktree(repo_dir: Path, entries: list[tuple[str, str]]) -> str:
     """Build a flat tree from ``(name, blob_sha)`` pairs; return the sha."""
     lines = "".join(f"100644 blob {sha}\t{name}\0" for name, sha in sorted(entries))
-    result = subprocess.run(
-        ["git", "mktree", "-z"],
-        cwd=repo_dir,
-        input=lines.encode("utf-8"),
-        capture_output=True,
-        check=False,
-    )
+    result = _run_git_bytes(repo_dir, ["mktree", "-z"], input_data=lines.encode("utf-8"))
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         msg = f"git mktree failed: {stderr}"
@@ -355,25 +355,19 @@ def _mktree(repo_dir: Path, entries: list[tuple[str, str]]) -> str:
 
 def _commit_tree(repo_dir: Path, tree_sha: str, *, parent: str | None, message: str) -> str:
     """Create an anchor commit for *tree_sha* with a fixed machine identity."""
-    args = ["git", "commit-tree", tree_sha, "-m", message]
+    args = ["commit-tree", tree_sha, "-m", message]
     if parent is not None:
-        args[3:3] = ["-p", parent]
+        args[2:2] = ["-p", parent]
     env = os.environ | {
         "GIT_AUTHOR_NAME": _ANCHOR_IDENT_NAME,
         "GIT_AUTHOR_EMAIL": _ANCHOR_IDENT_EMAIL,
         "GIT_COMMITTER_NAME": _ANCHOR_IDENT_NAME,
         "GIT_COMMITTER_EMAIL": _ANCHOR_IDENT_EMAIL,
     }
-    result = subprocess.run(
-        args,
-        cwd=repo_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    try:
+        result = run_git(args, repo_dir, env=env)
+    except subprocess.TimeoutExpired as exc:
+        raise LedgerGitError(f"git commit-tree timed out after {exc.timeout}s") from exc
     if result.returncode != 0:
         msg = f"git commit-tree failed: {result.stderr.strip()}"
         raise LedgerGitError(msg)

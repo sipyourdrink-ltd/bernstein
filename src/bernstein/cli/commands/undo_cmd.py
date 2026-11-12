@@ -62,11 +62,14 @@ def undo_cmd(task_id: str | None, revert_all: bool, yes: bool, dry_run: bool) ->
         console.print("[dim]Cancelled.[/dim]")
         return
 
-    success_count = _execute_reverts(commits_to_revert)
+    success_count, timeout_error = _execute_reverts(commits_to_revert)
 
     if success_count > 0:
         console.print(f"\n[green]✓[/green] Successfully reverted {success_count} commit(s).")
         _log_undo_audit(task_id, revert_all, success_count)
+    if timeout_error is not None:
+        raise click.ClickException(timeout_error)
+    if success_count > 0:
         _run_post_revert_tests()
 
 
@@ -124,6 +127,7 @@ def _find_commits_to_revert(task_id: str | None, revert_all: bool) -> list[tuple
             encoding="utf-8",
             errors="replace",
             cwd=".",
+            timeout=30,
         )
         commits: list[tuple[str, str]] = []
         for line in res.stdout.splitlines():
@@ -136,19 +140,21 @@ def _find_commits_to_revert(task_id: str | None, revert_all: bool) -> list[tuple
         return []
 
 
-def _execute_reverts(commits: list[tuple[str, str]]) -> int:
-    """Execute git reverts and return the count of successful reverts."""
+def _execute_reverts(commits: list[tuple[str, str]]) -> tuple[int, str | None]:
+    """Return the completed revert count and any terminal timeout message."""
     success_count = 0
     for h, s in commits:
         console.print(f"Reverting [cyan]{h[:8]}[/cyan] {s}...")
         try:
-            subprocess.run(["git", "revert", "--no-edit", h], check=True, capture_output=True)
+            subprocess.run(["git", "revert", "--no-edit", h], check=True, capture_output=True, timeout=120)
             success_count += 1
+        except subprocess.TimeoutExpired:
+            return success_count, f"Revert of {h[:8]} timed out. Inspect git status before resuming."
         except subprocess.CalledProcessError as e:
             console.print(f"[red]Failed to revert {h[:8]}:[/red] {e.stderr.decode()}")
             if not click.confirm("Continue with remaining reverts?", default=True):
                 break
-    return success_count
+    return success_count, None
 
 
 def _log_undo_audit(task_id: str | None, revert_all: bool, success_count: int) -> None:
