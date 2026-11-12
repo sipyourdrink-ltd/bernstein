@@ -69,7 +69,7 @@ class MqttAuditSink:
     """
 
     # Class-level metadata - easy for tests to assert against and for
-    # operators to surface in ``bernstein plugins list`` output.
+    # operators to surface in ``bernstein plugins`` output.
     plugin_name: ClassVar[str] = "custom-audit-sink"
     hook_target: ClassVar[str] = "on_audit_event"
 

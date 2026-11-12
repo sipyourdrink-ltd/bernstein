@@ -180,12 +180,10 @@ bernstein replay publish backend-abc --yes-i-want-to-publish
 A published receipt is **not** a drop-in substitute for an exported one, in two
 ways worth knowing before you build a pipeline on it:
 
-- **It verifies against the *published* head, not the original.** Keeping the
-  export's `head_hash` to pin against is the correct instinct everywhere else,
-  but `bernstein replay verify <published> --head <original_head_hash>` fails a
-  perfectly good receipt, and the `ok: false` reads as tampering. Pin against
-  `head_hash` from the publish, and keep `original_head_hash` only for
-  correlating the two.
+- **Pin verification to the published `head_hash`.** Use
+  `bernstein replay -- verify <published> --head <published_head_hash>`.
+  The `--` passes `--head` to the replay verifier. Use `original_head_hash`
+  to correlate the published receipt with the original.
 - **It drops `blob_refs` and ships `blob_digests: []`**, where an exported
   receipt keeps them. Redaction rewrites the payloads the chain is computed
   over; that is what makes the head differ, and it is why the visible steps
