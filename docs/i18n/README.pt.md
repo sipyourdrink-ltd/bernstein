@@ -160,7 +160,7 @@ Uma execução em andamento pode ser assistida a partir de qualquer uma das inte
 | `bernstein live` — o dashboard no terminal | `bernstein gui serve` — o dashboard no navegador |
 
 ### comprovar uma execução
-<!-- l10n: en="prove a run" hash="sha256:7109de4d1efc" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 O determinismo aqui é algo que você confere, não algo que você aceita por fé. Execute uma vez com auditoria habilitada e depois verifique o que foi registrado:
 
@@ -180,7 +180,7 @@ O journal é gravado em cada execução; a espinha de lineage está sempre ativa
 
 Um recibo de execução vincula o cabeçalho do journal, o cabeçalho da espinha de lineage quando a execução gravou entradas e, opcionalmente, um intervalo de cadeia de auditoria, sob um único sujeito assinado por Ed25519 com a chave pública embutida. Um revisor de posse desse arquivo e da chave pública do operador pode confirmar que as ações e cadeias embutidas não foram alteradas: sem chave HMAC, sem `.sdd/` ativo, e saída `2` identificando a primeira etapa divergente em caso de adulteração. Esse recibo identifica o estado do journal nele embutido; provar que esse estado é o journal finalizado completo exige adicionalmente um selo independente de cabeçalho/contagem. Apenas com o arquivo e sem a chave `--public-key`, a verificação é somente de integridade — prova que o recibo é internamente consistente, não quem o assinou, e o veredito deixa isso claro. Detalhes em [replay determinístico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
-Na interface web, abra **Governance** e use **Verify a receipt** para verificar um recibo de execução no servidor. O navegador mostra o resultado da verificação apenas de integridade e a origem da chave. Consulte [Governance operator guide](../operations/governance.md#verifying-a-dropped-receipt).
+Na interface web, abra **Governance** e use **Verify a receipt** para verificar um recibo de execução no servidor. O navegador mostra o resultado da verificação apenas de integridade e a origem da chave. Consulte [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 A mesma verificabilidade se aplica a números de benchmark. `bernstein bench run <suite> --reliability k` (também escrito `bernstein eval --reliability k`) executa cada tarefa `k` vezes sob coordenação fixa, e então relata um piso `pass^k` (todas as `k` tentativas devem passar) ao lado do teto `pass@1`. Esse resultado é selado em um recibo assinado que `bernstein bench reliability-verify` recalcula offline, de modo que um piso forjado falha na verificação. Detalhes: [piso de confiabilidade pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

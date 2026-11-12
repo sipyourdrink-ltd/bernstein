@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — панель у терміналі | `bernstein gui serve` — панель у браузері |
 
 ### підтвердження виконання
-<!-- l10n: en="prove a run" hash="sha256:7109de4d1efc" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Детермінізм тут — це властивість, яку ви перевіряєте, а не те, що приймається на віру. Запустіть один раз з увімкненим аудитом, а потім перевірте збережені записи:
 
@@ -180,7 +180,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 Квитанція виконання об'єднує заголовок журналу, заголовок хребта походження (якщо записувалися події) та, опціонально, діапазон ланцюга аудиту під єдиним суб'єктом, підписаним Ed25519 із вбудованим відкритим ключем. Рецензент із цим файлом та відкритим ключем оператора може переконатися, що вбудовані дії та ланцюги не змінювалися: без ключа HMAC, без активного `.sdd/`, і з кодом виходу `2` із зазначенням першого відмінного кроку в разі підробки. Ця квитанція ідентифікує стан журналу, який вона містить; доведення того, що цей стан є повним завершеним журналом, додатково вимагає незалежної печатки заголовка/кількості. З одним лише файлом без `--public-key` перевірка стосується виключно внутрішньої цілісності. Подробиці у розділі [детерміноване відтворення](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
-У вебінтерфейсі відкрийте **Governance** і виберіть **Verify a receipt**, щоб перевірити квитанцію виконання на сервері. Браузер показує результат перевірки лише цілісності й джерело ключа. Див. [Governance operator guide](../operations/governance.md#verifying-a-dropped-receipt).
+У вебінтерфейсі відкрийте **Governance** і виберіть **Verify a receipt**, щоб перевірити квитанцію виконання на сервері. Браузер показує результат перевірки лише цілісності й джерело ключа. Див. [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Така ж перевірюваність застосовується до оціночних показників. `bernstein bench run <suite> --reliability k` (також записується як `bernstein eval --reliability k`) запускає кожне завдання `k` разів за фіксованої координації, а потім звітує про нижню межу `pass^k` (усі `k` спроб мають бути успішними) разом із верхньою межею `pass@1`. Цей результат запечатується в підписаній квитанції, яку `bernstein bench reliability-verify` перераховує офлайн, тому сфальсифікована нижня межа не пройде верифікацію. Подробиці: [нижня межа надійності pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
