@@ -716,6 +716,8 @@ docs/eval/
 
 The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). The evaluator consumes trajectory JSON (`events` and `diff`; schema documented in `goal_drift_suite.py`); an automatic converter from `.sdd` run journals is follow-up. Default execution without `--trajectory` evaluates empty telemetry, records `unmeasured=True`, and fails closed honestly. Pass `--trajectory <path>` with trajectory JSON to score agent runs, or `--smoke-synthetic` (requiring `--stub-signer`) for hermetic plumbing tests. By default, partial step coverage with zero drift is compliant; pass `--require-step-coverage` to enforce 100% planned step coverage as a strict gate. It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
 
+Recorded evaluators can optionally attach a finite numeric `intent_score` to an event with a non-negative integer `step`. The drift curve exposes these values separately as `intent_scores`, for example `[{"step_index": 0, "intent_score": 0.8}, {"step_index": 2, "intent_score": 0.1}]`, sorted by step (preserving event order for scores at the same step). Missing or invalid scores are omitted; runs without scores expose an empty list. These are projections of recorded output only: no evaluator is called, and the hard step measurements, hard aggregates, step coverage, score, and threshold outcome remain independent of the intent values.
+
 Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 
 ---
