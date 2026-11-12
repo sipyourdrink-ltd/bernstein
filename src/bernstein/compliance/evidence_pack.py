@@ -75,9 +75,9 @@ SCHEMA_VERSION: str = "1.0.0"
 #: FINOS AIGF are tracked under #1316 and are not selectable until their
 #: clause maps are reviewed by subject-matter experts; emitting
 #: TODO-only bundles would mislead operators.
-Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai"]
+Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai", "cisa-agentic"]
 
-SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai")
+SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai", "cisa-agentic")
 
 #: Fixed mtime for every entry in the produced zip - required for
 #: byte-deterministic output. Zip cannot store dates before 1980.
@@ -160,11 +160,10 @@ _STANDARD_MAPS: dict[str, dict[str, Any]] = {
     },
 }
 
-# The OWASP ASI / AST, ISO 42001 and CoSAI maps live in dedicated modules (one
-# control class per module) and are registered here so ``build_evidence_pack``
-# reads them the same way it reads ``ai-act``. Registration is a plain
-# assignment - the modules only depend on stdlib, so importing them at module
-# load is cheap and side-effect free.
+# The OWASP ASI / AST, ISO 42001, CoSAI and CISA agentic maps live in
+# dedicated modules and are registered here so ``build_evidence_pack`` reads
+# them the same way it reads ``ai-act``. Registration is a plain assignment.
+from bernstein.compliance import cisa_agentic as _cisa_agentic  # noqa: E402
 from bernstein.compliance import cosai as _cosai  # noqa: E402
 from bernstein.compliance import iso42001 as _iso42001  # noqa: E402
 from bernstein.compliance import owasp_asi as _owasp_asi  # noqa: E402
@@ -174,6 +173,7 @@ _STANDARD_MAPS[_owasp_asi.STANDARD_ID] = _owasp_asi.control_map()
 _STANDARD_MAPS[_owasp_skills.STANDARD_ID] = _owasp_skills.control_map()
 _STANDARD_MAPS[_iso42001.STANDARD_ID] = _iso42001.control_map()
 _STANDARD_MAPS[_cosai.STANDARD_ID] = _cosai.control_map()
+_STANDARD_MAPS[_cisa_agentic.STANDARD_ID] = _cisa_agentic.control_map()
 
 
 # ---------------------------------------------------------------------------
