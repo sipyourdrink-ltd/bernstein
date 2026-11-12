@@ -508,11 +508,6 @@ def handle_stalled_manager(orch: Any) -> StalledManagerDiagnostic | None:
         if record_path is not None:
             logger.error("Stalled-manager diagnostic written to %s", record_path)
 
-    # Best-effort console surface for operators running ``bernstein run``
-    # in the foreground.  The orchestrator does not assume a Rich console
-    # is present; ``print`` reaches stdout/stderr regardless.
-    print(f"[bernstein] {message}")
-
     # Bulletin / notification channel if the orchestrator wires one in.
     bulletin = getattr(orch, "_post_bulletin", None)
     if callable(bulletin):

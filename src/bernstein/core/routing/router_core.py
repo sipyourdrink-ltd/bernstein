@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -921,15 +920,6 @@ def route_task(
     Returns:
         ModelConfig with selected model and effort (and is_batch flag).
     """
-    print(
-        f"[SPAWNER-DEBUG] route_task: ENTRY task.id={getattr(task, 'id', '?')!r}, "
-        f"task.role={getattr(task, 'role', '?')!r}, task.model={getattr(task, 'model', None)!r}, "
-        f"task.effort={getattr(task, 'effort', None)!r}, bandit_metrics_dir={bandit_metrics_dir!r}, "
-        f"workdir={workdir!r}, budget_remaining_usd={budget_remaining_usd!r}, "
-        f"budget_aware_routing_enabled={budget_aware_routing_enabled!r}",
-        file=sys.stderr,
-        flush=True,
-    )
     cfg = _select_model_config(
         task,
         bandit_metrics_dir,
@@ -1219,15 +1209,6 @@ def _select_model_config(
             of its own, routing raises :class:`ModelNotConfiguredError`
             rather than silently picking Claude Sonnet/Opus.
     """
-    print(
-        f"[SPAWNER-DEBUG] _select_model_config: ENTRY task.id={getattr(task, 'id', '?')!r}, "
-        f"task.role={getattr(task, 'role', '?')!r}, task.model={getattr(task, 'model', None)!r}, "
-        f"task.effort={getattr(task, 'effort', None)!r}, task.scope={getattr(task, 'scope', None)!r}, "
-        f"task.priority={getattr(task, 'priority', None)!r}, "
-        f"task.complexity={getattr(task, 'complexity', None)!r}",
-        file=sys.stderr,
-        flush=True,
-    )
     # Manager-specified overrides take precedence
     if task.model or task.effort:
         model = task.model or default_model

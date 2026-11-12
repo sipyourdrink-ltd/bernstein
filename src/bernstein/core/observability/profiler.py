@@ -240,10 +240,6 @@ class ProfilerSession:
 
         logger.info("Profile saved to %s", prof_path)
         logger.info("Profile report saved to %s", txt_path)
-        print(f"\n[profiler] Elapsed: {elapsed_s:.2f}s")
-        print(f"[profiler] Binary dump: {prof_path}")
-        print(f"[profiler] Text report: {txt_path}")
-        print(f"[profiler] Top {self._top_n} functions:\n{report}")
 
 
 def _extract_top_functions(

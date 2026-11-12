@@ -576,7 +576,7 @@ def run_cas_gc_cli(
 
     sdd_dir = workdir / ".sdd"
     if not sdd_dir.is_dir():
-        print("Error: .sdd directory not found in %s", workdir)
+        print(f"Error: .sdd directory not found in {workdir}")
         return False
 
     if not yes and not dry_run:
