@@ -91,6 +91,14 @@ class BufferedSink(ArtifactSink):
     The buffer is bounded (``max_pending``): producer writes block
     when the queue is full so a slow remote sink applies back-pressure
     instead of being silently dropped.
+
+    Args:
+        local: Sink that receives writes synchronously.
+        remote: Sink that receives mirrored writes.
+        max_pending: Queue capacity, which defaults to 1024.
+
+    Raises:
+        ValueError: If ``max_pending`` is less than one.
     """
 
     name: str = "buffered"

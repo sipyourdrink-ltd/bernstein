@@ -45,7 +45,13 @@ class GatePlugin(_QualityGate):
 
 
 class GatePluginRegistry:
-    """Discover and manage quality-gate plugins."""
+    """Discover and manage quality-gate plugins.
+
+    Args:
+        workdir: Project root containing the local ``.bernstein/gates`` directory.
+        built_in_names: Gate names reserved for built-in gates. None means
+            no names are reserved by this registry.
+    """
 
     def __init__(self, workdir: Path, *, built_in_names: set[str] | frozenset[str] | None = None) -> None:
         self._workdir = workdir

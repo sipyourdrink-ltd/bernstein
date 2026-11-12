@@ -98,7 +98,12 @@ def _mcp_entry_from_dict(d: dict[str, Any]) -> Any:
 
 
 class HookBlockingError(Exception):
-    """Raised when a hook command exits with code 2, indicating a blocking failure."""
+    """Raised when a hook command exits with code 2, indicating a blocking failure.
+
+    Attributes:
+        hook_name: Name of the hook that blocked orchestration.
+        stderr: Diagnostic text captured from the hook.
+    """
 
     def __init__(self, hook_name: str, stderr: str) -> None:
         super().__init__(f"Hook {hook_name!r} blocked orchestration: {stderr}")
@@ -698,6 +703,12 @@ class PluginManager:
 
     The manager handles lifecycle hooks (task creation, agent spawning, etc.)
     and provides a thread pool for background hooks.
+
+    Args:
+        workdir: Project root for workdir-scoped plugin discovery and
+            quarantine. Defaults to None.
+        record_declaration_failures: Enable recording of plugin load failures
+            that trigger quarantine when a workdir is set. Defaults to False.
     """
 
     def __init__(self, workdir: Path | None = None, *, record_declaration_failures: bool = False) -> None:
