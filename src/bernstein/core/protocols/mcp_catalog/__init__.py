@@ -152,11 +152,6 @@ class MCPServerCapabilities:
     first_contact_at: str
 
 
-def _canonicalize_tool_names(tool_names: frozenset[str]) -> str:
-    """Return JSON-canonicalized sorted tool name list for digest."""
-    return json.dumps(sorted(tool_names), separators=(",", ":"))
-
-
 class ServerCapabilitiesStore:
     """Persistent store for MCP server capabilities.
 

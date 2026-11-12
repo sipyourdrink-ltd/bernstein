@@ -7,6 +7,8 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class PackEntry:
+    """Path and SHA-256 digest for one file in a task context pack."""
+
     path: str
     sha256: str
 
@@ -16,6 +18,8 @@ class PackEntry:
 
 @dataclass(frozen=True, slots=True)
 class TaskContextPack:
+    """The file manifest carried with a task's context."""
+
     entries: list[PackEntry] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:

@@ -1192,15 +1192,6 @@ def run_quality_gates(
 # ---------------------------------------------------------------------------
 
 
-def _result_str(check: QualityGateCheckResult) -> str:
-    """Translate a QualityGateCheckResult to a metrics result string."""
-    if check.passed:
-        return "pass"
-    if check.blocked:
-        return "blocked"
-    return "flagged"
-
-
 def _result_str_from_status(status: str, blocked: bool) -> str:
     """Translate a detailed gate status to the legacy metrics result string."""
     if status in {"pass", "skipped"}:

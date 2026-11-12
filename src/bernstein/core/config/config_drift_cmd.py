@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class ConfigDeviation:
+    """One difference between a current configuration key and its default."""
+
     key: str
     kind: Literal["changed", "added", "removed"]
     default_value: Any = None
@@ -27,6 +29,8 @@ class ConfigDeviation:
 
 @dataclass(frozen=True)
 class ConfigDiffReport:
+    """Collect per-key deviations and totals for a configuration comparison."""
+
     deviations: list[ConfigDeviation] = field(default_factory=list[ConfigDeviation])
     total_keys: int = 0
     changed_count: int = 0
@@ -76,6 +80,7 @@ def _flatten_dict(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 
 
 def diff_against_defaults(current: dict[str, Any], defaults: dict[str, Any] | None = None) -> ConfigDiffReport:
+    """Compare flattened configuration values with the selected defaults."""
     if defaults is None:
         defaults = _BUILTIN_DEFAULTS
     flat_current = _flatten_dict(current)

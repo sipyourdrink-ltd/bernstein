@@ -47,7 +47,12 @@ bernstein recipes run NAME --param key=value [--param ...]   [--dry-run] [-g GOA
 
 ## Registered runs (content-addressed, receipt-backed)
 
-`recipes run` executes a manifest ad hoc. For a workflow you fire
+`recipes run` executes a manifest ad hoc. Registry commands that need an
+existing `.sdd/` directory exit with status `1` and print an initialization
+hint to stderr if the directory is missing. If `.sdd` is a file, registry
+commands report the obstruction on stderr and exit with status `1`.
+
+For a workflow you fire
 repeatedly, register it first: the recipe id becomes the sha256 of its
 canonical body, and every fire writes a receipt to the audit chain.
 

@@ -117,6 +117,8 @@ class ChatInput(Input):
 
 
 class BernsteinApp(App[None]):
+    """Interactive dashboard for task, agent, and run activity."""
+
     CSS = """
     Screen {
         background: $background;
@@ -1445,5 +1447,6 @@ class BernsteinApp(App[None]):
 
 
 def run_dashboard() -> None:
+    """Start the interactive Bernstein Textual dashboard."""
     app = BernsteinApp()
     app.run()

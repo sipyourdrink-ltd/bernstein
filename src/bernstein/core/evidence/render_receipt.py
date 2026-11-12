@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 #: Sentinel epoch for default clock_value when none is supplied.
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)  # noqa: UP017
@@ -59,6 +59,7 @@ __all__ = [
     "RenderObservationDelta",
     "RenderReceipt",
     "Viewport",
+    "first_property_difference",
     "render_delta",
 ]
 
@@ -565,6 +566,26 @@ def _flatten_observations(receipt: RenderReceipt) -> dict[tuple[str, str], str]:
         record("", f"{_UNSTABLE_NS}.{prop}", value)
 
     return observed
+
+
+def first_property_difference(
+    base: Mapping[tuple[str, str], str],
+    head: Mapping[tuple[str, str], str],
+) -> tuple[str, str] | None:
+    """Return the first changed or missing ``(element_path, property)`` key.
+
+    Inputs map element paths and namespaced property names to captured values,
+    using the same flattened representation as :func:`render_delta`. Keys are
+    ordered lexicographically by element path, then property name, independent
+    of insertion order. Equal mappings return ``None``; neither input is mutated.
+
+    This compares observations only. Callers must establish that captures share
+    an environment separately; use :func:`render_delta` for receipt validation.
+    """
+    for key in sorted(set(base) | set(head)):
+        if key not in base or key not in head or base[key] != head[key]:
+            return key
+    return None
 
 
 @dataclass(frozen=True, slots=True)

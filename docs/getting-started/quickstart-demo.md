@@ -88,8 +88,9 @@ adapter can be resolved it stops rather than running on mock.
 The deprecated `bernstein quickstart` spelling has no `--real` option and keeps
 the behaviour it always had: it picks up an installed agent CLI by itself and
 prints `~$0.20`, falling back to `$0.00 (mock)` only when it finds none. On a
-machine with an agent CLI on PATH it therefore spends money with no flag asked
-for. Pass `--adapter mock` to pin it, or move to `bernstein demo --flask-todo`.
+machine with an agent CLI on PATH it can therefore spend money without an
+explicit opt-in flag. Pass `--adapter mock` to pin it, or use
+`bernstein demo --flask-todo`.
 
 ## Source
 

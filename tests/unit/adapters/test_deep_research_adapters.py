@@ -15,6 +15,8 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -30,7 +32,7 @@ from bernstein.adapters.deep_research import (
 from bernstein.adapters.gpt_researcher import GPTResearcherAdapter
 from bernstein.adapters.registry import get_adapter
 from bernstein.adapters.tongyi_deepresearch import TongyiDeepResearchAdapter
-from bernstein.adapters.tongyi_deepresearch_runner import visited_urls
+from bernstein.adapters.tongyi_deepresearch_runner import _redirect_tools, visited_urls
 
 ADAPTERS_DIR = Path(artifact.__file__).parent
 
@@ -388,6 +390,26 @@ def _tongyi_args(tmp_path: Path, checkout: Path) -> list[str]:
         "--model",
         "m2",
     ]
+
+
+def test_tongyi_reader_defaults_timeout_only_on_redirected_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = Mock()
+    visit = SimpleNamespace(requests=SimpleNamespace(get=request))
+    monkeypatch.setitem(sys.modules, "tool_visit", visit)
+    monkeypatch.delenv("SERPER_BASE_URL", raising=False)
+    monkeypatch.setenv("JINA_BASE_URL", "http://gateway.invalid/fetch")
+    _redirect_tools()
+
+    visit.requests.get("https://r.jina.ai/https://example.invalid")
+    request.assert_called_once_with("http://gateway.invalid/fetch/https://example.invalid", timeout=(5.0, 30.0))
+    request.reset_mock()
+
+    visit.requests.get("https://r.jina.ai/https://example.invalid", timeout=7)
+    request.assert_called_once_with("http://gateway.invalid/fetch/https://example.invalid", timeout=7)
+    request.reset_mock()
+
+    visit.requests.get("https://elsewhere.invalid")
+    request.assert_called_once_with("https://elsewhere.invalid")
 
 
 def test_tongyi_runner_sends_search_and_visit_to_the_configured_bases(tmp_path: Path) -> None:

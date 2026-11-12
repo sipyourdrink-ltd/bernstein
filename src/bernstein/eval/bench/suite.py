@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -18,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
+
+    from bernstein.compliance.controls import ControlRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +129,41 @@ class BenchTask:
 # ---------------------------------------------------------------------------
 
 
+def validate_measurement_control_ids(
+    control_ids: Sequence[str], *, registry: ControlRegistry | None = None
+) -> tuple[str, ...]:
+    """Validate an explicit declaration and preserve its order as an immutable tuple.
+
+    An omitted declaration is handled by ``BenchSuite``; an explicit declaration
+    must name at least one distinct, registered control.
+    """
+    if isinstance(control_ids, (str, bytes)) or not isinstance(control_ids, Sequence):
+        raise ValueError("measurement_control_ids must be a non-empty sequence of control IDs")
+    ids = tuple(control_ids)
+    if not ids:
+        raise ValueError("measurement_control_ids must not be empty")
+    if any(not isinstance(cid, str) for cid in ids):
+        raise ValueError("measurement_control_ids must contain only strings")
+
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for cid in ids:
+        if cid in seen:
+            duplicates.add(cid)
+        seen.add(cid)
+    if duplicates:
+        raise ValueError(f"measurement_control_ids contains duplicate IDs: {', '.join(sorted(duplicates))}")
+
+    if registry is None:
+        from bernstein.compliance.controls import get_default_registry
+
+        registry = get_default_registry()
+    unknown = registry.validate_control_ids(ids)
+    if unknown:
+        raise ValueError(f"measurement_control_ids contains unknown IDs: {', '.join(sorted(unknown))}")
+    return ids
+
+
 @dataclass
 class BenchSuite:
     """
@@ -135,17 +173,22 @@ class BenchSuite:
     so adding, removing, or reordering any task changes the suite identity.
     If private holdout tasks are configured, ``holdout_hash`` is bound to
     the manifest without publishing the private task specifications.
+    An optional ``measurement_control_ids`` declaration is validated against
+    the control registry and bound to the suite identity when present.
     """
 
     version: str
     tasks: list[BenchTask] = field(default_factory=list)
     holdout_hash: str = ""
     holdout_tasks: list[BenchTask] = field(default_factory=list, repr=False)
+    measurement_control_ids: tuple[str, ...] | None = None
 
     # Computed lazily and cached.
     _suite_hash: str | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.measurement_control_ids is not None:
+            self.measurement_control_ids = validate_measurement_control_ids(self.measurement_control_ids)
         if not self.holdout_hash and self.holdout_tasks:
             self.holdout_hash = self.compute_holdout_hash()
 
@@ -173,6 +216,8 @@ class BenchSuite:
         effective_holdout = self.holdout_hash or (self.compute_holdout_hash() if self.holdout_tasks else "")
         if effective_holdout:
             payload_dict["holdout_hash"] = effective_holdout
+        if self.measurement_control_ids is not None:
+            payload_dict["measurement_control_ids"] = list(self.measurement_control_ids)
         payload = json.dumps(
             payload_dict,
             sort_keys=True,
@@ -203,6 +248,8 @@ class BenchSuite:
         effective_holdout = self.holdout_hash or (self.compute_holdout_hash() if self.holdout_tasks else "")
         if effective_holdout:
             d["holdout_hash"] = effective_holdout
+        if self.measurement_control_ids is not None:
+            d["measurement_control_ids"] = list(self.measurement_control_ids)
         return d
 
     def save(self, path: Path) -> None:
@@ -226,7 +273,17 @@ class BenchSuite:
             for t in raw["tasks"]
         ]
         holdout_hash = raw.get("holdout_hash", "")
-        suite = cls(version=raw["version"], tasks=tasks, holdout_hash=holdout_hash)
+        measurement_control_ids = (
+            validate_measurement_control_ids(raw["measurement_control_ids"])
+            if "measurement_control_ids" in raw
+            else None
+        )
+        suite = cls(
+            version=raw["version"],
+            tasks=tasks,
+            holdout_hash=holdout_hash,
+            measurement_control_ids=measurement_control_ids,
+        )
         # Integrity check: stored hash must match recomputed hash.
         if suite.suite_hash != raw["suite_hash"]:
             raise ValueError(

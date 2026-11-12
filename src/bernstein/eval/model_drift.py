@@ -595,6 +595,8 @@ def record_observation(
 
 
 class DriftVerificationStatus(Enum):
+    """Outcomes of verifying a model drift observation."""
+
     MATCH = "MATCH"
     UNSIGNED = "UNSIGNED"
     COVERAGE_UNDECLARED = "COVERAGE_UNDECLARED"
@@ -604,6 +606,8 @@ class DriftVerificationStatus(Enum):
 
 @dataclass
 class DriftVerificationResult:
+    """A drift verification verdict with an optional recomputed comparison."""
+
     observation_hash: str
     status: DriftVerificationStatus
     detail: str = ""

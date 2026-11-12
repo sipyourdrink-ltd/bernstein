@@ -16,13 +16,18 @@ The adapter accepts a JSON object mapping task IDs to trajectory payloads:
         }
     }
 Alternatively, a single top-level object {"events": [...], "diff": "..."} or list of events
-may be supplied to apply across all evaluated tasks.
+may be supplied to apply across all evaluated tasks. Events may include an optional
+numeric "intent_score" from a recorded evaluator. Finite scores with non-negative
+integer steps are projected into "intent_scores" in step order (preserving event
+order within a step); missing or invalid scores are omitted. No evaluator is called,
+and intent scores do not participate in hard measurements or threshold decisions.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import posixpath
 from dataclasses import dataclass
 from typing import Any
@@ -175,6 +180,7 @@ class DriftTrajectoryCurve:
     passed_gate: bool
     unmeasured: bool = False
     step_coverage: float = 1.0
+    intent_scores: tuple[tuple[int, float], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -187,6 +193,7 @@ class DriftTrajectoryCurve:
             "passed_gate": self.passed_gate,
             "unmeasured": self.unmeasured,
             "step_coverage": self.step_coverage,
+            "intent_scores": [{"step_index": step, "intent_score": score} for step, score in self.intent_scores],
         }
 
     @classmethod
@@ -202,6 +209,9 @@ class DriftTrajectoryCurve:
             passed_gate=bool(data.get("passed_gate", True)),
             unmeasured=bool(data.get("unmeasured", False)),
             step_coverage=float(data.get("step_coverage", 1.0)),
+            intent_scores=tuple(
+                (int(s["step_index"]), float(s["intent_score"])) for s in data.get("intent_scores", ())
+            ),
         )
 
 
@@ -300,6 +310,25 @@ def compute_step_drift(
     )
 
 
+def _project_intent_scores(events: list[dict[str, Any]]) -> tuple[tuple[int, float], ...]:
+    """Project recorded evaluator scores without feeding them into hard checks."""
+    scores: list[tuple[int, float]] = []
+    for event in events:
+        step = event.get("step")
+        score = event.get("intent_score")
+        if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+            continue
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            continue
+        try:
+            value = float(score)
+        except OverflowError:
+            continue
+        if math.isfinite(value):
+            scores.append((step, value))
+    return tuple(sorted(scores, key=lambda item: item[0]))
+
+
 def evaluate_trajectory_drift(
     task: GoalDriftTask,
     events: list[dict[str, Any]],
@@ -385,6 +414,7 @@ def evaluate_trajectory_drift(
         passed_gate=passed,
         unmeasured=unmeasured,
         step_coverage=step_coverage,
+        intent_scores=_project_intent_scores(events),
     )
 
 

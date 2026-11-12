@@ -787,7 +787,7 @@ class MetricsCollector:
             passed: Whether verification passed.
             role: Agent role.
             model: Model used.
-            _provider: API provider (part of interface).
+            provider: Reserved parameter.
         """
         # Update task metrics if exists
         if task_id in self._task_metrics:
@@ -1103,7 +1103,7 @@ class MetricsCollector:
             model: Model used.
             latency_ms: Request latency.
             tokens: Tokens consumed.
-            _cost_usd: Cost in USD (part of interface, tracked by CostTracker).
+            cost_usd: Cost in USD (part of interface, tracked by CostTracker).
             success: Whether the call succeeded.
         """
         _ = cost_usd  # Part of interface; cost tracked separately by CostTracker

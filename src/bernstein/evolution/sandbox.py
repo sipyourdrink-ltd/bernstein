@@ -358,7 +358,7 @@ class SandboxValidator:
         try:
             worktree_remove(self.repo_root, path)
         except Exception as exc:
-            logger.warning("Failed to cleanup sandbox worktree %s: %s", path, exc)
+            logger.warning("Failed to clean up sandbox worktree %s: %s", path, exc)
 
         try:
             branch_delete(self.repo_root, branch_name)

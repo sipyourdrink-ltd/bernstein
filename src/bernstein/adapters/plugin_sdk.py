@@ -279,7 +279,7 @@ class PluginAdapter(CLIAdapter):
         """Validate adapter-specific configuration.
 
         Args:
-            config: Configuration dictionary to validate.
+            _config: Reserved parameter.
 
         Returns:
             A list of human-readable validation error messages.

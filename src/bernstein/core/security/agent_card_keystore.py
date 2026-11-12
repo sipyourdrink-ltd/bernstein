@@ -256,9 +256,8 @@ class AgentCardKeystore:
                 if self._private_path.exists() and self._public_path.exists():
                     _, old_public_pem = self._load_existing()
                     old_keyid = install_identity_keyid(old_public_pem)
-            except Exception:
-                # If we can't read the old key, continue anyway
-                pass
+            except Exception as exc:
+                logger.warning("Agent-card rotation could not read the previous key ID (%s)", type(exc).__name__)
 
             if self._private_path.exists() or self._public_path.exists():
                 self._archive_existing()
@@ -281,9 +280,9 @@ class AgentCardKeystore:
                         **({"old_keyid": old_keyid} if old_keyid is not None else {}),
                     },
                 )
-            except Exception:
-                # Best effort - audit failure shouldn't break key rotation
-                pass
+            except Exception as exc:
+                # Rotation is already on disk, but the audit outcome is uncertain.
+                logger.warning("Agent-card rotation could not confirm its audit event (%s)", type(exc).__name__)
 
             # Drop what the grace window has already stopped publishing.
             # Done after the audit append so a prune failure (or a

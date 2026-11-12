@@ -569,7 +569,7 @@ def format_console(cl: RunChangelog, *, _repo_url: str | None = None) -> str:
 
     Args:
         cl: The changelog to render.
-        repo_url: Optional repository URL; used to generate task links.
+        _repo_url: Reserved parameter.
 
     Returns:
         Rich markup string suitable for ``console.print()``.

@@ -174,12 +174,14 @@ def _redirect_tools() -> None:
         def get(url: Any, *args: Any, **kwargs: Any) -> Any:
             if isinstance(url, str) and url.startswith(_JINA_READER):
                 url = base + url[len(_JINA_READER) :]
+                kwargs.setdefault("timeout", (5.0, 30.0))
             return requests.get(url, *args, **kwargs)
 
         setattr(visit, "requests", _Overlay(requests, get=get))  # noqa: B010
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the Tongyi research adapter and write its report artifacts."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prompt-file", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)

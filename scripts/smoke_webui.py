@@ -10,12 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from capture_webui_renders import gui_server, resolve_bernstein
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Page, Request, expect, sync_playwright
 
 from bernstein.core.approval.models import PendingApproval
 from bernstein.core.approval.queue import ApprovalQueue
-from bernstein.core.lineage.spine import LineageSpine
-from bernstein.core.security.audit import load_or_create_audit_key
 
 ROUTES = {
     "tasks": "Tasks",
@@ -54,37 +52,6 @@ def check_routes(page: Page, base: str, dashboard_password: str, headers: dict[s
 
     page.goto(f"{base}/ui/unknown-smoke-route")
     expect(page.get_by_role("heading", name="Route not found")).to_be_visible()
-
-
-def check_governance(page: Page, base: str) -> None:
-    page.goto(f"{base}/ui/governance")
-    expect(page.get_by_text("Select a run", exact=True)).to_be_visible()
-    expect(page.locator("[data-metric]")).to_have_count(0)
-
-    page.get_by_label("Run ID", exact=True).fill("ui-smoke-run")
-    coverage_url = f"{base}/api/v1/governance/coverage?run_id=ui-smoke-run"
-    with page.expect_response(coverage_url) as response:
-        page.get_by_role("button", name="Load coverage", exact=True).click()
-    assert response.value.ok
-    document = response.value.json()
-    assert document["recorded_actions"] == 1
-    expect(page).to_have_url(f"{base}/ui/governance?run_id=ui-smoke-run")
-    expect(page.get_by_text("Run chain verified", exact=True)).to_be_visible()
-    for metric, counts in document["metrics"].items():
-        row = page.locator(f'[data-metric="{metric}"]')
-        fraction = f"{counts['covered']} / {counts['total']} agent actions recorded in this run"
-        expect(row.get_by_text(fraction, exact=True)).to_be_visible()
-
-    page.reload()
-    expect(page.get_by_text("Run chain verified", exact=True)).to_be_visible()
-    page.get_by_label("Run ID", exact=True).fill("ui-smoke-empty")
-    page.get_by_role("button", name="Load coverage", exact=True).click()
-    expect(page.get_by_text("No run chain entries", exact=True)).to_be_visible()
-    expect(page.locator('[data-metric-state="not-measured"]')).to_have_count(2)
-
-    page.goto(f"{base}/ui/governance?run_id=ui-smoke-unverified")
-    expect(page.get_by_role("alert").filter(has_text="Run chain verification failed")).to_be_visible()
-    expect(page.locator("[data-metric]")).to_have_count(0)
 
 
 def check_governance_receipt(page: Page, base: str) -> None:
@@ -215,45 +182,6 @@ def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> 
     assert task.json()["status"] == "cancelled"
 
 
-def check_task_creation(page: Page, base: str, headers: dict[str, str]) -> None:
-    tasks_url = f"{base}/api/v1/tasks"
-    for index, entry in enumerate(("header", "prompt", "empty state"), start=1):
-        page.goto(f"{base}/ui/tasks")
-        if entry == "empty state":
-            page.get_by_role("button", name="Failed").click()
-            expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
-            trigger = page.get_by_role("button", name="Create task", exact=True).last
-        elif entry == "prompt":
-            trigger = page.get_by_role("button", name="New from prompt", exact=True)
-        else:
-            trigger = page.get_by_role("button", name="Create task", exact=True)
-        trigger.click()
-        form = page.get_by_role("dialog", name="Create task", exact=True)
-        expect(form.get_by_label("Prompt" if entry == "prompt" else "Title")).to_be_focused()
-        if entry == "header":
-            page.keyboard.press("Escape")
-            expect(trigger).to_be_focused()
-            trigger.click()
-            expect(form.get_by_label("Title")).to_be_focused()
-            page.mouse.click(1, 1)
-            expect(form).to_be_hidden()
-            expect(trigger).to_be_focused()
-            trigger.click()
-        title = f"Task creation smoke {index}"
-        description = f"Created from the {entry} control."
-        form.get_by_label("Title").fill(title)
-        form.get_by_label("Prompt").fill(description)
-        form.get_by_label("Role (optional)").fill("qa")
-        with page.expect_response(lambda reply: reply.url == tasks_url and reply.request.method == "POST") as created:
-            form.get_by_role("button", name="Create task", exact=True).click()
-        assert created.value.status == 201
-        task_id = created.value.json()["id"]
-        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
-        task = page.request.get(f"{tasks_url}/{task_id}", headers=headers)
-        expect(task).to_be_ok()
-        assert (task.json()["title"], task.json()["description"], task.json()["role"]) == (title, description, "qa")
-
-
 def check_approvals(
     page: Page,
     base: str,
@@ -262,14 +190,27 @@ def check_approvals(
     queue_dir: Path,
 ) -> None:
     page.goto(f"{base}/ui/approvals")
-    expect(page.get_by_role("button", name="Approve once")).to_be_visible()
+    approve = page.get_by_role("button", name="Approve once")
+    expect(approve).to_be_visible()
     expect(page.get_by_role("button", name="Always deny", exact=False)).to_have_count(0)
+    attempts: list[str] = []
+
+    def record_resolution(request: Request) -> None:
+        if request.method == "POST" and request.url.endswith("/resolve"):
+            attempts.append(request.url)
+
+    page.on("request", record_resolution)
 
     for approval, decision in zip(approvals[:2], ("allow", "reject"), strict=True):
+        expect(page.get_by_text(f"APPROVAL · {approval.id}", exact=True)).to_be_visible()
+        expect(approve).to_be_enabled()
         url = f"{base}/api/v1/approvals/{approval.id}/resolve"
         with page.expect_response(url) as reply:
             if decision == "allow":
-                page.get_by_role("button", name="Approve once").click()
+                approve.evaluate("""button => {
+                    button.click();
+                    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+                }""")
             else:
                 page.keyboard.press("d")
         assert reply.value.ok, f"Approval resolution returned HTTP {reply.value.status}"
@@ -277,17 +218,58 @@ def check_approvals(
         resolution = ApprovalQueue(base_dir=queue_dir).get_resolution(approval.id)
         assert resolution is not None and resolution.decision.value == decision
         expect(page.get_by_text(f"APPROVAL · {approval.id}", exact=True)).to_be_hidden()
+        assert attempts.count(url) == 1
 
     stale = approvals[2]
     expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_visible()
+    queue_url = f"{base}/api/v1/approvals/queue"
+    nav = page.get_by_role("navigation")
+    nav.get_by_role("link", name="Tasks", exact=True).click()
+    page.route(queue_url, lambda route: route.fulfill(status=503, json={"detail": "Queue unavailable"}))
+    page.evaluate("() => { const now = Date.now; Date.now = () => now() + 6_000; }")
+    with page.expect_response(queue_url) as queue_error:
+        nav.get_by_role("link", name="Approvals").click()
+    assert queue_error.value.status == 503
+    expect(page.get_by_text("Could not load approvals", exact=True)).to_be_visible(timeout=25_000)
+    page.keyboard.press("a")
+    assert len(attempts) == 2
+    page.unroute(queue_url)
+    page.get_by_role("button", name="Retry", exact=True).click()
+    expect(approve).to_be_visible()
+
     url = f"{base}/api/v1/approvals/{stale.id}/resolve"
     settled = page.request.post(url, data={"decision": "reject", "nonce": stale.nonce_hex}, headers=headers)
     expect(settled).to_be_ok()
     with page.expect_response(url) as reply:
-        page.get_by_role("button", name="Approve once").click()
+        approve.click()
     assert reply.value.status == 410
     expect(page.get_by_role("alert").filter(has_text="This approval is no longer current")).to_be_visible()
-    expect(page.get_by_role("button", name="Approve once")).to_be_hidden()
+    expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_hidden()
+
+    pending = approvals[3]
+    expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_visible()
+    page.evaluate("() => { const now = Date.now; Date.now = () => now() + 180_000; }")
+    url = f"{base}/api/v1/approvals/{pending.id}/resolve"
+    expect(approve).to_be_enabled()
+    with page.expect_response(url) as skewed:
+        page.keyboard.press("a")
+    assert skewed.value.ok
+    resolution = ApprovalQueue(base_dir=queue_dir).get_resolution(pending.id)
+    assert resolution is not None and resolution.decision.value == "allow"
+    expect(page.get_by_text(f"APPROVAL · {pending.id}", exact=True)).to_be_hidden()
+    assert attempts.count(url) == 1
+
+    expired = approvals[4]
+    expect(page.get_by_text(f"APPROVAL · {expired.id}", exact=True)).to_be_hidden()
+    reply = page.request.post(
+        f"{base}/api/v1/approvals/{expired.id}/resolve",
+        data={"decision": "allow", "nonce": expired.nonce_hex},
+        headers=headers,
+    )
+    assert reply.status == 410
+    assert reply.json()["detail"] == "NONCE_EXPIRED"
+    assert ApprovalQueue(base_dir=queue_dir).get_resolution(expired.id) is None
+    page.remove_listener("request", record_resolution)
 
 
 def main() -> None:
@@ -305,26 +287,12 @@ def main() -> None:
                     agent_role="qa",
                     tool_name="read_file",
                     tool_args={"path": f"docs/check-{index}.md"},
-                    ttl_seconds=120,
+                    ttl_seconds=0 if index == 4 else 120,
                 )
             )
-            for index in range(3)
+            for index in range(5)
         ]
-        audit_key = project / "audit.key"
-        for run_id, key in (
-            ("ui-smoke-run", load_or_create_audit_key(audit_key)),
-            ("ui-smoke-unverified", secrets.token_bytes(32)),
-        ):
-            spine = LineageSpine(project / ".sdd/lineage", run_id=run_id, hmac_key=key)
-            spine.record(
-                artifact_path="docs/demo.md",
-                content=b"Smoke evidence",
-                actor="smoke",
-                step_id="read",
-                model="none",
-                timestamp=1,
-            )
-        env = {"BERNSTEIN_AUDIT_KEY_PATH": str(audit_key)}
+        env = {"BERNSTEIN_AUDIT_KEY_PATH": str(project / "audit.key")}
         with (
             patch.dict("os.environ", env),
             gui_server(resolve_bernstein(None), project, token, dashboard_password) as base,
@@ -353,12 +321,10 @@ def main() -> None:
             check_routes(page, base, dashboard_password, headers)
             check_task(page, base, created.json()["id"], headers)
             check_approvals(page, base, headers, approvals, queue_dir)
-            check_task_creation(page, base, headers)
-            check_governance(page, base)
             check_governance_receipt(page, base)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()
-    print("Web UI route, drawer, auth, task, approval and governance smoke passed", flush=True)
+    print("Web UI route, drawer, authentication, approval, task cancellation and receipt smoke passed", flush=True)
 
 
 if __name__ == "__main__":

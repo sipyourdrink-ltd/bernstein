@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.tui.themes import (
     DARK_THEME,
     HIGH_CONTRAST_THEME,
@@ -56,29 +58,20 @@ class TestThemeColors:
 
 
 class TestDetectTerminalTheme:
-    @patch.dict(os.environ, {"BERNSTEIN_THEME": "light"}, clear=False)
-    def test_explicit_light(self) -> None:
-        assert detect_terminal_theme() == ThemeMode.LIGHT
-
-    @patch.dict(os.environ, {"BERNSTEIN_THEME": "dark"}, clear=False)
-    def test_explicit_dark(self) -> None:
-        assert detect_terminal_theme() == ThemeMode.DARK
-
-    @patch.dict(os.environ, {"BERNSTEIN_THEME": "high_contrast"}, clear=False)
-    def test_explicit_high_contrast(self) -> None:
-        assert detect_terminal_theme() == ThemeMode.HIGH_CONTRAST
-
-    @patch.dict(os.environ, {"COLORFGBG": "0;15", "BERNSTEIN_THEME": ""}, clear=False)
-    def test_colorfgbg_light(self) -> None:
-        assert detect_terminal_theme() == ThemeMode.LIGHT
-
-    @patch.dict(os.environ, {"COLORFGBG": "15;0", "BERNSTEIN_THEME": ""}, clear=False)
-    def test_colorfgbg_dark(self) -> None:
-        assert detect_terminal_theme() == ThemeMode.DARK
-
-    @patch.dict(os.environ, {"BERNSTEIN_THEME": "", "COLORFGBG": ""}, clear=False)
-    def test_default_is_dark(self) -> None:
-        assert detect_terminal_theme() == ThemeMode.DARK
+    @pytest.mark.parametrize(
+        "env,expected",
+        [
+            pytest.param({"BERNSTEIN_THEME": "light"}, ThemeMode.LIGHT, id="explicit_light"),
+            pytest.param({"BERNSTEIN_THEME": "dark"}, ThemeMode.DARK, id="explicit_dark"),
+            pytest.param({"BERNSTEIN_THEME": "high_contrast"}, ThemeMode.HIGH_CONTRAST, id="explicit_high_contrast"),
+            pytest.param({"COLORFGBG": "0;15", "BERNSTEIN_THEME": ""}, ThemeMode.LIGHT, id="colorfgbg_light"),
+            pytest.param({"COLORFGBG": "15;0", "BERNSTEIN_THEME": ""}, ThemeMode.DARK, id="colorfgbg_dark"),
+            pytest.param({"BERNSTEIN_THEME": "", "COLORFGBG": ""}, ThemeMode.DARK, id="default_is_dark"),
+        ],
+    )
+    def test_detect_terminal_theme(self, env: dict[str, str], expected: ThemeMode) -> None:
+        with patch.dict(os.environ, env, clear=False):
+            assert detect_terminal_theme() == expected
 
 
 class TestGetTheme:

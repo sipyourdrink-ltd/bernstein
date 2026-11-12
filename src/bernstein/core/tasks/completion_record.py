@@ -30,6 +30,8 @@ KNOWN_TRIGGER_FIELDS = {"kind", "referenced_hash"}
 
 
 class ReopenTriggerKind(StrEnum):
+    """Evidence conditions that can reopen a completed task."""
+
     ASSUMPTION_HASH_MISMATCH = "assumption-hash-mismatch"
     RECEIPT_INVALIDATED = "receipt-invalidated"
 
@@ -46,6 +48,8 @@ def _is_valid_hash(h: str) -> bool:
 
 @dataclass(frozen=True)
 class ExportItem:
+    """An exported artifact path and its recorded content hash."""
+
     path: str
     content_hash: str
 
@@ -55,6 +59,8 @@ class ExportItem:
 
 @dataclass(frozen=True)
 class AssumptionItem:
+    """An expected file hash or configuration value used by a completion record."""
+
     kind: Literal["file", "config"]
     key_or_path: str
     expected_value_or_hash: str
@@ -73,6 +79,8 @@ class AssumptionItem:
 
 @dataclass(frozen=True)
 class ReopenTriggerItem:
+    """A completion reopening condition tied to a specific evidence hash."""
+
     kind: ReopenTriggerKind
     referenced_hash: str
 

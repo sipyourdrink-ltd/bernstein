@@ -231,6 +231,8 @@ def _path_segments(value: str) -> tuple[str, ...] | None:
 
 @dataclass
 class AgentIdentityCard:
+    """An agent's identity, assigned runtime, and declared capability scope."""
+
     agent_id: str
     role: str
     adapter: str

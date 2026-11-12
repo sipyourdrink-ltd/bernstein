@@ -62,6 +62,10 @@ Inspect a policy file and its hash:
 bernstein cache policy --file policy.json
 ```
 
+An unreadable or invalid policy file exits with status `1` and a diagnostic on
+stderr. Command-line usage errors, including a missing file, exit with status
+`2`.
+
 ## Drift-based expiry (a pure verdict, not a clock race)
 
 `evaluate_freshness(entry, policy, repo_state)` returns a `FreshnessVerdict`

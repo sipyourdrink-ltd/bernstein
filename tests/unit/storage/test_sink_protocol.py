@@ -9,6 +9,8 @@ emulators or real credentials.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,6 +26,21 @@ from bernstein.core.storage.sink import join_keys, normalise_key
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
+
+
+def test_storage_imports_without_pytest() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['pytest'] = None; from bernstein.core.storage import LocalFsSink",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 class TestLocalFsSinkConformance(ArtifactSinkConformance):
