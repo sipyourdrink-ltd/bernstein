@@ -16,12 +16,41 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.config.platform_compat import IS_WINDOWS
 from bernstein.core.persistence.atomic_write import write_atomic_json
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+
+def _publish_clone(staged: Path, destination: Path) -> bool:
+    """Install a staged checkout without replacing a concurrently created path."""
+    if IS_WINDOWS:
+        # Windows rename fails if its destination already exists.
+        try:
+            staged.rename(destination)
+        except FileExistsError:
+            return False
+        return True
+
+    # POSIX rename may replace an empty destination. Reserve it with an
+    # exclusive mkdir, so another clone or directory creator wins cleanly.
+    try:
+        destination.mkdir()
+    except FileExistsError:
+        return False
+    reserved = destination.stat()
+    try:
+        staged.rename(destination)
+    except BaseException:
+        with suppress(OSError):
+            current = destination.stat()
+            if (current.st_dev, current.st_ino) == (reserved.st_dev, reserved.st_ino):
+                destination.rmdir()
+        raise
+    return True
 
 
 def _topological_sort(
@@ -198,10 +227,9 @@ class Workspace:
                         check=True,
                         timeout=120,
                     )
-                    if abs_path.exists() or abs_path.is_symlink():
+                    if not _publish_clone(staged_repo, abs_path):
                         logger.debug("Repo '%s' appeared during clone", repo.name)
                         continue
-                    staged_repo.rename(abs_path)
                 cloned.append(repo.name)
             except subprocess.TimeoutExpired:
                 logger.warning("Timed out cloning '%s' after 120s", repo.name)

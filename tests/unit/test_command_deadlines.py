@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -105,27 +107,93 @@ def test_ssh_open_reports_timeout_and_close_still_cleans_up(tmp_path: Path) -> N
     assert not sock.exists()
 
 
-def test_undo_aborts_batch_after_revert_timeout() -> None:
-    def git(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
-        if args[1] == "log":
-            assert kwargs["timeout"] == 30
-            return subprocess.CompletedProcess(
-                args, 0, stdout="first task:example\nsecond task:example\nthird task:example"
-            )
-        if args[-1] == "first":
-            assert kwargs["timeout"] == 120
-            return subprocess.CompletedProcess(args, 0)
-        return _timeout(args, **kwargs)
-
-    with (
-        patch("bernstein.cli.commands.undo_cmd.subprocess.run", side_effect=git) as run,
-        patch("bernstein.cli.commands.undo_cmd._log_undo_audit") as audit,
-        patch("bernstein.cli.commands.undo_cmd._run_post_revert_tests") as verify,
-    ):
+def test_undo_git_log_timeout_is_not_an_empty_result() -> None:
+    with patch("bernstein.cli.commands.undo_cmd.subprocess.run", side_effect=_timeout):
         result = CliRunner().invoke(undo_cmd, ["example", "--yes"])
 
     assert result.exit_code == 1
-    assert "Revert of second timed out. Inspect git status before resuming." in result.output
-    assert run.call_count == 3
-    audit.assert_called_once_with("example", False, 1)
+    assert "Timed out reading Git history for undo." in result.output
+    assert "No matching commits" not in result.output
+
+
+@pytest.mark.parametrize("first_completes", [False, True])
+def test_undo_aborts_and_audits_uncertain_revert(first_completes: bool) -> None:
+    first = MagicMock(returncode=0)
+    first.communicate.return_value = (b"", b"")
+    failed = MagicMock(pid=12345)
+    failed.communicate.side_effect = subprocess.TimeoutExpired("git revert", 120)
+    first.__enter__.return_value = first
+    failed.__enter__.return_value = failed
+
+    with (
+        patch("bernstein.cli.commands.undo_cmd.subprocess.run") as run,
+        patch("bernstein.cli.commands.undo_cmd.subprocess.Popen") as popen,
+        patch("bernstein.cli.commands.undo_cmd.kill_process_group", return_value=True) as kill_group,
+        patch("bernstein.core.tasks.lifecycle.get_audit_log") as get_audit,
+        patch("bernstein.cli.commands.undo_cmd._run_post_revert_tests") as verify,
+    ):
+        run.return_value = subprocess.CompletedProcess(
+            ["git", "log"], 0, stdout="first task:example\nsecond task:example\nthird task:example"
+        )
+        popen.side_effect = [first, failed] if first_completes else [failed]
+        result = CliRunner().invoke(undo_cmd, ["example", "--yes"])
+
+    confirmed = int(first_completes)
+    uncertain = "second" if first_completes else "first"
+    assert result.exit_code == 1
+    assert f"Revert of {uncertain} timed out" in result.output
+    assert "Check git status and recent commits" in result.output
+    assert run.call_args.kwargs["timeout"] == 30
+    assert popen.call_count == confirmed + 1
+    failed.communicate.assert_called_once_with(timeout=120)
+    kill_group.assert_called_once_with(failed.pid, sig=9)
+    get_audit.return_value.log.assert_called_once()
+    details = get_audit.return_value.log.call_args.kwargs["details"]
+    assert details["commit_count"] == confirmed
+    assert details["outcome"] == "unknown"
+    assert details["uncertain_commit"] == uncertain
     verify.assert_not_called()
+
+
+def test_workspace_competing_clones_publish_one_checkout(tmp_path: Path) -> None:
+    repo = RepoConfig(name="example", path=Path("example"), url="https://example.invalid/repo.git")
+    workspace = Workspace(root=tmp_path, repos=[repo])
+    ready = Barrier(2)
+
+    def clone(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        checkout = Path(args[-1])
+        checkout.mkdir()
+        (checkout / "ready").touch()
+        ready.wait(timeout=5)
+        return subprocess.CompletedProcess(args, 0)
+
+    with (
+        patch("bernstein.core.persistence.workspace.subprocess.run", side_effect=clone),
+        ThreadPoolExecutor(max_workers=2) as workers,
+    ):
+        results = sorted(workers.map(lambda _: workspace.clone_missing(), range(2)))
+
+    assert results == [[], ["example"]]
+    assert (tmp_path / "example" / "ready").is_file()
+    assert list(tmp_path.iterdir()) == [tmp_path / "example"]
+
+
+def test_workspace_preserves_empty_destination_created_during_clone(tmp_path: Path) -> None:
+    destination = tmp_path / "example"
+    repo = RepoConfig(name="example", path=Path("example"), url="https://example.invalid/repo.git")
+    workspace = Workspace(root=tmp_path, repos=[repo])
+    inode = None
+
+    def clone(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        nonlocal inode
+        Path(args[-1]).mkdir()
+        destination.mkdir()
+        inode = destination.stat().st_ino
+        return subprocess.CompletedProcess(args, 0)
+
+    with patch("bernstein.core.persistence.workspace.subprocess.run", side_effect=clone):
+        assert workspace.clone_missing() == []
+
+    assert inode is not None
+    assert destination.stat().st_ino == inode
+    assert list(destination.iterdir()) == []

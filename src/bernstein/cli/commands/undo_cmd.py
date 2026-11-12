@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import subprocess
-from contextlib import suppress
+import tempfile
+from contextlib import nullcontext, suppress
 from pathlib import Path
 
 import click
@@ -11,6 +12,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 
+from bernstein.core.config.platform_compat import IS_WINDOWS, kill_process_group
 from bernstein.core.worktrees.change_set import (
     TaskChangeSet,
     TaskChangeSetUnresolved,
@@ -62,14 +64,17 @@ def undo_cmd(task_id: str | None, revert_all: bool, yes: bool, dry_run: bool) ->
         console.print("[dim]Cancelled.[/dim]")
         return
 
-    success_count, timeout_error = _execute_reverts(commits_to_revert)
+    success_count, uncertain_commit = _execute_reverts(commits_to_revert)
 
     if success_count > 0:
         console.print(f"\n[green]✓[/green] Successfully reverted {success_count} commit(s).")
-        _log_undo_audit(task_id, revert_all, success_count)
-    if timeout_error is not None:
-        raise click.ClickException(timeout_error)
+    if uncertain_commit is not None:
+        _log_undo_audit(task_id, revert_all, success_count, uncertain_commit=uncertain_commit)
+        raise click.ClickException(
+            f"Revert of {uncertain_commit[:8]} timed out. Check git status and recent commits before resuming."
+        )
     if success_count > 0:
+        _log_undo_audit(task_id, revert_all, success_count)
         _run_post_revert_tests()
 
 
@@ -135,21 +140,23 @@ def _find_commits_to_revert(task_id: str | None, revert_all: bool) -> list[tuple
             if (revert_all and "[bernstein]" in s) or (task_id and f"task:{task_id}" in s):
                 commits.append((h, s))
         return commits
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException("Timed out reading Git history for undo.") from exc
     except Exception as exc:
         console.print(f"[red]Error:[/red] Failed to read git log: {exc}")
         return []
 
 
 def _execute_reverts(commits: list[tuple[str, str]]) -> tuple[int, str | None]:
-    """Return the completed revert count and any terminal timeout message."""
+    """Return the completed revert count and a commit whose outcome is uncertain."""
     success_count = 0
     for h, s in commits:
         console.print(f"Reverting [cyan]{h[:8]}[/cyan] {s}...")
         try:
-            subprocess.run(["git", "revert", "--no-edit", h], check=True, capture_output=True, timeout=120)
+            _run_revert(h)
             success_count += 1
         except subprocess.TimeoutExpired:
-            return success_count, f"Revert of {h[:8]} timed out. Inspect git status before resuming."
+            return success_count, h
         except subprocess.CalledProcessError as e:
             console.print(f"[red]Failed to revert {h[:8]}:[/red] {e.stderr.decode()}")
             if not click.confirm("Continue with remaining reverts?", default=True):
@@ -157,7 +164,39 @@ def _execute_reverts(commits: list[tuple[str, str]]) -> tuple[int, str | None]:
     return success_count, None
 
 
-def _log_undo_audit(task_id: str | None, revert_all: bool, success_count: int) -> None:
+def _run_revert(commit: str) -> None:
+    """Run a Git revert, keeping ordinary hook descendants in its process group."""
+    argv = ["git", "revert", "--no-edit", commit]
+    # On Windows a surviving child can keep a communicate reader blocked.
+    with (
+        tempfile.TemporaryFile() if IS_WINDOWS else nullcontext() as error_file,
+        subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE if error_file is None else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if error_file is None else error_file,
+            start_new_session=not IS_WINDOWS,
+        ) as proc,
+    ):
+        try:
+            _, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            if not kill_process_group(proc.pid, sig=9):
+                proc.kill()
+            raise
+        if proc.returncode != 0:
+            if error_file is not None:
+                error_file.seek(0)
+                stderr = error_file.read()
+            raise subprocess.CalledProcessError(proc.returncode, argv, stderr=stderr)
+
+
+def _log_undo_audit(
+    task_id: str | None,
+    revert_all: bool,
+    success_count: int,
+    *,
+    uncertain_commit: str | None = None,
+) -> None:
     """Log undo action to audit trail (best-effort).
 
     The import below must resolve for any correctly-installed bernstein
@@ -181,6 +220,7 @@ def _log_undo_audit(task_id: str | None, revert_all: bool, success_count: int) -
                 "commit_count": success_count,
                 "task_id": task_id,
                 "revert_all": revert_all,
+                **({"outcome": "unknown", "uncertain_commit": uncertain_commit} if uncertain_commit else {}),
             },
         )
 
