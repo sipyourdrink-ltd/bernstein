@@ -2214,10 +2214,8 @@ def _claim_task_with_conflict_retry(
          bounded retries rather than an infinite tight loop.
     Retries within one call are capped at ``_CLAIM_CONFLICT_MAX_ATTEMPTS``.
 
-    Every attempt is logged at INFO with task_id, version sent, response
-    code, the current version/status discovered on re-fetch, and the
-    decision taken -- so a repeat of this bug shows up as readable log
-    lines instead of a silent multi-hundred-line loop.
+    Per-attempt status and retry preparation are logged at DEBUG. Conflict
+    outcomes are logged at INFO or WARNING.
 
     Returns:
         ``(response, None)`` on a successful (non-409) response -- caller
