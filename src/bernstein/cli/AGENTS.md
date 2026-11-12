@@ -11,8 +11,8 @@ The top-level `bernstein` command (`pyproject.toml` `[project.scripts]` maps it 
 | `helpers.py` | Shared console and utility helpers |
 | `run_cmd.py` | `bernstein run` entry; bootstrap/confirm split into siblings |
 | `commands/governance_cmd.py` | The `bernstein govern` group: `verify`, `plan`, and the `audit`, `reconcile`, `inventory` and `lane` subcommands that live in `govern_*_cmd.py` |
-| `commands/govern_audit_cmd.py`, `commands/status_cmd.py` | `govern audit` runs the doctor checks as opt-in producers `INS-001` to `INS-020`: each wraps the `_doctor_check_*` helper that `bernstein doctor` calls (#5073). `BERNSTEIN_GOVERN_AUDIT_SENTINEL=1` adds a synthetic failure that is journaled and notified (#5091) |
-| `commands/audit_cmd.py` | `bernstein audit verify`: one pass per integrity pillar; the hash-tile pillar checks every published tile against its segment bytes and is read-only (#6548) |
+| `commands/govern_audit_cmd.py`, `commands/status_cmd.py` | `govern audit` runs the doctor checks as opt-in producers `INS-001` to `INS-020`: each wraps the `_doctor_check_*` helper that `bernstein doctor` calls (#5073). `BERNSTEIN_GOVERN_AUDIT_SENTINEL=1` adds a synthetic failure. The audit journals it when selected and dispatches notifications when configured and enabled (#5091) |
+| `commands/audit_cmd.py` | `bernstein audit verify`: one pass per integrity pillar; with an audit key, the read-only hash-tile pillar checks tiles against successfully authenticated segment bytes (#6548) |
 | `commands/trust_cmd.py` | `bernstein trust`: the one sanctioned writer of `.sdd/runtime/workspace_trust.json` |
 | `commands/verify_cmd.py`, `commands/verify_kinds.py` | `bernstein verify <artefact-path>` dispatches on the artefact's kind through a registry (#5103) |
 | `commands/seal_cmd.py` | `bernstein seal`: anchors a run's sealed head outside this install (#4205) |
