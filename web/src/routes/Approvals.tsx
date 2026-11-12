@@ -2,7 +2,7 @@
 // Source of truth: design_handoff_bernstein_phase1/design-source/screens/screen-approvals.jsx
 // + README §6.03 (Approvals specs) and §8 (states contract).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, Check, X } from 'lucide-react';
 import { ApiError, apiGet, apiPost } from '@/lib/api';
@@ -44,6 +44,10 @@ interface QueuedApprovalsResponse {
 }
 
 type Decision = 'allow' | 'reject';
+
+function isExpired(approval: QueuedApproval, now: number): boolean {
+  return now >= (approval.created_at + approval.ttl_seconds) * 1000;
+}
 
 // ---------------------------------------------------------------------------
 // Pure helpers - derive design-only fields from generic tool_args.
@@ -161,6 +165,7 @@ export default function Approvals() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const decisionInFlight = useRef(false);
   // Re-render once a second so wait timers tick without refetching.
   const [now, setNow] = useState<number>(() => Date.now());
 
@@ -237,7 +242,16 @@ export default function Approvals() {
       }
       showToast(error instanceof Error ? error.message : 'Could not resolve approval', 'error');
     },
+    onSettled: () => { decisionInFlight.current = false; },
   });
+
+  const submitDecision = useCallback((decision: Decision) => {
+    if (queueQ.isError || isResolving || decisionInFlight.current || !selected?.nonce || isExpired(selected, Date.now())) {
+      return;
+    }
+    decisionInFlight.current = true;
+    resolve({ approval: selected, decision });
+  }, [queueQ.isError, isResolving, selected, resolve]);
 
   const moveSelection = (delta: 1 | -1) => {
     if (pending.length === 0) return;
@@ -248,6 +262,7 @@ export default function Approvals() {
 
   // Keyboard shortcuts: A approve · D deny · ↑/↓ navigate.
   useEffect(() => {
+    if (queueQ.isError) return;
     const onKey = (e: KeyboardEvent) => {
       // Don't fight form inputs.
       const target = e.target as HTMLElement | null;
@@ -266,15 +281,15 @@ export default function Approvals() {
         moveSelection(-1);
       } else {
         const key = e.key.toLowerCase();
-        if ((key !== 'a' && key !== 'd') || e.repeat || !selected?.nonce || isResolving) return;
+        if ((key !== 'a' && key !== 'd') || e.repeat) return;
         e.preventDefault();
-        resolve({ approval: selected, decision: key === 'a' ? 'allow' : 'reject' });
+        submitDecision(key === 'a' ? 'allow' : 'reject');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, pending, selected, resolve, isResolving]);
+  }, [selectedId, pending, queueQ.isError, submitDecision]);
 
   // -------------------------------------------------------------------------
   // Top-level state branches
@@ -365,7 +380,7 @@ export default function Approvals() {
             approval={selected}
             now={now}
             pending={isResolving}
-            onDecision={(decision) => resolve({ approval: selected, decision })}
+            onDecision={submitDecision}
           />
         ) : (
           <EmptyState
@@ -491,7 +506,8 @@ function SelectedApproval({
   const target = approvalTarget(approval);
   const waitS = waitSeconds(approval.created_at, now);
 
-  const disabled = pending || !approval.nonce;
+  const expired = isExpired(approval, now);
+  const disabled = pending || !approval.nonce || expired;
 
   return (
     <>
@@ -627,7 +643,11 @@ function SelectedApproval({
             Deny
           </button>
         </div>
-        {!approval.nonce && (
+        {expired ? (
+          <p role="alert" className="text-body text-muted-foreground">
+            This approval has expired.
+          </p>
+        ) : !approval.nonce && (
           <p role="alert" className="text-body text-muted-foreground">
             This request has no approval nonce. Reload the queue before deciding.
           </p>

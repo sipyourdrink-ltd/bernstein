@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from capture_webui_renders import gui_server, resolve_bernstein
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Page, Request, expect, sync_playwright
 
 from bernstein.core.approval.models import PendingApproval
 from bernstein.core.approval.queue import ApprovalQueue
@@ -82,14 +82,25 @@ def check_approvals(
     queue_dir: Path,
 ) -> None:
     page.goto(f"{base}/ui/approvals")
-    expect(page.get_by_role("button", name="Approve once")).to_be_visible()
+    approve = page.get_by_role("button", name="Approve once")
+    expect(approve).to_be_visible()
     expect(page.get_by_role("button", name="Always deny", exact=False)).to_have_count(0)
+    attempts: list[str] = []
+
+    def record_resolution(request: Request) -> None:
+        if request.method == "POST" and request.url.endswith("/resolve"):
+            attempts.append(request.url)
+
+    page.on("request", record_resolution)
 
     for approval, decision in zip(approvals[:2], ("allow", "reject"), strict=True):
         url = f"{base}/api/v1/approvals/{approval.id}/resolve"
         with page.expect_response(url) as reply:
             if decision == "allow":
-                page.get_by_role("button", name="Approve once").click()
+                approve.evaluate("""button => {
+                    button.click();
+                    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+                }""")
             else:
                 page.keyboard.press("d")
         assert reply.value.ok, f"Approval resolution returned HTTP {reply.value.status}"
@@ -97,17 +108,52 @@ def check_approvals(
         resolution = ApprovalQueue(base_dir=queue_dir).get_resolution(approval.id)
         assert resolution is not None and resolution.decision.value == decision
         expect(page.get_by_text(f"APPROVAL · {approval.id}", exact=True)).to_be_hidden()
+        assert attempts.count(url) == 1
 
     stale = approvals[2]
     expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_visible()
+    queue_url = f"{base}/api/v1/approvals/queue"
+    nav = page.get_by_role("navigation")
+    nav.get_by_role("link", name="Tasks", exact=True).click()
+    page.route(queue_url, lambda route: route.fulfill(status=503, json={"detail": "Queue unavailable"}))
+    page.evaluate("() => { const now = Date.now; Date.now = () => now() + 6_000; }")
+    with page.expect_response(queue_url) as queue_error:
+        nav.get_by_role("link", name="Approvals").click()
+    assert queue_error.value.status == 503
+    expect(page.get_by_text("Could not load approvals", exact=True)).to_be_visible(timeout=25_000)
+    page.keyboard.press("a")
+    assert len(attempts) == 2
+    page.unroute(queue_url)
+    page.get_by_role("button", name="Retry", exact=True).click()
+    expect(approve).to_be_visible()
+
     url = f"{base}/api/v1/approvals/{stale.id}/resolve"
     settled = page.request.post(url, data={"decision": "reject", "nonce": stale.nonce_hex}, headers=headers)
     expect(settled).to_be_ok()
     with page.expect_response(url) as reply:
-        page.get_by_role("button", name="Approve once").click()
+        approve.click()
     assert reply.value.status == 410
     expect(page.get_by_role("alert").filter(has_text="This approval is no longer current")).to_be_visible()
-    expect(page.get_by_role("button", name="Approve once")).to_be_hidden()
+    expect(page.get_by_text(f"APPROVAL · {stale.id}", exact=True)).to_be_hidden()
+
+    expiring = approvals[3]
+    expect(page.get_by_text(f"APPROVAL · {expiring.id}", exact=True)).to_be_visible()
+    page.evaluate("() => { const now = Date.now; Date.now = () => now() + 180_000; }")
+    expect(approve).to_be_disabled()
+    expect(page.get_by_text("This approval has expired.", exact=True)).to_be_visible()
+    page.keyboard.press("a")
+    assert len(attempts) == 3
+
+    expired = approvals[4]
+    reply = page.request.post(
+        f"{base}/api/v1/approvals/{expired.id}/resolve",
+        data={"decision": "allow", "nonce": expired.nonce_hex},
+        headers=headers,
+    )
+    assert reply.status == 410
+    assert reply.json()["detail"] == "NONCE_EXPIRED"
+    assert ApprovalQueue(base_dir=queue_dir).get_resolution(expired.id) is None
+    page.remove_listener("request", record_resolution)
 
 
 def main() -> None:
@@ -125,10 +171,10 @@ def main() -> None:
                     agent_role="qa",
                     tool_name="read_file",
                     tool_args={"path": f"docs/check-{index}.md"},
-                    ttl_seconds=120,
+                    ttl_seconds=0 if index == 4 else 120,
                 )
             )
-            for index in range(3)
+            for index in range(5)
         ]
         env = {"BERNSTEIN_AUDIT_KEY_PATH": str(project / "audit.key")}
         with (
@@ -137,7 +183,7 @@ def main() -> None:
             sync_playwright() as playwright,
         ):
             browser = playwright.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page = browser.new_page(viewport={"width": 1440, "height": 900}, service_workers="block")
             page.set_default_timeout(8_000)
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))

@@ -432,8 +432,8 @@ def resolve_queued_approval(request: Request, approval_id: str, body: ResolveReq
 
     The request body must echo the ``nonce`` the gate issued when the
     approval was queued. Mismatches return ``409 NONCE_MISMATCH``; a
-    nonce replayed against an already-resolved or evicted approval
-    returns ``410 NONCE_EXPIRED``. The resolution is attributed to the
+    nonce for an expired, already-resolved or evicted approval returns
+    ``410 NONCE_EXPIRED``. The resolution is attributed to the
     principal the request authenticated as. When scoped tokens are
     configured and the request presents none, the call is refused with
     ``401`` rather than recorded against an unnamed caller; when no scoped
