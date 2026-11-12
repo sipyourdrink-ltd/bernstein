@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class ConfigDeviation:
     """One difference between a current configuration key and its default."""
+
     key: str
     kind: Literal["changed", "added", "removed"]
     default_value: Any = None
@@ -29,6 +30,7 @@ class ConfigDeviation:
 @dataclass(frozen=True)
 class ConfigDiffReport:
     """Collect per-key deviations and totals for a configuration comparison."""
+
     deviations: list[ConfigDeviation] = field(default_factory=list[ConfigDeviation])
     total_keys: int = 0
     changed_count: int = 0

@@ -66,6 +66,7 @@ _CODE_CHANGE_KINDS = frozenset({FACT_MODIFY_SOURCE, FACT_REMOVE_DEFINITION, FACT
 @dataclass(frozen=True)
 class CollusionFlag:
     """An invariant violation linking the effects of two tasks."""
+
     invariant: str
     task_a: str
     task_b: str
@@ -83,6 +84,7 @@ class CollusionFlag:
 @dataclass(frozen=True)
 class CollusionVerdict:
     """Summary of checked task pairs and their invariant violations."""
+
     checked_pairs: int
     flags: tuple[CollusionFlag, ...] = ()
 

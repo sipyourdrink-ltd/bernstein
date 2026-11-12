@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 @dataclass
 class LeaderboardEntry:
     """Leaderboard row linking a submission to its suite and measured score."""
+
     bundle_hash: str
     suite_hash: str
     suite_version: str

@@ -174,6 +174,7 @@ class ApiTierInfo:
 
 class Scope(Enum):
     """Relative size of a task's expected work."""
+
     SMALL = "small"  # <30 min, single file
     MEDIUM = "medium"  # 30-120 min, few files
     LARGE = "large"  # 2-8 hours, subsystem
@@ -181,6 +182,7 @@ class Scope(Enum):
 
 class Complexity(Enum):
     """Relative difficulty of implementing a task."""
+
     LOW = "low"  # Docs, formatting, simple fixes
     MEDIUM = "medium"  # Feature implementation, tests
     HIGH = "high"  # Architecture, complex reasoning, security
@@ -188,6 +190,7 @@ class Complexity(Enum):
 
 class TaskStatus(Enum):
     """Lifecycle states persisted by the task store."""
+
     PLANNED = "planned"  # Awaiting human approval before execution (plan mode)
     OPEN = "open"
     CLAIMED = "claimed"

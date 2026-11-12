@@ -69,6 +69,7 @@ def env_ttl_seconds(default: int = DEFAULT_REVALIDATE_SECONDS) -> int:
 @dataclass(frozen=True)
 class HTTPResponse:
     """Minimal HTTP response used by the registry client."""
+
     status: int
     body: bytes
     etag: str | None
@@ -76,6 +77,7 @@ class HTTPResponse:
 
 class HTTPTransport(Protocol):
     """Injectable HTTP GET boundary for volunteer registry fetches."""
+
     def get(self, url: str, *, headers: dict[str, str]) -> HTTPResponse: ...
 
 
@@ -104,6 +106,7 @@ class _UrllibTransport:
 @dataclass(frozen=True)
 class IndexEntry:
     """A repository listing advertised by a volunteer index."""
+
     repo_url: str
     default_branch: str
     topics: tuple[str, ...]
@@ -115,6 +118,7 @@ class IndexEntry:
 @dataclass(frozen=True)
 class BrowseResult:
     """A volunteer listing whose manifest was loaded and accepted."""
+
     repo_url: str
     default_branch: str
     manifest: VolunteerManifest
@@ -126,6 +130,7 @@ class BrowseResult:
 @dataclass(frozen=True)
 class DroppedEntry:
     """A repository omitted from volunteer results and the reason."""
+
     repo_url: str
     reason: str
 

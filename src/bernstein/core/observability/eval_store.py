@@ -22,6 +22,7 @@ EvalResult = Literal["pass", "fail", "retry"]
 @dataclass
 class EvalRecord:
     """One evaluation outcome with task, model, role, and resource measurements."""
+
     task_id: str
     model: str
     role: str
@@ -66,6 +67,7 @@ def load_eval_records(metrics_dir: Path, limit: int = 0) -> list[EvalRecord]:
 @dataclass
 class ModelAccuracy:
     """Per-model evaluation counts and average duration and cost."""
+
     model: str
     total: int = 0
     passed: int = 0

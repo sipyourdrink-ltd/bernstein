@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
 class VerificationStatus(Enum):
     """Outcomes of offline benchmark submission verification."""
+
     MATCH = "MATCH"
     DIVERGED = "DIVERGED"
     MISSING_RECEIPT = "MISSING_RECEIPT"
@@ -78,6 +79,7 @@ class VerificationStatus(Enum):
 @dataclass
 class TaskVerificationResult:
     """Verification result and replayed measurements for one benchmark task."""
+
     task_id: str
     status: VerificationStatus
     detail: str = ""
@@ -91,6 +93,7 @@ class TaskVerificationResult:
 @dataclass
 class BundleVerificationResult:
     """Overall bundle verification verdict and the individual task results."""
+
     bundle_hash: str
     suite_hash: str
     status: VerificationStatus  # overall verdict

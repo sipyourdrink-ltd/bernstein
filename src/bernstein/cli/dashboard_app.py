@@ -118,6 +118,7 @@ class ChatInput(Input):
 
 class BernsteinApp(App[None]):
     """Interactive dashboard for task, agent, and run activity."""
+
     CSS = """
     Screen {
         background: $background;

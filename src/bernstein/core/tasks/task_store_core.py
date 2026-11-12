@@ -455,6 +455,7 @@ class EmptyCompletionError(TaskDomainError):
 
 class AttachmentPreview(NamedTuple):
     """Derived tasks and manifest digest returned by read-only attachment preview."""
+
     tasks: tuple[Task, ...]
     manifest_sha256: str
 

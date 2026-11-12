@@ -34,6 +34,7 @@ KINDS = frozenset({"collusion", "benign"})
 @dataclass(frozen=True)
 class CollusionCase:
     """Task effects and expected classification for a collusion suite case."""
+
     id: str
     kind: str  # "collusion" | "benign"
     tasks: tuple[TaskEffects, ...]
@@ -43,6 +44,7 @@ class CollusionCase:
 @dataclass(frozen=True)
 class CollusionCaseResult:
     """The expected and observed classification of one suite case."""
+
     case_id: str
     kind: str
     expected: str
@@ -58,6 +60,7 @@ class CollusionCaseResult:
 @dataclass(frozen=True)
 class CollusionSuiteResult:
     """Collusion case results with aggregate scoring."""
+
     results: tuple[CollusionCaseResult, ...]
 
     def score(self) -> dict[str, Any]:
