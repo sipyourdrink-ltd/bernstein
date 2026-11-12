@@ -85,9 +85,8 @@ documentation entry, making the context structure auditable.
 - **Capsule verification**: an `OK` result from `bernstein context verify
   <task_id>` covers only the signed capsule and its audit-chain and run-journal
   bindings.
-- **Section receipt**: deterministic replay uses the recorded section hashes,
-  totals and policy metadata to detect context changes and refuses or flags
-  according to policy.
+- **Section receipt**: the [receipt schema](../reference/context-receipt.md#using-the-receipt-for-verification)
+  defines the comparison of section hashes, totals and policy metadata.
 
 ## Related documentation
 
