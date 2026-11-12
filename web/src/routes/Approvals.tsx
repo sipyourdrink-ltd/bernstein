@@ -258,11 +258,17 @@ export default function Approvals() {
         focus.restore = false;
       }
     };
+    const cancelRestoration = () => {
+      const focus = decisionFocus.current;
+      if (focus) focus.restore = false;
+    };
     document.addEventListener('focusin', trackFocus, true);
     document.addEventListener('pointerdown', trackPointer, true);
+    window.addEventListener('blur', cancelRestoration);
     return () => {
       document.removeEventListener('focusin', trackFocus, true);
       document.removeEventListener('pointerdown', trackPointer, true);
+      window.removeEventListener('blur', cancelRestoration);
     };
   }, []);
 
@@ -275,8 +281,10 @@ export default function Approvals() {
     }
 
     decisionFocus.current = null;
-    if (!focus.restore || document.activeElement !== document.body) return;
-    const nextRow = queueList.current?.querySelector<HTMLButtonElement>('button[data-approval-id]');
+    if (!focus.restore || !document.hasFocus() || document.activeElement !== document.body) return;
+    const nextRow =
+      queueList.current?.querySelector<HTMLButtonElement>('button[aria-current="true"]') ??
+      queueList.current?.querySelector<HTMLButtonElement>('button[data-approval-id]');
     (nextRow ?? queueHeading.current)?.focus();
   }, [isResolving, pending]);
 
