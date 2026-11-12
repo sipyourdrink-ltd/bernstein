@@ -14,7 +14,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { MoreHorizontal, Play, Command as CommandIcon, Search, X } from 'lucide-react';
+import { MoreHorizontal, Plus, Command as CommandIcon, Search, X } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '@/lib/api';
 import { useEventStream } from '@/lib/sse';
 import { TaskLogsPanel } from '@/components/logs';
@@ -24,6 +24,7 @@ import { TaskDepsPanel } from '@/components/deps/TaskDepsPanel';
 import { TaskTracePanel } from '@/components/trace/TaskTracePanel';
 import { TaskArtifactsPanel } from '@/components/artifacts';
 import { SteerPanel } from '@/components/steer/SteerPanel';
+import { CreateTaskDialog } from '@/components/tasks/CreateTaskDialog';
 import {
   formatUSD,
   formatDuration,
@@ -435,6 +436,8 @@ export default function Tasks() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page] = useState<number>(1);
   const [activeTab, setActiveTab] = useState<DetailTab>('Summary');
+  const [createFocus, setCreateFocus] = useState<'title' | 'prompt' | null>(null);
+  const createTrigger = useRef<HTMLElement | null>(null);
 
   const parsed = useMemo(() => parseQuery(queryStr), [queryStr]);
   const chip = CHIPS.find((c) => c.key === activeChip) ?? CHIPS[0];
@@ -533,16 +536,11 @@ export default function Tasks() {
 
   const selected = items.find((t) => t.id === selectedId) ?? null;
 
-  // Selection lifecycle: clear selection if the previously-selected row no
-  // longer exists (e.g. SSE invalidation removed it). Otherwise the detail
-  // query keeps thrashing on a 404 and the drawer renders stale fallback data.
-  // The drawer only opens on explicit user action - never auto-select.
-  useEffect(() => {
-    if (!listQ.data) return;
-    if (selectedId !== null && !items.some((t) => t.id === selectedId)) {
-      setSelectedId(null);
-    }
-  }, [selectedId, items, listQ.data]);
+  // The task detail query owns the drawer even when the current list is filtered.
+  const openCreate = (focus: 'title' | 'prompt') => {
+    createTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCreateFocus(focus);
+  };
 
   const refetchList = () => {
     listQ.refetch();
@@ -560,6 +558,8 @@ export default function Tasks() {
           stalledCount={stalledCount}
           lastSync={lastSync}
           loading={listQ.isLoading}
+          onCreate={() => openCreate('title')}
+          onCreateFromPrompt={() => openCreate('prompt')}
         />
 
         <SearchBar value={queryStr} onChange={setQueryStr} />
@@ -588,10 +588,8 @@ export default function Tasks() {
                 title="No tasks yet"
                 description="Spin up the first run to populate this list."
                 action={{
-                  label: 'Run new task',
-                  onClick: () => {
-                    /* CTA handled by parent shell command palette */
-                  },
+                  label: 'Create task',
+                  onClick: () => openCreate('title'),
                 }}
               />
             </div>
@@ -604,6 +602,20 @@ export default function Tasks() {
           )}
         </div>
       </section>
+
+      {createFocus && (
+        <CreateTaskDialog
+          initialFocus={createFocus}
+          trigger={createTrigger.current}
+          onClose={() => setCreateFocus(null)}
+          onCreated={(taskId) => {
+            setCreateFocus(null);
+            setActiveTab('Summary');
+            setSelectedId(taskId);
+            void qc.invalidateQueries({ queryKey: ['tasks'] });
+          }}
+        />
+      )}
 
       {/* ── Detail drawer (overlay) ─────────────────────────────────────── */}
       <DrawerShell open={selectedId !== null} onClose={closeDrawer}>
@@ -896,12 +908,16 @@ function Header({
   stalledCount,
   lastSync,
   loading,
+  onCreate,
+  onCreateFromPrompt,
 }: {
   totalCount: number;
   runningCount: number;
   stalledCount: number;
   lastSync: string | null;
   loading: boolean;
+  onCreate: () => void;
+  onCreateFromPrompt: () => void;
 }) {
   return (
     <div className="mb-[14px] flex items-baseline justify-between gap-4">
@@ -928,13 +944,15 @@ function Header({
       <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
+          onClick={onCreate}
           className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-secondary"
         >
-          <Play className="size-3" strokeWidth={1.5} />
-          Run new task
+          <Plus className="size-3" strokeWidth={1.5} />
+          Create task
         </button>
         <button
           type="button"
+          onClick={onCreateFromPrompt}
           className="inline-flex items-center gap-1.5 rounded-md border border-foreground bg-foreground px-2.5 py-1.5 text-[12px] font-medium text-background transition-colors hover:bg-foreground/90"
         >
           <CommandIcon className="size-3" strokeWidth={1.5} />

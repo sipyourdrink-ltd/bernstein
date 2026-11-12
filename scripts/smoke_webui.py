@@ -74,6 +74,45 @@ def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> 
     assert task.json()["status"] == "cancelled"
 
 
+def check_task_creation(page: Page, base: str, headers: dict[str, str]) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    for index, entry in enumerate(("header", "prompt", "empty state"), start=1):
+        page.goto(f"{base}/ui/tasks")
+        if entry == "empty state":
+            page.get_by_role("button", name="Failed").click()
+            expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+            trigger = page.get_by_role("button", name="Create task", exact=True).last
+        elif entry == "prompt":
+            trigger = page.get_by_role("button", name="New from prompt", exact=True)
+        else:
+            trigger = page.get_by_role("button", name="Create task", exact=True)
+        trigger.click()
+        form = page.get_by_role("dialog", name="Create task", exact=True)
+        expect(form.get_by_label("Prompt" if entry == "prompt" else "Title")).to_be_focused()
+        if entry == "header":
+            page.keyboard.press("Escape")
+            expect(trigger).to_be_focused()
+            trigger.click()
+            expect(form.get_by_label("Title")).to_be_focused()
+            page.mouse.click(1, 1)
+            expect(form).to_be_hidden()
+            expect(trigger).to_be_focused()
+            trigger.click()
+        title = f"Task creation smoke {index}"
+        description = f"Created from the {entry} control."
+        form.get_by_label("Title").fill(title)
+        form.get_by_label("Prompt").fill(description)
+        form.get_by_label("Role (optional)").fill("qa")
+        with page.expect_response(lambda reply: reply.url == tasks_url and reply.request.method == "POST") as created:
+            form.get_by_role("button", name="Create task", exact=True).click()
+        assert created.value.status == 201
+        task_id = created.value.json()["id"]
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        task = page.request.get(f"{tasks_url}/{task_id}", headers=headers)
+        expect(task).to_be_ok()
+        assert (task.json()["title"], task.json()["description"], task.json()["role"]) == (title, description, "qa")
+
+
 def check_approvals(
     page: Page,
     base: str,
@@ -159,9 +198,10 @@ def main() -> None:
             check_routes(page, base, dashboard_password, headers)
             check_task(page, base, created.json()["id"], headers)
             check_approvals(page, base, headers, approvals, queue_dir)
+            check_task_creation(page, base, headers)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()
-    print("Web UI route, drawer, authentication and cancellation smoke passed", flush=True)
+    print("Web UI route, drawer, auth, task and approval smoke passed", flush=True)
 
 
 if __name__ == "__main__":
