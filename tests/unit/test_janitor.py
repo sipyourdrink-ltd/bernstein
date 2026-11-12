@@ -489,8 +489,8 @@ class TestTestPasses:
         timeout_records = [r for r in caplog.records if "test_passes TIMEOUT" in r.message]
         assert len(timeout_records) == 1
         assert "timeout=300s" in timeout_records[0].message
-        assert "command='check-package'" in timeout_records[0].message
-        assert f"cwd={tmp_path}" in timeout_records[0].message
+        assert "check-package" not in caplog.text
+        assert str(tmp_path) not in caplog.text
 
     def test_passes_on_exit_zero(self, tmp_path: Path) -> None:
         signal = CompletionSignal(
@@ -516,10 +516,8 @@ class TestTestPasses:
         passed, _ = evaluate_signal(signal, tmp_path)
         assert passed is False
 
-    def test_nonzero_exit_logs_failure_detail(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """Logging gap: a failing test_passes command used to fail silently
-        (no log line at all).  Assert the FAIL log line fires with the
-        command, exit code, and captured stderr/stdout."""
+    def test_nonzero_exit_logs_failure_metadata(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Keep the exit code visible while omitting command and output."""
         caplog.set_level("INFO", logger="bernstein.core.quality.janitor")
         signal = CompletionSignal(
             type="test_passes",
@@ -530,7 +528,9 @@ class TestTestPasses:
         fail_records = [r for r in caplog.records if "test_passes FAIL" in r.message]
         assert fail_records, f"expected a test_passes FAIL log line, got: {[r.message for r in caplog.records]}"
         assert "exit=1" in fail_records[0].message
-        assert "boom" in fail_records[0].message
+        assert fail_records[0].levelname == "WARNING"
+        assert "boom" not in caplog.text
+        assert str(tmp_path) not in caplog.text
 
 
 # --- bug 12: branch-check acceptance signals vs actual pushed branch ---

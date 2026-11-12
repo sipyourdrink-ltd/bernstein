@@ -172,9 +172,10 @@ class TestCloneMissing:
         assert cloned == []
 
     @patch("bernstein.core.persistence.workspace.subprocess.run")
-    def test_handles_clone_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_handles_clone_failure(self, mock_run: MagicMock, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level("INFO", logger="bernstein.core.persistence.workspace")
         mock_run.side_effect = subprocess.CalledProcessError(
-            returncode=128, cmd=["git", "clone"], stderr="fatal: repo not found"
+            returncode=128, cmd=["git", "clone"], stderr="fatal: synthetic-git-error-secret"
         )
         ws = Workspace(
             root=tmp_path,
@@ -182,12 +183,15 @@ class TestCloneMissing:
                 RepoConfig(
                     name="bad",
                     path=Path("./repos/bad"),
-                    url="https://github.com/org/bad.git",
+                    url="https://synthetic-git-url-secret@github.com/org/bad.git",
                 ),
             ],
         )
         cloned = ws.clone_missing()
         assert cloned == []
+        assert "exit_code=128" in caplog.text
+        assert "synthetic-git-url-secret" not in caplog.text
+        assert "synthetic-git-error-secret" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

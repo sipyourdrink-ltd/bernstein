@@ -292,7 +292,7 @@ def _install_github(source: GitHubSource, install_dir: Path) -> PluginInstallRes
         archive_name = download_url.rsplit("/", 1)[-1]
         archive_path = tmp_path / archive_name
 
-        logger.info("plugin_installer: downloading %s → %s", download_url, archive_path)
+        logger.info("plugin_installer: downloading GitHub release asset")
         try:
             # GitHub redirects release assets to a signed CDN URL; we accept
             # any https scheme but refuse plain HTTP / non-web schemes so a
@@ -331,7 +331,7 @@ def _install_git(source: GitSource, install_dir: Path) -> PluginInstallResult:
     with tempfile.TemporaryDirectory() as tmp:
         clone_dir = Path(tmp) / repo_name
         clone_cmd = ["git", "clone", "--depth=1", source.url, str(clone_dir)]
-        logger.info("plugin_installer: cloning %s (ref=%s)", source.url, source.ref)
+        logger.info("plugin_installer: cloning Git plugin source")
         try:
             subprocess.run(clone_cmd, check=True, capture_output=True, timeout=120)
         except subprocess.CalledProcessError as exc:
@@ -360,7 +360,7 @@ def _install_git(source: GitSource, install_dir: Path) -> PluginInstallResult:
             shutil.rmtree(plugin_dir)
         shutil.copytree(clone_dir, plugin_dir)
 
-    logger.info("plugin_installer: git plugin installed → %s", plugin_dir)
+    logger.info("plugin_installer: Git plugin installed")
     return PluginInstallResult(success=True, install_path=plugin_dir, source_kind="git")
 
 
