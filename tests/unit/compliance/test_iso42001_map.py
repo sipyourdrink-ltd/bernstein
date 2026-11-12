@@ -26,6 +26,7 @@ import hashlib
 import json
 import re
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -376,10 +377,15 @@ def test_iso42005_export_references_only_matching_records(tmp_path: Path) -> Non
 def test_iso42005_export_rejects_non_string_catalogue_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
 ) -> None:
-    catalogue = get_standard_map("iso-42005")
+    original = get_standard_map("iso-42005")
+    catalogue = deepcopy(original)
     catalogue["controls"][0][field] = []
-    monkeypatch.setitem(evidence_pack._STANDARD_MAPS, "iso-42005", catalogue)
     output = tmp_path / "invalid.zip"
-    with pytest.raises(ValueError, match="invalid ISO 42005 verdict/status"):
-        build_evidence_pack(sdd_dir=_seed_sdd(tmp_path), standard="iso-42005", output_path=output)
+    sdd = _seed_sdd(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setitem(evidence_pack._STANDARD_MAPS, "iso-42005", catalogue)
+        with pytest.raises(ValueError, match="invalid ISO 42005 verdict/status"):
+            build_evidence_pack(sdd_dir=sdd, standard="iso-42005", output_path=output)
     assert not output.exists()
+    assert get_standard_map("iso-42005") is original
+    assert build_evidence_pack(sdd_dir=sdd, standard="iso-42005", output_path=output).event_count == 1
