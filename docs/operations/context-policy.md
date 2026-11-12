@@ -82,19 +82,24 @@ explicit configuration is present.
 
 ## Verifying context
 
-Run `bernstein context verify` to check that a run's context matches the
-current configuration:
+Run `bernstein context verify <task_id>` to recompute a task's context
+capsule offline and check it against the audit chain and the run journal:
 
 ```bash
-# Verify context for a specific task
-bernstein context verify --task-id <task_id>
+# Human-readable result
+bernstein context verify <task_id>
 
-# Verify context for the current run
-bernstein context verify --run-id <run_id>
+# Machine-readable, from another project root
+bernstein context verify <task_id> --json --workdir /path/to/project
 ```
 
-If the current context policy differs from what was used during the run, the
-verify command reports the diverging fields.
+The exit code is `0` when the capsule verifies, `1` when the task has no
+capsule, and `2` on a mismatch, a mock capsule or tampering. The command
+takes one task at a time; there is no run-wide form.
+
+The result is one of `OK`, `NO CAPSULE`, `MOCK` or `MISMATCH`, with the
+reason. `--json` adds the separate checks: `signature_ok`, `chain_ok` and
+`journal_ok`.
 
 ## Declared context manifest
 

@@ -36,11 +36,11 @@ max_agents: 6         # start here; tune up/down based on 429 rate
 ```
 
 ```bash
-# Override at runtime
-bernstein run --max-agents 10
-# Or via environment variable
+# Override for one run with the environment variable
 BERNSTEIN_MAX_AGENTS=10 bernstein run
 ```
+
+`bernstein run` has no `--max-agents` flag.
 
 ---
 
