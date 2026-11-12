@@ -14,7 +14,7 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 
 ## Root command flags
 
-`bernstein` itself accepts these flags (defined on `cli` in `src/bernstein/cli/main.py`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
+`bernstein` itself accepts these flags (defined at `cli/main.py:482-572`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -42,9 +42,6 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 | `-v, --verbose` | off | Show debug-level output. |
 | `-q, --quiet` | off | Suppress all non-error output. |
 | `-t, --task PATTERN` | none | Run only backlog tasks matching PATTERN. |
-| `--sandbox BACKEND` | none | Override the sandbox backend selected for the run. |
-| `--allow-paid` | off | Allow selection of paid sandbox backends. |
-| `--refine SPEC` | none | Parse and validate an iterative refinement spec. The root runner does not consume it yet. |
 | `--auto-pr` | off | Auto-open a GitHub PR when all tasks complete. |
 | `--activity-log [PATH]` | off | Write activity to a log file. Default path `.sdd/logs/activity.log`. |
 
@@ -2017,10 +2014,7 @@ example widening `viewer` to `operator`) breaks its signature and the token
 stops validating. Every issue and revoke is mirrored onto the audit chain
 (`dashboard.token_grant`), and every login and write authorization is a
 signed governance decision in the `dashboard-auth` lineage run - recompute
-them offline with `bernstein govern verify dashboard-auth --bindings FILE`,
-where `FILE` contains the signed role bindings produced by
-`dashboard_role_bindings` in `bernstein.core.server.dashboard_tokens`.
-The dashboard generates these bindings in memory.
+them offline with `bernstein governance verify dashboard-auth`.
 
 | Subcommand | Purpose |
 |---|---|
@@ -2035,6 +2029,7 @@ root containing `.sdd/`.
 bernstein auth dashboard-token issue --principal alice --scope viewer
 bernstein auth dashboard-token list
 bernstein auth dashboard-token revoke 3f1a9c2d5e7b0a41
+bernstein governance verify dashboard-auth
 ```
 
 Startup posture: `bernstein gui serve` on a loopback host without any

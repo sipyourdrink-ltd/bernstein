@@ -4,7 +4,7 @@ Driving Bernstein from a script means knowing which command moves a task between
 
 > Source of truth for transitions: [`architecture/LIFECYCLE.md`](../../architecture/LIFECYCLE.md). All flag claims below are cited as `cli/<file>:<line>`.
 
-## Task states
+## The 12 task states
 
 | State | One-liner |
 |---|---|
@@ -18,12 +18,6 @@ Driving Bernstein from a script means knowing which command moves a task between
 | `BLOCKED` | Waiting on another task, resource, or approval. |
 | `WAITING_FOR_SUBTASKS` | Parent task waiting for child subtasks to complete. |
 | `CANCELLED` | Manually or programmatically cancelled. Terminal. |
-| `STOP_REQ` | Cancellation requested. The reaper waits for the worker group to exit. |
-| `SUSPENDED` | Parked mid-session. Resumable from an attested receipt. |
-| `ABANDONED` | Agent voluntarily ended the task with a structured reason. |
-| `BLOCKED_BY_ABANDON` | An abandoned dependency blocks the task. |
-| `BLOCKED_BY_FAILED_DEP` | An unsuccessful dependency blocks the task. |
-| `REFUSED` | Worker reported a typed refusal. |
 | `ORPHANED` | Agent crashed mid-task; awaits crash recovery. |
 | `PENDING_APPROVAL` | Task completed but requires human approval before merge. Set directly by the approval subsystem (no FSM-managed exit). |
 
@@ -47,7 +41,7 @@ Create a single task on the running task server (`POST /tasks`).
 
 **Synopsis:** `bernstein add-task TITLE [flags]`
 
-**Flags:** See `bernstein add-task --help`.
+**Flags:** *(source: `cli/commands/task_cmd.py:37-66`)*
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -58,11 +52,6 @@ Create a single task on the running task server (`POST /tasks`).
 | `--scope` | `medium` | `small` / `medium` / `large`. |
 | `--complexity` | `medium` | `low` / `medium` / `high`. |
 | `--depends-on TASK_ID` | - | Task IDs this task depends on. Repeatable. |
-| `--criterion-profile PRESET` | none | Per-task preset such as `safety-first`, `speed-first`, `balanced`, or `cost-first`. |
-| `--mode` | none | Worker response style (`verbose`, `balanced`, `terse`) or mode profile (`fast`, `smart`, `deep`). |
-| `--artifact-kind` | none | Artifact type (`report`, `dataset`, `action_log`, `ops_result`, `finding`, or `blob`). Requires `--artifact-output`. |
-| `--artifact-output PATH` | none | Workdir-relative artifact path. |
-| `--artifact-criterion TYPE:VALUE` | none | Repeatable check of type `schema_valid`, `criteria_match`, or `hash_stable`. Requires `--artifact-kind`. |
 | `--dry-run` | off | Print the JSON payload without calling the API. |
 
 The command is registered as `task compose` internally and exposed as the visible `bernstein add-task` (see `cli/main.py:696`).
@@ -222,7 +211,7 @@ Two related but distinct gates.
 | `--validate-only` | off | Validate `--pipeline` schema and exit. No agents run. |
 | `--dry-run` | off | Print resolved pipeline; spawn nothing. |
 
-**[`bernstein verify`](verify.md)** builds and verifies signed run receipts and checks evidence such as WAL integrity and execution fingerprints. The janitor runs the [task quality pipeline](../../architecture/quality-pipeline.md) during task completion.
+**`bernstein verify`** *(source: `cli/commands/verify_cmd.py`)* runs the **quality pipeline** (lint / tests / type-check / custom gates) on a specific task's artefact. It's the same gate the janitor runs automatically; calling it manually is useful when you want to re-run gates after fixing something out-of-band. See [`architecture/quality-pipeline.md`](../../architecture/quality-pipeline.md) for what the gates do.
 
 ---
 

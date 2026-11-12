@@ -413,10 +413,10 @@ The scanner runs without LLM calls, using static regex patterns:
 - Path traversal patterns in code
 - SQL injection vectors
 
-Scan a task's diff for security findings:
+Run a manual security review on any diff:
 
 ```bash
-bernstein security-review <task-id>
+bernstein review --security <task-id>
 ```
 
 ## Secret management
@@ -660,13 +660,20 @@ rate_limits:
 
 ### Built-in compliance checks
 
-Run the compliance audit against your current workspace:
+Run a full security posture check against your current configuration:
 
 ```bash
-bernstein govern audit-compliance
+bernstein doctor --security
 ```
 
-This command runs the compliance checks. See [Compliance profiles](../operations/compliance.md) for configuration and reporting.
+Output includes:
+- Authentication status (enabled/disabled)
+- TLS configuration check
+- Audit log integrity status
+- Agent sandbox configuration
+- Permission mode in effect
+- PII detection status
+- Dependency vulnerability summary
 
 ### Generate a compliance report
 
@@ -777,5 +784,5 @@ Before deploying Bernstein in a production environment:
 - [ ] Audit log exported to SIEM
 - [ ] Retention policy configured
 - [ ] Dependency scanning enabled
-- [ ] `bernstein govern audit-compliance` passes
+- [ ] `bernstein doctor --security` passes clean
 - [ ] `bernstein compliance report` reviewed and archived

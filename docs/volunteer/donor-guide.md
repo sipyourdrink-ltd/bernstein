@@ -2,15 +2,25 @@
 
 ## How to Join
 
-### Available CLI commands
+### One-Liner CLI Command
 
-Use `bernstein volunteer browse --index URL` to list opt-in projects, `verify` to
-validate a project manifest, and `budget` to set donor limits. The CLI also
-provides `hub` and `verify-bundle`.
+> **Not available yet.** `bernstein volunteer run` is the intended entry point
+> and lands with the one-command onboarding work (#3889). Today the shipped
+> subcommands are `bernstein volunteer verify`, `browse` and `hub`; the rest of
+> this guide describes the shape the runner is being built to, so a donor can
+> tell in advance what it will and will not be allowed to do on their machine.
+>
+> Bare `bernstein volunteer` explains the flow and exits non-zero without
+> recording consent. A consent receipt binds your key to one project's manifest
+> digest and sandbox profile digest, so it is written once a task source exists
+> to pick a project - not before.
 
-The `autopilot` command loads a donor profile. Running the loop requires
-a Python `TaskSource` implementation. The CLI cannot run an individual
-task from an issue URL.
+```bash
+bernstein volunteer run https://github.com/owner/project/issues/123
+```
+
+This is the command a donor will run to start a volunteer task. It takes a
+GitHub issue URL and begins the execution process.
 
 ### Complete Join Process
 
@@ -25,17 +35,17 @@ task from an issue URL.
    ```
    Run this on the project you want to donate to (or current directory) to validate its volunteer manifest and get the digest.
 
-3. **Browse Participating Projects**
+3. **Browse Available Issues**
    ```bash
-   bernstein volunteer browse --index https://registry.example/index.json
+   bernstein volunteer browse
    ```
-   Replace the example URL with your volunteer index. Repeat `--index` to
-   browse multiple indexes.
+   List all issues labeled for volunteers across all indexes (donor needs to configure indexes first).
 
-4. **Set Donor Limits**
+4. **Run a Task**
    ```bash
-   bernstein volunteer budget --budget-tasks 10 --budget-hours 6 --max-size m
+   bernstein volunteer run <issue-url>
    ```
+   Replace `<issue-url>` with the exact GitHub issue URL you want to work on.
 
 ## Federated index discovery (Python API)
 
@@ -167,8 +177,10 @@ The resolver does not fetch project manifests or distribute keys.
 
 **Task Release**
 
-The CLI has no manual task-release command. A hub lease that stops receiving
-heartbeats expires after its configured timeout.
+Interrupting the worker process abandons the task and the lease it holds
+expires on its own. `bernstein volunteer release <task-id> "<reason>"`, which
+records the reason against the lease instead of waiting for the timeout, lands
+with the runner (#3889) and is not available yet.
 
 ### Cleanup
 

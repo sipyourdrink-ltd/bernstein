@@ -46,9 +46,6 @@ to establish baselines against. Then we started the real run.
 bernstein evolve --budget 5.00 --phase observe --days 30
 ```
 
-The command above is quoted from the original account of the run. See the
-current CLI example below.
-
 ---
 
 ## Days 1–14: Observation phase
@@ -301,11 +298,13 @@ evolve:
     rollback_window_hours: 48
 ```
 
-In an existing workspace with completed runs and `evolve.github_sync`
-disabled in `bernstein.yaml`, inspect local failure-pattern drafts:
+To run it yourself:
 
 ```bash
-bernstein evolve run --dry-run
+pip install bernstein
+cd your-project
+bernstein init
+bernstein evolve --budget 5.00
 ```
 
 Source: https://github.com/sipyourdrink-ltd/bernstein
