@@ -26,11 +26,12 @@ import hashlib
 import json
 import re
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-from bernstein.compliance import iso42001
+from bernstein.compliance import evidence_pack, iso42001
 from bernstein.compliance.evidence_pack import (
     SUPPORTED_STANDARDS,
     build_evidence_pack,
@@ -326,3 +327,65 @@ def test_build_evidence_pack_is_deterministic(tmp_path: Path) -> None:
     b = build_evidence_pack(sdd_dir=sdd, standard="iso-42001", output_path=tmp_path / "b.zip")
     assert a.sha256 == b.sha256
     assert (tmp_path / "a.zip").read_bytes() == (tmp_path / "b.zip").read_bytes()
+
+
+def test_iso42005_export_references_only_matching_records(tmp_path: Path) -> None:
+    sdd = _seed_sdd(tmp_path)
+    audit_log = sdd / "audit" / "log.jsonl"
+    unrelated = json.loads(audit_log.read_text(encoding="utf-8"))
+    refusal = {
+        **unrelated,
+        "timestamp": "2026-01-06T10:00:00+00:00",
+        "event_type": "capability_matrix_refusal",
+        "details": {"mode": "enforce", "reason": "fixture", "offending_tools": ["example"], "chain": ["parent"]},
+    }
+    later = {**refusal, "timestamp": "2026-01-07T10:00:00+00:00", "details": {**refusal["details"], "mode": "audit"}}
+    audit_log.write_text("".join(json.dumps(event) + "\n" for event in (later, refusal, unrelated)), encoding="utf-8")
+    first, second = tmp_path / "first.zip", tmp_path / "second.zip"
+    a = build_evidence_pack(sdd_dir=sdd, standard="iso-42005", output_path=first)
+    b = build_evidence_pack(sdd_dir=sdd, standard="iso-42005", output_path=second)
+    assert a.sha256 == b.sha256
+    assert first.read_bytes() == second.read_bytes()
+    assert a.controls_mapped == 0
+    assert a.controls_partial == 2
+
+    with zipfile.ZipFile(first) as archive:
+        rows = json.loads(archive.read("controls.json"))["controls"]
+        refs = {row["control_id"]: row["evidence_refs"] for row in rows if row["evidence_refs"]}
+        assert refs == {
+            "impact.foreseeable-misuse": ["audit-chain/events.jsonl:2"],
+            "impact.mitigations": ["audit-chain/events.jsonl:2"],
+        }
+        for member, line in (ref.rsplit(":", 1) for refs_for_row in refs.values() for ref in refs_for_row):
+            assert json.loads(archive.read(member).splitlines()[int(line) - 1]) == refusal
+
+    for name, since in (("audit-only", later["timestamp"]), ("empty", "2026-02-01T00:00:00+00:00")):
+        output = tmp_path / f"{name}.zip"
+        pack = build_evidence_pack(sdd_dir=sdd, standard="iso-42005", since=since, output_path=output)
+        assert pack.event_count == (1 if name == "audit-only" else 0)
+        assert (pack.controls_mapped, pack.controls_partial, pack.controls_organisational, pack.controls_todo) == (
+            0,
+            0,
+            3,
+            2,
+        )
+        with zipfile.ZipFile(output) as archive:
+            assert all(not row["evidence_refs"] for row in json.loads(archive.read("controls.json"))["controls"])
+
+
+@pytest.mark.parametrize("field", ["verdict", "status"])
+def test_iso42005_export_rejects_non_string_catalogue_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    original = get_standard_map("iso-42005")
+    catalogue = deepcopy(original)
+    catalogue["controls"][0][field] = []
+    output = tmp_path / "invalid.zip"
+    sdd = _seed_sdd(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setitem(evidence_pack._STANDARD_MAPS, "iso-42005", catalogue)
+        with pytest.raises(ValueError, match="invalid ISO 42005 verdict/status"):
+            build_evidence_pack(sdd_dir=sdd, standard="iso-42005", output_path=output)
+    assert not output.exists()
+    assert get_standard_map("iso-42005") is original
+    assert build_evidence_pack(sdd_dir=sdd, standard="iso-42005", output_path=output).event_count == 1
