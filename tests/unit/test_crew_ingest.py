@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from bernstein.adapters.crew_ingest import (
     CrewTask,
     IngestedCrewRun,
 )
+from bernstein.core.config.manifest import load_manifest
 from bernstein.core.identity.delegation import DelegationLedger
 from bernstein.core.observability.ingest_contract import IngestAdapterDeclaration
 
@@ -166,6 +168,67 @@ def test_reingesting_same_fixture_is_idempotent(
     path = ledger.receipt_path(run.run_id)
     lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(lines) == 2
+
+
+def test_ingest_declares_final_delegation_head(adapter: CrewIngestAdapter, ledger: DelegationLedger) -> None:
+    run = adapter.ingest_trace(FIXTURE_PATH)
+    receipts = adapter.record_handoffs_to_ledger(ledger, run)
+    manifest = load_manifest(ledger.root.parent, run.run_id)
+    assert manifest is not None
+    assert manifest.delegation_head_hmac == receipts[-1].hmac
+    assert manifest.delegation_hop_count == len(receipts)
+    assert manifest.manifest_hash == manifest.compute_hash()
+
+    adapter.record_handoffs_to_ledger(ledger, run)
+    assert load_manifest(ledger.root.parent, run.run_id) == manifest
+
+
+@pytest.mark.parametrize("kept", [0, 1])
+def test_ingested_chain_truncation_fails_verification(
+    adapter: CrewIngestAdapter, ledger: DelegationLedger, kept: int
+) -> None:
+    run = adapter.ingest_trace(FIXTURE_PATH)
+    adapter.record_handoffs_to_ledger(ledger, run)
+    path = ledger.receipt_path(run.run_id)
+    lines = path.read_text().splitlines()
+    path.write_text("\n".join(lines[:kept]) + "\n")
+
+    result = adapter.verify_run(ledger, run.run_id, key=TEST_KEY)
+    assert not result.valid
+    assert not result.chain_ok
+    assert any("mismatch" in error for error in result.errors)
+
+    # A matching truncated trace cannot replace the original declaration.
+    from dataclasses import replace
+
+    truncated = replace(run, handoffs=run.handoffs[:kept])
+    with pytest.raises(ValueError, match="declared delegation head mismatch"):
+        adapter.record_handoffs_to_ledger(ledger, truncated)
+
+
+def test_ingested_chain_without_manifest_is_incomplete(adapter: CrewIngestAdapter, ledger: DelegationLedger) -> None:
+    run = adapter.ingest_trace(FIXTURE_PATH)
+    adapter.record_handoffs_to_ledger(ledger, run)
+    (ledger.root.parent / "runtime" / "manifests" / f"{run.run_id}.json").unlink()
+    result = adapter.verify_run(ledger, run.run_id, key=TEST_KEY)
+    assert not result.valid
+    assert result.incomplete
+
+
+def test_reingest_rejects_tampered_receipt(adapter: CrewIngestAdapter, ledger: DelegationLedger) -> None:
+    run = adapter.ingest_trace(FIXTURE_PATH)
+    adapter.record_handoffs_to_ledger(ledger, run)
+    path = ledger.receipt_path(run.run_id)
+    lines = path.read_text().splitlines()
+    receipt = json.loads(lines[0])
+    receipt["subject"] = "role:forged"
+    lines[0] = json.dumps(receipt)
+    path.write_text("\n".join(lines) + "\n")
+    manifest = load_manifest(ledger.root.parent, run.run_id)
+
+    with pytest.raises(ValueError, match="fail verification"):
+        adapter.record_handoffs_to_ledger(ledger, run)
+    assert load_manifest(ledger.root.parent, run.run_id) == manifest
 
 
 def test_crew_callback_handler_records_trace(adapter: CrewIngestAdapter, ledger: DelegationLedger) -> None:

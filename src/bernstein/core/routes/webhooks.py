@@ -27,6 +27,7 @@ from bernstein.core.webhook_signatures import verify_hmac_sha256
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.models import TriggerEvent
     from bernstein.core.orchestration.trigger_manager import TriggerGateResult, TriggerManager
     from bernstein.core.trigger_sources.receipt import TriggerAdmission
 
@@ -459,11 +460,19 @@ def _get_trigger_manager(request: Request) -> TriggerManager | None:
     ``bernstein triggers list`` skips construction when the file is absent.
     """
     from bernstein.core.orchestration.trigger_manager import TriggerManager
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
 
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
-    if sdd_dir is None or not (sdd_dir / "config" / "triggers.yaml").exists():
+    if sdd_dir is None:
         return None
-    return TriggerManager(sdd_dir)
+    try:
+        (sdd_dir / "config" / "triggers.yaml").stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError:
+        # Let the manager report unavailable policy and suppress mapped tasks.
+        pass
+    return TriggerManager(sdd_dir, quarantine_store=DeclarationQuarantineStore(sdd_dir.parent))
 
 
 def _push_trigger_event(event: Any) -> Any:
@@ -885,6 +894,60 @@ def _handle_gitlab_note(
     return [task] if task is not None else []
 
 
+def _first_text(*values: object) -> str:
+    return next((value for value in values if isinstance(value, str) and value), "")
+
+
+def _gitlab_trigger_event(data: dict[str, Any], event_type: str, tenant_id: str) -> TriggerEvent:
+    """Project the authenticated delivery into workspace trigger inputs."""
+    import json
+
+    from bernstein.core.models import TriggerEvent
+
+    attrs = data.get("object_attributes")
+    attrs = attrs if isinstance(attrs, dict) else {}
+    project = data.get("project")
+    project = project if isinstance(project, dict) else {}
+    user = data.get("user")
+    user = user if isinstance(user, dict) else {}
+    delivery_identity = hashlib.sha256(
+        json.dumps([tenant_id, data], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return TriggerEvent(
+        source="gitlab_webhook",
+        repo=_first_text(project.get("path_with_namespace"), project.get("name")),
+        branch=_first_text(attrs.get("ref"), data.get("ref"), attrs.get("source_branch")),
+        sha=_first_text(attrs.get("sha"), data.get("sha")),
+        sender=_first_text(user.get("username"), user.get("name")),
+        metadata={
+            "event_type": event_type,
+            "delivery_identity": delivery_identity,
+            "cooldown_scope": hashlib.sha256(tenant_id.encode()).hexdigest(),
+        },
+    )
+
+
+def _record_gitlab_trigger_outcome(
+    manager: TriggerManager, event: TriggerEvent, gate: TriggerGateResult, *, task_id: str = ""
+) -> None:
+    if gate.trigger_name is None:
+        return
+    event_type = event.metadata["event_type"]
+    summary = f"GitLab {event_type} suppressed: {gate.reason}" if gate.suppressed else f"GitLab {event_type} delivery"
+    try:
+        manager.record_fire(
+            trigger_name=gate.trigger_name,
+            source=event.source,
+            task_id=task_id,
+            dedup_key=gate.dedup_key or "",
+            summary=summary,
+            produced=bool(task_id),
+            cooldown_scope=event.metadata["cooldown_scope"],
+        )
+    except OSError:
+        logger.warning("Could not append GitLab trigger history", exc_info=True)
+
+
 @router.post("/webhooks/gitlab", status_code=200)
 async def gitlab_webhook(request: Request) -> JSONResponse:
     """Receive a GitLab CI webhook, verify token, and create ci-fix tasks.
@@ -898,6 +961,8 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
     plaintext token in the ``x-gitlab-token`` header.
     Returns 200 on success, 401 on bad/missing token.
     """
+    from bernstein.core.orchestration.trigger_manager import compute_dedup_key
+
     store = _get_store(request)
     tenant_id = request_tenant_id(request)
     body_bytes = await request.body()
@@ -939,10 +1004,40 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
             content={"event_type": event_type, "tasks_created": 0, "task_ids": []},
         )
 
+    # Validate the mapped tasks before a matching rule reserves delivery.
+    task_requests = [TaskCreate(**payload, tenant_id=tenant_id) for payload in task_payloads]
+    manager = _get_trigger_manager(request)
+    gate = None
+    event = None
+    if manager is not None:
+        event = _gitlab_trigger_event(data, event_type, tenant_id)
+        gate = manager.gate_direct_task(event)
+        if gate.suppressed and gate.trigger_name is not None:
+            if gate.reason == "deduplicated":
+                key = compute_dedup_key(gate.trigger_name, event)
+                if not any(
+                    row.get("dedup_key") == key and row.get("task_id") and row.get("produced", True)
+                    for row in manager.get_fire_history(limit=None)
+                ):
+                    return JSONResponse(status_code=503, content={"detail": "GitLab delivery outcome is unconfirmed"})
+            _record_gitlab_trigger_outcome(manager, event, gate)
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "event_type": event_type,
+                    "tasks_created": 0,
+                    "task_ids": [],
+                    "skipped_reason": f"trigger_suppressed ({gate.trigger_name}: {gate.reason})",
+                },
+            )
+
     created_ids: list[str] = []
-    for payload_dict in task_payloads:
-        task = await store.create(TaskCreate(**payload_dict, tenant_id=tenant_id))
+    for task_request in task_requests:
+        task = await store.create(task_request)
         created_ids.append(task.id)
+
+    if manager is not None and event is not None and gate is not None:
+        _record_gitlab_trigger_outcome(manager, event, gate, task_id=created_ids[0])
 
     return JSONResponse(
         status_code=200,

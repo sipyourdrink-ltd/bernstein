@@ -19,6 +19,7 @@ from bernstein.core.llm import call_llm
 from bernstein.core.manager_parsing import (
     _parse_upgrade_details,
     _resolve_depends_on,
+    dispatch_distribution,
     parse_tasks_response,
     raw_dicts_to_tasks,
 )
@@ -168,7 +169,7 @@ async def _run_shape_check_with_retry(
 
     try:
         retry_raw = parse_tasks_response(retry_response)
-        retry_tasks = raw_dicts_to_tasks(retry_raw)
+        retry_tasks = raw_dicts_to_tasks(retry_raw, classify_dispatch=True)
     except Exception as exc:
         logger.error("Re-prompt response could not be parsed: %s", exc)
         return tasks
@@ -348,7 +349,7 @@ async def plan(
 
         # 6. Parse response
         raw_tasks = parse_tasks_response(raw_response)
-        tasks = raw_dicts_to_tasks(raw_tasks)
+        tasks = raw_dicts_to_tasks(raw_tasks, classify_dispatch=True)
 
         if not tasks:
             logger.warning("LLM returned no valid tasks")
@@ -370,6 +371,7 @@ async def plan(
         # Log a one-line shape summary per slice for operator visibility.
         for idx, task in enumerate(tasks, start=1):
             logger.info("slice %d: %s · %s", idx, task.title, summarise_slice(task))
+        logger.info("Plan dispatch: %s", dispatch_distribution(tasks))
 
         # 7. Resolve dependency titles to IDs
         _resolve_depends_on(tasks)

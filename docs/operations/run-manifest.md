@@ -3,8 +3,8 @@
 Every `bernstein run` writes a manifest capturing the complete configuration
 of that orchestration run: model routing, budget ceiling, approval-gate
 mode, agent-adapter settings, and who/when/what-commit triggered it. The
-manifest is immutable, written once at run start, and hashed so its
-configuration can be cited as SOC 2 / ISO 27001 evidence.
+configuration is written at run start; the final delegation chain head is
+committed atomically at run close. The hash covers the whole declaration.
 
 > This is a different concept from [named team manifests](team-manifests.md)
 > (`core/teams/manifest.py`), which pin a reusable role/model/response-profile
@@ -37,16 +37,29 @@ payloads.
 | `agent_adapter` | CLI adapter, model, max agents, max tasks per agent. |
 | `provenance` | `triggered_by` (OS user), `triggered_at_iso`, `commit_sha` (`git rev-parse HEAD`). |
 | `orchestrator_config` | Snapshot of the run's `OrchestratorConfig` fields (poll interval, retries, merge strategy, recovery mode, dry-run, plan mode, and more). |
+| `delegation_head_hmac` / `delegation_hop_count` | Last delegation receipt HMAC and receipt count, declared at close; absent before close. |
+| `delegation_seal` | Audit-key HMAC authenticating the final declaration and configuration. |
 | `manifest_hash` | SHA-256 over the canonical JSON of every other field. |
 
-## Hashing and immutability
+## Hashing and finalization
 
 `manifest_hash` is computed over the canonical (sorted-key, minimal-separator)
-JSON serialization of the manifest with `manifest_hash` itself excluded, so
-the hash uniquely identifies the run's configuration. The manifest is
-written once at run start and never mutated afterward — a config drift
-between two runs shows up as a `manifest diff`, never as an edit to an
-existing manifest file.
+JSON serialization of the manifest with `manifest_hash` itself excluded and
+unset delegation fields omitted (preserving pre-upgrade hashes), so
+the hash identifies the configuration and, after close, the delegation head.
+Configuration fields stay fixed. After writers drain, the orchestrator adds
+the final receipt digest/count, seals the declaration with the audit key, and
+recomputes `manifest_hash`, committing the result in one atomic replacement under the delegation append lock. A failed
+write leaves the startup manifest intact. Older or unclosed manifests without
+a head produce an incomplete delegation verification (exit `3`), never valid.
+See [delegation verification](delegation-verify.md).
+
+The SHA-256 digest is a checksum, not a signature. `delegation_seal` is an
+audit-key HMAC over the manifest fields except the seal and public checksum.
+Verification checks this seal as well as the head/count. A keyless writer cannot
+forge a shorter declaration by recomputing the checksum. See
+[delegation verification](delegation-verify.md) for export layout, legacy behavior
+and replay/key-holder limits.
 
 ## Where it lives
 

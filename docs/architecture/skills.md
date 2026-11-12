@@ -141,9 +141,11 @@ without emitting the event.
 ## Sources
 
 Skills are aggregated from multiple sources into a single
-:class:`SkillLoader`. Name collisions abort startup with
-:class:`DuplicateSkillError` - duplicate names across sources are never
-silently shadowed.
+:class:`SkillLoader`. Source enumeration failures and artifact registration
+errors (including :class:`DuplicateSkillError`) quarantine the failing entry
+while other skills load. The default loader persists these markers and journals
+them; retry requires explicit [re-enable](../operations/declaration-quarantine.md).
+Duplicate names across sources are never silently shadowed.
 
 ### First-party
 

@@ -297,6 +297,31 @@ class ReconcileEntry:
     observed_at: int | None
     evidence_ref: str
 
+    @property
+    def idempotency_key(self) -> str:
+        """Identify the intended value for this kind and entity.
+
+        Policy and observations remain separate apply inputs. This derived
+        key does not alter the signed diff's serialized bytes.
+        """
+        desired = self.declared_value
+        desired_digest = None if desired is None else hashlib.sha256(desired.encode("utf-8")).hexdigest()
+        return _content_hash([self.kind.value, self.entity_id, desired_digest])
+
+    def already_satisfied(self, current: SnapshotEntity | None, *, absence_confirmed: bool = False) -> bool:
+        """Compare fresh evidence, treating an unread entity as unknown.
+
+        A missing observation is evidence of absence only when the caller
+        confirms it. A match is not an approval to perform a change.
+        """
+        if current is None:
+            return absence_confirmed and self.declared_value is None
+        return (
+            current.kind is self.kind
+            and current.entity_id == self.entity_id
+            and current.observed_value == self.declared_value
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Return the canonical serialization."""
         return {

@@ -2213,6 +2213,7 @@ class TriggerFireRecord:
     dedup_key: str
     event_summary: str = ""
     produced: bool = True
+    cooldown_scope: str | None = None
 
 
 @dataclass(frozen=True)

@@ -60,7 +60,6 @@ KNOWN_ORPHANS_TOKENS = frozenset(
 # of these fails until struck from the list. The list only ever shrinks.
 KNOWN_ORPHANS_SECURITY = frozenset(
     {
-        "authzen",
         "capability_delta",
         "claude_permission_profiles",
         "command_allowlist",
@@ -74,7 +73,6 @@ KNOWN_ORPHANS_SECURITY = frozenset(
         "dp_telemetry",
         "engagement_mandate",
         "environment_digest",
-        "external_policy_hook",
         "hipaa",
         "identity_spawn_anchor",
         "ip_allowlist",

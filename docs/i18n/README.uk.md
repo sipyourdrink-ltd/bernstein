@@ -1,13 +1,5 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg">
-  <img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg" width="340">
-</picture>
-
-<br>
-
 <img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
 
 <br>
@@ -15,20 +7,16 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### опенсорсний governance-шар для AI-агентів
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
-[![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
-[![GHCR](https://img.shields.io/badge/ghcr.io-bernstein-2496ed?logo=docker&logoColor=white)](https://ghcr.io/sipyourdrink-ltd/bernstein)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab)](https://python.org)
 [![License](https://img.shields.io/github/license/sipyourdrink-ltd/bernstein)](https://github.com/sipyourdrink-ltd/bernstein/blob/main/LICENSE)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sipyourdrink-ltd/bernstein/badge)](https://scorecard.dev/viewer/?uri=github.com/sipyourdrink-ltd/bernstein)
-[![CodeQL](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/codeql.yml)
-[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
-[![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
-<a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/sipyourdrink-ltd/bernstein?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/sipyourdrink-ltd/bernstein)
+![built with Bernstein](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/built-with-bernstein.svg)
 
-[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [deepwiki](https://deepwiki.com/sipyourdrink-ltd/bernstein) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -135,7 +123,7 @@ flowchart LR
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -144,7 +132,15 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
+`bernstein doctor --json` також виводить результати контракту аудиту `findings`, які збігаються з результатами `bernstein govern audit --only INS --json` за однакових спостережень за станом встановлення. Звичайний звіт doctor зберігає попередній вигляд. Стабільні ідентифікатори перевірок описано в [посібнику з експлуатації doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
+
 pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://docs.bernstein.run/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+`bernstein worktrees sweep` показує попередній список робочих дерев і sandbox-сесій, що залишилися після завершених завдань, із віком та обсягом на диску. Видалити можна лише робочі дерева, використовуючи `--apply` і окреме схвалення видалення. Sandbox-сесії лише включаються до звіту (видалення: #6571); `doctor` попереджає про давні витоки. Див. [порядок очищення](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+
+У разі збою ініціалізації навичка потрапляє до [карантину](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) зі збереженням причини та події аудиту. `bernstein status` показує кількість; `doctor` і `govern audit` повідомляють про вимкнені оголошення. Після усунення причини явно зніміть позначку командою `bernstein quarantine re-enable DECLARATION_ID`.
+
+[GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -164,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — панель у терміналі | `bernstein gui serve` — панель у браузері |
 
 ### підтвердження виконання
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
 
 Детермінізм тут — це властивість, яку ви перевіряєте, а не те, що приймається на віру. Запустіть один раз з увімкненим аудитом, а потім перевірте збережені записи:
 
@@ -185,6 +181,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Квитанція виконання об'єднує заголовок журналу, заголовок хребта походження (якщо записувалися події) та, опціонально, діапазон ланцюга аудиту під єдиним суб'єктом, підписаним Ed25519 із вбудованим відкритим ключем. Рецензент із цим файлом та відкритим ключем оператора може переконатися, що вбудовані дії та ланцюги не змінювалися: без ключа HMAC, без активного `.sdd/`, і з кодом виходу `2` із зазначенням першого відмінного кроку в разі підробки. Ця квитанція ідентифікує стан журналу, який вона містить; доведення того, що цей стан є повним завершеним журналом, додатково вимагає незалежної печатки заголовка/кількості. З одним лише файлом без `--public-key` перевірка стосується виключно внутрішньої цілісності. Подробиці у розділі [детерміноване відтворення](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 Така ж перевірюваність застосовується до оціночних показників. `bernstein bench run <suite> --reliability k` (також записується як `bernstein eval --reliability k`) запускає кожне завдання `k` разів за фіксованої координації, а потім звітує про нижню межу `pass^k` (усі `k` спроб мають бути успішними) разом із верхньою межею `pass@1`. Цей результат запечатується в підписаній квитанції, яку `bernstein bench reliability-verify` перераховує офлайн, тому сфальсифікована нижня межа не пройде верифікацію. Подробиці: [нижня межа надійності pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+Для машинозчитуваних результатів перевірок використовуйте `bernstein govern audit --format json` або `--format sarif`, а для перевірки в CI — `--strict --quiet`. Докладніше: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` порівнює ланцюжок квитанцій із кінцевим хешем і кількістю переходів, запечатаними в маніфесті запуску за допомогою HMAC із ключем аудиту. Перевірка виявляє видалення хвоста, підміну й нарощування ланцюжка після закриття, зокрема переписування оголошення без ключа. Видалення оголошення залишає запуск незавершеним (код виходу `3`), і він ніколи не вважається дійсним. Це не виявляє повторного пред’явлення старішого справжнього знімка й не захищає від автора запису, який володіє ключем аудиту. Див. [порядок перевірки делегування](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### як це працює
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
@@ -286,9 +286,9 @@ Bernstein названо на честь Леонарда Бернстайна, 
 Створіть порожній контейнер з аудитом без планувальника та процесів агентів: `bernstein_run(template="administrative", goal="Weekly sprint")`. Додавайте ручні завдання через `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` і перевіряйте стан через `bernstein_run_status(run_id="admin-...")`. Завдання можна брати через звичайний API призначення, але автоматична оркестрація їх не запускає. Непорожній запуск завершується, коли кожне завдання має статус `done`, `closed` або `cancelled`; порожній залишається відкритим. [Порядок роботи](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### участь, підтримка, ліцензія
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
-Запрошуємо створювати PR; файл [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) містить правила налаштування та стилю коду. Повідомлення про вразливості приймаються через [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). Якщо Bernstein заощаджує ваш час: [GitHub Sponsors](https://github.com/sponsors/chernistry). Контакт: [forte@bernstein.run](mailto:forte@bernstein.run).
+Запрошуємо створювати PR; файл [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) містить правила налаштування та стилю коду. Повідомлення про вразливості приймаються через [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). Контакт: [forte@bernstein.run](mailto:forte@bernstein.run).
 
 Метадані для цитування містяться в [CITATION.cff](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CITATION.cff). Ліцензія: [Apache-2.0](https://github.com/sipyourdrink-ltd/bernstein/blob/main/LICENSE); назва проєкту захищена окремо в [TRADEMARKS.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md).
 

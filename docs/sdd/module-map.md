@@ -156,6 +156,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `gpt_researcher.py`             | gpt-researcher adapter for Bernstein |
 | `gpt_researcher_runner.py`      | Standalone runner for gpt-researcher, launched by path |
 | `gptme.py`                      | gptme CLI adapter |
+| `graph_trace_ingest.py`         | Ingest adapter for graph-shaped agent runtimes (#4964) |
 | `hermes.py`                     | Hermes Agent (Nous Research) CLI adapter |
 | `holmesgpt.py`                  | HolmesGPT adapter for Bernstein |
 | `hook_gate_render.py`           | Render in-process verification-gate hooks for capable adapters (issue #2360) |
@@ -180,6 +181,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `openai_agents_runner.py`       | Python entrypoint that runs an OpenAI Agents SDK session |
 | `opencode.py`                   | OpenCode CLI adapter |
 | `openhands.py`                  | OpenHands CLI adapter |
+| `osv_scanner.py`                | Feed-pinned OSV-Scanner adapter and SARIF normalization |
 | `pi.py`                         | Pi (pi-coding-agent) CLI adapter |
 | `plandex.py`                    | Plandex CLI adapter |
 | `plugin_sdk.py`                 | Adapter plugin SDK for third-party agent integration |

@@ -41,7 +41,9 @@ from bernstein.core.worktrees.classifier import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
+    from bernstein.core.sandbox.leak_sweep import LeakedLane
     from bernstein.core.security.audit import AuditLog
+    from bernstein.core.security.dual_approval import ApprovalStatus
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +343,7 @@ def list_cmd(workdir: Path, as_json: bool) -> None:
 )
 @click.option(
     "--dry",
+    "--dry-run",
     "dry",
     is_flag=True,
     default=False,
@@ -373,7 +376,7 @@ def gc_cmd(workdir: Path, yes: bool, apply_changes: bool, dry: bool, force_unsav
     Worktrees that still hold unsaved work (uncommitted changes or unmerged
     commits) are preserved and reported as safety-skips unless
     ``--force-unsaved`` is passed. The safety decision - reap or skip - is
-    recorded in the HMAC-chained audit log either way, so a skip is never
+    recorded in the HMAC-chained audit log during apply, so a skip is never
     silent.
     """
     # `--dry` outranks the opt-ins: between "delete" and "do not", the flag that
@@ -402,6 +405,15 @@ def gc_cmd(workdir: Path, yes: bool, apply_changes: bool, dry: bool, force_unsav
         _report_safety_skips(console, unsaved)
     if unsaved and force_unsaved:
         console.print(render_worktrees_table(unsaved))
+
+    if dry_run:
+        for row in targets:
+            _print_reap_progress(console, row, False, dry_run=True)
+        console.print(
+            f"[cyan]Dry run - nothing was written or deleted. Re-run with [bold]--apply[/bold] to reap "
+            f"{len(targets)} worktree(s).[/cyan]"
+        )
+        return
 
     if not targets:
         # Everything reapable was actually an unsaved worktree we are
@@ -440,14 +452,6 @@ def gc_cmd(workdir: Path, yes: bool, apply_changes: bool, dry: bool, force_unsav
     except GcLockError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(2) from exc
-
-    if dry_run:
-        # Said after the plan, not before it: the reader has just seen a list of
-        # paths and needs to know nothing happened to them.
-        console.print(
-            f"[cyan]Dry run - nothing was deleted. Re-run with [bold]--apply[/bold] to reap "
-            f"{len(targets)} worktree(s).[/cyan]"
-        )
 
 
 def _report_safety_skips(console: Console, skipped: list[ClassifiedWorktree]) -> None:
@@ -743,3 +747,276 @@ def unlock_cmd(workdir: Path, force: bool, as_json: bool) -> None:
             "Pass --force only if you are sure that process is dead."
         )
         raise SystemExit(1)
+
+
+@worktrees_group.command("sweep")
+@click.option("--workdir", type=click.Path(path_type=Path, file_okay=False), default=".", show_default=True)
+@click.option(
+    "--apply", "apply_changes", is_flag=True, help="Remove approved worktrees; sandbox lanes are report-only (#6571)."
+)
+@click.option("--dry-run", "--dry", is_flag=True, help="Force a read-only preview, even with --apply.")
+@click.option(
+    "--removal-approval",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    help="JSON containing a removal request and responses under the existing dual-approval model.",
+)
+@click.option("--measure-disk", is_flag=True, help="Allow read-only backend probes for sandbox disk usage.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable lanes and removal operation.")
+def sweep_cmd(
+    workdir: Path,
+    apply_changes: bool,
+    dry_run: bool,
+    removal_approval: Path | None,
+    measure_disk: bool,
+    as_json: bool,
+) -> None:
+    """List task-terminal worktrees and sandbox sessions, with age and disk use.
+
+    Dry run by default. Applying requires a separate removal-class approval
+    bound to the operation printed by the preview. Exit 1 refuses an unavailable
+    source, invalid approval or changed plan. Exit 2 reports an occupied GC lock.
+    Sandboxes are report-only (#6571), excluded from approval and apply.
+    Unknown sandbox disk usage and unsaved contents are null / '?', never zero/no.
+    """
+    from bernstein.core.sandbox.leak_sweep import (
+        lane_removal_operation,
+        sweep_leaked_lanes,
+    )
+
+    repo_root = workdir.resolve()
+    outcomes: list[dict[str, object]] = []
+    error: Exception | None = None
+    removed = 0
+    try:
+        lanes = sweep_leaked_lanes(repo_root, measure_disk=measure_disk)
+        operation = lane_removal_operation(lanes)
+        if apply_changes and not dry_run:
+            from bernstein.core.security.dual_approval import (
+                ApprovalChannel,
+                ApprovalRequest,
+                ApprovalResponse,
+                evaluate_approval,
+            )
+
+            if removal_approval is None:
+                raise PermissionError("--apply requires --removal-approval (approval class: removal)")
+            payload = json.loads(removal_approval.read_text())
+            request = ApprovalRequest(**payload["request"])
+            responses = [
+                ApprovalResponse(**{**row, "channel": ApprovalChannel(row["channel"])}) for row in payload["responses"]
+            ]
+            approval = evaluate_approval(request, responses)
+            removed = remove_leaked_lanes(repo_root, lanes, removal_approval=approval, outcomes=outcomes)
+        else:
+            removed = 0
+    except GcLockError as exc:
+        click.echo(str(exc), err=True)
+        raise click.exceptions.Exit(2) from exc
+    except Exception as exc:
+        if not outcomes:
+            raise click.ClickException(str(exc)) from exc
+        error = exc
+        removed = sum(row["removal_status"] == "removed" for row in outcomes)
+
+    if as_json:
+        # Keep the listing composable with the existing sandbox leaks JSON list.
+        rows = [
+            {**lane.to_dict(), "removal_operation": operation, **(outcomes[i] if outcomes else {})}
+            for i, lane in enumerate(lanes)
+        ]
+        click.echo(json.dumps(rows, indent=2))
+        if error is not None:
+            raise click.ClickException(str(error)) from error
+        return
+    table = Table(title="Leaked lanes", header_style="bold cyan")
+    for column in ("Kind", "Resource", "Tasks", "Age", "Size", "Unsaved", "Removal"):
+        table.add_column(column, overflow="fold")
+    removal_statuses: list[str] = []
+    for i, lane in enumerate(lanes):
+        unsaved = "?"
+        if lane.has_unsaved_work is not None:
+            unsaved = "yes" if lane.has_unsaved_work else "no"
+        removal_status = "report only (removal: #6571)"
+        if lane.removal_eligible:
+            removal_status = str(outcomes[i]["removal_status"]) if outcomes else "approval required"
+        removal_statuses.append(removal_status)
+        table.add_row(
+            lane.kind,
+            str(lane.path or lane.resource_id),
+            ", ".join(lane.task_ids),
+            "?" if lane.age_seconds is None else format_age(lane.age_seconds),
+            "?" if lane.size_bytes is None else format_size(lane.size_bytes),
+            unsaved,
+            removal_status,
+        )
+    console = Console()
+    console.print(table)
+    # Keep exact IDs and outcomes available even when the table folds a path.
+    for lane, status in zip(lanes, removal_statuses, strict=True):
+        click.echo(f"{lane.kind} {lane.resource_id}: {status}")
+    click.echo(f"Removal operation: {operation}")
+    click.echo(f"{removed} removed." if apply_changes and not dry_run else "Dry run - nothing was written or deleted.")
+    if error is not None:
+        raise click.ClickException(str(error)) from error
+
+
+def _worktree_removal_veto(workdir: Path, row: ClassifiedWorktree) -> str | None:
+    """Read live PID and content state, including for corrupt directories."""
+    from bernstein.core.worktrees.classifier import (
+        _coerce_pid,
+        _corrupt_dir_has_content,
+        _probe_unsaved_work,
+        _process_alive,
+        _read_pid_record,
+    )
+
+    # CORRUPT rows omit PID metadata, so always read the record.
+    pid = _coerce_pid(_read_pid_record(workdir, row.session_id))
+    if pid is not None and _process_alive(pid):
+        return "worker PID is alive"
+    unsaved = (
+        _corrupt_dir_has_content(row.path)
+        if row.state is WorktreeState.CORRUPT
+        else _probe_unsaved_work(row.path, workdir)
+    )
+    return "unsaved work" if unsaved else None
+
+
+def remove_leaked_lanes(
+    workdir: Path,
+    lanes: list[LeakedLane],
+    *,
+    removal_approval: ApprovalStatus | None = None,
+    outcomes: list[dict[str, object]] | None = None,
+) -> int:
+    """Remove a hash-bound plan under the GC lock and the removal approval gate.
+
+    Approval responses are re-evaluated (TTL, denials, independent approvers).
+    The entire source audit chain is verified before it can authorize deletion.
+    Each intent is journaled before deletion and each outcome after it; an
+    audit append failure prevents the next destructive action. Optional outcomes
+    record every lane, including those not attempted after an error. Unsaved
+    work and live worker PIDs veto worktree removal on a best-effort recheck.
+    Sandbox lanes are report-only and never reach a backend removal call.
+    """
+    from bernstein.core.sandbox.leak_sweep import (
+        SandboxSweepUnavailableError,
+        lane_removal_operation,
+        sweep_leaked_lanes,
+    )
+    from bernstein.core.security.audit import AuditLog, load_audit_key
+    from bernstein.core.security.dual_approval import evaluate_approval
+    from bernstein.core.worktrees.classifier import classify_worktrees, reap_worktree
+
+    if outcomes is None:
+        outcomes = []
+    outcomes[:] = [
+        {"removal_status": "not_attempted"}
+        if lane.removal_eligible
+        else {"removal_status": "report_only", "removal_reason": "report only (removal: #6571)"}
+        for lane in lanes
+    ]
+    if removal_approval is None:
+        raise PermissionError("removal approval required")
+    approved = evaluate_approval(removal_approval.request, removal_approval.responses)
+    if (
+        not approved.is_approved
+        or approved.request.required_approvals < 2
+        or approved.request.operation != lane_removal_operation(lanes)
+    ):
+        raise PermissionError("removal approval is expired, denied, insufficient, or covers a different plan")
+    removed = 0
+    with lock_gc(workdir):
+        log = AuditLog(workdir / ".sdd/audit", key=load_audit_key())
+        report = log.verify_detailed()
+        if not report.ok or report.tears:
+            errors = [*report.hard_errors, *(tear.describe() for tear in report.tears)]
+            raise SandboxSweepUnavailableError(f"cannot remove from an unverified audit chain: {errors}")
+        if lane_removal_operation(sweep_leaked_lanes(workdir)) != approved.request.operation:
+            raise RuntimeError("removal plan changed since listing")
+        for lane, outcome in zip(lanes, outcomes, strict=True):
+            if not lane.removal_eligible:
+                continue
+            try:
+                if not evaluate_approval(approved.request, approved.responses).is_approved:
+                    raise PermissionError("removal approval expired during sweep")
+                current = sweep_leaked_lanes(workdir)
+                match = next(
+                    (
+                        item
+                        for item in current
+                        if item.removal_eligible and lane_removal_operation([item]) == lane_removal_operation([lane])
+                    ),
+                    None,
+                )
+                if match is None:
+                    raise RuntimeError(f"lane changed since listing: {lane.resource_id}")
+                details = {
+                    **match.to_dict(),
+                    "task_id": match.task_ids[0] if len(match.task_ids) == 1 else None,
+                    "task_ids": list(match.task_ids),
+                    "approval_class": "removal",
+                    "removal_approval_id": approved.request.request_id,
+                    "forced": False,
+                }
+                reason = "unsaved work" if match.has_unsaved_work else None
+                row = next((row for row in classify_worktrees(workdir) if row.path == match.path), None)
+                if row is None:
+                    raise RuntimeError(f"worktree disappeared before removal: {match.resource_id}")
+                reason = _worktree_removal_veto(workdir, row) or reason
+                if reason:
+                    outcome.update(removal_status="skipped", removal_reason=reason)
+                    log.log(
+                        "lane.remove",
+                        "lane-sweep",
+                        match.kind,
+                        match.resource_id,
+                        {**details, "removed": False, "phase": "skipped", "reason": reason},
+                    )
+                    continue
+                log.log(
+                    "lane.remove",
+                    "lane-sweep",
+                    match.kind,
+                    match.resource_id,
+                    {**details, "removed": False, "phase": "intent"},
+                )
+                try:
+                    reason = _worktree_removal_veto(workdir, row)
+                    if reason:
+                        outcome.update(removal_status="skipped", removal_reason=reason)
+                        log.log(
+                            "lane.remove",
+                            "lane-sweep",
+                            match.kind,
+                            match.resource_id,
+                            {**details, "removed": False, "phase": "skipped", "reason": reason},
+                        )
+                        continue
+                    if not reap_worktree(workdir, row):
+                        raise RuntimeError(f"worktree removal failed: {match.resource_id}")
+                except Exception as exc:
+                    log.log(
+                        "lane.remove",
+                        "lane-sweep",
+                        match.kind,
+                        match.resource_id,
+                        {**details, "removed": False, "phase": "failed", "error_type": type(exc).__name__},
+                    )
+                    raise
+                # Preserve the actual deletion outcome even if its audit append fails.
+                outcome["removal_status"] = "removed"
+                removed += 1
+                log.log(
+                    "lane.remove",
+                    "lane-sweep",
+                    match.kind,
+                    match.resource_id,
+                    {**details, "removed": True, "phase": "result"},
+                )
+            except Exception as exc:
+                if outcome["removal_status"] != "removed":
+                    outcome["removal_status"] = "failed"
+                outcome["removal_error"] = str(exc)
+                raise
+    return removed

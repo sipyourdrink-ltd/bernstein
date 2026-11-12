@@ -364,7 +364,7 @@ def _delegation_rows(
     rows: list[dict[str, Any]] = []
     for run_id in _chain_runs(root, "delegation"):
         result = _delegation.verify_run_chain(root=root, run_id=run_id, key=key)
-        if not result.chain_ok:
+        if not result.chain_ok or result.incomplete:
             unverified.append(
                 {
                     "chain": "delegation",

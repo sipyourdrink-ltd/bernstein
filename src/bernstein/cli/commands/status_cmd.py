@@ -27,6 +27,7 @@ from bernstein.cli.helpers import (
 from bernstein.cli.status import collect_rate_limit_snapshots, render_status
 from bernstein.cli.ui import make_console
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult, discover_agents_cached
+from bernstein.core.checks.adapters import doctor_producer
 from bernstein.core.process_utils import list_command_lines, process_cwd
 from bernstein.tui.worker_badges import format_worker_badge, get_badge_for_worker
 
@@ -207,6 +208,10 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     # the dedicated supervisor command to spot a wedged worker.
     data["supervisor"] = _supervisor_status_summary(Path.cwd())
 
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+
+    data["quarantined_declarations"] = len(DeclarationQuarantineStore(Path.cwd()).load())
+
     if as_json or is_json():
         print_json(data)
         return
@@ -222,6 +227,7 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     con = make_console(no_color=force_no_color)
 
     render_status(data, console=con, view_config=vc)
+    con.print(f"Quarantined declarations: {data['quarantined_declarations']}")
 
     supervisor_line = _supervisor_summary_line(Path.cwd())
     if supervisor_line:
@@ -526,6 +532,7 @@ def _print_parked_unavailable(available: bool) -> None:
 _CheckFn = Any  # Callable[[str, bool, str, str, str], None]
 
 
+@doctor_producer("INS-011")
 def _doctor_check_storage(_check: _CheckFn) -> None:
     """Check storage backend connectivity (memory/postgres/redis)."""
     storage_backend = os.environ.get("BERNSTEIN_STORAGE_BACKEND", "memory")
@@ -546,6 +553,7 @@ def _doctor_check_storage(_check: _CheckFn) -> None:
     )
 
 
+@doctor_producer("INS-011")
 def _doctor_check_postgres(_check: _CheckFn) -> None:
     """Check postgres backend connectivity."""
     db_url = os.environ.get("BERNSTEIN_DATABASE_URL")
@@ -585,6 +593,7 @@ def _doctor_check_postgres(_check: _CheckFn) -> None:
         )
 
 
+@doctor_producer("INS-011")
 def _doctor_check_redis(_check: _CheckFn) -> None:
     """Check redis backend connectivity."""
     db_url = os.environ.get("BERNSTEIN_DATABASE_URL")
@@ -635,6 +644,7 @@ def _try_parse_secrets_config(config_path: Path) -> Any | None:
         return None
 
 
+@doctor_producer("INS-012")
 def _doctor_check_secrets(workdir: Path, _check: _CheckFn) -> None:
     """Check secrets manager configuration and connectivity."""
     from bernstein.core.secrets import check_provider_connectivity
@@ -733,6 +743,7 @@ def _add_check(checks: list[dict[str, Any]], name: str, ok: bool, detail: str, f
     checks.append({"name": name, "ok": ok, "detail": detail, "fix": fix, "fix_id": fix_id})
 
 
+@doctor_producer("INS-018")
 def _doctor_check_eval_gate_power(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Advisory: flag statistical eval gate decisions taken below the minimum n (#2520).
 
@@ -749,6 +760,7 @@ def _doctor_check_eval_gate_power(checks: list[dict[str, Any]], workdir: Path) -
     _add_check(checks, advisory["name"], True, detail, fix)
 
 
+@doctor_producer("INS-020")
 def _doctor_check_audit_anchoring(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Surface whether the audit history is anchored outside this machine (#5036).
 
@@ -765,6 +777,7 @@ def _doctor_check_audit_anchoring(checks: list[dict[str, Any]], workdir: Path) -
     _add_check(checks, row["name"], status != "FAIL", detail, row["fix"])
 
 
+@doctor_producer("INS-019")
 def _doctor_check_otel_export(checks: list[dict[str, Any]]) -> None:
     """Surface the live OTLP export advisory (#2526, Phase 4).
 
@@ -787,8 +800,9 @@ def _doctor_check_otel_export(checks: list[dict[str, Any]]) -> None:
     )
 
 
-def _doctor_check_python(checks: list[dict[str, Any]]) -> bool:
-    """Check Python version. Returns True if version is adequate."""
+@doctor_producer("INS-001")
+def _doctor_check_python(checks: list[dict[str, Any]]) -> None:
+    """Check Python version."""
     major, minor = sys.version_info.major, sys.version_info.minor
     py_ok = (major, minor) >= (3, 12)
     _add_check(
@@ -798,23 +812,20 @@ def _doctor_check_python(checks: list[dict[str, Any]]) -> bool:
         f"Python {major}.{minor} (need 3.12+)",
         "Install Python 3.12 or newer" if not py_ok else "",
     )
-    return py_ok
 
 
-def _doctor_check_adapters(checks: list[dict[str, Any]], *, env: Mapping[str, str] | None = None) -> bool:
-    """Check CLI adapters in PATH. Returns True if any found."""
+@doctor_producer("INS-002")
+def _doctor_check_adapters(checks: list[dict[str, Any]], *, env: Mapping[str, str] | None = None) -> None:
+    """Check CLI adapters in PATH."""
     import shutil
 
-    any_adapter = False
     has_path = env is not None and "PATH" in env
-    path_val = env["PATH"] if has_path else None
+    path_val = env["PATH"] if env is not None and has_path else None
     for adapter_name in ("claude", "codex", "gemini"):
         if has_path:
             found = shutil.which(adapter_name, path=path_val) is not None
         else:
             found = shutil.which(adapter_name) is not None
-        if found:
-            any_adapter = True
         _add_check(
             checks,
             f"Adapter: {adapter_name}",
@@ -822,9 +833,9 @@ def _doctor_check_adapters(checks: list[dict[str, Any]], *, env: Mapping[str, st
             "found in PATH" if found else "not in PATH",
             f"Install {adapter_name} CLI - see docs" if not found else "",
         )
-    return any_adapter
 
 
+@doctor_producer("INS-003")
 def _doctor_check_last_green(checks: list[dict[str, Any]], *, env: Mapping[str, str] | None = None) -> None:
     """Surface adapter last-green advisories from the canary projection.
 
@@ -847,12 +858,13 @@ def _doctor_check_last_green(checks: list[dict[str, Any]], *, env: Mapping[str, 
         )
 
 
+@doctor_producer("INS-004")
 def _doctor_check_version_posture(
     checks: list[dict[str, Any]],
     workdir: Path,
     *,
     env: Mapping[str, str] | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     """Seal the adapter version posture into a chain-anchored receipt (#2515).
 
     The advisory rows above are advisory-only console text. This turns the
@@ -867,10 +879,10 @@ def _doctor_check_version_posture(
     try:
         sealed = emit_version_posture_receipt(workdir, env=env)
     except Exception:  # posture is advisory: never break the doctor run
-        return
+        return None
     entries = sealed["entries"]
     if not entries:
-        return  # no tracked adapter installed: nothing to attest
+        return None  # no tracked adapter installed: nothing to attest
     below = sum(1 for e in entries if e["verdict"] == "below_floor")
     unknown = sum(1 for e in entries if e["verdict"] == "unknown_version")
     anchored = "chain-anchored" if sealed["anchored"] else "unanchored (audit write failed)"
@@ -885,17 +897,18 @@ def _doctor_check_version_posture(
         detail,
         "Upgrade below-floor adapters; the receipt records the posture regardless" if below else "",
     )
+    return {"entries": entries, "anchored": sealed["anchored"]}
 
 
-def _doctor_check_auth(checks: list[dict[str, Any]], *, env: Mapping[str, str] | None = None) -> bool:
-    """Check adapter authentication. Returns True if any auth found."""
+@doctor_producer("INS-005")
+def _doctor_check_auth(checks: list[dict[str, Any]], *, env: Mapping[str, str] | None = None) -> None:
+    """Check adapter authentication."""
     from bernstein.core.preflight import (
         _claude_has_oauth_session,  # type: ignore[reportPrivateUsage]
         _codex_has_auth,  # type: ignore[reportPrivateUsage]
         gemini_has_auth,  # type: ignore[reportPrivateUsage]
     )
 
-    any_key = False
     source_env = env if env is not None else os.environ
 
     # Claude
@@ -908,8 +921,6 @@ def _doctor_check_auth(checks: list[dict[str, Any]], *, env: Mapping[str, str] |
             claude_authed = True
         else:
             claude_detail = _NOT_AUTHENTICATED_MSG
-    if claude_authed:
-        any_key = True
     _add_check(
         checks,
         "Auth: claude",
@@ -920,8 +931,6 @@ def _doctor_check_auth(checks: list[dict[str, Any]], *, env: Mapping[str, str] |
 
     # Codex
     codex_authed, codex_method = _codex_has_auth(env=env)
-    if codex_authed:
-        any_key = True
     _add_check(
         checks,
         "Auth: codex",
@@ -933,8 +942,6 @@ def _doctor_check_auth(checks: list[dict[str, Any]], *, env: Mapping[str, str] |
 
     # Gemini
     gemini_authed, gemini_method = gemini_has_auth(env=env)
-    if gemini_authed:
-        any_key = True
     _add_check(
         checks,
         "Auth: gemini",
@@ -944,9 +951,8 @@ def _doctor_check_auth(checks: list[dict[str, Any]], *, env: Mapping[str, str] |
         fix_id="gemini_auth" if not gemini_authed else "",
     )
 
-    return any_key
 
-
+@doctor_producer("INS-006")
 def _doctor_check_port(checks: list[dict[str, Any]], port: int = 8052) -> None:
     """Check if the task server port is available."""
     import socket
@@ -968,6 +974,7 @@ def _doctor_check_port(checks: list[dict[str, Any]], port: int = 8052) -> None:
     )
 
 
+@doctor_producer("INS-007")
 def _doctor_check_workspace(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Check .sdd/ directory structure."""
     required_dirs = [".sdd", ".sdd/backlog", ".sdd/runtime"]
@@ -982,10 +989,14 @@ def _doctor_check_workspace(checks: list[dict[str, Any]], workdir: Path) -> None
     )
 
 
-def _doctor_check_stale_pids(checks: list[dict[str, Any]], workdir: Path) -> list[Path]:
-    """Check for stale PID files. Returns list of stale PID file paths."""
+@doctor_producer("INS-008")
+def _doctor_check_stale_pids(
+    checks: list[dict[str, Any]], workdir: Path, *, stale_pid_paths: list[Path] | None = None
+) -> None:
+    """Check for stale PID files, retaining paths for the optional repair."""
     stale_pids: list[str] = []
-    stale_pid_paths: list[Path] = []
+    if stale_pid_paths is None:
+        stale_pid_paths = []
     for pid_name in ("server.pid", "spawner.pid", "watchdog.pid"):
         pid_path = workdir / ".sdd" / "runtime" / pid_name
         if not pid_path.exists():
@@ -1008,9 +1019,9 @@ def _doctor_check_stale_pids(checks: list[dict[str, Any]], workdir: Path) -> lis
         "Run 'bernstein stop' to clean up" if stale_pids else "",
         fix_id="stale_pids" if stale_pids else "",
     )
-    return stale_pid_paths
 
 
+@doctor_producer("INS-009")
 def _doctor_check_guardrails(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Check guardrail stats."""
     from bernstein.core.guardrails import get_guardrail_stats
@@ -1025,6 +1036,7 @@ def _doctor_check_guardrails(checks: list[dict[str, Any]], workdir: Path) -> Non
     _add_check(checks, "Guardrails", True, g_detail)
 
 
+@doctor_producer("INS-010")
 def _doctor_check_ci_tools(checks: list[dict[str, Any]]) -> None:
     """Check CI tool dependencies (ruff, pytest, pyright)."""
     from bernstein.core.ci_fix import check_test_dependencies
@@ -1033,6 +1045,7 @@ def _doctor_check_ci_tools(checks: list[dict[str, Any]]) -> None:
         _add_check(checks, f"CI tool: {dep['name']}", dep["ok"] == "True", dep["detail"], dep["fix"])
 
 
+@doctor_producer("INS-014")
 def _doctor_check_context_and_plugins(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Check context files, MCP servers, permissions, installations, and plugins."""
     from bernstein.tui.context_files_doctor import check_context_files, check_mcp_servers, check_permission_rules
@@ -1065,6 +1078,7 @@ def _doctor_check_context_and_plugins(checks: list[dict[str, Any]], workdir: Pat
         _add_check(checks, "Plugin loading", True, "no errors")
 
 
+@doctor_producer("INS-015")
 def _doctor_check_commit_attribution(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Check git commit attribution stats."""
     from bernstein.cli.commit_stats import collect_commit_stats
@@ -1088,6 +1102,7 @@ def _doctor_check_commit_attribution(checks: list[dict[str, Any]], workdir: Path
         _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True, f"{commit_result.total_commits} commits: {role_parts}")
 
 
+@doctor_producer("INS-017")
 def _doctor_check_schedule_supervisor(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Surface schedule supervisor liveness, last fire, and next fire.
 
@@ -1131,6 +1146,7 @@ def _doctor_check_schedule_supervisor(checks: list[dict[str, Any]], workdir: Pat
     _add_check(checks, "Schedule supervisor", True, "; ".join(parts))
 
 
+@doctor_producer("INS-016")
 def _doctor_check_compliance(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Check compliance mode prerequisites."""
     from bernstein.core.compliance import compliance_prerequisite_summary
@@ -1139,6 +1155,28 @@ def _doctor_check_compliance(checks: list[dict[str, Any]], workdir: Path) -> Non
     if summary is not None:
         name, ok, detail, fix = summary
         _add_check(checks, name, ok, detail, fix)
+
+
+@doctor_producer("INS-013")
+def _doctor_check_readiness(checks: list[dict[str, Any]]) -> None:
+    """Project the existing Python, adapter and auth observations into readiness."""
+    prerequisites = checks
+    if not any(row["name"] == "Python version" for row in prerequisites):
+        prerequisites = []
+        _doctor_check_python(prerequisites)
+        _doctor_check_adapters(prerequisites)
+        _doctor_check_auth(prerequisites)
+    py_ok = any(row["name"] == "Python version" and row["ok"] for row in prerequisites)
+    any_adapter = any(row["name"].startswith("Adapter: ") and row["ok"] for row in prerequisites)
+    any_key = any(row["name"].startswith("Auth: ") and row["ok"] for row in prerequisites)
+    any_adapter_key = any_adapter and any_key
+    _add_check(
+        checks,
+        "Ready to run",
+        py_ok and any_adapter_key,
+        "yes" if (py_ok and any_adapter_key) else "missing adapter or API key",
+        "Install an adapter (claude/codex/gemini) and set its API key" if not any_adapter_key else "",
+    )
 
 
 def _doctor_print_fix_summary(auto_fix: bool, fixed: list[str], manual_needed: list[str]) -> None:
@@ -1218,51 +1256,58 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     else:
         spawner_env = None
 
-    py_ok = _doctor_check_python(checks)
+    findings = [_doctor_check_python(checks)]
     if spawner_env is not None:
-        any_adapter = _doctor_check_adapters(checks, env=spawner_env)
-        _doctor_check_last_green(checks, env=spawner_env)
-        _doctor_check_version_posture(checks, workdir, env=spawner_env)
-        any_key = _doctor_check_auth(checks, env=spawner_env)
+        findings.append(_doctor_check_adapters(checks, env=spawner_env))
+        findings.append(_doctor_check_last_green(checks, env=spawner_env))
+        findings.append(_doctor_check_version_posture(checks, workdir, env=spawner_env))
+        findings.append(_doctor_check_auth(checks, env=spawner_env))
     else:
-        any_adapter = _doctor_check_adapters(checks)
-        _doctor_check_last_green(checks)
-        _doctor_check_version_posture(checks, workdir)
-        any_key = _doctor_check_auth(checks)
-    _doctor_check_port(checks)
-    _doctor_check_workspace(checks, workdir)
-    stale_pid_paths = _doctor_check_stale_pids(checks, workdir)
-    _doctor_check_guardrails(checks, workdir)
-    _doctor_check_ci_tools(checks)
+        findings.append(_doctor_check_adapters(checks))
+        findings.append(_doctor_check_last_green(checks))
+        findings.append(_doctor_check_version_posture(checks, workdir))
+        findings.append(_doctor_check_auth(checks))
+    findings.append(_doctor_check_port(checks))
+    findings.append(_doctor_check_workspace(checks, workdir))
+    stale_pid_paths: list[Path] = []
+    findings.append(_doctor_check_stale_pids(checks, workdir, stale_pid_paths=stale_pid_paths))
+    findings.append(_doctor_check_guardrails(checks, workdir))
+    findings.append(_doctor_check_ci_tools(checks))
 
     def _check_fn(name: str, ok: bool, detail: str, fix: str = "", fix_id: str = "") -> None:
         _add_check(checks, name, ok, detail, fix, fix_id)
 
-    _doctor_check_storage(_check_fn)
-    _doctor_check_secrets(workdir, _check_fn)
+    findings.append(_doctor_check_storage(_check_fn))
+    findings.append(_doctor_check_secrets(workdir, _check_fn))
+    findings.append(_doctor_check_readiness(checks))
 
-    any_adapter_key = any_adapter and any_key
+    findings.append(_doctor_check_context_and_plugins(checks, workdir))
+    from bernstein.core.security.declaration_quarantine import quarantine_summary
+
+    _add_check(checks, *quarantine_summary(workdir))
+    findings.append(_doctor_check_commit_attribution(checks, workdir))
+    findings.append(_doctor_check_compliance(checks, workdir))
+    findings.append(_doctor_check_schedule_supervisor(checks, workdir))
+    findings.append(_doctor_check_eval_gate_power(checks, workdir))
+    findings.append(_doctor_check_otel_export(checks))
+    findings.append(_doctor_check_audit_anchoring(checks, workdir))
+
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+
+    leak_check = check_leaked_lanes(workdir)
     _add_check(
         checks,
-        "Ready to run",
-        py_ok and any_adapter_key,
-        "yes" if (py_ok and any_adapter_key) else "missing adapter or API key",
-        "Install an adapter (claude/codex/gemini) and set its API key" if not any_adapter_key else "",
+        leak_check["name"],
+        True,
+        ("WARNING: " if leak_check["status"] == "WARN" else "") + leak_check["detail"],
+        leak_check["fix"],
     )
-
-    _doctor_check_context_and_plugins(checks, workdir)
-    _doctor_check_commit_attribution(checks, workdir)
-    _doctor_check_compliance(checks, workdir)
-    _doctor_check_schedule_supervisor(checks, workdir)
-    _doctor_check_eval_gate_power(checks, workdir)
-    _doctor_check_otel_export(checks)
-    _doctor_check_audit_anchoring(checks, workdir)
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
 
     if as_json or is_json():
-        result_dict: dict[str, Any] = {"checks": checks}
+        result_dict: dict[str, Any] = {"checks": checks, "findings": [finding.to_dict() for finding in findings]}
         # Surface the execution surface so machine-readable consumers can
         # branch on it (e.g. tooling that ignores brew-adapter failures
         # inside a fresh container).

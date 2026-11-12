@@ -6,6 +6,8 @@ never reused, and cannot be removed without an explicit tombstone.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from bernstein.core.checks.contract import Evidence, Finding, Verdict
@@ -19,6 +21,7 @@ from bernstein.core.checks.registry import CheckRegistry, populate_default_check
 ACTIVE_PINNED_IDS: frozenset[str] = frozenset(
     {
         "doctor:compliance",
+        "doctor:declaration-quarantine",
         "compliance:soc2:encryption_at_rest",
         "sentinel:failure",
         # Opt-in (#5105): run under `govern audit --only duplication`.
@@ -59,8 +62,30 @@ def test_active_pinned_ids_match_default_registry() -> None:
     )
 
 
+def test_cli_installation_catalog_is_explicit_stable_and_idempotent() -> None:
+    """CLI composition adds INS without coupling core's default checks to CLI."""
+    registry = CheckRegistry()
+    populate_default_checks(registry)
+    core_ids = {check.check_id for check in registry.list_checks()}
+    assert not any(check_id.startswith("INS-") for check_id in core_ids)
+
+    from bernstein.cli.commands.govern_audit_cmd import populate_installation_checks
+
+    pinned_installation_ids = {f"INS-{number:03}" for number in range(1, 21)}
+    populate_installation_checks(registry)
+    populate_installation_checks(registry)
+    installed = registry.list_checks(only_areas=("INS",))
+    assert {check.check_id for check in installed} == pinned_installation_ids
+    assert len(installed) == len(pinned_installation_ids)
+    assert all(check.area == "INS" and check.opt_in for check in installed)
+    assert all(re.fullmatch(r"INS-\d{3}", check.check_id) for check in installed)
+    assert pinned_installation_ids.isdisjoint(TOMBSTONED_IDS)
+    assert {check.check_id for check in registry.list_checks()} == ACTIVE_PINNED_IDS | pinned_installation_ids
+    assert not any(check.check_id.startswith("INS-") for check in registry.iter_checks())
+
+
 def test_check_ids_are_properly_namespaced() -> None:
-    """Check IDs must be non-empty and strictly namespaced with a colon."""
+    """Core default check IDs use a non-empty colon namespace."""
     registry = CheckRegistry()
     populate_default_checks(registry)
 

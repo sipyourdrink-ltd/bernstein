@@ -794,3 +794,288 @@ def _make_fake_entry_point(name: str, plugin: Any) -> Any:
             return plugin_class  # return the class; manager will instantiate
 
     return _FakeEP()
+
+
+def test_old_quality_gate_config_warns_and_does_not_register(
+    pm: PluginManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    spec = "examples.plugins.quality_gate_plugin:SecurityScanGate"
+    (tmp_path / "bernstein.yaml").write_text(f"plugins:\n  - {spec}\n", encoding="utf-8")
+
+    with patch("bernstein.plugins.manager.entry_points", return_value=[]):
+        with pytest.warns(UserWarning, match=r"GatePlugin.*plugins:.*\.bernstein/gates/.*quality_gates.pipeline"):
+            pm.load_from_workdir(tmp_path)
+
+    assert spec not in pm.registered_names
+    resolution = next(item for item in pm.resolutions if item.declared == spec)
+    assert resolution.loaded is False
+    assert "security_scan_cmd" in resolution.failure
+
+
+def test_config_gate_with_hook_implementation_keeps_its_hook(
+    pm: PluginManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    from examples.plugins import quality_gate_plugin
+
+    calls: list[str] = []
+
+    class HybridGate(quality_gate_plugin.SecurityScanGate):
+        @hookimpl
+        def on_task_completed(self, task_id: str) -> None:
+            calls.append(task_id)
+
+    monkeypatch.setattr(quality_gate_plugin, "HybridGate", HybridGate, raising=False)
+    spec = "examples.plugins.quality_gate_plugin:HybridGate"
+    pm.discover_config_plugins([spec])
+    pm.fire_task_completed(task_id="t-1", role="qa", result_summary="passed")
+
+    assert spec in pm.registered_names
+    assert calls == ["t-1"]
+
+
+def test_worker_quarantines_a_failing_plugin_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from bernstein.core.orchestration.worker import _monitor_logs
+    from bernstein.core.security.audit_chain import EVENT_DECLARATION_QUARANTINED, AuditChainStore
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+    from bernstein.plugins import manager
+
+    calls = []
+    broken = True
+
+    class BrokenFactory:
+        def __init__(self) -> None:
+            calls.append("factory")
+            if broken:
+                raise RuntimeError("synthetic plugin initialization failure")
+
+    module_name = "bernstein_test_plugin_factories"
+    monkeypatch.setitem(
+        manager.sys.modules, module_name, SimpleNamespace(Broken=BrokenFactory, Healthy=_CollectorPlugin)
+    )
+    monkeypatch.setattr(manager, "_manager", None)
+    monkeypatch.setattr(manager, "entry_points", lambda **_kwargs: [])
+    (tmp_path / "bernstein.yaml").write_text(
+        f"plugins:\n  - {module_name}:Broken\n  - {module_name}:Healthy\n", encoding="utf-8"
+    )
+    log_path = tmp_path / "worker.log"
+    log_path.touch()
+    child = Mock()
+    child.poll.return_value = 0
+
+    store = DeclarationQuarantineStore(tmp_path)
+    with pytest.warns(UserWarning, match="synthetic plugin initialization failure"):
+        manager.get_plugin_manager(tmp_path)
+    assert not store.path.exists()
+    with pytest.warns(UserWarning, match="synthetic plugin initialization failure"):
+        _monitor_logs(log_path, "synthetic", child, tmp_path)
+
+    assert f"{module_name}:Healthy" in manager.get_plugin_manager(tmp_path).registered_names
+    (marker,) = store.load()
+    assert marker.kind == "plugin"
+    assert marker.source_name == f"{module_name}:Broken"
+    assert marker.reason == "synthetic plugin initialization failure"
+
+    broken = False
+    diagnostic = manager.get_plugin_manager(tmp_path, reload=True)
+    assert f"{module_name}:Broken" not in diagnostic.registered_names
+    assert len(calls) == 2
+    assert store.reenable(marker.declaration_id, actor="operator")
+    _monitor_logs(log_path, "synthetic", child, tmp_path)
+    assert f"{module_name}:Broken" in manager.get_plugin_manager(tmp_path).registered_names
+    assert len(calls) == 3
+    events = AuditChainStore(tmp_path / ".sdd" / "audit").query(event_type=EVENT_DECLARATION_QUARANTINED)
+    assert len(events) == 1
+
+
+def test_partial_pluggy_registration_is_removed_before_quarantine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+    from bernstein.plugins import manager
+
+    calls = []
+
+    class PartiallyValid:
+        @hookimpl
+        def on_agent_spawned(self, session_id: str, role: str, model: str) -> None:
+            calls.append(session_id)
+
+        @hookimpl
+        def on_task_created(self, unknown_argument: str) -> None:
+            pass
+
+    module_name = "bernstein_test_partial_plugin"
+    monkeypatch.setitem(manager.sys.modules, module_name, SimpleNamespace(PartiallyValid=PartiallyValid))
+    spec = f"{module_name}:PartiallyValid"
+    plugin_manager = PluginManager(tmp_path, record_declaration_failures=True)
+    with pytest.warns(UserWarning, match="unknown_argument"):
+        plugin_manager.discover_config_plugins([spec])
+
+    assert plugin_manager._pm.get_plugin(spec) is None
+    plugin_manager.fire_agent_spawned("session", "role", "model")
+    assert calls == []
+    (marker,) = DeclarationQuarantineStore(tmp_path).load()
+    assert marker.source_name == spec
+
+
+def test_corrupt_plugin_quarantine_does_not_cache_an_empty_manager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+    from bernstein.plugins import manager
+
+    store = DeclarationQuarantineStore(tmp_path)
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(manager, "_manager", None)
+    monkeypatch.setattr(manager, "entry_points", lambda **_kwargs: [])
+    for _ in range(2):
+        with pytest.raises(manager.PluginQuarantineUnavailable, match="quarantine is unavailable"):
+            manager.get_plugin_manager(tmp_path, record_declaration_failures=True)
+        assert manager._manager is None
+
+    store.path.write_text("[]", encoding="utf-8")
+    assert manager.get_plugin_manager(tmp_path, record_declaration_failures=True).workdir == tmp_path
+
+
+def test_plugin_constructor_reuses_manager_during_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.plugins import manager
+
+    lookups = []
+
+    class ReentrantFactory:
+        def __init__(self) -> None:
+            lookups.append(manager.get_plugin_manager())
+
+    module_name = "bernstein_test_reentrant_factory"
+    monkeypatch.setitem(manager.sys.modules, module_name, SimpleNamespace(Factory=ReentrantFactory))
+    monkeypatch.setattr(manager, "_manager", None)
+    monkeypatch.setattr(manager, "entry_points", lambda **_kwargs: [])
+    (tmp_path / "bernstein.yaml").write_text(f"plugins: [{module_name}:Factory]\n", encoding="utf-8")
+    result = manager.get_plugin_manager(tmp_path, record_declaration_failures=True)
+    assert lookups == [result]
+
+
+def test_worker_abort_monitor_survives_unavailable_plugin_notifications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import Mock
+
+    from bernstein.core.orchestration.worker import _monitor_logs
+    from bernstein.plugins import manager
+
+    def unavailable(*_args, **_kwargs):
+        raise manager.PluginQuarantineUnavailable("unavailable")
+
+    monkeypatch.setattr(manager, "get_plugin_manager", unavailable)
+    log_path = tmp_path / "worker.log"
+    log_path.write_text("[Bash] fixture exited with code 1\n", encoding="utf-8")
+    child = Mock()
+    child.poll.side_effect = [None, 0]
+    _monitor_logs(log_path, "synthetic", child, tmp_path)
+    child.kill.assert_called_once()
+
+
+def test_deferred_factory_lookup_does_not_capture_initializing_manager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from bernstein.plugins import manager
+
+    async def lookup() -> PluginManager:
+        return manager.get_plugin_manager()
+
+    scheduled = []
+
+    class Factory:
+        def __init__(self) -> None:
+            scheduled.append(asyncio.create_task(lookup()))
+
+    module_name = "bernstein_test_deferred_factory"
+    monkeypatch.setitem(manager.sys.modules, module_name, SimpleNamespace(Factory=Factory))
+    monkeypatch.setattr(manager, "_manager", None)
+    monkeypatch.setattr(manager, "entry_points", lambda **_kwargs: [])
+    (tmp_path / "bernstein.yaml").write_text(f"plugins: [{module_name}:Factory]\n", encoding="utf-8")
+
+    async def verify() -> None:
+        first = manager.get_plugin_manager(tmp_path, record_declaration_failures=True)
+        fresh = manager.get_plugin_manager(tmp_path, reload=True, record_declaration_failures=True)
+        assert fresh is not first
+        assert await asyncio.gather(*scheduled) == [fresh, fresh]
+
+    asyncio.run(verify())
+
+
+def test_concurrent_first_plugin_lookups_share_one_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from bernstein.plugins import manager
+
+    first_loading = Event()
+    second_lookup = Event()
+    release = Event()
+    created = []
+    original_load = PluginManager.load_from_workdir
+
+    def load(candidate: PluginManager, workdir: Path | None = None) -> None:
+        created.append(candidate)
+        first_loading.set()
+        assert release.wait(timeout=5)
+        original_load(candidate, workdir)
+
+    def second() -> PluginManager:
+        second_lookup.set()
+        return manager.get_plugin_manager(tmp_path, record_declaration_failures=True)
+
+    monkeypatch.setattr(manager, "_manager", None)
+    monkeypatch.setattr(manager, "entry_points", lambda **_kwargs: [])
+    monkeypatch.setattr(PluginManager, "load_from_workdir", load)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(manager.get_plugin_manager, tmp_path, record_declaration_failures=True)
+        assert first_loading.wait(timeout=5)
+        other = pool.submit(second)
+        assert second_lookup.wait(timeout=5)
+        release.set()
+        assert first.result(timeout=5) is other.result(timeout=5)
+    assert len(created) == 1
+
+
+def test_factory_thread_can_look_up_manager_during_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from threading import Thread
+    from types import SimpleNamespace
+
+    from bernstein.plugins import manager
+
+    lookups = []
+
+    class Factory:
+        def __init__(self) -> None:
+            thread = Thread(
+                target=lambda: lookups.extend((manager.get_plugin_manager(), manager.get_plugin_manager(tmp_path))),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=2)
+            if thread.is_alive():
+                raise RuntimeError("plugin manager lookup blocked the factory thread")
+
+    module_name = "bernstein_test_threaded_factory"
+    monkeypatch.setitem(manager.sys.modules, module_name, SimpleNamespace(Factory=Factory))
+    monkeypatch.setattr(manager, "_manager", None)
+    monkeypatch.setattr(manager, "entry_points", lambda **_kwargs: [])
+    (tmp_path / "bernstein.yaml").write_text(f"plugins: [{module_name}:Factory]\n", encoding="utf-8")
+    result = manager.get_plugin_manager(tmp_path, record_declaration_failures=True)
+    assert f"{module_name}:Factory" in result.registered_names
+    assert lookups == [result, result]

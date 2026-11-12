@@ -585,12 +585,33 @@ def test_audit_events_appended_for_session_lifecycle(tmp_path: Path, monkeypatch
     assert valid, f"audit chain not verifiable: {errors}"
 
 
-def test_session_create_audit_names_the_owning_tasks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("evidence", [None, {"resource_id": "immutable-id", "created_at": "original"}, {}])
+def test_session_create_audit_names_the_owning_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, evidence: dict[str, str] | None
+) -> None:
     """The create record carries the spawn's task ids, so a session that is never
     destroyed can be traced to the task it was provisioned for (#5112)."""
     monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
     backend = _FakeBackend(tmp_path)
     spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+    original_create = backend.create
+    original_log = AuditLog.log
+    recorded_events = []
+
+    def record_event(*args, **kwargs):
+        event = original_log(*args, **kwargs)
+        recorded_events.append(event)
+        return event
+
+    monkeypatch.setattr(AuditLog, "log", record_event)
+
+    async def create_with_evidence(*args, **kwargs):
+        created = await original_create(*args, **kwargs)
+        if evidence is not None:
+            created.removal_evidence = evidence
+        return created
+
+    monkeypatch.setattr(backend, "create", create_with_evidence)
 
     agent_session = AgentSession(id="S-31", role="backend", task_ids=["T-a", "T-b"])
     spawner._spawn_via_sandbox_session(  # pyright: ignore[reportPrivateUsage]
@@ -608,6 +629,54 @@ def test_session_create_audit_names_the_owning_tasks(tmp_path: Path, monkeypatch
     assert len(creates) == 1
     assert creates[0].details["agent_session_id"] == "S-31"
     assert creates[0].details["task_ids"] == ["T-a", "T-b"]
+    recorded_create = next(event for event in recorded_events if event.event_type == "sandbox.session_create")
+    if evidence is None:
+        assert "removal_evidence" not in recorded_create.details
+    else:
+        assert recorded_create.details["removal_evidence"] == evidence
+        evidence["later"] = "mutation"
+        assert "later" not in recorded_create.details["removal_evidence"]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    ["abc", ["x"], 5, {"resource_id": object()}, {5: "resource-id"}, [["resource_id", "id"]]],
+    ids=["string", "list", "int", "non-serializable-value", "non-string-key", "list-of-pairs"],
+)
+def test_invalid_removal_evidence_preserves_sandbox_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, evidence: object
+) -> None:
+    """Invalid optional evidence cannot hide a sandbox or trigger host fallback."""
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    backend = _FakeBackend(tmp_path)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+    original_create = backend.create
+
+    async def create_with_evidence(*args, **kwargs):
+        created = await original_create(*args, **kwargs)
+        monkeypatch.setattr(created, "removal_evidence", evidence)
+        return created
+
+    monkeypatch.setattr(backend, "create", create_with_evidence)
+    with caplog.at_level(logging.WARNING):
+        session = _spawn_one(spawner, adapter, "S-bad-evidence")
+
+    assert adapter.spawn_calls == []
+    assert len(backend.created) == 1
+    assert session.isolation == "container"
+    spawner._sandbox_exec_handles[session.id].future.result(timeout=5.0)  # pyright: ignore[reportPrivateUsage]
+    _wait_until(lambda: backend.destroyed)
+    assert backend.destroyed == [backend.created[0].session_id]
+    assert "Invalid sandbox removal evidence" in caplog.text
+
+    audit = AuditLog(audit_dir=tmp_path / ".sdd" / "audit")
+    creates = audit.query(event_type="sandbox.session_create")
+    assert len(creates) == 1
+    assert creates[0].resource_id == backend.created[0].session_id
+    assert creates[0].details["agent_session_id"] == session.id
+    assert "removal_evidence" not in creates[0].details
+    _wait_until(lambda: len(audit.query(event_type="sandbox.session_destroy")) == 1)
+    assert audit.verify() == (True, [])
 
 
 def test_concurrent_lifecycles_keep_audit_chain_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

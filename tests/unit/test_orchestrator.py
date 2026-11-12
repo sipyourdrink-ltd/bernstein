@@ -1747,6 +1747,51 @@ class TestRunStop:
         target_events = [event.event_type for event in chain.query() if event.details.get("run_id") == orch._run_id]
         assert target_events[-3:] == ["intent.journal_seal", "otel.projection", "run.closure"]
 
+    @pytest.mark.parametrize("write_fails", [False, True])
+    def test_run_close_declares_delegation_head_in_manifest(self, tmp_path: Path, monkeypatch, write_fails) -> None:
+        from bernstein.core.config.manifest import load_manifest
+        from bernstein.core.identity import delegation
+
+        monkeypatch.setenv("BERNSTEIN_CONFIDENCE_DB", str(tmp_path / "confidence.sqlite"))
+        monkeypatch.setattr(delegation, "_audit_key", lambda: b"k" * 32)
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        config = OrchestratorConfig(poll_interval_s=0, server_url="http://testserver", dry_run=True)
+        orch = _build_orchestrator(tmp_path, transport, config=config)
+        ledger = delegation.DelegationLedger(tmp_path / ".sdd" / "audit", b"k" * 32)
+        receipt = ledger.record_hop(run_id=orch._run_id, issuer="p", subject="o", audience="a", act="spawn")
+        manifest_path = tmp_path / ".sdd" / "runtime" / "manifests" / f"{orch._run_id}.json"
+        startup = manifest_path.read_bytes()
+        cleanup = orch._cleanup
+
+        def finish_writers():
+            nonlocal receipt
+            cleanup()
+            receipt = ledger.record_hop(run_id=orch._run_id, issuer="o", subject="a", audience="a", act="spawn")
+
+        monkeypatch.setattr(orch, "_cleanup", finish_writers)
+        if write_fails:
+            from bernstein.core.persistence import atomic_write
+
+            replace_file = atomic_write.os.replace
+
+            def fail_manifest_replace(source, target):
+                if str(target) == str(manifest_path):
+                    raise OSError("simulated manifest commit failure")
+                return replace_file(source, target)
+
+            monkeypatch.setattr(atomic_write.os, "replace", fail_manifest_replace)
+        orch.run()
+        manifest = load_manifest(tmp_path / ".sdd", orch._run_id)
+        if write_fails:
+            assert manifest_path.read_bytes() == startup
+            assert manifest.delegation_head_hmac is None
+            result = delegation.verify_run(orch._run_id, root=ledger.root)
+            assert result.incomplete and not result.valid
+        else:
+            assert getattr(manifest, "delegation_head_hmac", None) == receipt.hmac
+            assert getattr(manifest, "delegation_hop_count", None) == 2
+            assert manifest.manifest_hash == manifest.compute_hash()
+
     def test_stop_breaks_loop(self, tmp_path: Path) -> None:
         transport = _mock_transport(
             {
