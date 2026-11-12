@@ -21,7 +21,7 @@ def test_timeout_when_no_signal() -> None:
     wake = CapacityWake()
     with (
         patch.object(capacity_wake, "time", SimpleNamespace(monotonic=lambda: 10.0)),
-        patch.object(wake._any_event, "wait", return_value=False) as wait,
+        patch.object(wake._any_event, "wait", side_effect=[False]) as wait,
     ):
         assert wake.wait(timeout_s=0.125) == WakeReason.TIMEOUT
     wait.assert_called_once_with(timeout=0.125)
