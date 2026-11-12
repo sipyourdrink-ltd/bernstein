@@ -194,8 +194,8 @@ def resolve_command(name: str) -> str:
     shell) and actively harmful (it made Python/pytest-driven tasks
     unsolvable for a ``run_command``-only worker).
 
-    Every decision - allow or deny - is logged at ``INFO`` with the exact
-    ``argv[0]`` and the rule that fired, so the audit log alone explains why
+    Every decision - allow or deny - is logged at ``INFO`` with the rule
+    that fired, so the audit log alone explains why
     a command was let through or refused.
 
     Args:
@@ -210,28 +210,28 @@ def resolve_command(name: str) -> str:
             resolve on PATH.
     """
     if not name:
-        logger.info("run_command policy: DENY rule=empty_argv0 argv0=%r", name)
+        logger.info("run_command policy: DENY rule=empty_argv0")
         msg = "empty command"
         raise CommandNotAllowedError(msg)
     candidate = Path(name)
     if candidate.is_absolute():
-        logger.info("run_command policy: DENY rule=absolute_path argv0=%r", name)
+        logger.info("run_command policy: DENY rule=absolute_path")
         msg = f"argv[0] must be a bare command name, not an absolute path: {name!r}"
         raise CommandNotAllowedError(msg)
     if "/" in name or os.sep in name or (os.altsep and os.altsep in name):
-        logger.info("run_command policy: DENY rule=path_separator argv0=%r", name)
+        logger.info("run_command policy: DENY rule=path_separator")
         msg = f"argv[0] must be a bare command name without a path separator: {name!r}"
         raise CommandNotAllowedError(msg)
     if name in _BLOCKED_COMMANDS:
-        logger.info("run_command policy: DENY rule=blocked_dangerous_command argv0=%r", name)
+        logger.info("run_command policy: DENY rule=blocked_dangerous_command")
         msg = f"argv[0] names a command this policy blocks as dangerous: {name!r}"
         raise CommandNotAllowedError(msg)
     resolved = shutil.which(name)
     if resolved is None:
-        logger.info("run_command policy: DENY rule=unresolvable_on_path argv0=%r", name)
+        logger.info("run_command policy: DENY rule=unresolvable_on_path")
         msg = f"argv[0] does not resolve to an executable on PATH: {name!r}"
         raise CommandNotAllowedError(msg)
-    logger.info("run_command policy: ALLOW rule=bare_command_resolved argv0=%r resolved=%r", name, resolved)
+    logger.info("run_command policy: ALLOW rule=bare_command_resolved")
     return resolved
 
 
@@ -685,13 +685,14 @@ def run_command_in_workdir(
     """
     invocation_id = next(_invocation_ids)
     is_shell_form = isinstance(argv, str)
+    exec_form = "shell_string" if is_shell_form else "argv_list"
     emit(
         {
             "type": "tool_call",
             "name": "run_command",
             "args": {"command": argv} if is_shell_form else {"argv": list(argv)},
             "tool_source": "builtin",
-            "exec_form": "shell_string" if is_shell_form else "argv_list",
+            "exec_form": exec_form,
             "invocation_id": invocation_id,
         }
     )
@@ -700,9 +701,8 @@ def run_command_in_workdir(
         command_str = argv
         if not command_str.strip():
             logger.info(
-                "run_command: exec_form=shell_string cwd=%s exit_code=n/a status=error error=%r",
-                workdir,
-                "empty command string",
+                "run_command: id=%d exec_form=shell_string status=error reason=empty_command",
+                invocation_id,
             )
             emit(
                 {
@@ -715,14 +715,12 @@ def run_command_in_workdir(
             )
             return "error: empty command string"
         exec_argv: list[str] = [*_SHELL_ARGV, command_str]
-        logged_form = f"shell_string command={command_str!r}"
     else:
         argv_list = list(argv)
         if not argv_list:
             logger.info(
-                "run_command: exec_form=argv_list cwd=%s exit_code=n/a status=error error=%r",
-                workdir,
-                "empty argv",
+                "run_command: id=%d exec_form=argv_list status=error reason=empty_argv",
+                invocation_id,
             )
             emit(
                 {
@@ -738,11 +736,8 @@ def run_command_in_workdir(
             resolved_command = resolve_command(argv_list[0])
         except CommandNotAllowedError as exc:
             logger.info(
-                "run_command: exec_form=argv_list cwd=%s argv=%r exit_code=n/a status=error error=%s: %s",
-                workdir,
-                argv_list,
-                type(exc).__name__,
-                exc,
+                "run_command: id=%d exec_form=argv_list status=error reason=command_not_allowed",
+                invocation_id,
             )
             emit(
                 {
@@ -756,7 +751,6 @@ def run_command_in_workdir(
             return f"error: {exc}"
         # argv list + shell=False: no shell string, no interpolation.
         exec_argv = [resolved_command, *argv_list[1:]]
-        logged_form = f"argv_list exec_argv={exec_argv!r}"
 
     real_workdir = Path(workdir).resolve()
 
@@ -766,11 +760,10 @@ def run_command_in_workdir(
     command_hash = _command_hash(real_workdir, exec_argv)
     window_s = _dedupe_window_s()
     logger.info(
-        "run_command invocation: id=%d command_hash=%s %s cwd=%s",
+        "run_command invocation: id=%d command_hash=%s exec_form=%s",
         invocation_id,
         command_hash,
-        logged_form,
-        real_workdir,
+        exec_form,
     )
     record, is_duplicate = _claim_or_join_invocation(command_hash, invocation_id, window_s)
     if is_duplicate:
@@ -814,12 +807,10 @@ def run_command_in_workdir(
             timeout=_RUN_COMMAND_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as exc:
-        logger.info(
-            "run_command: %s cwd=%s exit_code=n/a status=error error=timeout after %ss stderr_tail=%r",
-            logged_form,
-            real_workdir,
+        logger.warning(
+            "run_command: id=%d status=error reason=timeout timeout_s=%s",
+            invocation_id,
             _RUN_COMMAND_TIMEOUT_S,
-            (exc.stderr or "")[-2000:] if isinstance(exc.stderr, str) else exc.stderr,
         )
         emit(
             {
@@ -833,12 +824,10 @@ def run_command_in_workdir(
         )
         return _finish(f"error: {exc}")
     except (OSError, subprocess.SubprocessError) as exc:
-        logger.info(
-            "run_command: %s cwd=%s exit_code=n/a status=error error=%s: %s",
-            logged_form,
-            real_workdir,
+        logger.warning(
+            "run_command: id=%d status=error error_type=%s",
+            invocation_id,
             type(exc).__name__,
-            exc,
         )
         emit(
             {
@@ -856,21 +845,14 @@ def run_command_in_workdir(
     stderr = completed.stderr[:_MAX_CMD_OUTPUT_CHARS]
     if completed.returncode == 0:
         logger.info(
-            "run_command: %s cwd=%s exit_code=%d status=ok",
-            logged_form,
-            real_workdir,
-            completed.returncode,
+            "run_command: id=%d exit_code=0 status=ok",
+            invocation_id,
         )
     else:
-        # Never truncate what we log to the reader's eye beyond the same cap
-        # already applied to the tool-facing stderr - full stderr tail on
-        # nonzero exit is the whole point of this log line.
-        logger.info(
-            "run_command: %s cwd=%s exit_code=%d status=nonzero stderr_tail=%r",
-            logged_form,
-            real_workdir,
+        logger.warning(
+            "run_command: id=%d exit_code=%d status=nonzero",
+            invocation_id,
             completed.returncode,
-            stderr[-2000:],
         )
     emit(
         {
