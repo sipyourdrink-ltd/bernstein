@@ -150,6 +150,10 @@ def test_configured_json_handler_redacts_child_message(
 ) -> None:
     root = logging.getLogger()
     monkeypatch.setattr(root, "handlers", [])
+    package_logger = logging.getLogger("bernstein")
+    monkeypatch.setattr(package_logger, "handlers", [])
+    monkeypatch.setattr(package_logger, "propagate", True)
+    monkeypatch.setattr(package_logger, "level", logging.NOTSET)
     monkeypatch.setenv("BERNSTEIN_LOG_JSON", "1")
     previous_level = root.level
     try:
