@@ -64,6 +64,22 @@ class TestVerbosityFlags:
         assert "synthetic-credential" not in stderr
         assert "person@example.com" not in stderr
 
+    def test_handler_formats_each_argument_once(self, capsys: pytest.CaptureFixture[str]) -> None:
+        class ChangingArgument:
+            calls = 0
+
+            def __str__(self) -> str:
+                self.calls += 1
+                return "initial value" if self.calls == 1 else "person@example.com"
+
+        apply_verbosity(verbose=True, quiet=False)
+        argument = ChangingArgument()
+        logging.getLogger("bernstein.redaction-test").error("Contact %s", argument)
+        stderr = capsys.readouterr().err
+        assert argument.calls == 1
+        assert "Contact initial value" in stderr
+        assert "person@example.com" not in stderr
+
     def test_verbosity_constants(self) -> None:
         assert QUIET == -1
         assert NORMAL == 0

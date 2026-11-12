@@ -163,13 +163,9 @@ class PiiRedactingFilter(logging.Filter):
         try:
             message = record.getMessage()
         except Exception:  # A formatter error would print the unredacted arguments.
-            record.msg = "[invalid log message]"
-            record.args = ()
-        else:
-            redacted = redact_sensitive_text(message)
-            if redacted != message:
-                record.msg = redacted
-                record.args = ()
+            message = "[invalid log message]"
+        record.msg = redact_sensitive_text(message)
+        record.args = ()
         return True
 
 

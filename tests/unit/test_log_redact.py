@@ -169,7 +169,7 @@ class TestFilterMsg:
         assert "alice@example.com" not in rec.msg
         assert "[REDACTED]" in rec.msg
 
-    def test_non_string_msg_ignored(self) -> None:
+    def test_non_string_msg_formatted(self) -> None:
         f = PiiRedactingFilter()
         rec = logging.LogRecord(
             name="test",
@@ -181,7 +181,7 @@ class TestFilterMsg:
             exc_info=None,
         )
         assert f.filter(rec) is True
-        assert rec.msg == 42  # type: ignore[comparison-overlap]
+        assert rec.getMessage() == "42"
 
 
 class TestFilterArgs:
