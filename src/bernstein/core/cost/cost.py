@@ -766,12 +766,6 @@ def get_cascade_model(task: Task, retry_count: int = 0) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _days_in_window(records: list[dict[str, Any]], days: int) -> list[dict[str, Any]]:  # type: ignore[reportUnusedFunction]
-    """Filter records to those within the last N days."""
-    cutoff = time.time() - days * 86400
-    return [r for r in records if r.get("timestamp", 0) >= cutoff]
-
-
 def compute_savings_vs_opus(records: list[dict[str, Any]]) -> float:
     """Estimate savings vs a hypothetical all-Opus baseline.
 
