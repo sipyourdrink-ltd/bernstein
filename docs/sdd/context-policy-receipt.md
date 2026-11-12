@@ -82,10 +82,12 @@ documentation entry, making the context structure auditable.
 ## Storage and verification
 
 - **On-disk**: receipts are stored in the run journal and audit chain
-- **Verification**: `bernstein context verify <task_id>` verifies the task's
-  signed context capsule against the audit chain and run journal
-- **Replay**: deterministic replay uses the receipt to detect context changes
-  and refuses or flags according to policy
+- **Capsule verification**: an `OK` result from `bernstein context verify
+  <task_id>` covers only the signed capsule and its audit-chain and run-journal
+  bindings.
+- **Section receipt**: deterministic replay uses the recorded section hashes,
+  totals and policy metadata to detect context changes and refuses or flags
+  according to policy.
 
 ## Related documentation
 
