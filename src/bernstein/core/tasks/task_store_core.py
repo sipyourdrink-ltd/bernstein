@@ -16,10 +16,9 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NotRequired, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NotRequired, Protocol, TypedDict, cast
 
 from fastapi import HTTPException
-from typing_extensions import TypedDict
 
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
