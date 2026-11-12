@@ -100,6 +100,9 @@ for record in reader.iter_records(run_id="r-2026-05-05"):
         print(record.producer.agent_id, record.prompt_sha, record.cost_usd)
 ```
 
+For writes, `LineageSpine.record(...)` returns the appended entry hash, while
+`LineageSpine.record_entry(...)` returns the appended `SpineEntry`.
+
 Each `LineageRecord` carries:
 
 - `output_artifact` - `path`, `sha256`, byte / line range
