@@ -1,0 +1,1 @@
+- Use the registered adapter key for admission checks when the adapter is pinned. Pi now uses the existing `pi` contract and its matching evidence.

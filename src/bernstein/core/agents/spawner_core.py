@@ -3091,7 +3091,7 @@ class AgentSpawner:
                     self._adapter.name(),
                 )
                 return resolved
-            pinned = self._adapter.name()
+            pinned = self._adapter_registry_name or self._adapter.name()
             logger.info(
                 "_infer_adapter_name_for_provider: run-level adapter pin %r wins; "
                 "model-name inference skipped for provider_name=%r model=%r",

@@ -27,13 +27,22 @@ from unittest.mock import MagicMock
 from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.agy import AgyAdapter
+from bernstein.adapters.pi import PiAdapter
 from bernstein.adapters.registry import get_adapter, registry_name_for
 
 
-def _spawner(tmp_path: Path, adapter: object, *, enable_caching: bool = False) -> AgentSpawner:
+def _spawner(
+    tmp_path: Path, adapter: object, *, enable_caching: bool = False, adapter_pinned: bool = False
+) -> AgentSpawner:
     templates_dir = tmp_path / "templates" / "roles"
     templates_dir.mkdir(parents=True, exist_ok=True)
-    return AgentSpawner(adapter, templates_dir, tmp_path, enable_caching=enable_caching)  # type: ignore[arg-type]
+    return AgentSpawner(
+        adapter,  # type: ignore[arg-type]
+        templates_dir,
+        tmp_path,
+        enable_caching=enable_caching,
+        adapter_pinned=adapter_pinned,
+    )
 
 
 def test_registry_key_lookup_returns_the_injected_run_level_adapter(tmp_path: Path) -> None:
@@ -46,6 +55,17 @@ def test_registry_key_lookup_returns_the_injected_run_level_adapter(tmp_path: Pa
     assert spawner._get_adapter_by_name("agy") is adapter
     # The display name keeps working for older call sites.
     assert spawner._get_adapter_by_name("Antigravity") is adapter
+
+
+def test_pinned_pi_uses_its_admission_key(tmp_path: Path) -> None:
+    adapter = PiAdapter()
+    spawner = _spawner(tmp_path, adapter, adapter_pinned=True)
+
+    key = spawner._infer_adapter_name_for_provider(None, "some-proxy/model")
+
+    assert adapter.name() == "Pi"
+    assert key == "pi"
+    assert spawner._get_adapter_by_name(key) is adapter
 
 
 def test_registry_key_lookup_survives_the_caching_wrap(tmp_path: Path) -> None:
