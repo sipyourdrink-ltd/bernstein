@@ -57,47 +57,27 @@ def catalog_dir(tmp_path: Path) -> Path:
 class TestMapDivision:
     """Tests for division-to-role mapping."""
 
-    def test_engineering_maps_to_backend(self) -> None:
-        assert _map_division("Engineering") == "backend"
-
-    def test_software_engineering_maps_to_backend(self) -> None:
-        assert _map_division("Software Engineering") == "backend"
-
-    def test_frontend_engineering(self) -> None:
-        assert _map_division("Frontend Engineering") == "frontend"
-
-    def test_qa_testing(self) -> None:
-        assert _map_division("QA Testing") == "qa"
-
-    def test_security(self) -> None:
-        assert _map_division("Security") == "security"
-
-    def test_cybersecurity(self) -> None:
-        assert _map_division("Cybersecurity") == "security"
-
-    def test_devops(self) -> None:
-        assert _map_division("DevOps") == "devops"
-
-    def test_infrastructure(self) -> None:
-        assert _map_division("Infrastructure") == "devops"
-
-    def test_documentation(self) -> None:
-        assert _map_division("Documentation") == "docs"
-
-    def test_machine_learning(self) -> None:
-        assert _map_division("Machine Learning") == "ml-engineer"
-
-    def test_management(self) -> None:
-        assert _map_division("Management") == "manager"
-
-    def test_unknown_division_passes_through(self) -> None:
-        assert _map_division("Exotic Division") == "exotic_division"
-
-    def test_case_insensitive(self) -> None:
-        assert _map_division("ENGINEERING") == "backend"
-
-    def test_hyphenated_division(self) -> None:
-        assert _map_division("qa-testing") == "qa"
+    @pytest.mark.parametrize(
+        "division,expected",
+        [
+            ("Engineering", "backend"),
+            ("Software Engineering", "backend"),
+            ("Frontend Engineering", "frontend"),
+            ("QA Testing", "qa"),
+            ("Security", "security"),
+            ("Cybersecurity", "security"),
+            ("DevOps", "devops"),
+            ("Infrastructure", "devops"),
+            ("Documentation", "docs"),
+            ("Machine Learning", "ml-engineer"),
+            ("Management", "manager"),
+            ("Exotic Division", "exotic_division"),
+            ("ENGINEERING", "backend"),
+            ("qa-testing", "qa"),
+        ],
+    )
+    def test_map_division(self, division: str, expected: str) -> None:
+        assert _map_division(division) == expected
 
 
 # ---------------------------------------------------------------------------

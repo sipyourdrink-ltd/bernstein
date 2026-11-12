@@ -91,7 +91,7 @@ class TestMultiModalContext:
 
 class TestDetectModality:
     @pytest.mark.parametrize(
-        ("ext", "expected"),
+        "ext,expected",
         [
             (".png", ModalityType.IMAGE),
             (".jpg", ModalityType.IMAGE),
@@ -102,43 +102,30 @@ class TestDetectModality:
             (".svg", ModalityType.IMAGE),
             (".tiff", ModalityType.IMAGE),
             (".ico", ModalityType.IMAGE),
-        ],
-    )
-    def test_image_extensions(self, ext: str, expected: ModalityType) -> None:
-        assert detect_modality(f"/tmp/file{ext}") == expected
-
-    @pytest.mark.parametrize(
-        ("ext", "expected"),
-        [
             (".mmd", ModalityType.DIAGRAM),
             (".dot", ModalityType.DIAGRAM),
             (".puml", ModalityType.DIAGRAM),
             (".drawio", ModalityType.DIAGRAM),
             (".d2", ModalityType.DIAGRAM),
-        ],
-    )
-    def test_diagram_extensions(self, ext: str, expected: ModalityType) -> None:
-        assert detect_modality(f"/tmp/file{ext}") == expected
-
-    @pytest.mark.parametrize(
-        ("ext", "expected"),
-        [
             (".mp3", ModalityType.AUDIO),
             (".wav", ModalityType.AUDIO),
             (".ogg", ModalityType.AUDIO),
             (".flac", ModalityType.AUDIO),
             (".m4a", ModalityType.AUDIO),
+            (".py", ModalityType.TEXT),
+            (".ts", ModalityType.TEXT),
+            (".js", ModalityType.TEXT),
+            (".rs", ModalityType.TEXT),
+            (".go", ModalityType.TEXT),
+            (".java", ModalityType.TEXT),
+            (".md", ModalityType.TEXT),
+            (".txt", ModalityType.TEXT),
+            (".yaml", ModalityType.TEXT),
+            (".json", ModalityType.TEXT),
         ],
     )
-    def test_audio_extensions(self, ext: str, expected: ModalityType) -> None:
+    def test_extensions(self, ext: str, expected: ModalityType) -> None:
         assert detect_modality(f"/tmp/file{ext}") == expected
-
-    @pytest.mark.parametrize(
-        "ext",
-        [".py", ".ts", ".js", ".rs", ".go", ".java", ".md", ".txt", ".yaml", ".json"],
-    )
-    def test_text_fallback(self, ext: str) -> None:
-        assert detect_modality(f"/tmp/file{ext}") == ModalityType.TEXT
 
     def test_case_insensitive(self) -> None:
         assert detect_modality("/tmp/file.PNG") == ModalityType.IMAGE
