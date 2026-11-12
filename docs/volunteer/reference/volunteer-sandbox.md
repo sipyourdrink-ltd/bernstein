@@ -2,7 +2,7 @@
 
 The sandbox profile records a containment decision derived from the project
 manifest, the donor's limits and available backends. The same inputs produce
-the same `sandbox_sha256`.
+the same profile digest.
 
 The current claimed-task runner starts a host process in a Git worktree with
 a filtered environment and a wall-clock cap. The profile records the selected
@@ -11,7 +11,7 @@ backend and resource settings for callers that integrate a sandbox backend.
 ## Derivation
 
 ```
-manifest.json  +  donor_limits  →  sandbox_profile  →  sandbox_sha256
+manifest + donor limits + backend availability and consent → profile → digest
 ```
 
 Inputs to the derivation:
@@ -19,6 +19,7 @@ Inputs to the derivation:
 - `manifest.allowed_paths`
 - `manifest.egress_allowlist`
 - `manifest.max_wall_clock_minutes`
+- Available backends and donor consent for plain-container execution
 - Optional donor memory and wall-clock ceilings supplied through the runner API
 
 The tighter ceiling applies. The effective egress allowlist includes the
@@ -34,22 +35,9 @@ manifest entries and the built-in package registries.
 | CPU | Default quota supplied by the profile |
 | Time | Lower of the manifest and optional donor wall-clock limits |
 
-## Receipt fields
+## Result bundle
 
-The produced receipt includes:
-
-| Field | Description |
-|-------|-------------|
-| `sandbox_sha256` | Digest of the derived sandbox profile |
-| `sandbox_type` | `"container"` or `"none"` |
-| `wall_clock_seconds` | Observed elapsed time |
-| `exit_codes` | Exit code per gate command |
-
-## Verifying containment
-
-A receipt's `sandbox_sha256` can be independently recomputed by:
-1. Loading the manifest from the checkout
-2. Applying the same donor flags
-3. Hashing the canonical profile JSON
-
-Mismatches indicate the donor used a non-compliant sandbox or the manifest changed between submission and verification.
+The signed result bundle records the profile digest in `sandbox_profile`.
+To recompute the digest, load the manifest at the attested base commit and
+derive the profile with the same backend and donor inputs. The digest binds
+the declared profile. Runtime enforcement depends on the caller.

@@ -301,12 +301,10 @@ evolve:
     rollback_window_hours: 48
 ```
 
-To preview proposals with the current CLI:
+In an existing workspace with completed runs and `evolve.github_sync`
+disabled in `bernstein.yaml`, inspect local failure-pattern drafts:
 
 ```bash
-pip install bernstein
-cd your-project
-bernstein init
 bernstein evolve run --dry-run
 ```
 
