@@ -2,9 +2,9 @@
 
 The volunteer program lets community members donate compute cycles toward
 open-source backlogs that have opted in. A project declares a policy in
-`.bernstein/volunteer.json`; a donor's worker derives a sandbox profile from
-that policy, runs a task in an isolated worktree, and produces a signed
-receipt bundle that a maintainer can verify offline.
+`.bernstein/volunteer.json`; the donor workflow derives a sandbox profile from
+that policy. The protocol defines a signed receipt bundle that a maintainer
+can verify offline.
 
 ## Start here
 
@@ -22,16 +22,16 @@ receipt bundle that a maintainer can verify offline.
 
 ## For donors
 
-Donors can browse opt-in projects, set local budgets and check a project
-manifest. Launching a task from an issue URL remains unimplemented.
-
-The worker runs under the project's sandbox profile. The receipt binds its
-profile digest to the project's manifest.
+Donors can browse opt-in projects, verify a project's manifest, and configure persistent donor limits from the CLI.
+The claimed-task runner starts a host process in a Git worktree with a
+filtered environment and wall-clock cap. See the
+[volunteer sandbox profile](reference/volunteer-sandbox.md) for the profile
+inputs and current enforcement.
 
 ```bash
 bernstein volunteer budget --budget-tasks 10 --budget-hours 6 --max-size m
-bernstein volunteer browse --index https://example.test/index.json
-bernstein volunteer verify /path/to/checkout
+bernstein volunteer browse --index https://registry.example/index.json
+bernstein volunteer verify /path/to/checkout   # check a project's manifest
 ```
 
 ## For project maintainers
@@ -43,7 +43,7 @@ submission verifies against the policy the project actually declared.
 
 ```bash
 bernstein volunteer verify
-bernstein volunteer browse --index https://example.test/index.json
+bernstein volunteer browse --index https://registry.example/index.json
 ```
 
 ## CLI surface
@@ -51,8 +51,9 @@ bernstein volunteer browse --index https://example.test/index.json
 | Command | Purpose |
 | --- | --- |
 | `bernstein volunteer verify` | Validate a manifest and print its digest. Accepts an optional checkout path. |
-| `bernstein volunteer browse --index <url>` | List opt-in projects from an HTTPS index. |
+| `bernstein volunteer browse --index URL` | List projects from a volunteer index. |
 | `bernstein volunteer budget` | Set or inspect persistent donor limits and usage. |
+| `bernstein volunteer autopilot` | Load an autopilot profile. Running tasks requires a Python task-source implementation. |
 | `bernstein volunteer hub` | Serve the lease store and the hub's own task board over HTTP. |
 
 ## Hub task board

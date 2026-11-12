@@ -2,12 +2,17 @@
 
 ## How to Join
 
-The CLI supports manifest verification and project browsing. Launching a task
-from an issue URL remains unimplemented.
+### Available CLI commands
 
-A bare `bernstein volunteer` invocation explains onboarding and exits before
-recording consent. A consent receipt binds the donor to a project's manifest
-and sandbox profile.
+Use `bernstein volunteer browse --index URL` to list opt-in projects, `verify` to
+validate a project manifest, and `budget` to set donor limits. The CLI also
+provides `hub` and `verify-bundle`.
+
+The `autopilot` command loads a donor profile. Running the loop requires
+a Python `TaskSource` implementation. The CLI cannot run an individual
+task from an issue URL.
+
+### Complete Join Process
 
 1. **Install Bernstein**
    ```bash
@@ -20,18 +25,23 @@ and sandbox profile.
    ```
    Run this on the project you want to donate to (or current directory) to validate its volunteer manifest and get the digest.
 
-3. **Browse Volunteer Projects**
+3. **Browse Participating Projects**
    ```bash
-   bernstein volunteer browse --index https://example.test/index.json
+   bernstein volunteer browse --index https://registry.example/index.json
    ```
-   Replace the example URL with your HTTPS index. The command lists eligible
-   projects and their manifest metadata.
+   Replace the example URL with your volunteer index. Repeat `--index` to
+   browse multiple indexes.
+
+4. **Set Donor Limits**
+   ```bash
+   bernstein volunteer budget --budget-tasks 10 --budget-hours 6 --max-size m
+   ```
 
 ## Federated index discovery (Python API)
 
 Federation is an explicit opt-in for Python callers. The CLI project browser
-and unconfigured `browse_indexes()`
-keep their flat-index behavior; CLI donor-configuration support is not included.
+and unconfigured `browse_indexes()` keep their flat-index behavior. CLI
+donor-configuration support is not included.
 
 ```python
 from bernstein.core.volunteer.registry import FederationPolicy, browse_indexes
@@ -89,8 +99,8 @@ The resolver does not fetch project manifests or distribute keys.
 ### Wall-Clock Budget
 - Each task has a configured maximum runtime (default: 24 hours = 1440 minutes)
 - Projects can set stricter limits in their `volunteer.json`
-- Pass `--budget <minutes>` to the project browser to filter projects by
-  their declared runtime limits.
+- Add `--budget <minutes>` to the `bernstein volunteer browse --index URL`
+  command to filter projects by their declared runtime limits.
 - Exceeding the budget results in automatic task termination
 
 ### Memory Limits
@@ -156,7 +166,8 @@ The resolver does not fetch project manifests or distribute keys.
 
 **Task Release**
 
-Interrupting the worker leaves its lease to expire.
+The CLI has no manual task-release command. A hub lease that stops receiving
+heartbeats expires after its configured timeout.
 
 ### Cleanup
 
