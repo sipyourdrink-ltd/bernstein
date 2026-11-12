@@ -61,7 +61,9 @@ persisted records and the presented inputs alone:
    over the record's canonical bytes.
 
 Exit codes: `0` verified, `1` no record for the run (or bad `--inputs`),
-`2` mismatch (a tampered claim, record, or spine).
+`2` mismatch (a tampered claim, record, or spine). Verification results go
+to stdout on success. Missing records, unreadable or malformed input, and
+mismatch diagnostics go to stderr.
 
 ## Cost attribution
 

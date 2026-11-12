@@ -24,6 +24,9 @@ import click
 from bernstein.cli.helpers import console
 from bernstein.core.security.audit import load_or_create_audit_key
 
+_EXIT_BAD_INPUT_OR_NO_RECORD = 1
+_EXIT_MISMATCH = 2
+
 
 def _lineage_root(workdir: Path) -> Path:
     return workdir / ".sdd" / "lineage"
@@ -68,16 +71,18 @@ def gate_verify_cmd(run_id: str, inputs_file: str, workdir: str) -> None:
     )
 
     root = Path(workdir).resolve()
+    try:
+        claimed = json.loads(Path(inputs_file).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"Cannot read JSON from --inputs: {exc}") from exc
+
     key = load_or_create_audit_key()
     lineage_root = _lineage_root(root)
-    claimed = json.loads(Path(inputs_file).read_text(encoding="utf-8"))
 
     records = read_records(lineage_root, run_id)
-    console.print()
-    console.print(f"[bold]Gate verify[/bold] run={run_id}")
     if not records:
-        console.print(f"[yellow]NO RECORD[/yellow] -- no adjudication records for run {run_id!r}")
-        raise SystemExit(1)
+        click.echo(f"NO RECORD -- no adjudication records for run {run_id!r}", err=True)
+        raise SystemExit(_EXIT_BAD_INPUT_OR_NO_RECORD)
 
     results = [
         verify_adjudication(
@@ -90,13 +95,15 @@ def gate_verify_cmd(run_id: str, inputs_file: str, workdir: str) -> None:
         for record in records
     ]
     if any(result.ok for result in results):
+        console.print()
+        console.print(f"[bold]Gate verify[/bold] run={run_id}")
         console.print(f"  records   {len(records)}")
         console.print("[green]OK[/green] -- the panel saw the claimed inputs; record anchored and verified.")
         raise SystemExit(0)
 
     reason = next((r.reason for r in results if r.reason), "no matching record")
-    console.print(f"[red]MISMATCH[/red] -- {reason}")
-    raise SystemExit(2)
+    click.echo(f"MISMATCH -- {reason}", err=True)
+    raise SystemExit(_EXIT_MISMATCH)
 
 
 __all__ = ["gate_group"]
