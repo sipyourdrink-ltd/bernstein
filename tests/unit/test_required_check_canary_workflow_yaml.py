@@ -522,6 +522,28 @@ def test_ci_gate_rollup_still_fails_on_real_failure_under_merge_group(
     )
 
 
+@pytest.mark.parametrize(
+    ("event", "planner_result", "expected"),
+    [
+        ("merge_group", "skipped", 0),
+        ("push", "skipped", 0),
+        ("workflow_dispatch", "skipped", 0),
+        ("pull_request", "skipped", 1),
+        ("pull_request", "failure", 1),
+        ("merge_group", "cancelled", 1),
+    ],
+)
+def test_ci_gate_rollup_accepts_planner_skip_only_outside_pull_requests(
+    ci_doc: dict[str, object], tmp_path: Path, event: str, planner_result: str, expected: int
+) -> None:
+    needs = dict(_MERGE_GROUP_NEEDS)
+    needs["plan-affected-tests"] = {"result": planner_result}
+    needs["test-macos"] = {"result": "success"}
+    needs["adapter-integration-macos"] = {"result": "success"}
+    proc = _run_rollup(tmp_path, _ci_gate_rollup_script(ci_doc), needs=needs, event=event, plan={})
+    assert proc.returncode == expected, proc.stdout + proc.stderr
+
+
 def test_ci_gate_rollup_passes_on_push(ci_doc: dict[str, object], tmp_path: Path) -> None:
     """Sanity: on a push to main the macOS jobs run (success here) and the
     PR-only jobs skip; the gate passes. Guards against a fix that breaks the

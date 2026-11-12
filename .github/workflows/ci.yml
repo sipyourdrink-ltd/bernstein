@@ -427,6 +427,7 @@ jobs:
 
   plan-affected-tests:
     name: Plan affected tests
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -825,6 +826,8 @@ jobs:
 
   typecheck:
     name: Type check report
+    # Keep advisory telemetry on PRs and branch runs without using a queue runner.
+    if: github.event_name != 'merge_group'
     needs: [lint]  # only run if lint passes (fast-fail)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1983,7 +1986,12 @@ jobs:
     # and workflow_dispatch is the cadence controller's full-suite entrypoint.
     # Merge-queue docs-only skips retain their existing policy.
     if: >-
-      ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') &&
+      ${{ !cancelled() &&
+          needs.determine-changes.result == 'success' &&
+          needs.lint.result == 'success' &&
+          (needs.plan-affected-tests.result == 'success' ||
+           (github.event_name != 'pull_request' && needs.plan-affected-tests.result == 'skipped')) &&
+          !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') &&
           (github.event_name != 'push' ||
            startsWith(github.event.head_commit.message, 'chore(release)') ||
            startsWith(github.event.head_commit.message, 'release:')) }}
@@ -2405,9 +2413,14 @@ jobs:
     name: Test (macos-latest, Python 3.13, shard ${{ matrix.shard }})
     needs: [lint, determine-changes, plan-affected-tests]
     if: >-
-      github.event_name != 'merge_group' &&
-      (needs.determine-changes.outputs.macos_sensitive == 'true' ||
-       contains(github.event.pull_request.labels.*.name, 'macos-needed'))
+      ${{ !cancelled() &&
+          needs.determine-changes.result == 'success' &&
+          needs.lint.result == 'success' &&
+          (needs.plan-affected-tests.result == 'success' ||
+           (github.event_name != 'pull_request' && needs.plan-affected-tests.result == 'skipped')) &&
+          github.event_name != 'merge_group' &&
+          (needs.determine-changes.outputs.macos_sensitive == 'true' ||
+           contains(github.event.pull_request.labels.*.name, 'macos-needed')) }}
     runs-on: macos-latest
     timeout-minutes: 90
     permissions:
@@ -2700,6 +2713,8 @@ jobs:
           # skip on ordinary post-merge pushes. They remain required on the
           # cadence workflow_dispatch and on immediate release pushes.
           POST_MERGE_PUSH_SKIPPABLE = {"test", "coverage-report"}
+          # The affected-test plan is only produced for pull requests.
+          PR_ONLY_SKIPPABLE = {"plan-affected-tests"}
           # install-smoke-rpm installs the newest *released* PyPI version,
           # not this tree's source (#3947), so an ordinary src/ or tests/
           # change cannot regress what it checks. It skips whenever the
@@ -2764,6 +2779,8 @@ jobs:
                   if name == "gate-evasion" and plan.get("gate_evasion_relevant") == "false":
                       continue
                   if ordinary_main_push and name in POST_MERGE_PUSH_SKIPPABLE:
+                      continue
+                  if event != "pull_request" and name in PR_ONLY_SKIPPABLE:
                       continue
                   if name == "coverage-report" and not coverage_required:
                       continue

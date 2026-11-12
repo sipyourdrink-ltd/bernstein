@@ -956,7 +956,7 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
     """
     gate = ci_jobs[GATE_JOB_KEY]
     tolerated: set[str] = set()
-    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "POST_MERGE_PUSH_SKIPPABLE"):
+    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "POST_MERGE_PUSH_SKIPPABLE", "PR_ONLY_SKIPPABLE"):
         bucket = rollup_constants.get(name)
         assert bucket, f"the roll-up no longer declares {name}"
         tolerated |= set(bucket)
@@ -975,9 +975,29 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
         "these jobs are required by `CI gate` and gate themselves on the event shape, but no tolerance bucket in "
         f"the roll-up names them: {undeclared}. On a merge_group ref they may skip; an undeclared skip is flagged "
         "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or "
-        "POST_MERGE_PUSH_SKIPPABLE with "
+        "POST_MERGE_PUSH_SKIPPABLE or PR_ONLY_SKIPPABLE with "
         "the reason its skip is safe, or drop the event condition."
     )
+
+
+def test_merge_groups_avoid_unused_planning_and_advisory_jobs(ci_jobs: dict[str, Any]) -> None:
+    assert ci_jobs["plan-affected-tests"]["if"] == "github.event_name == 'pull_request'"
+    assert ci_jobs["typecheck"]["if"] == "github.event_name != 'merge_group'"
+    gate_needs = ci_jobs[GATE_JOB_KEY]["needs"]
+    assert "typecheck" not in gate_needs
+    assert "pyright-strict-zone" in gate_needs
+    assert "adapter-conformance-windows" in gate_needs
+    for name in ("test", "test-macos"):
+        job = ci_jobs[name]
+        assert "plan-affected-tests" in job["needs"]
+        condition = " ".join(job["if"].split())
+        assert "!cancelled() &&" in condition
+        assert "needs.lint.result == 'success' &&" in condition
+        assert "needs.determine-changes.result == 'success' &&" in condition
+        assert (
+            "(needs.plan-affected-tests.result == 'success' || "
+            "(github.event_name != 'pull_request' && needs.plan-affected-tests.result == 'skipped'))" in condition
+        )
 
 
 def test_every_queue_required_context_emits_on_all_pull_requests_unconditionally(
