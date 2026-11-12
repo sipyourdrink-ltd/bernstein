@@ -261,8 +261,7 @@ class SSHBackend:
 
         Args:
             cmd: Command to execute on the remote host.
-            workdir: Local workdir (used to resolve relative paths only;
-                the command runs in the remote session directory).
+            workdir: Compatibility parameter. The remote session directory is used.
             log_path: Optional local file to capture combined stdout/stderr.
             timeout_seconds: Process timeout (part of interface, tracked
                 externally by the caller).

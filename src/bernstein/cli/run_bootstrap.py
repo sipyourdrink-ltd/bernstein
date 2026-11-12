@@ -770,17 +770,17 @@ def _show_dry_run_plan(
 ) -> None:
     """Show scheduling plan without executing.
 
-    When a plan file is provided, loads tasks directly from it so no running
-    server is required.  Otherwise falls back to fetching open tasks from a
-    running task server.
+    Load a saved plan when supplied. Otherwise synthesize one from an explicit
+    goal or an explicit or discovered seed file. With none of these inputs,
+    preview the open tasks on the running task server.
 
     Args:
         workdir: Project root directory.
         plan_file: Optional plan file path.
         goal: Optional goal string.
         seed_file: Optional seed file path.
-        model_override: Optional model override.
-        cli: Optional CLI override.
+        model_override: Model used for the cost estimate when supplied.
+        cli: Compatibility parameter. Validated by the CLI before this call.
     """
     _ = cli  # Part of interface: --cli is validated by its click.Choice
     from rich.table import Table

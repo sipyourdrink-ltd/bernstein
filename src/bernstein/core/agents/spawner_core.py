@@ -7101,8 +7101,8 @@ class AgentSpawner:
     ) -> list[str]:
         """Build the CLI command to run inside the container.
 
-        Reads the prompt from the prompt file instead of passing it as
-        a command-line argument (which can hit ARG_MAX limits).
+        The generated command reads the prompt from the mounted session file
+        at execution time.
 
         Args:
             prompt_file: Path to the prompt file (part of interface;

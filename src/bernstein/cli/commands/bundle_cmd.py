@@ -125,12 +125,12 @@ def ticket_cmd(
 def verify_cmd(archive: Path, signature: Path, card_path: Path) -> None:
     """Verify a ticket bundle against an Agent Card.
 
-    Click exits with status 0 on success. It reports verification errors
-    and exits with status 1.
+    Click exits with status 0 when the bundle is verified.
 
     Raises:
-        click.ClickException: If the Agent Card cannot be read or parsed,
-            or if bundle verification fails.
+        click.ClickException: If reading the Agent Card fails, decoding
+            raises ValueError, a required key is missing, or verification
+            returns false.
     """
     try:
         card_payload = json.loads(card_path.read_text(encoding="utf-8"))

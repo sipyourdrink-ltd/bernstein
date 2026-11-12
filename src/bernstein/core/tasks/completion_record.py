@@ -30,7 +30,7 @@ KNOWN_TRIGGER_FIELDS = {"kind", "referenced_hash"}
 
 
 class ReopenTriggerKind(StrEnum):
-    """Evidence changes that can invalidate a completion assumption."""
+    """Evidence conditions that can reopen a completed task."""
 
     ASSUMPTION_HASH_MISMATCH = "assumption-hash-mismatch"
     RECEIPT_INVALIDATED = "receipt-invalidated"
