@@ -1455,7 +1455,9 @@ class CacheBaselineCollector:
             f.write(json.dumps(record) + "\n")
 
         logger.warning(
-            f"Cache baseline drop recorded: {drop.baseline_name} "
-            f"dropped by {drop.drop_percentage:.1%} "
-            f"({drop.previous_value:.2f} → {drop.current_value:.2f})"
+            "Cache baseline drop recorded: %s dropped by %.1f%% (%.2f → %.2f)",
+            drop.baseline_name,
+            drop.drop_percentage * 100,
+            drop.previous_value,
+            drop.current_value,
         )
