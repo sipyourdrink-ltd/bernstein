@@ -60,9 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      # contents: write is required by the autosync push path only; the
-      # push itself refuses to run without the named autosync token.
-      contents: write
+      # Autosync checkout and push use BERNSTEIN_AUTOSYNC_TOKEN.
+      contents: read
       pull-requests: read
       actions: read
       # The andon gate reads the open/closed state of the trunk-unstable
