@@ -132,7 +132,9 @@ def test_server_get_returns_none_on_unreachable(tmp_path: Path, monkeypatch: pyt
         assert helpers.server_get("/status", raise_on_auth_error=True) is None
 
 
-def test_server_get_401_without_optin_stays_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_server_get_401_without_optin_stays_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Back-compat: the 69 existing callers must keep receiving ``None`` on 401."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("BERNSTEIN_SERVER_URL", raising=False)
@@ -142,6 +144,28 @@ def test_server_get_401_without_optin_stays_none(tmp_path: Path, monkeypatch: py
 
     with patch.object(helpers.httpx, "get", fake_get):
         assert helpers.server_get("/status") is None
+
+    output = capsys.readouterr()
+    assert "Server error:" in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("auth_error", [False, True])
+def test_require_server_reachable_reports_failure_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], auth_error: bool
+) -> None:
+    def probe(*_args: object, **_kwargs: object) -> None:
+        if auth_error:
+            raise helpers.ServerAuthError(401)
+
+    monkeypatch.setattr(helpers, "server_get", probe)
+    with pytest.raises(SystemExit) as exc:
+        helpers.require_server_reachable()
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    expected = "rejected credentials" if auth_error else "Cannot reach task server"
+    assert expected in output.err
+    assert output.out == ""
 
 
 def test_resolve_auth_token_persists_to_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
