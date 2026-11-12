@@ -111,7 +111,13 @@ export function ReceiptVerification() {
         <div role="status" className="space-y-2 rounded-md border border-border bg-background p-3 text-body text-foreground">
           <p className="font-medium">{verdict.ok ? 'Receipt integrity verified' : 'Receipt did not verify'}</p>
           {verdict.ok && <p className="font-mono">{verdict.tier}</p>}
-          {verdict.caveat && <p>{verdict.caveat}</p>}
+          {verdict.ok && (
+            <p>
+              The signed receipt contents were checked using the public key embedded in the receipt.
+              To verify who signed it, use the operator's public key obtained separately with{' '}
+              <code>bernstein verify receipt &lt;file&gt; --public-key &lt;pem&gt;</code>.
+            </p>
+          )}
           <dl className="flex flex-wrap gap-x-4 gap-y-1">
             <div><dt>Status</dt><dd className="font-mono">{verdict.status}</dd></div>
             {verdict.run_id && <div className="min-w-0"><dt>Run ID</dt><dd className="break-all font-mono">{verdict.run_id}</dd></div>}

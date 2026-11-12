@@ -132,8 +132,21 @@ def check_governance_receipt(page: Page, base: str) -> None:
     assert digest == hashlib.sha256(valid.read_bytes()).hexdigest()
     assert verdict["tier"] == "integrity-only"
     expect(panel.get_by_text("Receipt integrity verified", exact=True)).to_be_visible()
-    expect(panel.get_by_text(verdict["caveat"], exact=True)).to_be_visible()
+    key_caveat = panel.get_by_text("The signed receipt contents were checked", exact=False)
+    expect(key_caveat).to_contain_text("public key embedded in the receipt")
+    expect(key_caveat).to_contain_text("operator's public key obtained separately")
     expect(panel.get_by_text(verdict["run_id"], exact=True)).to_be_visible()
+
+    reformatted = valid.read_bytes() + b" \n"
+    file_input.set_input_files({"name": "reformatted.json", "mimeType": "application/json", "buffer": reformatted})
+    expect(key_caveat).to_be_hidden()
+    with page.expect_response(endpoint) as reformatted_response:
+        submit.click()
+    assert reformatted_response.value.ok
+    digest, reformatted_verdict = page.evaluate("() => Promise.all(window.receiptRequests)")[-1]
+    assert digest == hashlib.sha256(reformatted).hexdigest()
+    assert reformatted_verdict["tier"] == "integrity-only"
+    expect(key_caveat).to_be_visible()
 
     data_transfer = page.evaluate_handle(
         """bytes => {
@@ -158,7 +171,7 @@ def check_governance_receipt(page: Page, base: str) -> None:
     assert failed_verdict["status"] == "tampered"
     expect(panel.get_by_text("Receipt did not verify", exact=True)).to_be_visible()
     expect(panel.get_by_text("tampered", exact=True)).to_be_visible()
-    expect(panel.get_by_text(verdict["caveat"], exact=True)).to_be_hidden()
+    expect(key_caveat).to_be_hidden()
 
     file_input.set_input_files({"name": "empty.json", "mimeType": "application/json", "buffer": b""})
     page.route(endpoint, lambda route: route.fulfill(status=503, json={"detail": "Verifier unavailable"}))
@@ -178,7 +191,7 @@ def check_governance_receipt(page: Page, base: str) -> None:
     assert malformed_verdict["status"] == "malformed"
     expect(panel.get_by_text("malformed", exact=True)).to_be_visible()
     expect(panel.get_by_role("alert")).to_have_count(0)
-    assert len(receipts) == 4
+    assert len(receipts) == 5
 
 
 def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> None:
