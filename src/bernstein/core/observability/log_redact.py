@@ -1,9 +1,7 @@
 """PII and credential redaction for logging and persisted traces.
 
-Installs a ``logging.Filter`` on the root logger that automatically replaces
-email addresses, phone numbers, SSNs, credit card numbers, and credential
-shapes with
-``[REDACTED]`` before log records are emitted.
+The filter replaces recognised PII and credential shapes in the formatted log
+message. Install it after configuring the handlers that emit those messages.
 
 Usage::
 
@@ -11,10 +9,6 @@ Usage::
 
     install_pii_filter()          # attaches to root logger and its handlers
     install_pii_filter(logger)    # attaches to a specific logger and its handlers
-
-The filter mutates ``record.msg`` and ``record.args`` in-place so that
-downstream handlers (file, console, structured JSON) all receive sanitised
-text - no PII is ever written to disk or stdout.
 """
 
 from __future__ import annotations
@@ -23,7 +17,6 @@ import logging
 import math
 import re
 from collections import Counter
-from typing import Any
 
 from bernstein.core.security.luhn import luhn_check
 
@@ -158,36 +151,25 @@ def redact_sensitive_bytes(data: bytes) -> bytes:
     return redact_sensitive_text(text).encode("utf-8", errors="surrogateescape")
 
 
-def _redact_arg(value: Any) -> Any:
-    """Redact a single log-record format argument if it's a string."""
-    if isinstance(value, str):
-        return redact_sensitive_text(value)
-    return value
-
-
 # ---------------------------------------------------------------------------
 # Logging filter
 # ---------------------------------------------------------------------------
 
 
 class PiiRedactingFilter(logging.Filter):
-    """``logging.Filter`` that scrubs PII from every log record.
-
-    Handles both eager-formatted messages (``record.msg`` is already a
-    string with no ``record.args``) and lazy ``%-format`` messages where
-    PII may hide inside ``record.args``.
-    """
+    """Redact recognized sensitive values after log message interpolation."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
-            record.msg = redact_sensitive_text(record.msg)
-
-        if record.args is not None:
-            if isinstance(record.args, dict):
-                record.args = {k: _redact_arg(v) for k, v in record.args.items()}
-            elif isinstance(record.args, tuple):
-                record.args = tuple(_redact_arg(a) for a in record.args)
-
+        try:
+            message = record.getMessage()
+        except Exception:  # A formatter error would print the unredacted arguments.
+            record.msg = "[invalid log message]"
+            record.args = ()
+        else:
+            redacted = redact_sensitive_text(message)
+            if redacted != message:
+                record.msg = redacted
+                record.args = ()
         return True
 
 

@@ -197,9 +197,7 @@ class TestFilterArgs:
             exc_info=None,
         )
         f.filter(rec)
-        assert isinstance(rec.args, tuple)
-        assert "alice@example.com" not in rec.args[0]
-        assert rec.args[1] == 8052  # int untouched
+        assert rec.getMessage() == "Login from [REDACTED] on port 8052"
 
     def test_redacts_dict_args(self) -> None:
         f = PiiRedactingFilter()
@@ -214,8 +212,7 @@ class TestFilterArgs:
         )
         rec.args = {"email": "bob@acme.com"}
         f.filter(rec)
-        assert isinstance(rec.args, dict)
-        assert "bob@acme.com" not in rec.args["email"]
+        assert rec.getMessage() == "Login from [REDACTED]"
 
     def test_none_args_ok(self) -> None:
         f = PiiRedactingFilter()
