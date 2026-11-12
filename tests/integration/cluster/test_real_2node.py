@@ -17,6 +17,7 @@ import time
 import httpx
 import pytest
 
+from bernstein.core.security.jwt_tokens import JWTManager, JWTPayload
 from tests.integration.cluster.conftest import (
     NODE_TIMEOUT_S,
     ClusterHandle,
@@ -253,7 +254,16 @@ def test_token_expiry_then_refresh(two_node_cluster: ClusterHandle) -> None:
     resp = httpx.post(hb_url, headers={"Authorization": f"Bearer {valid_token}"}, json=hb_payload, timeout=5.0)
     assert resp.status_code == 200, resp.text
 
-    expired_token = _mint_token(handle.cluster_secret, node_id, ttl_s=-60.0, scopes=["node:heartbeat"])
+    expired_at = time.time() - 60.0
+    expired_token = JWTManager(secret=handle.cluster_secret, expiry_hours=1)._encode(
+        JWTPayload(
+            session_id=f"node-{node_id}",
+            user_id=node_id,
+            issued_at=expired_at - 60.0,
+            expires_at=expired_at,
+            scopes=["node:heartbeat"],
+        )
+    )
     resp = httpx.post(hb_url, headers={"Authorization": f"Bearer {expired_token}"}, json=hb_payload, timeout=5.0)
     assert resp.status_code == 401, f"Expected 401 after expiry; got {resp.status_code} {resp.text}"
 

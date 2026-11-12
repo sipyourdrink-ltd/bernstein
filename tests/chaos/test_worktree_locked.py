@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-async def test_worktree_locked(test_client: TestClient, orchestrator_factory, integration_sdd: Path):
+async def test_worktree_locked(
+    test_client: TestClient, orchestrator_factory, integration_sdd: Path, caplog: pytest.LogCaptureFixture
+):
     # 1. Create a task
     desc = (
         "```python\n"
@@ -31,7 +33,9 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
         "time.sleep(2)\n"
         "```"
     )
-    test_client.post("/tasks", json={"title": "Chaos Task", "description": desc, "role": "backend"})
+    created = test_client.post("/tasks", json={"title": "Chaos Task", "description": desc, "role": "backend"})
+    assert created.status_code in (200, 201), created.text
+    task_id = created.json()["id"]
 
     # 2. Run orchestrator
     orch: Orchestrator = orchestrator_factory(max_agents=1, use_worktrees=True)
@@ -50,6 +54,8 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
                 if owns_lock:
                     return
                 for t in tasks_data:
+                    if t["id"] != task_id:
+                        continue
                     slug = t["title"].lower().replace(" ", "-")
                     marker = integration_sdd / "runtime" / f"DONE_{slug}"
                     if marker.exists():
@@ -77,12 +83,20 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
                     del orch._agents[sid]
 
                 resp = test_client.get("/tasks")
-                if any(t["status"] == "done" for t in resp.json()):
+                task = next(t for t in resp.json() if t["id"] == task_id)
+                if task["status"] in {"done", "failed"}:
                     break
                 await asyncio.sleep(0.5)
+            else:
+                pytest.fail("the lock test task did not reach a terminal state")
 
             # 3. Verify
-            # The task should be done on server, but changes NOT on main because merge failed
+            assert owns_lock, "the test never injected its index lock"
+            assert task["status"] == "failed"
+            assert any(
+                f"Merge-back failed for task {task_id}" in message and str(lock_file) in message
+                for message in caplog.messages
+            ), "the task failed without hitting the injected index lock"
             assert not (integration_sdd.parent / "chaos.txt").exists()
 
     finally:
