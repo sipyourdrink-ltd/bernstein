@@ -122,9 +122,11 @@ There is no dedicated `dr verify` subcommand today. The supported drill is:
 
 1. `bernstein dr backup --to ./drill.tar.gz`
 2. `bernstein dr restore --from ./drill.tar.gz --dry-run`
-3. Confirm `Files:` matches the backup's printed count.
-4. To check a restored workspace, restore into a fresh scratch directory
-   and run `doctor` from that directory:
+3. Inspect the archive entries and compare the printed SHA256 prefix with
+   the one from the backup.
+4. To check a restored workspace, restore into a fresh scratch directory,
+   compare the restored file count with the backup, and run `doctor` from
+   that directory:
 
    ```bash
    scratch="$(mktemp -d)"
