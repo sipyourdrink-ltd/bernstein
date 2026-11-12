@@ -174,6 +174,7 @@ def _redirect_tools() -> None:
         def get(url: Any, *args: Any, **kwargs: Any) -> Any:
             if isinstance(url, str) and url.startswith(_JINA_READER):
                 url = base + url[len(_JINA_READER) :]
+                kwargs.setdefault("timeout", (5.0, 30.0))
             return requests.get(url, *args, **kwargs)
 
         setattr(visit, "requests", _Overlay(requests, get=get))  # noqa: B010

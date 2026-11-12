@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
+from http.client import IncompleteRead
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_OPENAPI_TIMEOUT_SECONDS = 15
+_MAX_OPENAPI_BYTES = 8 * 1024 * 1024
 
 _SDK_HEADER = '''\
 """Auto-generated Bernstein API client SDK.
@@ -219,6 +222,9 @@ def generate_sdk_from_app(base_url: str = "http://127.0.0.1:8052") -> str:
 
     Returns:
         Python source code for the generated client.
+
+    Raises:
+        ValueError: The OpenAPI document is larger than the response limit.
     """
     import urllib.request
 
@@ -229,9 +235,16 @@ def generate_sdk_from_app(base_url: str = "http://127.0.0.1:8052") -> str:
     # dev servers, otherwise require https.
     ensure_http_url(url, allow_http=True, source="sdk_generator")
     # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-    with urllib.request.urlopen(url) as resp:
-        spec = json.loads(resp.read().decode("utf-8"))
-    return generate_sdk(spec)
+    with urllib.request.urlopen(url, timeout=_OPENAPI_TIMEOUT_SECONDS) as resp:
+        payload = resp.read(_MAX_OPENAPI_BYTES + 1)
+        if len(payload) > _MAX_OPENAPI_BYTES:
+            raise ValueError(f"OpenAPI document exceeds the {_MAX_OPENAPI_BYTES}-byte limit")
+        # A sized HTTPResponse.read may return early without raising on an
+        # incomplete Content-Length response. Keep the original framing check.
+        remaining = getattr(resp, "length", None)
+        if isinstance(remaining, int) and remaining > 0:
+            raise IncompleteRead(payload, remaining)
+    return generate_sdk(json.loads(payload.decode("utf-8")))
 
 
 def generate_sdk_to_file(output_path: str, openapi_spec: dict[str, Any]) -> str:
