@@ -9,8 +9,8 @@ Usage::
 
     from bernstein.core.observability.log_redact import install_pii_filter
 
-    install_pii_filter()          # attaches to root logger
-    install_pii_filter(logger)    # attaches to a specific logger
+    install_pii_filter()          # attaches to root logger and its handlers
+    install_pii_filter(logger)    # attaches to a specific logger and its handlers
 
 The filter mutates ``record.msg`` and ``record.args`` in-place so that
 downstream handlers (file, console, structured JSON) all receive sanitised
@@ -201,10 +201,11 @@ _FILTER_ATTR = "_bernstein_pii_filter"
 def install_pii_filter(
     target: logging.Logger | None = None,
 ) -> PiiRedactingFilter:
-    """Attach a ``PiiRedactingFilter`` to *target* (default: root logger).
+    """Protect *target* and its current handlers (default: root logger).
 
-    Safe to call multiple times - subsequent calls are no-ops that return the
-    existing filter instance.
+    A logger filter sees records emitted by that logger. Handler filters also
+    see records propagated from children. Call after configuring handlers, or
+    call again to protect handlers added since installation.
 
     Args:
         target: Logger to protect. ``None`` means the root logger.
@@ -215,11 +216,12 @@ def install_pii_filter(
     if target is None:
         target = logging.getLogger()
 
-    existing = getattr(target, _FILTER_ATTR, None)
-    if isinstance(existing, PiiRedactingFilter):
-        return existing
-
-    pii_filter = PiiRedactingFilter()
+    pii_filter = getattr(target, _FILTER_ATTR, None)
+    if not isinstance(pii_filter, PiiRedactingFilter):
+        pii_filter = PiiRedactingFilter()
+        setattr(target, _FILTER_ATTR, pii_filter)
     target.addFilter(pii_filter)
-    setattr(target, _FILTER_ATTR, pii_filter)
+    for handler in target.handlers:
+        if not any(isinstance(existing, PiiRedactingFilter) for existing in handler.filters):
+            handler.addFilter(pii_filter)
     return pii_filter

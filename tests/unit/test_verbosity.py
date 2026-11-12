@@ -48,6 +48,12 @@ class TestVerbosityFlags:
         assert result.exit_code != 0
         assert "cannot" in result.output.lower() or "error" in result.output.lower()
 
+    @pytest.mark.parametrize("verbose", [True, False])
+    def test_package_handler_redacts_child_messages(self, verbose: bool, capsys: pytest.CaptureFixture[str]) -> None:
+        apply_verbosity(verbose=verbose, quiet=not verbose)
+        logging.getLogger("bernstein.redaction-test").error("Contact %s", "person@example.com")
+        assert capsys.readouterr().err.count("Contact [REDACTED]") == 1
+
     def test_verbosity_constants(self) -> None:
         assert QUIET == -1
         assert NORMAL == 0

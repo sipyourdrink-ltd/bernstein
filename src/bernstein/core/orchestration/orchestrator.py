@@ -6926,6 +6926,10 @@ if __name__ == "__main__":
             ],
         )
 
+    from bernstein.core.observability.log_redact import install_pii_filter
+
+    install_pii_filter()
+
     # Apply deterministic random seed if requested via env var.
     _deterministic_seed_env = os.environ.get("BERNSTEIN_DETERMINISTIC_SEED", "").strip()
     if _deterministic_seed_env:

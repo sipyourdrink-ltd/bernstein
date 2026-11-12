@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from bernstein.core.log_redact import (
     PiiRedactingFilter,
     install_pii_filter,
@@ -236,22 +237,17 @@ class TestFilterArgs:
 
 
 class TestInstall:
-    def test_installs_on_root(self) -> None:
+    def test_installs_on_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
         root = logging.getLogger()
-        # Remove any existing filter from prior test runs
-        for f in root.filters.copy():
-            if isinstance(f, PiiRedactingFilter):
-                root.removeFilter(f)
-        if hasattr(root, "_bernstein_pii_filter"):
+        with monkeypatch.context() as isolated:
+            isolated.setattr(root, "filters", [])
+            isolated.setattr(root, "handlers", [])
+            isolated.delattr(root, "_bernstein_pii_filter", raising=False)
+            filt = install_pii_filter()
+            assert isinstance(filt, PiiRedactingFilter)
+            assert filt in root.filters
+            root.removeFilter(filt)
             delattr(root, "_bernstein_pii_filter")
-
-        filt = install_pii_filter()
-        assert isinstance(filt, PiiRedactingFilter)
-        assert filt in root.filters
-
-        # Cleanup
-        root.removeFilter(filt)
-        delattr(root, "_bernstein_pii_filter")
 
     def test_idempotent(self) -> None:
         test_logger = logging.getLogger("test.idempotent")
@@ -301,7 +297,8 @@ class TestEndToEnd:
 
         handler.emit = capture_emit  # type: ignore[assignment]
 
-        test_logger.info("User %s has SSN %s", "alice@corp.com", "123-45-6789")
+        child = logging.getLogger("test.e2e.child")
+        child.info("User %s has SSN %s", "alice@corp.com", "123-45-6789")
 
         assert len(records) == 1
         assert "alice@corp.com" not in records[0]
