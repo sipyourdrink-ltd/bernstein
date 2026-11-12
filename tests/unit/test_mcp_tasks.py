@@ -90,6 +90,29 @@ async def test_get_journal_head_empty_when_missing() -> None:
     assert _get_journal_head("non-existent-task") == ""
 
 
+def test_get_journal_head_reports_read_failure(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        patch("bernstein.core.replay.journal.run_journal_path") as journal_path,
+        patch("bernstein.core.replay.journal.EventJournal.resume", side_effect=OSError("private diagnostic")),
+    ):
+        journal_path.return_value.exists.return_value = True
+        assert _get_journal_head("example-task") == ""
+
+    assert "Could not read the task journal head (OSError)" in caplog.text
+    assert "private diagnostic" not in caplog.text
+
+
+def test_get_journal_head_is_quiet_if_journal_disappears(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        patch("bernstein.core.replay.journal.run_journal_path") as journal_path,
+        patch("bernstein.core.replay.journal.EventJournal.resume", side_effect=FileNotFoundError),
+    ):
+        journal_path.return_value.exists.return_value = True
+        assert _get_journal_head("example-task") == ""
+
+    assert "Could not read the task journal head" not in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_project_task_helper() -> None:
     data = _make_task_dict("t-123", status="done", result_summary="Success summary")
