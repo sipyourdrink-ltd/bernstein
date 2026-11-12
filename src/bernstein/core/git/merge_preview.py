@@ -26,8 +26,10 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
+import subprocess
 import uuid
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -81,7 +83,8 @@ class MergePreviewConflict(MergePreviewError):
     @property
     def display_paths(self) -> str:
         """Format paths for diagnostics while keeping the recorded paths intact."""
-        return ", ".join(for_log(path, escape_nonprintable=True) for path in self.conflicting_files) or "<unknown>"
+        paths = (for_log(path.replace("\\", "\\\\"), escape_nonprintable=True) for path in self.conflicting_files)
+        return ", ".join(paths) or "<unknown>"
 
 
 def preview_worktree_path(repo_root: Path, *, session_id: str, task_id: str) -> Path:
@@ -106,10 +109,17 @@ def preview_worktree_path(repo_root: Path, *, session_id: str, task_id: str) -> 
 
 def _conflicting_files(preview: Path) -> list[str]:
     """Return the unmerged paths inside a preview whose merge just failed."""
-    result = run_git(["diff", "--name-only", "--diff-filter=U", "-z"], preview, timeout=30)
-    if not result.ok:
+    # Text-mode subprocess output normalizes carriage returns in filenames.
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=U", "-z"],
+        cwd=preview,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode:
         return []
-    return [path for path in result.stdout.split("\0") if path]
+    return [os.fsdecode(path) for path in result.stdout.split(b"\0") if path]
 
 
 def _discard_preview(repo_root: Path, preview: Path) -> None:
