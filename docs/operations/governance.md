@@ -122,7 +122,7 @@ The result is a statement about the evidence, not a failed request.
 
 ## Guarantees
 
-- **Verifiability** - `bernstein governance verify <run>` re-resolves and
+- **Verifiability** - `bernstein govern verify <run>` re-resolves and
   re-projects every recorded access and budget decision from the presented
   bindings and ledger and confirms the recorded verdicts. Any single-byte tamper
   to a record, the bindings, or the spine fails the check.
@@ -136,7 +136,7 @@ The result is a statement about the evidence, not a failed request.
 ## CLI
 
 ```
-bernstein governance verify <run> --bindings bindings.json [--ledger ledger.jsonl]
+bernstein govern verify <run> --bindings bindings.json [--ledger ledger.jsonl]
 ```
 
 Exit codes: `0` verified, `1` no records / bad input, `2` mismatch.

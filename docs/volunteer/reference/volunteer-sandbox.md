@@ -13,9 +13,9 @@ Inputs to the derivation:
 - `manifest.allowed_paths`
 - `manifest.egress_allowlist`
 - `manifest.max_wall_clock_minutes`
-- Donor flags: `--cpu`, `--memory`, `--no-network`
+- Optional donor memory and wall-clock ceilings supplied through the runner API
 
-The donor's resource flags override the manifest's implicit defaults but cannot loosen restrictions (e.g. a manifest with `egress_allowlist: []` blocks all egress regardless of donor flags).
+The tighter ceiling applies. An empty `egress_allowlist` disables network access.
 
 ## Sandbox types
 
@@ -27,9 +27,9 @@ Linux namespace isolation using `unshare`. The worker runs as a non-root user in
 |----------|-------------|
 | Filesystem | chroot to repo root; read/write limited to `allowed_paths` globs |
 | Network | New namespace; no host network unless `egress_allowlist` is populated |
-| PIDs | New PID namespace; max processes limited by donor `--pids` flag |
-| Memory | Limited by donor `--memory` flag (default 2 GiB) |
-| CPU | Cgroup v2 shares limited by donor `--cpu` flag (default 2 cores) |
+| PIDs | Separate PID namespace |
+| Memory | Profile ceiling of 2 GiB, lowered by an optional donor memory limit |
+| CPU | CPU quota set by the sandbox profile |
 | Time | `max_wall_clock_minutes` enforced via `RLIMIT_CPU` |
 
 ### `none`

@@ -22,14 +22,14 @@ receipt bundle that a maintainer can verify offline.
 
 ## For donors
 
-A donor runs `bernstein volunteer` against an issue labeled for volunteers.
+Donors can browse opt-in projects, verify a project's manifest, and configure persistent donor limits from the CLI.
 The worker never inherits the host environment, never runs a shell on issue
 text, and never loosens containment — the profile digest that lands in the
 receipt is a pure function of the project's manifest.
 
 ```bash
 bernstein volunteer budget --budget-tasks 10 --budget-hours 6 --max-size m
-bernstein volunteer run https://github.com/owner/project/issues/123
+bernstein volunteer browse
 bernstein volunteer verify /path/to/checkout   # check a project's manifest
 ```
 
@@ -52,7 +52,7 @@ bernstein volunteer browse            # list issues open to volunteers
 | `bernstein volunteer verify [repo]` | Validate a manifest and print its digest. |
 | `bernstein volunteer browse` | List issues labeled for volunteers. |
 | `bernstein volunteer budget` | Set or inspect persistent donor limits and usage. |
-| `bernstein volunteer run <url>` | Execute a claimed task and produce a receipt. |
+| `bernstein volunteer autopilot` | Load an autopilot profile. Running tasks requires a Python task-source implementation. |
 | `bernstein volunteer hub` | Serve the lease store and the hub's own task board over HTTP. |
 
 ## Hub task board

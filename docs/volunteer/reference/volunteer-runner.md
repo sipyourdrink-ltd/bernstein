@@ -36,7 +36,7 @@ The sandbox profile is a deterministic function of:
 - `allowed_paths`
 - `egress_allowlist`
 - `max_wall_clock_minutes`
-- The donor's resource limits (if running with `--limit`)
+- The donor's optional wall-clock and memory ceilings passed to the runner
 
 The derived profile is hashed and recorded in the receipt as `sandbox_sha256`.
 

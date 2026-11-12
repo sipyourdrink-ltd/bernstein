@@ -143,14 +143,14 @@ This is the honest limit. Any solution must work within it.
 
 **Phase 1 (When trigger fires)**: Multi-mirror git indexes
 1. Document initial mirror set (at least 2 geographic regions)
-2. Update `bernstein volunteer publish` to push to multiple remotes
-3. Update `bernstein volunteer fetch` to try mirrors in order
+2. Add publishing support for multiple registry mirrors
+3. Add ordered mirror lookup to volunteer discovery
 4. Add simple cron-based mirror sync as fallback
 
 **Phase 2 (Optional, if onion access needed)**: Onion transport
 1. Document how to run hub as onion service
 2. Update manifest to include optional onion address
-3. Add Tor-aware fetching option in volunteer fetch
+3. Add a Tor-aware option to volunteer discovery
 
 **Phase 3 (Scale, if needed)**: Gossip between hubs
 1. Design distributed sync protocol
