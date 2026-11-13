@@ -199,12 +199,19 @@ def test_partial_claim_page_preserves_known_claims_and_marks_incomplete(monkeypa
         REMOTE,
         {
             "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
-            "/tasks?status=claimed&limit=500&offset=0": {"tasks": [_task("page-one", "n-1")], "total": 2},
+            "/tasks?status=claimed&limit=500&offset=0": {
+                "tasks": [_task("page-one", "n-1", status="claimed")],
+                "total": 2,
+            },
+            "/tasks?status=claimed&limit=500&offset=1": {"tasks": [], "total": 2},
             "/tasks?status=in_progress&limit=500&offset=0": {"tasks": [], "total": 0},
         },
     )
 
-    view = _load_cluster_view(REMOTE, [_task("legacy", "n-1")])
+    view = _load_cluster_view(
+        REMOTE,
+        [_task("legacy", "n-1", status="claimed"), _task("finished", "n-1")],
+    )
 
     assert view is not None and view["claims_complete"] is False
     assert [task["id"] for task in view["nodes"][0]["tasks"]] == ["legacy", "page-one"]
@@ -314,6 +321,12 @@ async def test_remote_cluster_survives_invalid_sibling_response_shapes(monkeypat
     async with app.run_test() as pilot:
         await pilot.pause()
         app._apply_data(frame)
+        app._apply_data(
+            {
+                **frame,
+                "status": {"runtime": {"config_last_diff": {"changed": True, "modified": ["bad"], "changes": None}}},
+            }
+        )
         await pilot.pause()
         assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
 

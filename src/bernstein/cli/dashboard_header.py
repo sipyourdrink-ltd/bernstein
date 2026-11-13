@@ -52,7 +52,7 @@ class DashboardHeader(Static):
         if self.remote_cluster:
             active = self.active_agents if self.active_agents is not None else "-"
             capacity = self.cluster_capacity if self.cluster_capacity is not None else "-"
-            right.append(f"Cluster agents {active}/{capacity}", style=f"bold {PALETTE.glow}")
+            right.append(f"Online cluster agents {active}/{capacity}", style=f"bold {PALETTE.glow}")
         else:
             right.append("[-]", style=f"bold {PALETTE.text_dim}")
             right.append(f" Agents {self.active_agents}/{self.max_agents} ", style=f"bold {PALETTE.glow}")

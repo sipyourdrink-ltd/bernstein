@@ -1030,9 +1030,10 @@ class BernsteinApp(App[None]):
         self._last_config_diff_fingerprint = fingerprint  # type: ignore[attr-defined]
 
         log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
-        modified = int(diff.get("modified", 0) or 0)
-        added = int(diff.get("added", 0) or 0)
-        removed = int(diff.get("removed", 0) or 0)
+        modified, added, removed = (
+            value if type(value := diff.get(key)) is int and value >= 0 else 0
+            for key in ("modified", "added", "removed")
+        )
         log.write(
             _format_activity_line(
                 "system",
@@ -1040,7 +1041,8 @@ class BernsteinApp(App[None]):
             )
         )
 
-        for raw_change in list(diff.get("changes", []))[:4]:
+        changes = diff.get("changes")
+        for raw_change in changes[:4] if isinstance(changes, list) else []:
             if not isinstance(raw_change, dict):
                 continue
             path = str(raw_change.get("path", "?"))

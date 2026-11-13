@@ -274,31 +274,35 @@ def _dashboard_task_rows(data: Any) -> list[dict[str, Any]] | None:
 _NODE_HELD_STATUSES = frozenset({"claimed", "in_progress"})
 
 
-def _fetch_held_tasks(url: str) -> tuple[list[dict[str, Any]], bool]:
+def _fetch_held_tasks(url: str) -> tuple[list[dict[str, Any]], set[str]]:
     """Read active claims separately from the capped dashboard task list."""
     tasks: dict[str, dict[str, Any]] = {}
-    complete = True
+    incomplete: set[str] = set()
     for status in sorted(_NODE_HELD_STATUSES):
         offset = 0
         first_total: int | None = None
         while first_total is None or offset < first_total:
             page = _get(f"/tasks?status={status}&limit=500&offset={offset}", url)
             if not isinstance(page, dict):
-                complete = False
+                incomplete.add(status)
                 break
             rows, total = page.get("tasks"), page.get("total")
             if not isinstance(rows, list) or type(total) is not int or total < 0:
-                complete = False
+                incomplete.add(status)
                 break
             if first_total is None:
                 first_total = total
             if not rows:
+                if offset < first_total:
+                    incomplete.add(status)
                 break
             for row in rows:
-                if _is_held_task(row):
+                if _is_held_task(row) and row["status"] == status:
                     tasks[row["id"]] = row
+                else:
+                    incomplete.add(status)
             offset += len(rows)
-    return list(tasks.values()), complete
+    return list(tasks.values()), incomplete
 
 
 def _is_held_task(task: Any) -> bool:
@@ -364,9 +368,9 @@ def _project_cluster_view(url: str, tasks: Any, registry: Any, now: float | None
     if not view_nodes:
         return {"nodes": [], "reachable": False}
 
-    active_tasks, complete = _fetch_held_tasks(url)
-    fallback = tasks if not complete and isinstance(tasks, list) else []
-    held_tasks = {task["id"]: task for task in fallback if _is_held_task(task)}
+    active_tasks, incomplete = _fetch_held_tasks(url)
+    fallback = tasks if incomplete and isinstance(tasks, list) else []
+    held_tasks = {task["id"]: task for task in fallback if _is_held_task(task) and task["status"] in incomplete}
     held_tasks.update((task["id"], task) for task in active_tasks)
     held: dict[str, list[dict[str, Any]]] = {}
     for task in held_tasks.values():
@@ -381,7 +385,7 @@ def _project_cluster_view(url: str, tasks: Any, registry: Any, now: float | None
 
     for fields in view_nodes:
         fields["tasks"] = held.get(fields["id"], [])
-    return {"nodes": view_nodes, "reachable": True, "claims_complete": complete}
+    return {"nodes": view_nodes, "reachable": True, "claims_complete": not incomplete}
 
 
 def _display_text(value: Any, default: str = "") -> str:
