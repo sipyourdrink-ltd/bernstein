@@ -34,10 +34,33 @@ bernstein cost --by profile --json
 | `--ledger PATH` | `.sdd/cost/ledger.jsonl` | Spend ledger to read. |
 | `--json` | off | Emit raw JSON. |
 
-When the ledger is present, attribution is per entry with transition
-exclusion (below). When it is missing, the command degrades to the
-`response_profile` tag on task records so older runs still show a
-breakdown.
+When the ledger path exists, attribution uses only its entries in the selected
+window, with transition exclusion described below. Task records are not a
+fallback in this case: an existing empty ledger, or a window containing no
+ledger entries, produces an empty grouped result rather than a task-record
+breakdown. If the ledger file is absent, the command instead groups task
+records by their `cost_tags.response_profile`; records without that tag go to
+`unattributed`. The time-window filter applies before this fallback too, so an
+empty selected task-record window has no profile buckets (and if the whole cost
+view has no data, the command uses its normal no-data output).
+
+## Attribution buckets
+
+A named profile bucket (for example, `terse`) means ledger entries carry that
+`response_profile` tag and their task has no recorded profile transition.
+`unattributed` means an entry has no profile tag; it does not name a profile
+or imply that spend was assigned to a default profile. `excluded (profile
+transition)` means the task has a recorded transition between profiles. All
+ledger entries for that task go in this one bucket, not under either named
+profile, because their spend cannot be reliably split between the profiles.
+The excluded bucket appears only when it has entries.
+
+For example, with three synthetic ledger records: `t-1` is tagged `terse`
+with $0.10 of cost; `t-2` has no profile tag and $0.02; and `t-3` is tagged
+`verbose` with $0.30 but has a recorded transition from `verbose` to `terse`.
+The grouped buckets are `terse` ($0.10), `unattributed` ($0.02), and
+`excluded (profile transition)` ($0.30); none of `t-3`'s cost is attributed to
+either named profile.
 
 ## Transition exclusion
 
@@ -87,7 +110,8 @@ bernstein cost profile-report --json
 The report carries, per profile: task count, output tokens, cost USD,
 mean output tokens per task, and (joined from metrics) the verification
 pass rate. Comparable cohorts that clear the honesty rule are listed
-separately.
+separately. Unlike `cost --by profile`, `profile-report` remains ledger-only;
+it does not fall back to task records when the ledger is missing or empty.
 
 ### Audit anchoring is mandatory
 
