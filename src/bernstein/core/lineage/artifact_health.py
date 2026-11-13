@@ -629,7 +629,7 @@ def artifact_health_json(
 ) -> str:
     """Return the canonical verdict JSON for ``uri``.
 
-    **The** entry point. ``bernstein artifact health --json`` and the server
+    **The** entry point. ``bernstein artifact health --output-json`` and the server
     route both call exactly this, so "the CLI and the dashboard cannot disagree"
     is a structural property rather than a pair of implementations kept in sync
     by discipline.

@@ -965,7 +965,7 @@ def _watchdog_check_process(
     unreadable pidfile. That is deliberate and it is the only safe default for a
     RECOVERY component: refusing to restart is the destructive choice here, and
     it is permanent, because nothing else recreates ``spawner.pid`` once it is
-    gone. ``bernstein doctor --fix`` / ``bernstein status --fix``
+    gone. ``bernstein doctor --fix``
     (``cli/commands/status_cmd.py::_fix_stale_pids``) deletes precisely the
     pidfile of a process that has already crashed, so "crashed, and then its
     stale pidfile was cleaned up" is an ordinary state that must still recover.

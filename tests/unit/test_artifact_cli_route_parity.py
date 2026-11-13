@@ -1,7 +1,7 @@
 """The CLI and the server cannot disagree about an artifact (#2559, AC1).
 
 The determinism criterion is not "two implementations were checked against each
-other once". It is structural: ``bernstein artifact health --json`` and
+other once". It is structural: ``bernstein artifact health --output-json`` and
 ``GET /artifacts/health`` are two callers of one function, and one function
 serialises the verdict. These tests pin the observable consequence -- the same
 ``.sdd`` state and the same evaluation instant give byte-identical bytes on both

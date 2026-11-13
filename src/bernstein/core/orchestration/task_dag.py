@@ -254,7 +254,7 @@ def topological_iter_with_parallel(dag: TaskDag) -> Iterator[frozenset[TaskNode]
 def format_plan(dag: TaskDag) -> str:
     """Render a DAG walk as a human-readable plan.
 
-    Used by the ``bernstein tasks plan --file`` CLI to highlight which
+    Used by the ``bernstein tasks dag --file`` CLI to highlight which
     batches will execute in parallel.
     """
     lines: list[str] = []
