@@ -12,6 +12,14 @@ bernstein run-service stop <run-id>
 bernstein run-service verify <run-id>
 ```
 
+## Choose a command
+
+| Command | Use it to... |
+|---|---|
+| `status [<run-id>]` | See supervisor liveness and task progress (or list all project runs). |
+| `attach <run-id>` | Reattach and prove ledger continuity from the last boundary. |
+| `verify <run-id>` | Check the full recorded audit history, ledger, and continuity boundaries offline. |
+
 ## Why
 
 `bernstein run` ties a run's lifetime to the invoking terminal. For a single
@@ -73,8 +81,10 @@ bernstein run-service attach <run-id>
 
 Reattaches from any shell: proves the current ledger head is a forward
 extension of the head last seen - that proof, not a bare "still running"
-check, is the reattach artefact - records a `reattached` receipt, and renders
-the live projection (completed / in-flight / scheduled tasks).
+check, is the reattach artefact - and renders the live projection (completed /
+in-flight / scheduled tasks). For an open run, attach records a new
+`reattached` receipt. A closed run is read-only: attach returns its existing
+final lifecycle receipt instead of recording another one.
 
 Exit codes: `0` continuous, `1` no such run, `3` continuity broken (the
 ledger diverged, or failed to verify).
