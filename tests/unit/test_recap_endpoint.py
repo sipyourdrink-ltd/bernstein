@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +90,39 @@ async def test_recap_with_tasks(client: AsyncClient) -> None:
     assert data["summary"]["completed"] == 0
     assert data["summary"]["failed"] == 0
     assert data["summary"]["success_rate"] == pytest.approx(0.0)
+
+
+@pytest.mark.anyio
+async def test_recap_reports_full_changed_paths(client: AsyncClient, tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, timeout=10)
+
+    git("init", "-q")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    filename = "résumé draft.txt"
+    path = tmp_path / filename
+    path.write_text("Draft\n", encoding="utf-8")
+    git("add", "--", filename)
+    git("commit", "-qm", "Add draft")
+    path.write_text("Draft\nSecond line\n", encoding="utf-8")
+
+    created = await client.post("/tasks", json={"title": "Draft report", "description": "Add report", "role": "qa"})
+    assert created.is_success, created.text
+    task_id = created.json()["id"]
+    claimed = await client.post(f"/tasks/{task_id}/claim")
+    assert claimed.is_success, claimed.text
+    completed = await client.post(f"/tasks/{task_id}/complete", json={"result_summary": "Draft ready"})
+    assert completed.is_success, completed.text
+
+    response = await client.get("/recap")
+    assert response.status_code == 200
+    assert response.json()["diff_stats"] == {
+        "files_changed": 1,
+        "additions": 1,
+        "deletions": 0,
+        "changed_files": [filename],
+    }
 
 
 @pytest.mark.anyio
