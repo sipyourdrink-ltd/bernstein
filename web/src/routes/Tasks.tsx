@@ -615,7 +615,10 @@ export default function Tasks() {
         <CreateTaskDialog
           initialFocus={createFocus}
           trigger={createTrigger.current}
-          onClose={() => setCreateFocus(null)}
+          onClose={(outcomeUnknown) => {
+            setCreateFocus(null);
+            if (outcomeUnknown) void qc.invalidateQueries({ queryKey: ['tasks', 'list'] });
+          }}
           onCreated={(taskId) => {
             drawerCreateTrigger.current = createTrigger.current;
             setCreateFocus(null);

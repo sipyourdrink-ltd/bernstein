@@ -28,7 +28,7 @@ export function CreateTaskDialog({
 }: {
   initialFocus: 'title' | 'prompt';
   trigger: HTMLElement | null;
-  onClose: () => void;
+  onClose: (outcomeUnknown: boolean) => void;
   onCreated: (taskId: string) => void;
 }) {
   const titleInput = useRef<HTMLInputElement>(null);
@@ -42,8 +42,8 @@ export function CreateTaskDialog({
     mutationFn: async (task: TaskInput) => {
       if (!navigator.onLine) throw new Error('You are offline. Reconnect and retry.');
       try {
-        const response = await apiPost<{ id: string }>('/tasks', task, { signal: AbortSignal.timeout(15_000) });
-        if (response?.id) return response;
+        const response = await apiPost<{ id?: unknown }>('/tasks', task, { signal: AbortSignal.timeout(15_000) });
+        if (typeof response?.id === 'string' && response.id.trim()) return response.id;
       } catch (error) {
         if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
           throw error;
@@ -51,14 +51,18 @@ export function CreateTaskDialog({
       }
       throw new TaskCreationOutcomeUnknown('Task creation could not be confirmed. Check the task list before retrying.');
     },
-    onSuccess: (task) => {
+    onSuccess: (taskId) => {
       created.current = true;
-      onCreated(task.id);
+      onCreated(taskId);
     },
     onSettled: () => { submitting.current = false; },
   });
 
   const outcomeUnknown = create.error instanceof TaskCreationOutcomeUnknown;
+
+  function close() {
+    if (!submitting.current) onClose(outcomeUnknown);
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -79,12 +83,12 @@ export function CreateTaskDialog({
 
   const error = validationError || taskCreationError(create.error);
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting.current) onClose(); }}>
+    <Dialog.Root open onOpenChange={(open) => { if (!open) close(); }}>
       <Dialog.Portal>
         <div
           aria-hidden="true"
           className="pointer-events-auto fixed inset-0 z-50 bg-background/75"
-          onClick={() => { if (!submitting.current) onClose(); }}
+          onClick={close}
         />
         <Dialog.Content
           className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-auto overscroll-contain rounded-md border border-border bg-card p-5 text-foreground"

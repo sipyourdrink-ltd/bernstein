@@ -316,6 +316,8 @@ def check_task_creation(page: Page, base: str, headers: dict[str, str]) -> None:
 
 def check_task_creation_failures(page: Page, base: str, headers: dict[str, str]) -> None:
     tasks_url = f"{base}/api/v1/tasks"
+    events_url = f"{base}/api/v1/events"
+    page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
     page.goto(f"{base}/ui/tasks")
     trigger = page.get_by_role("button", name="Create task", exact=True).first
     trigger.click()
@@ -342,6 +344,8 @@ def check_task_creation_failures(page: Page, base: str, headers: dict[str, str])
             route.continue_()
         elif route.request.post_data_json.get("role") == "unknown":
             route.fulfill(status=400, json={"detail": "Role unknown is not configured. Allowed roles: qa."})
+        elif route.request.post_data_json["title"] == "Malformed task response":
+            route.fulfill(status=201, json={"id": {"unexpected": True}})
         else:
             response = route.fetch()
             assert response.status == 201
@@ -361,8 +365,19 @@ def check_task_creation_failures(page: Page, base: str, headers: dict[str, str])
         expect(page.request.get(f"{tasks_url}/{saved_ids[0]}", headers=headers)).to_be_ok()
         cancel.click()
         expect(trigger).to_be_focused()
+        expect(page.get_by_text("Task creation response loss", exact=True)).to_be_visible()
+
+        trigger.click()
+        form.get_by_label("Title").fill("Malformed task response")
+        form.get_by_label("Prompt").fill("Treat a malformed response as unconfirmed.")
+        submit.click()
+        expect(form.get_by_role("alert")).to_contain_text("Check the task list before retrying")
+        expect(submit).to_be_disabled()
+        cancel.click()
+        expect(trigger).to_be_focused()
     finally:
         page.unroute(tasks_url, respond_to_create)
+        page.unroute(events_url)
 
 
 def check_approvals(
