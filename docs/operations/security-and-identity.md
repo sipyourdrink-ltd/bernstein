@@ -6,8 +6,8 @@ deployment.
 ## Overview
 
 Bernstein's security model has two axes. The **human axis** authenticates
-operators against an identity provider (OIDC, SAML, or local username +
-password) and enforces RBAC on the FastAPI surface; tokens are JWT, sessions
+operators against an OIDC or SAML identity provider and enforces RBAC on
+the FastAPI surface; tokens are JWT, sessions
 are persisted to `.sdd/auth/`, and every privileged action is recorded in an
 HMAC-chained tamper-evident audit log. The **agent axis** treats every spawned
 agent as a first-class identity: the orchestrator issues a per-agent JWT
@@ -15,8 +15,7 @@ scoped to specific tasks and permissions, the API middleware validates that
 scope on every mutating request, and revocation is one POST.
 
 Authentication is required by default (`auth_middleware.py:14-19`). The only
-path to "no auth" is an explicit opt-out (`BERNSTEIN_AUTH_DISABLED=1` or
-`auth.enabled: false` in `bernstein.yaml`), which logs a loud warning on
+path to "no auth" is an explicit opt-out (`BERNSTEIN_AUTH_DISABLED=1`), which logs a loud warning on
 startup. SSO providers, RBAC route mapping, identity issuance, audit
 integrity, drain/export endpoints, and SBOM generation are all in-tree
 features - there is no separate "enterprise edition" toggle.
@@ -24,7 +23,7 @@ features - there is no separate "enterprise edition" toggle.
 ## Request rate limits
 
 Request limits apply to both canonical routes and their `/api/v1` aliases.
-Seed-configured `rate_limit.buckets` share their counters across both forms.
+Named buckets under the seed’s `rate_limit` mapping share counters across both forms.
 Canonical rules take precedence; versioned-only rules remain supported when
 no canonical rule matches.
 The `/events`, `/events/cost` and `/events/thread` routes and their versioned
@@ -67,22 +66,22 @@ general request limits continue to apply as well.
 
 ## Auth providers
 
-Three provider families are supported, configured under `auth.*` in
-`bernstein.yaml` and exposed by `core/security/auth.py:923-...`
-(`AuthService`).
+`AuthService` supports OIDC and SAML login. Set
+`BERNSTEIN_AUTH_ENABLED=true` to enable the authentication service.
 
-| Provider         | Config keys                                              | Code                                                      |
-| ---------------- | -------------------------------------------------------- | --------------------------------------------------------- |
-| **OIDC**         | `auth.oidc.{enabled,issuer,client_id,client_secret,scopes,redirect_uri}` | `core/security/sso_oidc.py`, `routes/auth.py:172-261`     |
-| **SAML 2.0**     | `auth.saml.{enabled,sp_entity_id,idp_metadata_url,...}`  | `core/security/auth.py` (SAML helpers), `routes/auth.py:269-316` |
-| **Local users**  | `auth.users[]` (admin-managed via `/auth/users`)         | `core/security/auth.py` (`AuthUserStore`), `routes/auth.py:494-520` |
+| Provider | Configuration |
+|----------|---------------|
+| **OIDC** | `BERNSTEIN_OIDC_ENABLED`, `BERNSTEIN_OIDC_ISSUER_URL`, `BERNSTEIN_OIDC_CLIENT_ID`, `BERNSTEIN_OIDC_CLIENT_SECRET`, `BERNSTEIN_OIDC_SCOPES`, `BERNSTEIN_OIDC_REDIRECT_URI` |
+| **SAML 2.0** | `BERNSTEIN_SAML_ENABLED`, `BERNSTEIN_SAML_IDP_ENTITY_ID`, `BERNSTEIN_SAML_IDP_SSO_URL`, `BERNSTEIN_SAML_IDP_X509_CERT`, `BERNSTEIN_SAML_SP_ENTITY_ID`, `BERNSTEIN_SAML_SP_ACS_URL` |
+
+Administrators can list stored users with `GET /auth/users`.
 
 Group-to-role mappings are surfaced via `GET /auth/group-mappings` and
 modified by admins via `PUT /auth/group-mappings`
 (`routes/auth.py:443-491`). They map IdP group claims (e.g.
 `bernstein-admins`) to one of the three Bernstein roles.
 
-A fourth path - **legacy bearer tokens** - exists for backwards
+The server also accepts **legacy bearer tokens** for backwards
 compatibility (`auth_middleware.py:7`). It accepts a single shared secret
 configured by `BERNSTEIN_AUTH_TOKEN`. Treat it as a transitional
 mechanism; SSO + JWT is the supported deployment.

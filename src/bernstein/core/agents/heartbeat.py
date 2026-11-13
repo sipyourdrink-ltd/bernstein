@@ -264,7 +264,7 @@ class HeartbeatMonitor:
         try:
             pid = int(raw_pid)
         except ValueError:
-            logger.info("Heartbeat reap for session %s: malformed pidfile contents %r", session_id, raw_pid)
+            logger.warning("Heartbeat reap for session %s: malformed pidfile", session_id)
             return
 
         # Verify the PID still belongs to this session's heartbeat loop before

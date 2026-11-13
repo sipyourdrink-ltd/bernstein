@@ -93,7 +93,8 @@ class DependencyValidator:
 
     def _find_cycles(self, tasks: list[Task]) -> list[list[str]]:
         """Detect simple cycles via DFS."""
-        adjacency = {task.id: [dep for dep in task.depends_on if dep in {t.id for t in tasks}] for task in tasks}
+        task_ids = {task.id for task in tasks}
+        adjacency = {task.id: [dep for dep in task.depends_on if dep in task_ids] for task in tasks}
         visited: set[str] = set()
         stack: list[str] = []
         on_stack: set[str] = set()

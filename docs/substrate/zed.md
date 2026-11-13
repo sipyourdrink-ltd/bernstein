@@ -1,9 +1,11 @@
 # Register Bernstein in Zed
 
 Zed reads MCP servers (which it calls "context servers") from its
-user-global settings file. `bernstein desktop-register --host zed` merges
-a `bernstein` entry under the `context_servers` key so every Zed session
-can call Bernstein's tools without manual editing.
+user-global settings file. Here, Zed is the host and Bernstein is the tool
+server it calls through that context-server interface. `bernstein
+desktop-register --host zed` merges a `bernstein` entry under the
+`context_servers` key so every Zed session can call Bernstein's tools without
+manual editing.
 
 The write is idempotent and backup-first: the existing config is copied to
 a timestamped `.bak` sibling before any mutating write, and re-running the

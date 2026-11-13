@@ -1,0 +1,21 @@
+# Contract for the Cline CLI (adapter: cline).
+#
+# Always-passed surface from src/bernstein/adapters/cline.py:
+# ``cline --yolo <prompt>``. ``--yolo`` auto-approves the tool set for an
+# unsupervised run; the prompt is positional.
+adapter: cline
+binary: cline
+install:
+  method: npm
+  spec: "cline@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "CLINE_API_KEY"
+  basis: api_key
+required_flags:
+  - "--yolo"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

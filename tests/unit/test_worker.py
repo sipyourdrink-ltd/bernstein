@@ -385,9 +385,6 @@ class TestWorkerProcess:
         # Kill and verify cleanup
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait(timeout=5)
-
-        # Give a moment for cleanup
-        time.sleep(0.2)
         assert not pid_file.exists(), "PID file was not cleaned up"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signals")

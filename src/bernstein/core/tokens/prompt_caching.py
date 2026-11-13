@@ -890,7 +890,7 @@ class CacheBaselineMonitor:
                         try:
                             handler(alert)
                         except Exception as e:
-                            logger.warning(f"Alert handler failed: {e}")
+                            logger.warning("Alert handler failed: %s", e)
 
                     return alert
             return None
@@ -916,9 +916,11 @@ def monitor_cache_baseline(name: str, current_value: float) -> CacheBaselineAler
 def on_baseline_drop(alert: CacheBaselineAlert) -> None:
     """Default handler for baseline drop alerts."""
     logger.warning(
-        f"Cache baseline drop detected: {alert.baseline_name} "
-        f"dropped by {alert.drop_percentage:.1%} "
-        f"({alert.previous_value:.2f} → {alert.current_value:.2f})"
+        "Cache baseline drop detected: %s dropped by %.1f%% (%.2f → %.2f)",
+        alert.baseline_name,
+        alert.drop_percentage * 100,
+        alert.previous_value,
+        alert.current_value,
     )
 
 
@@ -965,9 +967,13 @@ def record_cache_cost_metrics(
 
     if savings_data["tier_available"] and savings_data["savings_usd"] > 0:
         logger.info(
-            f"Cache {operation} savings: ${savings_data['savings_usd']:.6f} "
-            f"({savings_data['savings_percentage']:.1%}) for {tokens} tokens "
-            f"({provider}:{model})"
+            "Cache %s savings: $%.6f (%.1f%%) for %s tokens (%s:%s)",
+            operation,
+            savings_data["savings_usd"],
+            savings_data["savings_percentage"] * 100,
+            tokens,
+            provider,
+            model,
         )
 
 

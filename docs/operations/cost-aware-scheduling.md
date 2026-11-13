@@ -202,8 +202,9 @@ bernstein cost policy knobs                 # full matrix + content hash
 bernstein cost policy knobs --model opus    # one row
 ```
 
-Operators override the shipped defaults without a code change, exactly like the
-price table:
+To inspect a custom matrix, pass a separate YAML file to
+`bernstein cost policy knobs --config FILE`. The CLI reads the following shape
+from that file. `cost_policy.knobs` is specific to this reader.
 
 ```yaml
 cost_policy:

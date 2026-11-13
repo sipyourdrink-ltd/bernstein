@@ -23,6 +23,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -511,17 +513,14 @@ class ScheduleStore:
     def _write(self, schedule: Schedule) -> None:
         """Write a schedule atomically to its JSON path.
 
-        Atomic write via ``tmp + os.replace`` so a crash mid-write leaves
-        either the old file or the new file intact; never half a
-        document. The supervisor loads schedules on every tick and a torn
-        write would either skip a fire (silent loss) or trip a JSON
-        decode (loud, but breaks the supervisor).
+        A unique staging file per write keeps concurrent publishers from
+        sharing a temporary path. The supervisor sees a complete document
+        before or after the atomic replacement.
         """
         path = self._path_for(schedule.id)
-        tmp = path.with_suffix(path.suffix + ".tmp")
         payload = asdict(schedule)
-        tmp.write_text(json.dumps(payload, sort_keys=True, indent=2))
-        tmp.replace(path)
+        # Keep the schedule file's existing umask-based permissions.
+        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2), mode=0o666)
 
 
 def _load_schedule(path: Path) -> Schedule | None:

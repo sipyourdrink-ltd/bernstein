@@ -2,35 +2,41 @@
 
 from __future__ import annotations
 
-import contextlib
-import os
 import shutil
-import signal
-import socket
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock
 
-from bernstein.core.orchestration.bootstrap import BootstrapResult, bootstrap_from_goal, bootstrap_from_seed
+import pytest
 
-
-def get_free_port() -> int:
-    """Return a free port number."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
+from bernstein.core.orchestration import bootstrap
+from bernstein.core.orchestration.bootstrap import bootstrap_from_goal, bootstrap_from_seed
 
 
-def _kill_bernstein_processes(result: BootstrapResult | None) -> None:
-    """Kill the server and spawner processes from a BootstrapResult."""
-    if result is None:
-        return
-    with contextlib.suppress(Exception):
-        os.kill(result.server_pid, signal.SIGTERM)
-    with contextlib.suppress(Exception):
-        os.kill(result.spawner_pid, signal.SIGTERM)
+@pytest.fixture
+def fake_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run bootstrap with no server, planning requests, or child processes."""
+    for name, result in {
+        "preflight_checks": None,
+        "_acquire_pid_lock": None,
+        "_clean_stale_runtime": None,
+        "_reconcile_dead_owner_before_runtime_cleanup": None,
+        "_run_git_hygiene": None,
+        "_discover_catalog": None,
+        "_index_codebase_with_timeout": None,
+        "_build_codebase_index": None,
+        "_resolve_auth_token": "bootstrap-test-token",
+        "supervised_server": 101,
+        "_wait_for_server": True,
+        "_sync_and_plan_tasks": (0, None, None),
+        "_goal_sync_and_plan": (0, None, None),
+        "_start_spawner": 102,
+        "_start_watchdog": 103,
+        "_register_mcp_discovery": None,
+    }.items():
+        monkeypatch.setattr(bootstrap, name, Mock(return_value=result))
 
 
-def test_inline_goal_resolves_gates_from_yaml(tmp_path: Path) -> None:
+def test_inline_goal_resolves_gates_from_yaml(tmp_path: Path, fake_launch: None) -> None:
     """Two runs over the same project (inline goal and seed file) record the same gate configuration."""
     # Create a bernstein.yaml with quality_gates
     seed_yaml = tmp_path / "bernstein.yaml"
@@ -47,40 +53,12 @@ quality_gates:
 """
     )
 
-    port1 = get_free_port()
-    port2 = get_free_port()
+    result_from_seed = bootstrap_from_seed(seed_yaml, workdir=tmp_path, port=8052)
+    seed_from_seed = result_from_seed.seed
+    shutil.rmtree(tmp_path / ".sdd")
 
-    # Mock preflight_checks to skip binary existence check (claude not required for test)
-    with patch("bernstein.core.orchestration.bootstrap.preflight_checks"):
-        # Run without inline goal (from seed file)
-        result_from_seed = None
-        try:
-            result_from_seed = bootstrap_from_seed(seed_yaml, workdir=tmp_path, port=port1)
-            seed_from_seed = result_from_seed.seed
-        finally:
-            _kill_bernstein_processes(result_from_seed)
-            # Clean up .sdd to remove PID file and reset state for second run
-            sdd_dir = tmp_path / ".sdd"
-            if sdd_dir.exists():
-                shutil.rmtree(sdd_dir)
-
-        # Run with inline goal (same goal as in the yaml)
-        result_from_goal = None
-        try:
-            result_from_goal = bootstrap_from_goal(
-                goal="test",
-                workdir=tmp_path,
-                cli="claude",
-                model=None,
-                port=port2,
-            )
-            seed_from_goal = result_from_goal.seed
-        finally:
-            _kill_bernstein_processes(result_from_goal)
-            # Clean up .sdd after second run (not strictly necessary for test, but good practice)
-            sdd_dir = tmp_path / ".sdd"
-            if sdd_dir.exists():
-                shutil.rmtree(sdd_dir)
+    result_from_goal = bootstrap_from_goal(goal="test", workdir=tmp_path, cli="claude", model=None, port=8052)
+    seed_from_goal = result_from_goal.seed
 
     # They should have the same quality_gates
     assert seed_from_seed.quality_gates == seed_from_goal.quality_gates
@@ -90,7 +68,7 @@ quality_gates:
     assert seed_from_goal.quality_gates.enabled is True  # type: ignore[union-attr]
 
 
-def test_trace_export_accepts_result(tmp_path: Path) -> None:
+def test_trace_export_accepts_result(tmp_path: Path, fake_launch: None) -> None:
     """Trace export accepts the result (seed is present in BootstrapResult)."""
     seed_yaml = tmp_path / "bernstein.yaml"
     seed_yaml.write_text(
@@ -102,23 +80,7 @@ quality_gates:
 """
     )
 
-    port = get_free_port()
-    result = None
-    with patch("bernstein.core.orchestration.bootstrap.preflight_checks"):
-        try:
-            result = bootstrap_from_goal(
-                goal="trace test",
-                workdir=tmp_path,
-                cli="claude",
-                model=None,
-                port=port,
-            )
-        finally:
-            _kill_bernstein_processes(result)
-            # Clean up .sdd
-            sdd_dir = tmp_path / ".sdd"
-            if sdd_dir.exists():
-                shutil.rmtree(sdd_dir)
+    result = bootstrap_from_goal(goal="trace test", workdir=tmp_path, cli="claude", model=None, port=8052)
 
     # The BootstrapResult must contain a seed (used for tracing)
     assert result.seed is not None

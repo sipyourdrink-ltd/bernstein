@@ -2214,10 +2214,8 @@ def _claim_task_with_conflict_retry(
          bounded retries rather than an infinite tight loop.
     Retries within one call are capped at ``_CLAIM_CONFLICT_MAX_ATTEMPTS``.
 
-    Every attempt is logged at INFO with task_id, version sent, response
-    code, the current version/status discovered on re-fetch, and the
-    decision taken -- so a repeat of this bug shows up as readable log
-    lines instead of a silent multi-hundred-line loop.
+    Per-attempt status and retry preparation are logged at DEBUG. Conflict
+    outcomes are logged at INFO or WARNING.
 
     Returns:
         ``(response, None)`` on a successful (non-409) response -- caller
@@ -2233,7 +2231,7 @@ def _claim_task_with_conflict_retry(
         if session_id is not None:
             params["claimed_by_session"] = session_id
         resp = orch._client.post(f"{base}/tasks/{current_task.id}/claim", params=params)
-        logger.info(
+        logger.debug(
             "claim attempt %d/%d task=%s sent_version=%s -> HTTP %d",
             attempts,
             _CLAIM_CONFLICT_MAX_ATTEMPTS,
@@ -2298,7 +2296,7 @@ def _claim_task_with_conflict_retry(
 
         # Still OPEN. Whether or not the version actually moved, retry with
         # the freshest known version rather than resubmitting stale data.
-        logger.info(
+        logger.debug(
             "claim conflict for task %s: re-fetch shows status=OPEN, version %s -> %s -- retrying (attempt %d/%d)",
             current_task.id,
             current_task.version,
@@ -4912,7 +4910,7 @@ def _verify_against_merge_preview(
             )
             return cast("tuple[bool, list[str]]", verify_fn(task, merged_tree, *extra_args))
     except MergePreviewConflict as exc:
-        files = ", ".join(exc.conflicting_files) or "<unknown>"
+        files = exc.display_paths
         logger.warning(
             "merge_preview: task=%s session=%s branch=%s verdict=conflict files=%s -- "
             "held on a merge conflict with the run branch, not on a failing check",
@@ -5892,7 +5890,7 @@ def handle_permission_denied_error(error_message: str, task_id: str, role: str, 
     hint = get_permission_hint(error_message)
 
     if hint:
-        logger.warning(f"Permission denied for task {task_id} ({role}): {error_message}\nHint: {hint}")
+        logger.warning("Permission denied for task %s (%s): %s\nHint: %s", task_id, role, error_message, hint)
 
         # Determine if we should retry
         should_retry = retry_count < 2  # Max 2 retries for permission issues
@@ -5906,7 +5904,7 @@ def handle_permission_denied_error(error_message: str, task_id: str, role: str, 
             "max_retries": 2,
         }
     else:
-        logger.warning(f"Permission denied for task {task_id} ({role}): {error_message}")
+        logger.warning("Permission denied for task %s (%s): %s", task_id, role, error_message)
 
         return {
             "permission_denied": True,

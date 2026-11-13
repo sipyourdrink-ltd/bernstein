@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 終端機儀表板 | `bernstein gui serve` — 瀏覽器儀表板 |
 
 ### 證明一次執行
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 這裡的確定性是你要去核查的東西，而不是憑空相信。啟用稽核執行一次，然後驗證記錄的內容：
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 日誌在每次執行時寫入；血統脊柱始終開啟，在每個產生血統的步驟上增加一條記錄，因此一次很短的執行可能以有效但為空的脊柱結束。`bernstein audit verify` 只有在執行以 `BERNSTEIN_AUDIT=1`、合規預設或 `bernstein run --audit` 啟動時才有鏈可查。`--audit` 旗標屬於 `bernstein run`；在上面的 `bernstein -g` 形式中，請設定環境變數。
 
 執行收據在一個 Ed25519 簽署主體下綁定日誌頭部、執行寫入脊柱條目時的血統脊柱頭部，以及選用的稽核鏈範圍，並內嵌公開金鑰。持有該檔案與操作者公開金鑰的審查者可以確認其中嵌入的動作與鏈未被更動：無需 HMAC 金鑰，無需活躍的 `.sdd/`，竄改時以退出碼 `2` 命名第一個分歧步驟。收據標識的是它所嵌入的那一份日誌狀態；要證明該狀態就是完整收尾的日誌，還需要一份獨立的頭部／筆數封印。僅憑檔案（不釘 `--public-key`）時，檢查只是完整性檢查：它證明收據內部自洽，而非誰簽署的，結論也會如實說明。詳見[確定性重播](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)。
+
+在網頁介面中，開啟 **Governance** 並使用 **Verify a receipt** 在伺服器上驗證執行收據。瀏覽器會顯示僅針對完整性的驗證結果和金鑰來源。請參閱 [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt)。
 
 同樣的可核查性也適用於評估數字。`bernstein bench run <suite> --reliability k`（也寫作 `bernstein eval --reliability k`）在固定協調下把每個任務執行 `k` 次，然後報告 `pass^k` 下限（所有 `k` 次嘗試都必須通過）以及 `pass@1` 上限。該結果封裝在一份簽署的收據中，`bernstein bench reliability-verify` 可離線重算，因此偽造的下限會驗證失敗。詳情：[pass^k 可靠性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 

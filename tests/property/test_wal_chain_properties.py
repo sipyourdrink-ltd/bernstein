@@ -16,6 +16,8 @@ tightly focused on the chain primitives.
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -70,10 +72,12 @@ _PAYLOAD = st.dictionaries(
 )
 
 
-def _writer_for(run_id: str) -> tuple[WALWriter, Path]:
-    """Return a writer with its own ``.sdd/`` tempdir."""
-    sdd = Path(tempfile.mkdtemp(prefix="bernstein-prop-wal-"))
-    return WALWriter(run_id=run_id, sdd_dir=sdd), sdd
+@contextmanager
+def _writer_for(run_id: str) -> Iterator[tuple[WALWriter, Path]]:
+    """Provide a writer with its own .sdd directory per example."""
+    with tempfile.TemporaryDirectory(prefix="bernstein-prop-wal-") as directory:
+        sdd = Path(directory)
+        yield WALWriter(run_id=run_id, sdd_dir=sdd), sdd
 
 
 @given(
@@ -87,18 +91,18 @@ def test_chain_extends_with_arbitrary_decisions(
     decisions: list[tuple[str, dict[str, Any], dict[str, Any], str, bool]],
 ) -> None:
     """Random ``append()`` sequences must verify cleanly."""
-    writer, sdd = _writer_for("run-prop-1")
-    for decision_type, inputs, output, actor, committed in decisions:
-        writer.append(
-            decision_type=decision_type,
-            inputs=inputs,
-            output=output,
-            actor=actor,
-            committed=committed,
-        )
+    with _writer_for("run-prop-1") as (writer, sdd):
+        for decision_type, inputs, output, actor, committed in decisions:
+            writer.append(
+                decision_type=decision_type,
+                inputs=inputs,
+                output=output,
+                actor=actor,
+                committed=committed,
+            )
 
-    valid, errors = WALReader("run-prop-1", sdd).verify_chain()
-    assert valid, f"chain rejected its own writes: {errors}"
+        valid, errors = WALReader("run-prop-1", sdd).verify_chain()
+        assert valid, f"chain rejected its own writes: {errors}"
 
 
 @settings(max_examples=30)
@@ -121,42 +125,42 @@ def test_single_byte_flip_breaks_verify_chain(
     alias. See the byte-coverage contract at the top of this module for why
     those are the only two exclusions.
     """
-    writer, sdd = _writer_for("run-prop-flip")
-    with mock.patch("bernstein.core.persistence.wal.time.time", return_value=_FROZEN_TS):
-        for decision_type, inputs, output, actor, committed in decisions:
-            writer.append(
-                decision_type=decision_type,
-                inputs=inputs,
-                output=output,
-                actor=actor,
-                committed=committed,
-            )
+    with _writer_for("run-prop-flip") as (writer, sdd):
+        with mock.patch("bernstein.core.persistence.wal.time.time", return_value=_FROZEN_TS):
+            for decision_type, inputs, output, actor, committed in decisions:
+                writer.append(
+                    decision_type=decision_type,
+                    inputs=inputs,
+                    output=output,
+                    actor=actor,
+                    committed=committed,
+                )
 
-    wal_path = sdd / "runtime" / "wal" / "run-prop-flip.wal.jsonl"
-    raw = wal_path.read_bytes()
-    if not raw:
-        pytest.skip("WAL produced no bytes")
+        wal_path = sdd / "runtime" / "wal" / "run-prop-flip.wal.jsonl"
+        raw = wal_path.read_bytes()
+        if not raw:
+            pytest.skip("WAL produced no bytes")
 
-    # The final newline separates records; it is outside every entry payload
-    # and therefore outside the digest. Every preceding byte is covered.
-    assert raw.endswith(b"\n"), "WAL records are newline-terminated"
-    covered = len(raw) - 1
-    if covered == 0:
-        pytest.skip("WAL holds nothing but a separator")
+        # The final newline separates records; it is outside every entry payload
+        # and therefore outside the digest. Every preceding byte is covered.
+        assert raw.endswith(b"\n"), "WAL records are newline-terminated"
+        covered = len(raw) - 1
+        if covered == 0:
+            pytest.skip("WAL holds nothing but a separator")
 
-    pos = flip_offset % covered
-    mutated = bytearray(raw)
-    mutated[pos] ^= 0x01
-    wal_path.write_bytes(bytes(mutated))
+        pos = flip_offset % covered
+        mutated = bytearray(raw)
+        mutated[pos] ^= 0x01
+        wal_path.write_bytes(bytes(mutated))
 
-    reader = WALReader("run-prop-flip", sdd)
-    valid, errors = reader.verify_chain()
-    context = raw[max(0, pos - 30) : pos + 30]
-    assert not valid, (
-        f"WAL byte flip went undetected at offset {pos}/{covered} "
-        f"(0x{raw[pos]:02x} -> 0x{mutated[pos]:02x}), context: {context!r}"
-    )
-    assert errors
+        reader = WALReader("run-prop-flip", sdd)
+        valid, errors = reader.verify_chain()
+        context = raw[max(0, pos - 30) : pos + 30]
+        assert not valid, (
+            f"WAL byte flip went undetected at offset {pos}/{covered} "
+            f"(0x{raw[pos]:02x} -> 0x{mutated[pos]:02x}), context: {context!r}"
+        )
+        assert errors
 
 
 @given(
@@ -165,15 +169,15 @@ def test_single_byte_flip_breaks_verify_chain(
 )
 def test_seq_is_strictly_monotonic(n: int, actor: str) -> None:
     """Sequence numbers must increment by exactly one per append."""
-    writer, _ = _writer_for("run-seq")
-    seqs: list[int] = []
-    for i in range(n):
-        entry = writer.append(
-            decision_type="t",
-            inputs={"i": i},
-            output={"r": i},
-            actor=actor,
-        )
-        seqs.append(entry.seq)
+    with _writer_for("run-seq") as (writer, _):
+        seqs: list[int] = []
+        for i in range(n):
+            entry = writer.append(
+                decision_type="t",
+                inputs={"i": i},
+                output={"r": i},
+                actor=actor,
+            )
+            seqs.append(entry.seq)
 
-    assert seqs == list(range(seqs[0], seqs[0] + n))
+        assert seqs == list(range(seqs[0], seqs[0] + n))

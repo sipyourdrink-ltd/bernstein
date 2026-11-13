@@ -3399,14 +3399,13 @@ class AgentSpawner:
 
             probe_adapter = get_adapter(adapter_name)
         except Exception as exc:
-            logger.info(
+            logger.warning(
                 "_primary_adapter_supports_sampling: provider_name=%r model=%r -> "
-                "adapter=%r could not be probed (%s: %s); treating as supports_sampling=False",
+                "adapter=%r could not be probed (%s); treating as supports_sampling=False",
                 provider_name,
                 model_config.model,
                 adapter_name,
                 type(exc).__name__,
-                exc,
             )
             return False
 

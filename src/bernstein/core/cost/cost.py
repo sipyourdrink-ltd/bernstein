@@ -1155,7 +1155,7 @@ class CachePricingRegistry:
         """Register a cache pricing tier."""
         key = f"{tier.provider}:{tier.model}"
         self.tiers[key] = tier
-        logger.info(f"Registered cache pricing tier: {key}")
+        logger.info("Registered cache pricing tier: %s", key)
 
     def get_tier(self, provider: str, model: str) -> CachePricingTier | None:
         """Get cache pricing tier for a provider/model."""

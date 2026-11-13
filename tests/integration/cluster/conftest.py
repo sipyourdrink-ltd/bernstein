@@ -49,15 +49,6 @@ SERVER_READY_TIMEOUT_S = 25.0
 SERVER_READY_POLL_S = 0.1
 
 
-def _free_port() -> int:
-    """Return an OS-assigned ephemeral TCP port."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return int(port)
-
-
 def _wait_http_ok(url: str, timeout_s: float = SERVER_READY_TIMEOUT_S) -> bool:
     """Poll ``url`` until it returns 2xx or the deadline expires."""
     deadline = time.monotonic() + timeout_s
@@ -104,8 +95,8 @@ class _PartitionProxy:
     works on macOS developer machines as well as Linux CI runners.
     """
 
-    def __init__(self, listen_port: int, target_host: str, target_port: int) -> None:
-        self._listen_port = listen_port
+    def __init__(self, target_host: str, target_port: int) -> None:
+        self._listen_port = 0
         self._target_host = target_host
         self._target_port = target_port
         self._partitioned = False
@@ -121,13 +112,19 @@ class _PartitionProxy:
 
     def start(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("127.0.0.1", self._listen_port))
-        sock.listen(64)
-        sock.settimeout(0.25)
-        self._server_sock = sock
-        self._thread = threading.Thread(target=self._accept_loop, daemon=True)
-        self._thread.start()
+        try:
+            sock.bind(("127.0.0.1", 0))
+            self._listen_port = sock.getsockname()[1]
+            sock.listen(64)
+            sock.settimeout(0.25)
+            self._server_sock = sock
+            thread = threading.Thread(target=self._accept_loop, args=(sock,), daemon=True)
+            thread.start()
+        except BaseException:
+            self._server_sock = None
+            sock.close()
+            raise
+        self._thread = thread
 
     def stop(self) -> None:
         self._stopping = True
@@ -160,10 +157,10 @@ class _PartitionProxy:
         """Resume forwarding."""
         self._partitioned = False
 
-    def _accept_loop(self) -> None:
-        while not self._stopping and self._server_sock is not None:
+    def _accept_loop(self, server_sock: socket.socket) -> None:
+        while not self._stopping:
             try:
-                client, _addr = self._server_sock.accept()
+                client, _addr = server_sock.accept()
             except (OSError, TimeoutError):
                 continue
             if self._partitioned:
@@ -348,7 +345,7 @@ class ClusterHandle:
     """
 
     workdir: Path
-    central_port: int
+    central_socket: socket.socket
     proxy_port: int
     central_log: Path
     worker_log: Path
@@ -359,6 +356,10 @@ class ClusterHandle:
     workers: list[WorkerHandle] = field(default_factory=list)
 
     # ---- URLs --------------------------------------------------------- #
+
+    @property
+    def central_port(self) -> int:
+        return int(self.central_socket.getsockname()[1])
 
     @property
     def central_url(self) -> str:
@@ -452,10 +453,13 @@ class ClusterHandle:
 
     def restart_central(self) -> None:
         """SIGTERM central, wait for exit, then re-launch + wait for ready."""
-        _terminate(self.central_proc)
+        previous = self.central_proc
+        _terminate(previous)
+        if previous is not None and previous.poll() is None:
+            raise RuntimeError("Central did not stop before restart")
         self.central_proc = _start_central(
             workdir=self.workdir,
-            port=self.central_port,
+            listener=self.central_socket,
             secret=self.cluster_secret,
             log_path=self.central_log,
             nodes_json=self.nodes_json,
@@ -491,7 +495,7 @@ class ClusterHandle:
 def _start_central(
     *,
     workdir: Path,
-    port: int,
+    listener: socket.socket,
     secret: str,
     log_path: Path,
     nodes_json: Path,
@@ -510,29 +514,27 @@ def _start_central(
     # so we set up the directory layout it expects.
     runtime_dir = nodes_json.parent
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    log_fh = log_path.open("a", encoding="utf-8")
+    fd = listener.fileno()
     cmd = [
         sys.executable,
         "-m",
         "uvicorn",
         "bernstein.core.server:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(port),
+        "--fd",
+        str(fd),
         "--log-level",
         "warning",
     ]
-    proc = subprocess.Popen(
-        cmd,
-        env=env,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        cwd=str(workdir),
-        start_new_session=True,
-    )
-    log_fh.close()
-    return proc
+    with log_path.open("a", encoding="utf-8") as log_fh:
+        return subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            cwd=str(workdir),
+            start_new_session=True,
+            pass_fds=(fd,),
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -548,8 +550,6 @@ def two_node_cluster(tmp_path: Path) -> Iterator[ClusterHandle]:
     call ``handle.start_worker(...)`` to bring workers online - that gives
     each scenario explicit control over how many nodes participate.
     """
-    central_port = _free_port()
-    proxy_port = _free_port()
     workdir = tmp_path
     sdd_runtime = workdir / ".sdd" / "runtime"
     sdd_runtime.mkdir(parents=True, exist_ok=True)
@@ -558,67 +558,59 @@ def two_node_cluster(tmp_path: Path) -> Iterator[ClusterHandle]:
     worker_log = workdir / "worker.log"
     cluster_secret = secrets.token_urlsafe(32)
 
-    proxy = _PartitionProxy(
-        listen_port=proxy_port,
-        target_host="127.0.0.1",
-        target_port=central_port,
-    )
-    proxy.start()
-
-    central_proc = _start_central(
-        workdir=workdir,
-        port=central_port,
-        secret=cluster_secret,
-        log_path=central_log,
-        nodes_json=nodes_json,
-    )
-
-    if not _wait_http_ok(f"http://127.0.0.1:{central_port}/health"):
+    # Retain ownership across both startup and the central restart scenario.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        proxy = _PartitionProxy(target_host="127.0.0.1", target_port=listener.getsockname()[1])
+        handle = ClusterHandle(
+            workdir=workdir,
+            central_socket=listener,
+            proxy_port=0,
+            central_log=central_log,
+            worker_log=worker_log,
+            nodes_json=nodes_json,
+            cluster_secret=cluster_secret,
+            proxy=proxy,
+        )
         try:
-            log_text = central_log.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            log_text = "<no central log>"
-        _terminate(central_proc)
-        proxy.stop()
-        raise RuntimeError(f"Central server failed to become ready.\n--- central.log ---\n{log_text[-2000:]}")
+            proxy.start()
+            handle.proxy_port = proxy.listen_port
+            handle.central_proc = _start_central(
+                workdir=workdir, listener=listener, secret=cluster_secret, log_path=central_log, nodes_json=nodes_json
+            )
+            if not _wait_http_ok(f"{handle.central_url}/health"):
+                with contextlib.suppress(OSError):
+                    sys.stderr.write(central_log.read_text(encoding="utf-8", errors="replace")[-2000:])
+                raise RuntimeError("Central server failed to become ready")
 
-    handle = ClusterHandle(
-        workdir=workdir,
-        central_port=central_port,
-        proxy_port=proxy_port,
-        central_log=central_log,
-        worker_log=worker_log,
-        nodes_json=nodes_json,
-        cluster_secret=cluster_secret,
-        central_proc=central_proc,
-        proxy=proxy,
-    )
-
-    failure_diag: dict[str, object] = {}
-    try:
-        yield handle
-    except BaseException:
-        # Capture forensic state before teardown for the test-failure report.
-        try:
-            failure_diag["status"] = handle.current_status()
-        except Exception:
-            failure_diag["status"] = "unavailable"
-        try:
-            failure_diag["nodes_json"] = nodes_json.read_text(encoding="utf-8") if nodes_json.exists() else "<missing>"
-        except OSError:
-            failure_diag["nodes_json"] = "<read-error>"
-        try:
-            failure_diag["central_log_tail"] = central_log.read_text(encoding="utf-8", errors="replace").splitlines()[
-                -100:
-            ]
-        except OSError:
-            failure_diag["central_log_tail"] = []
-        sys.stderr.write("\n--- two_node_cluster diagnostics ---\n")
-        sys.stderr.write(json.dumps(failure_diag, indent=2, default=str)[:6000])
-        sys.stderr.write("\n--- end diagnostics ---\n")
-        raise
-    finally:
-        handle.shutdown()
+            failure_diag: dict[str, object] = {}
+            try:
+                yield handle
+            except BaseException:
+                # Capture forensic state before teardown for the test-failure report.
+                try:
+                    failure_diag["status"] = handle.current_status()
+                except Exception:
+                    failure_diag["status"] = "unavailable"
+                try:
+                    failure_diag["nodes_json"] = (
+                        nodes_json.read_text(encoding="utf-8") if nodes_json.exists() else "<missing>"
+                    )
+                except OSError:
+                    failure_diag["nodes_json"] = "<read-error>"
+                try:
+                    failure_diag["central_log_tail"] = central_log.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()[-100:]
+                except OSError:
+                    failure_diag["central_log_tail"] = []
+                sys.stderr.write("\n--- two_node_cluster diagnostics ---\n")
+                sys.stderr.write(json.dumps(failure_diag, indent=2, default=str)[:6000])
+                sys.stderr.write("\n--- end diagnostics ---\n")
+                raise
+        finally:
+            handle.shutdown()
 
 
 # --------------------------------------------------------------------------- #

@@ -1,20 +1,14 @@
 """PII and credential redaction for logging and persisted traces.
 
-Installs a ``logging.Filter`` on the root logger that automatically replaces
-email addresses, phone numbers, SSNs, credit card numbers, and credential
-shapes with
-``[REDACTED]`` before log records are emitted.
+The filter replaces recognised PII and credential shapes in the formatted log
+message. Install it after configuring the handlers that emit those messages.
 
 Usage::
 
     from bernstein.core.observability.log_redact import install_pii_filter
 
-    install_pii_filter()          # attaches to root logger
-    install_pii_filter(logger)    # attaches to a specific logger
-
-The filter mutates ``record.msg`` and ``record.args`` in-place so that
-downstream handlers (file, console, structured JSON) all receive sanitised
-text - no PII is ever written to disk or stdout.
+    install_pii_filter()          # attaches to root logger and its handlers
+    install_pii_filter(logger)    # attaches to a specific logger and its handlers
 """
 
 from __future__ import annotations
@@ -23,7 +17,6 @@ import logging
 import math
 import re
 from collections import Counter
-from typing import Any
 
 from bernstein.core.security.luhn import luhn_check
 
@@ -158,36 +151,21 @@ def redact_sensitive_bytes(data: bytes) -> bytes:
     return redact_sensitive_text(text).encode("utf-8", errors="surrogateescape")
 
 
-def _redact_arg(value: Any) -> Any:
-    """Redact a single log-record format argument if it's a string."""
-    if isinstance(value, str):
-        return redact_sensitive_text(value)
-    return value
-
-
 # ---------------------------------------------------------------------------
 # Logging filter
 # ---------------------------------------------------------------------------
 
 
 class PiiRedactingFilter(logging.Filter):
-    """``logging.Filter`` that scrubs PII from every log record.
-
-    Handles both eager-formatted messages (``record.msg`` is already a
-    string with no ``record.args``) and lazy ``%-format`` messages where
-    PII may hide inside ``record.args``.
-    """
+    """Redact recognized sensitive values after log message interpolation."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
-            record.msg = redact_sensitive_text(record.msg)
-
-        if record.args is not None:
-            if isinstance(record.args, dict):
-                record.args = {k: _redact_arg(v) for k, v in record.args.items()}
-            elif isinstance(record.args, tuple):
-                record.args = tuple(_redact_arg(a) for a in record.args)
-
+        try:
+            message = record.getMessage()
+        except Exception:  # A formatter error would print the unredacted arguments.
+            message = "[invalid log message]"
+        record.msg = redact_sensitive_text(message)
+        record.args = ()
         return True
 
 
@@ -201,10 +179,11 @@ _FILTER_ATTR = "_bernstein_pii_filter"
 def install_pii_filter(
     target: logging.Logger | None = None,
 ) -> PiiRedactingFilter:
-    """Attach a ``PiiRedactingFilter`` to *target* (default: root logger).
+    """Protect *target* and its current handlers (default: root logger).
 
-    Safe to call multiple times - subsequent calls are no-ops that return the
-    existing filter instance.
+    A logger filter sees records emitted by that logger. Handler filters also
+    see records propagated from children. Call after configuring handlers, or
+    call again to protect handlers added since installation.
 
     Args:
         target: Logger to protect. ``None`` means the root logger.
@@ -215,11 +194,12 @@ def install_pii_filter(
     if target is None:
         target = logging.getLogger()
 
-    existing = getattr(target, _FILTER_ATTR, None)
-    if isinstance(existing, PiiRedactingFilter):
-        return existing
-
-    pii_filter = PiiRedactingFilter()
+    pii_filter = getattr(target, _FILTER_ATTR, None)
+    if not isinstance(pii_filter, PiiRedactingFilter):
+        pii_filter = PiiRedactingFilter()
+        setattr(target, _FILTER_ATTR, pii_filter)
     target.addFilter(pii_filter)
-    setattr(target, _FILTER_ATTR, pii_filter)
+    for handler in target.handlers:
+        if not any(isinstance(existing, PiiRedactingFilter) for existing in handler.filters):
+            handler.addFilter(pii_filter)
     return pii_filter

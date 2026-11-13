@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import threading
-import time
+from collections.abc import Callable
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from bernstein.core.capacity_wake import CapacityWake, WakeReason
+
+from bernstein.core.orchestration import capacity_wake
 
 # ---------------------------------------------------------------------------
 # WakeReason.TIMEOUT
@@ -13,13 +17,40 @@ from bernstein.core.capacity_wake import CapacityWake, WakeReason
 
 
 def test_timeout_when_no_signal() -> None:
-    """wait() returns TIMEOUT when neither signal fires within the window."""
+    """wait() returns TIMEOUT after passing the full window to the combined event."""
     wake = CapacityWake()
-    t0 = time.monotonic()
-    reason = wake.wait(timeout_s=0.05)
-    elapsed = time.monotonic() - t0
-    assert reason == WakeReason.TIMEOUT
-    assert elapsed >= 0.04  # Waited close to the full interval
+    with (
+        patch.object(capacity_wake, "time", SimpleNamespace(monotonic=lambda: 10.0)),
+        patch.object(wake._any_event, "wait", side_effect=[False]) as wait,
+    ):
+        assert wake.wait(timeout_s=0.125) == WakeReason.TIMEOUT
+    wait.assert_called_once_with(timeout=0.125)
+
+
+def _wait_for_signal(wake: CapacityWake, signal: Callable[[], None]) -> WakeReason:
+    entered_wait = threading.Event()
+    original_wait = wake._any_event.wait
+
+    def wait_for_combined_event(timeout: float) -> bool:
+        entered_wait.set()
+        signaled = original_wait(timeout)
+        assert signaled, "signal did not wake the combined event"
+        return signaled
+
+    def send_signal() -> None:
+        if entered_wait.wait(timeout=5.0):
+            signal()
+
+    thread = threading.Thread(target=send_signal, daemon=True)
+    thread.start()
+    try:
+        with patch.object(wake._any_event, "wait", side_effect=wait_for_combined_event) as wait:
+            reason = wake.wait(timeout_s=5.0)
+        wait.assert_called_once()
+        return reason
+    finally:
+        thread.join(timeout=5.0)
+        assert not thread.is_alive()
 
 
 # ---------------------------------------------------------------------------
@@ -30,21 +61,7 @@ def test_timeout_when_no_signal() -> None:
 def test_capacity_signal_wakes_early() -> None:
     """signal_capacity() causes wait() to return CAPACITY before timeout."""
     wake = CapacityWake()
-    t0 = time.monotonic()
-
-    def _signal() -> None:
-        time.sleep(0.02)
-        wake.signal_capacity()
-
-    t = threading.Thread(target=_signal, daemon=True)
-    t.start()
-
-    reason = wake.wait(timeout_s=5.0)
-    elapsed = time.monotonic() - t0
-    t.join(timeout=1.0)
-
-    assert reason == WakeReason.CAPACITY
-    assert elapsed < 1.0  # Returned well before the 5s timeout
+    assert _wait_for_signal(wake, wake.signal_capacity) == WakeReason.CAPACITY
 
 
 def test_capacity_event_cleared_after_wait() -> None:
@@ -76,21 +93,7 @@ def test_capacity_signal_before_wait() -> None:
 def test_abort_signal_wakes_early() -> None:
     """signal_abort() causes wait() to return ABORT before timeout."""
     wake = CapacityWake()
-    t0 = time.monotonic()
-
-    def _signal() -> None:
-        time.sleep(0.02)
-        wake.signal_abort()
-
-    t = threading.Thread(target=_signal, daemon=True)
-    t.start()
-
-    reason = wake.wait(timeout_s=5.0)
-    elapsed = time.monotonic() - t0
-    t.join(timeout=1.0)
-
-    assert reason == WakeReason.ABORT
-    assert elapsed < 1.0
+    assert _wait_for_signal(wake, wake.signal_abort) == WakeReason.ABORT
 
 
 def test_abort_signal_persists_across_calls() -> None:
@@ -127,10 +130,9 @@ def test_abort_requested_property() -> None:
 def test_zero_timeout_returns_immediately() -> None:
     """wait(timeout_s=0) returns TIMEOUT without blocking."""
     wake = CapacityWake()
-    t0 = time.monotonic()
-    reason = wake.wait(timeout_s=0.0)
-    assert time.monotonic() - t0 < 0.5
-    assert reason == WakeReason.TIMEOUT
+    with patch.object(wake._any_event, "wait", wraps=wake._any_event.wait) as wait:
+        assert wake.wait(timeout_s=0.0) == WakeReason.TIMEOUT
+    wait.assert_called_once_with(timeout=0.0)
 
 
 def test_zero_timeout_with_capacity_signal() -> None:
@@ -168,16 +170,8 @@ def test_wake_fires_when_agent_completes() -> None:
     active_tasks: dict[str, int] = {"task-1": 99999}  # dummy
 
     def _agent_completes() -> None:
-        time.sleep(0.03)
-        # Simulate _reap_finished removing the task and signalling
         active_tasks.pop("task-1", None)
         wake.signal_capacity()
 
-    t = threading.Thread(target=_agent_completes, daemon=True)
-    t.start()
-
-    reason = wake.wait(timeout_s=2.0)
-    t.join(timeout=1.0)
-
-    assert reason == WakeReason.CAPACITY
+    assert _wait_for_signal(wake, _agent_completes) == WakeReason.CAPACITY
     assert len(active_tasks) == 0
