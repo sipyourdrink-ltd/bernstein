@@ -49,6 +49,32 @@ preamble to prefer a precise reason over `other`.
 | `attempts` | Number of attempts before abandon |
 | `detail` | Free-form context string |
 
+When reading a row, `task_id` and `reason` are required. Extra keys are
+ignored, so adding fields does not prevent older readers from loading a row.
+Omitted optional fields use their defaults; in particular, a missing
+`attempts` is `0`, and a missing `timestamp` is `0` (not the current time).
+A missing `id` is generated when the row is read. Recognized reasons are the
+taxonomy values (for example, `unsafe_change`) or enum names (for example,
+`UNSAFE_CHANGE`; names are case-insensitive). An unknown reason makes the
+whole row invalid and it is skipped, not converted to `other`.
+
+`read_all` retains append order, but `list` orders valid rows by descending
+timestamp (newest first). The sort is stable: rows with equal timestamps keep
+their order in the ledger. Since older rows without a timestamp get `0`, they
+sort after rows with positive timestamps and may fall outside the list
+limit. For example, these ledger lines are in append order:
+
+```jsonl
+{"task_id":"T-old","reason":"out_of_scope"}
+{"task_id":"T-first","reason":"unsafe_change","timestamp":200}
+{"task_id":"T-invalid","reason":"not_a_reason","timestamp":300}
+{"task_id":"T-second","reason":"other","timestamp":200}
+```
+
+The invalid-reason row is skipped. `list` returns `T-first`, `T-second`, then
+`T-old`: the two rows at timestamp `200` retain their append order, while the
+row with the omitted timestamp defaults to `0` and sorts last.
+
 ## CLI
 
 ```text
