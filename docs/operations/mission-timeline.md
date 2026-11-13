@@ -14,7 +14,11 @@ overnight progress from task lists and logs.
 
 ## Mission timeline screen
 
-The web UI route `Missions` renders the deterministic mission projection:
+The web UI route `Missions` renders the deterministic mission projection. Each
+**lane** is the visual row for one mission phase, not a separate scheduling unit:
+the row presents that phase's projected state, gate verdict, and envelope spend.
+Mission phases are distinct from plan stages: a stage groups steps and expresses
+ordering through explicit `depends_on` prerequisites. See the [Plans guide](../architecture/plans.md).
 
 - **Phase lanes** with per-phase state (`pending` / `active` / `passed` /
   `halted` / `unverified`), gate verdict, and per-phase envelope burn.
