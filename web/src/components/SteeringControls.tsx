@@ -139,7 +139,7 @@ export default function SteeringControls({ taskId }: SteeringControlsProps) {
         </button>
 
         {mutation.isError && (
-          <span className="text-[12px] text-red-500">
+          <span className="text-[12px] text-destructive">
             {mutation.error instanceof ApiError
               ? `${mutation.error.status} - rejected`
               : 'failed'}

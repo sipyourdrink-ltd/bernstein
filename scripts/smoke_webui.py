@@ -161,6 +161,73 @@ def check_governance_receipt(page: Page, base: str) -> None:
     assert len(receipts) == 5
 
 
+def check_trace_highlight_contrast(page: Page, drawer: Locator, base: str, task_id: str) -> None:
+    trace_url = f"{base}/api/v1/dashboard/tasks/{task_id}/trace?**"
+    timestamp = 1_768_000_000
+    response = {
+        "task_id": task_id,
+        "events": [
+            {
+                "id": "smoke-trace-event",
+                "ts": timestamp,
+                "kind": "verify",
+                "actor": "qa",
+                "summary": "Verified smoke task",
+                "outcome": "success",
+                "trace_id": "smoke-trace",
+                "session_id": "smoke-session",
+                "payload": {},
+            }
+        ],
+        "total": 1,
+        "cursor": None,
+        "first_ts": timestamp,
+        "last_ts": timestamp,
+        "has_open_trace": False,
+    }
+    page.route(trace_url, lambda route: route.fulfill(json=response))
+    settled_colors = page.add_style_tag(content="* { transition: none !important; }")
+    was_dark = page.evaluate("() => document.documentElement.classList.contains('dark')")
+    try:
+        drawer.get_by_role("button", name="Trace", exact=True).click()
+        drawer.get_by_role("searchbox", name="Search trace events").fill("smoke")
+        mark = drawer.locator("mark").filter(has_text="smoke")
+        expect(mark).to_be_visible()
+        for dark in (False, True):
+            page.evaluate("(dark) => document.documentElement.classList.toggle('dark', dark)", dark)
+            ratio = mark.evaluate(
+                r"""mark => {
+                    const rgb = color => color.match(/[\d.]+/g).map(Number);
+                    const layers = [];
+                    for (let node = mark; node; node = node.parentElement) {
+                        const layer = rgb(getComputedStyle(node).backgroundColor);
+                        layers.push(layer);
+                        if ((layer[3] ?? 1) === 1) break;
+                    }
+                    const background = layers.reverse().reduce(
+                        (under, [red, green, blue, alpha = 1]) =>
+                            [red, green, blue].map((channel, i) => channel * alpha + under[i] * (1 - alpha)),
+                        [255, 255, 255],
+                    );
+                    const luminance = color => color
+                        .slice(0, 3)
+                        .map(channel => channel / 255)
+                        .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+                        .reduce((sum, channel, i) => sum + channel * [0.2126, 0.7152, 0.0722][i], 0);
+                    const foreground = luminance(rgb(getComputedStyle(mark).color));
+                    const backdrop = luminance(background);
+                    return (Math.max(foreground, backdrop) + 0.05) / (Math.min(foreground, backdrop) + 0.05);
+                }"""
+            )
+            theme = "dark" if dark else "light"
+            assert ratio >= 4.5, f"Trace highlight contrast {ratio:.2f}:1 in {theme} theme"
+            print(f"Trace highlight contrast {ratio:.2f}:1 in {theme} theme", flush=True)
+    finally:
+        page.evaluate("(dark) => document.documentElement.classList.toggle('dark', dark)", was_dark)
+        settled_colors.evaluate("style => style.remove()")
+        page.unroute(trace_url)
+
+
 def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> None:
     page.goto(f"{base}/ui/tasks")
     row = page.get_by_role("row").filter(has_text=TASK_TITLE)
@@ -170,6 +237,9 @@ def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> 
         button = drawer.get_by_role("button", name=name, exact=True)
         button.click()
         expect(button).to_have_attribute("aria-pressed", "true")
+
+    check_trace_highlight_contrast(page, drawer, base, task_id)
+    drawer.get_by_role("button", name="Summary", exact=True).click()
 
     cancel_url = f"{base}/api/v1/tasks/{task_id}/cancel"
     with page.expect_response(
