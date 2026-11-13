@@ -6,7 +6,7 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 
 - **Sidebar views** - dedicated activity bar panel with Agents, Tasks, and Overview views
 - **Agent tree with delegation hierarchy** - see active agents, their roles, models, and parent/child relationships
-- **Task grouping** - tasks organized by status (open, in progress, done, failed) with inline actions
+- **Flat task list** - one row per task, not grouped by status; the icon at the start of each row indicates its status (hover for the exact status), and contextual actions depend on that status
 - **Dashboard webview** - at-a-glance stats: task breakdown, agent count, cost totals, alerts
 - **SSE real-time updates** - live streaming from the orchestrator, no manual refresh needed
 - **`@bernstein` chat participant** - query orchestrator status and costs from VS Code Chat
