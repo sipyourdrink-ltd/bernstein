@@ -35,9 +35,20 @@ response, similarity = manager.lookup(key_text, model="claude-sonnet-4")
 # similarity == 1.0 on an exact hash hit; < threshold means a miss
 ```
 
-A hit increments the entry's `hit_count` and refreshes `last_used_at`.
-Entries older than the TTL are treated as misses and pruned opportunistically.
-When the store exceeds its entry cap, the least-recently-used entries are
+A hit increments the entry's `hit_count` and refreshes `last_used_at`. This
+records recency for least-recently-used eviction when the store is at capacity;
+it does **not** extend the entry's lifetime. Expiry is based on `created_at`:
+with a positive TTL, an entry is expired once its age is greater than the TTL
+and lookups treat it as a miss. Expired entries are pruned opportunistically.
+A nonpositive TTL disables expiry. Either manager's `lookup()` returns
+`(None, 0.0)` on a miss.
+
+For example, with a 24-hour TTL, an entry created Monday at 09:00 and hit
+Tuesday at 08:00 still expires after its original Tuesday 09:00 deadline; the
+recent hit only makes it less likely to be selected for capacity eviction.
+The response cache follows the same rules, with its 7-day default TTL.
+
+When a new entry is stored at capacity, the least-recently-used entries are
 evicted to make room.
 
 The response cache additionally exposes a canonical key builder,
