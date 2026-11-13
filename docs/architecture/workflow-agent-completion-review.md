@@ -160,10 +160,11 @@ Column key:
 | 1/7 | `test_gate_accepted_attempt_positive_control_has_no_native_interface` | gate | GREEN. The positive control is **UNEXERCISABLE**: no acceptance interface exists. | GREEN |
 | 2 | `test_failed_refused_or_rejected_attempt_never_releases_dependents[failed,refused,verification_rejected]` | proposed | RED ×3: the node reported success after FAILED, REFUSED, and reopen (janitor reject) | GREEN |
 | 2 | `test_spawn_exception_fails_node_and_blocks_dependents` | existing | GREEN | GREEN |
+| 2 (rule 4) | `test_missing_completion_authority_blocks_before_dispatch` | proposed | RED on current main: the spawner was called once without a completion authority | Not run in the historical simulation |
 | 3 | `test_agent_deadline_survives_runner_restart` | proposed | RED: phase 1 released the consumer and never timed out | GREEN |
 | 4 | `test_cancelled_attempt_never_releases_or_retries[acknowledged,unacknowledged]` | proposed | RED ×2: CANCELLED (`confirmed_dead`) and STOP_REQ (child alive) both reported success | GREEN |
 | 5 | `test_resume_after_crash_before_dispatch_dispatches_once` | proposed, already met | GREEN: known not started, dispatched once | GREEN |
-| 5 | `test_resume_after_crash_around_dispatch_does_not_respawn[lost_dispatch_ack,after_dispatch_confirmation]` | proposed | RED ×2: spawn counter 2 for the same task id | GREEN |
+| 5 | `test_resume_after_crash_around_dispatch_does_not_respawn[lost_dispatch_ack,before_terminal_checkpoint]` | proposed | RED ×2: spawn counter 2 for the same task id. The latter hook fires before the terminal checkpoint and does not establish durable dispatch acknowledgement. | GREEN |
 | 6 | `test_stale_or_foreign_evidence_cannot_release_dependents[5 kinds]` | proposed | RED ×5: other run, other node, foreign tenant, stale attempt, tampered receipt | GREEN |
 | 7 | `test_native_artifact_rejection_blocks_dependents` | proposed | RED: `verify_artifact` rejected the artifact and the consumer still ran | GREEN |
 | 8 | `test_agent_loop_waits_for_the_current_attempt` | proposed | RED: 3 predicate runs and 3 concurrent agents | GREEN |

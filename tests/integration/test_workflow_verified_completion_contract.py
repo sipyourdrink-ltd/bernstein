@@ -819,10 +819,10 @@ def test_resume_after_crash_before_dispatch_dispatches_once(env: _Env) -> None:
 
 @pytest.mark.parametrize(
     "window",
-    ["lost_dispatch_ack", "after_dispatch_confirmation"],
+    ["lost_dispatch_ack", "before_terminal_checkpoint"],
 )
 def test_resume_after_crash_around_dispatch_does_not_respawn(env: _Env, window: str) -> None:
-    """[PROPOSED #5] A crash after the spawn side effect (ack lost, or confirmed) never duplicates the agent."""
+    """[PROPOSED #5] A crash after launch and before a terminal checkpoint never duplicates the agent."""
     rid = f"p5-{window.replace('_', '-')}"
     spec = _spec(env)
     if window == "lost_dispatch_ack":
@@ -834,7 +834,10 @@ def test_resume_after_crash_around_dispatch_does_not_respawn(env: _Env, window: 
     first = env.start(lambda: env.runner(crashing, audit=audit).run(spec, run_id=rid))
     assert first.wait(BOUND_S + AGENT_TIMEOUT_S)
     assert isinstance(first.error, _SimulatedCrash), f"precondition: injected crash fired ({first.statuses()})"
-    assert crashing.spawn_count() == 1, "precondition: exactly one agent launched before the crash"
+    assert crashing.spawned_task_ids() == [f"wf-produce-{rid}"]
+    assert len(crashing.procs) == 1 and crashing.procs[0].poll() is None
+    assert not (env.workdir / "runs" / rid / "produce.node.json").exists()
+    assert env.sentinel_writes() == 0
 
     env.driver.restart()  # the store owner restarts too; it replays the journal
     task = env.driver.task(f"wf-produce-{rid}")
