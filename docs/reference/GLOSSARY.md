@@ -154,9 +154,13 @@ Write-Ahead Log -- the durable journal of state transitions used for crash recov
 
 A pre-spawn pool of agent processes kept idle so newly-claimed tasks see lower spawn latency. Instead of fork-and-init on every task, the orchestrator hands a queued process its prompt and the agent is already past CLI startup costs. Sized for typical concurrency; can be disabled if RAM is constrained (each pre-spawned process holds its baseline working set). Implemented in `src/bernstein/core/agents/warm_pool.py` and `src/bernstein/core/agents/spawner_warm_pool.py`.
 
+### Workspace
+
+The **project workspace** is the project root that the [`bernstein worktrees` command](../operations/worktrees.md) inspects. In the default worktree-isolation layout, an artifact-mode session instead uses an **artifact workspace**: the plain directory `.sdd/workspaces/{session_id}` under the repo root that serves as that session's working directory. Unlike a [worktree](#worktree), it is not a git checkout and has no per-session branch; see the [artifact guide](../operations/artifacts.md).
+
 ### Worktree
 
-An isolated git worktree per agent, located at `.sdd/worktrees/{session_id}`. Each agent works in its own branch without interfering with others. Implemented in `src/bernstein/core/git/worktree.py`.
+An isolated git checkout per agent, located at `.sdd/worktrees/{session_id}`. Each agent works in its own branch without interfering with others. In the default worktree-isolation layout, this differs from an [artifact workspace](#workspace), which is a plain directory rather than a git checkout. See the [worktree guide](../operations/worktrees.md). Implemented in `src/bernstein/core/git/worktree.py`.
 
 ---
 
