@@ -984,9 +984,12 @@ class BernsteinApp(App[None]):
         header.elapsed = bar.elapsed
         header.cost_trend = _mini_cost_sparkline(list(self._cost_history))
         if not header.remote_cluster and isinstance(sd, dict):
-            prov = sd.get("runtime", {}).get("config_provenance", {})
-            if isinstance(prov, dict):
-                header.max_agents = prov.get("max_agents", {}).get("value", header.max_agents)
+            runtime = sd.get("runtime")
+            provenance = runtime.get("config_provenance") if isinstance(runtime, dict) else None
+            max_agents = provenance.get("max_agents") if isinstance(provenance, dict) else None
+            value = max_agents.get("value") if isinstance(max_agents, dict) else None
+            if type(value) is int and value > 0:
+                header.max_agents = value
         header.active_agents = bar.agents
 
     def _check_budget_alerts(self, pct: float, spent: float, budget: float) -> None:

@@ -150,18 +150,20 @@ def _fetch_all() -> dict[str, Any]:
     activity_summaries = _load_activity_summaries() if local else {}
 
     # Slow path: HTTP to task server (may take 1-3s with many tasks)
-    status = _get("/status", url)
-    costs = _get("/costs", url)
+    raw_status = _get("/status", url)
+    raw_costs = _get("/costs", url)
     quality = _get("/quality", url)
-    bandit = _get("/routing/bandit", url)
+    raw_bandit = _get("/routing/bandit", url)
+    status = _dashboard_status(raw_status)
+    costs = _dashboard_costs(raw_costs)
+    bandit = raw_bandit if isinstance(raw_bandit, dict) else None
     # Use /status for task counts instead of fetching all 400+ task objects
     raw_tasks = _get("/tasks", url)
     tasks = _dashboard_task_rows(raw_tasks)
     pending_approval = sum(1 for task in tasks or [] if task["status"] == "pending_approval")
     # Verification nudge: read from status response (already included by /status route)
-    verification_nudge: dict[str, Any] = {}
-    if isinstance(status, dict):
-        verification_nudge = status.get("verification_nudge", {}) or {}
+    nudge = status.get("verification_nudge") if status is not None else None
+    verification_nudge = nudge if isinstance(nudge, dict) else {}
 
     # An unreachable server and an idle one produce the same empty panels, so
     # the difference is carried explicitly rather than left to the log. Every
@@ -170,7 +172,9 @@ def _fetch_all() -> dict[str, Any]:
     # working dashboard over it would hide the data that did arrive.
     registry = _get("/cluster/status", url)
     cluster = _project_cluster_view(url, tasks, registry)
-    server_unreachable = all(result is None for result in (status, costs, quality, bandit, raw_tasks, registry))
+    server_unreachable = all(
+        result is None for result in (raw_status, raw_costs, quality, raw_bandit, raw_tasks, registry)
+    )
 
     return {
         "server_unreachable": server_unreachable,
@@ -191,6 +195,50 @@ def _fetch_all() -> dict[str, Any]:
         "verification_nudge": verification_nudge,
         "activity_summaries": activity_summaries,
     }
+
+
+def _finite_number(value: Any) -> float:
+    if type(value) not in (int, float):
+        return 0.0
+    try:
+        numeric = float(value)
+    except OverflowError:
+        return 0.0
+    return numeric if math.isfinite(numeric) else 0.0
+
+
+def _dashboard_status(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict) or not data:
+        return None
+    status = dict(data)
+    for key in ("total", "done", "failed"):
+        status[key] = int(_finite_number(status.get(key)))
+    runtime = status.get("runtime")
+    if isinstance(runtime, dict):
+        runtime = dict(runtime)
+        for key in ("active_worktrees", "restart_count"):
+            runtime[key] = int(_finite_number(runtime.get(key)))
+        completed = runtime.get("last_completed")
+        if isinstance(completed, dict) and completed:
+            runtime["last_completed"] = {**completed, "seconds_ago": _finite_number(completed.get("seconds_ago"))}
+        status["runtime"] = runtime
+    nudge = status.get("verification_nudge")
+    if isinstance(nudge, dict):
+        status["verification_nudge"] = {**nudge, "unverified_count": int(_finite_number(nudge.get("unverified_count")))}
+    return status
+
+
+def _dashboard_costs(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict) or not data:
+        return None
+    costs = dict(data)
+    for key in ("spent_usd", "budget_usd", "percentage_used"):
+        costs[key] = _finite_number(costs.get(key))
+    per_model = costs.get("per_model")
+    costs["per_model"] = (
+        {name: _finite_number(value) for name, value in per_model.items()} if isinstance(per_model, dict) else {}
+    )
+    return costs
 
 
 def _nonnegative_int(data: Any, key: str) -> int | None:
@@ -226,19 +274,22 @@ def _dashboard_task_rows(data: Any) -> list[dict[str, Any]] | None:
 _NODE_HELD_STATUSES = frozenset({"claimed", "in_progress"})
 
 
-def _fetch_held_tasks(url: str) -> list[dict[str, Any]] | None:
+def _fetch_held_tasks(url: str) -> tuple[list[dict[str, Any]], bool]:
     """Read active claims separately from the capped dashboard task list."""
     tasks: dict[str, dict[str, Any]] = {}
+    complete = True
     for status in sorted(_NODE_HELD_STATUSES):
         offset = 0
         first_total: int | None = None
         while first_total is None or offset < first_total:
             page = _get(f"/tasks?status={status}&limit=500&offset={offset}", url)
             if not isinstance(page, dict):
-                return None
+                complete = False
+                break
             rows, total = page.get("tasks"), page.get("total")
             if not isinstance(rows, list) or type(total) is not int or total < 0:
-                return None
+                complete = False
+                break
             if first_total is None:
                 first_total = total
             if not rows:
@@ -247,7 +298,7 @@ def _fetch_held_tasks(url: str) -> list[dict[str, Any]] | None:
                 if _is_held_task(row):
                     tasks[row["id"]] = row
             offset += len(rows)
-    return list(tasks.values())
+    return list(tasks.values()), complete
 
 
 def _is_held_task(task: Any) -> bool:
@@ -313,12 +364,12 @@ def _project_cluster_view(url: str, tasks: Any, registry: Any, now: float | None
     if not view_nodes:
         return {"nodes": [], "reachable": False}
 
-    active_tasks = _fetch_held_tasks(url)
-    held_tasks = tasks if active_tasks is None else active_tasks
+    active_tasks, complete = _fetch_held_tasks(url)
+    fallback = tasks if not complete and isinstance(tasks, list) else []
+    held_tasks = {task["id"]: task for task in fallback if _is_held_task(task)}
+    held_tasks.update((task["id"], task) for task in active_tasks)
     held: dict[str, list[dict[str, Any]]] = {}
-    for task in held_tasks if isinstance(held_tasks, list) else []:
-        if not _is_held_task(task):
-            continue
+    for task in held_tasks.values():
         held.setdefault(task["claimed_by_session"], []).append(
             {
                 "id": task["id"],
@@ -330,7 +381,7 @@ def _project_cluster_view(url: str, tasks: Any, registry: Any, now: float | None
 
     for fields in view_nodes:
         fields["tasks"] = held.get(fields["id"], [])
-    return {"nodes": view_nodes, "reachable": True}
+    return {"nodes": view_nodes, "reachable": True, "claims_complete": complete}
 
 
 def _display_text(value: Any, default: str = "") -> str:
@@ -363,6 +414,8 @@ def _format_cluster_view(view: dict[str, Any]) -> str:
             return "[yellow]Cluster status unavailable[/]"
         return "[dim]No worker nodes registered with this server[/]"
     lines = [f"[bold]CLUSTER[/] [dim]{len(nodes)} node(s)[/]"]
+    if view.get("claims_complete") is False:
+        lines.append("[yellow]Some active claims could not be loaded[/]")
     for node in nodes:
         status = node["status"]
         style = "green" if status == "online" else "dim" if status == "offline" else "yellow"

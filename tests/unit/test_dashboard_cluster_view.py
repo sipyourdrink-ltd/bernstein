@@ -193,6 +193,24 @@ def test_malformed_cluster_response_does_not_discard_the_poll(
     assert data["cluster"] == {"nodes": [], "reachable": False}
 
 
+def test_partial_claim_page_preserves_known_claims_and_marks_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/tasks?status=claimed&limit=500&offset=0": {"tasks": [_task("page-one", "n-1")], "total": 2},
+            "/tasks?status=in_progress&limit=500&offset=0": {"tasks": [], "total": 0},
+        },
+    )
+
+    view = _load_cluster_view(REMOTE, [_task("legacy", "n-1")])
+
+    assert view is not None and view["claims_complete"] is False
+    assert [task["id"] for task in view["nodes"][0]["tasks"]] == ["legacy", "page-one"]
+    assert "Some active claims could not be loaded" in _format_cluster_view(view)
+
+
 def test_invalid_duplicate_claim_does_not_replace_a_valid_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     claim = _task("held", "n-1", status="claimed")
     _serve(
@@ -274,6 +292,49 @@ async def test_malformed_legacy_rows_keep_the_remote_dashboard_alive(monkeypatch
         assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
         assert set(app._task_titles) == {"healthy"}
         assert not any("Server not responding" in line.text for line in app.query_one(RichLog).lines)
+
+
+@pytest.mark.asyncio
+async def test_remote_cluster_survives_invalid_sibling_response_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/status": ["bad"],
+            "/costs": ["bad"],
+            "/routing/bandit": ["bad"],
+        },
+    )
+    frame = _fetch_all()
+    assert frame["status"] is None and frame["costs"] is None and frame["bandit"] is None
+    monkeypatch.setattr(dashboard_app, "_fetch_all", lambda: frame)
+    app = BernsteinApp()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._apply_data(frame)
+        await pilot.pause()
+        assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
+
+
+def test_invalid_dashboard_status_and_cost_numbers_are_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/status": {"total": "bad", "runtime": {"active_worktrees": [], "last_completed": {"seconds_ago": "bad"}}},
+            "/costs": {"spent_usd": "bad", "per_model": {"model": []}},
+        },
+    )
+
+    frame = _fetch_all()
+
+    assert frame["status"]["total"] == 0
+    assert frame["status"]["runtime"]["active_worktrees"] == 0
+    assert frame["status"]["runtime"]["last_completed"]["seconds_ago"] == 0
+    assert frame["costs"]["spent_usd"] == 0
+    assert frame["costs"]["per_model"] == {"model": 0}
 
 
 @pytest.mark.asyncio
