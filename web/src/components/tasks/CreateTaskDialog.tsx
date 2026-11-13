@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useIsMutating, useMutation } from '@tanstack/react-query';
-import { useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { ApiError, apiGet, apiPost } from '@/lib/api';
 
 const fieldClass = 'w-full rounded-md border border-meta-foreground bg-background px-3 py-2 text-body text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card';
@@ -15,6 +15,13 @@ type TaskInput = { id: string; title: string; description: string; role?: string
 const outcomeUnknownMessage = 'Task creation could not be confirmed. Check the task before retrying.';
 let inMemoryRecoveryId: string | null = null;
 let recoveryDraft: TaskInput | null = null;
+let recoveryRejection: string | undefined;
+const recoveryListeners = new Set<() => void>();
+
+function subscribeToRecovery(listener: () => void) {
+  recoveryListeners.add(listener);
+  return () => { recoveryListeners.delete(listener); };
+}
 
 function readRecoveryId(): string | null {
   try {
@@ -25,8 +32,9 @@ function readRecoveryId(): string | null {
   }
 }
 
-function rememberRecoveryId(id: string | null) {
+function rememberRecoveryId(id: string | null, rejection?: string) {
   inMemoryRecoveryId = id;
+  recoveryRejection = rejection;
   if (!id) recoveryDraft = null;
   try {
     if (id) window.sessionStorage.setItem(recoveryKey, id);
@@ -34,6 +42,7 @@ function rememberRecoveryId(id: string | null) {
   } catch {
     // Keep recovery available while the page is mounted if storage is blocked.
   }
+  for (const listener of recoveryListeners) listener();
 }
 
 function taskCreationError(error: Error | null): string | undefined {
@@ -67,8 +76,11 @@ export function CreateTaskDialog({
   const created = useRef(false);
   const mounted = useRef(false);
   const [validationError, setValidationError] = useState('');
-  const [recoveryId, setRecoveryId] = useState(readRecoveryId);
-  const [initialDraft] = useState(() => recoveryDraft?.id === recoveryId ? recoveryDraft : null);
+  const storedRecoveryId = useSyncExternalStore(subscribeToRecovery, readRecoveryId);
+  const rejection = useSyncExternalStore(subscribeToRecovery, () => recoveryRejection);
+  const [initialDraft] = useState(() => recoveryDraft?.id === storedRecoveryId ? recoveryDraft : null);
+  const ownCreateId = useRef<string | null>(null);
+  const recoveryId = ownCreateId.current === storedRecoveryId && submitting.current ? null : storedRecoveryId;
   const createInFlight = useIsMutating({ mutationKey: createMutationKey }) > 0;
   const lookupInFlight = useIsMutating({ mutationKey: lookupMutationKey }) > 0;
   const busy = createInFlight || lookupInFlight;
@@ -91,18 +103,17 @@ export function CreateTaskDialog({
     retry: false,
     mutationFn: async (task: TaskInput) => {
       if (!navigator.onLine) throw new Error('You are offline. Reconnect and retry.');
-      rememberRecoveryId(task.id);
       recoveryDraft = task;
+      rememberRecoveryId(task.id);
       try {
         const response = await apiPost<{ id?: unknown }>('/tasks', task, { signal: AbortSignal.timeout(15_000) });
         if (response?.id === task.id) return task.id;
       } catch (error) {
         if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
-          if (mounted.current && readRecoveryId() === task.id) rememberRecoveryId(null);
+          if (readRecoveryId() === task.id) rememberRecoveryId(null, taskCreationError(error));
           throw error;
         }
       }
-      setRecoveryId(task.id);
       throw new Error(outcomeUnknownMessage);
     },
     onSuccess: complete,
@@ -130,7 +141,8 @@ export function CreateTaskDialog({
 
   useLayoutEffect(() => {
     if (recoveryId) checkButton.current?.focus();
-  }, [recoveryId]);
+    else if (rejection) titleInput.current?.focus();
+  }, [recoveryId, rejection]);
 
   function close() {
     if (!busy && !submitting.current && !checking.current) onClose(recoveryId !== null);
@@ -153,11 +165,12 @@ export function CreateTaskDialog({
     const id = Array.from(random, (byte) => byte.toString(16).padStart(2, '0')).join('');
     submitButton.current?.focus();
     submitting.current = true;
+    ownCreateId.current = id;
     create.mutate({ id, title, description, ...(role ? { role } : {}) });
   }
 
   const error = validationError || taskCreationError(verify.error ?? create.error)
-    || (recoveryId ? outcomeUnknownMessage : undefined);
+    || rejection || (recoveryId ? outcomeUnknownMessage : undefined);
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) close(); }}>
       <Dialog.Portal>
@@ -223,7 +236,6 @@ export function CreateTaskDialog({
                       if (promptInput.current) promptInput.current.value = '';
                       const role = formRef.current?.elements.namedItem('role');
                       if (role instanceof HTMLInputElement) role.value = '';
-                      setRecoveryId(null);
                       create.reset();
                       verify.reset();
                       requestAnimationFrame(() => titleInput.current?.focus());

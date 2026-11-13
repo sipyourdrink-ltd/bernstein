@@ -563,12 +563,20 @@ def check_task_creation_survives_route_remount(page: Page, base: str) -> None:
         expect(form.get_by_role("button", name="Start a new task instead", exact=True)).to_be_disabled()
         expect(form.get_by_role("button", name="Check task", exact=True)).to_be_disabled()
         assert len(attempts) == len(pending) == 1
-        pending[0].fulfill(response=pending[0].fetch())
-        check = form.get_by_role("button", name="Check task", exact=True)
-        expect(check).to_be_enabled()
-        check.click()
+        pending[0].fulfill(status=400, json={"detail": "Choose the qa role."})
+        expect(form.get_by_role("alert")).to_have_text("Choose the qa role.")
+        expect(form.get_by_label("Title")).to_have_value(title)
+        role = form.get_by_label("Role (optional)")
+        expect(role).to_be_enabled()
+        expect(form.get_by_role("button", name="Check task", exact=True)).to_have_count(0)
+        role.fill("qa")
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        assert len(attempts) == len(pending) == 2
+        assert attempts[0] != attempts[1]
+        pending[1].fulfill(response=pending[1].fetch())
         expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
-        assert len(attempts) == 1
         page.keyboard.press("Escape")
     finally:
         page.unroute(tasks_url, hold_create)
