@@ -10,10 +10,10 @@ reviewer sees is a complete syntactic unit.
 ## Why it exists
 
 Reviewer false-negatives cost real bugs. Other roles read code they
-wrote; reviewer reads unfamiliar diffs. Splitting on the largest
-semantic unit that fits the budget (function → class → block → line)
-gives the reviewer denser context per token and prevents the
-"I-saw-half-a-function" failure mode.
+wrote; reviewer reads unfamiliar diffs. The chunker groups top-level
+Python units (functions, classes, and statement runs) toward a token
+budget. It does not split an oversized function or class into smaller
+blocks or lines, so a chunk can exceed the budget.
 
 ## How to use it
 
@@ -48,7 +48,35 @@ consumes the chunks yet; callers render them.
 
 The chunker takes its budget from the `budget_tokens` argument
 (default `4000`; the line-based fallback uses the same value) and is
-otherwise self-contained - no user-facing knobs.
+otherwise self-contained - no user-facing knobs. The budget is a soft
+target based on a rough character-count estimate (about four characters
+per token), not a hard limit. Python units are packed together up to the
+target; a function or class that alone exceeds it is emitted whole, so
+that chunk can be over budget. The effective minimum is 64 tokens:
+smaller values, including zero or negative values, are clamped to 64.
+
+For example, suppose `report.py` contains only `build_report`, whose full
+body is about 900 estimated tokens (the body is abbreviated here). With a
+400-token budget the chunker returns the complete function as one chunk,
+not several pieces of its body:
+
+```python
+# report.py
+
+
+def build_report():
+    # ... long body ...
+    return report
+
+
+chunks = chunk_for_review("report.py", budget_tokens=400)
+# chunks[0] contains the complete build_report; its estimate can exceed 400.
+```
+
+Non-Python files and Python files that fail to parse use line-based
+windows instead of AST units; invalid Python is not returned as one
+whole unparsed chunk. Missing, unreadable, or empty files produce an
+empty list (`[]`).
 
 ## Limitations
 
