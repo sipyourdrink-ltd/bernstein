@@ -329,16 +329,30 @@ async def recap(request: Request) -> dict[str, Any]:
     }
 
 
-def _parse_numstat_output(stdout: str) -> dict[str, Any]:
+def _display_numstat_path(raw: bytes) -> str:
+    """Decode UTF-8 paths and use reversible Git quoting for other bytes."""
+    try:
+        path = raw.decode("utf-8")
+        if not (path.startswith('"') and path.endswith('"')):
+            return path
+    except UnicodeDecodeError:
+        pass
+    # Quote literal double-quoted names too, so they cannot be confused with
+    # the escaped form of a different path.
+    body = "".join(chr(byte) if 32 <= byte < 127 and byte not in (34, 92) else f"\\{byte:03o}" for byte in raw)
+    return '"' + body + '"'
+
+
+def _parse_numstat_output(stdout: bytes) -> dict[str, Any]:
     """Parse NUL-delimited ``git diff --numstat -z`` output into a summary."""
-    records = iter(stdout.split("\0"))
+    records = iter(stdout.split(b"\0"))
     files_changed = 0
     additions = 0
     deletions = 0
     changed_files: list[str] = []
 
     for record in records:
-        parts = record.split("\t", 2)
+        parts = record.split(b"\t", 2)
         if len(parts) != 3:
             continue
         added, deleted, path = parts
@@ -346,18 +360,18 @@ def _parse_numstat_output(stdout: str) -> dict[str, Any]:
             # Rename and copy records carry the old and new paths in two
             # separate NUL-delimited fields.
             next(records, None)
-            path = next(records, "")
+            path = next(records, b"")
             if not path:
                 continue
         try:
-            add_count = int(added) if added != "-" else 0
-            del_count = int(deleted) if deleted != "-" else 0
+            add_count = int(added) if added != b"-" else 0
+            del_count = int(deleted) if deleted != b"-" else 0
         except ValueError:
             continue
         files_changed += 1
         additions += add_count
         deletions += del_count
-        changed_files.append(path)
+        changed_files.append(_display_numstat_path(path))
 
     return {
         "files_changed": files_changed,
@@ -417,8 +431,7 @@ async def _get_git_diff_stats(workdir: Path, done_tasks: list[Any]) -> dict[str,
         logger.warning("Failed to get git diff stats: %s", stderr)
         return empty
 
-    stdout = stdout_bytes.decode("utf-8", errors="replace")
-    return _parse_numstat_output(stdout)
+    return _parse_numstat_output(stdout_bytes)
 
 
 def _score_to_grade(total: int) -> str:
