@@ -22,40 +22,24 @@ bernstein sync --port 8052 --dir .
 | `--port` | `8052` | Task server port. The command talks to `http://127.0.0.1:<port>`. |
 | `--dir` | `.` | Project root directory (parent of `.sdd/`). |
 
-Requires a reachable task server; if the server can't be reached the command
-reports "Cannot connect to task server - is it running?" and continues
-without creating tasks.
+Requires a reachable task server. If the initial task-status query cannot connect, sync records "Cannot connect to task server - is it running?" and returns before either pass; it does not continue reconciling files.
 
 ## What it does
 
-1. Scans `.sdd/backlog/open/*.yaml`, `.sdd/backlog/open/*.md`, and
-   `.sdd/backlog/issues/*.yaml` / `*.md`.
-2. For each file, parses a `BacklogTask` (title, role, priority, scope,
-   complexity, description) and checks it against every task already on the
-   server (queried across `open`, `claimed`, `in_progress`, `done`, `failed`,
-   and `cancelled` status). A file is considered already-synced if its
-   normalised title *or* a slug derived from its filename matches an
-   existing server task's normalised title.
-3. New tasks are submitted in one batch via `POST /tasks/batch`; if the
-   server doesn't support batching (404), the command falls back to
-   creating them one at a time via `POST /tasks`. The originating filename
-   is appended to each task's description as `<!-- source: <file> -->` for
-   traceability.
-4. For tasks that have reached `done`, `failed`, or `cancelled` on the
-   server, the matching backlog file is moved out of
-   `.sdd/backlog/open/` or `.sdd/backlog/claimed/` into
-   **`.sdd/backlog/closed/`**.
+Sync has separate creation and archival passes, with different file collections:
 
-   Note: the command's own `--help` text and its terminal summary line both
-   say the file moves to `backlog/done/`. The directory `.sdd/backlog/done/`
-   is in fact created by the command, but nothing is ever written into it —
-   the real move target, per `_move_completed_files` in
-   `core/persistence/sync.py`, is `.sdd/backlog/closed/`. Look there, not in
-   `done/`, for files after a sync.
+| Pass | Reads | Effect on files |
+|---|---|---|
+| Creation | `.sdd/backlog/open/*.yaml`, `.md`; `.sdd/backlog/issues/*.yaml`, `.md` | Parses each file and creates a server task only if it is not already represented. Does not move files. |
+| Archive | Metadata in `.sdd/backlog/issues/`, `open/`, and `claimed/` (`*.yaml` and `*.md`) | Matches parsed metadata titles against terminal server tasks (`done`, `failed`, `cancelled`), after title normalization. For a match, moves a same-named live file from `open/` or `claimed/` to `closed/`. Files in `issues/` are metadata only and are retained. |
 
-5. Prints a summary: how many tasks were created, how many files were
-   skipped as already-synced, how many were moved to `closed/`, and any
-   per-file errors (unparseable file, failed HTTP call).
+For example, an issue metadata file at `.sdd/backlog/issues/123.yaml` can have the same parsed title as a terminal task and guide the move of the separate live file `.sdd/backlog/open/123.yaml` into `closed/`; the issue metadata file remains in `issues/`. The archive pass also considers metadata in `open/` and `claimed/`, but only same-named live files in those two directories can be moved.
+
+For creation, a file is considered already-synced if its normalised title or a slug derived from its filename matches an existing server task's normalised title. New tasks are submitted in one batch via `POST /tasks/batch`; if the server does not support batching (404), the command falls back to creating them one at a time via `POST /tasks`. The originating filename is appended to each task's description as `<!-- source: <file> -->` for traceability.
+
+The command prints how many tasks were created, how many files were skipped as already-synced, how many were moved to `closed/`, and any per-file errors (unparseable file, failed HTTP call).
+
+Note: the command's own `--help` text and its terminal summary line both say the file moves to `backlog/done/`. The directory `.sdd/backlog/done/` is in fact created by the command, but nothing is ever written into it — the real move target, per `_move_completed_files` in `core/persistence/sync.py`, is `.sdd/backlog/closed/`. Look there, not in `done/`, for files after a sync.
 
 ## Deduplication
 
