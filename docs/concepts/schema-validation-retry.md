@@ -1,10 +1,12 @@
 # Schema validation retry
 
 When a spawned agent emits malformed JSON (manager planning output,
-MCP tool response, planner decoder), Bernstein retries up to N times
-and **feeds the specific validation error back into the next prompt**.
-Errors accumulate across steps so the agent learns "you keep
-mis-typing field `priority`."
+MCP tool response, planner decoder), Bernstein validates the supplied
+response and can request another response after a validation failure.
+`max_attempts` is the maximum number of **total validations**, including
+the supplied initial response—not a count of additional retries.
+Validation feedback accumulated so far is placed before the base prompt
+when requesting another response.
 
 ## Why it exists
 
@@ -59,21 +61,28 @@ response or raises `ValueError`, not a schema class directly, so any
 validator (Pydantic, JSONSchema, hand-rolled) plugs in. On a malformed
 payload the helper:
 
-1. Runs the `validate` callable.
-2. Records the `ValueError` into `ctx`.
-3. Calls `ask_again(base_prompt + "you previously got these errors: …")`.
-4. Loops up to `max_attempts`; raises `SchemaRetryExhausted` with the
-   full error trail on terminal failure.
+1. Runs the `validate` callable on the current response, starting with
+   `initial_response`.
+2. Returns the result immediately if validation succeeds, including when
+   success occurs on the final allowed validation.
+3. On a `ValueError`, records the error in `ctx`. If this was the final
+   allowed validation, raises `SchemaRetryExhausted` with the full error
+   trail; it does not call `ask_again`.
+4. Otherwise, calls `ask_again` with the accumulated validation-feedback
+   preamble followed by `base_prompt` (if supplied), then validates the
+   returned response. Thus, `max_attempts=1` validates only the supplied
+   response and makes no callback; `max_attempts=3` validates at most
+   three responses and makes at most two callbacks.
 
-Errors accumulate across steps in the same `SchemaRetryContext`, so
-the same agent across a multi-step pipeline sees the trail of every
-prior validation failure, not just the most recent.
+Errors accumulate across validations and across steps in the same
+`SchemaRetryContext`, so the same agent across a multi-step pipeline sees
+the trail of every prior validation failure, not just the most recent.
 
 ## Configuration
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `defaults.SCHEMA_RETRY_MAX_ATTEMPTS` | `3` | Per-decode retry budget. |
+| `defaults.SCHEMA_RETRY_MAX_ATTEMPTS` | `3` | Maximum total validations per decode, including the supplied response. |
 | `schema_retry_attempts_total{outcome}` | metric | `success` / `recovered` / `retry` / `exhausted` outcomes; scrape for cost-tracking the retry loop. |
 
 ## Limitations
