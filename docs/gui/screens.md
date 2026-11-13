@@ -92,7 +92,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **24 h sparkline:** recharts `<BarChart>`, 8 px bars / 2 px gap, last bar full accent. Dashed gridlines at 25 / 50 / 75 %. Mono x-axis labels (`−24h / −18h / −12h / −6h / now`).
 - **By-adapter table:** Adapter (mono) · Calls · Tokens · Cost · Share (progress + %) · Δ 7 d (mono colored: green if reduced, warning if > +20 %).
 - **Top 10 tasks:** index column (mono `01`–`10`) · title + agent meta · cost (mono bold right).
-- **Endpoints:** `GET /api/v1/costs/current`, `/costs/history`, `/costs/by-tag`, `/costs/forecast`. Live ticks: `GET /api/v1/events/cost`.
+- **Endpoints:** `GET /api/v1/costs/current`, `/costs/history`, `/costs/by-tag`, `/costs/forecast`, `/costs/top-tasks?limit=10`. The Top Tasks request returns up to 10 highest-cost tasks with usage in the trailing 24 hours: the route sets `limit=10`, while the handler's default `hours=24` defines the report window. Live ticks: `GET /api/v1/events/cost`.
 - **Replaces TUI widget:** `cost_sparkline.py`.
 
 ## Missions (`/ui/missions`)
