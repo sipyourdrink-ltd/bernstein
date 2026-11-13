@@ -7,6 +7,18 @@ whole run is done. Both are colour-coded terminal progress bars rendered
 client-side from data the task server already returns on every poll — there
 is no separate "progress" API call.
 
+## Which signal answers which question?
+
+These signals are not interchangeable; choose one based on what you need to know.
+
+| Signal | Input | What an operator can infer |
+|---|---|---|
+| Run completion percentage | The polled task-server status/summary counts: `tasks_done / tasks_total` | The fraction of tasks in the run marked done; it is a run-completion summary, not a measure of agent activity. |
+| Task completion percentage | Each task's API fields (`progress.percentage`, step counts, or test counts, in that order); a task marked `done` is 100% | The dashboard's client-side estimate for that task's completion. It trusts the supplied fields and is not independently verified. |
+| [Session-log activity](progress-watch.md) | Changes in a watched agent session log's mtime or size | The log is advancing, which indicates activity. Growth alone does not establish that work was completed. |
+| [Per-agent token usage](token-progress.md) | Bytes appended to the session's `.sdd/runtime/<session_id>.tokens` sidecar, counted on orchestrator ticks | How much token usage has been recorded for the agent, and (when configured) how it compares with its task budget—not task completion. |
+| [Journal-derived task progress vector](task-artifacts.md#progress-vector) | A projection of journaled work, including checkpoint references, evidence producers and results, diff/gate attempts, and task transitions | How much progress is earned by recorded work. It cannot be set by the agent, but it is distinct from the dashboard's API-derived percentage. |
+
 ## What renders where
 
 | Surface | What it shows | Width |

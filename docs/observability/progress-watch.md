@@ -3,9 +3,14 @@
 ProgressWatch is a small observability primitive that decides whether a
 spawned CLI agent is "stuck or just thinking" without parsing the
 agent's own stdout. It watches a structured session log on disk: if the
-log file's mtime or size moves forward, the agent is making progress.
-If it has not moved for `agents.progress_watch.inactivity_seconds`, the
+log file's mtime or size moves forward, the session log is active. Growth
+indicates activity, but does not establish that work was completed. If it
+has not moved for `agents.progress_watch.inactivity_seconds`, the
 watcher records a stall and asks the dispatch loop to escalate.
+
+This is an activity signal, not a completion percentage. For run and task
+completion estimates and how they differ from other observability signals, see
+[Cumulative progress tracking](cumulative-progress.md).
 
 The watcher does not spawn its own thread and does not kill processes
 directly. The dispatch loop tick (every 30s by default) calls
