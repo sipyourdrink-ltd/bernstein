@@ -1,7 +1,6 @@
-"""Golden test suite for the Bernstein orchestrator.
+"""Golden test suite for Bernstein, covering routing, planning, and execution outcomes.
 
-Curated set of tasks with known-good expectations to detect regressions
-in routing, planning, or execution quality.
+Curated tasks with known-good expectations to detect regressions in these areas.
 """
 
 from __future__ import annotations
