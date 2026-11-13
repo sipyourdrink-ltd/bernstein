@@ -27,8 +27,10 @@ cli: claude            # or any other registry key listed below
 ```
 
 Use `bernstein adapters check <name>` to verify conformance for a
-single adapter, and `bernstein adapters list` for a richer view that
-includes source paths and conformance verdicts.
+single adapter. `bernstein adapters list` is the registry inventory: it
+shows source paths and whether each adapter's binary is available, not a
+conformance verdict. For conformance reports, see the
+[operator guide](../operations/adapters.md).
 
 ## Categories
 
