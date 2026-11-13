@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
-from threading import Barrier, Lock
+from threading import Barrier, BrokenBarrierError, Lock
 
 import pytest
 
 from bernstein.core.planning.schedule_store import (
+    FIRE_CURSOR_KEY,
     CronParseError,
     ScheduleStore,
     _canonical_schedule_id,
@@ -196,14 +198,15 @@ class TestScheduleStoreUpdateLastFire:
         store = ScheduleStore(tmp_path)
         schedule = store.add(cron="0 9 * * *", goal="Daily digest")
         target = store.directory / f"{schedule.id}.json"
-        ready = Barrier(2, timeout=5)
+        ready = Barrier(2, timeout=2)
         rename_lock = Lock()
         real_replace = os.replace
 
         def replace_together(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
             if Path(dst) == target:
-                # Both writers have staged their payloads before either publishes.
-                ready.wait()
+                # If writes overlap, both reach publication before either proceeds.
+                with suppress(BrokenBarrierError):
+                    ready.wait()
                 with rename_lock:
                     real_replace(src, dst)
             else:
@@ -220,7 +223,47 @@ class TestScheduleStoreUpdateLastFire:
         reloaded = store.get(schedule.id)
         assert reloaded is not None
         assert reloaded.last_fire_at == fire_time
-        assert list(store.directory.iterdir()) == [target]
+        assert list(store.directory.glob("*.json*")) == [target]
+
+    def test_concurrent_fire_and_cursor_updates_preserve_both_fields(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="0 9 * * *", goal="Daily digest")
+        target = store.directory / f"{schedule.id}.json"
+        publish = Barrier(2, timeout=2)
+        start = Barrier(2, timeout=5)
+        real_replace = os.replace
+
+        def synchronize_publish(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst) == target:
+                # Serialized writers cannot both reach publication together.
+                with suppress(BrokenBarrierError):
+                    publish.wait()
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", synchronize_publish)
+        fire_time = 1_700_000_000.0
+        cursor_time = fire_time + 60
+
+        def update_fire() -> None:
+            start.wait()
+            store.update_last_fire(schedule.id, fire_time)
+
+        def update_cursor() -> None:
+            second_store = ScheduleStore(tmp_path)
+            start.wait()
+            second_store.advance_fire_cursor(schedule.id, cursor_time)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(update_fire)
+            second = pool.submit(update_cursor)
+            first.result(timeout=10)
+            second.result(timeout=10)
+
+        reloaded = store.get(schedule.id)
+        assert reloaded is not None
+        assert (reloaded.last_fire_at, reloaded.extra.get(FIRE_CURSOR_KEY)) == (fire_time, cursor_time)
 
 
 class TestScheduleStoreLoadCorrupt:
