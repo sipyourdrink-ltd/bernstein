@@ -57,7 +57,8 @@ bernstein abandonments stats  [--workdir PATH] [--json]
 ```
 
 - `list` prints the most recent rows (newest first; default 20).
-- `stats` shows roll-ups by reason / role / adapter plus a total.
+- `stats` reports `total` and counts by reason, role, and adapter (`by_reason`,
+  `by_role`, and `by_adapter`). These are abandonment counts, not rates.
 
 Pass `--json` (or set the global `--json` flag) for machine-readable
 output.
@@ -83,13 +84,13 @@ jq -c 'select(.reason == "unsafe_change") | select(.timestamp > (now - 86400))' 
   .sdd/runtime/abandonments.jsonl
 ```
 
-## Aggregations exposed by the module
+## Rate helpers
 
-- `abandon_rate_by_role` - rate per role, range `[0, 1]`
-- `abandon_rate_by_adapter` - rate per adapter, range `[0, 1]`
-
-Both are imported by the cost / observability dashboards and surface in
-`bernstein abandonments stats`.
+The separate `abandon_rate_by_role` and `abandon_rate_by_adapter` helpers
+compute rates as abandons divided by abandons plus completed tasks. They
+require completed-task counts as input (`completed_by_role` or
+`completed_by_adapter`) to supply the denominator; these rates are not fields
+in the `stats` output.
 
 ## Troubleshooting
 
