@@ -192,6 +192,33 @@ def test_malformed_cluster_response_does_not_discard_the_poll(
     assert data["cluster"] == {"nodes": [], "reachable": False}
 
 
+def test_invalid_duplicate_claim_does_not_replace_a_valid_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    claim = _task("held", "n-1", status="claimed")
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/tasks?status=claimed&limit=500&offset=0": {"tasks": [claim], "total": 1},
+            "/tasks?status=in_progress&limit=500&offset=0": {"tasks": [{**claim, "status": []}], "total": 1},
+        },
+    )
+
+    view = _load_cluster_view(REMOTE, [])
+
+    assert view is not None
+    assert [task["id"] for task in view["nodes"][0]["tasks"]] == ["held"]
+
+
+def test_empty_loopback_registry_counts_as_a_successful_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(monkeypatch, LOCAL, {"/cluster/status": {"nodes": []}})
+
+    data = _fetch_all()
+
+    assert data["cluster"] is None
+    assert not data["server_unreachable"]
+
+
 def test_remote_claims_ignore_invalid_status_and_timestamp_values(monkeypatch: pytest.MonkeyPatch) -> None:
     tasks = [
         {**_task("bad-status", "n-1"), "status": []},

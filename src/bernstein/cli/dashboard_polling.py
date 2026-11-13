@@ -168,10 +168,9 @@ def _fetch_all() -> dict[str, Any]:
     # HTTP read has to have failed before the whole server is called
     # unreachable: one route erroring is a broken route, and blanking a
     # working dashboard over it would hide the data that did arrive.
-    cluster = _load_cluster_view(url, tasks)
-    server_unreachable = not (cluster and cluster["reachable"]) and all(
-        result is None for result in (status, costs, quality, bandit, raw_tasks)
-    )
+    registry = _get("/cluster/status", url)
+    cluster = _project_cluster_view(url, tasks, registry)
+    server_unreachable = all(result is None for result in (status, costs, quality, bandit, raw_tasks, registry))
 
     return {
         "server_unreachable": server_unreachable,
@@ -237,13 +236,31 @@ def _fetch_held_tasks(url: str) -> list[dict[str, Any]] | None:
             if not rows:
                 break
             for row in rows:
-                if isinstance(row, dict) and isinstance(task_id := row.get("id"), str):
-                    tasks[task_id] = row
+                if _is_held_task(row):
+                    tasks[row["id"]] = row
             offset += len(rows)
     return list(tasks.values())
 
 
+def _is_held_task(task: Any) -> bool:
+    if not isinstance(task, dict):
+        return False
+    status = task.get("status")
+    return (
+        isinstance(status, str)
+        and status in _NODE_HELD_STATUSES
+        and isinstance(task.get("id"), str)
+        and bool(task["id"])
+        and isinstance(task.get("claimed_by_session"), str)
+        and bool(task["claimed_by_session"])
+    )
+
+
 def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[str, Any] | None:
+    return _project_cluster_view(url, tasks, _get("/cluster/status", url), now)
+
+
+def _project_cluster_view(url: str, tasks: Any, registry: Any, now: float | None = None) -> dict[str, Any] | None:
     """Project the central's node registry and claims into the AGENTS panel.
 
     Worker nodes run their agents on their own machines, so nothing about them
@@ -257,8 +274,7 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
     The active-claim query bypasses the legacy task-list cap. Older servers
     can still supply claims in the dashboard's existing task list.
     """
-    status = _get("/cluster/status", url)
-    nodes = status.get("nodes") if isinstance(status, dict) else None
+    nodes = registry.get("nodes") if isinstance(registry, dict) else None
     if not isinstance(nodes, list) or not nodes:
         if is_loopback(url):
             return None
@@ -293,18 +309,11 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
     held_tasks = tasks if active_tasks is None else active_tasks
     held: dict[str, list[dict[str, Any]]] = {}
     for task in held_tasks if isinstance(held_tasks, list) else []:
-        if not isinstance(task, dict):
+        if not _is_held_task(task):
             continue
-        status = task.get("status")
-        owner = task.get("claimed_by_session")
-        task_id = task.get("id")
-        if not isinstance(status, str) or status not in _NODE_HELD_STATUSES:
-            continue
-        if not isinstance(owner, str) or not owner or not isinstance(task_id, str) or not task_id:
-            continue
-        held.setdefault(owner, []).append(
+        held.setdefault(task["claimed_by_session"], []).append(
             {
-                "id": task_id,
+                "id": task["id"],
                 "role": _display_text(task.get("role")),
                 "title": _display_text(task.get("title")),
                 "elapsed_s": _claim_age(task.get("claimed_at"), now),
