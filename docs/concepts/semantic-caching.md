@@ -16,17 +16,42 @@ the semantic matcher itself.
 | | `SemanticCacheManager` | `ResponseCacheManager` |
 |---|---|---|
 | Caches | LLM **planning** responses | Completed **task results** (`result_summary`) |
-| Keyed on | Goal text | `role:title\ndescription` (task-shape) |
+| Keyed on | Normalized goal text (SHA-256 for exact matches) | `role:title\ndescription` (task-shape) |
 | Similarity threshold | 0.85 | 0.95 (deliberately high — wrong reuse here skips spawning an agent) |
 | TTL | 24h | 7 days |
 | Max entries | 500 | 1,000 |
 | Storage | `.sdd/caching/semantic_cache.jsonl` | `.sdd/caching/response_cache.jsonl` |
-| Model-sensitive | Yes — entries are scoped per `model` | No — stores *what was accomplished*, not a model's wording |
+| Model handling | Lookup filters by model; storage key does not | Model-agnostic — stores *what was accomplished*, not a model's wording |
 
 Both do an exact SHA-256 match on normalized text first (O(1)); on a miss,
 they fall back to a TF-style word-frequency cosine similarity scan (O(n))
 over non-expired entries and accept the best match once it clears the
 threshold.
+
+For planning-cache keys, normalization lowercases the text, replaces each
+punctuation character with a space, collapses consecutive whitespace, and
+strips leading and trailing whitespace. The exact hash is based on that
+normalized text, and fuzzy matching builds its word-frequency vector from the
+same normalization. Both exact and fuzzy planning lookups filter entries by
+the requested model; entries for other models are ignored.
+
+That lookup filter does not make the planning storage key model-specific:
+entries are keyed only by the hash of normalized text. Storing text that
+normalizes to an existing key refreshes its response in place but retains the
+entry's original model field. For example, starting with an empty cache:
+
+```python
+cache.store("  Add, unit tests for auth! ", "plan A", model="model-a")
+cache.store("add unit tests for auth", "plan B", model="model-b")
+
+cache.lookup("ADD unit tests for auth.", model="model-a")
+# ("plan B", 1.0): response refreshed, original model-a field retained
+cache.lookup("add unit tests for auth", model="model-b")
+# (None, 0.0): no entry is stored under model-b
+```
+
+The completed-task `ResponseCacheManager` is distinct: it stores task result
+summaries under task-shape keys and does not filter lookups by model.
 
 ## How lookups work
 
