@@ -380,6 +380,57 @@ def check_task_creation_failures(page: Page, base: str, headers: dict[str, str])
         page.unroute(events_url)
 
 
+def check_task_creation_during_initial_list(page: Page, base: str, headers: dict[str, str]) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    list_url = f"{tasks_url}?page=1"
+    events_url = f"{base}/api/v1/events"
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+
+    def unconfirmed_create(route: Route) -> None:
+        response = route.fetch()
+        assert response.status == 201
+        route.fulfill(status=500, json={"detail": "The task response could not be delivered."})
+
+    def submit_from(trigger: Locator, title: str) -> None:
+        trigger.click()
+        form.get_by_label("Title").fill(title)
+        form.get_by_label("Prompt").fill("Check the refreshed list after response loss.")
+        form.get_by_role("button", name="Create task", exact=True).click()
+        expect(form.get_by_role("alert")).to_contain_text("Check the task list before retrying")
+
+    page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
+    page.route(tasks_url, unconfirmed_create)
+    try:
+        snapshot = page.request.get(list_url, headers=headers)
+        expect(snapshot).to_be_ok()
+        stale_routes: list[Route] = []
+        page.route(list_url, lambda route: stale_routes.append(route), times=1)
+        with page.expect_request(list_url):
+            page.goto(f"{base}/ui/tasks")
+        title = "Created while the initial list was loading"
+        submit_from(header, title)
+        assert len(stale_routes) == 1
+        with page.expect_request(list_url):
+            form.get_by_role("button", name="Cancel", exact=True).click()
+        stale_routes[0].fulfill(response=snapshot)
+        expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
+        expect(header).to_be_focused()
+
+        title = "Created from an empty task list"
+        page.route(list_url, lambda route: route.fulfill(json=[]), times=1)
+        page.reload()
+        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+        submit_from(page.get_by_role("button", name="Create task", exact=True).last, title)
+        form.get_by_role("button", name="Cancel", exact=True).click()
+        expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
+        expect(header).to_be_focused()
+    finally:
+        page.unroute(tasks_url, unconfirmed_create)
+        page.unroute(list_url)
+        page.unroute(events_url)
+
+
 def check_approvals(
     page: Page,
     base: str,
@@ -603,6 +654,7 @@ def main() -> None:
             check_task(page, base, created.json()["id"], headers)
             check_approvals(page, base, headers, approvals, queue_dir)
             check_task_creation_failures(page, base, headers)
+            check_task_creation_during_initial_list(page, base, headers)
             check_task_creation(page, base, headers)
             check_governance_receipt(page, base)
             assert not errors, "Browser errors:\n" + "\n".join(errors)

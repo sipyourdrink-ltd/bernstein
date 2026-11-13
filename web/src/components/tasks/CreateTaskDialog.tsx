@@ -22,12 +22,12 @@ function taskCreationError(error: Error | null): string | undefined {
 
 export function CreateTaskDialog({
   initialFocus,
-  trigger,
+  onRestoreFocus,
   onClose,
   onCreated,
 }: {
   initialFocus: 'title' | 'prompt';
-  trigger: HTMLElement | null;
+  onRestoreFocus: (outcomeUnknown: boolean) => void;
   onClose: (outcomeUnknown: boolean) => void;
   onCreated: (taskId: string) => void;
 }) {
@@ -98,7 +98,7 @@ export function CreateTaskDialog({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            if (!created.current) trigger?.focus();
+            if (!created.current) onRestoreFocus(outcomeUnknown);
           }}
         >
           <Dialog.Title className="text-h2">Create task</Dialog.Title>

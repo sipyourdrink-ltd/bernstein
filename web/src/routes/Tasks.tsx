@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEventHandler,
   type ReactNode,
   type Ref,
 } from 'react';
@@ -438,7 +439,8 @@ export default function Tasks() {
   const [page] = useState<number>(1);
   const [activeTab, setActiveTab] = useState<DetailTab>('Summary');
   const [createFocus, setCreateFocus] = useState<'title' | 'prompt' | null>(null);
-  const createTrigger = useRef<HTMLElement | null>(null);
+  const createTrigger = useRef<HTMLButtonElement | null>(null);
+  const createFromEmptyState = useRef(false);
   const drawerCreateTrigger = useRef<HTMLElement | null>(null);
   const headerCreateButton = useRef<HTMLButtonElement | null>(null);
 
@@ -455,11 +457,11 @@ export default function Tasks() {
 
   const listQ = useQuery({
     queryKey: ['tasks', 'list', listPath],
-    queryFn: async (): Promise<TasksListResponse> => {
+    queryFn: async ({ signal }): Promise<TasksListResponse> => {
       // Backend returns either a wrapped {items, total, ...} OR a raw list
       // (legacy /tasks endpoint shape). Normalize here so the rest of the
       // component can assume the wrapped shape.
-      const raw = await apiGet<TasksListResponse | TaskRow[]>(listPath);
+      const raw = await apiGet<TasksListResponse | TaskRow[]>(listPath, { signal });
       if (Array.isArray(raw)) {
         return { items: raw, total: raw.length, page: 1, page_size: raw.length };
       }
@@ -539,12 +541,18 @@ export default function Tasks() {
 
   const selected = items.find((t) => t.id === selectedId) ?? null;
 
-  // The task detail query owns the drawer even when the current list is filtered.
-  const openCreate = (focus: 'title' | 'prompt') => {
-    const active = document.activeElement;
-    createTrigger.current = active instanceof HTMLElement && active !== document.body ? active : headerCreateButton.current;
+  const openCreate = (focus: 'title' | 'prompt', trigger: HTMLButtonElement, fromEmptyState = false) => {
+    createTrigger.current = trigger;
+    createFromEmptyState.current = fromEmptyState;
     setCreateFocus(focus);
   };
+
+  async function refreshAfterCreate() {
+    const filters = { queryKey: ['tasks', 'list'] };
+    // An uncached list request started before creation may still be in flight.
+    await qc.cancelQueries(filters);
+    await qc.invalidateQueries(filters);
+  }
 
   const refetchList = () => {
     listQ.refetch();
@@ -565,8 +573,8 @@ export default function Tasks() {
           stalledCount={stalledCount}
           lastSync={lastSync}
           loading={listQ.isLoading}
-          onCreate={() => openCreate('title')}
-          onCreateFromPrompt={() => openCreate('prompt')}
+          onCreate={(event) => openCreate('title', event.currentTarget)}
+          onCreateFromPrompt={(event) => openCreate('prompt', event.currentTarget)}
           createButtonRef={headerCreateButton}
         />
 
@@ -597,7 +605,7 @@ export default function Tasks() {
                 description="Spin up the first run to populate this list."
                 action={{
                   label: 'Create task',
-                  onClick: () => openCreate('title'),
+                  onClick: (event) => openCreate('title', event.currentTarget, true),
                 }}
               />
             </div>
@@ -614,17 +622,24 @@ export default function Tasks() {
       {createFocus && (
         <CreateTaskDialog
           initialFocus={createFocus}
-          trigger={createTrigger.current}
+          onRestoreFocus={(outcomeUnknown) => {
+            const trigger = createTrigger.current;
+            if (trigger?.isConnected && !(outcomeUnknown && createFromEmptyState.current)) {
+              trigger.focus();
+            } else {
+              headerCreateButton.current?.focus();
+            }
+          }}
           onClose={(outcomeUnknown) => {
             setCreateFocus(null);
-            if (outcomeUnknown) void qc.invalidateQueries({ queryKey: ['tasks', 'list'] });
+            if (outcomeUnknown) void refreshAfterCreate();
           }}
           onCreated={(taskId) => {
             drawerCreateTrigger.current = createTrigger.current;
             setCreateFocus(null);
             setActiveTab('Summary');
             setSelectedId(taskId);
-            void qc.invalidateQueries({ queryKey: ['tasks'] });
+            void refreshAfterCreate();
           }}
         />
       )}
@@ -940,8 +955,8 @@ function Header({
   stalledCount: number;
   lastSync: string | null;
   loading: boolean;
-  onCreate: () => void;
-  onCreateFromPrompt: () => void;
+  onCreate: MouseEventHandler<HTMLButtonElement>;
+  onCreateFromPrompt: MouseEventHandler<HTMLButtonElement>;
   createButtonRef: Ref<HTMLButtonElement>;
 }) {
   return (
