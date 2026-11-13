@@ -148,10 +148,17 @@ export function CreateTaskDialog({
         <div
           aria-hidden="true"
           className="pointer-events-auto fixed inset-0 z-50 bg-background/75"
+          onPointerDown={(event) => event.preventDefault()}
           onClick={close}
         />
         <Dialog.Content
           className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-auto overscroll-contain rounded-md border border-border bg-card p-5 text-foreground"
+          onKeyDown={(event) => {
+            if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             (recoveryId ? checkButton : initialFocus === 'prompt' ? promptInput : titleInput).current?.focus();
@@ -209,6 +216,7 @@ export function CreateTaskDialog({
                     aria-disabled={verify.isPending || undefined}
                     onClick={() => {
                       if (checking.current) return;
+                      checkButton.current?.focus();
                       checking.current = true;
                       verify.mutate(recoveryId);
                     }}

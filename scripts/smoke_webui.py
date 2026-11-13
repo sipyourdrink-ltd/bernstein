@@ -483,9 +483,12 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
         submit.press("Enter")
         expect(submit).to_have_attribute("aria-disabled", "true")
         expect(submit).to_be_focused()
-        for key in ("Tab", "Shift+Tab", "Enter"):
+        page.mouse.click(1, 1)
+        expect(form).to_be_visible()
+        for key in ("Tab", "Shift+Tab", "Control+k", "Enter"):
             page.keyboard.press(key)
             expect(submit).to_be_focused()
+        expect(page.get_by_role("dialog", name="Command palette")).to_have_count(0)
         assert len(saved_ids) == len(pending_create) == 1
         pending_create[0].fulfill(status=500, json={"detail": "The task response could not be delivered."})
         expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
@@ -496,9 +499,12 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
         with page.expect_request(task_url):
             check.press("Enter")
         expect(check).to_have_attribute("aria-disabled", "true")
-        for key in ("Tab", "Shift+Tab", "Enter"):
+        page.mouse.click(1, 1)
+        expect(form).to_be_visible()
+        for key in ("Tab", "Shift+Tab", "Control+k", "Enter"):
             page.keyboard.press(key)
             expect(check).to_be_focused()
+        expect(page.get_by_role("dialog", name="Command palette")).to_have_count(0)
         assert len(pending_check) == 1
         pending_check[0].fulfill(status=404, json={"detail": "Not found"})
         expect(form.get_by_role("alert")).to_contain_text("The task is not visible yet")
