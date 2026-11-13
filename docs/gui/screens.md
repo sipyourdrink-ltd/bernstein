@@ -39,7 +39,8 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **Data shown:** task ID, title + branch, agent, role pill, duration (color-coded if stalled), progress bar, cost.
 - **Filter chips:** All · Running · Queued · Stalled · Done · 24h · Failed (with counts).
 - **Operator search syntax:** mono input parses `agent:` / `status:` / `role:` token prefixes.
-- **Drawer tabs:** Summary · Diff · Gates · Logs · Deps · Trace · Steer (Steer disabled with a reason on terminal tasks).
+- **Drawer tabs:** Summary · Diff · Gates · Artifacts · Logs · Deps · Trace · Steer (Steer disabled with a reason on terminal tasks).
+- **Artifacts:** task-scoped evidence posted by workers, including reports, tables, and preview links, with version history and a progress strip.
 - Use "Create task" or "New from prompt" to enter a title, prompt and optional role. The form submits to `POST /api/v1/tasks` and opens the drawer for the created task.
 - If the server's response cannot confirm creation, use **Check task** before submitting again.
 - **Actions:** Cancel run · Re-run · Change model · Change role · Kill session.
