@@ -8,6 +8,10 @@ Bernstein-specific terms used throughout the codebase and documentation.
 
 An execution context belonging to an individual worker, with its own lifecycle distinct from a run's orchestration lifecycle. The persisted `session.json` is a run-level snapshot, not an individual worker session; see [Session persistence (fast resume)](../operations/session-fast-resume.md).
 
+### Adapter
+
+An adapter lets Bernstein run a supported external CLI coding agent, such as Claude Code CLI. See the [integrations index](../adapters/index.md) for examples.
+
 ### Bulletin Board
 
 An append-only communication channel where agents post findings, blockers, and status updates visible to all other agents in the same run. Implemented in `src/bernstein/core/communication/bulletin.py`.
@@ -139,6 +143,10 @@ An isolated git worktree per agent, located at `.sdd/worktrees/{session_id}`. Ea
 ### ACP Bridge
 
 The ACP (Agent Client Protocol) adapter that lets ACP-aware editors (e.g. Zed) use Bernstein as their multi-agent backend over stdio or HTTP. Implemented in `src/bernstein/core/protocols/acp/`. See `bernstein acp serve --stdio | --http :PORT`.
+
+### Substrate
+
+An editor or desktop integration that can host Bernstein's tools. For example, Claude Desktop can load Bernstein as an MCP server; see [Register Bernstein in Claude Desktop](../substrate/claude-desktop.md).
 
 ### Autofix Daemon
 
