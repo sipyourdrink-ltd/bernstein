@@ -68,7 +68,7 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the browser dashboard |
+| `bernstein live` — the terminal dashboard, including remote cluster workers | `bernstein gui serve` — the browser dashboard |
 
 ### at a glance
 

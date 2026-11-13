@@ -381,7 +381,7 @@ class BernsteinApp(App[None]):
         server and re-execs ``bernstein run`` here, which would shut down the
         central and start a fresh local orchestrator in its place.
         """
-        if action == "hot_restart" and self._remote_view():
+        if action in {"hot_restart", "compare_task"} and self._remote_view():
             return False
         return not (isinstance(self.focused, ChatInput) and action != "focus_chat")
 
@@ -419,24 +419,26 @@ class BernsteinApp(App[None]):
             logger.debug("Layout calculation error during resize (ignored)", exc_info=True)
 
     def on_mount(self) -> None:
-        # Skip historical spawner.log entries - start from current position
-        sp = Path(".sdd/runtime/spawner.log")
-        if sp.exists():
-            self._spawner_size = sp.stat().st_size
-
         t: DataTable[Any] = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)  # pyright: ignore[reportUnknownVariableType]
         t.add_columns("", "P", "ROLE", "TASK")
         t.cursor_type = "row"
         t.zebra_stripes = True
         t.focus()  # Arrow keys work immediately without clicking
 
-        evolve_p = Path(".sdd/runtime/evolve.json")
-        if evolve_p.exists():
-            try:
-                evolve_data: dict[str, Any] = json.loads(evolve_p.read_text())
-                self._evolve = evolve_data.get("enabled", False)
-            except Exception as exc:
-                logger.warning("Failed to read evolve.json: %s", exc)
+        remote = self._remote_view()
+        if not remote:
+            # Skip historical spawner.log entries.
+            sp = Path(".sdd/runtime/spawner.log")
+            if sp.exists():
+                self._spawner_size = sp.stat().st_size
+
+            evolve_p = Path(".sdd/runtime/evolve.json")
+            if evolve_p.exists():
+                try:
+                    evolve_data: dict[str, Any] = json.loads(evolve_p.read_text())
+                    self._evolve = evolve_data.get("enabled", False)
+                except Exception as exc:
+                    logger.warning("Failed to read evolve.json: %s", exc)
 
         # Write startup messages to activity log
         self._write_activity("system", "Bernstein starting...")
@@ -444,8 +446,8 @@ class BernsteinApp(App[None]):
 
         # Immediate agent display from local file (no HTTP wait). A remote
         # server's agents are never in the local file; see _fetch_all.
-        agents = [] if self._remote_view() else _load_agents()
-        if self._remote_view():
+        agents = [] if remote else _load_agents()
+        if remote:
             self._write_activity("system", "Remote server: agents are read from its cluster nodes")
         elif agents:
             alive = sum(1 for a in agents if a.get("status") != "dead")
@@ -1173,6 +1175,8 @@ class BernsteinApp(App[None]):
 
     def action_compare_task(self) -> None:
         """Mark a task for comparison. First press marks, second press opens compare view."""
+        if self._remote_view():
+            return
         table = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)
         try:
             row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
@@ -1296,6 +1300,8 @@ class BernsteinApp(App[None]):
 
     def action_hot_restart(self) -> None:
         """Hot restart: stop server+orchestrator, exit TUI, then re-exec the full stack."""
+        if self._remote_view():
+            return
         self.notify("Restarting server and orchestrator...", severity="warning", timeout=2)
         self._shutdown_server_and_orchestrator()
         self._restart_on_exit = True
@@ -1426,6 +1432,11 @@ class BernsteinApp(App[None]):
         wants_stop = any(k in lower for k in _stop_kw)
 
         if action == "save":
+            if self._remote_view():
+                self.notify("Saving local changes is unavailable in a remote dashboard.", severity="warning")
+                if wants_stop:
+                    self.action_graceful_quit()
+                return
             self.notify("Saving work (committing changes)...", severity="information")
             import subprocess
 

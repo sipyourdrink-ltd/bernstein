@@ -13,6 +13,7 @@ actually return.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -66,9 +67,11 @@ class FakeServer:
         self.requests.append((url, dict(headers)))
         path = httpx.URL(url).path
         request = httpx.Request("GET", url)
-        if path not in self.routes:
+        route = url.split("?", 1)[-1]
+        key = f"{path}?{route}" if "?" in url else path
+        if key not in self.routes:
             return httpx.Response(404, json={"detail": "not found"}, request=request)
-        return httpx.Response(200, json=self.routes[path], request=request)
+        return httpx.Response(200, json=self.routes[key], request=request)
 
 
 @pytest.fixture(autouse=True)
@@ -121,6 +124,53 @@ def test_remote_central_lists_nodes_with_their_claimed_tasks(monkeypatch: pytest
     assert [t["id"] for t in nodes["n-vps"]["tasks"]] == ["t-vps-1"]
     assert [t["id"] for t in nodes["n-mac"]["tasks"]] == ["t-mac-1"]
     assert nodes["n-mac"]["tasks"][0]["role"] == "qa"
+
+
+def test_remote_claims_are_paginated_independently_of_the_task_board(monkeypatch: pytest.MonkeyPatch) -> None:
+    legacy_tasks = [_task(f"done-{i}", "n-1", status="done") for i in range(500)]
+    claimed = [_task(f"held-{i}", "n-1", status="claimed") for i in range(501)]
+    server = _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/tasks": legacy_tasks,
+            "/tasks?status=claimed&limit=500&offset=0": {"tasks": claimed[:500], "total": 501},
+            "/tasks?status=claimed&limit=500&offset=500": {"tasks": claimed[500:], "total": 501},
+            "/tasks?status=in_progress&limit=500&offset=0": {"tasks": [_task("working", "n-1")], "total": 1},
+        },
+    )
+
+    data = _fetch_all()
+
+    assert data["tasks"] == legacy_tasks
+    assert [t["id"] for t in data["cluster"]["nodes"][0]["tasks"]] == [
+        *(t["id"] for t in claimed),
+        "working",
+    ]
+    assert any("offset=500" in url for url, _ in server.requests)
+
+
+def test_remote_poll_skips_local_runtime_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli import dashboard_polling
+
+    def read_local() -> None:
+        pytest.fail("remote polling read local runtime state")
+
+    for name in (
+        "_load_agents",
+        "_load_quarantine",
+        "_load_guardrail_violations",
+        "_load_cache_stats",
+        "_load_activity_summaries",
+    ):
+        monkeypatch.setattr(dashboard_polling, name, read_local)
+    _serve(monkeypatch, REMOTE, {"/cluster/status": {"nodes": []}})
+
+    data = _fetch_all()
+
+    for key in ("quarantine", "guardrails", "cache_stats", "activity_summaries"):
+        assert data[key] == {}
 
 
 def test_every_request_to_the_remote_central_carries_the_operator_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -289,3 +339,28 @@ def test_remote_view_quit_does_not_drain_this_machine(monkeypatch: pytest.Monkey
 
     assert exits == [True]
     assert pushed == []
+
+
+@pytest.mark.parametrize(("text", "quits"), [("save", False), ("save and stop", True)])
+def test_remote_chat_save_cannot_commit_locally(monkeypatch: pytest.MonkeyPatch, text: str, quits: bool) -> None:
+    monkeypatch.setenv("BERNSTEIN_SERVER_URL", REMOTE)
+    app = BernsteinApp()
+    calls: list[str] = []
+    monkeypatch.setattr(app, "notify", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app, "action_graceful_quit", lambda: calls.append("quit"))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("remote view invoked git"))
+
+    app._handle_system_command("save", text)
+
+    assert calls == (["quit"] if quits else [])
+
+
+def test_remote_view_cannot_open_local_compare_or_restart(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_SERVER_URL", REMOTE)
+    app = BernsteinApp()
+    monkeypatch.setattr(app, "query_one", lambda *args: pytest.fail("remote view entered local comparison"))
+    monkeypatch.setattr(app, "_shutdown_server_and_orchestrator", lambda: pytest.fail("remote view restarted server"))
+
+    assert app.check_action("compare_task", ()) is False
+    app.action_compare_task()
+    app.action_hot_restart()

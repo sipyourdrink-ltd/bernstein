@@ -143,11 +143,12 @@ def _fetch_all() -> dict[str, Any]:
     # Fast path: local files (instant, no HTTP). A remote central's agents are
     # not in this machine's agents.json - whatever is there belongs to some
     # other, local run - so a remote view does not read it at all.
-    agents = _load_agents() if is_loopback(url) else []
-    quarantine = _load_quarantine()
-    guardrails = _load_guardrail_violations()
-    cache_stats = _load_cache_stats()
-    activity_summaries = _load_activity_summaries()
+    local = is_loopback(url)
+    agents = _load_agents() if local else []
+    quarantine = _load_quarantine() if local else {}
+    guardrails = _load_guardrail_violations() if local else {}
+    cache_stats = _load_cache_stats() if local else {}
+    activity_summaries = _load_activity_summaries() if local else {}
 
     # Slow path: HTTP to task server (may take 1-3s with many tasks)
     status = _get("/status", url)
@@ -194,6 +195,25 @@ def _fetch_all() -> dict[str, Any]:
 _NODE_HELD_STATUSES = frozenset({"claimed", "in_progress"})
 
 
+def _fetch_held_tasks(url: str) -> list[dict[str, Any]] | None:
+    """Read active claims separately from the capped dashboard task list."""
+    tasks: list[dict[str, Any]] = []
+    for status in sorted(_NODE_HELD_STATUSES):
+        offset = 0
+        while True:
+            page = _get(f"/tasks?status={status}&limit=500&offset={offset}", url)
+            if not isinstance(page, dict):
+                return None
+            rows, total = page.get("tasks"), page.get("total")
+            if not isinstance(rows, list) or not isinstance(total, int):
+                return None
+            tasks.extend(rows)
+            offset += len(rows)
+            if not rows or offset >= total:
+                break
+    return tasks
+
+
 def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[str, Any] | None:
     """Project the central's node registry and claims into the AGENTS panel.
 
@@ -205,7 +225,8 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
     behaviour. A remote server is always a cluster view, even when the read
     fails: falling back to local files there would show another run's agents.
 
-    Read-only: one GET, plus the task list the caller already fetched.
+    The active-claim query bypasses the legacy task-list cap. Older servers
+    can still supply claims in the dashboard's existing task list.
     """
     status = _get("/cluster/status", url)
     raw_nodes = status.get("nodes") if isinstance(status, dict) else None
@@ -213,8 +234,10 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
     if is_loopback(url) and not nodes:
         return None
 
+    active_tasks = _fetch_held_tasks(url) if nodes else []
+    held_tasks = tasks if active_tasks is None else active_tasks
     held: dict[str, list[dict[str, Any]]] = {}
-    for task in tasks if isinstance(tasks, list) else []:
+    for task in held_tasks if isinstance(held_tasks, list) else []:
         if not isinstance(task, dict) or task.get("status") not in _NODE_HELD_STATUSES:
             continue
         owner = task.get("claimed_by_session")

@@ -467,12 +467,11 @@ Node status is the server's: `online` is green, `degraded` and other
 non-online states yellow, `offline` dim. A node that stops heartbeating keeps
 its row, with a growing heartbeat age, until the node reaper marks it.
 
-The cluster view is read-only and only issues GETs (`/cluster/status`
-alongside the polls the dashboard already makes). Against a remote server the
-TUI also stops reading this machine's `.sdd/runtime` agent files, disables hot
-restart (`r`, which would stop the server and start a local `bernstein run`),
-and `q` quits without draining. A loopback server with no registered nodes
-keeps the single-machine view unchanged.
+The cluster panel reads `/cluster/status` and pages active claims by status.
+Against a remote server the TUI skips local runtime data and disables local
+save, local task comparison, and hot restart. Press `q` to quit without
+draining. A loopback server with no registered nodes keeps the single-machine
+view.
 
 Endpoints relevant to cluster operations:
 
