@@ -3,6 +3,10 @@
 `bernstein checkpoint` writes a human-readable, point-in-time snapshot of
 session progress — what's done, what's in flight, what's next, and the
 current git SHA — to `.sdd/sessions/<timestamp>-checkpoint.json`.
+Choose a checkpoint when you need a current progress snapshot to refer back
+to during the run. For a handoff brief that summarizes completed work,
+learnings, and what comes next, choose [`bernstein wrap-up`](wrap-up.md)
+instead; it saves a different artifact.
 
 ## Usage
 
@@ -32,12 +36,14 @@ for backward compatibility) with:
 | `goal` | `--goal`, or empty |
 | `completed_task_ids` | Tasks with status `done` |
 | `in_flight_task_ids` | Tasks with status `claimed` or `in_progress` |
-| `next_steps` | Titles of tasks with status `open` |
+| `next_steps` | Titles of tasks with status `open` (the complete list is saved in the JSON; only the first five titles are shown in the terminal) |
+| `cost_spent` | Defaults to `0.0` USD; this command does not populate it with measured spend |
 | `git_sha` | Current `HEAD` commit |
 
 After writing, it prints a Rich summary panel to the terminal listing done,
-in-flight, and next-step tasks (next steps capped at 5 in the terminal view;
-the full list is in the JSON file).
+in-flight, and next-step tasks. The terminal view shows at most the first
+five open-task titles (and indicates any additional titles); the JSON retains
+the complete `next_steps` list.
 
 ## What this is not
 
