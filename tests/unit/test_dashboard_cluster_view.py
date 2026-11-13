@@ -218,6 +218,29 @@ def test_partial_claim_page_preserves_known_claims_and_marks_incomplete(monkeypa
     assert "Some active claims could not be loaded" in _format_cluster_view(view)
 
 
+def test_ownerless_active_tasks_do_not_make_cluster_claims_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/tasks?status=claimed&limit=500&offset=0": {
+                "tasks": [_task("unowned", None, status="claimed")],
+                "total": 1,
+            },
+            "/tasks?status=in_progress&limit=500&offset=0": {
+                "tasks": [_task("active", "n-1")],
+                "total": 1,
+            },
+        },
+    )
+
+    view = _load_cluster_view(REMOTE, [])
+
+    assert view is not None and view["claims_complete"] is True
+    assert [task["id"] for task in view["nodes"][0]["tasks"]] == ["active"]
+
+
 def test_invalid_duplicate_claim_does_not_replace_a_valid_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     claim = _task("held", "n-1", status="claimed")
     _serve(
@@ -327,6 +350,32 @@ async def test_remote_cluster_survives_invalid_sibling_response_shapes(monkeypat
                 "status": {"runtime": {"config_last_diff": {"changed": True, "modified": ["bad"], "changes": None}}},
             }
         )
+        await pilot.pause()
+        assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_invalid_bandit_fields_do_not_break_expert_cluster_view(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/routing/bandit": {
+                "active": True,
+                "selection_frequency": ["bad"],
+                "exploration_stats": {"model": {"mean": []}},
+                "shadow_stats": {"matched_outcomes": ["bad"]},
+            },
+        },
+    )
+    frame = _fetch_all()
+    monkeypatch.setattr(dashboard_app, "_fetch_all", lambda: frame)
+    app = BernsteinApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_toggle_expert()
+        app._apply_data(frame)
         await pilot.pause()
         assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
 

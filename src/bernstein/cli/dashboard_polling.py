@@ -156,7 +156,7 @@ def _fetch_all() -> dict[str, Any]:
     raw_bandit = _get("/routing/bandit", url)
     status = _dashboard_status(raw_status)
     costs = _dashboard_costs(raw_costs)
-    bandit = raw_bandit if isinstance(raw_bandit, dict) else None
+    bandit = _dashboard_bandit(raw_bandit)
     # Use /status for task counts instead of fetching all 400+ task objects
     raw_tasks = _get("/tasks", url)
     tasks = _dashboard_task_rows(raw_tasks)
@@ -241,6 +241,35 @@ def _dashboard_costs(data: Any) -> dict[str, Any] | None:
     return costs
 
 
+def _dashboard_bandit(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict) or not data:
+        return None
+    frequencies = data.get("selection_frequency")
+    exploration = data.get("exploration_stats")
+    shadow = data.get("shadow_stats")
+    return {
+        **data,
+        "selection_frequency": {name: int(_finite_number(value)) for name, value in frequencies.items()}
+        if isinstance(frequencies, dict)
+        else {},
+        "exploration_stats": {
+            name: {key: _finite_number(stats.get(key)) for key in ("mean", "last")}
+            for name, stats in exploration.items()
+            if isinstance(stats, dict)
+        }
+        if isinstance(exploration, dict)
+        else {},
+        "shadow_stats": {
+            key: _finite_number(shadow.get(key))
+            for key in ("matched_outcomes", "pending_outcomes", "agreement_rate", "disagreement_count")
+        }
+        if isinstance(shadow, dict)
+        else {},
+        "total_completions": int(_finite_number(data.get("total_completions"))),
+        "exploration_rate": _finite_number(data.get("exploration_rate")),
+    }
+
+
 def _nonnegative_int(data: Any, key: str) -> int | None:
     value = data.get(key) if isinstance(data, dict) else None
     return value if type(value) is int and value >= 0 else None
@@ -314,8 +343,8 @@ def _is_held_task(task: Any) -> bool:
         and status in _NODE_HELD_STATUSES
         and isinstance(task.get("id"), str)
         and bool(task["id"])
-        and isinstance(task.get("claimed_by_session"), str)
-        and bool(task["claimed_by_session"])
+        and "claimed_by_session" in task
+        and (task["claimed_by_session"] is None or isinstance(task["claimed_by_session"], str))
     )
 
 
@@ -374,7 +403,10 @@ def _project_cluster_view(url: str, tasks: Any, registry: Any, now: float | None
     held_tasks.update((task["id"], task) for task in active_tasks)
     held: dict[str, list[dict[str, Any]]] = {}
     for task in held_tasks.values():
-        held.setdefault(task["claimed_by_session"], []).append(
+        owner = task.get("claimed_by_session")
+        if not owner:
+            continue
+        held.setdefault(owner, []).append(
             {
                 "id": task["id"],
                 "role": _display_text(task.get("role")),
