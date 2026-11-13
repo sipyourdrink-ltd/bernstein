@@ -35,12 +35,8 @@ Apply the same principle: set `max_agents` so that peak parallelism stays below 
 max_agents: 6         # start here; tune up/down based on 429 rate
 ```
 
-```bash
-# Override at runtime
-bernstein run --max-agents 10
-# Or via environment variable
-BERNSTEIN_MAX_AGENTS=10 bernstein run
-```
+Set `max_agents` in the run's `bernstein.yaml` before starting
+Bernstein. The orchestrator reads the limit from that seed.
 
 ---
 

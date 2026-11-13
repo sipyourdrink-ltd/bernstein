@@ -192,25 +192,26 @@ tracer, meter, span context manager, and named presets for common
 backends (`telemetry.py:1-22`).
 
 ```python
-from bernstein.core.observability.telemetry import init_telemetry_from_preset, init_telemetry, start_span
+from bernstein.core.observability.telemetry import init_telemetry, start_span
 
-# Built-in presets (telemetry.py:86-100): "jaeger", "grafana", "datadog",
-# "zipkin", "console", and more. Each preset hardcodes endpoint, protocol,
-# and TLS expectations.
-init_telemetry_from_preset("jaeger")
-
-# Or supply a custom OTLP endpoint
-init_telemetry("http://my-collector:4317", protocol="grpc")
+init_telemetry("http://my-collector:4317")
 
 # Spans are produced from anywhere in the runtime
 with start_span("task.run", {"task.id": task_id}):
     ...
 ```
 
-The default protocol is OTLP/gRPC (`telemetry.py:50,
-DEFAULT_PROTOCOL`); switch to HTTP/protobuf via the `protocol` argument
-or via the preset's `_HTTP_PROTOBUF` (`telemetry.py:53`). The default
-service name is `bernstein` (`telemetry.py:58`).
+Alternatively, choose a named preset when you initialise the process.
+For OTLP over HTTP/protobuf, use `otlp-http`. Pass `endpoint_override`
+to set a different collector base URL.
+
+```python
+from bernstein.core.observability.telemetry import init_telemetry_from_preset
+
+init_telemetry_from_preset("otlp-http", endpoint_override="http://my-collector:4318")
+```
+
+The default service name is `bernstein`.
 
 Service maps work out of the box because every span carries
 `service.name` as a resource attribute; no extra config required for

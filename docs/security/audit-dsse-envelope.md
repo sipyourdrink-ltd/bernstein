@@ -70,24 +70,18 @@ operator has plumbed lineage v2 KMS adapters (see
 from bernstein.core.security.audit_dsse import load_envelope, verify_envelope
 
 envelope = load_envelope(envelope_path)
-result = verify_envelope(envelope, trusted_public_key=ed25519_public_key)
+result = verify_envelope(envelope, public_key=ed25519_public_key)
 if not result.ok:
     for err in result.errors:
         print("FAIL:", err)
     raise SystemExit(1)
 ```
 
-`verify_envelope` runs four independent checks:
-
-1. **Envelope shape** - DSSE structural fields, payload type, signatures
-   array, base64 payload validity.
-2. **Statement type** - `_type` and `predicateType` match the constants
-   above. Out-of-band envelopes from another producer fail this check.
-3. **Subject digest** - every artefact in the predicate's bundle manifest
-   has a matching SHA-256 entry in the in-toto subject list. A digest
-   mismatch surfaces here before any signature work.
-4. **Signature** - the DSSE PAE bytes verify against the supplied public
-   key. Wrong key, edited payload, edited signature, all fail.
+`load_envelope` parses the envelope from disk. `verify_envelope` checks
+the payload type, decodes the payload, and verifies the signature over the
+DSSE PAE bytes against the supplied public key. It then checks the in-toto
+statement's `_type` and `predicateType`. Use the standalone verifier below
+for the additional checks against the supplied bundle archive.
 
 ## Verifying with the standalone verifier
 
@@ -101,10 +95,11 @@ verifier's venv.
 ```bash
 python tools/verify_audit_dsse.py \
   --envelope path/to/envelope.json \
+  --bundle path/to/bundle.zip \
   --public-key path/to/operator-pubkey.pem
 ```
 
-Add `--bundle path/to/bundle.zip --hmac-key path/to/audit.key` and the
+Add `--hmac-key path/to/audit.key` and the
 verifier additionally re-walks the HMAC chain inside the bundle. Without
 the HMAC key, the verifier still validates the envelope's Ed25519
 signature and the in-toto subject digests - that is the regulator-class
@@ -151,6 +146,7 @@ harness rather than reading it from the bundle the auditor was handed:
 ```bash
 python tools/verify_audit_dsse.py \
   --envelope bundle/envelope.json \
+  --bundle bundle/article12.zip \
   --public-key /etc/bernstein/operator-pubkey.pem
 ```
 
