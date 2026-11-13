@@ -1,9 +1,10 @@
 # Shell completions
 
-`bernstein completions` prints a shell completion script for the `bernstein`
-CLI, generated from Click's built-in completion support. It reflects the
-live command tree — every group and command registered on the root CLI at
-the moment the script is generated, including their subcommands.
+`bernstein completions` prints a shell-specific completion script for the
+`bernstein` CLI, generated from Click's built-in completion support. The script
+connects the shell to the live root command tree; it does not print a fixed list
+of suggestions. Only commands available for completion are suggested (hidden
+commands are not advertised).
 
 ## Usage
 
@@ -31,22 +32,33 @@ eval "$(bernstein completions --shell bash)"
 eval "$(bernstein completions --shell zsh)"
 ```
 
-**fish** — write the script to fish's completions directory:
+**fish** — load the generated completion into the current shell:
 
-```bash
+```fish
 bernstein completions --shell fish | source
 ```
+
+To save the script for subsequent fish sessions, write it to a file first:
+
+```fish
+bernstein completions --shell fish > bernstein.fish
+```
+
+Move `bernstein.fish` to fish's completions directory,
+`~/.config/fish/completions/bernstein.fish` (create the directory if needed).
+Fish loads completion files from that directory in future shells.
 
 ## How it behaves
 
 The command walks up from its own Click context to the root CLI group, so
-the generated script always covers the full command tree, not just the
-`completions` command itself. It uses Click's `BashComplete` / `ZshComplete`
-/ `FishComplete` classes directly (the same mechanism Click's own
-`_BERNSTEIN_COMPLETE` environment-variable completion protocol uses under
-the hood) rather than a hand-maintained list of subcommands, so newly added
-commands and options get tab completion automatically without any change to
-this command.
+completion is built for the full command tree, not just the `completions`
+command itself. It uses Click's `BashComplete` / `ZshComplete` / `FishComplete`
+classes rather than a hand-maintained list of subcommands. Once the generated
+script is loaded, the shell invokes the installed `bernstein` CLI through
+Click's `_BERNSTEIN_COMPLETE` environment-variable protocol when the user asks
+for completions; the CLI then returns suggestions for the current command and
+input. Newly added commands and options can therefore be completed without
+changes to this command.
 
 ## Source
 
