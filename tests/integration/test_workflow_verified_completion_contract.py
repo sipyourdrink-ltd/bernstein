@@ -951,7 +951,8 @@ def test_verified_artifact_and_closed_task_without_attempt_acceptance_block_depe
 # ---------------------------------------------------------------------------
 
 
-def test_agent_loop_waits_for_the_current_attempt(env: _Env) -> None:
+@pytest.mark.parametrize("reported_done", [False, True], ids=["live", "reported-done"])
+def test_agent_loop_waits_for_the_current_attempt(env: _Env, reported_done: bool) -> None:
     """[PROPOSED #8] No predicate evaluation and no next iteration while the current attempt is unresolved."""
     predicate_log = env.workdir / "predicate.log"
     flag = env.workdir / "loop.done"
@@ -961,14 +962,28 @@ def test_agent_loop_waits_for_the_current_attempt(env: _Env) -> None:
         f'      until: "printf p >> {shlex.quote(str(predicate_log))}; test -f {shlex.quote(str(flag))}"\n'
         "      max_iterations: 3"
     )
-    sp = env.spawner(_Plan(mode="block"))
-    run = env.start(lambda: env.runner(sp).run(_spec(env, produce_extra=loop), run_id="p8-loop"))
-    _observe(env, sp, run)
+
+    def report_done(sp: _LifecycleSpawner, task: Task, session: AgentSession, proc: subprocess.Popen[bytes]) -> None:
+        assert _wait_exit(proc) == 0
+        sp.driver.call(lambda s: s.complete(task.id, "agent reported DONE"))
+
+    plan = _Plan(mode="0", after_launch=report_done) if reported_done else _Plan(mode="block")
+    sp = env.spawner(plan)
+    rid = "p8-done" if reported_done else "p8-live"
+    run = env.start(lambda: env.runner(sp).run(_spec(env, produce_extra=loop), run_id=rid))
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert task.claimed_by_session == sp.sessions[0].id
+    assert task.closed_at is None
+    if reported_done:
+        assert task.status is TaskStatus.DONE and sp.procs[0].poll() == 0
+    else:
+        assert task.status is TaskStatus.CLAIMED and sp.procs[0].poll() is None
     predicate_runs = len(predicate_log.read_text(encoding="utf-8")) if predicate_log.exists() else 0
     assert (predicate_runs, sp.spawn_count()) == (0, 1), (
         f"loop advanced on an unresolved attempt: {predicate_runs} predicate runs, "
-        f"{sp.spawn_count()} concurrent agents {sp.spawned_task_ids()}"
+        f"{sp.spawn_count()} dispatches {sp.spawned_task_ids()}"
     )
+    assert env.sentinel_writes() == 0
 
 
 # ---------------------------------------------------------------------------

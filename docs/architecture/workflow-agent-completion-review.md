@@ -49,13 +49,16 @@ section 7; the original base observations below are historical.
 ### Revalidation on main 11481be64e5e
 
 Including the existing runner tests, the Python 3.13 baseline reports
-**20 failed, 36 passed**. One additional failure directly tests proposed rule 4: a runner with a working
+**21 failed, 36 passed**. One additional failure directly tests proposed rule 4: a runner with a working
 spawner and no completion authority must fail before dispatch. Current main
 calls the spawner once. The test observes dispatch and dependent execution.
 It does not prescribe which run bookkeeping can be written before refusal.
-The other failure shows that current main releases the consumer after native
+Another failure shows that current main releases the consumer after native
 artifact verification and a same-task, same-session CLOSED transition without
 attempt-bound acceptance. It leaves the accepted-artifact positive control open.
+The loop test now also covers an agent that exited successfully and reported
+`DONE` without acceptance. The runner evaluates the predicate and dispatches
+three iterations in both the live and reported-done cases.
 
 The crash cases now prove a live child and no terminal checkpoint before
 restart. The second hook runs before the terminal checkpoint. Coverage
@@ -185,7 +188,7 @@ Column key:
 | 6 | `test_stale_or_foreign_evidence_cannot_release_dependents[5 kinds]` | proposed | RED ×5: other run, other node, foreign tenant, stale attempt, tampered receipt | GREEN |
 | 7 | `test_native_artifact_rejection_blocks_dependents` | proposed | RED: `verify_artifact` rejected the artifact and the consumer still ran | GREEN |
 | 7 | `test_verified_artifact_and_closed_task_without_attempt_acceptance_block_dependents` | proposed | RED on current main: native verification passed and the current task closed without attempt-bound acceptance. The consumer ran once. | Not run in the historical simulation |
-| 8 | `test_agent_loop_waits_for_the_current_attempt` | proposed | RED: 3 predicate runs and 3 concurrent agents | GREEN |
+| 8 | `test_agent_loop_waits_for_the_current_attempt[live,reported-done]` | proposed | RED ×2: 3 predicate runs and 3 dispatches, both with live children and with clean exit plus unaccepted `DONE` | GREEN for live case only |
 | 9 | `test_legacy_unproven_agent_success_checkpoint_is_not_trusted` | proposed | RED: a version 1 agent success released the consumer (no respawn) | GREEN |
 | 9 | `test_legacy_command_checkpoint_resume_is_unchanged`, `test_legacy_condition_skip_checkpoint_resume_is_unchanged` | existing | GREEN | GREEN |
 | - | `test_harness_sentinel_dispatcher_and_reaper_are_sound`, two `test_native_*` facts | existing / native fact | GREEN | GREEN |
