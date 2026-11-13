@@ -6,6 +6,10 @@ states when a task transitions. Plane is an OSS, self-hostable project
 tracker; the adapter works against both Plane Cloud and any
 self-hosted Plane deployment.
 
+The adapter exposes each Plane issue as a Bernstein `Ticket`. The ticket ID
+is the underlying Plane issue ID. The display sequence number is stored
+separately as `sequence_id` in the ticket's raw metadata.
+
 The adapter implements `bernstein.core.trackers.AbstractTrackerAdapter`
 and lives under `bernstein.core.trackers.builtin.plane_adapter`. It is
 disabled by default and must be opted in via `bernstein.yaml`.
