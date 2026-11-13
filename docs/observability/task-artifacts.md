@@ -49,6 +49,31 @@ bernstein artifact show <task> <key>      # latest version + history
 bernstein audit verify                    # recompute every artifact offline
 ```
 
+`bernstein artifact list <task> --output-json` emits one JSON object with these
+fields:
+
+- `task`: the requested task ID.
+- `artifacts`: an array of listed artifact versions. Each row has `key`,
+  `version`, `type`, `link_kind` (null when not applicable), `content_hash`,
+  `journal_index`, `journal_identity`, and `verified`.
+- `verified`: the overall verification result; false if any listed row fails or
+  if tampering hides every row. Check each row's `verified` field to identify an
+  individual failure.
+- `reason`: null when verification succeeds, or the first failure reason
+  (including when tampering hides every row).
+
+Exit statuses for this task-specific listing are 0 when rows are listed, 1 when
+there are no artifacts and no tampering was found, and 2 when tampering hid every
+row. In particular, a failed row does not make the command fail: status 0 means
+the listing was rendered, not that every artifact passed. Automation should
+inspect each row's `verified` value (and the top-level `verified` summary).
+
+Without a task argument, `bernstein artifact list --output-json` is a different,
+local inventory: its JSON object has only an `artifacts` array, with one entry per
+lineage-spine URI and fields `uri` and `productions` (the number of productions).
+It does not return task versions or verification verdicts. This inventory exits
+successfully even when the array is empty; do not interpret it as a task listing.
+
 `bernstein artifact list` with no task argument answers a different question --
 the artifact keys the local lineage spines carry -- so the two listings stay
 distinct under one name.
