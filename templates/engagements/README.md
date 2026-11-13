@@ -58,17 +58,31 @@ phases:
 
 ## Scope Gating
 
-Every phase `action` is gated on the `EngagementMandate` scope check:
+The design gates every phase `action` on the `EngagementMandate` scope check:
 
 1. The orchestrator resolves `scope_ref` to an `EngagementMandate` receipt
 2. The receipt's `scope` is validated against the phase's declared target
 3. If the scope check fails, the phase is skipped with a logged refusal
 4. Phase config may override the inherited `scope_ref` for narrower sub-targets
 
+## Status
+
+No CLI command or orchestrator path runs a playbook yet. `bernstein run` has
+no `--playbook` option, and nothing calls the loader outside its tests. The
+scope steps above describe the design; they are not enforced at run time.
+
 ## Example
 
-See `web-app-full.yaml` for a complete 5-phase engagement:
+See `web-app-full.yaml` for a complete 5-phase engagement. Load and inspect
+it with the library loader:
 
-```bash
-bernstein run --playbook templates/engagements/web-app-full.yaml
+```python
+from pathlib import Path
+
+from bernstein.core.planning.engagement_library import load_engagement_library
+
+library = load_engagement_library(Path("templates/engagements"))
+playbook = library.get("web-app-full")
+print(playbook.name, [phase.name for phase in playbook.phases])
+# Full Web Application Security Assessment ['Recon', 'Enumeration', 'Scan', 'Verify', 'Report']
 ```
