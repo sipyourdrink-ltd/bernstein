@@ -525,8 +525,7 @@ class ScheduleSupervisor:
         skipped_windows: list[int] = []
         pending = schedule.extra.get(PENDING_CATCH_UP_RECEIPT_KEY)
         if isinstance(pending, list) and pending and all(isinstance(window, int) for window in pending):
-            receipts.append(self._record_counterfactual(schedule, pending, now_epoch))
-            self._store.clear_catch_up_receipt(schedule.id)
+            receipts.append(self._publish_pending_catch_up_receipt(schedule, pending, now_epoch))
 
         # Step forward through missed windows up to ``now``.
         current_anchor = anchor
@@ -586,6 +585,13 @@ class ScheduleSupervisor:
                 self._store.clear_catch_up_receipt(schedule.id)
 
         return receipts
+
+    def _publish_pending_catch_up_receipt(
+        self, schedule: Schedule, skipped_windows: list[int], now_epoch: int
+    ) -> FireReceipt:
+        receipt = self._record_counterfactual(schedule, skipped_windows, now_epoch)
+        self._store.clear_catch_up_receipt(schedule.id)
+        return receipt
 
     @staticmethod
     def _resolve_response_profile(schedule: Schedule) -> tuple[str, str]:
