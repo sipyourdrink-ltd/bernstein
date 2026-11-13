@@ -2,9 +2,9 @@
 
 Aider's config file lives at `~/.aider.conf.yml` and is YAML, not JSON.
 Aider does not natively load MCP servers, so this adapter is best-effort:
-`bernstein desktop-register --host aider` records a `bernstein` entry
-under an `mcp-servers` key in the YAML config. Community wrappers, custom
-launch scripts, and Aider plugins can pick that entry up to invoke
+registration writes a `bernstein` server entry under an `mcp-servers` key in
+that YAML config, but does not make Aider load Bernstein. A community wrapper,
+custom launch script, or Aider plugin must consume the entry to invoke
 Bernstein.
 
 The write is idempotent and backup-first: the existing config is copied to
