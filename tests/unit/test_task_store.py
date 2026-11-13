@@ -110,7 +110,7 @@ async def test_replay_jsonl_reconstructs_latest_task_state(tmp_path: Path) -> No
 
     assert restored is not None
     assert restored.status == TaskStatus.CLAIMED
-    assert restored.version == 1
+    assert restored.version == task.version
 
 
 @pytest.mark.anyio

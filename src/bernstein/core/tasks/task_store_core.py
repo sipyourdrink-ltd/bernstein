@@ -841,6 +841,8 @@ class TaskStore:
                         task.dispatch_tier = DispatchTier(record["dispatch_tier"])
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
+                    if isinstance(version := record.get("version"), int):
+                        task.version = version
                     task.terminal_reason = record.get("terminal_reason", task.terminal_reason)
                     if isinstance(metadata := record.get("metadata"), dict):
                         task.metadata = metadata
@@ -1470,6 +1472,8 @@ class TaskStore:
                     solved_blocker_ids.add(retry_of)
 
         frontier = set(completed_task_ids)
+        completed = [*self._by_status[TaskStatus.DONE].values(), *self._by_status[TaskStatus.CLOSED].values()]
+        succeeded_ids = satisfied_dependency_ids(completed)
         while frontier:
             next_frontier: set[str] = set()
             for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
@@ -1484,7 +1488,16 @@ class TaskStore:
                 if not blocker_cleared and not self._dependencies_satisfied(candidate):
                     continue
 
-                remaining_blocker = blocking_dependency(candidate, self._tasks)
+                remaining_blocker = min(
+                    (
+                        dep_id
+                        for dep_id in candidate.depends_on
+                        if dep_id not in succeeded_ids
+                        and (dependency := self._tasks.get(dep_id)) is not None
+                        and dependency.status in UNSUCCESSFUL_TERMINAL_STATUSES
+                    ),
+                    default=None,
+                )
                 if remaining_blocker is not None:
                     if remaining_blocker != blocker_id:
                         candidate.metadata["blocking_task_id"] = remaining_blocker
