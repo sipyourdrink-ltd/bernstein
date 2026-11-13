@@ -230,6 +230,19 @@ def test_final_stderr_limit_error_takes_priority_over_earlier_stdout_429(tmp_pat
     assert adapter.rate_limit_meter.hits_in_window() == 0
 
 
+def test_configuration_footer_does_not_override_retryable_response(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    body = (
+        "HTTP/1.1 429 Too Many Requests\nContent-Length: 21\n\n"
+        "Retry after 3 seconds\nINFO: Project spending limit: $10\nRequest failed."
+    )
+
+    with pytest.raises(RateLimitError):
+        _probe_once(adapter, tmp_path / "agent.log", body)
+
+    assert adapter.rate_limit_meter.hits_in_window() == 1
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: unrecognised 429 body falls back to retryable
 # ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ classifies a 429 response body into one of the two kinds so the backoff
 decision can branch before :class:`~bernstein.adapters.base.RateLimitMeter`
 advises a retry.
 
-The pattern table is data-driven: each entry is a ``(needle,
+The pattern table is data-driven: each entry is a ``(pattern,
 classification, reason_label)`` tuple and the classifier is a single
 loop over it. Adding a new endpoint's wording is a one-line append; no
 control flow changes.
@@ -19,6 +19,7 @@ current state.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final
@@ -42,12 +43,12 @@ class _PatternRule:
     """One data-driven classification rule.
 
     Attributes:
-        needle: Case-insensitive substring to match against the body.
+        pattern: Regular expression matched against the lowercased body.
         classification: Result when the needle matches.
         reason_label: Short machine-readable reason (e.g. ``session_cap``).
     """
 
-    needle: str
+    pattern: str
     classification: HTTP429Classification
     reason_label: str
 
@@ -65,13 +66,24 @@ _PATTERN_RULES: Final[tuple[_PatternRule, ...]] = (
         HTTP429Classification.STANDING,
         "session_cap",
     ),
-    _PatternRule("spending limit", HTTP429Classification.STANDING, "spend_cap"),
-    _PatternRule("spend limit", HTTP429Classification.STANDING, "spend_cap"),
-    _PatternRule("daily limit", HTTP429Classification.STANDING, "spend_cap"),
+    _PatternRule(
+        r"\b(spend(?:ing)?|daily) limit (?:has been |was |is )?(?:reached|exceeded|exhausted)\b",
+        HTTP429Classification.STANDING,
+        "spend_cap",
+    ),
+    _PatternRule(
+        r"\b(?:hit|reached|exceeded) (?:the |your |its )?(?:daily |(?:daily )?spend(?:ing)? )limit\b",
+        HTTP429Classification.STANDING,
+        "spend_cap",
+    ),
     _PatternRule("budget exceeded", HTTP429Classification.STANDING, "spend_cap"),
     _PatternRule("insufficient_quota", HTTP429Classification.STANDING, "quota_exceeded"),
     _PatternRule("quota exceeded", HTTP429Classification.STANDING, "quota_exceeded"),
-    _PatternRule("credit balance", HTTP429Classification.STANDING, "credit_cap"),
+    _PatternRule(
+        r"\binsufficient credit balance\b|\bcredit balance (?:is |has been )?(?:zero|too low|exhausted)\b",
+        HTTP429Classification.STANDING,
+        "credit_cap",
+    ),
 )
 
 
@@ -93,6 +105,6 @@ def classify_429(body: str, retry_after: str | None = None) -> HTTP429Classifica
 
     lowered = body.lower()
     for rule in _PATTERN_RULES:
-        if rule.needle in lowered:
+        if re.search(rule.pattern, lowered):
             return rule.classification
     return HTTP429Classification.RETRYABLE
