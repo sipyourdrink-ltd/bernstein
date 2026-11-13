@@ -9,7 +9,20 @@
 - **`bernstein replay verify <RECEIPT>`** - offline verifier for an exported or published receipt.
 - **`bernstein replay diff-journal A B`** - per-step divergence finder across two journals.
 
-All subcommands read from the same underlying journal on disk. The base command additionally supports **task-trace replay**, which re-creates a new task from a stored task trace and (optionally) compares the replay's `result_summary` against the original via a colour diff.
+## Choosing replay inputs
+
+These replay modes read different recorded data; choose the identifier or file that matches the job:
+
+| Job | Command and identifier/file | Recorded data read |
+|---|---|---|
+| Display run events | `bernstein replay <RUN_ID>` (or `latest`) | The run's event journal under `.sdd/runs/<RUN_ID>/` (the `journal.jsonl` run journal). |
+| Compare run events | `bernstein replay diff <RUN_A> <RUN_B>` | The two runs' recorded event logs (`events.jsonl`) under `.sdd/runs/`. |
+| Display an agent's steps | `bernstein replay <AGENT_ID>` | That agent's per-step journal under `.sdd/runtime/journal/<AGENT_ID>/`. If this journal directory exists, a plain identifier resolves here first, ahead of run-event or task-trace replay. |
+| Compare agent journals | `bernstein replay diff-journal <AGENT_A> <AGENT_B>` | The two agents' per-step journals under `.sdd/runtime/journal/`. |
+| Verify a receipt offline | `bernstein replay verify <RECEIPT>` | The supplied exported or published receipt file; it does not read the run journal. |
+| Re-submit a task trace | `bernstein replay <TASK_ID>` (when no agent journal or run with that ID takes precedence) | The latest recorded trace for that task under `.sdd/traces/`; submits a new task from its snapshot. |
+
+The run-journal check is a flag on run replay: `bernstein replay <RUN_ID> --verify` checks that run's journal chain. It is distinct from the `verify` verb, which verifies a receipt file offline.
 
 ## What replay does (and doesn't do)
 
