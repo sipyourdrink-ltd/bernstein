@@ -98,6 +98,10 @@ Killing or collecting agents that have exceeded their timeout or become unrespon
 
 One orchestration of a goal. See the [single-writer run-state actor](../orchestration/run-actor.md).
 
+### Plan
+
+A declarative input describing a goal for Bernstein to execute. See the [plans guide](../architecture/plans.md).
+
 ### Orchestrator
 
 Schedules eligible work and advances tasks on each [Tick](#tick).
@@ -114,6 +118,10 @@ A versioned catalog of message schemas for MCP, A2A, and ACP protocols. Backs fo
 
 Writes role-specific Claude Code skills (`.claude/skills/*.md`) into the agent's worktree before spawn. This moves orchestration boilerplate into skills that survive context compaction, reducing prompt size by 30-40%. Implemented in `src/bernstein/adapters/skills_injector.py`.
 
+### Stage
+
+A group of steps within a [plan](../architecture/plans.md). Stages declare their prerequisites explicitly with `depends_on`; their position in the plan does not create an implicit prerequisite. See the [plans guide](../architecture/plans.md).
+
 ### Spawn
 
 Creating a short-lived agent process for a task batch. The spawner handles prompt construction, worktree setup, and process management. Implemented in `src/bernstein/core/agents/spawner.py`.
@@ -121,6 +129,10 @@ Creating a short-lived agent process for a task batch. The spawner handles promp
 ### Supervisor
 
 Observes worker liveness and reports stalls. For example, `bernstein supervisor status --json` returns a snapshot with stuck-worker counts and worker details; see the [Supervisor reference](../api/supervisor.md).
+
+### Step
+
+An item in a [plan](../architecture/plans.md) that Bernstein materializes as a [Task](#task) for the orchestrator to schedule. See the [plans guide](../architecture/plans.md).
 
 ### Task
 
