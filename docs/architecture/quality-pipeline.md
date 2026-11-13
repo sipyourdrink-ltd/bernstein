@@ -350,6 +350,8 @@ quality_gates:
 
   pii_scan: true
   dlp_scan: true
+  dlp_check_credential_literals: true   # provider keys in .py argument/default literals; live keys anywhere
+  dlp_block_credential_literals: true   # false = report as [WARN] without blocking
   security_scan: false
   coverage_delta: false
   complexity_check: false
@@ -383,6 +385,13 @@ Every field of `QualityGatesConfig` is read from this section; a key the
 parser does not know is accepted by the schema and ignored, so
 `tests/unit/test_quality_gates.py` pins the parser's keyword list against the
 dataclass and fails when a field is added without its parser line.
+
+The DLP credential-literal pass applies the same provider rules and
+allowlist policy to Python string and bytes literals. Bytes are decoded
+with UTF-8 replacement before matching. DLP finding paths use `/`
+separators on every platform, including Windows.
+Credential-literal findings retain the file, line and rule but use a source-free
+redacted marker, so escaped sibling credentials cannot enter gate details.
 
 When `pipeline:` is omitted, Bernstein synthesises one from the booleans
 above. To override the order (or insert custom gates), declare an

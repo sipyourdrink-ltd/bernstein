@@ -10,6 +10,12 @@ Extends PII/secret detection (pii_output_gate.py) with additional categories:
 3. **Proprietary data leakage** - internal hostnames / RFC-1918 addresses,
    customer-ID-labeled UUIDs, and configurable internal-URL patterns.
    Soft-flags by default; can be promoted to hard-block via config.
+4. **Credential literals** - a string literal in a Python file's argument or
+   default position (``os.getenv("K", "<value>")``, ``config.get(...)``, a
+   parameter or dataclass-field default) shaped like a provider credential, or
+   a live payment key in any position.
+   The value is what runs whenever the variable is unset, so routing it
+   through a lookup does not make it any less committed.  Hard-blocks merge.
 
 Regex-only - no network calls, no LLM.  Designed to run as a quality gate
 that complements the existing ``pii_scan`` gate.
@@ -28,6 +34,7 @@ Usage::
 
 from __future__ import annotations
 
+import ast
 import re
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -47,7 +54,7 @@ __all__ = [
 # Types
 # ---------------------------------------------------------------------------
 
-DLPCategory = Literal["license_violation", "regulated_data", "proprietary_data"]
+DLPCategory = Literal["license_violation", "regulated_data", "proprietary_data", "credential_literal"]
 DLPSeverity = Literal["critical", "high", "medium", "low"]
 
 
@@ -127,6 +134,9 @@ class DLPConfig:
         block_regulated_data: Hard-block merge on regulated data findings.
         block_proprietary_data: Hard-block merge on proprietary data findings
             (default False - soft-flag only).
+        check_credential_literals: Detect credential-shaped string literals in
+            Python argument and default positions (:meth:`DLPScanner.scan_python_source`).
+        block_credential_literals: Hard-block merge on credential literal findings.
         internal_url_patterns: Additional hostname / URL glob patterns that
             are considered internal / proprietary (e.g. ``"*.corp.example.com"``).
         ignore_paths: Glob-like path patterns to skip during scanning.
@@ -141,6 +151,8 @@ class DLPConfig:
     block_license_violations: bool = True
     block_regulated_data: bool = True
     block_proprietary_data: bool = False
+    check_credential_literals: bool = True
+    block_credential_literals: bool = True
     internal_url_patterns: list[str] = field(default_factory=lambda: list[str]())
     ignore_paths: list[str] = field(default_factory=lambda: list[str]())
     allowlist_prefixes: list[str] = field(
@@ -427,6 +439,129 @@ def _overlaps(span: tuple[int, int], others: list[tuple[int, int]]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Credential literals in argument / default position (#6152)
+# ---------------------------------------------------------------------------
+
+#: Provider credential shapes, matched against a literal's *value*, not the
+#: text around it.  Each pattern names its ``prefix`` group so a filler body
+#: (``sk_live_xxxxxxxx``) can be told from a real one.  Kept to shapes a
+#: provider issues with a fixed prefix: a generic "long random string" rule
+#: would flag every hash and fixture id passed to a function.  PEM headers are
+#: not repeated here: ``pii_scan`` matches them anywhere on a line already.
+#:
+#: The fourth field says whether the value declares itself live.  Only those
+#: ignore an allowlist word inside the value (``sk-live-...-placeholder-...``):
+#: the provider reads the prefix, not the words after it.  An ``AKIA`` key has
+#: no live/test marker, so AWS's own documentation key
+#: ``AKIAIOSFODNN7EXAMPLE`` stays exempt by its ``EXAMPLE``.
+_CREDENTIAL_LITERAL_RULES: list[tuple[str, re.Pattern[str], str, bool]] = [
+    (
+        "live_payment_key",
+        re.compile(r"(?<![A-Za-z0-9])(?P<prefix>[sr]k[-_]live[-_])[A-Za-z0-9][\w-]{7,}"),
+        "Live-mode payment API key literal in an argument or default",
+        True,
+    ),
+    (
+        "aws_access_key_literal",
+        re.compile(r"(?<![A-Z0-9])(?P<prefix>A[KS]IA)[0-9A-Z]{16}(?![A-Z0-9])"),
+        "AWS access key ID literal in an argument or default",
+        False,
+    ),
+    (
+        "github_token_literal",
+        re.compile(r"(?<![A-Za-z0-9])(?P<prefix>gh[pousr]_|github_pat_)\w{36,255}"),
+        "GitHub token literal in an argument or default",
+        False,
+    ),
+    (
+        "slack_token_literal",
+        re.compile(r"(?<![A-Za-z0-9])(?P<prefix>xox[bporas]-)[A-Za-z\d-]{10,255}"),
+        "Slack token literal in an argument or default",
+        False,
+    ),
+    (
+        "google_api_key_literal",
+        re.compile(r"(?<![A-Za-z0-9])(?P<prefix>AIza)[\w-]{35}(?![\w-])"),
+        "Google API key literal in an argument or default",
+        False,
+    ),
+]
+
+#: Characters a hand-written stand-in is made of.  A body of only these after
+#: the provider prefix (``sk_live_xxxxxxxx``, ``AKIA0000000000000000``) is a
+#: placeholder by construction, not by what it says about itself.
+_FILLER_CHARS = frozenset("xX*0.-_<>")
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    """The ``id`` of every string constant that is a bare statement: a docstring, not a value."""
+    return {
+        id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+
+
+def _argument_position_literals(tree: ast.AST) -> list[tuple[int, str, bool]]:
+    """``(lineno, value, in_argument_position)`` of each string or bytes value.
+
+    Bytes are decoded with UTF-8 replacement so the same credential rules apply
+    without rejecting a literal containing non-UTF-8 bytes.
+
+    Argument position covers call arguments and keyword values (``os.getenv``,
+    ``dict.get``, ``setdefault``, ``field(default=...)``), parameter defaults of
+    functions and lambdas, and annotated class-body assignments (dataclass,
+    pydantic and attrs field defaults).  Other literals (a plain assignment, a
+    dict value, a ``return``) are listed too: a value that declares itself live
+    is checked wherever it sits, because no line rule reads an all-lowercase
+    ``sk-live-`` value in those positions.  Docstrings are not values.
+    """
+    candidates: list[ast.expr | None] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            candidates.extend(node.args)
+            candidates.extend(kw.value for kw in node.keywords)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            candidates.extend(node.args.defaults)
+            candidates.extend(node.args.kw_defaults)
+        elif isinstance(node, ast.ClassDef):
+            candidates.extend(stmt.value for stmt in node.body if isinstance(stmt, ast.AnnAssign))
+    argument_nodes = {id(c) for c in candidates if c is not None}
+    docstrings = _docstring_nodes(tree)
+    return [
+        (
+            node.lineno,
+            node.value.decode("utf-8", "replace") if isinstance(node.value, bytes) else node.value,
+            id(node) in argument_nodes,
+        )
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and id(node) not in docstrings
+    ]
+
+
+def _contains_allowlist_word(value: str, config: DLPConfig) -> bool:
+    upper = value.upper()
+    return any(prefix.upper() in upper for prefix in config.allowlist_prefixes)
+
+
+def _starts_with_allowlisted_prefix(value: str, config: DLPConfig) -> bool:
+    upper = value.upper()
+    return any(upper.startswith(prefix.upper()) for prefix in config.allowlist_prefixes)
+
+
+def _is_filler(matched: str, prefix: str) -> bool:
+    body = matched[len(prefix) :]
+    return bool(body) and all(ch in _FILLER_CHARS for ch in body)
+
+
+def _redact_literal(line: str, value: str) -> str:
+    """Return a source-free marker; findings carry file, line and rule separately.
+
+    Regexes over raw source cannot recognize every escaped spelling of a sibling
+    credential. Never copy that source into an excerpt or the cached gate detail.
+    """
+    return "<credential literal: ***>"
+
+
+# ---------------------------------------------------------------------------
 # Scanner
 # ---------------------------------------------------------------------------
 
@@ -460,6 +595,8 @@ class DLPScanner:
             return cfg.block_regulated_data
         if category == "proprietary_data":
             return cfg.block_proprietary_data
+        if category == "credential_literal":
+            return cfg.block_credential_literals
         return rule_block_default
 
     @staticmethod
@@ -548,6 +685,68 @@ class DLPScanner:
 
         lines = diff_text.splitlines()
         findings = self._scan_lines(lines, diff_mode=True)
+        return _make_result(findings)
+
+    def scan_python_source(self, source: str) -> DLPScanResult:
+        """Scan a Python file's string and bytes literals for provider credentials.
+
+        The line rules read assignment-shaped text, so a credential written as
+        ``os.getenv("API_KEY", "sk_live_...")``, ``settings.get("k", "...")``,
+        ``kwargs.setdefault(...)``, a parameter default or a dataclass field
+        default passes them: nothing on the line is ``key = "..."``.  This
+        pass walks the syntax tree instead, takes every string literal in one
+        of those positions, and matches it against
+        :data:`_CREDENTIAL_LITERAL_RULES`.  A value that declares itself live
+        (``sk-live-``) is matched in any position: a plain assignment, a dict
+        value or a ``return`` is read by no line rule when it is all lowercase.
+
+        A value that *starts* with an ``allowlist_prefixes`` entry, a body
+        made only of filler characters (``sk_live_xxxxxxxx``), and a line
+        matched by ``allowlist_patterns`` are exempt.  An allowlist word
+        elsewhere in the value (``AKIAIOSFODNN7EXAMPLE``) exempts it too,
+        except for a value whose prefix declares it live
+        (``sk-live-...-placeholder-...``): the provider authenticates on the
+        prefix, whatever words follow it.
+
+        Args:
+            source: Python source text.
+
+        Returns:
+            DLPScanResult with one finding per flagged literal.  A file that
+            does not parse yields no findings: the line rules still ran.
+        """
+        cfg = self._config
+        if not (cfg.enabled and cfg.check_credential_literals):
+            return DLPScanResult.empty()
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, RecursionError):
+            return DLPScanResult.empty()
+
+        lines = source.splitlines()
+        findings: list[DLPFinding] = []
+        for lineno, value, in_argument_position in _argument_position_literals(tree):
+            line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
+            if _is_allowlisted_line(line, cfg) or _starts_with_allowlisted_prefix(value, cfg):
+                continue
+            for rule_label, pattern, description, declares_live in _CREDENTIAL_LITERAL_RULES:
+                m = pattern.search(value)
+                if m is None or _is_filler(value[m.start() :], m.group("prefix")):
+                    continue
+                if not declares_live and (not in_argument_position or _contains_allowlist_word(value, cfg)):
+                    continue
+                findings.append(
+                    DLPFinding(
+                        category="credential_literal",
+                        rule=rule_label,
+                        severity="high",
+                        line_number=lineno,
+                        redacted_match=_redact_literal(line, value),
+                        description=description,
+                        block_merge=self._should_block("credential_literal", True),
+                    )
+                )
+                break
         return _make_result(findings)
 
 

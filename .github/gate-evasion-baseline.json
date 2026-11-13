@@ -49,12 +49,12 @@
       "verdict_basis": "junit_failures"
     },
     {
-      "actual_verdict": "pass",
+      "actual_verdict": "fail",
       "case_class": "runtime_config_placeholder_secret",
-      "caught": false,
+      "caught": true,
       "expected_verdict": "fail",
       "gate_that_must_flag": "dlp_scan",
-      "verdict_basis": "gate_verdict"
+      "verdict_basis": "finding_signature"
     },
     {
       "actual_verdict": "fail",
@@ -65,9 +65,9 @@
       "verdict_basis": "finding_signature"
     }
   ],
-  "catch_rate": 0.375,
-  "caught_count": 3,
-  "content_sha256": "b0b56b927595f84309409cc6298adfc62f40ddd9b8847162da117c1b7c01be20",
+  "catch_rate": 0.5,
+  "caught_count": 4,
+  "content_sha256": "724ff23d5372e754a649d6209374b562cfb5ca906707bf75497770ecce365e8e",
   "corpus_sha256": "0083910223efd1e7fea28dc1411fc650087be90e98085873d059dd4e591f50f7",
   "schema_version": 1,
   "suite_hash": "f364fb175823c25586842830fd2a37d858258b7cc37cd490aa4bc02556a48f65",
@@ -78,5 +78,5 @@
     "vulture": "2.16"
   },
   "total": 8,
-  "update_reason": "Remeasure at ruff 0.17.2 for the dependency group bump in #6819; pytest 9.1.1 and vulture 2.16 unchanged."
+  "update_reason": "Integrate reviewed credential-literal detection and escaped-sibling redaction with current-main locked tools"
 }

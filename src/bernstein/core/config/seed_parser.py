@@ -1914,6 +1914,8 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         dlp_block_license_violations=_qg_bool("dlp_block_license_violations", True),
         dlp_block_regulated_data=_qg_bool("dlp_block_regulated_data", True),
         dlp_block_proprietary_data=_qg_bool("dlp_block_proprietary_data", False),
+        dlp_check_credential_literals=_qg_bool("dlp_check_credential_literals", True),
+        dlp_block_credential_literals=_qg_bool("dlp_block_credential_literals", True),
         dlp_internal_url_patterns=_qg_str_list("dlp_internal_url_patterns", []),
         dlp_ignore_paths=_qg_str_list("dlp_ignore_paths", []),
         dlp_allowlist_prefixes=_qg_str_list(
