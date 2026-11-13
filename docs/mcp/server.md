@@ -6,11 +6,10 @@ through Bernstein. This page describes the protocol surface and how to point a
 client at the server. For the per-tier tool catalogue see
 [`tool_tiers.md`](tool_tiers.md).
 
-## Execution readiness proposal (#6645; not implemented)
+## Execution readiness (#6645)
 
-This section proposes a public contract for review; it describes no shipped
-readiness fields or probe tool. Implementation is blocked on accepting the
-response schema and the authority boundary for an opt-in synthetic probe.
+The task server exposes coordinator observations. The MCP projection,
+scheduler and dispatch evidence, and opt-in synthetic probe are proposed.
 
 ### Root cause
 
@@ -21,13 +20,22 @@ The existing `/health/ready` checks the store, drain and read-only state; it
 does not establish execution readiness. MCP initialization identifies the
 bridge package, not the remote coordinator.
 
+### Coordinator status evidence
+
+The task server includes `execution_readiness` in `GET /status`, scoped to
+the same tenant as the task counts. The coordinator reports its package
+version and observation time. Drain blocks worker claims. Read-only mode is
+reported as an observation with unknown dispatch capacity because workers can
+claim through a GET route. Scheduler ownership remains unknown. This response is an observation with no expiry guarantee. The MCP
+bridge's version and status schema are independent of this server projection.
+
 ### Proposed boundary
 
 - Preserve the existing `live`, count, cost, error and hint semantics and the
   existing `/health/ready` load-balancer contract. Add an optional nested
-  `readiness` object to both MCP status output schemas, backed by a new
-  `/status.execution_readiness` projection containing coordinator, scheduler
-  and dispatch evidence. The bridge adds its transport observation and
+  `readiness` object to both MCP status output schemas, backed by
+  `/status.execution_readiness` once scheduler and dispatch evidence are
+  available. The bridge adds its transport observation and
   computes the aggregate; status reads never create tasks, call models,
   claim capacity or change the queue.
 - Use `readiness.schema_version = 1`, an aggregate `state` in
@@ -645,7 +653,7 @@ and no state-changing request is sent:
 
 A task that is stuck, blocked, or unfinished has no approval to grant. Finish
 work you are executing with `bernstein_complete`, report a blocker with
-`bernstein_post_message`, or abandon the work with `bernstein task cancel <task_id>`.
+`bernstein_post_message`, or abandon the work with `bernstein cancel <task_id>`. The hint above contains the older spelling.
 
 ### `planned` is decided on the plan, not on the task
 

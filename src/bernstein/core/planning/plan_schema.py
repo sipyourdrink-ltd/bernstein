@@ -17,6 +17,7 @@ from bernstein.core.planning.signal_contract import (
     parse_completion_signal,
 )
 from bernstein.core.tasks.artifacts import ArtifactKind
+from bernstein.core.tasks.models import DispatchTier
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -50,6 +51,8 @@ KNOWN_ROLES: list[str] = [
 SCOPE_VALUES: list[str] = ["small", "medium", "large"]
 
 COMPLEXITY_VALUES: list[str] = ["low", "medium", "high"]
+
+DISPATCH_TIER_VALUES: list[str] = [tier.value for tier in DispatchTier]
 
 EFFORT_VALUES: list[str] = ["low", "normal", "high", "max"]
 
@@ -177,6 +180,12 @@ _STEP_SCHEMA: dict[str, Any] = {
             "enum": COMPLEXITY_VALUES,
             "default": "medium",
             "description": "Reasoning difficulty: low, medium, high.",
+        },
+        "dispatch_tier": {
+            "type": "string",
+            "enum": DISPATCH_TIER_VALUES,
+            "default": DispatchTier.LOCAL.value,
+            "description": "Backend tier for this step.",
         },
         "cli": {"type": "string", "minLength": 1, "description": "CLI agent override for this step."},
         "model": {
@@ -381,6 +390,7 @@ _STEP_ENUM_FIELDS: list[tuple[str, list[str]]] = [
     ("role", KNOWN_ROLES),
     ("scope", SCOPE_VALUES),
     ("complexity", COMPLEXITY_VALUES),
+    ("dispatch_tier", DISPATCH_TIER_VALUES),
     ("effort", EFFORT_VALUES),
 ]
 

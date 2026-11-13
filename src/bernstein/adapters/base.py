@@ -352,7 +352,20 @@ def record_rate_limit_hit(
 
 @dataclass
 class SpawnResult:
-    """Result of spawning an agent process."""
+    """Result of spawning an agent process.
+
+    Attributes:
+        pid: ID of the spawned process, or 0 when no child was started.
+        log_path: Path to the process log.
+        proc: Process handle, when supplied by the adapter.
+        timeout_timer: Timer used to enforce the process timeout, if any.
+        post_exit_thread: Optional worker finishing adapter bookkeeping
+            after the process exits.
+        abort_reason: Classified reason for an aborted or refused run, if reported.
+        abort_detail: Human-readable details accompanying an abort.
+        finish_reason: Adapter-reported reason a turn finished, if known.
+        acp_result: ACP turn result when available.
+    """
 
     pid: int
     log_path: Path

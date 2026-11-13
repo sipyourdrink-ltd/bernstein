@@ -29,6 +29,8 @@ CLEANUP_GRACE_S = 300  # keep workspace 5 min after finish for log viewing
 
 
 class SessionStatus(StrEnum):
+    """Lifecycle states of a sandbox evaluation session."""
+
     QUEUED = "queued"
     CLONING = "cloning"
     RUNNING = "running"
@@ -39,6 +41,8 @@ class SessionStatus(StrEnum):
 
 
 class SolutionPack(StrEnum):
+    """Available templates for a sandbox evaluation session."""
+
     CODE_QUALITY = "code-quality"
     TEST_COVERAGE = "test-coverage"
     SECURITY_AUDIT = "security-audit"

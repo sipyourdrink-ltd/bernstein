@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, entry_points
 from importlib.metadata import version as dist_version
 from pathlib import Path
+from threading import RLock
 from types import ModuleType
 from typing import Any, ClassVar, cast
 
@@ -36,8 +37,14 @@ from bernstein.core.plugin_policy import (
     check_plugin_allowed,
     load_plugin_policy,
 )
+from bernstein.core.security.declaration_quarantine import (
+    DeclarationQuarantineEntry,
+    DeclarationQuarantineStore,
+    declaration_id,
+)
+from bernstein.core.security.redactor import redact_text
 from bernstein.core.workspace import is_workspace_trusted
-from bernstein.plugins import hookimpl
+from bernstein.plugins import _QualityGate, hookimpl
 from bernstein.plugins.hookspecs import (
     BernsteinSpec,
     ElicitationResponse,
@@ -53,6 +60,7 @@ __all__ = [
     "HookValidationError",
     "PluginManager",
     "PluginPolicyViolation",
+    "PluginQuarantineUnavailable",
     "PluginResolution",
     "get_plugin_manager",
 ]
@@ -66,6 +74,8 @@ SLOW_HOOK_THRESHOLD: float = 1.0
 
 # Module-level singleton so the same manager is reused within a process.
 _manager: PluginManager | None = None
+_discovery_lock = RLock()
+_initializing_manager: PluginManager | None = None
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
@@ -88,7 +98,12 @@ def _mcp_entry_from_dict(d: dict[str, Any]) -> Any:
 
 
 class HookBlockingError(Exception):
-    """Raised when a hook command exits with code 2, indicating a blocking failure."""
+    """Raised when a hook command exits with code 2, indicating a blocking failure.
+
+    Attributes:
+        hook_name: Name of the hook that blocked orchestration.
+        stderr: Diagnostic text captured from the hook.
+    """
 
     def __init__(self, hook_name: str, stderr: str) -> None:
         super().__init__(f"Hook {hook_name!r} blocked orchestration: {stderr}")
@@ -672,6 +687,10 @@ def _plugin_version(plugin: object) -> str:
     return str(declared) if isinstance(declared, str) else ""
 
 
+class PluginQuarantineUnavailable(RuntimeError):
+    """Workspace declaration state could not be verified."""
+
+
 class PluginManager:
     """Discovers, loads, and invokes Bernstein plugins.
 
@@ -684,13 +703,21 @@ class PluginManager:
 
     The manager handles lifecycle hooks (task creation, agent spawning, etc.)
     and provides a thread pool for background hooks.
+
+    Args:
+        workdir: Project root for workdir-scoped plugin discovery and
+            quarantine. Defaults to None.
+        record_declaration_failures: Enable recording of plugin load failures
+            that trigger quarantine when a workdir is set. Defaults to False.
     """
 
-    def __init__(self, workdir: Path | None = None) -> None:
+    def __init__(self, workdir: Path | None = None, *, record_declaration_failures: bool = False) -> None:
         self._pm = pluggy.PluginManager("bernstein")
         self._pm.add_hookspecs(BernsteinSpec)
         self._registered_names: list[str] = []
         self._workdir = workdir
+        self._record_declaration_failures = record_declaration_failures
+        self._declaration_quarantine = DeclarationQuarantineStore(workdir) if workdir is not None else None
         # Enterprise plugin policy (allowlist/blocklist). Loaded from
         # .bernstein/plugins-policy.yaml in load_from_workdir().
         self._policy: PluginPolicy = PluginPolicy()
@@ -1148,19 +1175,82 @@ class PluginManager:
             log.warning("collect_plugin_ingest_adapters failed: %s", exc)
             return 0
 
+    def _register_discovered_plugin(self, plugin: object, name: str) -> None:
+        previous = self._pm.get_plugin(name)
+        try:
+            if self._pm.register(plugin, name=name) is None:
+                raise ValueError(f"Plugin {name!r} was not registered")
+        except Exception:
+            # Pluggy can install hooks before a later hook fails validation.
+            if plugin is not None and previous is None and self._pm.get_plugin(name) is plugin:
+                self._pm.unregister(plugin=plugin, name=name)
+            raise
+
+    def _disabled_plugins(self) -> set[str]:
+        if self._declaration_quarantine is None:
+            return set()
+        try:
+            entries = self._declaration_quarantine.load()
+        except (OSError, TypeError, ValueError) as exc:
+            raise PluginQuarantineUnavailable("Plugin declaration quarantine is unavailable") from exc
+        return {entry.declaration_id for entry in entries if entry.kind == "plugin"}
+
+    def _skip_quarantined_plugin(
+        self, disabled: set[str], *, name: str, source: str, declared: str, version: str = ""
+    ) -> bool:
+        if declaration_id("plugin", name, f"{source}:{declared}", None) not in disabled:
+            return False
+        self._record_failed_resolution(
+            name=name, source=source, declared=declared, version=version, failure="declaration quarantined"
+        )
+        return True
+
+    def _quarantine_initialization_failure(
+        self, disabled: set[str], *, name: str, source: str, declared: str, reason: str, error_type: str
+    ) -> None:
+        if not self._record_declaration_failures or self._declaration_quarantine is None:
+            return
+        if any(
+            row.loaded and (row.name, row.source, row.declared) == (name, source, declared) for row in self._resolutions
+        ):
+            return
+        origin = f"{source}:{declared}"
+        entry_id = declaration_id("plugin", name, origin, None)
+        disabled.add(entry_id)
+        try:
+            self._declaration_quarantine.record_failure(
+                DeclarationQuarantineEntry(
+                    declaration_id=entry_id,
+                    kind="plugin",
+                    source_name=name,
+                    origin=origin,
+                    skill_name=None,
+                    reason=reason,
+                    error_type=error_type,
+                    at=time.time(),
+                )
+            )
+        except Exception:
+            log.exception("Could not persist plugin quarantine for %r", name)
+
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
         eps = entry_points(group="bernstein.plugins")
+        disabled = self._disabled_plugins()
         for ep in eps:
             declared_version = _entry_point_dist_version(ep)
             try:
                 check_plugin_allowed(ep.name, self._policy)
+                if self._skip_quarantined_plugin(
+                    disabled, name=ep.name, source="entry_point", declared=ep.value, version=declared_version
+                ):
+                    continue
                 plugin = ep.load()
                 # Entry points may point to a class or an instance; instantiate if needed.
                 if isinstance(plugin, type):
                     plugin = plugin()
                 name = ep.name
-                self._pm.register(plugin, name=name)
+                self._register_discovered_plugin(plugin, name)
                 self._registered_names.append(name)
                 self._record_resolution(
                     name=name,
@@ -1182,8 +1272,17 @@ class PluginManager:
                     failure=f"blocked by enterprise policy: {exc.reason}",
                 )
             except Exception as exc:
+                reason, _ = redact_text(str(exc))
+                self._quarantine_initialization_failure(
+                    disabled,
+                    name=ep.name,
+                    source="entry_point",
+                    declared=ep.value,
+                    reason=reason,
+                    error_type=type(exc).__name__,
+                )
                 warnings.warn(
-                    f"Failed to load bernstein plugin {ep.name!r} ({ep.value}): {exc}",
+                    f"Failed to load bernstein plugin {ep.name!r} ({ep.value}): {reason}",
                     stacklevel=1,
                 )
                 self._record_failed_resolution(
@@ -1191,7 +1290,7 @@ class PluginManager:
                     source="entry_point",
                     declared=ep.value,
                     version=declared_version,
-                    failure=f"{type(exc).__name__}: {exc}",
+                    failure=f"{type(exc).__name__}: {reason}",
                 )
 
         from bernstein.plugins.reporters import discover_reporters
@@ -1284,11 +1383,14 @@ class PluginManager:
         Args:
             config_plugins: List of import-path strings from the config file.
         """
+        disabled = self._disabled_plugins()
         for spec in config_plugins:
             # Use the short name (after the last dot/colon) for policy checks.
             policy_name = spec.rsplit(":", 1)[-1].rsplit(".", 1)[-1] if (":" in spec or "." in spec) else spec
             try:
                 check_plugin_allowed(policy_name, self._policy)
+                if self._skip_quarantined_plugin(disabled, name=spec, source="config", declared=spec):
+                    continue
                 if ":" in spec:
                     module_path, attr = spec.rsplit(":", 1)
                     mod = importlib.import_module(module_path)
@@ -1298,8 +1400,16 @@ class PluginManager:
                     obj = mod
 
                 plugin = obj() if isinstance(obj, type) else obj
+                if isinstance(plugin, _QualityGate) and not any(
+                    self._pm.parse_hookimpl_opts(plugin, attr) is not None for attr in dir(plugin)
+                ):
+                    raise ValueError(
+                        "GatePlugin cannot run under plugins:; move its file to .bernstein/gates/ "
+                        "(or register it under bernstein.gates) and add "
+                        f"{plugin.name!r} to quality_gates.pipeline"
+                    )
                 name = spec
-                self._pm.register(plugin, name=name)
+                self._register_discovered_plugin(plugin, name)
                 self._registered_names.append(name)
                 self._record_resolution(
                     name=name,
@@ -1321,8 +1431,12 @@ class PluginManager:
                     failure=f"blocked by enterprise policy: {exc.reason}",
                 )
             except Exception as exc:
+                reason, _ = redact_text(str(exc))
+                self._quarantine_initialization_failure(
+                    disabled, name=spec, source="config", declared=spec, reason=reason, error_type=type(exc).__name__
+                )
                 warnings.warn(
-                    f"Failed to load bernstein config plugin {spec!r}: {exc}",
+                    f"Failed to load bernstein config plugin {spec!r}: {reason}",
                     stacklevel=1,
                 )
                 self._record_failed_resolution(
@@ -1330,7 +1444,7 @@ class PluginManager:
                     source="config",
                     declared=spec,
                     version="",
-                    failure=f"{type(exc).__name__}: {exc}",
+                    failure=f"{type(exc).__name__}: {reason}",
                 )
 
     def _load_command_hooks_subsystem(self, root: Path) -> None:
@@ -1372,6 +1486,8 @@ class PluginManager:
             if isinstance(raw_plugins, list):
                 plugin_strs: list[str] = [str(item) for item in raw_plugins]  # type: ignore[var-annotated]
                 self.discover_config_plugins(plugin_strs)
+        except PluginQuarantineUnavailable:
+            raise
         except Exception as exc:
             log.warning("Config plugins subsystem failed to load: %s", exc)
 
@@ -1397,6 +1513,7 @@ class PluginManager:
         # (or absent) ``_workdir`` is exactly the gap that let committed hooks
         # run untrusted, so the manager's trust root is the root it loads.
         self._workdir = root
+        self._declaration_quarantine = DeclarationQuarantineStore(root)
 
         # Load enterprise plugin policy before any plugin registration.
         self._policy = load_plugin_policy(root)
@@ -1411,6 +1528,8 @@ class PluginManager:
         # Each subsystem is isolated: a failure in one does not cascade.
         try:
             self.discover_entry_points()
+        except PluginQuarantineUnavailable:
+            raise
         except Exception as exc:
             log.warning("Entry-point plugin discovery failed: %s", exc)
 
@@ -1421,6 +1540,8 @@ class PluginManager:
 
         try:
             self._load_config_plugins_subsystem(root)
+        except PluginQuarantineUnavailable:
+            raise
         except Exception as exc:
             log.warning("Config plugins subsystem failed: %s", exc)
 
@@ -1588,7 +1709,9 @@ class PluginManager:
                 log.debug("Finished background hook %r", name)
 
 
-def get_plugin_manager(workdir: Path | None = None, reload: bool = False) -> PluginManager:
+def get_plugin_manager(
+    workdir: Path | None = None, reload: bool = False, *, record_declaration_failures: bool = False
+) -> PluginManager:
     """Return the global :class:`PluginManager` instance.
 
     The manager is a process-global singleton, but the *first* caller does not
@@ -1603,12 +1726,37 @@ def get_plugin_manager(workdir: Path | None = None, reload: bool = False) -> Plu
     Args:
         workdir: Project root for loading local plugins.
         reload: If True, discard any existing manager and create a new one.
+        record_declaration_failures: Persist first failures in runtime discovery.
 
     Returns:
         The (possibly freshly constructed) :class:`PluginManager`.
     """
-    global _manager
-    if _manager is None or reload or (workdir is not None and _manager.workdir != workdir):
-        _manager = PluginManager(workdir=workdir)
-        _manager.load_from_workdir(workdir)
-    return _manager
+    global _manager, _initializing_manager
+    initializing = _initializing_manager
+    if (
+        initializing is not None
+        and (workdir is None or initializing.workdir == workdir)
+        and not reload
+        and not record_declaration_failures
+    ):
+        # Factories can delegate this legacy lookup to another thread while
+        # synchronous discovery is waiting for them to return.
+        return initializing
+    with _discovery_lock:
+        initializing = _initializing_manager
+        if initializing is not None and (workdir is None or initializing.workdir == workdir):
+            return initializing
+        if (
+            _manager is None
+            or reload
+            or (workdir is not None and _manager.workdir != workdir)
+            or (record_declaration_failures and not _manager._record_declaration_failures)
+        ):
+            manager = PluginManager(workdir=workdir, record_declaration_failures=record_declaration_failures)
+            _initializing_manager = manager
+            try:
+                manager.load_from_workdir(workdir)
+            finally:
+                _initializing_manager = initializing
+            _manager = manager
+        return _manager

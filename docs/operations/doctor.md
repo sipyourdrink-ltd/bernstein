@@ -11,8 +11,8 @@ bernstein govern audit --list --only INS
 The doctor's JSON retains `checks` and `runtime` and adds `findings`. That array
 uses exactly the same schema and producers as the installation audit's JSON
 array. The text report, display order, readiness calculation, exit behavior and
-`--fix` workflow remain unchanged. Installation checks are opt-in in the audit
-registry: use `--only INS` to measure the host rather than just the workspace.
+`--fix` workflow remain unchanged. Use `bernstein govern audit --only INS` to select the installation checks
+and measure the host.
 The audit CLI explicitly composes the installation catalog into its runner;
 the core default registry remains independent of CLI doctor implementations.
 See [installation check composition](../sdd/installation-check-composition.md)
@@ -256,18 +256,35 @@ under `provider_availability` in `bernstein.yaml` and exits non-zero when
 any declared chain element is broken. See
 [Provider availability & failover](provider-availability.md).
 
-## Proposed aged-leak finding (#6572)
+## Aged leaked lanes
 
-**Design proposal only: unimplemented.**
+The default `bernstein doctor` report includes a **Leaked lanes** advisory.
+It reads task records for worktrees and audited sandbox sessions and warns
+when a terminal task's lane is older than 24 hours. Set
+`BERNSTEIN_LEAK_MAX_AGE_SECONDS` to a finite, non-negative number of seconds to
+change the threshold. Unknown task ownership is never counted as terminal;
+unreadable sources produce an unavailable-check warning, not a clean bill of
+health. The check never deletes anything or contacts sandbox providers.
+Preview remediation with `bernstein worktrees sweep` or `bernstein sandbox
+sweep`; applying the worktree removal plan requires a separate removal
+approval. Sandbox lanes are report-only (removal: #6571) and are never stopped
+or removed by sweep. See
+[worktree operations](worktrees.md#task-terminal-lane-sweep).
+
+## Proposed structured aged-leak finding (#6572)
+
+**Design proposal: the structured finding below remains unimplemented.**
+The basic advisory above does not implement this full result contract.
 [Issue #6572](https://github.com/sipyourdrink-ltd/bernstein/issues/6572)
-requires both worktree and sandbox listing prerequisites before a doctor
+requires both worktree and sandbox listing prerequisites before a structured doctor
 finding. [#6733](https://github.com/sipyourdrink-ltd/bernstein/pull/6733)
 continues the sandbox half of #6549; it explicitly leaves doctor separate.
 The worktree contribution
 [#5751](https://github.com/sipyourdrink-ltd/bernstein/pull/5751) remains a
 draft with unresolved persistence/evidence and public listing boundaries.
-This proposal preserves that contributor's work and does not modify the PR
-or claim either prerequisite supplies the complete doctor feature.
+The combined sweep above now supplies a basic advisory, while this proposal
+preserves the remaining structured-finding and evidence-contract questions.
+It does not modify that contributor's PR or claim the complete doctor feature.
 
 The accepted goal is a read-only finding for a **confirmed leaked** worktree
 or sandbox older than an agreed configurable age, naming the lane, owning
@@ -283,7 +300,8 @@ a key. Advisory records do not authorize removal.
 1. **Public threshold configuration.** Decide the configuration source,
    units, documented default, override precedence and invalid-value behavior.
    The issue explicitly leaves the default undecided; no new flag, env name
-   or seed schema is selected here.
+   or seed schema is selected by this proposal. The basic advisory uses the
+   environment variable and default documented above.
 2. **Age evidence and comparison.** Decide the age source, threshold
    comparison and unknown/unusable timestamp behavior. Existing sandbox ages
    use create-event time; worktree ages use filesystem ctime. Neither proves

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 import uuid
 
@@ -107,9 +108,14 @@ def test_is_run_name_shape(value: str, expected: bool) -> None:
     assert is_run_name(value) is expected
 
 
+def _uuid_sample(count: int) -> list[uuid.UUID]:
+    rng = random.Random(42)
+    return [uuid.UUID(int=rng.getrandbits(128), version=4) for _ in range(count)]
+
+
 def test_all_names_match_format_over_sample() -> None:
-    for _ in range(1000):
-        name = render_name(uuid.uuid4())
+    for run_id in _uuid_sample(1000):
+        name = render_name(run_id)
         assert is_run_name(name), name
 
 
@@ -127,21 +133,20 @@ def test_collision_rate_is_low_over_large_sample() -> None:
     # expected collision count is well under 30. Assert a generous ceiling
     # so the test is not flaky while still catching a degenerate recipe
     # (e.g. one that ignores most of the digest).
-    sample = [uuid.uuid4() for _ in range(5000)]
+    sample = _uuid_sample(5000)
     collisions = find_collisions(sample)
     colliding_ids = sum(len(ids) for ids in collisions.values())
     assert colliding_ids < 100, f"unexpectedly high collision count: {colliding_ids}"
 
 
 def test_find_collisions_detects_known_clash() -> None:
-    sample = [uuid.uuid4() for _ in range(20000)]
+    sample = _uuid_sample(20_000)
     collisions = find_collisions(sample)
-    # A 20k sample over 473k names is very likely to clash at least once.
-    if collisions:
-        for name, ids in collisions.items():
-            assert is_run_name(name)
-            assert len(ids) >= 2
-            assert all(render_name(i) == name for i in ids)
+    assert collisions, "the fixed sample must contain at least one collision"
+    for name, ids in collisions.items():
+        assert is_run_name(name)
+        assert len(ids) >= 2
+        assert all(render_name(i) == name for i in ids)
 
 
 def test_find_collisions_empty_for_distinct_names() -> None:
@@ -152,7 +157,7 @@ def test_find_collisions_empty_for_distinct_names() -> None:
 
 
 def test_build_lookup_round_trips_known_ids() -> None:
-    ids = [uuid.uuid4() for _ in range(50)]
+    ids = _uuid_sample(50)
     lookup = build_lookup(ids)
     for run_id in ids:
         name = render_name(run_id)

@@ -72,8 +72,7 @@ def capture_widget_text(_widget_class_name: str, render_text: str) -> str:
     single space, and strips trailing whitespace from every line.
 
     Args:
-        widget_class_name: Name of the widget class (used for documentation /
-            logging, not included in the output).
+        _widget_class_name: Reserved parameter.
         render_text: Raw text output from the widget.
 
     Returns:

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.atomic_write import write_atomic_text
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
 from bernstein.core.tunnels.protocol import (
     ProviderNotAvailable,
     TunnelHandle,
@@ -63,6 +64,11 @@ class TunnelRegistry:
         """Initialize the registry and load any persisted state."""
         self._state_path = state_path or STATE_PATH
         self._providers: dict[str, TunnelProvider] = dict(providers or {})
+        self._provider_guard = DuplicateGuard("tunnel provider")
+        if self._providers:
+            module = caller_module_name()
+            for name in self._providers:
+                self._provider_guard.register(name, module)
         self._active: dict[str, TunnelHandle] = {}
         self._load()
 
@@ -110,8 +116,13 @@ class TunnelRegistry:
 
         Args:
             provider: Driver instance to register.
+
+        Raises:
+            ValueError: If a driver already uses this name.
         """
-        self._providers[provider.name] = provider
+        name = provider.name
+        self._provider_guard.register(name, caller_module_name())
+        self._providers[name] = provider
 
     def providers(self) -> dict[str, TunnelProvider]:
         """Return a copy of the registered provider mapping.

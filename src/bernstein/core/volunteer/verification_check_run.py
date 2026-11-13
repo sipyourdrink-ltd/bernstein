@@ -488,7 +488,7 @@ def _verify_acceptance_evidence(
     try:
         issue = client.get_issue(repo_slug, issue_number)
     except Exception as e:
-        logger.warning(f"Failed to fetch issue #{issue_number}: {e!s}")
+        logger.warning("Failed to fetch issue #%s: %s", issue_number, e)
         return AcceptanceVerificationResult(
             status="neutral",
             reason=f"Failed to fetch linked issue #{issue_number} from GitHub API.",
@@ -579,13 +579,13 @@ def _verify_acceptance_evidence(
         spec.loader.exec_module(module)
         collected = module.build_report().collected
     except (ImportError, AttributeError, SyntaxError) as e:
-        logger.warning(f"Expected error loading check_test_collection: {e!s}")
+        logger.warning("Expected error loading check_test_collection: %s", e)
         return AcceptanceVerificationResult(
             status="neutral",
             reason="Failed to execute test collection script, unable to verify evidence.",
         )
     except Exception as e:
-        logger.warning(f"Unexpected error loading check_test_collection: {e!s}")
+        logger.warning("Unexpected error loading check_test_collection: %s", e)
         return AcceptanceVerificationResult(
             status="neutral",
             reason="Unexpected error loading test collection script, unable to verify evidence.",

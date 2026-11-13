@@ -128,6 +128,7 @@ def render_retention_pdf(*, org: str, period: tuple[str, str], evidence: dict[st
 
 
 def render_retention_csv(evidence: dict[str, Any]) -> str:
+    """Render the retention policy boundary and parameters as a CSV row."""
     boundary = evidence["boundary"]
     params = evidence["retention_params"]
     row = {
@@ -169,6 +170,7 @@ def render_oversight_pdf(*, org: str, period: tuple[str, str], evidence: dict[st
 
 
 def render_oversight_csv(evidence: dict[str, Any]) -> str:
+    """Render human oversight receipts with their displayed and executed hashes."""
     fields = ("receipt_id", "principal", "decision", "ts_ns", "displayed_hash", "executed_hash", "binding_ok")
     return _csv(fields, evidence["receipts"])
 
@@ -213,6 +215,7 @@ def render_incident_pdf(*, org: str, timeline: dict[str, Any], gaps: list[dict[s
 
 
 def render_incident_csv(timeline: dict[str, Any]) -> str:
+    """Render incident timeline events in their supplied order as CSV."""
     fields = ("ts_ns", "kind", "detail")
     return _csv(fields, timeline.get("events", []))
 

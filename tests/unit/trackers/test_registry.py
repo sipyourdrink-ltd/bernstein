@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -17,6 +17,9 @@ from bernstein.core.trackers.registry import (
     reset_registry_for_tests,
 )
 from tests.fixtures.trackers.in_memory_tracker import InMemoryTracker
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -188,3 +191,92 @@ def test_hookspec_declares_provide_tracker_adapter() -> None:
     from bernstein.plugins.hookspecs import BernsteinSpec
 
     assert hasattr(BernsteinSpec, "provide_tracker_adapter")
+
+
+def test_runtime_tracker_hook_quarantine_survives_repair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.commands.pipeline_cmd import _instantiate_trackers
+    from bernstein.cli.commands.trackers_cmd import _load_registry_with_plugins
+    from bernstein.core.security.audit_chain import EVENT_DECLARATION_QUARANTINED, AuditChainStore
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+
+    class RepairablePlugin:
+        calls = 0
+        broken = True
+
+        def provide_tracker_adapter(self) -> tuple[str, type[InMemoryTracker]]:
+            self.calls += 1
+            if self.broken:
+                raise RuntimeError("synthetic tracker hook failure")
+            return "repairable", InMemoryTracker
+
+    plugin = RepairablePlugin()
+    pm = _FakePluginManager({"repairable": plugin, "healthy": _FakePlugin(("healthy", InMemoryTracker))})
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("bernstein.plugins.manager.get_plugin_manager", lambda *args, **kwargs: pm)
+    store = DeclarationQuarantineStore(tmp_path)
+    configs = {"repairable": {}, "healthy": {}}
+
+    assert "healthy" in _load_registry_with_plugins()
+    assert not store.path.exists()
+    assert not (tmp_path / ".sdd" / "audit").exists()
+
+    adapters, _ = _instantiate_trackers(configs, [], workdir=tmp_path)
+    assert set(adapters) == {"healthy"}
+    (marker,) = store.load()
+    assert marker.kind == "tracker"
+    assert marker.source_name == "repairable"
+    assert marker.reason == "synthetic tracker hook failure"
+
+    plugin.broken = False
+    assert "repairable" not in _load_registry_with_plugins()
+    adapters, _ = _instantiate_trackers(configs, [], workdir=tmp_path)
+    assert set(adapters) == {"healthy"}
+    assert plugin.calls == 2
+    assert store.reenable(marker.declaration_id, actor="operator")
+    adapters, _ = _instantiate_trackers(configs, [], workdir=tmp_path)
+    assert set(adapters) == {"repairable", "healthy"}
+    assert plugin.calls == 3
+    assert len(AuditChainStore(tmp_path / ".sdd" / "audit").query(event_type=EVENT_DECLARATION_QUARANTINED)) == 1
+
+
+def test_workspace_tracker_discovery_does_not_reuse_other_plugin_factories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.trackers.registry import discover_workspace_trackers
+
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    managers = {
+        first: _FakePluginManager({"first": _FakePlugin(("first", InMemoryTracker))}),
+        second: _FakePluginManager({"second": _FakePlugin(("second", InMemoryTracker))}),
+    }
+    register_tracker("global_programmatic", InMemoryTracker)
+    discover_plugin_trackers(managers[first])
+    monkeypatch.setattr("bernstein.plugins.manager.get_plugin_manager", managers.__getitem__)
+
+    workspace_registry = discover_workspace_trackers(second, record_failures=False)
+    assert "first" not in workspace_registry
+    assert "second" in workspace_registry
+    assert "global_programmatic" in workspace_registry
+    assert "linear" in workspace_registry
+    assert "first" in get_registry()
+    assert "second" not in get_registry()
+
+
+def test_invalid_registration_leaves_healthy_plugins_and_builtins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.trackers.registry import discover_workspace_trackers
+
+    invalid = TrackerRegistration("shared", InMemoryTracker, capabilities=None)  # type: ignore[arg-type]
+    pm = _FakePluginManager(
+        {
+            "bad": _FakePlugin([invalid, ("same_hook", InMemoryTracker)]),
+            "good": _FakePlugin(("shared", InMemoryTracker)),
+        }
+    )
+    monkeypatch.setattr("bernstein.plugins.manager.get_plugin_manager", lambda _root: pm)
+    registry = discover_workspace_trackers(tmp_path, record_failures=True)
+    assert registry.get("shared").provenance == "good"
+    assert "same_hook" in registry
+    assert "linear" in registry

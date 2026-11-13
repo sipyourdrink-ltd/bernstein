@@ -1077,6 +1077,10 @@ class WorktreeManager:
         repo_root: Absolute path to the repository root.
         setup_config: Optional environment setup applied after each worktree is
             created (symlinks, file copies, setup command).
+        salvage_on_cleanup: Attempt to preserve uncommitted work and
+            unmerged commits during cleanup. Defaults to True.
+        salvage_push: Let cleanup attempt to push a salvaged branch.
+            Defaults to True and applies when cleanup salvages work.
     """
 
     def __init__(

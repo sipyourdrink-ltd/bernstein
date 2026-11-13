@@ -542,6 +542,35 @@ Third-party backends must:
    `TYPE_CHECKING`) so importing the backend module never crashes on
    a missing SDK.
 
+### Optional removal contract
+
+`bernstein.core.sandbox.SandboxRemovalBackend` is a separate,
+runtime-checkable protocol. Its async methods are
+`reattach_for_removal(session_id: str, *, evidence: Mapping[str, str]) -> SandboxReattachResult`
+and `destroy_for_removal(session: SandboxSession, *, evidence: Mapping[str, str]) -> SandboxRemovalResult`.
+Required methods, capabilities and conformance remain unchanged; without
+this extension a backend is unavailable for removal.
+
+Sessions may supply `removal_evidence: Mapping[str, str] | None` (default
+`None`): backend-specific, non-secret identity evidence, copied into create-event
+`details["removal_evidence"]` when present. Legacy records omit it; no migration.
+The spawner validates and copies a mapping with string keys and values. Invalid
+evidence is omitted with a warning; the create event is still emitted and sandbox
+execution and teardown continue normally. The removal protocol, status enums and
+result classes are also available directly from `bernstein.core.sandbox`.
+
+`SandboxReattachStatus` values are `attached`, `unsupported`, `not_found`,
+`identity_mismatch`, `error`. Only `attached` requires and permits a session;
+the backend must verify it matches both the requested id and evidence.
+`SandboxRemovalStatus` values are `removed`, `not_found`, `identity_mismatch`,
+`error`. Only `removed` confirms removal; absence is not confirmation.
+The frozen results default `detail` to `""` and reattachment `session` to `None`;
+invalid statuses and status/handle combinations are rejected. Backends must
+reject malformed evidence and recheck identity before removal. Invalid results
+and exceptions must expose no removable handle or confirmation. Reattachment
+must never provision a resource or fall back to `create` or `resume(snapshot_id)`.
+Provider implementations and removal execution are separate follow-up work.
+
 ## Integration
 
 - `SandboxBackend` / `SandboxSession` / `SandboxCapability` /
@@ -603,7 +632,13 @@ can mislead it; a `sandbox.session_destroy` appended by someone without the
 audit key would hide a real leak from the listing. Run `bernstein audit verify`
 before a listing drives a removal; it rejects such a record. Removing a leaked
 session is left to the backend's own tooling (for example `docker rm`) after
-checking it holds nothing you need.
+checking it holds nothing you need. For a combined worktree/sandbox inventory
+use `bernstein sandbox sweep` (alias of `worktrees sweep`). Sandbox lanes are
+report-only (removal: #6571): sweep never stops or removes their containers.
+Only worktrees support gated removal; apply rechecks the worktree plan under
+the GC lock, verifies the audit chain and journals removal with task ids. See
+the [task-terminal lane workflow](../operations/worktrees.md#task-terminal-lane-sweep)
+for worktree removal approvals and read-only sandbox disk measurement.
 
 The separate Python API `prepare_sandbox_removal_proposal(workdir,
 sandbox_session_id, create_hmac=...)` prepares read-only evidence for one

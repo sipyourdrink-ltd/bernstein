@@ -1012,7 +1012,7 @@ def check_review_checklist(
         diff: Git diff string.
         task: The task that produced the diff.
         checklist: List of items to check (e.g. "Proper error handling").
-        workdir: Project root directory.
+        _workdir: Reserved parameter.
 
     Returns:
         List of PermissionDecision, one for each checklist item.

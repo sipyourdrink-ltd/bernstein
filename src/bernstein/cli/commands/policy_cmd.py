@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import click
@@ -30,7 +31,11 @@ def check_policies() -> None:
         description="Manual policy audit from bernstein policy check.",
         role="manual",
     )
-    violations = engine.check(subject, build_policy_diff(workdir))
+    try:
+        diff = build_policy_diff(workdir)
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException("Timed out reading the repository diff for policy checks.") from exc
+    violations = engine.check(subject, diff)
     if not violations:
         click.echo("Policy check passed.")
         return

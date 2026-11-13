@@ -6,6 +6,7 @@ import json
 import time
 from pathlib import Path
 
+import pytest
 from bernstein.core.run_changelog import (
     RunChangelog,
     TaskChange,
@@ -25,32 +26,22 @@ from bernstein.core.run_changelog import (
 
 
 class TestComponentForFile:
-    def test_cli_module(self) -> None:
-        assert _component_for_file("src/bernstein/cli/changelog_cmd.py") == "CLI"
-
-    def test_routes(self) -> None:
-        assert _component_for_file("src/bernstein/core/routes/tasks.py") == "API Routes"
-
-    def test_core(self) -> None:
-        assert _component_for_file("src/bernstein/core/models.py") == "Core Engine"
-
-    def test_adapters(self) -> None:
-        assert _component_for_file("src/bernstein/adapters/claude.py") == "Adapters"
-
-    def test_templates(self) -> None:
-        assert _component_for_file("templates/roles/backend.md") == "Role Templates"
-
-    def test_tests(self) -> None:
-        assert _component_for_file("tests/unit/test_foo.py") == "Unit Tests"
-
-    def test_docs(self) -> None:
-        assert _component_for_file("docs/roadmap.md") == "Documentation"
-
-    def test_github(self) -> None:
-        assert _component_for_file(".github/workflows/ci.yml") == "CI/CD"
-
-    def test_unknown(self) -> None:
-        assert _component_for_file("random/file.py") == "Other"
+    @pytest.mark.parametrize(
+        "path,expected",
+        [
+            ("src/bernstein/cli/changelog_cmd.py", "CLI"),
+            ("src/bernstein/core/routes/tasks.py", "API Routes"),
+            ("src/bernstein/core/models.py", "Core Engine"),
+            ("src/bernstein/adapters/claude.py", "Adapters"),
+            ("templates/roles/backend.md", "Role Templates"),
+            ("tests/unit/test_foo.py", "Unit Tests"),
+            ("docs/roadmap.md", "Documentation"),
+            (".github/workflows/ci.yml", "CI/CD"),
+            ("random/file.py", "Other"),
+        ],
+    )
+    def test_component_for_file(self, path: str, expected: str) -> None:
+        assert _component_for_file(path) == expected
 
 
 class TestDominantComponent:

@@ -4,14 +4,13 @@
 
 **What:** Outbound, fire-and-forget notification drivers - Slack, Telegram,
 Discord, Email, generic webhook, PagerDuty (via webhook), Jira (via webhook),
-and shell command. Lifecycle events (`pre_task`, `post_task`, `pre_merge`,
-`post_merge`, `pre_spawn`) are fanned out to every configured sink whose
-filters match.
+and shell command. When a caller attaches the lifecycle bridge, it fans out
+events to the configured sinks whose filters match.
 
 **Why:** Bernstein's chat-control bridges (Telegram/Slack/Discord drivers
 under `core/chat/`) are *inbound* - a human attaches and drives a run
 interactively. Long-running unattended runs need a *symmetric outbound* path
-to push "task failed", "merge landed", "budget exceeded" back to humans
+to push task or merge updates back to humans
 without hijacking the same chat. The notifications subsystem is that path.
 See `core/notifications/protocol.py:1-22`.
 
@@ -51,6 +50,11 @@ the `bernstein.notification_sinks` entry-point group
 (`core/notifications/registry.py:37-49`).
 
 ### Common config shape (every sink)
+
+`bernstein notify list` and `bernstein notify test` read this section directly
+from the supplied YAML file. The run seed uses [`notify` and `smtp`](CONFIG.md#notifications)
+for its built-in notifications. Configure a lifecycle bridge explicitly when
+using the driver API for run events.
 
 ```yaml
 notifications:
@@ -279,9 +283,9 @@ The dispatcher keeps an LRU + on-disk window keyed by `event_id`
 - `dedup_lru_size`: 2048 entries (in-memory)
 - `dedup_window_seconds`: 21600 (6 hours)
 
-Both knobs live under `notifications:` at top level in `bernstein.yaml`. A
-restart re-seeds the LRU from `.sdd/runtime/notifications/dedup.jsonl` so a
-crash loop is throttled too.
+Set both knobs under `notifications:` in the YAML supplied to the driver
+command with `--config`, or load that section when constructing the bridge.
+A restart re-seeds the LRU from `.sdd/runtime/notifications/dedup.jsonl`.
 
 ### Retry policy
 

@@ -181,13 +181,9 @@ overall     : MATCH
 
 ### 3. Submit to the leaderboard
 
-```bash
-bernstein bench submit my-bundle.json
-```
-
-The submission gate runs `bench verify` first.  A bundle whose replayed
-runs do not reproduce the claimed per-task outcomes is **rejected** before
-any leaderboard entry is written.
+Verify the bundle offline with `bernstein bench verify` before proposing a
+leaderboard entry. A bundle whose replayed runs fail to reproduce the claimed
+per-task outcomes fails verification.
 
 The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
 each row linking its bundle hash so anyone can re-verify.
@@ -199,7 +195,7 @@ bernstein bench compare a.json b.json
 ```
 
 `bench compare` ranks two bundles by expected value (see
-[Lambda](#lambda-λ-weight-for-wrong-answers)), but only when they were
+[Lambda](#lambda-weight-for-wrong-answers)), but only when they were
 produced by the **same harness settings**.  Every bundle carries a
 `harness_fingerprint` (see [Bundle format](#bundle-format)) — a SHA-256
 over the canonical JSON of the `scheduler_config` mapping that shaped
@@ -298,8 +294,10 @@ signers, wrong keys and invalid signatures produce **neutral** with the reason
 in the summary; a valid signature still requires receipt verification and replay.
 The scorecard does not choose or discover trusted keys.
 
-`bench run --baseline` does not currently accept trusted keys, so install-identity
-baselines remain **neutral** through that CLI path. Stub baselines require the
+`bench run --baseline` accepts repeatable `--trusted-key FINGERPRINT=PATH`
+options. Supply public PEM files from a trusted source separate from the
+baseline bundle. Without a matching key, an install-identity baseline remains
+**neutral**. Stub baselines require the
 existing `--stub-signer` opt-in and must come from a channel you trust (the
 default branch's own artefact, not an upload): the stub key is public and proves
 no origin. The current run's bundle is not re-verified — it was produced
@@ -425,7 +423,7 @@ by guessing used to be free.
 crash is not the run being confidently wrong, and counting it as one would move
 the number for something the run did not do.
 
-### Lambda (λ): weight for wrong answers
+### Lambda: weight for wrong answers
 
 This section is about `bench compare` on submission bundles. The rates above are
 defined for the SWE-bench harness, which records abstentions. A **submission
@@ -717,6 +715,8 @@ docs/eval/
 ## Goal-Drift Suite (`goal-drift-v1`)
 
 The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). The evaluator consumes trajectory JSON (`events` and `diff`; schema documented in `goal_drift_suite.py`); an automatic converter from `.sdd` run journals is follow-up. Default execution without `--trajectory` evaluates empty telemetry, records `unmeasured=True`, and fails closed honestly. Pass `--trajectory <path>` with trajectory JSON to score agent runs, or `--smoke-synthetic` (requiring `--stub-signer`) for hermetic plumbing tests. By default, partial step coverage with zero drift is compliant; pass `--require-step-coverage` to enforce 100% planned step coverage as a strict gate. It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
+
+Recorded evaluators can optionally attach a finite numeric `intent_score` to an event with a non-negative integer `step`. The drift curve exposes these values separately as `intent_scores`, for example `[{"step_index": 0, "intent_score": 0.8}, {"step_index": 2, "intent_score": 0.1}]`, sorted by step (preserving event order for scores at the same step). Missing or invalid scores are omitted; runs without scores expose an empty list. These are projections of recorded output only: no evaluator is called, and the hard step measurements, hard aggregates, step coverage, score, and threshold outcome remain independent of the intent values.
 
 Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 

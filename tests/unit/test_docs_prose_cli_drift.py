@@ -409,19 +409,36 @@ def test_reverting_slice1_fix_fails() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _corpus_pages() -> list[Path]:
+    pages = [REPO_ROOT / "docs" / "index.md"]
+    for corpus_dir in CORPUS_DIRS:
+        pages.extend(sorted(corpus_dir.glob("*.md")))
+    return pages
+
+
+def test_landing_page_is_in_the_narrative_corpus() -> None:
+    assert REPO_ROOT / "docs" / "index.md" in _corpus_pages()
+
+
+def test_landing_page_drift_reports_repository_path_and_line() -> None:
+    page = "Welcome.\nUse `bernstein narrative-docs-stale-command` to begin.\n"
+    failures = check(extract(page), _surface(), "docs/index.md")
+    assert failures == ["docs/index.md:2: command 'bernstein narrative-docs-stale-command' does not exist"]
+
+
 def test_narrative_docs_have_no_cli_drift() -> None:
     surface = _surface()
     failures: list[str] = []
     stats: list[str] = []
     total_checked = 0
     total_skipped = 0
-    for corpus_dir in CORPUS_DIRS:
-        for page in sorted(corpus_dir.glob("*.md")):
-            ext = extract(page.read_text(encoding="utf-8"))
-            total_checked += len(ext.checked)
-            total_skipped += len(ext.skipped)
-            stats.append(f"{page.name}: checked={len(ext.checked)} skipped={len(ext.skipped)}")
-            failures.extend(check(ext, surface, page.name))
+    for page in _corpus_pages():
+        page_name = page.relative_to(REPO_ROOT).as_posix()
+        ext = extract(page.read_text(encoding="utf-8"))
+        total_checked += len(ext.checked)
+        total_skipped += len(ext.skipped)
+        stats.append(f"{page_name}: checked={len(ext.checked)} skipped={len(ext.skipped)}")
+        failures.extend(check(ext, surface, page_name))
     assert total_checked > 0, "extractor found no invocations - the gate would be silent"
     assert not failures, (
         "Narrative docs drift from the registered CLI surface:\n"

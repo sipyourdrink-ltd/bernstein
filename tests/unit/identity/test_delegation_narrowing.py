@@ -28,6 +28,7 @@ from bernstein.core.identity.delegation_scope import (
     duties_for_act,
     verify_authority,
 )
+from tests.support.delegation import verify_declared_chain
 
 KEY = b"k" * 32
 
@@ -165,7 +166,7 @@ class TestWideningIsRejected:
             scope=child_scope,
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-widen", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-widen", key=KEY)
 
         # The HMAC chain itself is perfectly intact - the widening writer held
         # the key. Only the recomputed subset relation catches it.
@@ -196,7 +197,7 @@ class TestWideningIsRejected:
             scope=DelegationScope(permissions=frozenset({"files.read"}), duties=frozenset({DUTY_SPAWN})),
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-drop", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-drop", key=KEY)
 
         assert result.valid is False
         assert _axes(result, CHECK_NARROWING) == {"task_ids", "path_prefixes", "not_after", "max_uses", "max_depth"}
@@ -251,7 +252,7 @@ class TestWideningIsRejected:
         rows[1]["hmac"] = delegation._compute_hmac(KEY, rows[1]["prev_hmac"], body)
         path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-reseal", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-reseal", key=KEY)
 
         assert result.chain_ok is True, "the forged chain is HMAC-consistent by construction"
         assert result.valid is False
@@ -274,7 +275,7 @@ class TestWideningIsRejected:
         row["hmac"] = delegation._compute_hmac(KEY, row["prev_hmac"], body)
         path.write_text(json.dumps(row, sort_keys=True) + "\n", encoding="utf-8")
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-ref", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-ref", key=KEY)
 
         assert result.valid is False
         assert "scope_ref_mismatch" in _axes(result, CHECK_NARROWING)
@@ -297,7 +298,7 @@ class TestWideningIsRejected:
             scope=PARENT_SCOPE,
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-mixed", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-mixed", key=KEY)
 
         assert result.valid is False
         assert "unscoped_parent" in _axes(result, CHECK_NARROWING)
@@ -314,7 +315,7 @@ class TestWideningIsRejected:
             parent_ref="f" * 64,
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-dangle", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-dangle", key=KEY)
 
         assert result.valid is False
         assert "unresolved_parent" in _axes(result, CHECK_NARROWING)
@@ -331,7 +332,7 @@ class TestWideningIsRejected:
             inline_scope=False,
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-byref", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-byref", key=KEY)
 
         assert result.valid is False
         assert "unresolved_scope" in _axes(result, CHECK_NARROWING)
@@ -360,7 +361,7 @@ class TestSeparationOfDuties:
             act="gate.approve",
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-sod", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-sod", key=KEY)
 
         assert result.chain_ok is True
         assert result.valid is False
@@ -387,7 +388,7 @@ class TestSeparationOfDuties:
             act="gate.approve",
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-sod-ok", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-sod-ok", key=KEY)
 
         assert result.valid is True
         assert result.authority.duties_ok is True
@@ -421,7 +422,7 @@ class TestSeparationOfDuties:
             ),
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-distinct", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-distinct", key=KEY)
 
         assert result.authority.narrowing_ok is True, "every hop is a strict subset of its parent"
         assert result.authority.duties_ok is False, "but one principal holds spawn and approve"
@@ -478,7 +479,7 @@ class TestDecisionBinding:
             act="gate.approve",
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-bind", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-bind", key=KEY)
 
         assert result.chain_ok is True
         assert result.valid is False
@@ -504,7 +505,7 @@ class TestDecisionBinding:
             binding=DecisionBinding(charter_hash="sha256:bbb", certificate_version="4"),
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-drift", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-drift", key=KEY)
 
         assert result.valid is False
         assert "binding_drift" in _axes(result, CHECK_BINDING)
@@ -532,7 +533,7 @@ class TestDecisionBinding:
             binding=binding,
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-bound", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-bound", key=KEY)
 
         assert result.valid is True
         assert result.authority.binding_ok is True
@@ -558,7 +559,7 @@ class TestDecisionBinding:
             encoding="utf-8",
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-hmac", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-hmac", key=KEY)
 
         assert result.chain_ok is False
         assert any("HMAC mismatch" in e for e in result.errors)
@@ -596,7 +597,7 @@ class TestNarrowingChainsPass:
             ),
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-ok", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-ok", key=KEY)
 
         assert result.valid is True
         assert result.authority.ok is True
@@ -634,7 +635,7 @@ class TestNarrowingChainsPass:
             inline_scope=False,
         )
 
-        result = delegation.verify_run_chain(
+        result = verify_declared_chain(
             root=ledger.root,
             run_id="run-res",
             key=KEY,
@@ -671,7 +672,7 @@ class TestLegacyReceiptsAreUnaffected:
             act="task.delegate",
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-legacy", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-legacy", key=KEY)
 
         assert result.valid is True
         assert result.chain_ok is True
@@ -773,7 +774,7 @@ class TestParentReferenceForms:
             parent_ref=root_receipt.hmac,
         )
 
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-tree", key=KEY)
+        result = verify_declared_chain(root=ledger.root, run_id="run-tree", key=KEY)
 
         assert result.valid is True, [str(v) for v in result.violations]
 

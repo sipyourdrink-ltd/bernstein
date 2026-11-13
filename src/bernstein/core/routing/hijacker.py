@@ -456,7 +456,7 @@ class SafetyCheck:
         Check if hijacking is safe.
 
         Args:
-            opportunities: List of detected opportunities.
+            _opportunities: Reserved parameter.
 
         Returns:
             True if hijacking is safe, False otherwise.

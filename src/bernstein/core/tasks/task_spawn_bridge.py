@@ -39,7 +39,7 @@ def should_auto_decompose(
     Args:
         task: The task to check.
         decomposed_task_ids: Set of already-decomposed task IDs.
-        _workdir: Repository root for coupling analysis (part of interface).
+        workdir: Reserved for coupling analysis.
         force_parallel: If True, enable decomposition logic.
 
     Returns:

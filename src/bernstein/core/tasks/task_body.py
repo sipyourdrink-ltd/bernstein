@@ -40,7 +40,7 @@ FORWARDED_FIELDS: frozenset[str] = frozenset(
         "upgrade_details",
         "artifact_spec",
         "completion_signals",
-        "metadata",  # only the ``context_files`` key
+        "metadata",  # only context_files and validated dispatch_hints
     }
 )
 
@@ -84,6 +84,23 @@ def signals_payload(signals: Iterable[Any]) -> list[dict[str, str]]:
     return out
 
 
+def dispatch_hints_payload(task: Task) -> dict[str, int | bool]:
+    """Forward only the known typed hints; other metadata stays local."""
+    if not isinstance(task.metadata, dict):
+        return {}
+    raw = task.metadata.get("dispatch_hints")
+    if not isinstance(raw, dict):
+        return {}
+    hints: dict[str, int | bool] = {}
+    lines = raw.get("estimated_changed_lines")
+    if type(lines) is int and lines >= 0:
+        hints["estimated_changed_lines"] = lines
+    shell = raw.get("requires_shell")
+    if isinstance(shell, bool):
+        hints["requires_shell"] = shell
+    return hints
+
+
 def build_task_body(task: Task, *, plan_mode: bool = False) -> dict[str, Any]:
     """Build the ``TaskCreate`` body for ``task``.
 
@@ -122,11 +139,16 @@ def build_task_body(task: Task, *, plan_mode: bool = False) -> dict[str, Any]:
     # Dropped signals mean the task is never gated on what it declared.
     if task.completion_signals:
         body["completion_signals"] = signals_payload(task.completion_signals)
-    # Issue #3375: only the ``context_files`` key rides this wire; other
-    # loader-internal metadata keys stay server-absent.
+    # Keep the metadata allowlist; generated dispatch hints are data, not permissions.
+    metadata: dict[str, Any] = {}
     context_files = task.metadata.get("context_files") if isinstance(task.metadata, dict) else None
     if isinstance(context_files, list) and context_files:
-        body["metadata"] = {"context_files": [str(p) for p in context_files]}
+        metadata["context_files"] = [str(p) for p in context_files]
+    hints = dispatch_hints_payload(task)
+    if hints:
+        metadata["dispatch_hints"] = hints
+    if metadata:
+        body["metadata"] = metadata
     if plan_mode:
         body["status"] = "planned"
     return body

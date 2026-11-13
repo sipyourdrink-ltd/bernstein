@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
@@ -59,6 +61,45 @@ def test_trusted_install_baseline_produces_verified_scorecard(baseline: SignedBa
     assert scorecard.conclusion == "success"
     assert scorecard.pass_rate_delta == 0.0
     assert scorecard.baseline_bundle_hash == baseline.bundle.bundle_hash()
+
+
+@pytest.mark.parametrize("trust", ["matching", "missing", "wrong"])
+def test_run_cli_compares_install_baseline_only_with_matching_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, baseline: SignedBaseline, trust: str
+) -> None:
+    from bernstein.eval.bench import bench_cli
+
+    monkeypatch.setattr(bench_cli, "_get_suite", lambda _name: baseline.suite)
+    monkeypatch.setattr(bench_cli, "_resolve_adapter", lambda _suite: MockReplayAdapter())
+    stored = tmp_path / "baseline.json"
+    baseline.bundle.save(stored)
+    args = ["run", "fixture", "--stub-signer", "--out", str(tmp_path / "current.json"), "--baseline", str(stored)]
+    if trust != "missing":
+        public = next(iter(baseline.trusted_keys.values())) if trust == "matching" else _keypair()[1]
+        key_path = tmp_path / "trusted.pem"
+        key_path.write_bytes(public)
+        args += ["--trusted-key", f"{baseline.bundle.signer_fingerprint}={key_path}"]
+
+    result = CliRunner().invoke(bench_cli.bench_group, args)
+    assert result.exit_code == 0, result.output
+    if trust == "matching":
+        assert "Benchmark passed successfully" in result.output
+    else:
+        assert "NEUTRAL" in result.output
+        assert "trusted public key" in result.output
+        assert "Benchmark passed successfully" not in result.output
+
+
+def test_run_cli_refuses_a_trusted_key_without_a_baseline(tmp_path: Path) -> None:
+    from bernstein.eval.bench.bench_cli import bench_group
+
+    target = tmp_path / "no-run.json"
+    result = CliRunner().invoke(
+        bench_group, ["run", "unused", "--trusted-key", "fingerprint=unused.pem", "--out", str(target)]
+    )
+    assert result.exit_code == 1
+    assert "--trusted-key requires --baseline" in result.output
+    assert not target.exists()
 
 
 def test_trusted_install_baseline_detects_score_regression(baseline: SignedBaseline) -> None:

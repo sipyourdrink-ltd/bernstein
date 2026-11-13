@@ -196,7 +196,7 @@ def _handle_status(request: Request, _payload: dict[str, Any]) -> JSONResponse:
 
     Args:
         request: Incoming FastAPI request.
-        payload: Full Discord interaction payload.
+        _payload: Reserved parameter.
 
     Returns:
         Ephemeral message with open/running/completed task counts.
@@ -225,8 +225,8 @@ def _handle_stop(_request: Request, _payload: dict[str, Any]) -> JSONResponse:
     asynchronously. The current run drains cleanly before exiting.
 
     Args:
-        request: Incoming FastAPI request.
-        payload: Full Discord interaction payload.
+        _request: Reserved parameter.
+        _payload: Reserved parameter.
 
     Returns:
         Ephemeral confirmation that the shutdown was requested.
@@ -248,8 +248,8 @@ def _handle_cost(_request: Request, _payload: dict[str, Any]) -> JSONResponse:
     Reads cost data from the task store metrics and returns a summary.
 
     Args:
-        request: Incoming FastAPI request.
-        payload: Full Discord interaction payload.
+        _request: Reserved parameter.
+        _payload: Reserved parameter.
 
     Returns:
         Ephemeral message with total spend and per-model breakdown.

@@ -24,6 +24,7 @@ These cover the hard conditions the builtins must satisfy:
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,44 @@ def _sink() -> tuple[list[dict[str, Any]], Any]:
         events.append(event)
 
     return events, emit
+
+
+@pytest.mark.parametrize(
+    ("command", "failure", "diagnostic"),
+    [
+        ("printf synthetic-sensitive", None, "status=nonzero"),
+        (["python3", "synthetic-sensitive"], "timeout", "reason=timeout"),
+        (["python3", "synthetic-sensitive"], "os-error", "error_type=OSError"),
+        (["/synthetic-sensitive"], None, "reason=command_not_allowed"),
+    ],
+)
+def test_command_application_logs_contain_only_metadata(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str | list[str],
+    failure: str | None,
+    diagnostic: str,
+) -> None:
+    from bernstein.adapters import openai_agents_builtins as builtins
+
+    def run(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(argv, 1, stderr=b"synthetic-sensitive")
+        if failure == "os-error":
+            raise OSError("synthetic-sensitive")
+        return subprocess.CompletedProcess(argv, 1, "synthetic-sensitive", "synthetic-sensitive")
+
+    monkeypatch.setattr(builtins, "_run_captured", run)
+    events, emit = _sink()
+    with caplog.at_level("INFO", logger=builtins.__name__):
+        result = run_command_in_workdir(tmp_path, command, emit=emit)
+
+    assert diagnostic in caplog.text
+    assert "synthetic-sensitive" not in caplog.text
+    assert "synthetic-sensitive" in result
+    assert events[0]["type"] == "tool_call"
+    assert events[-1]["type"] == "tool_result"
 
 
 class TestPathConfinement:

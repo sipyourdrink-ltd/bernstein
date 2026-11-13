@@ -62,8 +62,9 @@ def test_sentinel_presence_is_reported_in_the_run(
 
 
 @pytest.mark.parametrize("active_runs", [1, 2])
+@pytest.mark.parametrize("options", [["--json"], ["--format", "sarif"], ["--quiet"]])
 def test_full_chain_detect_record_notify_fires_once_per_run(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch, active_runs: int
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, active_runs: int, options: list[str]
 ) -> None:
     monkeypatch.setattr("time.time", lambda: 1_700_000_000.5)
     received: list[NotificationEvent] = []
@@ -95,9 +96,16 @@ def test_full_chain_detect_record_notify_fires_once_per_run(
     with monkeypatch.context() as sentinel:
         sentinel.setenv(_ENV, "1")
         for _ in range(active_runs):
-            result = CliRunner().invoke(cli, ["govern", "audit", "-w", str(workspace), "--json"])
+            result = CliRunner().invoke(cli, ["govern", "audit", "-w", str(workspace), *options])
             assert result.exit_code == 1, result.output
-            assert any(row["check_id"] == _CHECK for row in json.loads(result.stdout))
+            if "--quiet" in options:
+                assert result.output == ""
+                assert result.stderr == ""
+            elif "sarif" in options:
+                results = json.loads(result.stdout)["runs"][0]["results"]
+                assert any(row["ruleId"] == _CHECK for row in results)
+            else:
+                assert any(row["check_id"] == _CHECK for row in json.loads(result.stdout))
         reports = read_audit_reports(lineage_root)
         assert len(reports) == active_runs
         assert len({report.to_canonical_bytes() for report in reports}) == 1

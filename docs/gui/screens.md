@@ -58,12 +58,17 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 
 - **Source:** `web/src/routes/Approvals.tsx`.
 - **Layout:** 2-column grid `440px 1fr`. Left = queue. Right = selected approval (Why card · Diff · Action bar).
-- **Queue row:** tool name (mono pill), role pill, target line (mono), agent + task footer, risk score chip (low / moderate / elevated / high), wait time.
-- **Why? card:** shield icon + "N reasons · M mitigations". Bulleted reasons, color-dotted by severity.
+- The queue shows the tool, role, submitting session and wait time. Select a request to inspect its arguments and any supplied reasons.
 - **Diff card:** sticky filename + +/− counts, mono 11.5 px, `+` lines green wash, `−` lines red wash, `max-height: 240px` with internal scroll.
-- **Action bar:** primary "Approve once" + danger "Deny" + ghost "Always allow / Always deny" + kbd hints (`A` / `D`).
-- **Endpoints:** `GET /api/v1/approvals/queue?session_id=`, `POST /api/v1/approvals/{approval_id}/resolve` with `{decision: allow|reject|always, reason}`. Updates from `/api/v1/events` increment the sidebar badge.
+- Use "Approve once" or "Deny" for the selected request. With its queue row focused, `A` approves and `D` denies. Up and Down move focus and selection in the queue. The server checks expiry. If the server reports the request has expired or changed, review the refreshed queue before deciding.
+- The screen polls `GET /api/v1/approvals/queue` and sends the selected request's nonce with the `allow` or `reject` decision to `POST /api/v1/approvals/{approval_id}/resolve`.
 - **Replaces TUI widget:** `approval_panel.py`.
+
+## Governance (`/ui/governance`)
+
+- **Source:** `web/src/routes/Governance.tsx`.
+- Choose or drop a run receipt and select **Verify receipt**. The browser sends the original file to `POST /api/v1/governance/verify-receipt`.
+- The screen shows the server's verdict and any errors. A successful check uses the key embedded in the receipt and displays the `integrity-only` tier.
 
 ## Audit (`/ui/audit`)
 

@@ -162,6 +162,8 @@ def test_govern_audit_skip_all_checks_fails_nonzero(tmp_path: Path) -> None:
             "doctor:compliance",
             "--skip",
             "compliance:soc2:encryption_at_rest",
+            "--skip",
+            "doctor:declaration-quarantine",
             "--json",
         ],
     )

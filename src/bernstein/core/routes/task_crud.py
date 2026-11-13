@@ -8,7 +8,7 @@ import logging
 import os
 import subprocess
 import time
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -101,14 +101,14 @@ from bernstein.core.tenanting import (
     requested_tenant_override,
     resolve_tenant_scope,
 )
-from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
+from bernstein.plugins.manager import HookBlockingError, PluginQuarantineUnavailable, get_plugin_manager
 
 logger = logging.getLogger(__name__)
 
 _DRAINING_DETAIL = "Server is draining -- no new claims accepted"
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterable, Sequence
+    from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
     from pathlib import Path
 
     from bernstein.core.models import Task
@@ -172,6 +172,14 @@ def _record_claim_receipt(request: Request, task: Task, claim_path: str) -> None
 def _get_workdir(request: Request) -> Path:
     """Return the repository root from application state."""
     return request.app.state.workdir  # type: ignore[no-any-return]
+
+
+@contextmanager
+def _task_plugin_notification() -> Iterator[None]:
+    try:
+        yield
+    except PluginQuarantineUnavailable:
+        logger.warning("Task plugin notification skipped because declaration quarantine is unavailable")
 
 
 def _checked_claim_session(claimed_by_session: str | None) -> str | None:
@@ -591,12 +599,11 @@ def _run_auto_commit_pre_complete(
             session_id,
             label="session id",
         )
-    except PathContainmentError as exc:
-        logger.info(
-            "auto_commit_pre_complete: task=%s session=%s reason=unsafe_session_path error=%s",
+    except PathContainmentError:
+        logger.warning(
+            "auto_commit_pre_complete: task=%s session=%s reason=unsafe_session_path",
             sanitize_log(str(task.id)),
             sanitize_log(str(session_id)),
-            sanitize_log(str(exc)),
         )
         return
 
@@ -1102,13 +1109,15 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
 
         # Pre-create hook: may block via HookBlockingError (T719)
         try:
-            pm = get_plugin_manager(_get_workdir(request))
+            pm = get_plugin_manager(_get_workdir(request), record_declaration_failures=True)
             pm.fire_pre_task_create(
                 task_id="",  # ID not yet assigned - use empty string
                 role=effective_body.role,
                 title=effective_body.title,
                 description=effective_body.description,
             )
+        except PluginQuarantineUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except HookBlockingError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1215,7 +1224,10 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
             build_log_record(task.id, task, assessment),
         )
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
-        get_plugin_manager(_get_workdir(request)).fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        with _task_plugin_notification():
+            get_plugin_manager(_get_workdir(request), record_declaration_failures=True).fire_task_created(
+                task_id=task.id, role=task.role, title=task.title
+            )
         return task_to_response(task)
 
 
@@ -1264,13 +1276,15 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
 
         # Pre-create hook: skip individual task if blocked (don't fail entire batch)
         try:
-            pm = get_plugin_manager(_get_workdir(request))
+            pm = get_plugin_manager(_get_workdir(request), record_declaration_failures=True)
             pm.fire_pre_task_create(
                 task_id="",
                 role=effective.role,
                 title=effective.title,
                 description=effective.description,
             )
+        except PluginQuarantineUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except HookBlockingError:
             logger.warning("Pre-create hook blocked task '%s' - skipping", sanitize_log(str(effective.title)))
             continue
@@ -1290,7 +1304,10 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
                 build_log_record(task.id, task, task_assessment),
             )
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
-        get_plugin_manager(_get_workdir(request)).fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        with _task_plugin_notification():
+            get_plugin_manager(_get_workdir(request), record_declaration_failures=True).fire_task_created(
+                task_id=task.id, role=task.role, title=task.title
+            )
 
     return BatchCreateResponse(
         created=[task_to_response(t) for t in created_tasks],
@@ -1365,7 +1382,10 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
                     json.dumps({"id": parent.id, "status": "waiting_for_subtasks"}),
                 )
 
-        get_plugin_manager(_get_workdir(request)).fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        with _task_plugin_notification():
+            get_plugin_manager(_get_workdir(request), record_declaration_failures=True).fire_task_created(
+                task_id=task.id, role=task.role, title=task.title
+            )
         return task_to_response(task)
 
 
@@ -1595,11 +1615,12 @@ async def _handle_contract_violation(
         sanitize_log(violation.path),
     )
     sse_bus.publish("task_update", json.dumps({"id": failed_task.id, "status": failed_task.status.value}))
-    get_plugin_manager(_get_workdir(request)).fire_task_failed(
-        task_id=failed_task.id,
-        role=failed_task.role,
-        error=f"contract_violation: {violation.path}",
-    )
+    with _task_plugin_notification():
+        get_plugin_manager(_get_workdir(request), record_declaration_failures=True).fire_task_failed(
+            task_id=failed_task.id,
+            role=failed_task.role,
+            error=f"contract_violation: {violation.path}",
+        )
     _update_file_health(request, failed_task.id, list(failed_task.owned_files), "failure")
     return HTTPException(
         status_code=422,
@@ -1754,11 +1775,12 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                     "task_update",
                     json.dumps({"id": failed_task.id, "status": failed_task.status.value}),
                 )
-                get_plugin_manager(_get_workdir(request)).fire_task_failed(
-                    task_id=failed_task.id,
-                    role=failed_task.role,
-                    error="completion missing summary",
-                )
+                with _task_plugin_notification():
+                    get_plugin_manager(_get_workdir(request), record_declaration_failures=True).fire_task_failed(
+                        task_id=failed_task.id,
+                        role=failed_task.role,
+                        error="completion missing summary",
+                    )
                 _update_file_health(
                     request,
                     failed_task.id,
@@ -1772,9 +1794,10 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
         if refusal is not None:
             return await _finalize_refusal(request, task, refusal, store, sse_bus)
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
-        get_plugin_manager(_get_workdir(request)).fire_task_completed(
-            task_id=task.id, role=task.role, result_summary=result_summary
-        )
+        with _task_plugin_notification():
+            get_plugin_manager(_get_workdir(request), record_declaration_failures=True).fire_task_completed(
+                task_id=task.id, role=task.role, result_summary=result_summary
+            )
 
         # Sigstore/Ed25519 attestation for the task completion (fire-and-forget)
         _try_attest_task_completion(request, task.id, task.role, result_summary)
@@ -1855,7 +1878,10 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "failed"}))
-    get_plugin_manager(_get_workdir(request)).fire_task_failed(task_id=task.id, role=task.role, error=body.reason)
+    with _task_plugin_notification():
+        get_plugin_manager(_get_workdir(request), record_declaration_failures=True).fire_task_failed(
+            task_id=task.id, role=task.role, error=body.reason
+        )
 
     # Update per-file health scores with failure outcome (fire-and-forget)
     _update_file_health(request, task.id, list(task.owned_files), "failure")

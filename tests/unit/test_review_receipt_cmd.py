@@ -76,7 +76,8 @@ def test_emit_then_verify_ok(project: Path) -> None:
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "OK" in result.output
+    assert "OK" in result.stdout
+    assert result.stderr == ""
 
 
 def test_verify_tampered_diff_exit_2(project: Path) -> None:
@@ -99,7 +100,8 @@ def test_verify_tampered_diff_exit_2(project: Path) -> None:
         ],
     )
     assert result.exit_code == 2, result.output
-    assert "MISMATCH" in result.output
+    assert "MISMATCH" in result.stderr
+    assert result.stdout == ""
 
 
 def test_verify_no_receipt_exit_1(project: Path) -> None:
@@ -121,6 +123,33 @@ def test_verify_no_receipt_exit_1(project: Path) -> None:
         ],
     )
     assert result.exit_code == 1, result.output
+
+    assert "NO RECEIPT" in result.stderr
+    assert result.stdout == ""
+
+
+def test_verify_invalid_issue_encoding(project: Path) -> None:
+    (project / "issue.md").write_bytes(b"\xff")
+    (project / "pr.diff").write_text(_DIFF, encoding="utf-8")
+    result = CliRunner().invoke(
+        review_receipt_group,
+        [
+            "verify",
+            "--pr",
+            _PR_URL,
+            "--issue",
+            str(project / "issue.md"),
+            "--diff",
+            str(project / "pr.diff"),
+            "-w",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Cannot read --issue or --diff" in result.stderr
+    assert result.stdout == ""
+    assert isinstance(result.exception, SystemExit)
 
 
 # ---------------------------------------------------------------------------
@@ -195,4 +224,27 @@ def test_verify_chain_rejects_a_ruleset_the_passes_were_not_reviewed_under(proje
     result = _verify_chain(project, rules=moved)
 
     assert result.exit_code == 2, result.output
-    assert "ruleset" in result.output
+    assert "ruleset" in result.stderr
+    assert result.stdout == ""
+
+
+def test_verify_chain_invalid_rules_encoding(project: Path) -> None:
+    _emit_chain(project)
+    rules = project / "rules.md"
+    rules.write_bytes(b"\xff")
+
+    result = _verify_chain(project, rules=rules)
+
+    assert result.exit_code == 1, result.output
+    assert "Cannot read --rules" in result.stderr
+    assert result.stdout == ""
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_verify_chain_missing_rules_path_is_usage_error(project: Path) -> None:
+    _emit_chain(project)
+    result = _verify_chain(project, rules=project / "missing-rules.md")
+
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.stderr
+    assert result.stdout == ""

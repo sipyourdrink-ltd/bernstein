@@ -343,7 +343,7 @@ def record_run_extension_set(journal: EventJournal, workdir: Path) -> LoadedExte
 
     extension_set = build_loaded_extension_set(
         loader=get_loader(get_templates_dir(workdir) / "roles"),
-        plugin_manager=get_plugin_manager(workdir),
+        plugin_manager=get_plugin_manager(workdir, record_declaration_failures=True),
     )
     record_loaded_extension_set(journal, extension_set)
     return extension_set

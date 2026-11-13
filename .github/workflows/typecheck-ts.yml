@@ -126,12 +126,15 @@ jobs:
       matrix:
         include:
           - package: sdk/typescript
+            lockfile: sdk/typescript/package-lock.json
             install: npm ci
             command: npx tsc --noEmit
           - package: packages/vscode
+            lockfile: packages/vscode/package-lock.json
             install: npm ci
             command: npx tsc --noEmit
           - package: web
+            lockfile: web/package-lock.json
             install: npm ci
             command: npx tsc -b
           - package: templates/cloudflare-mcp-server
@@ -150,6 +153,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7 # zizmor: ignore[cache-poisoning]
         with:
           node-version: '24'
+          # The Workers template intentionally has no committed lockfile.
+          package-manager-cache: false
+          cache: ${{ matrix.lockfile && 'npm' || '' }}
+          cache-dependency-path: ${{ matrix.lockfile }}
 
       - name: Install dependencies
         working-directory: ${{ matrix.package }}

@@ -7,10 +7,12 @@ behaviour, plus end-to-end agent dispatch through a real
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from bernstein.core.models import ModelConfig
@@ -25,7 +27,7 @@ from bernstein.core.workflows import (
     WorkflowSpec,
     load_workflow_spec_from_text,
 )
-from bernstein.core.workflows.workflow_runner import load_node_state
+from bernstein.core.workflows.workflow_runner import load_node_state, record_spec_snapshot
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -220,6 +222,74 @@ nodes:
     assert not (runner_workdir / "gated.txt").exists()
 
 
+@pytest.mark.parametrize(("resume", "windows"), [(False, False), (True, False), (False, True)])
+def test_when_timeout_fails_node_and_skips_dependants(runner_workdir: Path, resume: bool, windows: bool) -> None:
+    spec = _spec_from(
+        """
+name: when-deadline
+description: "Check a timed-out condition"
+version: "1.0.0"
+nodes:
+  - id: conditional
+    command: "true"
+    when: "test -f ready"
+  - id: downstream
+    command: "true"
+    depends_on: [conditional]
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    run_id = "when-deadline-test"
+    process = MagicMock(pid=12345)
+    process.communicate.side_effect = subprocess.TimeoutExpired("test -f ready", 30)
+    with (
+        patch("bernstein.core.workflows.workflow_runner.IS_WINDOWS", windows),
+        patch("bernstein.core.workflows.workflow_runner.subprocess.Popen") as popen,
+        patch("bernstein.core.workflows.workflow_runner.kill_process_group", return_value=not windows) as kill_group,
+    ):
+        popen.return_value.__enter__.return_value = process
+        if resume:
+            record_spec_snapshot(runner_workdir, run_id, spec)
+            execution = runner.resume(spec, run_id=run_id)
+        else:
+            execution = runner.run(spec, run_id=run_id)
+
+    popen.assert_called_once()
+    assert popen.call_args.args == ("test -f ready",)
+    assert popen.call_args.kwargs["stdout"] == (subprocess.DEVNULL if windows else subprocess.PIPE)
+    assert popen.call_args.kwargs["start_new_session"] is not windows
+    process.communicate.assert_called_once_with(timeout=30)
+    kill_group.assert_called_once_with(process.pid, sig=9)
+    assert process.kill.called is windows
+    assert not execution.succeeded
+    assert [node.status for node in execution.nodes] == [NodeStatus.FAILED, NodeStatus.SKIPPED]
+    failure = execution.nodes[0]
+    assert failure.error == "when predicate timed out after 30s"
+    assert not failure.condition_skipped
+    persisted = load_node_state(runner_workdir, run_id, "conditional")
+    assert persisted is not None and persisted["status"] == NodeStatus.FAILED
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX shell background syntax")
+def test_when_waits_for_background_output_before_dispatch(runner_workdir: Path) -> None:
+    spec = _spec_from(
+        """
+name: when-background
+description: "Wait for a condition's output producer"
+version: "1.0.0"
+nodes:
+  - id: conditional
+    command: "test -f ready"
+    when: "(sleep 0.1; touch ready) &"
+"""
+    )
+
+    execution = _build_runner(workdir=runner_workdir).run(spec)
+
+    assert execution.succeeded
+    assert (runner_workdir / "ready").is_file()
+
+
 def test_when_true_runs_the_node_normally(runner_workdir: Path) -> None:
     """A passing `when` predicate behaves like an ungated node."""
     spec = _spec_from(
@@ -367,6 +437,32 @@ nodes:
     assert tick.status == NodeStatus.SUCCESS
     assert tick.iterations >= 3
     assert int(counter.read_text().strip()) >= 3
+
+
+def test_loop_timeout_fails_on_the_first_iteration(runner_workdir: Path) -> None:
+    spec = _spec_from(
+        """
+name: loop-deadline
+description: "Check a timed-out loop predicate"
+version: "1.0.0"
+nodes:
+  - id: iterate
+    command: "true"
+    loop:
+      until: "test -f ready"
+      max_iterations: 3
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    with patch.object(runner, "_loop_predicate_passes", side_effect=subprocess.TimeoutExpired("test -f ready", 30)):
+        execution = runner.run(spec)
+
+    assert not execution.succeeded
+    node = execution.nodes[0]
+    assert node.status == NodeStatus.FAILED
+    assert node.iterations == 1
+    assert node.exit_code is None
+    assert node.error == "loop predicate timed out after 30s"
 
 
 def test_loop_max_iterations_exhausted_fails(runner_workdir: Path) -> None:

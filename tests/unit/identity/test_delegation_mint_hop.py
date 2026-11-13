@@ -5,16 +5,13 @@
 receipts".  One test per acceptance criterion, named for the property it
 protects, plus the fail-closed path the issue left to the implementer.
 
-Two tests record limits of the existing model rather than criteria met.
-``test_removing_the_tail_receipt_yields_valid_true_and_one_fewer_hop`` shows the
-one case AC4 cannot reach without a receipt-format change, and
-``test_multi_sibling_grading_limitation`` is deliberately attached to no
-criterion number at all: AC6 asks only that the CLI exit 0 and print the hop
-count, and that is covered on its own.
+The run manifest declares the final chain head and hop count at close (#5352).
+Deleting any receipt, including the tail, must disagree with that declaration.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 
 import pytest
@@ -60,7 +57,9 @@ def _write_manifest(sdd_dir, root_identity_id: str) -> None:
     """
     from bernstein.core.config.manifest import RunManifest, save_manifest
 
-    save_manifest(RunManifest(run_id=RUN, run_root_identity_id=root_identity_id), sdd_dir)
+    manifest = RunManifest(run_id=RUN, run_root_identity_id=root_identity_id)
+    object.__setattr__(manifest, "manifest_hash", manifest.compute_hash())
+    save_manifest(manifest, sdd_dir)
 
 
 def _mint_orchestrator(store):
@@ -94,7 +93,8 @@ def test_chain_over_several_spawned_agents_passes_with_one_hop_per_mint(store, a
         _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"], allowed_files=["src/**"])
     result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
     assert result.hops == 3
-    assert result.valid, result.errors + [str(v) for v in result.authority.violations]
+    assert result.chain_ok and result.authority.ok
+    assert result.incomplete and not result.valid
 
 
 def test_narrowing_grades_from_the_receipt_with_the_store_deleted(store, tmp_path, audit_root):
@@ -136,39 +136,92 @@ def test_narrowing_grades_from_the_receipt_with_the_store_deleted(store, tmp_pat
     assert rows[1].axes == ()
 
 
-def test_removing_the_tail_receipt_yields_valid_true_and_one_fewer_hop(store, audit_root):
-    """AC4 holds for every receipt except the tail, which this model cannot detect (#5352).
+def _declare_head(audit_root, **overrides):
+    from bernstein.core.config.manifest import RunManifest, save_manifest
 
-    The loop removes each receipt in turn.  Removing the first or any interior
-    receipt breaks ``prev_hmac`` linkage and verification fails, which is AC4.
-    Removing the TAIL yields ``valid=True`` with ``hops == n - 1``: the shorter
-    chain is internally consistent, because no receipt records how many hops the
-    run should have had, so an end truncation is indistinguishable from a run
-    that simply delegated one fewer time.
+    lines = _receipt_lines(audit_root)
+    fields = {
+        "run_id": RUN,
+        "delegation_head_hmac": json.loads(lines[-1])["hmac"],
+        "delegation_hop_count": len(lines),
+        **overrides,
+    }
+    manifest = RunManifest.from_dict(fields)
+    object.__setattr__(manifest, "delegation_seal", manifest.compute_delegation_seal(KEY))
+    object.__setattr__(manifest, "manifest_hash", manifest.compute_hash())
+    save_manifest(manifest, audit_root.parent)
+    return manifest
 
-    This is a demonstrated limit of the existing receipt model, not a defect
-    introduced here and not something to engineer around.  Detecting it needs a
-    hop count, a terminator, a sidecar or some other completeness state on the
-    receipt, and #5047 excludes changing the receipt format.  The assertion is
-    written the way the behaviour actually is, so a future format change that
-    closes the gap will trip this test rather than pass unnoticed.
-    """
+
+@pytest.mark.parametrize("removed", [0, 1, 2])
+def test_removing_any_receipt_including_the_tail_fails(store, audit_root, removed):
     parent = _mint_orchestrator(store)
     for index in range(3):
-        _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"], allowed_files=["src/**"])
+        _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"])
     original = _receipt_lines(audit_root)
-    assert len(original) == 3
+    _declare_head(audit_root, run_root_identity_id=parent.id)
     path = audit_root / "delegation" / f"{RUN}.jsonl"
+    path.write_text("\n".join(line for i, line in enumerate(original) if i != removed) + "\n")
 
-    for removed in range(len(original)):
-        kept = [line for index, line in enumerate(original) if index != removed]
-        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
-        result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
-        if removed == len(original) - 1:
-            assert result.valid, "tail truncation is expected to remain undetectable"
-            assert result.hops == len(original) - 1
-        else:
-            assert not result.valid, f"removing receipt {removed} left the chain passing"
+    result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root), "--json"])
+    payload = json.loads(result.output)
+    assert not payload["valid"], payload
+    assert result.exit_code == 1
+    if removed == 2:
+        assert any("declared" in error and "mismatch" in error for error in payload["errors"])
+
+
+def test_no_declared_head_is_incomplete_never_valid(store, audit_root):
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
+    assert not result.valid
+    assert result.chain_ok
+    assert result.incomplete
+
+
+def test_cli_incomplete_exits_three(store, audit_root):
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root), "--json"])
+    assert result.exit_code == 3, result.output
+    payload = json.loads(result.output)
+    assert payload["incomplete"] and not payload["valid"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"delegation_head_hmac": None},
+        {"delegation_head_hmac": "é" * 64},
+        {"delegation_hop_count": True},
+        {"delegation_hop_count": -1},
+        {"delegation_hop_count": 1.5},
+        {"delegation_hop_count": 2},
+        {"delegation_head_hmac": "a" * 64},
+    ],
+)
+def test_cli_declared_head_intact_or_invalid(store, audit_root, fields):
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    _declare_head(audit_root, **fields)
+    result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root), "--json"])
+    payload = json.loads(result.output)
+    assert payload["valid"] is (not fields), payload
+    assert result.exit_code == (0 if not fields else 1)
+
+
+def test_post_close_growth_does_not_replace_the_declared_head(store, audit_root):
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    _declare_head(audit_root)
+    _mint_child(store, "later-child", parent, task_ids=["t2"])
+    result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root), "--json"])
+    payload = json.loads(result.output)
+    assert not payload["valid"]
+    assert result.exit_code == 1
+    assert any("mismatch" in error for error in payload["errors"])
 
 
 def test_parentless_mint_writes_no_receipt_and_leaves_no_broken_chain(store, audit_root):
@@ -229,6 +282,7 @@ def test_cli_verify_exits_zero_and_prints_the_hop_count(store, audit_root, monke
     # scope, and every axis on that receipt is one the comparator reads.
     _mint_child(store, "child-0", parent, task_ids=["t0"])
 
+    _declare_head(audit_root, run_root_identity_id=parent.id)
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
     assert result.exit_code == 0, result.output
     assert "1 hop(s)" in result.output
@@ -256,6 +310,7 @@ def test_a_recorded_file_scope_that_narrows_grades_pass(store, audit_root, monke
     assert verdict.unproven_hops == 0
     assert verdict.hops[0].axes == ()
 
+    _declare_head(audit_root, run_root_identity_id=parent.id)
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
     assert result.exit_code == 0, result.output
 
@@ -297,6 +352,7 @@ def test_siblings_grade_when_the_manifest_declares_the_run_root(store, tmp_path,
             metadata={"run_id": RUN},
         )
 
+    _declare_head(audit_root, run_root_identity_id=root_identity.id)
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
     assert result.exit_code == 0, result.output
     assert "2 hop(s)" in result.output
@@ -324,3 +380,101 @@ def test_without_a_manifest_the_positional_root_rule_is_unchanged(store, audit_r
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
     assert result.exit_code == 3, result.output
     assert "root_claimed_mid_chain" in result.output
+    assert "incomplete" in result.output
+
+
+def test_finalizing_twice_cannot_redeclare_a_changed_chain(store, audit_root):
+    from bernstein.core.config.manifest import RunManifest, load_manifest, save_manifest
+
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    manifest = RunManifest(run_id=RUN)
+    object.__setattr__(manifest, "manifest_hash", manifest.compute_hash())
+    save_manifest(manifest, audit_root.parent)
+    ledger = delegation.DelegationLedger(audit_root, KEY)
+    ledger.finalize_manifest(audit_root.parent, RUN)
+    closed = load_manifest(audit_root.parent, RUN)
+    ledger.finalize_manifest(audit_root.parent, RUN)
+    assert closed == load_manifest(audit_root.parent, RUN)
+    assert closed.manifest_hash == closed.compute_hash()
+    _mint_child(store, "later", parent, task_ids=["t2"])
+    with pytest.raises(ValueError, match="declared delegation head mismatch"):
+        ledger.finalize_manifest(audit_root.parent, RUN)
+    assert closed == load_manifest(audit_root.parent, RUN)
+
+
+@pytest.mark.parametrize("damage", ["checksum", "missing", "malformed"])
+def test_cli_rejects_an_unusable_final_manifest(store, audit_root, damage):
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    _declare_head(audit_root)
+    path = audit_root.parent / "runtime" / "manifests" / f"{RUN}.json"
+    if damage == "checksum":
+        fields = json.loads(path.read_text())
+        fields["delegation_hop_count"] = 2
+        path.write_text(json.dumps(fields))
+    elif damage == "missing":
+        path.unlink()
+    else:
+        path.write_text("[]")
+    result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root), "--json"])
+    payload = json.loads(result.output)
+    assert not payload["valid"]
+    assert result.exit_code == (3 if damage == "missing" else 1)
+
+
+def test_keyless_manifest_rewrite_cannot_hide_tail_truncation(store, audit_root):
+    from dataclasses import replace
+
+    from bernstein.core.config.manifest import load_manifest, save_manifest
+
+    parent = _mint_orchestrator(store)
+    for index in range(3):
+        _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"])
+    _declare_head(audit_root, run_root_identity_id=parent.id)
+    path = audit_root / "delegation" / f"{RUN}.jsonl"
+    lines = path.read_text().splitlines()[:-1]
+    path.write_text("\n".join(lines) + "\n")
+    manifest = load_manifest(audit_root.parent, RUN)
+    forged = replace(manifest, delegation_head_hmac=json.loads(lines[-1])["hmac"], delegation_hop_count=len(lines))
+    forged = replace(forged, manifest_hash=forged.compute_hash())
+    save_manifest(forged, audit_root.parent)
+    result = delegation.verify_run(RUN, root=audit_root, key=KEY)
+    assert not result.valid and not result.chain_ok
+    assert any("seal" in error for error in result.errors)
+
+
+def test_different_validly_keyed_tail_is_rejected(store, audit_root):
+    from dataclasses import replace
+
+    parent = _mint_orchestrator(store)
+    for index in range(2):
+        _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"])
+    _declare_head(audit_root, run_root_identity_id=parent.id)
+    receipts = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY).receipts
+    alternate = replace(receipts[-1], act="alternate.valid.action")
+    body = alternate.body()
+    alternate = replace(alternate, hmac=delegation._compute_hmac(KEY, alternate.prev_hmac, body))
+    path = audit_root / "delegation" / f"{RUN}.jsonl"
+    lines = path.read_text().splitlines()
+    lines[-1] = json.dumps({**body, "hmac": alternate.hmac})
+    path.write_text("\n".join(lines) + "\n")
+    result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
+    assert not result.valid
+    assert result.hops == 2
+    assert any("head mismatch" in error for error in result.errors)
+    assert not any("receipt tampered" in error for error in result.errors)
+
+
+def test_close_refuses_to_rehash_tampered_startup_manifest(store, audit_root):
+    from dataclasses import replace
+
+    from bernstein.core.config.manifest import RunManifest, save_manifest
+
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    manifest = RunManifest(run_id=RUN)
+    manifest = replace(manifest, manifest_hash=manifest.compute_hash())
+    save_manifest(replace(manifest, run_root_identity_id="tampered"), audit_root.parent)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        delegation.DelegationLedger(audit_root, KEY).finalize_manifest(audit_root.parent, RUN)

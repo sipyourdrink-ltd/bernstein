@@ -14,6 +14,8 @@ from typing import Any
 
 import click
 
+from bernstein.core.observability.log_redact import PiiRedactingFilter
+
 # ---------------------------------------------------------------------------
 # Context key for verbosity state
 # ---------------------------------------------------------------------------
@@ -106,6 +108,7 @@ def _configure_bernstein_logger(level: int, fmt: str) -> None:
     logger.propagate = False
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt))
+    handler.addFilter(PiiRedactingFilter())
     logger.handlers = [handler]
 
 

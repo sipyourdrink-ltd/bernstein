@@ -46,7 +46,13 @@ def main(argv: list[str] | None = None) -> int:
     conflicts and ensures the verifier runs with only its declared dependencies
     (cryptography, cbor2 - no bernstein imports).
 
-    Returns the same exit codes: 0=pass, 1=fail, 2=bad args.
+    Args:
+        argv: Arguments for the standalone verifier. If None, use
+            ``sys.argv[1:]``.
+
+    Returns:
+        The verifier's exit status. The verifier reports 0 for pass,
+        1 for failure, and 2 for invalid arguments.
     """
     if argv is None:
         argv = sys.argv[1:]

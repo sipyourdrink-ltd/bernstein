@@ -70,7 +70,7 @@ def serve(use_stdio: bool, http_addr: str | None, server_url: str) -> None:
         asyncio.run(_run_http(server, host, port))
         return
     if not use_stdio:
-        raise click.UsageError("either --stdio or --http :PORT must be enabled")
+        raise click.UsageError("Enable --stdio or provide --http HOST:PORT.")
     asyncio.run(server.run_stdio())
 
 
@@ -103,7 +103,7 @@ def _parse_addr(addr: str) -> tuple[str, int]:
     except ValueError as exc:
         raise click.UsageError(f"invalid port {port_str!r}") from exc
     if not (0 < port < 65536):
-        raise click.UsageError(f"port {port} out of range")
+        raise click.UsageError(f"Port {port} is out of range.")
     return host, port
 
 

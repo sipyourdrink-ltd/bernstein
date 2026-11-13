@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 _KEY = b"k" * 32
@@ -63,7 +64,8 @@ def test_gate_verify_ok(tmp_path: Path, monkeypatch) -> None:
         ["verify", "run-1", "--inputs", str(inputs_file), "--workdir", str(tmp_path)],
     )
     assert result.exit_code == 0, result.output
-    assert "OK" in result.output
+    assert "OK" in result.stdout
+    assert result.stderr == ""
 
 
 def test_gate_verify_detects_mismatch(tmp_path: Path, monkeypatch) -> None:
@@ -79,4 +81,58 @@ def test_gate_verify_detects_mismatch(tmp_path: Path, monkeypatch) -> None:
         gate_group,
         ["verify", "run-1", "--inputs", str(inputs_file), "--workdir", str(tmp_path)],
     )
-    assert result.exit_code != 0
+    assert result.exit_code == 2, result.output
+    assert "MISMATCH" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("payload", "diagnostic"),
+    [(b"{}", "NO RECORD"), (b"{", "Invalid JSON"), (b"\xff", "Invalid JSON")],
+    ids=["missing-record", "invalid-json", "invalid-utf8"],
+)
+def test_gate_verify_bad_input_or_no_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes, diagnostic: str
+) -> None:
+    from bernstein.cli.commands.gate_cmd import gate_group
+
+    _write_key(tmp_path, monkeypatch)
+    inputs_file = tmp_path / "inputs.json"
+    inputs_file.write_bytes(payload)
+    result = CliRunner().invoke(
+        gate_group,
+        ["verify", "run-1", "--inputs", str(inputs_file), "--workdir", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert diagnostic in result.stderr
+    assert result.stdout == ""
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_gate_verify_rejects_non_utf8_json_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.commands.gate_cmd import gate_group
+
+    _write_key(tmp_path, monkeypatch)
+    _emit_record(tmp_path, "run-1", {"diff": "abc"})
+    inputs_file = tmp_path / "inputs.json"
+    inputs_file.write_text(r'{"diff":"\ud800"}', encoding="utf-8")
+    result = CliRunner().invoke(
+        gate_group,
+        ["verify", "run-1", "--inputs", str(inputs_file), "--workdir", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Invalid JSON" in result.stderr
+    assert result.stdout == ""
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_gate_verify_missing_input_path_is_usage_error(tmp_path: Path) -> None:
+    from bernstein.cli.commands.gate_cmd import gate_group
+
+    result = CliRunner().invoke(gate_group, ["verify", "run-1", "--inputs", str(tmp_path / "missing.json")])
+
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.stderr
+    assert result.stdout == ""

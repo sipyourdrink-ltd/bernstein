@@ -385,6 +385,16 @@ class LineageSpine:
 
     The store is safe across threads and processes; appends take an
     exclusive ``flock`` over the run directory.
+
+    Args:
+        root: Parent directory for run-specific stores.
+        run_id: Run identifier used as the store subdirectory.
+        hmac_key: Key used to authenticate lineage rows.
+        hash_profile: Canonicalization profile, defaulting to ``py-json-v1``.
+
+    Raises:
+        ValueError: If the hash profile is unknown.
+        SpineRunIdError: If the run ID is invalid.
     """
 
     def __init__(

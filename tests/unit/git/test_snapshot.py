@@ -111,6 +111,59 @@ def test_take_does_not_disturb_real_index(repo: Path) -> None:
     assert before == after == "staged.txt"
 
 
+def test_linked_worktree_snapshot_preserves_indexes_and_shares_metadata(repo: Path) -> None:
+    linked = repo / "linked"
+    _git("worktree", "add", "--detach", str(linked), cwd=repo)
+    filename = "README.md"
+    (repo / filename).write_text("main staged\n", encoding="utf-8")
+    _git("add", filename, cwd=repo)
+    (linked / filename).write_text("linked staged\n", encoding="utf-8")
+    _git("add", filename, cwd=linked)
+    (linked / filename).write_text("linked unstaged\n", encoding="utf-8")
+
+    snap = SnapshotStore(linked).take(task_id="T-linked", label="linked worktree")
+
+    assert _git("show", f"{snap.tree_sha}:{filename}", cwd=linked) == "linked unstaged\n"
+    assert _git("show", f":{filename}", cwd=linked) == "linked staged\n"
+    assert _git("show", f":{filename}", cwd=repo) == "main staged\n"
+    _git("worktree", "remove", "--force", str(linked), cwd=repo)
+    assert SnapshotStore(repo).list(task_id="T-linked") == [snap]
+
+
+def test_snapshot_from_subdirectory_captures_sibling_edits_and_deletions(repo: Path) -> None:
+    (repo / "remove.txt").write_text("remove me\n", encoding="utf-8")
+    _git("add", "remove.txt", cwd=repo)
+    _git("commit", "-qm", "add tracked sibling", cwd=repo)
+    nested = repo / "nested"
+    nested.mkdir()
+    (nested / "new.txt").write_text("nested\n", encoding="utf-8")
+    (repo / "README.md").write_text("root changed\n", encoding="utf-8")
+    (repo / "remove.txt").unlink()
+
+    snap = SnapshotStore(nested).take(task_id="T-nested")
+
+    assert _git("show", f"{snap.tree_sha}:README.md", cwd=repo) == "root changed\n"
+    assert _git("ls-tree", "-r", "--name-only", snap.tree_sha, cwd=repo).splitlines() == [
+        "README.md",
+        "nested/new.txt",
+    ]
+
+
+def test_linked_worktree_stack_metadata_is_shared(repo: Path) -> None:
+    linked = repo / "linked"
+    _git("branch", "task-first", cwd=repo)
+    _git("branch", "task-second", cwd=repo)
+    _git("worktree", "add", "--detach", str(linked), cwd=repo)
+
+    first = stack_push(repo, task_id="T-stack", branch="task-first")
+    second = stack_push(linked, task_id="T-stack", branch="task-second")
+
+    assert second.parent_branch == "task-first"
+    assert stack_list(repo, task_id="T-stack") == [first, second]
+    assert stack_clear(linked, task_id="T-stack") == 2
+    assert stack_list(repo, task_id="T-stack") == []
+
+
 def test_take_persists_metadata_sidecar(repo: Path) -> None:
     """The metadata JSON sidecar is written alongside the ref."""
     snap = SnapshotStore(repo).take(task_id="T-meta", label="before tool call")

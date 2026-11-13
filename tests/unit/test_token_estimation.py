@@ -32,51 +32,25 @@ class TestBytesPerTokenForFileType:
             ("config.yml", JSON_BYTES_PER_TOKEN),
             ("pyproject.toml", JSON_BYTES_PER_TOKEN),
             ("events.jsonl", JSON_BYTES_PER_TOKEN),
-        ],
-    )
-    def test_json_extensions(self, path: str, expected: float) -> None:
-        assert bytes_per_token_for_file_type(path) == expected
-
-    @pytest.mark.parametrize(
-        "path,expected",
-        [
             ("main.py", CODE_BYTES_PER_TOKEN),
             ("app.ts", CODE_BYTES_PER_TOKEN),
             ("lib.rs", CODE_BYTES_PER_TOKEN),
             ("server.go", CODE_BYTES_PER_TOKEN),
             ("utils.js", CODE_BYTES_PER_TOKEN),
             ("query.sql", CODE_BYTES_PER_TOKEN),
-        ],
-    )
-    def test_code_extensions(self, path: str, expected: float) -> None:
-        assert bytes_per_token_for_file_type(path) == expected
-
-    @pytest.mark.parametrize(
-        "path,expected",
-        [
             ("README.md", TEXT_BYTES_PER_TOKEN),
             ("notes.txt", TEXT_BYTES_PER_TOKEN),
             ("docs.rst", TEXT_BYTES_PER_TOKEN),
             ("output.log", TEXT_BYTES_PER_TOKEN),
             ("data.csv", TEXT_BYTES_PER_TOKEN),
-        ],
-    )
-    def test_text_extensions(self, path: str, expected: float) -> None:
-        assert bytes_per_token_for_file_type(path) == expected
-
-    @pytest.mark.parametrize(
-        "path,expected",
-        [
             ("index.html", TEXT_BYTES_PER_TOKEN),
             ("feed.xml", TEXT_BYTES_PER_TOKEN),
+            ("bundle.min.js", MINIFIED_BYTES_PER_TOKEN),
+            ("style.min.css", MINIFIED_BYTES_PER_TOKEN),
         ],
     )
-    def test_markup_extensions(self, path: str, expected: float) -> None:
+    def test_bytes_per_token_for_extension(self, path: str, expected: float) -> None:
         assert bytes_per_token_for_file_type(path) == expected
-
-    @pytest.mark.parametrize("path", ["bundle.min.js", "style.min.css"])
-    def test_minified_files(self, path: str) -> None:
-        assert bytes_per_token_for_file_type(path) == MINIFIED_BYTES_PER_TOKEN
 
     @pytest.mark.parametrize(
         "path",

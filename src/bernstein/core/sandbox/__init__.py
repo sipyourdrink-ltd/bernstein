@@ -15,6 +15,11 @@ Public API::
 
     from bernstein.core.sandbox import (
         SandboxBackend,
+        SandboxRemovalBackend,
+        SandboxRemovalResult,
+        SandboxRemovalStatus,
+        SandboxReattachResult,
+        SandboxReattachStatus,
         SandboxCapability,
         SandboxSession,
         WorkspaceManifest,
@@ -47,6 +52,11 @@ from bernstein.core.sandbox.backend import (
     ExecResult,
     SandboxBackend,
     SandboxCapability,
+    SandboxReattachResult,
+    SandboxReattachStatus,
+    SandboxRemovalBackend,
+    SandboxRemovalResult,
+    SandboxRemovalStatus,
     SandboxSession,
 )
 from bernstein.core.sandbox.manifest import (
@@ -122,6 +132,11 @@ __all__ = [
     "SandboxCapability",
     "SandboxEnvironment",
     "SandboxPolicy",
+    "SandboxReattachResult",
+    "SandboxReattachStatus",
+    "SandboxRemovalBackend",
+    "SandboxRemovalResult",
+    "SandboxRemovalStatus",
     "SandboxRuntime",
     "SandboxSelectionError",
     "SandboxSession",

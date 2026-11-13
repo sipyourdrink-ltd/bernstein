@@ -253,22 +253,25 @@ def verify_memory(scope: str, namespace: str, workdir: str) -> None:
     record's ``source_hash`` against the lineage spine.
 
     Exit codes: 0 = OK, 1 = no entries / bad input, 2 = tamper detected.
+    Missing entries and tamper diagnostics go to stderr.
     """
     chain = MemoryChain(_chain_root(workdir), hmac_key=load_or_create_audit_key())
     result = chain.verify(MemoryScope(scope), namespace, spine_root=_spine_root(workdir))
-    console.print()
-    console.print(f"[bold]Memory chain[/bold] scope={scope} namespace={namespace} entries={result.count}")
+    summary = f"scope={scope} namespace={namespace} entries={result.count}"
     if result.status is MemoryChainStatus.OK:
+        console.print()
+        console.print(f"[bold]Memory chain[/bold] {summary}")
         console.print("[green]OK[/green] -- chain intact, HMAC tags valid, every source_hash anchored.")
         raise SystemExit(0)
+    click.echo(f"Memory chain {summary}", err=True)
     if result.status is MemoryChainStatus.NO_ENTRIES:
-        console.print("[yellow]NO ENTRIES[/yellow] -- this scope/namespace stored nothing.")
+        click.echo("NO ENTRIES -- this scope/namespace stored nothing.", err=True)
         raise SystemExit(1)
-    console.print(f"[red]TAMPER DETECTED[/red] -- {len(result.errors)} error(s):")
+    click.echo(f"TAMPER DETECTED -- {len(result.errors)} error(s):", err=True)
     for err in result.errors[:50]:
-        console.print(f"  - {err}")
+        click.echo(f"  - {err}", err=True)
     if len(result.errors) > 50:
-        console.print(f"  ... ({len(result.errors) - 50} more)")
+        click.echo(f"  ... ({len(result.errors) - 50} more)", err=True)
     raise SystemExit(2)
 
 

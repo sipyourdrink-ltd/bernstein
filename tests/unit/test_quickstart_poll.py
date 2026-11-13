@@ -11,10 +11,10 @@ exit.
 
 from __future__ import annotations
 
-import time
 from unittest.mock import MagicMock, patch
 
 from bernstein.cli.commands import quickstart_cmd
+from tests.unit._poll_test_clock import PollClock
 
 
 def _resp(items: list[dict]) -> MagicMock:
@@ -31,11 +31,14 @@ def test_quickstart_poll_exits_early_on_the_dict_shaped_status_payload():
         {"id": "t1", "lineage_id": "t1", "title": "a", "role": "backend", "status": "done"},
         {"id": "t2", "lineage_id": "t2", "title": "b", "role": "qa", "status": "done"},
     ]
-    with patch.object(quickstart_cmd.httpx, "get", return_value=_resp(items)):
-        start = time.monotonic()
-        quickstart_cmd._poll_until_done("http://127.0.0.1:1", start + 6.0, expected_total=2)
-        elapsed = time.monotonic() - start
-    assert elapsed < 2.0, f"poll must exit on the first tick when everything is done; took {elapsed:.1f}s"
+    clock = PollClock()
+    with (
+        patch.object(quickstart_cmd.httpx, "get", side_effect=[_resp(items)]) as get,
+        patch.object(quickstart_cmd, "time", clock),
+    ):
+        quickstart_cmd._poll_until_done("http://127.0.0.1:1", 6.0, expected_total=2)
+    assert clock.sleeps == []
+    assert get.call_count == 1
 
 
 def test_quickstart_poll_keeps_waiting_while_a_failed_lineage_may_retry():
@@ -45,11 +48,14 @@ def test_quickstart_poll_keeps_waiting_while_a_failed_lineage_may_retry():
         {"id": "t1", "lineage_id": "t1", "title": "a", "role": "backend", "status": "done"},
         {"id": "t2", "lineage_id": "t2", "title": "b", "role": "qa", "status": "failed"},
     ]
-    with patch.object(quickstart_cmd.httpx, "get", return_value=_resp(items)):
-        start = time.monotonic()
-        quickstart_cmd._poll_until_done("http://127.0.0.1:1", start + 3.0, expected_total=2)
-        elapsed = time.monotonic() - start
-    assert elapsed >= 2.9, f"a failed lineage must keep the poll alive for its retry; exited after {elapsed:.1f}s"
+    clock = PollClock()
+    with (
+        patch.object(quickstart_cmd.httpx, "get", side_effect=[_resp(items)] * 2) as get,
+        patch.object(quickstart_cmd, "time", clock),
+    ):
+        quickstart_cmd._poll_until_done("http://127.0.0.1:1", 3.0, expected_total=2)
+    assert clock.sleeps == [2.0, 2.0]
+    assert get.call_count == 2
 
 
 def test_quickstart_poll_ignores_an_incomplete_snapshot():
@@ -63,8 +69,11 @@ def test_quickstart_poll_ignores_an_incomplete_snapshot():
         {"id": "t1", "lineage_id": "t1", "title": "a", "role": "backend", "status": "done"},
         {"id": "t2", "lineage_id": "t2", "title": "b", "role": "qa", "status": "done"},
     ]
-    with patch.object(quickstart_cmd.httpx, "get", return_value=_resp(items)):
-        start = time.monotonic()
-        quickstart_cmd._poll_until_done("http://127.0.0.1:1", start + 3.0, expected_total=3)
-        elapsed = time.monotonic() - start
-    assert elapsed >= 2.9, f"2 done of 3 seeded must keep the poll alive; exited after {elapsed:.1f}s"
+    clock = PollClock()
+    with (
+        patch.object(quickstart_cmd.httpx, "get", side_effect=[_resp(items)] * 2) as get,
+        patch.object(quickstart_cmd, "time", clock),
+    ):
+        quickstart_cmd._poll_until_done("http://127.0.0.1:1", 3.0, expected_total=3)
+    assert clock.sleeps == [2.0, 2.0]
+    assert get.call_count == 2
