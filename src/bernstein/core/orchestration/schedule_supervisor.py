@@ -531,7 +531,7 @@ class ScheduleSupervisor:
 
         # Step forward through missed windows up to ``now``.
         current_anchor = anchor
-        fires_dispatched = 0
+        catch_up_attempts = 0
         while True:
             try:
                 next_fire = _next_fire_after(parsed, current_anchor)
@@ -540,14 +540,19 @@ class ScheduleSupervisor:
             if next_fire > now_epoch:
                 break
             if schedule.misfire_policy == "catch_up":
-                if fires_dispatched >= self._catch_up_limit:
+                if catch_up_attempts >= self._catch_up_limit:
                     # Fold remaining windows into a counterfactual receipt
                     # so the operator can replay them out-of-band.
                     skipped_windows.append(next_fire)
                     current_anchor = next_fire
                     continue
-                receipts.append(self._dispatch_or_collide(schedule, next_fire))
-                fires_dispatched += 1
+                receipt, deferred = self._dispatch_or_collide(schedule, next_fire)
+                receipts.append(receipt)
+                # The cursor cannot pass a window still awaiting dispatch
+                # or a correction to the schedule's parameters.
+                if deferred or receipt.refused:
+                    break
+                catch_up_attempts += 1
             else:  # skip policy
                 # Only dispatch the most recent missed instant; older
                 # windows are folded into the skipped_windows receipt.
@@ -563,15 +568,16 @@ class ScheduleSupervisor:
                         skipped_windows.append(next_fire)
                         current_anchor = next_fire
                         continue
-                receipts.append(self._dispatch_or_collide(schedule, next_fire))
-                fires_dispatched += 1
+                receipt, _ = self._dispatch_or_collide(schedule, next_fire)
+                receipts.append(receipt)
             current_anchor = next_fire
 
         if skipped_windows and schedule.misfire_policy in {"skip", "catch_up"}:
             # Emit one counterfactual receipt summarising skipped windows.
-            receipts.append(
-                self._record_counterfactual(schedule, skipped_windows, now_epoch),
-            )
+            receipt = self._record_counterfactual(schedule, skipped_windows, now_epoch)
+            receipts.append(receipt)
+            if schedule.misfire_policy == "catch_up":
+                self._store.advance_fire_cursor(schedule.id, float(receipt.fire_time))
 
         return receipts
 
@@ -736,8 +742,8 @@ class ScheduleSupervisor:
         self._persist_receipt(refused)
         return refused
 
-    def _dispatch_or_collide(self, schedule: Schedule, fire_epoch: int) -> FireReceipt:
-        """Evaluate the collision guard, then dispatch or record a collision.
+    def _dispatch_or_collide(self, schedule: Schedule, fire_epoch: int) -> tuple[FireReceipt, bool]:
+        """Return the outcome receipt and whether a collision deferred the window.
 
         With no running probe this is a straight pass-through to
         :meth:`_fire`, preserving the historical dispatch path. With a probe
@@ -748,7 +754,7 @@ class ScheduleSupervisor:
           running fire's recorded checkpoint reference, which is threaded
           into the dispatched event so the handoff survives the dispatch);
         - ``ENQUEUE`` -> defer the window; it is re-evaluated next tick;
-        - ``CANCEL`` -> drop the window for good, advancing ``last_fire_at``
+        - ``CANCEL`` -> drop the window for good, advancing the processed cursor
           so a later idle tick cannot resurrect what was already canceled.
 
         A collision receipt is emitted for every overlap considered, so a
@@ -757,7 +763,7 @@ class ScheduleSupervisor:
         real predecessor, so it is anchored rather than free-floating.
         """
         if self._running_probe is None:
-            return self._fire(schedule, fire_epoch, counterfactual=False)
+            return self._fire(schedule, fire_epoch, counterfactual=False), False
         running = self._running_probe(schedule)
         decision = decide_collision(
             policy=self._collision_policy,
@@ -767,7 +773,7 @@ class ScheduleSupervisor:
         if not (running.running and running.running_count >= self._concurrency_cap):
             # No live collision: dispatch normally (no receipt needed - the
             # fire's own audit entry already records it).
-            return self._fire(schedule, fire_epoch, counterfactual=False)
+            return self._fire(schedule, fire_epoch, counterfactual=False), False
 
         # Capture-head and append are one section: see _AuditChainAdapter.
         if self._chain is None:
@@ -780,13 +786,14 @@ class ScheduleSupervisor:
         if decision.dispatch:
             # SUPERSEDE_WITH_HANDOFF: the stale run is checkpointed elsewhere;
             # the new fire proceeds, resuming from the recorded checkpoint.
-            return self._fire(
+            receipt = self._fire(
                 schedule,
                 fire_epoch,
                 counterfactual=False,
                 resume_from_checkpoint=decision.resume_from_checkpoint,
                 warm_resume=decision.warm_resume,
             )
+            return receipt, False
         # ENQUEUE / CANCEL_NEW: record the decision, dispatch nothing.
         receipt = FireReceipt(
             schedule_id=schedule.id,
@@ -815,7 +822,7 @@ class ScheduleSupervisor:
             # fire would be the same class of lie this change set exists to
             # remove - only on the doctor / status surface instead.
             self._store.advance_fire_cursor(schedule.id, float(fire_epoch))
-        return receipt
+        return receipt, decision.action is CollisionAction.ENQUEUE
 
     def _append_collision(
         self,
