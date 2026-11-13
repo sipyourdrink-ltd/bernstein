@@ -35,6 +35,38 @@ bernstein migrate \
     --dry-run
 ```
 
+To preview a filtered set from a repository other than the current working
+directory, repeat `--exclude` for each repo-relative glob to omit and add
+`--json-output` to inspect the complete plan without spawning tasks:
+
+```bash
+bernstein migrate \
+    --repo-root /path/to/repository \
+    --glob 'src/**/*.py' \
+    --exclude 'src/generated/**/*' \
+    --exclude 'src/**/test_*.py' \
+    --transform 'convert all sync handler functions to async' \
+    --chunk-size 5 \
+    --dry-run \
+    --json-output
+```
+
+For a populated match, the JSON contains `plan` (the migration plan,
+including its configured glob and exclusions), `files` (all selected paths),
+`chunks` (the complete ordered list of file lists), and
+`effective_max_parallel` (the parallelism cap after accounting for the chunk
+count). Paths are resolved against `--repo-root`; sorted target paths are
+partitioned in that order into chunks. By contrast, the regular text dry-run
+preview lists only the first chunk (and a bounded target preview), not every
+chunk. The JSON output includes the entire chunk list. The Rich console
+can wrap long paths in either output mode, so use enough output columns
+to keep JSON strings intact before parsing.
+
+If no files match, the command instead returns a JSON object with `plan_id`,
+`spawned: []`, and a `warning` describing the unmatched glob and repository
+root; it does not return the populated dry-run fields (`plan`, `files`,
+`chunks`, or `effective_max_parallel`).
+
 The CLI takes the glob and transform inline. Reference migration plan
 YAMLs (`templates/migrations/sync_to_async.yaml`,
 `templates/migrations/pytest_asyncio.yaml`) document the same shape the
