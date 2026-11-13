@@ -4,6 +4,10 @@ Bernstein-specific terms used throughout the codebase and documentation.
 
 ---
 
+### Agent Session
+
+An execution context belonging to an individual worker, with its own lifecycle distinct from a run's orchestration lifecycle. The persisted `session.json` is a run-level snapshot, not an individual worker session; see [Session persistence (fast resume)](../operations/session-fast-resume.md).
+
 ### Bulletin Board
 
 An append-only communication channel where agents post findings, blockers, and status updates visible to all other agents in the same run. Implemented in `src/bernstein/core/communication/bulletin.py`.
@@ -56,6 +60,10 @@ policy graph. See [docs/security/lethal-trifecta.md](../security/lethal-trifecta
 for the threat model and default capability table; implementation in
 `src/bernstein/core/security/capability_matrix.py`.
 
+### Mission
+
+A multi-day goal with ordered phases and verification gates. See the [mission timeline](../operations/mission-timeline.md).
+
 ### Janitor
 
 The verification system that checks whether an agent's work is correct - runs lint, type-checks, tests, and other quality gates before accepting work. Distinct from the **Cross-Model Verifier** (which double-checks output by re-running on a second model) and the **Reviewer** (which performs LLM-based review). Implemented in `src/bernstein/core/quality/janitor.py`.
@@ -81,6 +89,10 @@ Automated checks (lint, type-check, tests, coverage) that must pass before work 
 ### Reap
 
 Killing or collecting agents that have exceeded their timeout or become unresponsive. Part of the agent lifecycle management. Implemented in `src/bernstein/core/agents/agent_lifecycle.py`.
+
+### Run
+
+One orchestration of a goal. See the [single-writer run-state actor](../orchestration/run-actor.md).
 
 ### SDD
 
