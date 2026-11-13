@@ -259,6 +259,40 @@ artifact bytes (in addition to the six filesystem/test completion signals):
 
 Each has a closed evaluator; none executes artifact-supplied code.
 
+A `criteria_match` value is a JSON list of predicates. Each predicate has an
+`op`, a `path`, and (except where not needed) a `value`; every predicate in the
+list must pass. For example:
+
+```json
+[
+  {"op": "eq", "path": "status", "value": "ok"},
+  {"op": "ge", "path": "metrics.changed", "value": 1},
+  {"op": "eq", "path": "rows.0.id", "value": 7}
+]
+```
+
+Paths walk nested object keys separated by dots, and use zero-based numeric
+segments to select array entries (`rows.0.id` is the `id` in the first row).
+An empty path (`""`) addresses the whole document; for example,
+`[{"op":"eq","path":"","value":{"status":"ok"}}]` compares the
+entire document with that object.
+
+For a dataset, the document is the array of JSONL rows. Consider these rows:
+
+```json
+{"id": 7, "optional": null}
+{"id": 8}
+```
+
+`0.optional` is present and has the value `null`; `1.optional` is missing.
+Ordinary comparisons (`eq`, `ne`, `contains`, and numeric comparisons) fail
+when a path is missing, rather than treating it as a value to compare. Thus
+`[{"op":"eq","path":"1.optional","value":null}]` fails, while
+`[{"op":"eq","path":"0.optional","value":null}]` passes. Use `exists`
+to test presence explicitly: `[{"op":"exists","path":"1.optional","value":false}]`
+passes for the missing path, and changing the value to `true` tests for a
+present path (including one whose value is null).
+
 Artifact completion enforces `artifact_spec.criteria` without requiring callers
 to repeat those gates in `completion_signals`. It evaluates the declared
 criteria first, then additional artifact completion signals, in declaration
