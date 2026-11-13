@@ -1,17 +1,18 @@
 # Best-of-N delegation
 
-For tasks tagged "complex" or "ambiguous", Bernstein can spawn K
-parallel candidate agents in isolated worktrees, score each candidate
-with automated signals (tests pass, lint clean, runtime) plus an
-LLM-as-judge rubric, and merge only the winner. Losing candidates'
-worktrees are cleaned up automatically.
+Best-of-N can run K parallel candidate agents in isolated worktrees and
+select a winner using automated signals (tests pass, lint clean, runtime)
+and, when configured, an LLM-as-judge rubric. This is not automatic:
+setting a task's `best_of_n` field does not itself start candidate fan-out.
+Worktree cleanup is also optional, and integrating the selected result is
+the caller's responsibility.
 
 ## Why it exists
 
 `task_retry` retries serially: fail → escalate → retry. That works
 for transient errors. It does **not** work for genuinely ambiguous
 tasks where serial retries compound the same wrong assumption. For
-those, K parallel attempts in isolated sandboxes plus a judge is
+those, K parallel attempts in isolated sandboxes plus an optional judge is
 cheaper in wall-clock and tokens than serial retries.
 
 The infrastructure to spawn parallel candidates already existed (git
@@ -20,9 +21,9 @@ the candidate-selection layer on top.
 
 ## How to use it
 
-The plan loader and the task-server API do not accept `best_of_n` yet; a
-`best_of_n:` key on a plan step is ignored. Set it on a `Task` object in
-Python and drive the fan-out with `BestOfNRunner` directly:
+The plan loader and task-server API do not accept `best_of_n` yet; a
+`best_of_n:` key on a plan step is ignored. In Python, set the field on a
+`Task` to opt it in for callers using the task-routing helpers:
 
 ```python
 task = Task(
@@ -34,33 +35,46 @@ task = Task(
 )
 ```
 
-The orchestrator does not fan out best-of-N tasks yet: nothing in `src/`
-constructs `BestOfNRunner`, and `tick_pipeline.partition_best_of_n` (a
-helper that separates best-of-N tasks) has no caller. A caller that runs
-`BestOfNRunner.run(task, n)` gets:
+`is_best_of_n(task)` recognizes the opt-in only when `task.best_of_n > 1`
+and the global `BEST_OF_N.enabled` flag is on. `task_n(task)` returns that
+requested count clamped to the configured maximum (or `1` when the task is
+not opted in). These helpers support routing; they do not start the runner.
+There is currently no orchestration wiring that constructs
+`BestOfNRunner`. A caller must explicitly provide a spawner and awaiter and
+invoke `BestOfNRunner.run(task, n)`. The runner uses that explicit `n`
+(clamped to `max_candidates`); it does not derive the count from the task
+field or check the opt-in helpers itself:
 
-1. The `spawner` callback invoked for n candidates (clamped to
-   `max_candidates`).
-2. The `awaiter` callback returning `CandidateResult`s.
-3. The optional `judge` callback scoring candidates that have a diff
-   (skipped when `judge` is None or `judge_enabled` is false).
-4. `select_best` picking the highest blended score (tests, lint, runtime,
-   judge).
-5. The optional `reclaimer` called for each loser.
+```python
+runner = BestOfNRunner(spawner=spawner, awaiter=awaiter, reclaimer=reclaimer)
+outcome = runner.run(task, n=3)
+```
 
-It returns a `BestOfNOutcome`; merging the winner is left to the caller.
+The runner calls the spawner for the requested candidates, waits for their
+`CandidateResult`s, then selects the highest-ranked candidate. By default,
+selection blends passing tests (0.5), lint (0.2), judge (0.2), and runtime
+(0.1); when no judge score is available, the judge weight is redistributed
+among the other signals. A judge callback is optional. It is not called if
+`judge` is absent or `BEST_OF_N.judge_enabled` is false; candidates are still
+ranked without judge scores. When judging is enabled, empty-diff candidates also skip the judge callback
+and are assigned a `judge_score` of `0.0`.
 
-The cross-model verifier still runs **on the winner** before merge.
-Best-of-N does not replace verification - it picks a candidate to
-verify.
+Cleanup is optional: only if a `reclaimer` callback is supplied does the
+runner call it for each losing candidate. It does not automatically remove
+worktrees otherwise. The returned `BestOfNOutcome` identifies the winner
+and losers, but applying or merging the winner is left to the caller.
+
+The caller should still run the cross-model verifier **on the winner**
+before merging. Best-of-N selects a candidate; it does not replace
+verification.
 
 ## Configuration
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `defaults.BEST_OF_N.enabled` | `false` | Master switch; tasks must set `best_of_n=K` *and* this must be on to fan out. |
+| `defaults.BEST_OF_N.enabled` | `false` | Enables task opt-in helpers to route tasks with `best_of_n=K` to fan-out; it does not start the runner itself. |
 | `defaults.BEST_OF_N.default_candidates` | `1` (off) | Declared but currently unread. |
-| `defaults.BEST_OF_N.max_candidates` | `5` | Hard cap, regardless of what a plan asks for. |
+| `defaults.BEST_OF_N.max_candidates` | `5` | Hard cap on the explicit runner count or helper-derived task count. |
 | `defaults.BEST_OF_N.judge_model` | `haiku` | Declared but currently unread; the judge is whatever `judge=` callable is passed to `BestOfNRunner`. |
 
 These are the `best_of_n` section of the `tuning:` block in `bernstein.yaml`.
