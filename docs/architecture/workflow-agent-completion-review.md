@@ -49,7 +49,7 @@ section 7; the original base observations below are historical.
 ### Revalidation on main 11481be64e5e
 
 Including the existing runner tests, the Python 3.13 baseline reports
-**22 failed, 36 passed**. One additional failure directly tests proposed rule 4: a runner with a working
+**22 failed, 37 passed**. One additional failure directly tests proposed rule 4: a runner with a working
 spawner and no completion authority must fail before dispatch. Current main
 calls the spawner once. The test observes dispatch and dependent execution.
 It does not prescribe which run bookkeeping can be written before refusal.
@@ -61,7 +61,8 @@ The loop test now also covers an agent that exited successfully and reported
 three iterations in both the live and reported-done cases.
 An unacknowledged cancellation leaves the controlled child alive. Reopening
 the task journal restores `STOP_REQ`, its version and its stop summary.
-The original claim session is absent after replay. The runner writes
+The separate native-fact test shows that replay omits the original claim
+session. The runner writes
 `run_complete.json`, so the resume test fails on that marker before it can
 verify reconciliation without redispatch.
 

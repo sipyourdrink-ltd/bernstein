@@ -801,7 +801,6 @@ def test_pending_cancellation_keeps_run_resumable(env: _Env) -> None:
     replayed = env.driver.task(task.id)
     assert replayed is not None and replayed.status is TaskStatus.STOP_REQ
     assert (replayed.version, replayed.result_summary) == (stop_version, stop_summary)
-    assert replayed.claimed_by_session is None, "the journal alone does not recover the original claim session"
     assert sp.procs[0].poll() is None, "precondition: the controlled child never acknowledged the stop"
     assert run_complete_marker_exists(env.workdir, rid) is None, (
         "a pending cancellation cannot mark the workflow complete"
@@ -1133,6 +1132,22 @@ def test_native_task_store_replay_does_not_preserve_attempt_identity(tmp_path: P
         assert again.status is TaskStatus.OPEN, "duplicate create replaced the closed record"
     finally:
         driver.close()
+
+
+def test_native_stop_replay_does_not_preserve_claim_session(env: _Env) -> None:
+    """[NATIVE FACT] The current journal preserves a stop request without its claiming session."""
+    sp = env.spawner(_Plan(mode="block", ignore_sigterm=True, after_launch=_cancel_unacknowledged))
+    task_id = "wf-produce-stop-replay"
+    session = sp.spawn_for_tasks([Task(id=task_id, title="produce", description="produce", role="backend")])
+    task = env.driver.task(task_id)
+    assert task is not None and task.status is TaskStatus.STOP_REQ
+    assert task.claimed_by_session == session.id
+
+    env.driver.restart()
+    replayed = env.driver.task(task_id)
+    assert replayed is not None and replayed.status is TaskStatus.STOP_REQ
+    assert replayed.claimed_by_session is None
+    assert sp.procs[0].poll() is None
 
 
 def test_native_artifact_receipt_binds_task_and_hash_only(tmp_path: Path) -> None:
