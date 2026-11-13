@@ -175,6 +175,9 @@ def _fetch_all() -> dict[str, Any]:
     return {
         "server_unreachable": server_unreachable,
         "cluster": cluster,
+        "remote": not local,
+        "cluster_active_agents": _nonnegative_int(registry, "active_agents"),
+        "cluster_capacity": _nonnegative_int(registry, "total_capacity"),
         "tasks": tasks,
         "status": status,
         "agents": agents,
@@ -188,6 +191,11 @@ def _fetch_all() -> dict[str, Any]:
         "verification_nudge": verification_nudge,
         "activity_summaries": activity_summaries,
     }
+
+
+def _nonnegative_int(data: Any, key: str) -> int | None:
+    value = data.get(key) if isinstance(data, dict) else None
+    return value if type(value) is int and value >= 0 else None
 
 
 def _dashboard_task_rows(data: Any) -> list[dict[str, Any]] | None:
@@ -545,7 +553,10 @@ def _task_retry_count(task: dict[str, Any]) -> int:
         for pattern in _RETRY_PATTERNS:
             match = pattern.search(value)
             if match is not None:
-                return int(match.group(1))
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    continue
     return int(typed) if isinstance(typed, int) else 0
 
 

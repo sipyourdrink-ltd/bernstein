@@ -38,7 +38,9 @@ class DashboardHeader(Static):
     elapsed = reactive(0)
     cost_trend = reactive("")
     max_agents = reactive(6)
-    active_agents = reactive(0)
+    active_agents: reactive[int | None] = reactive(0)
+    remote_cluster = reactive(False)
+    cluster_capacity: reactive[int | None] = reactive(None)
 
     def render(self) -> Table:
         left = Text()
@@ -47,10 +49,14 @@ class DashboardHeader(Static):
         left.append("  Agent Orchestra", style=f"bold {PALETTE.text_dim}")
 
         right = Text()
-        # Agent count control: [-] N/Max [+]
-        right.append("[-]", style=f"bold {PALETTE.text_dim}")
-        right.append(f" Agents {self.active_agents}/{self.max_agents} ", style=f"bold {PALETTE.glow}")
-        right.append("[+]", style=f"bold {PALETTE.text_dim}")
+        if self.remote_cluster:
+            active = self.active_agents if self.active_agents is not None else "-"
+            capacity = self.cluster_capacity if self.cluster_capacity is not None else "-"
+            right.append(f"Cluster agents {active}/{capacity}", style=f"bold {PALETTE.glow}")
+        else:
+            right.append("[-]", style=f"bold {PALETTE.text_dim}")
+            right.append(f" Agents {self.active_agents}/{self.max_agents} ", style=f"bold {PALETTE.glow}")
+            right.append("[+]", style=f"bold {PALETTE.text_dim}")
         right.append("  ", style="")
         if self.git_branch:
             right.append(self.git_branch, style=f"bold {PALETTE.glow}")
@@ -339,7 +345,7 @@ class BigStats(Static):
 
     done = reactive(0)
     total = reactive(0)
-    agents = reactive(0)
+    agents: reactive[int | None] = reactive(0)
     elapsed = reactive(0)
     evolve = reactive(False)
     failed = reactive(0)
@@ -389,7 +395,8 @@ class BigStats(Static):
         t.append("\u258c", style="dim")
         t.append(f" {pct}%", style=f"bold {PALETTE.glow}" if pct == 100 else "bold")
 
-        t.append(f"  {self.agents} agents", style=f"bold {PALETTE.glow}")
+        agents = self.agents if self.agents is not None else "-"
+        t.append(f"  {agents} agents", style=f"bold {PALETTE.glow}")
         if self.failed:
             t.append(f"  {self.failed} failed", style=f"bold {PALETTE.danger}")
 

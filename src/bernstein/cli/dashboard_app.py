@@ -381,7 +381,7 @@ class BernsteinApp(App[None]):
         server and re-execs ``bernstein run`` here, which would shut down the
         central and start a fresh local orchestrator in its place.
         """
-        if action in {"hot_restart", "compare_task"} and self._remote_view():
+        if action in {"hot_restart", "compare_task", "agents_up", "agents_down"} and self._remote_view():
             return False
         return not (isinstance(self.focused, ChatInput) and action != "focus_chat")
 
@@ -603,7 +603,16 @@ class BernsteinApp(App[None]):
             "pending_approval": data.get("pending_approval", 0),
             "verification_nudge": data.get("verification_nudge", {}),
         }
-        self._update_stats(data.get("status"), tasks, data.get("agents", []), costs, monitoring)
+        self._update_stats(
+            data.get("status"),
+            tasks,
+            data.get("agents", []),
+            costs,
+            monitoring,
+            remote=data.get("remote", False),
+            cluster_active_agents=data.get("cluster_active_agents"),
+            cluster_capacity=data.get("cluster_capacity"),
+        )
         self._update_activity(data.get("agents", []))
 
     def _log_phase_transitions(self, status: Any, agents_list: list[Any]) -> None:
@@ -867,6 +876,10 @@ class BernsteinApp(App[None]):
         agents: list[dict[str, Any]],
         costs: dict[str, Any] | None = None,
         monitoring: dict[str, Any] | None = None,
+        *,
+        remote: bool = False,
+        cluster_active_agents: int | None = None,
+        cluster_capacity: int | None = None,
     ) -> None:
         bar = self.query_one("#stats-row", BigStats)
         header = self.query_one(_HEADER_BAR_SELECTOR, DashboardHeader)
@@ -874,7 +887,11 @@ class BernsteinApp(App[None]):
         if sd:
             self._apply_status_data(bar, sd)
 
-        bar.agents = sum(1 for a in agents if a.get("status") not in ("dead", None))
+        bar.agents = (
+            cluster_active_agents if remote else sum(1 for agent in agents if agent.get("status") not in ("dead", None))
+        )
+        header.remote_cluster = remote
+        header.cluster_capacity = cluster_capacity
         bar.elapsed = int(time.time() - self._start_ts)
         bar.evolve = self._evolve
         self.sub_title = _build_runtime_subtitle(
@@ -966,7 +983,7 @@ class BernsteinApp(App[None]):
         header.budget_usd = bar.budget_usd
         header.elapsed = bar.elapsed
         header.cost_trend = _mini_cost_sparkline(list(self._cost_history))
-        if isinstance(sd, dict):
+        if not header.remote_cluster and isinstance(sd, dict):
             prov = sd.get("runtime", {}).get("config_provenance", {})
             if isinstance(prov, dict):
                 header.max_agents = prov.get("max_agents", {}).get("value", header.max_agents)
@@ -1308,6 +1325,8 @@ class BernsteinApp(App[None]):
 
     def action_agents_up(self) -> None:
         """Increase max_agents by 1 via the config API."""
+        if self._remote_view():
+            return
         header = self.query_one(_HEADER_BAR_SELECTOR, DashboardHeader)
         new_val = header.max_agents + 1
         try:
@@ -1319,6 +1338,8 @@ class BernsteinApp(App[None]):
 
     def action_agents_down(self) -> None:
         """Decrease max_agents by 1 (min 1). Running agents finish gracefully."""
+        if self._remote_view():
+            return
         header = self.query_one(_HEADER_BAR_SELECTOR, DashboardHeader)
         new_val = max(1, header.max_agents - 1)
         if new_val == header.max_agents:

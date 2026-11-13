@@ -24,6 +24,7 @@ from textual.widgets import RichLog, Static
 
 from bernstein.cli import dashboard_app
 from bernstein.cli.dashboard_app import BernsteinApp
+from bernstein.cli.dashboard_header import BigStats, DashboardHeader
 from bernstein.cli.dashboard_polling import _fetch_all, _format_cluster_view, _load_cluster_view
 
 REMOTE = "http://10.20.30.40:8112"
@@ -250,7 +251,10 @@ def test_remote_claims_ignore_invalid_status_and_timestamp_values(monkeypatch: p
 
 @pytest.mark.asyncio
 async def test_malformed_legacy_rows_keep_the_remote_dashboard_alive(monkeypatch: pytest.MonkeyPatch) -> None:
-    tasks = [{**_task("broken", "n-1"), "status": []}, {**_task("healthy", "n-1"), "priority": ["bad"]}]
+    tasks = [
+        {**_task("broken", "n-1"), "status": []},
+        {**_task("healthy", "n-1"), "priority": ["bad"], "description": "[RETRY " + "9" * 5000 + "]"},
+    ]
     _serve(
         monkeypatch,
         REMOTE,
@@ -270,6 +274,34 @@ async def test_malformed_legacy_rows_keep_the_remote_dashboard_alive(monkeypatch
         assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
         assert set(app._task_titles) == {"healthy"}
         assert not any("Server not responding" in line.text for line in app.query_one(RichLog).lines)
+
+
+@pytest.mark.asyncio
+async def test_remote_dashboard_counts_use_cluster_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")], "active_agents": 2, "total_capacity": 4},
+            "/status": {"runtime": {"config_provenance": {"max_agents": {"value": 6}}}},
+        },
+    )
+    frame = _fetch_all()
+    monkeypatch.setattr(dashboard_app, "_fetch_all", lambda: frame)
+    app = BernsteinApp()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._apply_data(frame)
+        header = app.query_one(DashboardHeader)
+        assert header.remote_cluster and header.active_agents == 2 and header.cluster_capacity == 4
+        assert app.query_one(BigStats).agents == 2
+        assert app.check_action("agents_up", ()) is False
+        assert app.check_action("agents_down", ()) is False
+
+        app._apply_data({**frame, "cluster_active_agents": None, "cluster_capacity": None})
+        assert header.active_agents is None and header.cluster_capacity is None
+        assert app.query_one(BigStats).agents is None
 
 
 def test_remote_poll_skips_local_runtime_sources(monkeypatch: pytest.MonkeyPatch) -> None:
