@@ -625,6 +625,23 @@ def test_spawn_exception_fails_node_and_blocks_dependents(env: _Env) -> None:
     assert env.sentinel_writes() == 0
 
 
+def test_missing_completion_authority_blocks_before_dispatch(env: _Env) -> None:
+    """[PROPOSED] A configured spawner alone cannot authorize agent dispatch."""
+    spawner = env.spawner(_Plan(mode="block"))
+    # Construct the runner directly so this case still lacks authority when
+    # the shared contract fixture starts supplying one.
+    runner = WorkflowRunner(spawner=spawner, workdir=env.workdir)  # type: ignore[arg-type]
+    run = env.start(lambda: runner.run(_spec(env), run_id="no-authority"))
+    assert run.wait(BOUND_S), "runner did not return without completion authority"
+    run.raise_unexpected()
+    assert spawner.spawn_count() == 0, "agent dispatched without completion authority"
+    assert env.sentinel_writes() == 0
+    produce = run.node("produce")
+    consume = run.node("consume")
+    assert produce is not None and produce.status is NodeStatus.FAILED
+    assert consume is not None and consume.status is NodeStatus.SKIPPED
+
+
 # ---------------------------------------------------------------------------
 # Matrix 3 - deadline survives a runner restart
 # ---------------------------------------------------------------------------
