@@ -107,18 +107,28 @@ means: it rewrites the payloads, so the published head is *not* the exported
 one. A script comparing `head_hash` across an export and a publish of the same
 agent would otherwise reasonably conclude something had been corrupted.
 
-**Failure paths are still prose**, on every one of these. That matters most on
-`verify`, which has two different failures that both exit `1`:
+**Receipt verification failures are JSON with `--as-json`.** A malformed
+receipt exits `1` and emits an error envelope on stdout:
 
-- the receipt verifies *false* - emits `{ok: false, ..., errors: [...]}`
-- the receipt is *malformed* - prints prose
+```json
+{
+  "ok": false,
+  "error": "receipt_malformed",
+  "detail": "<diagnostic text>"
+}
+```
 
-Same exit status, one parseable and one not, and no way to tell which you are
-getting before you try. Those route to different people: "this chain does not
-verify" is a finding about the run, "this file is not a receipt" is a finding
-about the invocation. Until that is closed, a scripted caller has to treat a
-parse failure as a third outcome rather than an error. Tracked in
-[#3996](https://github.com/sipyourdrink-ltd/bernstein/issues/3996).
+`detail` contains diagnostic text; `error` is the machine-readable discriminator.
+A well-formed receipt that fails verification also exits `1`, but emits the
+normal result `{ok: false, head_hash, steps, errors: [...], signed}` instead.
+It has an `errors` array and **no `error` key**. Both outcomes are parseable JSON:
+branch on the `error` discriminator rather than inferring the category from a
+JSON parse failure.
+
+A missing receipt instead exits `2` and emits
+`{"ok": false, "error": "receipt_not_found", "detail": "receipt not found: <path>"}`.
+Successful verification exits `0` with `ok: true` in the normal result.
+Without `--as-json`, verification failures remain human-readable prose.
 
 **The exit code is the verdict, not the payload.** This was true when these
 verbs ignored `--as-json` and it stays true now that they honour it: `verify`
