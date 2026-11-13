@@ -86,7 +86,7 @@ _PATTERN_RULES: Final[tuple[_PatternRule, ...]] = (
         HTTP429Classification.STANDING,
         "credit_cap",
         r"insufficient credit balance|(?:out of|exhausted) (?:your )?credit balance|"
-        r"credit balance (?:is |has been )?(?:zero|too low|exhausted|\$?0(?:\.0+)?)(?:\W|$)",
+        r"credit balance (?:is |has been )?(?:zero|too low|exhausted)\b",
     ),
 )
 
