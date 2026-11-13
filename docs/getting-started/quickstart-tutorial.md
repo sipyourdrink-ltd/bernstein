@@ -13,8 +13,10 @@ isolated git worktrees, and merges verified results back to your branch automati
 **What you'll need**:
 - [ ] Python 3.12 or later
 - [ ] Git (any recent version)
-- [ ] At least one CLI coding agent (Claude Code, Codex, or Gemini - see Step 2)
+- [ ] For this walkthrough, at least one CLI coding agent (Claude Code, Codex, or Gemini - see Step 2)
 - [ ] An API key for your chosen agent
+
+Bernstein also supports other adapter types; see the [adapter catalog](../adapters/index.md) for the options beyond CLI agents.
 
 ---
 
@@ -48,8 +50,7 @@ bernstein, version 3.20.0
 
 ## Step 2: Check for CLI agents
 
-Bernstein does not run models directly - it orchestrates CLI coding agents that you install
-separately. Check which ones are available on your system:
+For this walkthrough, use a CLI coding agent installed separately. Check which ones are available on your system:
 
 ```bash
 bernstein doctor
