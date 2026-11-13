@@ -243,6 +243,22 @@ def test_configuration_footer_does_not_override_retryable_response(tmp_path: Pat
     assert adapter.rate_limit_meter.hits_in_window() == 1
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Your credit balance is $0.00.",
+        "Your monthly spending limit of $20 has been reached.",
+        "You have run out of credit balance for this billing period.",
+    ],
+)
+def test_explicit_final_cap_messages_keep_existing_classification(tmp_path: Path, message: str) -> None:
+    adapter = _ProbeAdapter()
+    with pytest.raises(StandingCapError):
+        _probe_once(adapter, tmp_path / "agent.log", f"HTTP 429: {message}")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 0
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: unrecognised 429 body falls back to retryable
 # ---------------------------------------------------------------------------

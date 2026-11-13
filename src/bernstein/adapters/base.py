@@ -1042,7 +1042,10 @@ class CLIAdapter(ABC):
             # Keep each response with its own continuation lines, excluding
             # startup diagnostics written before it or in the other stream.
             body = self._startup_429_body((stdout_lines, stderr_lines), tail_text)
-            if classify_429(body) is HTTP429Classification.STANDING:
+            if (
+                classify_429(tail_text) is HTTP429Classification.STANDING
+                or classify_429(body, require_explicit_cap=True) is HTTP429Classification.STANDING
+            ):
                 raise StandingCapError(f"{provider_name} hit a standing cap during startup: {tail_text}")
             # Tap the meter once before raising so the panel and the
             # ``rate_limit.hit`` event both see the spawn-time 429.
