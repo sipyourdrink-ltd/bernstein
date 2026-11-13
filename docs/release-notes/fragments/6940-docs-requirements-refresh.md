@@ -1,0 +1,1 @@
+The documentation toolchain pins in `docs/requirements.txt` (what Read the Docs installs) are refreshed to a fresh resolve, including pymdown-extensions 13, python-dateutil 4 and watchdog 7. The site builds with `mkdocs build --strict` on these pins exactly as it did before.
