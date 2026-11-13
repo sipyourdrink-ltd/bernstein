@@ -54,7 +54,9 @@ The dashboard requires a credential: on a loopback bind an operator token is iss
 - The topbar contains a `Single / Fleet` segmented control (defined in `web/src/components/AppShell.tsx`).
 - **Single** - current process only. Reads `/api/v1/*` from one server.
 - **Fleet** - multi-project view, backed by the fleet dashboard subsystem (`src/bernstein/core/fleet/`). Requires a fleet-enabled server.
-- The toggle is a UI affordance only; it does not change auth or routing on its own. Configure the fleet endpoint upstream - see [Fleet (multi-project)](../operations/fleet.md).
+- Enabling Fleet in the header opens the Fleet view (`/fleet`). Disabling it while there returns to Tasks; toggling it from another view leaves you on that view.
+- The **Fleet mode** checkbox in Settings saves the preference to browser storage. The header reads that preference on the next page reload; changing the checkbox does not immediately change the current view.
+- Fleet URLs with `?fleet=1` are shareable: opening one starts in Fleet mode, taking precedence over the locally saved preference. Configure the fleet endpoint upstream - see [Fleet (multi-project)](../operations/fleet.md).
 
 ## Build chip and `/health/deps`
 
