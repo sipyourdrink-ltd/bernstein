@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,16 +17,18 @@ from typing import Any
 
 import pytest
 
+from bernstein.core.orchestration.collision import CollisionPolicy, RunningFireState
 from bernstein.core.orchestration.schedule_projection import project_schedule_fire
 from bernstein.core.orchestration.schedule_supervisor import (
     AUDIT_EVENT_TYPE,
     DEFAULT_CATCH_UP_LIMIT,
+    FireReceipt,
     ScheduleSupervisor,
     _matches_day,
     _next_fire_after,
     load_receipts,
 )
-from bernstein.core.planning.schedule_store import ScheduleStore, parse_cron
+from bernstein.core.planning.schedule_store import Schedule, ScheduleStore, parse_cron
 from bernstein.core.trigger_sources.schedule import normalize_schedule_fire
 
 # ---------------------------------------------------------------------------
@@ -306,6 +309,128 @@ class TestSupervisorTickCatchUpPolicy:
         counterfactuals = [r for r in receipts if r.counterfactual]
         assert len(counterfactuals) == 1
         assert len(counterfactuals[0].skipped_windows) > 0
+
+    def test_catch_up_does_not_dispatch_skipped_windows_after_restart(self, tmp_path: Path) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Every minute", misfire_policy="catch_up")
+        last_fire = int(datetime(2030, 1, 1, 12, tzinfo=UTC).timestamp())
+        store.update_last_fire(schedule.id, float(last_fire))
+        now = last_fire + 180
+        fired: list[Any] = []
+        supervisor = ScheduleSupervisor(store, fired.append, _StubAuditLog(), catch_up_limit=1)
+
+        receipts = supervisor.tick(now=now)
+        assert [receipt.fire_time for receipt in receipts if receipt.dispatched] == [last_fire + 60]
+        assert [receipt.skipped_windows for receipt in receipts if receipt.counterfactual] == [(last_fire + 120, now)]
+
+        restarted_store = ScheduleStore(tmp_path)
+        resumed = restarted_store.get(schedule.id)
+        assert resumed is not None
+        assert resumed.last_fire_at == last_fire + 60
+        restarted = ScheduleSupervisor(restarted_store, fired.append, _StubAuditLog(), catch_up_limit=1)
+
+        assert restarted.tick(now=now + 1) == []
+        assert [event.raw_payload["fire_time"] for event in fired] == [last_fire + 60]
+        assert [receipt.fire_time for receipt in restarted.tick(now=now + 60) if receipt.dispatched] == [now + 60]
+
+    def test_catch_up_retries_deferred_window_before_applying_cap(self, tmp_path: Path) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Every minute", misfire_policy="catch_up")
+        last_fire = int(datetime(2030, 1, 1, 12, tzinfo=UTC).timestamp())
+        store.update_last_fire(schedule.id, float(last_fire))
+        now = last_fire + 180
+        running = True
+
+        def probe(_schedule: Schedule) -> RunningFireState:
+            return RunningFireState(running=running, running_count=int(running), fire_id="previous")
+
+        fired: list[Any] = []
+        supervisor = ScheduleSupervisor(
+            store,
+            fired.append,
+            _StubAuditLog(),
+            catch_up_limit=1,
+            running_probe=probe,
+            collision_policy=CollisionPolicy.ENQUEUE,
+        )
+
+        busy_receipts = supervisor.tick(now=now)
+        assert len(busy_receipts) == 1
+        assert busy_receipts[0].fire_time == last_fire + 60
+        assert not busy_receipts[0].dispatched
+        assert not busy_receipts[0].counterfactual
+        assert fired == []
+
+        running = False
+        idle_receipts = supervisor.tick(now=now)
+        assert [receipt.fire_time for receipt in idle_receipts if receipt.dispatched] == [last_fire + 60]
+        assert [receipt.skipped_windows for receipt in idle_receipts if receipt.counterfactual] == [
+            (last_fire + 120, now)
+        ]
+
+    def test_catch_up_retries_first_deferred_window_after_restart(self, tmp_path: Path) -> None:
+        store = ScheduleStore(tmp_path)
+        now = int(datetime(2030, 1, 1, 12, tzinfo=UTC).timestamp())
+        store.add(cron="* * * * *", goal="Every minute", misfire_policy="catch_up", now=now - 1)
+        fired: list[Any] = []
+        busy = ScheduleSupervisor(
+            store,
+            fired.append,
+            _StubAuditLog(),
+            running_probe=lambda _schedule: RunningFireState(running=True, running_count=1, fire_id="previous"),
+            collision_policy=CollisionPolicy.ENQUEUE,
+        )
+        assert [receipt.fire_time for receipt in busy.tick(now=now)] == [now]
+        assert fired == []
+
+        restarted = ScheduleSupervisor(ScheduleStore(tmp_path), fired.append, _StubAuditLog(), catch_up_limit=1)
+        receipts = restarted.tick(now=now + 60)
+
+        assert [receipt.fire_time for receipt in receipts if receipt.dispatched] == [now]
+        assert [receipt.skipped_windows for receipt in receipts if receipt.counterfactual] == [(now + 60,)]
+
+    def test_catch_up_recovers_after_counterfactual_write_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Every minute", misfire_policy="catch_up")
+        last_fire = int(datetime(2030, 1, 1, 12, tzinfo=UTC).timestamp())
+        store.update_last_fire(schedule.id, float(last_fire))
+        now = last_fire + 180
+        fired: list[Any] = []
+        supervisor = ScheduleSupervisor(store, fired.append, _StubAuditLog(), catch_up_limit=1)
+        write_receipt = supervisor._persist_receipt
+
+        def fail_counterfactual(receipt: FireReceipt) -> None:
+            if receipt.counterfactual:
+                raise OSError("could not publish counterfactual")
+            write_receipt(receipt)
+
+        monkeypatch.setattr(supervisor, "_persist_receipt", fail_counterfactual)
+        supervisor.tick(now=now)
+        assert [event.raw_payload["fire_time"] for event in fired] == [last_fire + 60]
+
+        restarted = ScheduleSupervisor(ScheduleStore(tmp_path), fired.append, _StubAuditLog(), catch_up_limit=1)
+        receipts = restarted.tick(now=now + 1)
+
+        assert [event.raw_payload["fire_time"] for event in fired] == [last_fire + 60]
+        assert [receipt.skipped_windows for receipt in receipts if receipt.counterfactual] == [(last_fire + 120, now)]
+        assert restarted.tick(now=now + 2) == []
+
+    @pytest.mark.parametrize("cursor", [None, "invalid"])
+    def test_catch_up_tolerates_invalid_saved_cursor(self, tmp_path: Path, cursor: str | None) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Every minute", misfire_policy="catch_up")
+        schedule_path = store.directory / f"{schedule.id}.json"
+        data = json.loads(schedule_path.read_text(encoding="utf-8"))
+        data["extra"]["fire_cursor_at"] = cursor
+        schedule_path.write_text(json.dumps(data), encoding="utf-8")
+        supervisor = ScheduleSupervisor(store, lambda _event: None, _StubAuditLog(), catch_up_limit=1)
+        now = int(datetime(2030, 1, 1, 12, tzinfo=UTC).timestamp())
+
+        assert [receipt.fire_time for receipt in supervisor.tick(now=now) if receipt.dispatched] == [now]
+        receipts = supervisor.tick(now=now + 180)
+        assert [receipt.skipped_windows for receipt in receipts if receipt.counterfactual] == [(now + 120, now + 180)]
 
 
 @pytest.mark.parametrize(("previous_year", "next_year"), [(2024, 2028), (2096, 2104)])
