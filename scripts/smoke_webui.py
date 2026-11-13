@@ -366,7 +366,7 @@ def check_task_creation_failures(page: Page, base: str, headers: dict[str, str])
         expect(role).to_be_enabled()
         role.fill("qa")
         submit.click()
-        expect(form.get_by_role("alert")).to_contain_text("Check the task list before retrying")
+        expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
         expect(submit).to_be_disabled()
         assert len(saved_ids) == 1
         expect(page.request.get(f"{tasks_url}/{saved_ids[0]}", headers=headers)).to_be_ok()
@@ -379,7 +379,7 @@ def check_task_creation_failures(page: Page, base: str, headers: dict[str, str])
             form.get_by_label("Title").fill(title)
             form.get_by_label("Prompt").fill("Treat a malformed response as unconfirmed.")
             submit.click()
-            expect(form.get_by_role("alert")).to_contain_text("Check the task list before retrying")
+            expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
             expect(submit).to_be_disabled()
             cancel.click()
             expect(trigger).to_be_focused()
@@ -405,7 +405,7 @@ def check_task_creation_during_initial_list(page: Page, base: str, headers: dict
         form.get_by_label("Title").fill(title)
         form.get_by_label("Prompt").fill("Check the refreshed list after response loss.")
         form.get_by_role("button", name="Create task", exact=True).click()
-        expect(form.get_by_role("alert")).to_contain_text("Check the task list before retrying")
+        expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
 
     page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
     page.route(tasks_url, unconfirmed_create)
@@ -437,6 +437,49 @@ def check_task_creation_during_initial_list(page: Page, base: str, headers: dict
         page.unroute(tasks_url, unconfirmed_create)
         page.unroute(list_url)
         page.unroute(events_url)
+
+
+def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = "Task saved outside the current filter"
+    saved_ids: list[str] = []
+
+    def respond_to_create(route: Route) -> None:
+        response = route.fetch()
+        assert response.status == 201
+        task_id = response.json()["id"]
+        assert route.request.post_data_json["id"] == task_id
+        saved_ids.append(task_id)
+        route.fulfill(status=500, json={"detail": "The task response could not be delivered."})
+
+    page.goto(f"{base}/ui/tasks")
+    page.get_by_role("button", name="Failed").click()
+    expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    page.get_by_role("button", name="Create task", exact=True).last.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill("Look up the exact task despite response loss.")
+    page.route(tasks_url, respond_to_create, times=1)
+    try:
+        form.get_by_role("button", name="Create task", exact=True).click()
+        expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
+        assert len(saved_ids) == 1
+        task_url = f"{tasks_url}/{saved_ids[0]}"
+        page.route(task_url, lambda route: route.fulfill(status=404, json={"detail": "Not found"}), times=1)
+        check = form.get_by_role("button", name="Check task", exact=True)
+        check.click()
+        expect(form.get_by_role("alert")).to_contain_text("The task is not visible yet")
+        expect(form.get_by_role("button", name="Create task", exact=True)).to_be_disabled()
+        check.click()
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        expect(page.request.get(task_url, headers=headers)).to_be_ok()
+        assert len(saved_ids) == 1
+        page.keyboard.press("Escape")
+        expect(header).to_be_focused()
+        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+    finally:
+        page.unroute(tasks_url, respond_to_create)
 
 
 def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
@@ -695,6 +738,7 @@ def main() -> None:
             check_approvals(page, base, headers, approvals, queue_dir)
             check_task_creation_failures(page, base, headers)
             check_task_creation_during_initial_list(page, base, headers)
+            check_unconfirmed_task_lookup(page, base, headers)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)

@@ -4,7 +4,8 @@ Use `bernstein_create_task` to queue a brief for a worker without starting a
 planner or agent. In the web UI, open **Tasks** and select **Create task** or
 **New from prompt**. Enter a title and prompt, with a role if needed. A
 confirmed creation opens the new task. If creation cannot be confirmed,
-dismiss the message and check the refreshed task list before retrying.
+select **Check task** before retrying. The lookup works even when the active
+list filter would hide the task.
 
 The equivalent REST call is `POST /api/v1/tasks` (legacy
 `POST /tasks` remains supported):
