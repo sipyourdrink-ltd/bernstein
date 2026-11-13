@@ -59,9 +59,10 @@ attempt-bound acceptance. It leaves the accepted-artifact positive control open.
 The loop test now also covers an agent that exited successfully and reported
 `DONE` without acceptance. The runner evaluates the predicate and dispatches
 three iterations in both the live and reported-done cases.
-An unacknowledged cancellation leaves the controlled child alive and the task
-in `STOP_REQ`, yet the runner writes `run_complete.json`. The new resume test
-fails on that marker before it can verify reconciliation without redispatch.
+An unacknowledged cancellation leaves the controlled child alive. Reopening
+the task journal restores `STOP_REQ`, its version and its stop summary, yet
+the runner writes `run_complete.json`. The resume test fails on that marker
+before it can verify reconciliation without redispatch.
 
 The crash cases now prove a live child and no terminal checkpoint before
 restart. The second hook runs before the terminal checkpoint. Coverage

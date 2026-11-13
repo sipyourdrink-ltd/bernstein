@@ -794,6 +794,13 @@ def test_pending_cancellation_keeps_run_resumable(env: _Env) -> None:
     run.raise_unexpected()
     task = env.driver.task(task.id)
     assert task is not None and task.status is TaskStatus.STOP_REQ
+    assert task.claimed_by_session == sp.sessions[0].id
+    stop_version = task.version
+    stop_summary = task.result_summary
+    env.driver.restart()
+    replayed = env.driver.task(task.id)
+    assert replayed is not None and replayed.status is TaskStatus.STOP_REQ
+    assert (replayed.version, replayed.result_summary) == (stop_version, stop_summary)
     assert sp.procs[0].poll() is None, "precondition: the controlled child never acknowledged the stop"
     assert run_complete_marker_exists(env.workdir, rid) is None, (
         "a pending cancellation cannot mark the workflow complete"
