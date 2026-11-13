@@ -30,9 +30,33 @@ bernstein scaffold "CLI to convert markdown to PDF" --template python-cli
 # Custom output directory (defaults to ./<slug-of-prompt>)
 bernstein scaffold "static landing page" --output ./my-site
 
-# Allow writing into a non-empty directory
-bernstein scaffold "habit tracker" --output ./existing --force
+# Force rendering into an existing directory
+bernstein scaffold "Build a habit tracker" --output ./existing --force
 ```
+
+Without `--force`, scaffold refuses a destination that already contains
+anything; it does not write the template files there. With `--force`, each
+path named by the selected template is written, replacing an existing file at
+the same path. Other files already in the directory are left alone, not
+removed.
+
+For example, suppose `./existing` already contains a hand-written
+`README.md` and a separate `notes.txt`:
+
+```text
+./existing/README.md   # your old readme
+./existing/notes.txt   # unrelated notes
+```
+
+Running the forced command above replaces `README.md` with the generated
+readme and leaves `notes.txt` unchanged. Without `--force`, the nonempty
+directory is refused instead.
+
+The default destination is derived from the prompt (for example, the prompt
+"Build a habit tracker" defaults to `./build-a-habit-tracker`). The project
+or package slug used inside generated files is derived separately from the
+final destination directory name and sanitized. Thus with `--output
+./my-site`, generated package names use `my-site`, not a slug of the prompt.
 
 The output is a populated directory with a working entry point,
 a `README.md` that paraphrases the prompt, and the next-step
@@ -42,9 +66,8 @@ command printed at the end:
 Scaffolded python-cli into /path/to/habit-tracker
   - README.md
   - pyproject.toml
-  - src/habit_tracker/__init__.py
-  - src/habit_tracker/cli.py
-  - tests/test_cli.py
+  - src/habit-tracker/__init__.py
+  - src/habit-tracker/main.py
 
 Next: cd /path/to/habit-tracker && cat README.md
 ```
@@ -53,12 +76,13 @@ Next: cd /path/to/habit-tracker && cat README.md
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `PROMPT` | required | The free-form prompt; drives `auto` template pick and slug. |
+| `PROMPT` | required | The free-form prompt; drives `auto` template selection and the default destination name. |
 | `--template NAME` | `auto` | One of the registered templates. `auto` runs the keyword heuristic. |
-| `--output DIR` | `./<slug-of-prompt>` | Destination directory. |
-| `--force` | off | Allow writing into a non-empty directory. |
+| `--output DIR` | `./<slug-of-prompt>` | Destination directory. The generated project/package slug is sanitized from the final destination directory name. |
+| `--force` | off | Permit rendering into a non-empty destination; matching template paths are overwritten, unrelated files are preserved. |
 
-Run `bernstein scaffold --help` to see the live template list.
+Run `bernstein scaffold --help` to see the live template list. The current
+built-in registry contains `python-cli`, `node-cli`, and `static-site`.
 
 ## Limitations
 
@@ -67,9 +91,9 @@ Run `bernstein scaffold --help` to see the live template list.
   `--template NAME` rather than rely on `auto`.
 - Templates are static. Variable substitution is limited to slug
   and prompt; richer parameterisation lives in follow-up slices.
-- No git initialisation, no commit, no remote push. The generator
-  writes files and returns; downstream tooling decides what to do
-  with them.
+- The generator does not create or initialize a Git repository, make a
+  commit, or push to a remote. It writes files and returns; downstream
+  tooling decides what to do with them.
 
 ## Related
 
