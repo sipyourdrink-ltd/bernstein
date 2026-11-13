@@ -95,7 +95,9 @@ def test_model_unreachable_exit_code_and_hint(runner: CliRunner) -> None:
     result = runner.invoke(cmd, [])
     assert result.exit_code == exit_code_for(ErrorCategory.MODEL_UNREACHABLE)
     assert result.exit_code == 68
-    assert "BERNSTEIN_OFFLINE" in result.stderr
+    assert "bernstein doctor extended" in result.stderr
+    assert "--provider" not in result.stderr
+    assert "BERNSTEIN_OFFLINE" not in result.stderr
 
 
 def test_timeout_exit_code_and_hint(runner: CliRunner) -> None:

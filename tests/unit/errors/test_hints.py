@@ -74,7 +74,9 @@ def test_hint_dependency_missing_works_without_command() -> None:
 def test_hint_model_unreachable_mentions_provider_and_offline() -> None:
     text = _render(hint_for(ErrorCategory.MODEL_UNREACHABLE, {"provider": "anthropic"}))
     assert "anthropic" in text
-    assert "BERNSTEIN_OFFLINE" in text
+    assert "bernstein doctor extended --provider anthropic" in text
+    # BERNSTEIN_OFFLINE skips the doctor's probes; it never switched to the mock adapter.
+    assert "BERNSTEIN_OFFLINE" not in text
 
 
 def test_hint_timeout_includes_seconds_when_supplied() -> None:
