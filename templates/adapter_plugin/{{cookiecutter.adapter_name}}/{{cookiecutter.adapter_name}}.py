@@ -1,132 +1,127 @@
-"""{{ cookiecutter.adapter_name }} CLI adapter for Bernstein."""
+"""{{ cookiecutter.adapter_name }} CLI adapter for Bernstein.
+
+{{ cookiecutter.description }}
+
+Declare the adapter under the ``bernstein.adapters`` entry-point group and
+Bernstein discovers it at runtime:
+
+    [project.entry-points."bernstein.adapters"]
+    {{ cookiecutter.adapter_name }} = "{{ cookiecutter.adapter_name }}:{{ cookiecutter.adapter_class }}"
+
+Then ``bernstein run --cli {{ cookiecutter.adapter_name }} plan.yaml`` routes tasks to it.
+"""
 
 from __future__ import annotations
 
 import logging
 import subprocess
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
+from bernstein.adapters.env_isolation import build_filtered_env
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.models import ModelConfig
 
 logger = logging.getLogger(__name__)
 
+#: The executable this adapter launches. Change it to the name of your CLI.
+CLI_BINARY = "{{ cookiecutter.adapter_name }}"
+
+#: Environment variables your CLI needs (API keys, endpoints). The agent
+#: process gets a filtered environment, so a variable that is not named here
+#: and is not in the base allowlist does not reach it.
+SECRET_ENV: tuple[str, ...] = ()
+
 
 class {{ cookiecutter.adapter_class }}(CLIAdapter):
-    """{{ cookiecutter.adapter_name }} CLI adapter.
+    """Spawn and monitor {{ cookiecutter.adapter_name }} CLI sessions.
 
-    {{ cookiecutter.description }}
-
-    Args:
-        workdir: Project working directory.
-        session_id: Unique agent session identifier.
-        **kwargs: Additional adapter configuration.
+    The contract is ``spawn``: launch the CLI without waiting for it, and
+    return a ``SpawnResult`` with the process id and the log file. Bernstein
+    reads the log and watches the process from there.
     """
-
-    name = "{{ cookiecutter.adapter_name }}"
-
-    def __init__(
-        self,
-        workdir: Path,
-        session_id: str,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(workdir, session_id, **kwargs)
-        self._cli_path = kwargs.get("cli_path", "{{ cookiecutter.adapter_name }}")
 
     def spawn(
         self,
-        task_description: str,
-        files: list[str] | None = None,
-        model: str | None = None,
-        effort: str | None = None,
-        timeout: int | None = None,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
+        multimodal_context: Any | None = None,
     ) -> SpawnResult:
-        """Spawn {{ cookiecutter.adapter_name }} agent for a task.
+        """Launch a {{ cookiecutter.adapter_name }} agent process.
 
         Args:
-            task_description: Task description to execute.
-            files: Optional list of files to include in context.
-            model: Optional model override.
-            effort: Optional effort level override.
-            timeout: Optional timeout in seconds.
+            prompt: Task description passed to the agent.
+            workdir: Working directory for the agent process.
+            model_config: Model and effort settings chosen by the orchestrator.
+            session_id: Unique identifier for this agent session.
+            mcp_config: Optional MCP server definitions. Ignored by this template.
+            timeout_seconds: Hard kill timeout in seconds. 0 disables it.
+            task_scope: Task scope hint. Ignored by this template.
+            budget_multiplier: Budget hint. Ignored by this template.
+            system_addendum: Extra system text. Ignored by this template.
+            multimodal_context: Attachments. Refused unless the adapter is
+                registered as multimodal-capable.
 
         Returns:
-            SpawnResult with agent PID and session info.
+            SpawnResult with the process PID and log file path.
+
+        Raises:
+            RuntimeError: If the CLI is not found in PATH or cannot be executed.
         """
-        # Build command
-        cmd = [self._cli_path, "run"]
+        self.refuse_multimodal_if_needed(multimodal_context)
+        self.enforce_network_policy()
+        log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Add task description
-        cmd.extend(["--description", task_description])
+        cmd = self.build_command(prompt, model_config)
+        logger.debug("Spawning %s for session %s", CLI_BINARY, session_id)
 
-        # Add files if provided
-        if files:
-            for f in files:
-                cmd.extend(["--file", f])
+        with log_path.open("w") as log_file:
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=workdir,
+                    env=build_filtered_env(SECRET_ENV),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"{CLI_BINARY} not found in PATH") from exc
+            except PermissionError as exc:
+                raise RuntimeError(f"Permission denied executing {CLI_BINARY}: {exc}") from exc
 
-        # Add model if provided
-        if model:
-            cmd.extend(["--model", model])
+        result = SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
+        if timeout_seconds > 0:
+            result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
+        return result
 
-        # Add effort if provided
-        if effort:
-            cmd.extend(["--effort", effort])
+    def build_command(self, prompt: str, model_config: ModelConfig) -> list[str]:
+        """Build the argv for one task. Adapt the flags to your CLI.
 
-        # Set timeout
-        if timeout is None:
-            timeout = self._default_timeout
-
-        logger.info("Spawning %s agent for task", self.name)
-        logger.debug("Command: %s", " ".join(cmd))
-
-        # Spawn process
-        # Note: In production, use proper process management
-        # This is a template - adapt to your adapter's actual CLI
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=self._workdir,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-
-            return SpawnResult(
-                success=result.returncode == 0,
-                pid=None,  # Template - replace with actual PID tracking
-                output=result.stdout,
-                error=result.stderr,
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning("%s agent timed out after %ds", self.name, timeout)
-            return SpawnResult(
-                success=False,
-                pid=None,
-                output="",
-                error=f"Timeout after {timeout}s",
-            )
-        except Exception as exc:
-            logger.error("%s agent spawn failed: %s", self.name, exc)
-            return SpawnResult(
-                success=False,
-                pid=None,
-                output="",
-                error=str(exc),
-            )
-
-    def detect_tier(self) -> Any | None:
-        """Detect the pricing tier for this adapter.
+        Args:
+            prompt: Task description passed to the agent.
+            model_config: Model and effort settings chosen by the orchestrator.
 
         Returns:
-            Tier information or None if unavailable.
+            The command to execute, binary first.
         """
-        # Template - implement based on your adapter's tier detection
-        # Return something like:
-        # return TierInfo(
-        #     tier=Tier.STANDARD,
-        #     is_active=True,
-        #     rate_limit=RateLimit(requests_per_minute=60),
-        # )
-        return None
+        cmd = [CLI_BINARY, "run", "--prompt", prompt]
+        if model_config.model:
+            cmd.extend(["--model", model_config.model])
+        return cmd
+
+    def name(self) -> str:
+        """Human-readable adapter name shown in ``bernstein ps`` and logs."""
+        return "{{ cookiecutter.adapter_class }}"
