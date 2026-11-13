@@ -60,7 +60,20 @@ print(manifest.ships.agents, manifest.ships.skills, manifest.ships.rules)
 applies the same schema, for callers that read the YAML
 themselves.
 
-Manifest example (`team-hub.yaml`):
+Minimal valid manifest (`team-hub.yaml`):
+
+```yaml
+name: acme-platform-hub
+version: "1"
+compatibility:
+  bernstein: ">=3.18"
+```
+
+`name`, `version`, and `compatibility.bernstein` are required. `ships`
+is optional; if omitted, `agents`, `skills`, and `rules` each default
+to an empty list. The buckets within `ships` are also optional and
+independently default to empty lists. For example, this one-bucket
+manifest has an empty `agents` and `rules` list:
 
 ```yaml
 name: acme-platform-hub
@@ -68,20 +81,19 @@ version: "1"
 compatibility:
   bernstein: ">=3.18"
 ships:
-  agents:
-    - reviewer
-    - release-manager
   skills:
-    - ci-discipline
-  rules:
-    - prefer-typing.md
-    - no-stale-todo.md
+    - team/skills/deploy-prod/
 ```
 
-`name`, `version`, and `compatibility` are required. `name` is a
-lowercase slug (`^[a-z][a-z0-9-]*$`). `compatibility.bernstein`
-is a PEP-440 style specifier string; it is held to being a
-non-empty string, and nothing enforces its semantics yet.
+`name` must be a lowercase slug (`^[a-z][a-z0-9-]*$`) with 1–64
+characters; `version` is a 1–32 character string. `compatibility.bernstein`
+is a 1–64 character string. It is stored as supplied; although it is
+intended to be a PEP-440 style specifier, the parser does not validate its
+semantics. Ship entries are relative paths: absolute paths and any entry
+containing `..` are rejected. A trailing slash on a directory entry is
+normalized away in the validated manifest (for example,
+`team/skills/deploy-prod/` is stored as `team/skills/deploy-prod`). The
+parser does not resolve entries against files on disk.
 
 ## Failure modes
 
@@ -109,3 +121,4 @@ the parser before validation runs.
 
 - Manifest schema: `src/bernstein/core/plugins_core/team_hub_manifest.py`
 - [Skill packs](../architecture/skills.md)
+
