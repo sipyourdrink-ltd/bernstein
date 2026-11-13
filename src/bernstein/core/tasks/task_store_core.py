@@ -31,6 +31,7 @@ from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
 from bernstein.core.tasks.lifecycle import (
+    UNSUCCESSFUL_TERMINAL_STATUSES,
     IllegalTransitionError,
     _validate_task_transition,
     transition_agent,
@@ -840,6 +841,9 @@ class TaskStore:
                         task.dispatch_tier = DispatchTier(record["dispatch_tier"])
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
+                    task.terminal_reason = record.get("terminal_reason", task.terminal_reason)
+                    if isinstance(metadata := record.get("metadata"), dict):
+                        task.metadata = metadata
                     task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
                     self._index_add(task)
                 else:
@@ -1444,49 +1448,6 @@ class TaskStore:
         self._notify_task_updated(task)
         return True
 
-    async def _revive_blocked_dependents(self, *task_ids: str) -> None:
-        """Revive tasks stranded on *task_ids* now that a retry of them succeeded.
-
-        A failed dependency that is retried and then completes does not
-        automatically clear its stranded dependents: the cascade that ran
-        when it first failed moved them to ``BLOCKED_BY_FAILED_DEP`` naming
-        the original id, and the original id is still terminal. This walks
-        the same frontier as :meth:`_cascade_unblock_dependency` but seeds it
-        from ``retry_of`` links, so a dependent whose
-        ``blocking_task_id`` matches a retried-and-succeeded task is moved
-        back to ``OPEN``.
-
-        Only the direct dependent is rewired -- a task stranded on a task
-        that was itself stranded is not reachable through this path, and the
-        retry's own completion re-runs the transitive unblock. Mirrors
-        :meth:`_cascade_failed_dependency`, which strands the same ring in
-        the failure direction (issue #4376).
-
-        Must be called with ``self._lock`` held.
-        """
-        solved_blocker_ids: set[str] = set()
-        for tid in task_ids:
-            completed_task = self._tasks.get(tid)
-            if completed_task is None or not isinstance(completed_task.metadata, dict):
-                continue
-            retry_of = completed_task.metadata.get("retry_of")
-            if isinstance(retry_of, str) and retry_of:
-                solved_blocker_ids.add(retry_of)
-
-        frontier = set(solved_blocker_ids)
-        while frontier:
-            next_frontier: set[str] = set()
-            for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
-                if candidate.status is not TaskStatus.BLOCKED_BY_FAILED_DEP:
-                    continue
-                blocker_id = (
-                    candidate.metadata.get("blocking_task_id") if isinstance(candidate.metadata, dict) else None
-                )
-                if blocker_id in solved_blocker_ids and await self._unblock_task(candidate, blocker_id):
-                    solved_blocker_ids.add(candidate.id)
-                    next_frontier.add(candidate.id)
-            frontier = next_frontier
-
     async def _cascade_unblock_dependency(self, *completed_task_ids: str) -> None:
         """Unblock tasks that were stranded by failed dependencies now succeeded by *completed_task_ids*.
 
@@ -1518,16 +1479,24 @@ class TaskStore:
                     candidate.metadata.get("blocking_task_id") if isinstance(candidate.metadata, dict) else None
                 )
                 blocker = self._tasks.get(blocker_id) if blocker_id else None
-                blocker_unblocked = blocker is not None and blocker.status not in (
-                    TaskStatus.BLOCKED_BY_FAILED_DEP,
-                    TaskStatus.FAILED,
-                    TaskStatus.CANCELLED,
-                    TaskStatus.REFUSED,
-                )
+                blocker_unblocked = blocker is not None and blocker.status not in UNSUCCESSFUL_TERMINAL_STATUSES
                 blocker_cleared = bool(blocker_id and (blocker_id in solved_blocker_ids or blocker_unblocked))
-                if (blocker_cleared or self._dependencies_satisfied(candidate)) and await self._unblock_task(
-                    candidate, blocker_id or candidate.id
-                ):
+                if not blocker_cleared and not self._dependencies_satisfied(candidate):
+                    continue
+
+                remaining_blocker = blocking_dependency(candidate, self._tasks)
+                if remaining_blocker is not None:
+                    if remaining_blocker != blocker_id:
+                        candidate.metadata["blocking_task_id"] = remaining_blocker
+                        candidate.result_summary = (
+                            f"dependency {remaining_blocker} is {self._tasks[remaining_blocker].status.value}"
+                        )
+                        candidate.version += 1
+                        await self._append_jsonl(self._task_to_record(candidate))
+                        self._notify_task_updated(candidate)
+                    continue
+
+                if await self._unblock_task(candidate, blocker_id or candidate.id):
                     solved_blocker_ids.add(candidate.id)
                     next_frontier.add(candidate.id)
             frontier = next_frontier
@@ -2507,7 +2476,6 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
-            await self._revive_blocked_dependents(task_id)
             await self._cascade_unblock_dependency(task_id)
         if completion is not None:
             self._audit_contract_outcome(task_id, outcome="valid")

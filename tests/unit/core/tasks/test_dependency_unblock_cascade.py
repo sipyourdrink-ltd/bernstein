@@ -87,6 +87,56 @@ async def test_failed_dependency_without_retry_stays_blocked(tmp_path) -> None:
     assert task_b_still_blocked.status == TaskStatus.BLOCKED_BY_FAILED_DEP
 
 
+@pytest.mark.parametrize("with_retry_lineage", [True, False], ids=["new-task", "same-task"])
+@pytest.mark.asyncio
+async def test_dependent_keeps_other_failed_prerequisite_after_recovery(tmp_path, with_retry_lineage: bool) -> None:
+    journal = tmp_path / "tasks.jsonl"
+    archive = tmp_path / "archive.jsonl"
+    store = TaskStore(jsonl_path=journal, archive_path=archive)
+    first = await store.create(TaskCreate(title="First prerequisite", description="", role="backend", priority=1))
+    second = await store.create(TaskCreate(title="Second prerequisite", description="", role="backend", priority=1))
+    dependent = await store.create(
+        TaskCreate(title="Dependent", description="", role="qa", priority=1, depends_on=[first.id, second.id])
+    )
+    await store.fail(first.id, reason="First failure")
+    await store.fail(second.id, reason="Second failure")
+    assert dependent.status == TaskStatus.BLOCKED_BY_FAILED_DEP
+    assert dependent.metadata["blocking_task_id"] == first.id
+
+    if with_retry_lineage:
+        retry = await store.create(
+            TaskCreate(title="Retry first", description="", role="backend", priority=1, metadata={"retry_of": first.id})
+        )
+    else:
+        await store.reopen(first.id, reason="Retry first prerequisite")
+        retry = first
+    assert await store.claim_by_id(retry.id) is not None
+    await store.complete(retry.id, result_summary="First prerequisite recovered")
+
+    assert dependent.status == TaskStatus.BLOCKED_BY_FAILED_DEP
+    assert dependent.metadata["blocking_task_id"] == second.id
+    with pytest.raises(ValueError, match="not open"):
+        await store.claim_by_id(dependent.id)
+
+    await store.flush_buffer()
+    store = TaskStore(jsonl_path=journal, archive_path=archive)
+    store.replay_jsonl()
+    restored = store.get_task(dependent.id)
+    assert restored is not None
+    assert restored.status == TaskStatus.BLOCKED_BY_FAILED_DEP
+    assert restored.metadata["blocking_task_id"] == second.id
+
+    retry_second = await store.create(
+        TaskCreate(title="Retry second", description="", role="backend", priority=1, metadata={"retry_of": second.id})
+    )
+    assert await store.claim_by_id(retry_second.id) is not None
+    await store.complete(retry_second.id, result_summary="Second prerequisite recovered")
+
+    assert restored.status == TaskStatus.OPEN
+    assert "blocking_task_id" not in restored.metadata
+    assert await store.claim_by_id(restored.id) is not None
+
+
 @pytest.mark.asyncio
 async def test_unblock_cascade_is_transitive(tmp_path) -> None:
     store = TaskStore(jsonl_path=tmp_path / "tasks.jsonl", archive_path=tmp_path / "archive.jsonl")

@@ -22,7 +22,7 @@ Driving Bernstein from a script means knowing which command moves a task between
 | `SUSPENDED` | Parked mid-session. Resumable from an attested receipt. |
 | `ABANDONED` | Agent voluntarily ended the task with a structured reason. |
 | `BLOCKED_BY_ABANDON` | An abandoned dependency blocks the task. |
-| `BLOCKED_BY_FAILED_DEP` | An unsuccessful dependency blocks the task. |
+| `BLOCKED_BY_FAILED_DEP` | An unsuccessful dependency blocks the task. If that dependency recovers while another prerequisite still has an unresolved failure, the task stays blocked and names that prerequisite. |
 | `REFUSED` | Worker reported a typed refusal. |
 | `ORPHANED` | Agent crashed mid-task; awaits crash recovery. |
 | `PENDING_APPROVAL` | Task completed but requires human approval before merge. Set directly by the approval subsystem (no FSM-managed exit). |
