@@ -387,6 +387,7 @@ async def test_large_cost_values_do_not_break_cluster_dashboard(monkeypatch: pyt
         REMOTE,
         {
             "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/status": {"total": 1, "done": 1e308},
             "/costs": {
                 "spent_usd": 0.01,
                 "budget_usd": 1.0,
@@ -403,6 +404,8 @@ async def test_large_cost_values_do_not_break_cluster_dashboard(monkeypatch: pyt
         await pilot.pause()
         app.action_toggle_expert()
         app._apply_data(frame)
+        assert app.query_one(BigStats).done == 1
+        app._apply_data({**frame, "costs": {**frame["costs"], "spent_usd": 1e308}})
         await pilot.pause()
         assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
 

@@ -211,8 +211,9 @@ def _dashboard_status(data: Any) -> dict[str, Any] | None:
     if not isinstance(data, dict) or not data:
         return None
     status = dict(data)
-    for key in ("total", "done", "failed"):
-        status[key] = int(_finite_number(status.get(key)))
+    status["total"] = max(0, int(_finite_number(status.get("total"))))
+    status["done"] = min(status["total"], max(0, int(_finite_number(status.get("done")))))
+    status["failed"] = min(status["total"] - status["done"], max(0, int(_finite_number(status.get("failed")))))
     runtime = status.get("runtime")
     if isinstance(runtime, dict):
         runtime = dict(runtime)
@@ -233,7 +234,7 @@ def _dashboard_costs(data: Any) -> dict[str, Any] | None:
         return None
     costs = dict(data)
     for key in ("spent_usd", "budget_usd", "percentage_used"):
-        costs[key] = _finite_number(costs.get(key))
+        costs[key] = max(0.0, _finite_number(costs.get(key)))
     per_model = costs.get("per_model")
     costs["per_model"] = (
         {name: _finite_number(value) for name, value in per_model.items()} if isinstance(per_model, dict) else {}
@@ -672,6 +673,10 @@ def _format_relative_age(seconds_ago: float) -> str:
     return f"{delta_s // 86_400}d ago"
 
 
+def _completion_percent(done: int, total: int) -> int:
+    return 100 * min(max(0, done), total) // total if total > 0 else 0
+
+
 def _build_runtime_subtitle(
     *,
     git_branch: str,
@@ -693,7 +698,7 @@ def _build_runtime_subtitle(
     """
     if unreachable_url:
         return f"No connection to {unreachable_url} - showing no data, not an idle run"
-    progress_pct = int(done / total * 100) if total > 0 else 0
+    progress_pct = _completion_percent(done, total)
     parts = [f"Running for {_format_elapsed_label(elapsed_s)}"]
     if git_branch:
         parts.append(f"branch {git_branch}")
@@ -739,6 +744,9 @@ def _mini_cost_sparkline(values: list[float], *, width: int = 10) -> str:
     if not values:
         return _SPARK_CHARS[0] * width
     data = values[-width:]
+    scale = max(abs(min(data)), abs(max(data)))
+    if scale:
+        data = [value / scale for value in data]
     lo = min(data)
     hi = max(data)
     span = hi - lo if hi != lo else 1.0

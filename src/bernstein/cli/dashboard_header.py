@@ -16,6 +16,7 @@ from textual.reactive import reactive
 from textual.widgets import Static
 
 from bernstein.cli.dashboard_polling import (
+    _completion_percent,
     _gradient_text,
     _tail_log,
 )
@@ -369,7 +370,7 @@ class BigStats(Static):
     unverified_threshold_exceeded = reactive(False)
 
     def render(self) -> Text:
-        pct = int(self.done / self.total * 100) if self.total > 0 else 0
+        pct = _completion_percent(self.done, self.total)
         m, s = divmod(self.elapsed, 60)
         h, m = divmod(m, 60)
         progress_colors = sample_gradient((PALETTE.teal, PALETTE.cyan, PALETTE.glow), 35)
