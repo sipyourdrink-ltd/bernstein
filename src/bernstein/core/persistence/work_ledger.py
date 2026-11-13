@@ -799,13 +799,16 @@ class LedgerReader:
                     continue
                 yield LedgerEntry.from_dict(row)
 
-    def verify(self, expected_head: str | None = None) -> LedgerVerification:
+    def verify(self, expected_head: str | None = None, *, allow_interrupted_tail: bool = False) -> LedgerVerification:
         """Walk the chain and recompute every entry hash.
 
         Args:
             expected_head: When supplied, additionally require the tail's
                 ``entry_hash`` to equal this value -- the check a resume
                 runs against an anchored head.
+            allow_interrupted_tail: For resume planning only, ignore an
+                unparseable final fragment with no newline. Every complete
+                row and any expected head must still verify.
 
         Returns:
             A :class:`LedgerVerification`; every error names the exact
@@ -822,13 +825,15 @@ class LedgerReader:
                 errors.append(f"no ledger file at {self._bucket_path}; expected head {expected_head!r}")
             return LedgerVerification(ok=ok, head_hash=GENESIS_HASH, entries=0, errors=errors)
 
-        with self._bucket_path.open(encoding="utf-8") as fh:
+        with self._bucket_path.open(encoding="utf-8", newline="\n") as fh:
             for line_no, raw in enumerate(fh, start=1):
                 stripped = raw.strip()
                 if not stripped:
                     continue
                 row = _parse_ledger_row(stripped)
                 if row is None:
+                    if allow_interrupted_tail and not raw.endswith("\n"):
+                        break
                     errors.append(f"entry {expected_seq} (line {line_no}): not a parseable ledger row")
                     continue
                 errors.extend(_check_row(row, line_no=line_no, expected_seq=expected_seq, prev_hash=prev_hash))

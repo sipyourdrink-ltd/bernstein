@@ -164,6 +164,35 @@ class TestFetchAndResume:
         entries = list(LedgerReader(run_ledger_dir(project / ".sdd", "run-a")).entries())
         assert entries[-1].kind == KIND_RUN_RESUMED
 
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["record", "dry-run"])
+    def test_resume_from_torn_append(self, project: Path, dry_run: bool) -> None:
+        ledger = _seed(project)
+        previous_head = ledger.head_hash
+        intact = ledger.bucket_path.read_bytes()
+        interrupted = ledger.append(kind=KIND_TASK_COMPLETED, task_id="t2")
+        torn = intact + interrupted.canonical_line().encode("utf-8")[:20]
+        ledger.bucket_path.write_bytes(torn)
+        ledger.close()
+
+        args = ["resume", "run-a", "--workdir", str(project), "--json"]
+        if dry_run:
+            args.append("--dry-run")
+        result = CliRunner().invoke(ledger_group, args)
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["head_hash"] == previous_head
+        assert payload["resume_frontier"] == ["t2"]
+        if dry_run:
+            assert ledger.bucket_path.read_bytes() == torn
+        else:
+            reader = LedgerReader(ledger.ledger_dir)
+            last = list(reader.entries())[-1]
+            assert last.kind == KIND_RUN_RESUMED
+            assert last.prev_hash == previous_head
+            assert reader.verify(expected_head=last.entry_hash).ok
+            assert ledger.bucket_path.read_bytes().startswith(intact)
+
     def test_resume_append_failure_keeps_json_parseable(self, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _seed(project)
 

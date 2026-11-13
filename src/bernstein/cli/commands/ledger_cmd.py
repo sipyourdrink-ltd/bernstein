@@ -334,7 +334,7 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
             click.echo("After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.", err=True)
             raise SystemExit(EXIT_NO_LEDGER) from None
 
-    result = reader.verify()
+    result = reader.verify(allow_interrupted_tail=True)
     if not result.ok:
         click.echo(f"Refusing to resume run {run_id!r}: the chain does not verify.", err=True)
         _print_errors(result.errors)
