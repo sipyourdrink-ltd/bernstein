@@ -29,12 +29,16 @@ stages:
         phases: [research, plan, implement, verify]
 ```
 
+Declaring `phases:` annotates the plan step; it does not make normal plan
+execution run the phased pipeline.
+
 A stage groups plan steps, while phases subdivide the work within a single step.
 
-The plan loader records the phases in `task.metadata["phases"]`; the
-orchestrator does not yet spawn per-phase agents. A caller that drives
-`PhasedRunner` runs one executor call per phase, and each phase writes a
-structured artefact to `.sdd/runtime/phase_artifacts/<task_id>/<phase>.json`:
+The normal plan loader records the parsed phase names as a list of strings
+in `task.metadata["phases"]`; it does not spawn per-phase agents. A caller
+that explicitly drives `PhasedRunner` runs one executor call per phase, and
+each phase writes a structured artefact to
+`.sdd/runtime/phase_artifacts/<task_id>/<phase>.json`:
 
 ```json
 {
@@ -69,19 +73,20 @@ phase default when present.
 ## Configuration
 
 The `tuning.phase_pipeline.*` keys below are accepted and stored on
-`defaults.PHASE_PIPELINE`, but no shipped code reads them yet: the
-orchestrator does not route `phases:` steps through `PhasedRunner`, and
-`PhasedRunner` takes `gate_enabled` (default `true`), `gate_max_retries`
-(default `1`) and `store` (default root `.sdd/runtime/phase_artifacts`)
-as constructor arguments.
+`defaults.PHASE_PIPELINE`, but no shipped code reads them. In particular,
+setting `enabled: true` does not route normal plan steps through
+`PhasedRunner`. The table describes each key's intended behavior, not a live
+effect. `PhasedRunner` must be invoked explicitly; its own `gate_enabled`
+and `gate_max_retries` arguments default to `true` and `1`, and its store
+defaults to `.sdd/runtime/phase_artifacts` unless the caller supplies one.
 
-| Knob | Default | Controls |
+| Knob | Default | Intended behavior (not currently applied from config) |
 |---|--:|---|
 | `tuning.phase_pipeline.enabled` | `false` | Route `phases:` steps through the phased runner. |
-| `tuning.phase_pipeline.artifact_root` | `.sdd/runtime/phase_artifacts` | Distilled handoff store. |
+| `tuning.phase_pipeline.artifact_root` | `.sdd/runtime/phase_artifacts` | Set the distilled handoff store root. |
 | `tuning.phase_pipeline.gc_on_task_close` | `true` | Drop artefacts when the parent task closes. |
-| `tuning.phase_pipeline.gate_enabled` | `true` | Mechanical exit-criteria gate at each phase boundary. |
-| `tuning.phase_pipeline.gate_max_retries` | `1` | Re-fires of a failing phase before the task fails. |
+| `tuning.phase_pipeline.gate_enabled` | `true` | Enable the mechanical exit-criteria gate at each phase boundary. |
+| `tuning.phase_pipeline.gate_max_retries` | `1` | Set the number of re-fires of a failing phase before the task fails. |
 
 ## Limitations
 
