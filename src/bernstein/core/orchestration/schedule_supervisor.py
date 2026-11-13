@@ -53,7 +53,9 @@ from bernstein.core.orchestration.schedule_projection import (
     ProjectionResult,
     project_schedule_fire,
 )
+from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.planning.schedule_store import (
+    PENDING_CATCH_UP_RECEIPT_KEY,
     ParsedCron,
     Schedule,
     ScheduleStore,
@@ -166,7 +168,7 @@ def _next_fire_after(parsed: ParsedCron, anchor_epoch: int) -> int:
 
 
 def _last_processed_window(schedule: Schedule) -> float:
-    """Newest window already decided about: a real fire or a canceled one.
+    """Newest processed window, including skipped and canceled windows.
 
     Scheduling reads this; operator-facing surfaces read ``last_fire_at``,
     which only ever records a window that actually dispatched.
@@ -528,6 +530,10 @@ class ScheduleSupervisor:
         anchor = int(processed) if processed else now_epoch - 60
         receipts: list[FireReceipt] = []
         skipped_windows: list[int] = []
+        pending = schedule.extra.get(PENDING_CATCH_UP_RECEIPT_KEY)
+        if isinstance(pending, list) and pending and all(isinstance(window, int) for window in pending):
+            receipts.append(self._record_counterfactual(schedule, pending, now_epoch))
+            self._store.clear_catch_up_receipt(schedule.id)
 
         # Step forward through missed windows up to ``now``.
         current_anchor = anchor
@@ -546,6 +552,10 @@ class ScheduleSupervisor:
                     skipped_windows.append(next_fire)
                     current_anchor = next_fire
                     continue
+                if not processed:
+                    # Pin the initial scan so a first-ever deferral can
+                    # resume the same window on a later tick or restart.
+                    self._store.advance_fire_cursor(schedule.id, float(current_anchor))
                 receipt, deferred = self._dispatch_or_collide(schedule, next_fire)
                 receipts.append(receipt)
                 # The cursor cannot pass a window still awaiting dispatch
@@ -553,6 +563,7 @@ class ScheduleSupervisor:
                 if deferred or receipt.refused:
                     break
                 catch_up_attempts += 1
+                processed = float(next_fire)
             else:  # skip policy
                 # Only dispatch the most recent missed instant; older
                 # windows are folded into the skipped_windows receipt.
@@ -574,10 +585,12 @@ class ScheduleSupervisor:
 
         if skipped_windows and schedule.misfire_policy in {"skip", "catch_up"}:
             # Emit one counterfactual receipt summarising skipped windows.
+            if schedule.misfire_policy == "catch_up":
+                self._store.record_catch_up_skip(schedule.id, skipped_windows)
             receipt = self._record_counterfactual(schedule, skipped_windows, now_epoch)
             receipts.append(receipt)
             if schedule.misfire_policy == "catch_up":
-                self._store.advance_fire_cursor(schedule.id, float(receipt.fire_time))
+                self._store.clear_catch_up_receipt(schedule.id)
 
         return receipts
 
@@ -1093,7 +1106,7 @@ class ScheduleSupervisor:
         path = self._receipts_dir / filename
         payload = asdict(receipt)
         # Tuples → lists for json. asdict already does this.
-        path.write_text(json.dumps(payload, sort_keys=True, indent=2))
+        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2), mode=0o666)
 
 
 # ---------------------------------------------------------------------------

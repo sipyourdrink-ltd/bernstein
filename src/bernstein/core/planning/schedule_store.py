@@ -20,7 +20,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.persistence.atomic_write import write_atomic_text
@@ -48,6 +48,7 @@ MisfirePolicy = Literal["skip", "catch_up"]
 #: dispatched. Kept out of ``last_fire_at`` so a canceled window never reads
 #: as a successful fire on the doctor / status surfaces.
 FIRE_CURSOR_KEY = "fire_cursor_at"
+PENDING_CATCH_UP_RECEIPT_KEY = "pending_catch_up_receipt"
 
 
 @dataclass(frozen=True)
@@ -509,6 +510,27 @@ class ScheduleStore:
                 params=dict(schedule.params),
             ),
         )
+
+    def record_catch_up_skip(self, schedule_id: str, skipped_windows: list[int]) -> None:
+        """Advance the cursor and retain the pending receipt in the same write."""
+        schedule = self.get(schedule_id)
+        if schedule is None:
+            return
+        extra = {
+            **schedule.extra,
+            FIRE_CURSOR_KEY: max(float(schedule.extra.get(FIRE_CURSOR_KEY, 0.0)), skipped_windows[-1]),
+            PENDING_CATCH_UP_RECEIPT_KEY: skipped_windows,
+        }
+        self._write(replace(schedule, extra=extra))
+
+    def clear_catch_up_receipt(self, schedule_id: str) -> None:
+        """Clear a pending receipt after its own file is published."""
+        schedule = self.get(schedule_id)
+        if schedule is None or PENDING_CATCH_UP_RECEIPT_KEY not in schedule.extra:
+            return
+        extra = dict(schedule.extra)
+        del extra[PENDING_CATCH_UP_RECEIPT_KEY]
+        self._write(replace(schedule, extra=extra))
 
     def _write(self, schedule: Schedule) -> None:
         """Write a schedule atomically to its JSON path.
