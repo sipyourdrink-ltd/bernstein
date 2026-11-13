@@ -211,21 +211,25 @@ def _dashboard_status(data: Any) -> dict[str, Any] | None:
     if not isinstance(data, dict) or not data:
         return None
     status = dict(data)
-    status["total"] = max(0, int(_finite_number(status.get("total"))))
-    status["done"] = min(status["total"], max(0, int(_finite_number(status.get("done")))))
-    status["failed"] = min(status["total"] - status["done"], max(0, int(_finite_number(status.get("failed")))))
+    total = max(0, int(_finite_number(status.get("total"))))
+    done = min(total, max(0, int(_finite_number(status.get("done")))))
+    failed = min(total - done, max(0, int(_finite_number(status.get("failed")))))
+    for key, value in (("total", total), ("done", done), ("failed", failed)):
+        if key in status:
+            status[key] = value
     runtime = status.get("runtime")
     if isinstance(runtime, dict):
         runtime = dict(runtime)
         for key in ("active_worktrees", "restart_count"):
-            runtime[key] = int(_finite_number(runtime.get(key)))
+            if key in runtime:
+                runtime[key] = int(_finite_number(runtime[key]))
         completed = runtime.get("last_completed")
-        if isinstance(completed, dict) and completed:
+        if isinstance(completed, dict) and "seconds_ago" in completed:
             runtime["last_completed"] = {**completed, "seconds_ago": _finite_number(completed.get("seconds_ago"))}
         status["runtime"] = runtime
     nudge = status.get("verification_nudge")
-    if isinstance(nudge, dict):
-        status["verification_nudge"] = {**nudge, "unverified_count": int(_finite_number(nudge.get("unverified_count")))}
+    if isinstance(nudge, dict) and "unverified_count" in nudge:
+        status["verification_nudge"] = {**nudge, "unverified_count": int(_finite_number(nudge["unverified_count"]))}
     return status
 
 
