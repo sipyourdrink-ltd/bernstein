@@ -10,6 +10,7 @@ modules sharing one conftest keep every group well inside the budget.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -500,3 +501,179 @@ async def test_self_create_subtask_refuses_a_parent_outside_the_callers_scope(
     assert store.get_task(fx.task_b_id).status.value == before_status, (
         f"{credential_name} transitioned an out-of-scope parent despite the refusal"
     )
+
+
+def _seed_governance_readback(
+    fx: Fixture, task_id: str, owner: str | None = "synthetic-policy-owner"
+) -> dict[str, Any]:
+    """Seed a domain policy in the real store without granting HTTP mutation rights."""
+    from bernstein.core.tasks.models import ApprovalSpec
+
+    task = fx.app.state.store.get_task(task_id)
+    assert task is not None
+    task.approval_spec = ApprovalSpec(prompt="synthetic-private-policy", timeout_seconds=137, default_action="fail")
+    task.sensitivity = "confidential"
+    task.claimed_by_session = owner
+    return {
+        "approval_spec": {"prompt": "synthetic-private-policy", "timeout_seconds": 137, "default_action": "fail"},
+        "sensitivity": "confidential",
+        "claimed_by_session": owner,
+    }
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+@pytest.mark.parametrize("credential_name", ["sso_operator", *READ_CREDENTIALS])
+async def test_governance_readback_detail_preserves_authorized_policy(
+    fx: Fixture, client: AsyncClient, credential_name: str, prefix: str
+) -> None:
+    task_id = fx.task_default_id if credential_name in ("legacy_bearer", "cluster_secret") else fx.task_a_id
+    expected = _seed_governance_readback(fx, task_id)
+    response = await client.get(f"{prefix}/tasks/{task_id}", headers=_credential(fx, credential_name).headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == task_id
+    for field, value in expected.items():
+        assert body[field] == value
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+@pytest.mark.parametrize("credential_name", [name for name in WRITE_CREDENTIALS if name != "agent_unrestricted"])
+async def test_governance_readback_claim_survives_store_replay(
+    fx: Fixture, client: AsyncClient, jsonl_path: Path, credential_name: str, prefix: str
+) -> None:
+    from bernstein.core.tasks.task_store import TaskStore
+
+    task_id = fx.task_default_id if credential_name in ("legacy_bearer", "cluster_secret") else fx.task_a_id
+    expected = _seed_governance_readback(fx, task_id, owner=None)
+    store = fx.app.state.store
+    before_version = store.get_task(task_id).version
+    expected["claimed_by_session"] = "synthetic-new-claim-owner"
+    response = await client.post(
+        f"{prefix}/tasks/{task_id}/claim",
+        headers=_credential(fx, credential_name).headers,
+        params={"claimed_by_session": expected["claimed_by_session"]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == task_id
+    assert body["status"] == "claimed"
+    assert body["version"] == before_version + 1
+    for field, value in expected.items():
+        assert body[field] == value
+
+    # Rebuild from every actual journal record without retaining live tasks.
+    journal = jsonl_path.read_bytes()
+    records = [json.loads(line) for line in journal.splitlines() if line.strip()]
+    assert sum(record.get("id") == task_id for record in records) >= 2
+    rebuilt = TaskStore(jsonl_path=jsonl_path, archive_path=jsonl_path.parent / "archive.jsonl")
+    assert rebuilt is not store
+    assert rebuilt.list_tasks() == []
+    rebuilt.replay_jsonl()
+    restored = rebuilt.get_task(task_id)
+    assert restored is not None
+    assert restored is not store.get_task(task_id)
+    expected_readback = {"id": task_id, "status": "claimed", "version": before_version + 1, **expected}
+    restored_record = restored.to_dict()
+    domain_readback = {field: restored_record[field] for field in expected_readback}
+    fx.app.state.store = rebuilt
+    try:
+        response = await client.get(f"{prefix}/tasks/{task_id}", headers=_credential(fx, credential_name).headers)
+        assert response.status_code == 200
+        http_readback = {field: response.json()[field] for field in expected_readback}
+        assert jsonl_path.read_bytes() == journal
+        assert {"domain": domain_readback, "http": http_readback} == {
+            "domain": expected_readback,
+            "http": expected_readback,
+        }
+    finally:
+        fx.app.state.store = store
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+@pytest.mark.parametrize("crossing_header", [False, True])
+@pytest.mark.parametrize("credential_name", READ_CREDENTIALS)
+async def test_governance_readback_detail_refuses_other_tenant_policy(
+    fx: Fixture, client: AsyncClient, credential_name: str, crossing_header: bool, prefix: str
+) -> None:
+    _seed_governance_readback(fx, fx.task_b_id)
+    credential = _credential(fx, credential_name)
+    headers = credential.crossing_headers() if crossing_header else credential.headers
+    response = await client.get(f"{prefix}/tasks/{fx.task_b_id}", headers=headers)
+    assert response.status_code in REJECTION_STATUSES
+    assert "synthetic-private-policy" not in response.text
+    assert "synthetic-policy-owner" not in response.text
+    assert "approval_spec" not in response.json()
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+@pytest.mark.parametrize("crossing_header", [False, True])
+@pytest.mark.parametrize("credential_name", WRITE_CREDENTIALS)
+async def test_governance_readback_cross_tenant_claim_has_no_side_effect(
+    fx: Fixture, client: AsyncClient, jsonl_path: Path, credential_name: str, crossing_header: bool, prefix: str
+) -> None:
+    _seed_governance_readback(fx, fx.task_b_id)
+    store = fx.app.state.store
+    before = json.loads(json.dumps(store.get_task(fx.task_b_id).to_dict()))
+    before_journal = jsonl_path.read_bytes()
+    credential = _credential(fx, credential_name)
+    headers = credential.crossing_headers() if crossing_header else credential.headers
+    response = await client.post(
+        f"{prefix}/tasks/{fx.task_b_id}/claim", headers=headers, params={"claimed_by_session": "forbidden-owner"}
+    )
+    assert response.status_code in REJECTION_STATUSES
+    assert "synthetic-private-policy" not in response.text
+    assert "synthetic-policy-owner" not in response.text
+    assert store.get_task(fx.task_b_id).to_dict() == before
+    assert jsonl_path.read_bytes() == before_journal
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+@pytest.mark.parametrize("credential_name", ["sso_viewer", "agent_task_scoped"])
+async def test_governance_readback_role_denial_has_no_claim_side_effect(
+    fx: Fixture, client: AsyncClient, jsonl_path: Path, credential_name: str, prefix: str
+) -> None:
+    _seed_governance_readback(fx, fx.task_a_id, owner=None)
+    store = fx.app.state.store
+    if credential_name != "sso_viewer":
+        # Real agent identities are backend-role; this checks the existing
+        # claim role gate, without inventing a new detail-read visibility rule.
+        store.get_task(fx.task_a_id).role = "security"
+    before = json.loads(json.dumps(store.get_task(fx.task_a_id).to_dict()))
+    before_journal = jsonl_path.read_bytes()
+    response = await client.post(
+        f"{prefix}/tasks/{fx.task_a_id}/claim",
+        headers=_credential(fx, credential_name).headers,
+        params={"claimed_by_session": "forbidden-owner"},
+    )
+    assert response.status_code == 403
+    assert "synthetic-private-policy" not in response.text
+    assert store.get_task(fx.task_a_id).to_dict() == before
+    assert jsonl_path.read_bytes() == before_journal
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+async def test_governance_readback_empty_backend_scope_cannot_claim(
+    fx: Fixture, client: AsyncClient, jsonl_path: Path, prefix: str
+) -> None:
+    # Despite its historical fixture name, this is a backend identity with
+    # task_ids=[], not a role authorized for unscoped task mutations.
+    _seed_governance_readback(fx, fx.task_a_id, owner=None)
+    store = fx.app.state.store
+    before = json.loads(json.dumps(store.get_task(fx.task_a_id).to_dict()))
+    before_journal = jsonl_path.read_bytes()
+    response = await client.post(
+        f"{prefix}/tasks/{fx.task_a_id}/claim",
+        headers=_credential(fx, "agent_unrestricted").headers,
+        params={"claimed_by_session": "forbidden-owner"},
+    )
+    assert response.status_code == 403
+    assert "task scope" in response.json()["detail"]
+    assert "synthetic-private-policy" not in response.text
+    assert store.get_task(fx.task_a_id).to_dict() == before
+    assert jsonl_path.read_bytes() == before_journal

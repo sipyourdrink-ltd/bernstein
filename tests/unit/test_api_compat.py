@@ -6,6 +6,8 @@ interfaces, and that the Bernstein task server public API contract is stable.
 
 from __future__ import annotations
 
+import json
+
 # ---------------------------------------------------------------------------
 # Unit tests for compare_signatures helper
 # ---------------------------------------------------------------------------
@@ -262,3 +264,104 @@ def test_all_change_kinds_are_represented() -> None:
     assert "param_became_required" in names
     assert "param_became_keyword_only" in names
     assert "param_became_positional_only" in names
+
+
+def test_task_response_exposes_governance_and_claim_fields() -> None:
+    """TaskResponse must expose approval_spec, sensitivity, and claimed_by_session (#6640).
+
+    These are safety-relevant governance fields. A missing field means an
+    external dispatcher cannot read back the policy it is expected to honour.
+    """
+    from bernstein.core.server import TaskResponse
+
+    fields = set(TaskResponse.model_fields)
+    for name in ("approval_spec", "sensitivity", "claimed_by_session"):
+        assert name in fields, f"TaskResponse is missing governance field: {name!r}"
+
+
+def test_task_to_response_roundtrips_governance_fields() -> None:
+    """task_to_response must carry approval_spec, sensitivity, and claimed_by_session through."""
+    from bernstein.core.server.server_app import task_to_response
+    from bernstein.core.tasks.models import Task
+
+    task = Task(
+        id="gov-test",
+        title="governance fixture",
+        description="fixture",
+        role="backend",
+        batch_eligible=False,
+        sensitivity="confidential",
+        claimed_by_session="owner-session-a",
+    )
+    resp = task_to_response(task)
+    assert resp.sensitivity == "confidential"
+    assert resp.claimed_by_session == "owner-session-a"
+    assert resp.approval_spec is None  # not set, None expected
+
+
+def test_task_to_response_preserves_nondefault_approval_policy_in_json() -> None:
+    """The API must project the actual policy rather than a constant null."""
+    from bernstein.core.server import TaskResponse
+    from bernstein.core.server.server_app import task_to_response
+    from bernstein.core.tasks.models import ApprovalSpec, Task
+
+    task = Task(
+        id="approval-projection",
+        title="approval fixture",
+        description="synthetic policy",
+        role="backend",
+        batch_eligible=False,
+        approval_spec=ApprovalSpec(
+            prompt="Review the synthetic change?",
+            timeout_seconds=631,
+            default_action="fail",
+        ),
+    )
+    expected = {
+        "prompt": "Review the synthetic change?",
+        "timeout_seconds": 631,
+        "default_action": "fail",
+    }
+
+    response = task_to_response(task)
+    assert response.approval_spec == expected
+    assert response.model_dump(mode="json")["approval_spec"] == expected
+    encoded = response.model_dump_json()
+    assert json.loads(encoded)["approval_spec"] == expected
+    assert TaskResponse.model_validate_json(encoded).approval_spec == expected
+
+
+def test_task_to_response_serializes_explicit_no_approval_policy_as_null() -> None:
+    """An explicitly absent policy remains a present JSON null."""
+    from bernstein.core.server.server_app import task_to_response
+    from bernstein.core.tasks.models import Task
+
+    task = Task(
+        id="approval-null",
+        title="approval fixture",
+        description="synthetic policy",
+        role="backend",
+        batch_eligible=False,
+        approval_spec=None,
+    )
+    response = task_to_response(task)
+    assert response.approval_spec is None
+    payload = json.loads(response.model_dump_json())
+    assert "approval_spec" in payload
+    assert payload["approval_spec"] is None
+
+
+def test_task_response_accepts_legacy_payload_without_approval_policy() -> None:
+    """Old responses may omit the field without acquiring an approval policy."""
+    from bernstein.core.server import TaskResponse
+    from bernstein.core.server.server_app import task_to_response
+    from bernstein.core.tasks.models import Task
+
+    task = Task(id="approval-legacy", title="fixture", description="synthetic", role="backend", batch_eligible=False)
+    legacy_payload = task_to_response(task).model_dump(mode="json", exclude={"approval_spec"})
+    assert "approval_spec" not in legacy_payload
+
+    response = TaskResponse.model_validate_json(json.dumps(legacy_payload))
+    assert "approval_spec" not in response.model_fields_set
+    assert response.approval_spec is None
+    assert json.loads(response.model_dump_json())["approval_spec"] is None
