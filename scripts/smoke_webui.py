@@ -197,23 +197,37 @@ def check_trace_highlight_contrast(page: Page, drawer: Locator, base: str, task_
             page.evaluate("(dark) => document.documentElement.classList.toggle('dark', dark)", dark)
             ratio = mark.evaluate(
                 r"""mark => {
-                    const rgb = color => color.match(/[\d.]+/g).map(Number);
-                    const composite = (under, [red, green, blue, alpha = 1]) =>
-                        [red, green, blue].map((channel, i) => channel * alpha + under[i] * (1 - alpha));
-                    const layers = [];
+                    const rgba = color => {
+                        const [red, green, blue, alpha = 1] = color.match(/[\d.]+/g).map(Number);
+                        return [red, green, blue, alpha];
+                    };
+                    const over = (top, bottom) => {
+                        const alpha = top[3] + bottom[3] * (1 - top[3]);
+                        if (alpha === 0) return [0, 0, 0, 0];
+                        return [
+                            ...top.slice(0, 3).map((channel, i) =>
+                                (channel * top[3] + bottom[i] * bottom[3] * (1 - top[3])) / alpha),
+                            alpha,
+                        ];
+                    };
+                    let ink = rgba(getComputedStyle(mark).color);
+                    let paper = [0, 0, 0, 0];
                     for (let node = mark; node; node = node.parentElement) {
-                        const layer = rgb(getComputedStyle(node).backgroundColor);
-                        layers.push(layer);
-                        if ((layer[3] ?? 1) === 1) break;
+                        const style = getComputedStyle(node);
+                        const background = rgba(style.backgroundColor);
+                        ink = over(ink, background);
+                        paper = over(paper, background);
+                        ink[3] *= Number(style.opacity);
+                        paper[3] *= Number(style.opacity);
                     }
-                    const background = layers.reverse().reduce(composite, [255, 255, 255]);
                     const luminance = color => color
                         .slice(0, 3)
                         .map(channel => channel / 255)
                         .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
                         .reduce((sum, channel, i) => sum + channel * [0.2126, 0.7152, 0.0722][i], 0);
-                    const foreground = luminance(composite(background, rgb(getComputedStyle(mark).color)));
-                    const backdrop = luminance(background);
+                    const canvas = [255, 255, 255, 1];
+                    const foreground = luminance(over(ink, canvas));
+                    const backdrop = luminance(over(paper, canvas));
                     return (Math.max(foreground, backdrop) + 0.05) / (Math.min(foreground, backdrop) + 0.05);
                 }"""
             )
