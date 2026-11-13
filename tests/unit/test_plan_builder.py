@@ -218,10 +218,11 @@ def test_render_contains_agent_assignments(simple_plan: TaskPlan) -> None:
     assert "backend" in md
 
 
-def test_render_contains_footer_commands(simple_plan: TaskPlan) -> None:
+def test_render_contains_footer_routes_and_rerun_command(simple_plan: TaskPlan) -> None:
     md = PlanBuilder(simple_plan).render_to_markdown()
-    assert "bernstein plans approve abc123" in md
-    assert "bernstein plans reject abc123" in md
+    assert "POST /plans/abc123/approve" in md
+    assert "POST /plans/abc123/reject" in md
+    assert "bernstein run --from-plan <path>" in md
 
 
 def test_render_ends_with_newline(simple_plan: TaskPlan) -> None:

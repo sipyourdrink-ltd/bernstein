@@ -287,9 +287,10 @@ class PlanBuilder:
         return "\n".join(lines)
 
     def _footer(self) -> str:
+        plan_id = self._plan.id
         return (
             "---\n"
-            "<!-- To approve: `bernstein plans approve {plan_id}` -->\n"
-            "<!-- To reject:  `bernstein plans reject {plan_id}` -->\n"
-            "<!-- To re-run:  `bernstein run --from-plan <path>` -->"
-        ).replace("{plan_id}", self._plan.id)
+            f"<!-- Approve via `POST /plans/{plan_id}/approve` -->\n"
+            f"<!-- Reject via `POST /plans/{plan_id}/reject` -->\n"
+            "<!-- Re-run with `bernstein run --from-plan <path>` -->"
+        )
