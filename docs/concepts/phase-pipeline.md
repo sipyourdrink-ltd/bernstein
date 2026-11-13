@@ -18,7 +18,9 @@ implementation.
 
 ## How to use it
 
-Add a `phases:` list to a step:
+Add a `phases:` list to a step. The following is the `stages` section of a
+complete plan, not a standalone plan document; include it in a plan that has
+the required top-level identity fields:
 
 ```yaml
 stages:
