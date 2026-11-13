@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as datetime_module
 import json
+from datetime import datetime, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,12 +65,22 @@ class TestQueueDepthTracking:
         assert record["labels"]["claimed"] == "5"
         assert record["labels"]["failed"] == "2"
 
-    def test_record_multiple_snapshots(self, tmp_path: Path) -> None:
-        """Test recording multiple queue depth snapshots."""
+    def test_record_multiple_snapshots(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep all five snapshots when writes cross midnight."""
+        current_time = datetime(2026, 6, 15, 23, 59)
+
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz: tzinfo | None = None) -> datetime:
+                return current_time.replace(tzinfo=tz)
+
+        monkeypatch.setattr(datetime_module, "datetime", FixedDatetime)
         collector = MetricsCollector(metrics_dir=tmp_path)
 
         # Record multiple snapshots
         for i in range(5):
+            if i == 2:
+                current_time = datetime(2026, 6, 16)
             collector.record_queue_depth(
                 queue_depth_open=i * 2,
                 queue_depth_claimed=i,
@@ -78,11 +90,14 @@ class TestQueueDepthTracking:
         # Flush to file
         collector._flush_buffer()  # type: ignore[reportPrivateUsage]
 
-        # A flush spanning midnight can place snapshots in two daily files.
-        record_count = sum(
-            len(path.read_text(encoding="utf-8").splitlines()) for path in tmp_path.glob("queue_depth_*.jsonl")
-        )
-        assert record_count == 5
+        records_per_file = {
+            path.name: len(path.read_text(encoding="utf-8").splitlines())
+            for path in tmp_path.glob("queue_depth_*.jsonl")
+        }
+        assert records_per_file == {
+            "queue_depth_2026-06-15.jsonl": 2,
+            "queue_depth_2026-06-16.jsonl": 3,
+        }
 
     def test_queue_depth_metric_type(self) -> None:
         """Test QUEUE_DEPTH metric type exists."""
