@@ -14,6 +14,12 @@ reads from it so future readers don't confuse them.
 | `knowledge_graph.py` | Codebase symbol graph (`core/knowledge/knowledge_graph.py`) | Files, classes, functions, methods; `defines` / `imports` / `calls` / `inherits` edges | SQLite at `.sdd/index/knowledge_graph.db` |
 | `ast_symbol_graph.py` | AST-level symbol graph (`core/knowledge/ast_symbol_graph.py`) | Function/class/method symbols; `calls` / `inherits` edges | In-memory per build; seeds `knowledge_graph` |
 
+Terminology note: a **workflow node** is a declaration in a YAML workflow
+manifest ([workflow manifest guide](../operations/workflow-manifests.md)); it is
+not a task record. A **task graph node** represents an executable task record,
+while a **symbol graph node** represents a code symbol or file. The shared word
+"node" refers to different entities in these domains.
+
 ## When to use which
 
 - **Scheduling / critical-path analysis / detecting bottlenecks** - `task_graph`.
