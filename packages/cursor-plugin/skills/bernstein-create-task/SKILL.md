@@ -1,14 +1,14 @@
 ---
 name: bernstein-create-task
 description: >
-  Create a new task in the Bernstein orchestrator. Use when the user wants to
+  Create a new task in the Bernstein task queue. Use when the user wants to
   add a task, delegate work to an agent, file a bug fix, or queue up work
-  for the orchestrator to handle.
+  for orchestration to handle.
 ---
 
 # Create Bernstein Task
 
-Create a new task in the Bernstein orchestrator and have it picked up by an agent.
+Create a new task in the Bernstein task queue for orchestration and have it picked up by an agent.
 
 ## When to Use
 
