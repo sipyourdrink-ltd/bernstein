@@ -72,9 +72,11 @@ task, an interrupted run, a bootstrap that raised — exits `1`.
 The denominator in `Tasks completed` is the seeded count, not the length of the
 task list the server happens to hold, so a retry that spawns a fresh task id
 cannot inflate it and a torn-down server cannot deflate it to `0 / 0`. The
-snapshot behind the table is taken while the server is still running; if it
-could not be read, the table says `Task server unreachable` instead of quietly
-reporting zeros.
+snapshot behind the table is taken while the server is still running. When that
+snapshot records an unreachable server, the table includes a `Task server` row
+whose value is `unreachable - counts unread`: any displayed `0 / 3` is a fallback,
+not a verified count of completed tasks. By contrast, a reachable snapshot with
+no completed tasks is a verified `0 / 3` and has no `Task server` row.
 
 ## Cost
 
