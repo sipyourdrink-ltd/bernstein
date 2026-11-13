@@ -29,6 +29,7 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.adapters.agy import AgyAdapter
 from bernstein.adapters.pi import PiAdapter
 from bernstein.adapters.registry import get_adapter, registry_name_for
+from bernstein.core.security import role_adapter_policy
 
 
 def _spawner(
@@ -57,15 +58,23 @@ def test_registry_key_lookup_returns_the_injected_run_level_adapter(tmp_path: Pa
     assert spawner._get_adapter_by_name("Antigravity") is adapter
 
 
-def test_pinned_pi_uses_its_admission_key(tmp_path: Path) -> None:
+def test_pinned_pi_uses_its_admission_key_without_changing_role_policy(tmp_path: Path) -> None:
     adapter = PiAdapter()
     spawner = _spawner(tmp_path, adapter, adapter_pinned=True)
 
-    key = spawner._infer_adapter_name_for_provider(None, "some-proxy/model")
+    routing_name = spawner._infer_adapter_name_for_provider(None, "some-proxy/model")
+    policy = role_adapter_policy.RolePolicy({"backend": ("Pi",)})
+    previous = role_adapter_policy.set_policy(policy)
+    try:
+        assert spawner._get_adapter_by_name(routing_name, role="backend") is adapter
+    finally:
+        role_adapter_policy.set_policy(previous)
 
-    assert adapter.name() == "Pi"
-    assert key == "pi"
-    assert spawner._get_adapter_by_name(key) is adapter
+    assert routing_name == "Pi"
+    assert spawner._adapter_admission_key(routing_name, None) == "pi"
+    override = spawner._infer_adapter_name_for_provider("claude", "some-proxy/model")
+    assert override == "claude"
+    assert spawner._adapter_admission_key(override, "claude") == override
 
 
 def test_registry_key_lookup_survives_the_caching_wrap(tmp_path: Path) -> None:

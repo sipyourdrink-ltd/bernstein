@@ -3091,7 +3091,7 @@ class AgentSpawner:
                     self._adapter.name(),
                 )
                 return resolved
-            pinned = self._adapter_registry_name or self._adapter.name()
+            pinned = self._adapter.name()
             logger.info(
                 "_infer_adapter_name_for_provider: run-level adapter pin %r wins; "
                 "model-name inference skipped for provider_name=%r model=%r",
@@ -3860,6 +3860,17 @@ class AgentSpawner:
                 verdict.floor,
                 verdict.advisory_id,
             )
+
+    def _adapter_admission_key(self, adapter_name: str, provider_name: str | None) -> str:
+        """Use the registered identity for admission when dispatch fell back to the run pin."""
+        if (
+            self._adapter_pinned
+            and self._adapter_registry_name is not None
+            and adapter_name == self._adapter.name()
+            and (not provider_name or adapter_name_for_provider(provider_name, "") is None)
+        ):
+            return self._adapter_registry_name
+        return adapter_name
 
     def _preflight_adapter_admission(self, adapter_name: str) -> None:
         """Refuse an adapter that cannot prove conformance admission (#2610).
@@ -5380,7 +5391,7 @@ class AgentSpawner:
                     # a fresh, matching admission receipt, sealing a chain-
                     # anchored receipt for the decision either way. Same
                     # placement rationale as the floor preflight above.
-                    self._preflight_adapter_admission(adapter_name)
+                    self._preflight_adapter_admission(self._adapter_admission_key(adapter_name, provider_name))
 
                     # Capability-aware routing (#2663): anchor the profile hash
                     # the resolved adapter presents at dispatch so replay detects
