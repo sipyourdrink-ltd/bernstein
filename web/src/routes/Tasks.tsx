@@ -29,7 +29,7 @@ import { SteerPanel } from '@/components/steer/SteerPanel';
 import {
   CreateTaskDialog,
   consumeConfirmedTaskCreation,
-  useConfirmedTaskCreation,
+  useConfirmedTaskCreations,
 } from '@/components/tasks/CreateTaskDialog';
 import {
   formatUSD,
@@ -564,10 +564,11 @@ export default function Tasks() {
     void refreshAfterCreate();
   }, [refreshAfterCreate]);
 
-  const confirmedTaskId = useConfirmedTaskCreation();
-  useLayoutEffect(() => {
+  const confirmedTaskIds = useConfirmedTaskCreations();
+  const [confirmedTaskId] = confirmedTaskIds;
+  useEffect(() => {
     if (!createFocus && confirmedTaskId) void refreshAfterCreate();
-  }, [confirmedTaskId, createFocus, refreshAfterCreate]);
+  }, [confirmedTaskIds, confirmedTaskId, createFocus, refreshAfterCreate]);
 
   const refetchList = () => {
     listQ.refetch();
@@ -595,7 +596,9 @@ export default function Tasks() {
 
         {confirmedTaskId && !createFocus && (
           <div className="mt-2 flex items-center gap-3">
-            <span role="status" className="text-body text-foreground">Task created.</span>
+            <span role="status" className="text-body text-foreground">
+              {confirmedTaskIds.length === 1 ? 'Task created.' : `${confirmedTaskIds.length} tasks created.`}
+            </span>
             <button
               type="button"
               className="rounded-md border border-border bg-card px-2.5 py-1.5 text-body-md text-foreground focus-visible:ring-2 focus-visible:ring-ring"

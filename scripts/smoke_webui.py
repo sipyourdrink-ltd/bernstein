@@ -677,6 +677,42 @@ def check_task_creation_success_after_remount(page: Page, base: str, *, settleme
         page.unroute(tasks_url)
 
 
+def check_task_creation_keeps_two_background_confirmations(page: Page, base: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    pending: list[Route] = []
+    titles = ["First background confirmation", "Second background confirmation"]
+    try:
+        for title in titles:
+            header.click()
+            form.get_by_label("Title").fill(title)
+            form.get_by_label("Prompt").fill("Keep each created task available for review.")
+            page.route(tasks_url, lambda route: pending.append(route), times=1)
+            with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+                form.get_by_role("button", name="Create task", exact=True).click()
+            page.go_back()
+            expect(page).to_have_url(f"{base}/ui/settings")
+            route = pending[-1]
+            route.fulfill(response=route.fetch())
+            page.wait_for_function("sessionStorage.getItem('bernstein.unconfirmed-task-id') === null")
+            page.go_forward()
+            expect(page).to_have_url(f"{base}/ui/tasks")
+        expect(page.get_by_role("status").filter(has_text="2 tasks created.")).to_have_count(1)
+        view_created = page.get_by_role("button", name="View created task", exact=True)
+        for index, title in enumerate(titles):
+            view_created.click()
+            expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(view_created if index == 0 else header).to_be_focused()
+        expect(view_created).to_have_count(0)
+        assert len(pending) == 2
+    finally:
+        page.unroute(tasks_url)
+
+
 def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
     list_url = f"{base}/api/v1/tasks?page=1"
     events_url = f"{base}/api/v1/events"
@@ -938,6 +974,7 @@ def main() -> None:
             check_task_creation_rejected_while_away(page, base)
             for settlement in ("while away", "with form closed", "with form open", "with palette open"):
                 check_task_creation_success_after_remount(page, base, settlement=settlement)
+            check_task_creation_keeps_two_background_confirmations(page, base)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)

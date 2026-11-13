@@ -16,7 +16,7 @@ const outcomeUnknownMessage = 'Task creation could not be confirmed. Check the t
 let inMemoryRecoveryId: string | null = null;
 let recoveryDraft: TaskInput | null = null;
 let recoveryRejection: string | undefined;
-let confirmedRecoveryId: string | null = null;
+let confirmedRecoveryIds: readonly string[] = [];
 const recoveryListeners = new Set<() => void>();
 
 function subscribeToRecovery(listener: () => void) {
@@ -46,13 +46,13 @@ function rememberRecoveryId(id: string | null, rejection?: string) {
   for (const listener of recoveryListeners) listener();
 }
 
-export function useConfirmedTaskCreation() {
-  return useSyncExternalStore(subscribeToRecovery, () => confirmedRecoveryId);
+export function useConfirmedTaskCreations() {
+  return useSyncExternalStore(subscribeToRecovery, () => confirmedRecoveryIds);
 }
 
 export function consumeConfirmedTaskCreation(taskId: string): boolean {
-  if (confirmedRecoveryId !== taskId) return false;
-  confirmedRecoveryId = null;
+  if (!confirmedRecoveryIds.includes(taskId)) return false;
+  confirmedRecoveryIds = confirmedRecoveryIds.filter((id) => id !== taskId);
   for (const listener of recoveryListeners) listener();
   return true;
 }
@@ -90,7 +90,7 @@ export function CreateTaskDialog({
   const [validationError, setValidationError] = useState('');
   const storedRecoveryId = useSyncExternalStore(subscribeToRecovery, readRecoveryId);
   const rejection = useSyncExternalStore(subscribeToRecovery, () => recoveryRejection);
-  const confirmedId = useConfirmedTaskCreation();
+  const confirmedIds = useConfirmedTaskCreations();
   const [initialRecoveryId] = useState(readRecoveryId);
   const [initialDraft] = useState(() =>
     recoveryDraft && (recoveryDraft.id === storedRecoveryId || rejection) ? recoveryDraft : null,
@@ -109,7 +109,7 @@ export function CreateTaskDialog({
   function confirm(taskId: string) {
     if (readRecoveryId() !== taskId) return;
     if (!mounted.current) {
-      confirmedRecoveryId = taskId;
+      confirmedRecoveryIds = [...confirmedRecoveryIds, taskId];
       rememberRecoveryId(null);
       return;
     }
@@ -119,12 +119,11 @@ export function CreateTaskDialog({
   }
 
   useLayoutEffect(() => {
-    if (busy || !confirmedId || confirmedId !== initialRecoveryId || !consumeConfirmedTaskCreation(confirmedId)) {
-      return;
-    }
+    if (busy || !initialRecoveryId || !confirmedIds.includes(initialRecoveryId)) return;
+    if (!consumeConfirmedTaskCreation(initialRecoveryId)) return;
     created.current = true;
-    onCreated(confirmedId);
-  }, [busy, confirmedId, initialRecoveryId, onCreated]);
+    onCreated(initialRecoveryId);
+  }, [busy, confirmedIds, initialRecoveryId, onCreated]);
 
   const create = useMutation({
     mutationKey: createMutationKey,
