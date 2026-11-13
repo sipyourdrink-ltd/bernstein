@@ -1,11 +1,13 @@
 # Chaos engineering
 
 `bernstein chaos` is a small fault-injection toolkit for SREs who want to
-prove the orchestrator survives the failure modes its docs claim it
-survives. It is **not** a load generator and **not** a security fuzzer.
-The verbs map directly to scenarios the deterministic core is supposed
-to recover from: an agent dies mid-task, a file disappears from a
-worktree.
+test Bernstein's operational recovery paths. Bernstein coordinates agent
+work and provides recurring schedule management; its wider operational
+surface includes WAL-backed durable state, isolated worktrees, and
+operator-facing SLO and error-budget signals. This toolkit is **not** a
+load generator and **not** a security fuzzer. Its verbs map directly to
+scenarios the system is supposed to recover from: an agent dies mid-task,
+a file disappears from a worktree.
 
 The CLI lives in `cli/commands/chaos_cmd.py:31` (`@click.group("chaos")`).
 All state - including replayable history - is written under
@@ -13,10 +15,10 @@ All state - including replayable history - is written under
 
 ---
 
-## Why chaos testing for an agent orchestrator
+## Why chaos testing for scheduling and operational recovery
 
-A multi-agent orchestrator looks deterministic on a green run, but its
-failure paths are exercised rarely. The same boring path covers:
+Bernstein coordinates multi-agent work, but a green run does not exercise
+its operational recovery surfaces. The same boring path covers:
 
 - **WAL replay**: an agent crashes mid-task. The orchestrator must
   re-claim, re-spawn, and finish the work without producing two
