@@ -1044,7 +1044,7 @@ class CLIAdapter(ABC):
         if self._is_rate_limit_error(tail_lines):
             # Distinguish a standing cap (won't clear this run) from a
             # transient request-rate limit before touching the meter.
-            if classify_429(tail_text) is HTTP429Classification.STANDING:
+            if classify_429("\n".join(tail_lines)) is HTTP429Classification.STANDING:
                 raise StandingCapError(f"{provider_name} hit a standing cap during startup: {tail_text}")
             # Tap the meter once before raising so the panel and the
             # ``rate_limit.hit`` event both see the spawn-time 429.

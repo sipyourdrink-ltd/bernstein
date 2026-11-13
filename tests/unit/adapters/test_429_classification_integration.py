@@ -175,6 +175,18 @@ def test_standing_cap_propagates_through_classify_failure(tmp_path: Path) -> Non
     assert result.transient is False
 
 
+def test_standing_cap_followed_by_cli_diagnostics_is_not_retried(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    body = "HTTP 429\nThe spending limit has been reached.\nThe request was not completed."
+
+    with pytest.raises(StandingCapError) as excinfo:
+        _probe_once(adapter, log_path, body)
+
+    assert classify_failure(excinfo.value).transient is False
+    assert adapter.rate_limit_meter.hits_in_window() == 0
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: unrecognised 429 body falls back to retryable
 # ---------------------------------------------------------------------------
