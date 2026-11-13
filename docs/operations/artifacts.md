@@ -39,6 +39,33 @@ Every kind routes through one core so two kinds can never disagree:
   not silently normalised, so two byte-different inputs can never both pass as
   "the same" artifact. NaN / Infinity are rejected in JSON kinds.
 
+### JSONL input and canonical output
+
+For `dataset` and `action_log`, the artifact reader decodes UTF-8, treats LF,
+CRLF, and lone CR as line separators, and ignores lines containing only
+whitespace. Those differences disappear before canonicalisation. If a nonblank
+row is invalid JSON, the error reports its **nonblank-row number** (starting at
+1), not its physical line number; blank and whitespace-only lines do not count.
+
+The documented row convention is one JSON object per row. The loader itself
+parses JSON values without requiring each value to be an object; it does not
+apply a schema check unless the task declares a `schema_valid` criterion. Thus,
+for example, an array-valued row can be loaded and canonicalised when no such
+criterion rejects it. The JSONL canonicaliser preserves row order, serialises
+compactly with object keys sorted, and joins rows with one LF (`\n`) between
+them, with **no final LF**. For example, the following notation uses `\r\n`
+and `\r` to mark actual CRLF and lone-CR separators (not literal backslash
+characters):
+
+```text
+Input:     {"z": 2, "a": 1}\r\n   \r["x", 1]
+Canonical: {"a":1,"z":2}\n["x",1]
+```
+
+The whitespace-only input line is discarded; row order is unchanged, and the
+canonical result has no LF after its final `]`. `dataset` and `action_log` use
+the same behavior.
+
 The artifact's identity is `content_hash = sha256(canonical_bytes)`.
 
 ## Determinism
