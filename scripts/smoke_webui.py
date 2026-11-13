@@ -619,9 +619,9 @@ def check_task_creation_rejected_while_away(page: Page, base: str) -> None:
         page.unroute(tasks_url)
 
 
-def check_task_creation_success_after_remount(page: Page, base: str) -> None:
+def check_task_creation_success_after_remount(page: Page, base: str, *, settlement: str) -> None:
     tasks_url = f"{base}/api/v1/tasks"
-    title = "Task confirmed after returning to Tasks"
+    title = f"Task confirmed after returning to Tasks ({settlement})"
     pending: list[Route] = []
     page.goto(f"{base}/ui/settings")
     page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
@@ -636,12 +636,19 @@ def check_task_creation_success_after_remount(page: Page, base: str) -> None:
             form.get_by_role("button", name="Create task", exact=True).click()
         page.go_back()
         expect(page).to_have_url(f"{base}/ui/settings")
+        assert len(pending) == 1
+        if settlement == "while away":
+            pending[0].fulfill(response=pending[0].fetch())
+            expect(page.get_by_role("heading", name="Settings", exact=True)).to_be_visible()
         page.go_forward()
         expect(page).to_have_url(f"{base}/ui/tasks")
-        header.click()
-        expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
-        assert len(pending) == 1
-        pending[0].fulfill(response=pending[0].fetch())
+        if settlement == "with form open":
+            header.click()
+            expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        else:
+            expect(form).to_have_count(0)
+        if settlement != "while away":
+            pending[0].fulfill(response=pending[0].fetch())
         expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
         assert page.evaluate("sessionStorage.getItem('bernstein.unconfirmed-task-id')") is None
         page.keyboard.press("Escape")
@@ -909,7 +916,8 @@ def main() -> None:
             check_unconfirmed_task_lookup(page, base, headers)
             check_task_creation_survives_route_remount(page, base)
             check_task_creation_rejected_while_away(page, base)
-            check_task_creation_success_after_remount(page, base)
+            for settlement in ("while away", "with form closed", "with form open"):
+                check_task_creation_success_after_remount(page, base, settlement=settlement)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)

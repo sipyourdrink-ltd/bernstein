@@ -26,7 +26,11 @@ import { TaskDepsPanel } from '@/components/deps/TaskDepsPanel';
 import { TaskTracePanel } from '@/components/trace/TaskTracePanel';
 import { TaskArtifactsPanel } from '@/components/artifacts';
 import { SteerPanel } from '@/components/steer/SteerPanel';
-import { CreateTaskDialog } from '@/components/tasks/CreateTaskDialog';
+import {
+  CreateTaskDialog,
+  consumeConfirmedTaskCreation,
+  useConfirmedTaskCreation,
+} from '@/components/tasks/CreateTaskDialog';
 import {
   formatUSD,
   formatDuration,
@@ -545,12 +549,27 @@ export default function Tasks() {
     setCreateFocus(focus);
   };
 
-  async function refreshAfterCreate() {
+  const refreshAfterCreate = useCallback(async () => {
     const filters = { queryKey: ['tasks', 'list'] };
     // An uncached list request started before creation may still be in flight.
     await qc.cancelQueries(filters);
     await qc.invalidateQueries(filters);
-  }
+  }, [qc]);
+
+  const openCreatedTask = useCallback((taskId: string) => {
+    drawerCreateTrigger.current = createTrigger.current ?? headerCreateButton.current;
+    setCreateFocus(null);
+    setActiveTab('Summary');
+    setSelectedId(taskId);
+    void refreshAfterCreate();
+  }, [refreshAfterCreate]);
+
+  const confirmedTaskId = useConfirmedTaskCreation();
+  useLayoutEffect(() => {
+    if (!createFocus && confirmedTaskId && consumeConfirmedTaskCreation(confirmedTaskId)) {
+      openCreatedTask(confirmedTaskId);
+    }
+  }, [confirmedTaskId, createFocus, openCreatedTask]);
 
   const refetchList = () => {
     listQ.refetch();
@@ -632,13 +651,7 @@ export default function Tasks() {
             setCreateFocus(null);
             if (outcomeUnknown) void refreshAfterCreate();
           }}
-          onCreated={(taskId) => {
-            drawerCreateTrigger.current = createTrigger.current;
-            setCreateFocus(null);
-            setActiveTab('Summary');
-            setSelectedId(taskId);
-            void refreshAfterCreate();
-          }}
+          onCreated={openCreatedTask}
         />
       )}
 

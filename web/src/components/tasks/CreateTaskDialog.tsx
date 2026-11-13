@@ -47,6 +47,16 @@ function rememberRecoveryId(id: string | null, rejection?: string) {
   for (const listener of recoveryListeners) listener();
 }
 
+export function useConfirmedTaskCreation() {
+  return useSyncExternalStore(subscribeToRecovery, () => confirmedRecoveryId);
+}
+
+export function consumeConfirmedTaskCreation(taskId: string): boolean {
+  if (confirmedRecoveryId !== taskId || readRecoveryId() !== taskId) return false;
+  rememberRecoveryId(null);
+  return true;
+}
+
 function taskCreationError(error: Error | null): string | undefined {
   if (error instanceof ApiError && error.status === 400) {
     const body = error.body;
@@ -80,7 +90,7 @@ export function CreateTaskDialog({
   const [validationError, setValidationError] = useState('');
   const storedRecoveryId = useSyncExternalStore(subscribeToRecovery, readRecoveryId);
   const rejection = useSyncExternalStore(subscribeToRecovery, () => recoveryRejection);
-  const confirmedId = useSyncExternalStore(subscribeToRecovery, () => confirmedRecoveryId);
+  const confirmedId = useConfirmedTaskCreation();
   const [initialDraft] = useState(() =>
     recoveryDraft && (recoveryDraft.id === storedRecoveryId || rejection) ? recoveryDraft : null,
   );
@@ -108,9 +118,8 @@ export function CreateTaskDialog({
   }
 
   useLayoutEffect(() => {
-    if (busy || !confirmedId || readRecoveryId() !== confirmedId) return;
+    if (busy || !confirmedId || !consumeConfirmedTaskCreation(confirmedId)) return;
     created.current = true;
-    rememberRecoveryId(null);
     onCreated(confirmedId);
   }, [busy, confirmedId, onCreated]);
 
