@@ -187,6 +187,25 @@ def test_standing_cap_followed_by_cli_diagnostics_is_not_retried(tmp_path: Path)
     assert adapter.rate_limit_meter.hits_in_window() == 0
 
 
+@pytest.mark.parametrize("separate_stderr", [False, True], ids=["same-log", "separate-stderr"])
+def test_startup_configuration_does_not_turn_transient_429_into_standing_cap(
+    tmp_path: Path, separate_stderr: bool
+) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    configuration = "Loaded project spending limit: $10\n"
+    if separate_stderr:
+        _write_log(log_path.with_suffix(".stderr.log"), RETRYABLE_BODY)
+        _write_log(log_path, configuration)
+    else:
+        _write_log(log_path, configuration + RETRYABLE_BODY)
+
+    with pytest.raises(RateLimitError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 1
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: unrecognised 429 body falls back to retryable
 # ---------------------------------------------------------------------------

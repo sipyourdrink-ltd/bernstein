@@ -1043,8 +1043,15 @@ class CLIAdapter(ABC):
         tail_text = tail_lines[-1] if tail_lines else "(no log output)"
         if self._is_rate_limit_error(tail_lines):
             # Distinguish a standing cap (won't clear this run) from a
-            # transient request-rate limit before touching the meter.
-            if classify_429("\n".join(tail_lines)) is HTTP429Classification.STANDING:
+            # transient request-rate limit before touching the meter. When
+            # the CLI prints an HTTP status, only classify that response and
+            # its continuation lines, excluding earlier startup messages.
+            body = tail_text
+            for index in range(len(tail_lines) - 1, -1, -1):
+                if re.search(r"\bHTTP(?:/[\d.]+)?\s+429\b", tail_lines[index], re.IGNORECASE):
+                    body = "\n".join(tail_lines[index:])
+                    break
+            if classify_429(body) is HTTP429Classification.STANDING:
                 raise StandingCapError(f"{provider_name} hit a standing cap during startup: {tail_text}")
             # Tap the meter once before raising so the panel and the
             # ``rate_limit.hit`` event both see the spawn-time 429.
