@@ -98,9 +98,17 @@ Writes role-specific Claude Code skills (`.claude/skills/*.md`) into the agent's
 
 Creating a short-lived agent process for a task batch. The spawner handles prompt construction, worktree setup, and process management. Implemented in `src/bernstein/core/agents/spawner.py`.
 
+### Task
+
+An executable work record with its own lifecycle and status.
+
 ### Tick
 
 The orchestrator's polling cycle (approximately 3 seconds). Each tick fetches pending tasks, spawns agents, checks heartbeats, and evaluates quality gates. Implemented in `src/bernstein/core/orchestration/orchestrator.py`.
+
+### Ticket
+
+A persistent work specification describing work to be done. An imported ticket can produce a task whose status is tracked independently of the ticket.
 
 ### WAL
 

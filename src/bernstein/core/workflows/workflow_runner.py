@@ -33,6 +33,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.config.platform_compat import IS_WINDOWS, kill_process_group
 from bernstein.core.persistence.workspace import is_workspace_trusted
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -40,6 +41,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from bernstein.core.workflows.workflow_spec import LoopSpec, WorkflowNode, WorkflowSpec
 
 logger = logging.getLogger(__name__)
+_PREDICATE_TIMEOUT_SECONDS = 30
 
 
 # ---------------------------------------------------------------------------
@@ -504,15 +506,13 @@ class WorkflowRunner:
                     results[node.id] = skipped
                     execution.nodes.append(skipped)
                     continue
-                if node.when is not None and not self._loop_predicate_passes(node.when):
-                    skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED, condition_skipped=True)
-                    results[node.id] = skipped
-                    execution.nodes.append(skipped)
-                    self._audit(
-                        "workflow.node_condition_skipped",
-                        node.id,
-                        {"run_id": run_id, "when": node.when},
-                    )
+                condition = self._evaluate_when(node, run_id)
+                if condition is not None:
+                    results[node.id] = condition
+                    execution.nodes.append(condition)
+                    if condition.status == NodeStatus.FAILED:
+                        record_node_state(self._workdir, run_id, condition, recorded_digest)
+                        aborted = True
                     continue
                 ready_nodes.append(node)
 
@@ -669,15 +669,13 @@ class WorkflowRunner:
                     results[node.id] = skipped
                     execution.nodes.append(skipped)
                     continue
-                if node.when is not None and not self._loop_predicate_passes(node.when):
-                    skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED, condition_skipped=True)
-                    results[node.id] = skipped
-                    execution.nodes.append(skipped)
-                    self._audit(
-                        "workflow.node_condition_skipped",
-                        node.id,
-                        {"run_id": rid, "when": node.when},
-                    )
+                condition = self._evaluate_when(node, rid)
+                if condition is not None:
+                    results[node.id] = condition
+                    execution.nodes.append(condition)
+                    if condition.status == NodeStatus.FAILED:
+                        record_node_state(self._workdir, rid, condition, spec_digest_result)
+                        aborted = True
                     continue
                 ready_nodes.append(node)
 
@@ -836,7 +834,13 @@ class WorkflowRunner:
             last.iterations = iteration
             if last.status == NodeStatus.FAILED:
                 return last
-            if self._loop_predicate_passes(loop.until):
+            try:
+                if self._loop_predicate_passes(loop.until):
+                    return last
+            except subprocess.TimeoutExpired:
+                last.status = NodeStatus.FAILED
+                last.exit_code = None
+                last.error = f"loop predicate timed out after {_PREDICATE_TIMEOUT_SECONDS}s"
                 return last
             self._audit(
                 "workflow.loop_continue",
@@ -849,6 +853,22 @@ class WorkflowRunner:
         last.status = NodeStatus.FAILED
         last.error = f"loop exhausted after {loop.max_iterations} iterations; predicate never exited 0: {loop.until!r}"
         return last
+
+    def _evaluate_when(self, node: WorkflowNode, run_id: str) -> NodeExecution | None:
+        """Return the terminal outcome of a false or timed-out when predicate."""
+        if node.when is None:
+            return None
+        try:
+            if self._loop_predicate_passes(node.when):
+                return None
+        except subprocess.TimeoutExpired:
+            return NodeExecution(
+                node_id=node.id,
+                status=NodeStatus.FAILED,
+                error=f"when predicate timed out after {_PREDICATE_TIMEOUT_SECONDS}s",
+            )
+        self._audit("workflow.node_condition_skipped", node.id, {"run_id": run_id, "when": node.when})
+        return NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED, condition_skipped=True)
 
     def _require_trusted_workspace(self, resource_id: str, kind: str) -> None:
         """Refuse shell execution unless the workdir has been trusted.
@@ -879,20 +899,32 @@ class WorkflowRunner:
 
         Raises:
             UntrustedWorkspaceError: When the workspace is not trusted.
+            subprocess.TimeoutExpired: When the predicate exceeds its deadline.
         """
         self._require_trusted_workspace("predicate", "predicate")
         # SECURITY: shell=True required because predicates are manifest-authored
         # bash expressions (e.g. "test -f marker") that rely on shell parsing; not user input.
-        proc = subprocess.run(
+        # POSIX pipe EOF preserves the normal completion behavior of a
+        # predicate with foreground or background output producers. On
+        # Windows, use no pipes so a surviving descendant cannot hold a
+        # communicate reader thread open after the deadline.
+        output = subprocess.DEVNULL if IS_WINDOWS else subprocess.PIPE
+        with subprocess.Popen(
             predicate,
             shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             cwd=str(self._workdir),
             env=self._env,
-            capture_output=True,
-            check=False,
-            text=True,
-        )
-        return proc.returncode == 0
+            stdout=output,
+            stderr=output,
+            start_new_session=not IS_WINDOWS,
+        ) as proc:
+            try:
+                proc.communicate(timeout=_PREDICATE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                if not kill_process_group(proc.pid, sig=9):
+                    proc.kill()
+                raise
+            return proc.returncode == 0
 
     def _execute_once(
         self,

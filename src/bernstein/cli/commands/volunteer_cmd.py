@@ -612,7 +612,7 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None, allowed_origins:
     "profile_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=".bernstein/volunteer_profile.json",
-    help="Path to volunteer profile JSON (default: .bernstein/volunteer_profile.json).",
+    help="Path to the volunteer profile JSON (default: .bernstein/volunteer_profile.json).",
 )
 def autopilot_cmd(profile_path: Path) -> None:
     """Run volunteer tasks automatically using the autopilot loop.
@@ -630,4 +630,4 @@ def autopilot_cmd(profile_path: Path) -> None:
     profile: VolunteerProfile = load_profile(profile_path.read_text())
     click.echo(f"Profile loaded for autopilot loop: {len(profile.allowed_projects)} allowed projects")
     click.echo(f"AutopilotLoop available for TaskSource implementation: {AutopilotLoop.__name__}")
-    raise click.ClickException("Autopilot requires a TaskSource implementation (not yet implemented)")
+    raise click.ClickException("Autopilot requires a TaskSource implementation (not yet implemented).")

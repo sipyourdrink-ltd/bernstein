@@ -2303,31 +2303,13 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
             timeout=timeout_s,
         )
         if result.returncode != 0:
-            logger.info(
-                "janitor test_passes FAIL: command=%r cwd=%s exit=%d stderr=%s stdout=%s",
-                command,
-                workdir,
-                result.returncode,
-                result.stderr.decode("utf-8", errors="replace")[-2000:],
-                result.stdout.decode("utf-8", errors="replace")[-2000:],
-            )
+            logger.warning("janitor test_passes FAIL: exit=%d", result.returncode)
         return result.returncode == 0
-    except subprocess.TimeoutExpired as exc:
-        logger.warning(
-            "janitor test_passes TIMEOUT: command=%r cwd=%s timeout=%ss exc=%s",
-            command,
-            workdir,
-            timeout_s,
-            exc,
-        )
+    except subprocess.TimeoutExpired:
+        logger.warning("janitor test_passes TIMEOUT: timeout=%ss", timeout_s)
         return False
     except OSError as exc:
-        logger.warning(
-            "janitor test_passes ERROR: command=%r cwd=%s exc=%s",
-            command,
-            workdir,
-            exc,
-        )
+        logger.warning("janitor test_passes ERROR: error_type=%s", type(exc).__name__)
         return False
 
 

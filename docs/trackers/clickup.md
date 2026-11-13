@@ -2,7 +2,9 @@
 
 Bernstein can pull work directly from a ClickUp list, post progress
 comments back to the underlying task, and move tasks between statuses
-when work transitions. The adapter also supports per-step CLI choice: a
+when work transitions. ClickUp calls this record a task; the Bernstein
+adapter exposes it as a Ticket, and `ticket.id` retains the ClickUp task
+identifier. The adapter also supports per-step CLI choice: a
 custom field can name the CLI adapter (`claude`, `codex`, `aider`, ...)
 Bernstein should pick for each ticket.
 

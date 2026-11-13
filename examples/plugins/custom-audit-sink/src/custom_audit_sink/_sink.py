@@ -68,8 +68,7 @@ class MqttAuditSink:
     needing a live broker.
     """
 
-    # Class-level metadata - easy for tests to assert against and for
-    # operators to surface in ``bernstein plugins list`` output.
+    # Stable metadata for tests that verify the plugin and hook names.
     plugin_name: ClassVar[str] = "custom-audit-sink"
     hook_target: ClassVar[str] = "on_audit_event"
 

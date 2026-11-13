@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — لوحة معلومات الطرفية | `bernstein gui serve` — لوحة معلومات المتصفح |
 
 ### إثبات عملية تشغيل
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 الحتمية هنا شيء يمكنك التحقق منه بنفسك، وليست أمراً تسلم به دون دليل. قم بالتشغيل مرة واحدة مع تمكين التدقيق، ثم تحقق مما تم تسجيله:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 يتم كتابة السجل في كل تشغيل؛ عمود النسب الفقري يعمل دائماً ويكتسب إدخالاً لكل خطوة ذات نسب، لذا يمكن أن ينتهي التشغيل القصير بعمود فقري صالح وفارغ. يمتلك `bernstein audit verify` سلسلة للتحقق منها فقط عند بدء التشغيل بـ `BERNSTEIN_AUDIT=1` أو إعداد مسبق للامتثال أو `bernstein run --audit`. ينتمي الخيار `--audit` إلى `bernstein run`؛ في صيغة `bernstein -g` أعلاه، قم بتعيين متغير البيئة.
 
 يربط إيصال التشغيل رأس السجل، ورأس عمود النسب الفقري عندما يكتب التشغيل إدخالات، واختيارياً نطاق سلسلة التدقيق، تحت كيان واحد موقع بـ Ed25519 مع تضمين المفتاح العام. يمكن للمراجع الذي يمتلك هذا الملف والمفتاح العام للمشغل التأكد من عدم تعديل الإجراءات والسلاسل المضمنة: لا حاجة لمفتاح HMAC، ولا حاجة لمجلد `.sdd/` نشط، ورمز الخروج `2` يحدد أول خطوة متباينة عند التلاعب. يحدد ذلك الإيصال حالة السجل المضمنة؛ وإثبات أن تلك الحالة هي السجل المكتمل بالكامل يتطلب بالإضافة إلى ذلك ختماً مستقلاً للرأس/العدد. مع الملف بمفرده ودون تحديد `--public-key`، يكون الفحص للنزاهة الداخلية فقط. التفاصيل في [إعادة التشغيل الحتمي](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+في واجهة الويب، افتح **Governance** واستخدم **Verify a receipt** للتحقق من إيصال التشغيل عبر الخادم. يعرض المتصفح نتيجة التحقق من السلامة فقط ومصدر المفتاح. راجع [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 تنطبق نفس إمكانية التحقق على أرقام التقييم. يقوم `bernstein bench run <suite> --reliability k` (يكتب أيضاً `bernstein eval --reliability k`) بتشغيل كل مهمة `k` من المرات بتنسيق ثابت، ثم يبلغ عن حد أدنى `pass^k` (يجب أن تنجح جميع محاولات `k`) إلى جانب الحد الأقصى `pass@1`. يتم ختم هذه النتيجة في إيصال موقّع يعيد `bernstein bench reliability-verify` حسابه دون اتصال، وبالتالي فإن أي حد أدنى مفتعل يفشل في التحقق. التفاصيل: [الحد الأدنى للموثوقية pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

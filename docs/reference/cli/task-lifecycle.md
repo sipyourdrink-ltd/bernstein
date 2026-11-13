@@ -109,22 +109,26 @@ For a holistic view including dependency edges and the critical path, use `berns
 
 ## `bernstein pending`
 
-List tasks waiting for **human approval** in the `--approval review` flow.
+List tasks waiting for **human approval** before starting or after verification.
 
 **Synopsis:** `bernstein pending [flags]`
 
-**Flags:** *(source: `cli/commands/task_cmd.py:291-303`)*
+**Flags:** *(source: `cli/commands/pending_cmd.py`)*
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--workdir` | `.` | Project root (parent of `.sdd/`). |
+| `--kind` | `all` | Use `approval` for pre-spawn gates or `spawn` for post-completion review. |
 
-A task is "pending" when its task store has dropped a JSON file under `.sdd/runtime/pending_approvals/`. This happens automatically when `bernstein run --approval review` verifies a task and pauses awaiting your decision. The state is **not** `PENDING_APPROVAL` (which is the FSM enum used by the security/approval subsystem); the file-on-disk semaphore is what `bernstein pending` reads.
+The pre-spawn gate writes `.sdd/runtime/approvals/<task_id>.pending`.
+When the orchestrator is configured for post-completion review, it parks
+verified tasks under `.sdd/runtime/pending_approvals/<task_id>.json`.
 
-JSON output mode (`--json` on the root) emits the raw array of pending records - useful in scripts:
+JSON output mode (`--json` on the root) returns an object with
+`approval_pending` and `spawn_pending` arrays:
 
 ```bash
-bernstein --json pending | jq -r '.[].task_id' | while read tid; do
+bernstein --json pending | jq -r '.spawn_pending[].task_id' | while read tid; do
   bernstein approve "$tid"
 done
 ```

@@ -1258,7 +1258,7 @@ def _run_endpoint_certification(
     "--unattended",
     is_flag=True,
     default=False,
-    help="Run probes through spawner environment (unattended parity).",
+    help="Run probes through the spawner environment (unattended parity).",
 )
 @click.pass_context
 def doctor_cmd(

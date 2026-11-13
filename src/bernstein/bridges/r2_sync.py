@@ -26,19 +26,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def _default_exclude_patterns() -> tuple[str, ...]:
-    """Default patterns for workspace file exclusion."""
-    return (
-        ".git",
-        "__pycache__",
-        "node_modules",
-        ".venv",
-        "*.pyc",
-        ".sdd/runtime",
-        ".sdd/logs",
-    )
-
-
 @dataclass(frozen=True)
 class R2Config:
     """Configuration for R2 workspace sync.

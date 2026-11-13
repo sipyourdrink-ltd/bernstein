@@ -160,7 +160,7 @@ Ein laufender Durchlauf kann über beide Bedienoberflächen beobachtet werden. B
 | `bernstein live` — das Terminal-Dashboard | `bernstein gui serve` — das Browser-Dashboard |
 
 ### einen Durchlauf nachweisen
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Determinismus ist hier etwas, das Sie überprüfen, statt darauf zu vertrauen. Einmal mit aktiviertem Audit ausführen und die Aufzeichnungen verifizieren:
 
@@ -179,6 +179,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Das Journal wird bei jedem Lauf geschrieben; das Lineage-Rückgrat ist immer aktiv und erhält für jeden Schritt einen Eintrag, sodass ein kurzer Lauf mit einem gültigen, leeren Rückgrat enden kann. `bernstein audit verify` hat nur dann eine Kette zu prüfen, wenn der Lauf mit `BERNSTEIN_AUDIT=1`, einem Compliance-Preset oder `bernstein run --audit` gestartet wurde. Das Flag `--audit` gehört zu `bernstein run`; bei der obigen `bernstein -g`-Form setzen Sie die Umgebungsvariable.
 
 Ein Run-Receipt bindet den Journal-Head, den Lineage-Head (sofern Einträge geschrieben wurden) und optional einen Audit-Kettenbereich unter einem einzigen Ed25519-signierten Subjekt mit eingebettetem öffentlichem Schlüssel. Ein Prüfer mit dieser Datei und dem öffentlichen Schlüssel des Betreibers kann bestätigen, dass Aktionen und Ketten unverändert sind: kein HMAC-Schlüssel, kein aktives `.sdd/`, und Exit-Code `2` mit Nennung des ersten abweichenden Schritts bei Manipulation. Dieser Receipt identifiziert den eingebetteten Journal-Zustand; um zu belegen, dass dieser Zustand dem vollständigen Journal entspricht, ist zusätzlich ein unabhängiges Head/Count-Siegel erforderlich. Mit der Datei allein ohne `--public-key`-Bindung dient die Prüfung nur der Integrität – sie belegt interne Konsistenz, nicht den Aussteller. Details unter [deterministisches Replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+Öffne in der Weboberfläche **Governance** und verwende **Verify a receipt**, um einen Run-Receipt auf dem Server zu prüfen. Der Browser zeigt das Ergebnis der reinen Integritätsprüfung und die Herkunft des Schlüssels. Siehe [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Dieselbe Prüfbarkeit gilt für Evaluierungsmetriken. `bernstein bench run <suite> --reliability k` (auch `bernstein eval --reliability k`) führt jede Aufgabe `k`-mal unter fester Koordination aus und berichtet die Untergrenze `pass^k` (alle `k` Versuche müssen bestehen) neben der Obergrenze `pass@1`. Dieses Ergebnis wird in einem signierten Beleg versiegelt, den `bernstein bench reliability-verify` offline nachrechnet, sodass fingierte Werte die Verifikation nicht bestehen. Details: [pass^k Zuverlässigkeits-Untergrenze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

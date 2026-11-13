@@ -90,6 +90,11 @@ recomputes offline from `.sdd` alone.
 
 ## Verifying a dropped receipt
 
+In the web UI, open **Governance** and choose or drop a file under
+**Verify a receipt**. Confirm the selected filename and select **Verify
+receipt** to send the original bytes to the server. A successful check shows
+the integrity-only tier and its trust caveat beside the verdict.
+
 ```
 POST /governance/verify-receipt
 ```
@@ -110,12 +115,11 @@ installation serving it.
 | `divergent_step` | The first divergent journal step, when journal tamper was located. |
 
 The tier is always `integrity-only` because the signature is checked against
-the key embedded in the receipt: that proves the file is internally consistent
-and that no byte changed after signing, not who produced it. Provenance
-requires the operator's key out of band —
-`bernstein verify receipt <file> --public-key <pem>` — and no key can be pinned
-through the endpoint, because a key arriving in the same request as the receipt
-is the same channel rather than an independent anchor.
+the key embedded in the receipt. The verifier checks the canonical signed
+contents. JSON formatting such as trailing whitespace can change without
+affecting the result. To check who signed the receipt, obtain the operator's
+public key separately and use `bernstein verify receipt <file> --public-key
+<pem>`. The endpoint uses only the embedded key.
 
 A receipt that does not verify is answered with `200` and a failing verdict.
 The result is a statement about the evidence, not a failed request.

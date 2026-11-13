@@ -16,7 +16,9 @@ import importlib
 import inspect
 import re
 import sys
-import time
+from collections.abc import Callable, Iterator
+from threading import Event
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -26,59 +28,80 @@ if TYPE_CHECKING:
 
 MODULE = "bernstein.core.observability.prometheus"
 
-# Well under any real import, so a "slow" import in these tests is still fast.
-_TIMEOUT = "0.05"
-_SLOWER_THAN_TIMEOUT = 0.35
+_TIMEOUT = 0.05
+
+
+class ImportSchedule:
+    """Let the real import callback finish on either side of the timeout."""
+
+    def __init__(self, *, late: bool) -> None:
+        self.late = late
+        self.done = Event()
+        self.target: Callable[[], None] | None = None
+        self.waits: list[float] = []
+
+    def wait(self, timeout: float) -> bool:
+        self.waits.append(timeout)
+        return self.done.is_set()
+
+    def thread(self, *, target: Callable[[], None], daemon: bool) -> SimpleNamespace:
+        assert daemon
+        return SimpleNamespace(start=lambda: self.start(target))
+
+    def start(self, target: Callable[[], None]) -> None:
+        assert self.target is None
+        self.target = target
+        if not self.late:
+            self.finish()
+
+    def finish(self) -> None:
+        assert self.target is not None
+        self.target()
+        assert self.done.is_set(), "the import callback did not finish"
 
 
 def _reimport(
     monkeypatch: pytest.MonkeyPatch,
     *,
     platform: str,
-    import_delay: float = 0.0,
+    schedule: ImportSchedule,
 ) -> ModuleType:
-    """Import the module fresh under a chosen platform and import speed.
-
-    ``sys.platform`` and ``__import__`` are restored before this returns rather
-    than at test teardown. Leaving them patched for the rest of the test lets
-    another fixture's teardown import a third-party module under a platform the
-    process never started on, which fails in a place that has nothing to do with
-    what is being tested.
-    """
+    """Reimport with a controlled worker only for this module's threading import."""
     real_import = builtins.__import__
-    real_platform = sys.platform
+    controlled_threading = SimpleNamespace(
+        Thread=schedule.thread,
+        Event=lambda: SimpleNamespace(set=schedule.done.set, wait=schedule.wait),
+    )
 
-    def maybe_slow_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "prometheus_client" and import_delay:
-            time.sleep(import_delay)
-        return real_import(name, *args, **kwargs)
+    def controlled_import(name: str, globals: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Any:
+        if name == "threading" and globals is not None and globals.get("__name__") == MODULE:
+            return controlled_threading
+        return real_import(name, globals, *args, **kwargs)
 
-    monkeypatch.setenv("BERNSTEIN_PROMETHEUS_IMPORT_TIMEOUT", _TIMEOUT)
-    sys.modules.pop(MODULE, None)
-    sys.platform = platform  # type: ignore[misc]
-    builtins.__import__ = maybe_slow_import  # type: ignore[assignment]
-    try:
+    with monkeypatch.context() as patch:
+        patch.setenv("BERNSTEIN_PROMETHEUS_IMPORT_TIMEOUT", str(_TIMEOUT))
+        patch.setattr(sys, "platform", platform)
+        patch.setattr(builtins, "__import__", controlled_import)
+        sys.modules.pop(MODULE, None)
         return importlib.import_module(MODULE)
-    finally:
-        builtins.__import__ = real_import  # type: ignore[assignment]
-        sys.platform = real_platform  # type: ignore[misc]
 
 
 @pytest.fixture(autouse=True)
-def _restore_module() -> Any:
-    """Put the original module object back for everything else in the process.
-
-    Restoring the object rather than re-importing it matters: a re-import here
-    would run while this test's platform patch may still be in effect, and
-    third-party modules that branch on ``sys.platform`` at import time refuse to
-    load under a platform they were not started on.
-    """
+def _restore_module() -> Iterator[None]:
+    """Restore both ways of importing the original module after the test."""
+    parent_name, _, attribute = MODULE.rpartition(".")
+    parent = vars(importlib.import_module(parent_name))
     original = sys.modules.get(MODULE)
+    original_attribute = parent.get(attribute)
     yield
     if original is not None:
         sys.modules[MODULE] = original
     else:
         sys.modules.pop(MODULE, None)
+    if original_attribute is not None:
+        parent[attribute] = original_attribute
+    else:
+        parent.pop(attribute, None)
 
 
 def test_module_imports_when_the_windows_import_overruns_its_timeout(
@@ -90,11 +113,16 @@ def test_module_imports_when_the_windows_import_overruns_its_timeout(
     the real class, and constructing it called ``register`` on a stub that had
     no such method.
     """
-    module = _reimport(monkeypatch, platform="win32", import_delay=_SLOWER_THAN_TIMEOUT)
+    importlib.import_module("prometheus_client")
+    schedule = ImportSchedule(late=True)
+    module = _reimport(monkeypatch, platform="win32", schedule=schedule)
+    assert schedule.waits == [_TIMEOUT]
+    assert not schedule.done.is_set()
 
     assert module._PROMETHEUS_AVAILABLE is False
-    # Give the daemon thread more than enough time to finish and try to interfere.
-    time.sleep(_SLOWER_THAN_TIMEOUT)
+    schedule.finish()
+    assert module._import_error is None
+    assert module._import_result["Counter"].__module__.startswith("prometheus_client")
     assert module._PROMETHEUS_AVAILABLE is False
 
 
@@ -106,10 +134,16 @@ def test_a_late_windows_import_does_not_replace_the_stub_metric_classes(
     A process that has already handed out stub metric objects cannot make them
     real retroactively, so a half-adopted result is worse than none.
     """
-    module = _reimport(monkeypatch, platform="win32", import_delay=_SLOWER_THAN_TIMEOUT)
+    importlib.import_module("prometheus_client")
+    schedule = ImportSchedule(late=True)
+    module = _reimport(monkeypatch, platform="win32", schedule=schedule)
+    assert schedule.waits == [_TIMEOUT]
+    assert not schedule.done.is_set()
     counter_at_import = module.Counter
 
-    time.sleep(_SLOWER_THAN_TIMEOUT)
+    schedule.finish()
+    assert module._import_error is None
+    assert module._import_result["Counter"].__module__.startswith("prometheus_client")
 
     assert module.Counter is counter_at_import
     assert module.Counter.__module__ == MODULE, "a real prometheus class was adopted late"
@@ -120,9 +154,16 @@ def test_stub_metrics_still_record_without_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Disabling metrics must disable them, not break the caller."""
-    module = _reimport(monkeypatch, platform="win32", import_delay=_SLOWER_THAN_TIMEOUT)
+    importlib.import_module("prometheus_client")
+    schedule = ImportSchedule(late=True)
+    module = _reimport(monkeypatch, platform="win32", schedule=schedule)
+    assert schedule.waits == [_TIMEOUT]
+    assert not schedule.done.is_set()
 
     module.tasks_total.labels(status="done", role="backend").inc()
+    schedule.finish()
+    assert module._import_error is None
+    assert module._import_result["Counter"].__module__.startswith("prometheus_client")
     assert module.generate_latest(module.registry) == b""
 
 
@@ -149,24 +190,30 @@ def test_a_windows_import_that_beats_the_timeout_is_adopted(
 ) -> None:
     """Positive control: without this, always-stub would satisfy every test above."""
     pytest.importorskip("prometheus_client")
-    module = _reimport(monkeypatch, platform="win32")
+    schedule = ImportSchedule(late=False)
+    module = _reimport(monkeypatch, platform="win32", schedule=schedule)
+    assert schedule.waits == [_TIMEOUT]
+    assert schedule.done.is_set()
 
     assert module._PROMETHEUS_AVAILABLE is True
     assert module.Counter.__module__.startswith("prometheus_client")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="this is the non-Windows path")
-def test_a_slow_import_off_windows_is_still_adopted(
+def test_import_off_windows_is_adopted_without_the_timeout_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Positive control: the ordinary path has no timeout, so slow is fine.
+    """Positive control: the ordinary path imports without a timeout worker.
 
     The host's own platform is used rather than a fabricated one, because
     third-party modules imported along the way branch on ``sys.platform`` when
     they load and refuse a platform the process did not start on.
     """
     pytest.importorskip("prometheus_client")
-    module = _reimport(monkeypatch, platform=sys.platform, import_delay=_SLOWER_THAN_TIMEOUT)
+    schedule = ImportSchedule(late=True)
+    module = _reimport(monkeypatch, platform=sys.platform, schedule=schedule)
+    assert schedule.target is None
+    assert schedule.waits == []
 
     assert module._PROMETHEUS_AVAILABLE is True
     assert module.Counter.__module__.startswith("prometheus_client")

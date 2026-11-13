@@ -27,29 +27,21 @@ if TYPE_CHECKING:
 class TestStatusColors:
     """Tests for status-to-colour mapping."""
 
-    def test_open_is_white(self) -> None:
-        assert status_color("open") == "white"
-
-    def test_claimed_is_cyan(self) -> None:
-        assert status_color("claimed") == "cyan"
-
-    def test_in_progress_is_yellow(self) -> None:
-        assert status_color("in_progress") == "yellow"
-
-    def test_done_is_green(self) -> None:
-        assert status_color("done") == "green"
-
-    def test_failed_is_red(self) -> None:
-        assert status_color("failed") == "red"
-
-    def test_blocked_is_dim(self) -> None:
-        assert status_color("blocked") == "dim"
-
-    def test_cancelled_is_dim(self) -> None:
-        assert status_color("cancelled") == "dim"
-
-    def test_unknown_defaults_to_white(self) -> None:
-        assert status_color("some_unknown_status") == "white"
+    @pytest.mark.parametrize(
+        "status,expected",
+        [
+            ("open", "white"),
+            ("claimed", "cyan"),
+            ("in_progress", "yellow"),
+            ("done", "green"),
+            ("failed", "red"),
+            ("blocked", "dim"),
+            ("cancelled", "dim"),
+            ("some_unknown_status", "white"),
+        ],
+    )
+    def test_status_color(self, status: str, expected: str) -> None:
+        assert status_color(status) == expected
 
     def test_all_task_statuses_covered(self) -> None:
         expected = {"open", "claimed", "in_progress", "done", "failed", "blocked", "cancelled", "refused"}

@@ -200,10 +200,10 @@ def server_get(path: str, *, raise_on_auth_error: bool = False) -> dict[str, Any
     except httpx.HTTPStatusError as exc:
         if raise_on_auth_error and exc.response.status_code in (401, 403):
             raise ServerAuthError(exc.response.status_code) from exc
-        console.print(f"[red]Server error:[/red] {exc}")
+        click.echo(f"Server error: {exc}", err=True)
         return None
     except Exception as exc:
-        console.print(f"[red]Server error:[/red] {exc}")
+        click.echo(f"Server error: {exc}", err=True)
         return None
 
 
@@ -247,10 +247,10 @@ def server_post(
         except httpx.HTTPStatusError as exc:
             if raise_on_auth_error and exc.response.status_code in (401, 403):
                 raise ServerAuthError(exc.response.status_code) from exc
-            console.print(f"[red]Server error:[/red] {exc}")
+            click.echo(f"Server error: {exc}", err=True)
             return None
         except Exception as exc:
-            console.print(f"[red]Server error:[/red] {exc}")
+            click.echo(f"Server error: {exc}", err=True)
             return None
     return None
 
@@ -270,13 +270,14 @@ def require_server_reachable() -> None:
     try:
         reachable = server_get("/status", raise_on_auth_error=True)
     except ServerAuthError:
-        console.print(
-            "[red]Server is running but rejected credentials.[/red] "
-            "Run [bold]bernstein[/bold] in this workspace, or set BERNSTEIN_AUTH_TOKEN to match the server."
+        click.echo(
+            "Server is running but rejected credentials. "
+            "Run bernstein in this workspace, or set BERNSTEIN_AUTH_TOKEN to match the server.",
+            err=True,
         )
         raise SystemExit(1) from None
     if reachable is None:
-        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
+        click.echo("Cannot reach task server. Is Bernstein running? Run bernstein to start.", err=True)
         raise SystemExit(1)
 
 

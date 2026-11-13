@@ -27,6 +27,49 @@
 
 Bernstein is the open-source governance layer for AI agents. It runs on policy as code: you write the policy - who may do what, what needs approval, what must be recorded - and Bernstein enforces it and produces the verifiable record. A deterministic scheduler - no model in the coordination loop - runs agents in parallel, gates what they produce, and records every step, so a run can be verified after the fact, offline, from the artifacts alone. CLI coding agents work out of the box (Claude Code, Codex, Gemini CLI, and 50+ more), and the same layer governs any agent workload: the deliverable can be a diff, a research report, a dataset, or an audit evidence pack. Air-gap install profile included. Apache-2.0.
 
+### install in 30 seconds
+
+```bash
+uv tool install bernstein    # or: pipx install bernstein
+bernstein init
+bernstein doctor             # checks a CLI agent is installed and authenticated
+bernstein -g "fix the failing test in tests/test_foo.py"
+```
+
+`bernstein doctor --json` also exposes audit-contract `findings`, identical to
+`bernstein govern audit --only INS --json` for the same installation observations.
+The normal doctor report keeps its existing display. See the
+[doctor operations guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) for stable check IDs.
+
+pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://docs.bernstein.run/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+`bernstein worktrees sweep` previews worktrees and sandbox sessions left behind
+by finished tasks, with age and disk usage. Only worktrees can be removed, using
+`--apply` and a separate removal approval. Sandboxes are report-only (removal:
+#6571); `doctor` warns about aged leaks. See the
+[lane cleanup workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+
+Skill initialization failures are [quarantined](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) with a persisted reason and audit event. `bernstein status` shows the count; `doctor` and `govern audit` report the disabled declarations. After fixing the cause, explicitly release the marker with `bernstein quarantine re-enable DECLARATION_ID`.
+
+[GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
+
+<img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
+
+The recording above is a real run, and it ships with its own proof. The cast, the signed run receipt derived from that run's journal, and the public key that pins it all live in [`docs/assets/demo-run/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/docs/assets/demo-run). Verify the run you just watched, offline:
+
+```bash
+bernstein verify receipt docs/assets/demo-run/run-receipt.json \
+    --public-key docs/assets/demo-run/run-receipt.pub.pem
+```
+
+The committed receipt can be re-checked at any time with the command above, and a tampered copy fails the same check. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
+
+A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other. In `bernstein live`, the left and right columns scroll independently as whole panes, so widgets below the fold remain reachable in shorter terminals.
+
+| ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
+|:---:|:---:|
+| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the browser dashboard |
+
 ### at a glance
 
 Five things set it apart; everything after is detail.
@@ -119,49 +162,6 @@ flowchart LR
 
 Each node is claimed by an agent whose role the phase allows; role fences and approval gates hold no matter what the agent does inside the task. A coding node completes behind merge gates in its own git worktree. The nodes above complete differently: an [artifact contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) names the deliverable (report, dataset, scan, action log), and the node finishes on a signed lineage receipt instead of a commit. Same scheduler, same journal, same offline verification - whether the graph ships code, research, an ops change, or a mix of all three. Ready-made graphs for software, research, docs, enterprise, and contributor workflows live in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
-### install in 30 seconds
-
-```bash
-uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
-```
-
-`bernstein doctor --json` also exposes audit-contract `findings`, identical to
-`bernstein govern audit --only INS --json` for the same installation observations.
-The normal doctor report keeps its existing display. See the
-[doctor operations guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) for stable check IDs.
-
-pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://docs.bernstein.run/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
-
-`bernstein worktrees sweep` previews worktrees and sandbox sessions left behind
-by finished tasks, with age and disk usage. Only worktrees can be removed, using
-`--apply` and a separate removal approval. Sandboxes are report-only (removal:
-#6571); `doctor` warns about aged leaks. See the
-[lane cleanup workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
-
-Skill initialization failures are [quarantined](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) with a persisted reason and audit event. `bernstein status` shows the count; `doctor` and `govern audit` report the disabled declarations. After fixing the cause, explicitly release the marker with `bernstein quarantine re-enable DECLARATION_ID`.
-
-[GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
-
-<img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
-
-The recording above is a real run, and it ships with its own proof. The cast, the signed run receipt derived from that run's journal, and the public key that pins it all live in [`docs/assets/demo-run/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/docs/assets/demo-run). Verify the run you just watched, offline:
-
-```bash
-bernstein verify receipt docs/assets/demo-run/run-receipt.json \
-    --public-key docs/assets/demo-run/run-receipt.pub.pem
-```
-
-The committed receipt can be re-checked at any time with the command above, and a tampered copy fails the same check. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
-
-A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other. In `bernstein live`, the left and right columns scroll independently as whole panes, so widgets below the fold remain reachable in shorter terminals.
-
-| ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
-|:---:|:---:|
-| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the browser dashboard |
-
 ### prove a run
 
 Determinism here is something you check, not something you take on faith. Run once with audit enabled, then verify what was recorded:
@@ -181,6 +181,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 The journal is written on every run; the lineage spine is always on and gains an entry for each lineage-bearing step, so a short run can finish with a valid, empty spine. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
 
 One run receipt binds the journal head, the lineage-spine head when the run wrote spine entries, and, opt-in, an audit-chain range, under a single Ed25519-signed subject with the public key embedded. A reviewer holding that file and the operator's public key can confirm the embedded actions and chains were not changed: no HMAC key, no live `.sdd/`, and exit `2` naming the first divergent step on tamper. That receipt identifies the journal state it embeds; proving that state is the complete finished journal additionally requires an independent head/count seal. With the file alone and no `--public-key` pin, the check is integrity-only — it proves the receipt is internally consistent, not who signed it, and the verdict says so. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+In the web UI, open **Governance** and use **Verify a receipt** to check a run receipt with the server. The browser shows the integrity-only verdict and the key source. See the [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 The same checkability applies to evaluation numbers. `bernstein bench run <suite> --reliability k` (also spelled `bernstein eval --reliability k`) runs every task `k` times under fixed coordination, then reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling. That result is sealed in a signed receipt which `bernstein bench reliability-verify` recomputes offline, so a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 

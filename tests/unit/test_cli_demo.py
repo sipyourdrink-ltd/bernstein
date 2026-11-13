@@ -21,6 +21,7 @@ from bernstein.cli.main import (
     detect_available_adapter,
     setup_demo_project,
 )
+from tests.unit._poll_test_clock import PollClock
 
 
 def _status_response(payload: dict) -> MagicMock:
@@ -474,8 +475,6 @@ def test_poll_exits_early_on_the_dict_shaped_status_payload():
     every tick - so the early-exit condition was unreachable and every
     demo run burned the full timeout with a blank spinner (issue #3433).
     """
-    import time as _time
-
     payload = {
         "tasks": {
             "count": 2,
@@ -487,11 +486,11 @@ def test_poll_exits_early_on_the_dict_shaped_status_payload():
     }
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
-    with patch.object(run_confirm.httpx, "get", return_value=resp):
-        start = _time.monotonic()
-        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 6.0)
-        elapsed = _time.monotonic() - start
-    assert elapsed < 2.0, f"poll must exit on the first tick when all tasks are done; took {elapsed:.1f}s"
+    clock = PollClock()
+    with patch.object(run_confirm.httpx, "get", side_effect=[resp]) as get, patch.object(run_confirm, "time", clock):
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", 6.0)
+    assert clock.sleeps == []
+    assert get.call_count == 1
 
 
 def test_poll_processing_crashes_are_loud():
@@ -520,8 +519,6 @@ def test_poll_keeps_waiting_while_a_failed_task_may_still_be_retried():
     still pending (observed live: 3/4 at 21 s instead of 4/4). Only an
     all-done snapshot may end the poll early.
     """
-    import time as _time
-
     payload = {
         "tasks": {
             "count": 2,
@@ -533,11 +530,14 @@ def test_poll_keeps_waiting_while_a_failed_task_may_still_be_retried():
     }
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
-    with patch.object(run_confirm.httpx, "get", return_value=resp):
-        start = _time.monotonic()
-        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 3.0, expected_total=2)
-        elapsed = _time.monotonic() - start
-    assert elapsed >= 2.9, f"a failed task must keep the poll alive for retries; exited after {elapsed:.1f}s"
+    clock = PollClock()
+    with (
+        patch.object(run_confirm.httpx, "get", side_effect=[resp] * 2) as get,
+        patch.object(run_confirm, "time", clock),
+    ):
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", 3.0, expected_total=2)
+    assert clock.sleeps == [2.0, 2.0]
+    assert get.call_count == 2
 
 
 def test_poll_exits_once_the_seeded_count_is_done_despite_failed_rows():
@@ -547,8 +547,6 @@ def test_poll_exits_once_the_seeded_count_is_done_despite_failed_rows():
     denominator the summary clamps to. Observed live pre-fix: a retried
     4/4 run still burned the full deadline.
     """
-    import time as _time
-
     payload = {
         "tasks": {
             "count": 3,
@@ -561,11 +559,11 @@ def test_poll_exits_once_the_seeded_count_is_done_despite_failed_rows():
     }
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
-    with patch.object(run_confirm.httpx, "get", return_value=resp):
-        start = _time.monotonic()
-        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 6.0, expected_total=2)
-        elapsed = _time.monotonic() - start
-    assert elapsed < 2.0, f"seeded count reached: poll must exit despite the failed original; took {elapsed:.1f}s"
+    clock = PollClock()
+    with patch.object(run_confirm.httpx, "get", side_effect=[resp]) as get, patch.object(run_confirm, "time", clock):
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", 6.0, expected_total=2)
+    assert clock.sleeps == []
+    assert get.call_count == 1
 
 
 def test_status_rows_unwrap_tolerates_all_known_shapes():
@@ -586,8 +584,6 @@ def test_poll_counts_done_lineages_not_done_rows():
     bug has no successful attempt - the poll must count distinct done
     lineages (finding 3723321829).
     """
-    import time as _time
-
     payload = {
         "tasks": {
             "count": 3,
@@ -600,13 +596,14 @@ def test_poll_counts_done_lineages_not_done_rows():
     }
     resp = MagicMock(status_code=200)
     resp.json.return_value = payload
-    with patch.object(run_confirm.httpx, "get", return_value=resp):
-        start = _time.monotonic()
-        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 3.0, expected_total=2)
-        elapsed = _time.monotonic() - start
-    assert elapsed >= 2.9, (
-        f"two done rows of ONE lineage must not satisfy a seeded total of 2; exited after {elapsed:.1f}s"
-    )
+    clock = PollClock()
+    with (
+        patch.object(run_confirm.httpx, "get", side_effect=[resp] * 2) as get,
+        patch.object(run_confirm, "time", clock),
+    ):
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", 3.0, expected_total=2)
+    assert clock.sleeps == [2.0, 2.0]
+    assert get.call_count == 2
 
 
 def test_fetch_outcome_counts_done_lineages_not_done_rows():

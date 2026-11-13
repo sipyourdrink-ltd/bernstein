@@ -146,7 +146,7 @@ def _merge_pick_impl(
         console.print(f"[dim]Switching to {base}...[/dim]")
         result = _run_git(["checkout", base], root)
         if not result and "error" in _run_git(["checkout", base], root).lower():
-            console.print(f"[red]Failed to checkout {base}.[/red]")
+            console.print(f"[red]Failed to check out {base}.[/red]")
             raise SystemExit(1)
         switched = True
 

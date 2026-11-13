@@ -11,9 +11,7 @@ import logging
 import time
 from collections import defaultdict
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, cast
-
-from typing_extensions import TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from bernstein.core.backlog_parser import parse_backlog_text
 from bernstein.core.context_collapse import staged_context_collapse

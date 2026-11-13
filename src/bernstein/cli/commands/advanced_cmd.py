@@ -298,7 +298,7 @@ def _generate_archive_report(
     "--archive",
     default=".sdd/archive/tasks.jsonl",
     show_default=True,
-    help="Path to archive file.",
+    help="Path to the archive file.",
 )
 def retro(
     since: float | None,
@@ -981,7 +981,7 @@ def _recap_since(since: str, workdir: str, *, as_json: bool) -> None:
     "--archive",
     default=".sdd/archive/tasks.jsonl",
     show_default=True,
-    help="Path to task archive.",
+    help="Path to the task archive.",
 )
 @click.option(
     "--since",

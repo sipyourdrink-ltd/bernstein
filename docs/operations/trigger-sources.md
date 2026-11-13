@@ -23,6 +23,13 @@ class TriggerEvent:
 
 (`src/bernstein/core/tasks/models.py`)
 
+`TriggerSource` is the Python protocol defined in
+`src/bernstein/core/trigger_sources/__init__.py`. Its
+`TriggerSource.normalize(self, raw_event: dict[str, Any]) -> TriggerEvent`
+method accepts a raw-event mapping and returns a normalized `TriggerEvent`.
+Normalization does not create a task; task creation is the caller's
+responsibility through one of the paths below.
+
 ## Two independent paths from event to task
 
 Bernstein does not route every event through one central dispatcher. Two

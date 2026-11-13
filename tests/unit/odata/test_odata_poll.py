@@ -15,6 +15,7 @@ from bernstein.core.trigger_sources.odata_poll import (
     OdataAuth,
     OdataConnection,
     OdataCursor,
+    OdataError,
     OdataHttpClient,
     OdataPollSource,
     discover_keys,
@@ -233,6 +234,20 @@ def test_bearer_token_never_logged(monkeypatch: pytest.MonkeyPatch, caplog: pyte
         _source(svc, entity_set="Missing").poll(None)
 
     assert "supersecret-bearer-value" not in caplog.text
+
+
+def test_transport_logs_omit_request_url(caplog: pytest.LogCaptureFixture) -> None:
+    class FailingClient:
+        def request(self, method: str, url: str, **kwargs: object) -> None:
+            raise OSError(url)
+
+    caplog.set_level(logging.DEBUG, logger="bernstein.core.trigger_sources.odata_poll")
+    client = OdataHttpClient(_connection(), http_client=FailingClient())
+    with pytest.raises(OdataError):
+        client.get_json("http://odata.test/Widgets?$skiptoken=synthetic-sensitive-cursor")
+
+    assert "method=GET error_type=OSError" in caplog.text
+    assert "synthetic-sensitive-cursor" not in caplog.text
 
 
 def test_auth_header_is_sent_but_redacted(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -799,7 +799,7 @@ if __name__ == "__main__":
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{server_url}/tasks/{args.task_id}")
             if resp.status_code != 200:
-                print(f"Task {args.task_id} not found.")
+                logger.error("Task %s not found (HTTP %d).", args.task_id, resp.status_code)
                 sys.exit(1)
 
             task_data = resp.json()
