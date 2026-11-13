@@ -187,7 +187,7 @@ the audit chain as `sandbox.host_isolation_declared`. See
   `resolve_config_bundle`, `explain_conflicts`, `check_source_policies`.
 - `src/bernstein/core/config/host_isolation.py` — `resolve_host_isolation`,
   the closed tier vocabulary for `host_isolation_tier`.
-- `src/bernstein/cli/config_diff_cli.py` — `bernstein config diff`.
+- `src/bernstein/cli/commands/config_diff_cli.py` — `bernstein config diff`.
 
 ## Related
 

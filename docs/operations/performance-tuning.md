@@ -168,7 +168,7 @@ cache:
 context_files:
   - README.md
   - docs/architecture/ARCHITECTURE.md
-  - src/bernstein/core/models.py
+  - src/bernstein/core/tasks/models.py
 ```
 
 ### Reading cache metrics

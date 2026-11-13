@@ -588,4 +588,4 @@ production code is changed by this proposal.
 | Cluster autoscaler (optional)    | `src/bernstein/core/protocols/cluster/cluster_autoscaler.py`                    |
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
-| Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+| Models / data classes            | `src/bernstein/core/tasks/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |

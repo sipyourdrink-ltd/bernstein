@@ -87,7 +87,7 @@ Point it at any Prometheus datasource that scrapes Bernstein.
 ## Related
 
 - Source: `src/bernstein/core/observability/prometheus.py`,
-  `src/bernstein/core/security/audit_log.py`
+  `src/bernstein/core/security/audit.py`
 - [Cluster mTLS setup](../cluster/mtls-setup.md)
 - [Cluster deployment patterns](../cluster/deployment-patterns.md)
 - [Operations / Observability overview](../operations/observability-overview.md)
