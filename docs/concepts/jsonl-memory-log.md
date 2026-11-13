@@ -13,10 +13,10 @@ be tail-friendly so a debugger or a sidecar tool can `tail -f` it
 during a live run. Second, the log must survive partial writes and
 manual edits without taking the whole record set down.
 
-A JSONL file with one event per line covers both: append-write is
-atomic at the line level, malformed lines are skipped on read, and
-any `tail`/`grep`/`jq` pipeline in the operator's toolkit works on
-day one.
+A JSONL file with one event per line covers both: writes append one
+compact JSON object and reads skip blank or malformed records while
+continuing through the stream. Any `tail`/`grep`/`jq` pipeline in the
+operator's toolkit works on day one.
 
 ## How to use it
 
@@ -54,8 +54,28 @@ One JSON object per line, UTF-8 encoded, compact separators:
 {"task":"T-2","lesson":"reject empty diffs"}
 ```
 
-`ensure_ascii=False` keeps unicode readable; compact separators mean
-a tail-corruption only loses the last record.
+`ensure_ascii=False` keeps unicode readable; compact separators keep
+records on individual lines. A partial or malformed line is skipped
+when reading, but the reader continues through later lines, so damage
+does not discard valid entries that follow it.
+
+## Reading a stream
+
+`read(key)` returns entries oldest first. Blank lines are ignored. A
+line containing invalid JSON, or valid JSON whose value is not an object,
+is skipped (with a warning), and reading continues; later valid objects
+are returned in their original file order. If the stream file does not
+exist, `read` returns an empty list.
+
+For example, the middle line below is invalid JSON and is skipped; both
+valid entries are returned:
+
+```jsonl
+{"step":1,"event":"start"}
+not-json
+{"step":2,"event":"finish"}
+```
+
 
 ## Limitations
 
