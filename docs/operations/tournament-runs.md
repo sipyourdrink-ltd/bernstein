@@ -33,6 +33,39 @@ spec = TournamentSpec(
 )
 ```
 
+`TournamentSpec.from_task_dict(task)` also accepts either of these task
+mappings:
+
+```python
+nested_task = {
+    "tournament": {
+        "attempts": 3,
+        "evaluators": [{"name": "tests"}],
+    },
+}
+flat_task = {
+    "attempts": 3,
+    "evaluators": [{"name": "tests", "weight": 1.0, "higher_is_better": True}],
+    "tie_break": "attempt_hash",
+}
+
+nested_spec = TournamentSpec.from_task_dict(nested_task)
+flat_spec = TournamentSpec.from_task_dict(flat_task)
+assert nested_spec.spec_hash() == flat_spec.spec_hash()
+```
+
+An omitted evaluator `weight` defaults to `1.0`, and an omitted
+`higher_is_better` defaults to `True`. An omitted `tie_break` defaults to
+`"attempt_hash"` (stable ascending attempt-hash order). The hash comparison
+above checks that the nested declaration with omitted defaults and the flat
+declaration with those defaults written explicitly produce the same canonical
+specification.
+
+If a task contains both a `tournament` block and top-level tournament fields,
+the nested block is selected; the top-level fields are ignored. For example,
+`{"tournament": {"attempts": 3, "evaluators": [{"name": "tests"}]}, "attempts": 9}`
+parses as three attempts.
+
 `TournamentSpec.spec_hash()` is a `sha256:` content hash of the canonical
 spec, so the same declared tournament always hashes to the same value and can
 be pinned into the receipt for offline replay. `attempts` must be `>= 1`,
