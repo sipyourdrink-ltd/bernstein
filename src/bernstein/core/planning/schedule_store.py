@@ -357,8 +357,9 @@ class ScheduleStore:
         return self._dir / f"{schedule_id}.json"
 
     def _lock_for(self, schedule_id: str) -> Path:
-        # Hash the ID so even a caller-supplied name maps to a single lock file.
-        digest = hashlib.sha256(schedule_id.encode("utf-8")).hexdigest()
+        # A case-insensitive filesystem can resolve multiple spellings to the
+        # same record. The lock must serialize them before reading that record.
+        digest = hashlib.sha256(schedule_id.casefold().encode("utf-8")).hexdigest()
         return self._dir / ".locks" / f"{digest}.lock"
 
     def add(

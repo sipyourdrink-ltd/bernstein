@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
 from pathlib import Path
-from threading import Barrier, BrokenBarrierError, Lock
+from threading import Event
+from typing import IO, TYPE_CHECKING
 
 import pytest
 
+from bernstein.core.persistence import file_locks
 from bernstein.core.planning.schedule_store import (
     FIRE_CURSOR_KEY,
     CronParseError,
@@ -19,6 +20,50 @@ from bernstein.core.planning.schedule_store import (
     parse_cron,
     validate_cron,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def _overlap_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    target: Path,
+    first_write: Callable[[], None],
+    second_write: Callable[[], None],
+) -> None:
+    first_at_publish = Event()
+    release_first = Event()
+    real_replace = os.replace
+    real_try_lock = file_locks._os_try_lock
+
+    def publish(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        if Path(dst) != target:
+            real_replace(src, dst)
+        elif first_at_publish.is_set():
+            real_replace(src, dst)
+            release_first.set()
+        else:
+            first_at_publish.set()
+            # A second writer either published, or attempted to lock the
+            # record before reading the first writer's pending update.
+            assert release_first.wait(timeout=30)
+            real_replace(src, dst)
+
+    def observe_contention(handle: IO[bytes]) -> bool:
+        acquired = real_try_lock(handle)
+        if not acquired:
+            release_first.set()
+        return acquired
+
+    monkeypatch.setattr(os, "replace", publish)
+    monkeypatch.setattr(file_locks, "_os_try_lock", observe_contention)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(first_write)
+        assert first_at_publish.wait(timeout=30)
+        second = pool.submit(second_write)
+        first.result(timeout=60)
+        second.result(timeout=60)
+
 
 # ---------------------------------------------------------------------------
 # Cron parser
@@ -198,68 +243,40 @@ class TestScheduleStoreUpdateLastFire:
         store = ScheduleStore(tmp_path)
         schedule = store.add(cron="0 9 * * *", goal="Daily digest")
         target = store.directory / f"{schedule.id}.json"
-        ready = Barrier(2, timeout=2)
-        rename_lock = Lock()
-        real_replace = os.replace
-
-        def replace_together(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-            if Path(dst) == target:
-                # If writes overlap, both reach publication before either proceeds.
-                with suppress(BrokenBarrierError):
-                    ready.wait()
-                with rename_lock:
-                    real_replace(src, dst)
-            else:
-                real_replace(src, dst)
-
-        monkeypatch.setattr(os, "replace", replace_together)
         fire_time = 1_700_000_000.0
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(store.update_last_fire, schedule.id, fire_time)
-            second = pool.submit(ScheduleStore(tmp_path).update_last_fire, schedule.id, fire_time)
-            first.result(timeout=10)
-            second.result(timeout=10)
+        second = ScheduleStore(tmp_path)
+        _overlap_writes(
+            monkeypatch,
+            target,
+            lambda: store.update_last_fire(schedule.id, fire_time),
+            lambda: second.update_last_fire(schedule.id, fire_time),
+        )
 
         reloaded = store.get(schedule.id)
         assert reloaded is not None
         assert reloaded.last_fire_at == fire_time
         assert list(store.directory.glob("*.json*")) == [target]
 
+    @pytest.mark.parametrize("use_case_alias", [False, True], ids=["canonical-id", "case-alias"])
     def test_concurrent_fire_and_cursor_updates_preserve_both_fields(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use_case_alias: bool
     ) -> None:
         store = ScheduleStore(tmp_path)
         schedule = store.add(cron="0 9 * * *", goal="Daily digest")
         target = store.directory / f"{schedule.id}.json"
-        publish = Barrier(2, timeout=2)
-        start = Barrier(2, timeout=5)
-        real_replace = os.replace
+        cursor_id = schedule.id.upper() if use_case_alias else schedule.id
+        second = ScheduleStore(tmp_path)
+        if second.get(cursor_id) is None:
+            pytest.skip("schedule directory is case-sensitive")
 
-        def synchronize_publish(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-            if Path(dst) == target:
-                # Serialized writers cannot both reach publication together.
-                with suppress(BrokenBarrierError):
-                    publish.wait()
-            real_replace(src, dst)
-
-        monkeypatch.setattr(os, "replace", synchronize_publish)
         fire_time = 1_700_000_000.0
         cursor_time = fire_time + 60
-
-        def update_fire() -> None:
-            start.wait()
-            store.update_last_fire(schedule.id, fire_time)
-
-        def update_cursor() -> None:
-            second_store = ScheduleStore(tmp_path)
-            start.wait()
-            second_store.advance_fire_cursor(schedule.id, cursor_time)
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(update_fire)
-            second = pool.submit(update_cursor)
-            first.result(timeout=10)
-            second.result(timeout=10)
+        _overlap_writes(
+            monkeypatch,
+            target,
+            lambda: store.update_last_fire(schedule.id, fire_time),
+            lambda: second.advance_fire_cursor(cursor_id, cursor_time),
+        )
 
         reloaded = store.get(schedule.id)
         assert reloaded is not None
