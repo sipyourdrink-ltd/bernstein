@@ -88,6 +88,15 @@ def _evaluate(qc: ModuleType, roster, pr):
     return qc.evaluate(pr, roster, OWNERS, NOW)
 
 
+def _attest(qc: ModuleType, pr):
+    """Evaluator fixture; authentication/digests are tested in test_quorum_evidence."""
+    count = qc.technical_reviews_needed(pr)
+    pr.adoption = qc.evidence.Evidence(
+        True, "synthetic authenticated evidence", reviewer_ids=tuple(f"reviewer/{i}" for i in range(count))
+    )
+    return pr
+
+
 # --- the ordinary contributor path -----------------------------------------
 
 
@@ -385,18 +394,20 @@ def test_a_pull_request_from_the_workflow_account_needs_the_maintainer(qc: Modul
     assert "workflow account" in verdict.requirements[0].text
 
 
-def test_the_maintainers_own_change_merges_without_approvals(qc: ModuleType, roster) -> None:
-    assert _evaluate(qc, roster, _pr(qc, author="owner", contributors={"owner"})).passed
+def test_the_maintainers_own_change_needs_technical_evidence_not_human_votes(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, author="owner", contributors={"owner"})
+    assert not _evaluate(qc, roster, pr).passed
+    assert _evaluate(qc, roster, _attest(qc, pr)).passed
 
 
 def test_a_committer_can_block_the_maintainer(qc: ModuleType, roster) -> None:
     pr = _pr(qc, author="owner", contributors={"owner"}, reviews=[_review(qc, "comm1", "CHANGES_REQUESTED")])
-    assert not _evaluate(qc, roster, pr).passed
+    assert not _evaluate(qc, roster, _attest(qc, pr)).passed
 
 
 def test_a_stranger_cannot_block_the_maintainer(qc: ModuleType, roster) -> None:
     pr = _pr(qc, author="owner", contributors={"owner"}, reviews=[_review(qc, "passer-by", "CHANGES_REQUESTED")])
-    assert _evaluate(qc, roster, pr).passed
+    assert _evaluate(qc, roster, _attest(qc, pr)).passed
 
 
 # --- adopted pull requests (charter section 3, until 2026-10-05) -------------
@@ -496,14 +507,14 @@ def test_adoption_is_honoured_on_an_ordinary_unowned_change(qc: ModuleType, rost
 
 def test_a_governance_change_waits_seventy_two_hours(qc: ModuleType, roster) -> None:
     pr = _pr(qc, author="owner", contributors={"owner"}, paths=["GOVERNANCE.md"], pushed_hours_ago=1)
-    verdict = _evaluate(qc, roster, pr)
+    verdict = _evaluate(qc, roster, _attest(qc, pr))
     assert not verdict.passed
     assert "71h from now" in verdict.requirements[0].who
 
 
 def test_a_governance_change_merges_once_the_window_closes(qc: ModuleType, roster) -> None:
     pr = _pr(qc, author="owner", contributors={"owner"}, paths=["GOVERNANCE.md"], pushed_hours_ago=73)
-    assert _evaluate(qc, roster, pr).passed
+    assert _evaluate(qc, roster, _attest(qc, pr)).passed
 
 
 def test_the_window_applies_to_the_roster_and_to_this_script(qc: ModuleType, roster) -> None:
@@ -576,7 +587,7 @@ def test_an_unrelated_workflow_edit_is_not_held_for_three_days(qc: ModuleType, r
         paths=[".github/workflows/ci.yml"],
         pushed_hours_ago=2,
     )
-    assert _evaluate(qc, roster, pr).passed
+    assert _evaluate(qc, roster, _attest(qc, pr)).passed
 
 
 def test_every_governance_path_exists_in_the_repository(qc: ModuleType) -> None:
@@ -600,10 +611,10 @@ def test_the_paths_are_reportable_so_the_sweep_need_not_restate_them(qc: ModuleT
 # --- drafts and plumbing ----------------------------------------------------
 
 
-def test_a_draft_is_neutral(qc: ModuleType, roster) -> None:
+def test_a_draft_cannot_publish_successful_quorum(qc: ModuleType, roster) -> None:
     verdict = _evaluate(qc, roster, _pr(qc, is_draft=True))
-    assert verdict.passed
-    assert verdict.requirements == []
+    assert not verdict.passed
+    assert any(not requirement.met and "draft" in requirement.text for requirement in verdict.requirements)
 
 
 def test_the_summary_names_the_charter_and_the_roster(qc: ModuleType, roster) -> None:
@@ -1113,7 +1124,7 @@ def test_the_window_runs_from_the_last_push_that_changed_the_diff(qc: ModuleType
     pr = _fetch(qc, _governance(_merged_main()))
     assert pr.last_push == NOW - timedelta(hours=1)
     assert pr.diff_changed_at == NOW - timedelta(hours=80)
-    assert _evaluate(qc, roster, pr).passed
+    assert _evaluate(qc, roster, _attest(qc, pr)).passed
 
 
 def test_the_window_restarts_when_the_merge_changed_the_diff(qc: ModuleType, roster) -> None:
@@ -1126,7 +1137,7 @@ def test_the_window_restarts_when_the_merge_changed_the_diff(qc: ModuleType, ros
 def test_the_window_runs_back_through_a_rebase_that_left_the_diff_alone(qc: ModuleType, roster) -> None:
     pr = _fetch(qc, _governance(_rebased()))
     assert pr.diff_changed_at == NOW - timedelta(hours=80)
-    assert _evaluate(qc, roster, pr).passed
+    assert _evaluate(qc, roster, _attest(qc, pr)).passed
 
 
 def test_the_window_falls_back_to_the_last_push_when_the_diff_cannot_be_compared(qc: ModuleType, roster) -> None:

@@ -117,3 +117,36 @@ def test_only_contributor_changes_get_the_full_evaluation(rr, roster) -> None:
     assert not rr.needs_a_look({"user": {"login": "owner"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "the-conductor[bot]"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "github-actions[bot]"}, "draft": False}, roster)
+
+
+def test_docs_and_tests_naming_security_use_the_evaluators_ordinary_tier(rr, roster) -> None:
+    pr = _pr(rr, paths=["tests/unit/test_security.py", "docs/security.md"])
+    assert rr.approvals_needed(pr) == (2, 1)
+    assert len(rr.plan_requests(pr, roster, set(), {})) == 2
+
+
+def test_diff_neutral_maintainers_of_a_branch_remain_eligible(rr, roster) -> None:
+    pr = _pr(rr, contributors={"outsider", "core1"})
+    pr.update_only = frozenset({"core1"})
+    assert rr.plan_requests(pr, roster, set(), {}) == ["core1", "comm1"]
+
+
+def test_carried_approval_is_not_requested_again(rr, roster) -> None:
+    pr = _pr(rr, reviews=[_review(rr, "core1", "APPROVED", sha=OLD)])
+    pr.same_diff = frozenset({OLD})
+    assert rr.plan_requests(pr, roster, set(), {}) == ["comm1"]
+
+
+def test_a_missing_core_vote_is_requested_even_when_total_votes_are_sufficient(rr, roster) -> None:
+    pr = _pr(rr, reviews=[_review(rr, "comm1", "APPROVED"), _review(rr, "comm2", "APPROVED")])
+    assert rr.plan_requests(pr, roster, set(), {}) == ["core1"]
+
+
+def test_noncore_pending_requests_do_not_hide_a_missing_core_vote(rr, roster) -> None:
+    assert rr.plan_requests(_pr(rr), roster, {"comm1", "comm2"}, {}) == ["core1"]
+
+
+def test_an_attested_integration_is_not_mistaken_for_missing_human_votes(rr, roster) -> None:
+    pr = _pr(rr)
+    pr.adoption = rr.qc.evidence.Evidence(False, "needs a fresh independent terminal report")
+    assert rr.plan_requests(pr, roster, set(), {}) == []

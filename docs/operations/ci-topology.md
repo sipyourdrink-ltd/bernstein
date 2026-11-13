@@ -67,7 +67,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
 | .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 11 |
-| .github/workflows/quorum-rerun.yml | quorum rerun | pull_request_review, schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "quorum-rerun-${{ github.event.pull_request.number \|\| 'sweep' }}"} | 1 |
+| .github/workflows/quorum-rerun.yml | quorum rerun | issue_comment, pull_request_review, schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "quorum-rerun-${{ github.event.pull_request.number \|\| github.event.issue.number \|\| 'sweep' }}"} | 2 |
 | .github/workflows/quorum.yml | quorum | merge_group, pull_request, pull_request_review, workflow_dispatch | {"cancel-in-progress": "true", "group": "quorum-${{ github.event.pull_request.number \|\| inputs.pr \|\| github.event.merge_group.head_ref \|\| github.ref }}"} | 1 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
@@ -151,7 +151,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-extension.yml | publish |
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
 | .github/workflows/publish.yml | build: Build<br>dispatch-homebrew: Dispatch Homebrew after PyPI publication<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-copr: Publish RPM to Copr<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>rpm-install-smoke: RPM install smoke (${{ matrix.image }})<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
-| .github/workflows/quorum-rerun.yml | rerun |
+| .github/workflows/quorum-rerun.yml | attestation: Evaluate maintainer attestation<br>rerun |
 | .github/workflows/quorum.yml | quorum: quorum |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs published channels |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
@@ -235,8 +235,8 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
 | .github/workflows/publish.yml | build: {"contents": "read"}<br>dispatch-homebrew: {"actions": "write"}<br>github-release: {"actions": "write", "attestations": "write", "contents": "write", "id-token": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read", "id-token": "write"}<br>rpm-install-smoke: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN |
-| .github/workflows/quorum-rerun.yml | workflow: {"contents": "read"}<br>rerun: {"actions": "write", "contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
-| .github/workflows/quorum.yml | workflow: {"contents": "read"}<br>quorum: {"contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
+| .github/workflows/quorum-rerun.yml | workflow: {"contents": "read"}<br>attestation: {"checks": "write", "contents": "read", "issues": "read", "pull-requests": "read"}<br>rerun: {"actions": "write", "contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
+| .github/workflows/quorum.yml | workflow: {"contents": "read"}<br>quorum: {"contents": "read", "issues": "read", "pull-requests": "read"} | GITHUB_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/rendering-lane.yml | workflow: {"contents": "read"} | - |

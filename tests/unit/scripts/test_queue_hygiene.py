@@ -158,6 +158,47 @@ def test_needs_review_added_when_green_and_unblocked(qh: ModuleType) -> None:
     assert any(i.startswith("add:needs-committer-review") for i in pr.intents)
 
 
+def test_waiting_for_quorum_does_not_hide_a_pr_from_reviewers(qh: ModuleType, monkeypatch) -> None:
+    monkeypatch.setattr(
+        qh,
+        "gh_json",
+        lambda *args, **kwargs: [
+            {"name": "CI gate", "bucket": "pass"},
+            {"name": "shipped bundle matches the lockfile", "bucket": "pass"},
+            {"name": "quorum", "bucket": "fail"},
+        ],
+    )
+    pr = _pr(qh, 1, checks_pass=qh.required_checks_pass("owner/repo", 1))
+    qh.rule_needs_committer_review([pr])
+    assert pr.intents == ["add:needs-committer-review"]
+
+
+@pytest.mark.parametrize("bucket", ["fail", "pending", "cancel", "skipping"])
+def test_review_readiness_still_requires_real_technical_checks(qh: ModuleType, monkeypatch, bucket) -> None:
+    monkeypatch.setattr(
+        qh,
+        "gh_json",
+        lambda *args, **kwargs: [{"name": "CI gate", "bucket": bucket}, {"name": "quorum", "bucket": "pass"}],
+    )
+    assert not qh.required_checks_pass("owner/repo", 1)
+
+
+def test_quorum_alone_does_not_prove_technical_readiness(qh: ModuleType, monkeypatch) -> None:
+    monkeypatch.setattr(qh, "gh_json", lambda *args, **kwargs: [{"name": "quorum", "bucket": "pass"}])
+    assert not qh.required_checks_pass("owner/repo", 1)
+
+
+def test_failed_quorum_cli_exit_still_exposes_successful_technical_results(qh, monkeypatch) -> None:
+    monkeypatch.setattr(
+        qh.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, '[{"name":"CI gate","bucket":"pass"},{"name":"quorum","bucket":"fail"}]', ""
+        ),
+    )
+    assert qh.required_checks_pass("owner/repo", 1)
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

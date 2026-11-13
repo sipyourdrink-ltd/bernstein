@@ -74,9 +74,11 @@
 /docker/sandbox/ @chernistry
 /scripts/researcher_sandbox.sh @chernistry
 
-# The review roster and the two scripts that enforce this file and the
+# The review roster and the scripts that enforce this file and the
 # charter. `.github/` above already covers the roster; these are the pieces
 # that live outside it (charter, s10).
 /scripts/quorum_check.py @chernistry
+/scripts/quorum_evidence.py @chernistry
+/scripts/quorum_request_reviews.py @chernistry
 /scripts/queue_hygiene.py @chernistry
 /renovate.json @chernistry

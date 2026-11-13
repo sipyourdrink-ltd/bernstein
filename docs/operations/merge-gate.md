@@ -98,7 +98,7 @@ Notes:
 ### 4. Verify the layers work end to end
 
 1. Open a PR that intentionally diverges `AGENTS.md` from canonical IR. Confirm the `PR policy` job runs the autosync steps and amends the PR head with a regen commit.
-2. Cause `ci.yml` on main to fail (e.g. force-push a known-bad commit to a sandbox branch, then merge with admin override). Open a fresh PR. Confirm the main-red-guard step in `PR policy` emits a warning and job summary pointing at the failing SHA.
+2. Exercise a synthetic failed-main CI response in the existing workflow tests. Confirm the main-red-guard warning and summary identify the failing SHA. Keep intentional failures confined to fixtures.
 3. Trigger the nightly sweep manually via `gh workflow run nightly-drift-sweep.yml`. Confirm it either no-ops (no drift) or opens a sweep PR labelled `automated`.
 4. Queue two PRs via auto-merge. Confirm each one gets its own merge-group CI run via the `merge_group:` trigger, and that `main` advances to the exact SHA the queue tested. The queue is configured with `max_entries_to_merge: 1` so one PR lands per push; see [merge-queue.md](merge-queue.md) for why.
 
@@ -210,7 +210,7 @@ with the failing run URL. The lane immediately returns to advisory.
 | Condition | Mechanism |
 |---|---|
 | Disable autosync on a single PR | Add the `skip-autosync` label to the PR |
-| Skip merge queue (admin only) | `gh pr merge --admin` bypasses the queue and required checks |
+| Maintainer integration | Authenticated exact-head technical-review evidence under the [review charter](../governance/review-charter.md); CI, bundle and merge queue remain required |
 | Skip main-red guard | Not supported. Repair main first |
 
 ## Files in this stack
