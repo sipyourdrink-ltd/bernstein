@@ -139,6 +139,44 @@ def test_failed_checkout_does_not_remove_concurrently_adopted_worktree(
     assert _git(repo, "rev-parse", f"agent/{session}") == saved_commit
 
 
+def test_stale_cleanup_rechecks_liveness_after_concurrent_create(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    creator = WorktreeManager(repo, salvage_on_cleanup=False)
+    janitor = WorktreeManager(repo, salvage_on_cleanup=False)
+    before_lock_write = Event()
+    cleanup_started = Event()
+    liveness_checked = Event()
+    real_write = worktree_module.write_worktree_lock
+    real_check = janitor._is_session_live
+
+    def delay_lock_write(*args: object, **kwargs: object) -> Path:
+        before_lock_write.set()
+        assert cleanup_started.wait(timeout=5)
+        liveness_checked.wait(timeout=2)
+        return real_write(*args, **kwargs)
+
+    def observe_liveness(session_id: str) -> bool:
+        live = real_check(session_id)
+        liveness_checked.set()
+        return live
+
+    def scan() -> int:
+        assert before_lock_write.wait(timeout=5)
+        cleanup_started.set()
+        return janitor.cleanup_all_stale()
+
+    monkeypatch.setattr(worktree_module, "write_worktree_lock", delay_lock_write)
+    monkeypatch.setattr(janitor, "_is_session_live", observe_liveness)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        creating = pool.submit(creator.create, "new-session")
+        cleaning = pool.submit(scan)
+        created = creating.result(timeout=10)
+        cleaned = cleaning.result(timeout=10)
+
+    assert cleaned == 0
+    assert created.is_dir()
+    assert "agent/new-session" in _branches(repo)
+
+
 def test_create_raise_after_worktree_exists_leaves_no_worktree_or_branch(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

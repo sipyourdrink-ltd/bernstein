@@ -1531,46 +1531,55 @@ class WorktreeManager:
             return 0
         cleaned = 0
         for entry in self._base_dir.iterdir():
-            if entry.is_dir() and entry.name != ".locks":
-                session_id = entry.name
-                if self._is_session_live(session_id):
-                    logger.debug("Keeping live worktree %s during stale cleanup", session_id)
-                    continue
-
-                # Preserve unmerged commits to the graveyard before we nuke
-                # the branch. A crashed agent may have committed
-                # work locally that never reached main; ``git worktree
-                # remove --force`` followed by ``git branch -D`` would make
-                # those commits unreachable and gc-eligible.
-                branch_name = f"agent/{session_id}"
-                base_ref = _resolve_graveyard_base(self.repo_root)
-                try:
-                    unmerged = _count_unmerged_commits(self.repo_root, branch_name, base=base_ref)
-                except Exception as exc:  # defensive - preserve rather than drop work
-                    logger.debug("Graveyard pre-check failed for %s: %s", session_id, exc)
-                    unmerged = -1 if _branch_exists(self.repo_root, branch_name) else 0
-                # Any non-zero result preserves: >0 is a real count, -1 means the
-                # check was inconclusive but the branch exists, so we keep the work.
-                if unmerged != 0:
-                    logger.warning(
-                        "Stale worktree %s has %s unmerged commit(s) (base %s); preserving to graveyard",
-                        session_id,
-                        unmerged if unmerged > 0 else "an unknown number of",
-                        base_ref,
-                    )
-                    try:
-                        preserve_branch_to_graveyard(self.repo_root, session_id, branch=branch_name)
-                    except Exception as exc:  # defensive - log and proceed
-                        logger.warning(
-                            "Graveyard preservation crashed for %s (continuing cleanup): %s",
-                            session_id,
-                            exc,
-                        )
-
-                logger.info("Cleaning stale worktree: %s", session_id)
-                self.cleanup(session_id)
-                cleaned += 1
+            if entry.name == ".locks" or not entry.is_dir():
+                continue
+            try:
+                with self._lock_slots(entry.name):
+                    if entry.is_dir() and self._cleanup_if_stale_locked(entry.name):
+                        cleaned += 1
+            except WorktreeError as exc:
+                logger.warning("Could not clean up stale worktree for %s: %s", entry.name, exc)
         return cleaned
+
+    def _cleanup_if_stale_locked(self, session_id: str) -> bool:
+        if self._is_session_live(session_id):
+            logger.debug("Keeping live worktree %s during stale cleanup", session_id)
+            return False
+
+        # Preserve unmerged commits to the graveyard before we nuke
+        # the branch. A crashed agent may have committed
+        # work locally that never reached main; ``git worktree
+        # remove --force`` followed by ``git branch -D`` would make
+        # those commits unreachable and gc-eligible.
+        branch_name = f"agent/{session_id}"
+        base_ref = _resolve_graveyard_base(self.repo_root)
+        try:
+            unmerged = _count_unmerged_commits(self.repo_root, branch_name, base=base_ref)
+        except Exception as exc:  # defensive - preserve rather than drop work
+            logger.debug("Graveyard pre-check failed for %s: %s", session_id, exc)
+            unmerged = -1 if _branch_exists(self.repo_root, branch_name) else 0
+        # Any non-zero result preserves: >0 is a real count, -1 means the
+        # check was inconclusive but the branch exists, so we keep the work.
+        if unmerged != 0:
+            logger.warning(
+                "Stale worktree %s has %s unmerged commit(s) (base %s); preserving to graveyard",
+                session_id,
+                unmerged if unmerged > 0 else "an unknown number of",
+                base_ref,
+            )
+            try:
+                preserve_branch_to_graveyard(self.repo_root, session_id, branch=branch_name)
+            except Exception as exc:  # defensive - log and proceed
+                logger.warning(
+                    "Graveyard preservation crashed for %s (continuing cleanup): %s",
+                    session_id,
+                    exc,
+                )
+
+        logger.info("Cleaning stale worktree: %s", session_id)
+        self._last_salvage = None
+        self._cleanup_locked(session_id)
+        return True
 
     def _is_session_live(self, session_id: str) -> bool:
         """Return True if the session still has a live process or lock."""
