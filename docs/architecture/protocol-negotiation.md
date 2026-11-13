@@ -56,6 +56,18 @@ Either list being empty raises `ValueError`.
    negotiated.capabilities` - i.e. what the local side loses by
    settling on the negotiated version, not what the remote side loses.
 
+When both sides share the selected minor, the negotiated version object
+comes from the **local** list. Its patch number and capabilities are
+therefore selected; the remote patch number does not replace them. If
+there is no shared minor, the fallback uses the version object from the
+side with the lower maximum minor (at that side's maximum minor).
+
+If there is no common major, negotiation fails: `success` is `False`,
+`negotiated_version` is `None` (there is no selected version), and
+`degraded_capabilities` is an empty `frozenset` because no negotiated
+version exists to compare against. `local_version` and `remote_version`
+still report each side's highest version.
+
 `version_is_compatible(local, remote)` is a cheaper standalone check:
 it only compares major versions, with no minor-resolution or
 capability diff.
@@ -79,6 +91,25 @@ result = negotiate_version(local, remote)
 if result.success:
     print(result.negotiated_version.version_string)  # "1.0.0"
     print(sorted(result.degraded_capabilities))  # capabilities lost vs. local best
+```
+
+For a shared minor, the selected object is local even when the remote patch
+number is higher. This pure Python example also shows that the selected
+object supplies the capabilities:
+
+```python
+from bernstein.core.protocols.protocol_negotiation import (
+    ProtocolVersion,
+    negotiate_version,
+)
+
+local = [ProtocolVersion("mcp", 1, 2, 3, frozenset({"local-cap"}))]
+remote = [ProtocolVersion("mcp", 1, 2, 9, frozenset({"remote-cap"}))]
+
+result = negotiate_version(local, remote)
+assert result.negotiated_version == local[0]
+assert result.negotiated_version.version_string == "1.2.3"
+assert result.negotiated_version.capabilities == frozenset({"local-cap"})
 ```
 
 `get_supported_versions(protocol)` returns Bernstein's own hardcoded
