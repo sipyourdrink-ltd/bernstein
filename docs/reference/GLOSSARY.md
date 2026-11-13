@@ -98,6 +98,10 @@ Killing or collecting agents that have exceeded their timeout or become unrespon
 
 One orchestration of a goal. See the [single-writer run-state actor](../orchestration/run-actor.md).
 
+### Orchestrator
+
+Schedules eligible work and advances tasks on each [Tick](#tick).
+
 ### SDD
 
 Software-Defined Development - the `.sdd/` directory where all runtime state lives: worktrees, sessions, task logs, and agent data. Initialized in `src/bernstein/core/orchestration/bootstrap.py`.
@@ -113,6 +117,10 @@ Writes role-specific Claude Code skills (`.claude/skills/*.md`) into the agent's
 ### Spawn
 
 Creating a short-lived agent process for a task batch. The spawner handles prompt construction, worktree setup, and process management. Implemented in `src/bernstein/core/agents/spawner.py`.
+
+### Supervisor
+
+Observes worker liveness and reports stalls. For example, `bernstein supervisor status --json` returns a snapshot with stuck-worker counts and worker details; see the [Supervisor reference](../api/supervisor.md).
 
 ### Task
 
