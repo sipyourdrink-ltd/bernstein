@@ -545,6 +545,7 @@ export default function Tasks() {
   const selected = items.find((t) => t.id === selectedId) ?? null;
 
   const openCreate = (focus: 'title' | 'prompt', trigger: HTMLButtonElement, fromEmptyState = false) => {
+    if (confirmedTaskId) consumeConfirmedTaskCreation(confirmedTaskId);
     createTrigger.current = fromEmptyState ? headerCreateButton.current : trigger;
     setCreateFocus(focus);
   };
@@ -566,10 +567,8 @@ export default function Tasks() {
 
   const confirmedTaskId = useConfirmedTaskCreation();
   useLayoutEffect(() => {
-    if (!createFocus && confirmedTaskId && consumeConfirmedTaskCreation(confirmedTaskId)) {
-      openCreatedTask(confirmedTaskId);
-    }
-  }, [confirmedTaskId, createFocus, openCreatedTask]);
+    if (!createFocus && confirmedTaskId) void refreshAfterCreate();
+  }, [confirmedTaskId, createFocus, refreshAfterCreate]);
 
   const refetchList = () => {
     listQ.refetch();
@@ -595,6 +594,22 @@ export default function Tasks() {
           createButtonRef={headerCreateButton}
         />
 
+        {confirmedTaskId && !createFocus && (
+          <div className="mt-2 flex items-center gap-3">
+            <span role="status" className="text-body text-foreground">Task created.</span>
+            <button
+              type="button"
+              className="rounded-md border border-border bg-card px-2.5 py-1.5 text-body-md text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={(event) => {
+                if (!consumeConfirmedTaskCreation(confirmedTaskId)) return;
+                createTrigger.current = event.currentTarget;
+                openCreatedTask(confirmedTaskId);
+              }}
+            >
+              View created task
+            </button>
+          </div>
+        )}
         <SearchBar value={queryStr} onChange={setQueryStr} />
 
         <ChipsRow active={activeChip} counts={counts} onSelect={setActiveChip} />

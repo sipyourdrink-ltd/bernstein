@@ -52,7 +52,7 @@ export function useConfirmedTaskCreation() {
 }
 
 export function consumeConfirmedTaskCreation(taskId: string): boolean {
-  if (confirmedRecoveryId !== taskId || readRecoveryId() !== taskId) return false;
+  if (confirmedRecoveryId !== taskId) return false;
   rememberRecoveryId(null);
   return true;
 }
@@ -108,6 +108,7 @@ export function CreateTaskDialog({
   function confirm(taskId: string) {
     if (readRecoveryId() !== taskId) return;
     if (!mounted.current) {
+      rememberRecoveryId(null);
       confirmedRecoveryId = taskId;
       for (const listener of recoveryListeners) listener();
       return;

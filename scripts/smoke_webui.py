@@ -642,14 +642,27 @@ def check_task_creation_success_after_remount(page: Page, base: str, *, settleme
             expect(page.get_by_role("heading", name="Settings", exact=True)).to_be_visible()
         page.go_forward()
         expect(page).to_have_url(f"{base}/ui/tasks")
+        palette = page.get_by_role("dialog", name="Command palette")
         if settlement == "with form open":
             header.click()
             expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        elif settlement == "with palette open":
+            page.keyboard.press("Control+k")
+            expect(palette.get_by_role("textbox")).to_be_focused()
         else:
             expect(form).to_have_count(0)
         if settlement != "while away":
             pending[0].fulfill(response=pending[0].fetch())
-        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        detail = page.get_by_role("dialog", name=title, exact=True)
+        if settlement != "with form open":
+            expect(page.get_by_role("status").filter(has_text="Task created.")).to_have_count(1)
+            expect(detail).to_have_count(0)
+            if settlement == "with palette open":
+                expect(palette.get_by_role("textbox")).to_be_focused()
+                page.keyboard.press("Escape")
+                expect(palette).to_have_count(0)
+            page.get_by_role("button", name="View created task", exact=True).click()
+        expect(detail).to_be_visible()
         assert page.evaluate("sessionStorage.getItem('bernstein.unconfirmed-task-id')") is None
         page.keyboard.press("Escape")
         expect(header).to_be_focused()
@@ -916,7 +929,7 @@ def main() -> None:
             check_unconfirmed_task_lookup(page, base, headers)
             check_task_creation_survives_route_remount(page, base)
             check_task_creation_rejected_while_away(page, base)
-            for settlement in ("while away", "with form closed", "with form open"):
+            for settlement in ("while away", "with form closed", "with form open", "with palette open"):
                 check_task_creation_success_after_remount(page, base, settlement=settlement)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
