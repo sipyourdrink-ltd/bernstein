@@ -7,17 +7,17 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 | File | Purpose |
 |---|---|
 | `audit.py` | Immutable HMAC-chained audit log; daily JSONL rotation; chain crosses file boundaries |
-| `audit_chain.py` | `AuditChainStore` facade plus the `EVENT_*` type constants |
+| `audit_chain.py` | `AuditChainStore` facade plus the `EVENT_*` type constants; the three `mcp.*` signing-gate events are shape-checked on write and a malformed one raises (#6913) |
 | `audit_receipt.py` | Offline-verifiable receipt projection (COSE / in-toto) over a chain range |
 | `agent_card_keystore.py` | Persistent Ed25519 keystore for A2A agent-card signing |
 | `intent_capsule.py` | Signed task-goal capsules with drift escalation |
 | `sigstore_attestation.py` | Rekor attestation with a local Ed25519 fallback; verifies local bundles |
 | `result_receipt_bundle.py` | Result receipt bundle with offline DSSE verification |
-| `capability_delta.py` | Pure `AgentPermissions` grant comparison; no production caller yet |
-| `surface_grant_delta.py` | Pure workflow/Dockerfile/Compose grant diffs; no production caller yet |
-| `key_custody.py` | Ed25519 signing custody protocol with file/env implementations; HSM integration is a subclassable stub |
-| `key_derivation.py` | HKDF-SHA256 per-store key derivation with scheme versioning |
+| `capability_delta.py`, `surface_grant_delta.py` | Pure grant comparisons (`AgentPermissions`; workflow/Dockerfile/Compose); no production caller yet |
+| `key_custody.py`, `key_derivation.py` | Ed25519 signing custody (file/env; HSM is a subclassable stub) and HKDF-SHA256 per-store key derivation with scheme versioning |
 | `approval_decision.py` | Signed, nonce-bound decision records read by the task approval gates |
+| `auth_rate_limiter.py` | Per-client request and auth-attempt limits keyed by the real TCP peer; exhausted windows and failed credentials start a bounded exponential lockout (#6874) |
+| `external_policy_hook.py` | `PolicyHookRegistry` for OPA/Cedar/custom hooks; a registry passed to `AgentSpawner` gates each resolved dispatch and fails closed: anything but an explicit ALLOW stops the action, and a refusal never selects another executor (`../agents/spawner_core.py`, #6956) |
 | `dlp_scanner.py` | `DLPScanner` behind the `dlp_scan` gate: secrets and regulated data in changed files, with value-scoped allowlisting |
 
 ## Invariants
@@ -30,11 +30,11 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 - Runtime audit mode is enabled by `BERNSTEIN_AUDIT=1` or compliance `audit_logging` (`../orchestration/orchestrator.py`); features degrade without it.
 - Untrusted paths are opened, never compared: a comparison validates one lookup while the open performs another (`sigstore_attestation.py`).
 - Where supported, tenant writes and rotation walk the subtree through `TenantPaths.anchor` (`../persistence/anchored_write.py`). Descriptor walks require `dir_fd`, `O_NOFOLLOW` and `O_DIRECTORY`; platform fallbacks do not provide equivalent symlink containment (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
-- `AuditLog.verify_incremental()` trusts only signed or HMAC-chained material. The signed checkpoint pins sealed prefixes by hash and length; missing or truncated segments are reported unless covered by a checkpoint-bound `ack-tear` record. Unsigned hash tiles are checked against the bytes, never used to skip them (#6435, #6443).
+- `AuditLog.verify_incremental()` trusts only signed or HMAC-chained material. The signed checkpoint pins sealed prefixes by hash and length; missing or truncated segments are reported unless covered by a checkpoint-bound `ack-tear` record. Unsigned hash tiles are checked against the bytes, never used to skip them (#6435, #6443), and are read before the segments they describe so a seal landing mid-run is not a fault (#6548).
 - DLP allowlist entries mark a *value* as benign, not the line: a rule skips only a match that overlaps an allowlisted span. Only operator `allowlist_patterns` suppress a whole line (`dlp_scanner.py`, #6430).
 
 ## Testing
 
 Single files only: `uv run pytest tests/unit/test_audit.py -x -q`.
 
-<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->
+<!-- Reviewed 2026-11-11 against main 535af7532; the notes above still hold. -->
