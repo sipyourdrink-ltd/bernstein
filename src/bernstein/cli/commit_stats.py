@@ -227,17 +227,14 @@ def collect_commit_stats(
     except (OSError, subprocess.SubprocessError) as exc:
         return CommitStatsResult(error=str(exc))
 
-    if not rows:
-        return CommitStatsResult()
-
     role_stats, total_added, total_deleted = _aggregate_role_stats(rows)
     total_commits_map = _count_commits_by_role(repo_dir, since, until)
     if isinstance(total_commits_map, CommitStatsResult):
         return total_commits_map  # error result
 
     final_roles: dict[str, RoleStats] = {}
-    for role in sorted(role_stats):
-        stats = role_stats[role]
+    for role in sorted(role_stats.keys() | total_commits_map.keys()):
+        stats = role_stats.get(role, RoleStats())
         final_roles[role] = RoleStats(
             commits=total_commits_map.get(role, 0),
             lines_added=stats.lines_added,

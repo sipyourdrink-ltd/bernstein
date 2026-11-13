@@ -153,6 +153,25 @@ class TestCollectCommitStats:
         result = collect_commit_stats(repo_dir="/tmp")
         assert result.error is not None
 
+    @pytest.mark.parametrize("mixed_history", [False, True], ids=["empty-churn", "mixed-history"])
+    def test_counts_roles_without_churn(self, mixed_history: bool) -> None:
+        rows = [("backend dev <backend@example.com>", 1, 0)] if mixed_history else []
+        counts = {"backend": 1, "docs": 1} if mixed_history else {"docs": 1}
+        with (
+            patch("bernstein.cli.commit_stats._run_git_log", return_value=rows),
+            patch("bernstein.cli.commit_stats._count_commits_by_role", return_value=counts),
+        ):
+            result = collect_commit_stats(repo_dir=".")
+
+        expected = {"docs": RoleStats(commits=1, lines_added=0, lines_deleted=0)}
+        if mixed_history:
+            expected["backend"] = RoleStats(commits=1, lines_added=1, lines_deleted=0)
+        assert result.error is None
+        assert result.total_commits == sum(counts.values())
+        assert result.roles == expected
+        assert result.total_lines_added == int(mixed_history)
+        assert result.total_lines_deleted == 0
+
     @patch("subprocess.run")
     def test_empty_repo(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
