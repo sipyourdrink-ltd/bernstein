@@ -416,6 +416,18 @@ worker releases the claim back to the pool via `POST /tasks/{id}/release`
 (`WorkerLoop._release_task`), so the task returns to `open` and another node
 can pick it up instead of being stranded in `claimed` (#3018).
 
+**A remote worker completes a task without posting its output.** A worker
+hands its result back as an artifact (`POST /tasks/{id}/artifacts`) before
+`POST /tasks/{id}/complete`. When the task was claimed by a node in the
+registry (`GET /cluster/nodes`, offline nodes included) and no verified
+artifact was posted, the janitor fails the task with
+`artifact_missing_remote` instead of grading the run checkout, where stale
+bytes at the declared output path, or a file that already satisfies a
+`path_exists` signal, would otherwise pass it (#6611). The task then takes
+the ordinary reopen budget. A completion with no claim owner, an owner that
+is not a registered node, or a cluster API that cannot be read is graded as
+before.
+
 ## Observability for cluster health
 
 ### Topology at a glance: `bernstein cluster status` / `nodes`
