@@ -6,9 +6,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
+from bernstein.core.server.server_models import TaskCreate
+from bernstein.core.tasks.task_store_core import TaskStore
 
 
 class TestRecapCommand:
@@ -61,6 +64,44 @@ class TestRecapCommand:
         assert data["summary"] == {"total": 2, "completed": 1, "failed": 1, "success_rate": 50.0}
         assert data["cost_breakdown"]["total_cost_usd"] == 0.25
         server.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_recap_archive_counts_retried_task_once_and_labels_unknown_cost(self, tmp_path: Path) -> None:
+        archive = tmp_path / "archive" / "tasks.jsonl"
+        store = TaskStore(tmp_path / "runtime" / "tasks.jsonl", archive_path=archive)
+        retried = await store.create(TaskCreate(title="Make report", description="Draft report", role="writer"))
+        await store.claim_by_id(retried.id)
+        await store.fail(retried.id, "First attempt failed")
+        await store.reopen(retried.id, "Retry requested")
+        await store.claim_by_id(retried.id)
+        await store.complete(retried.id, "Report ready")
+        cancelled = await store.create(TaskCreate(title="Review", description="Review draft", role="reviewer"))
+        await store.cancel(cancelled.id, "Review no longer needed")
+        assert len(store.read_archive()) == 3
+
+        runner = CliRunner()
+        with patch("bernstein.cli.advanced_cmd.server_get") as server:
+            result = runner.invoke(cli, ["recap", "--archive", str(archive), "--as-json"])
+            human = runner.invoke(cli, ["recap", "--archive", str(archive)])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert {task["id"]: task["status"] for task in data["tasks"]} == {retried.id: "done", cancelled.id: "cancelled"}
+        assert data["summary"] == {"total": 2, "completed": 1, "failed": 0, "success_rate": 50.0}
+        assert data["cost_breakdown"]["total_cost_usd"] is None
+        assert human.exit_code == 0, human.output
+        assert "Unavailable" in human.output
+        server.assert_not_called()
+
+    @pytest.mark.parametrize("costs", [[10**400], [1e308, 1e308]])
+    def test_recap_archive_rejects_unrepresentable_cost(self, tmp_path: Path, costs: list[int | float]) -> None:
+        archive = tmp_path / "tasks.jsonl"
+        rows = [{"task_id": f"t{i}", "status": "done", "cost_usd": cost} for i, cost in enumerate(costs)]
+        archive.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        result = CliRunner().invoke(cli, ["recap", "--archive", str(archive), "--as-json"])
+
+        assert result.exit_code == 1
+        assert "Archive cost is out of range" in result.output
 
     def test_recap_missing_archive_reports_error(self, tmp_path: Path) -> None:
         archive = tmp_path / "missing.jsonl"

@@ -418,6 +418,9 @@ A subcommand group; defaults to `bernstein logs tail`.
 
 By default, recap queries the task server. Use `--archive` for a local archive
 report without the server. `--archive` and `--since` cannot be combined.
+Archive counts use the last entry for each task. Recorded cost sums the
+entries with a known cost, including retries. It is unavailable if the file
+contains no cost data.
 
 With `--since` the summary is the "since you were away" report: completed and
 failed tasks, provider errors, and estimated cost read from `.sdd/` alone, so

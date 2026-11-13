@@ -979,9 +979,9 @@ def _recap_since(since: str, workdir: str, *, as_json: bool) -> None:
 
 def _recap_from_archive(path: Path) -> dict[str, Any]:
     """Build a recap from the terminal records in an explicit JSONL archive."""
-    tasks: list[dict[str, Any]] = []
+    tasks_by_id: dict[str, dict[str, Any]] = {}
     total_cost = 0.0
-    completed = failed = 0
+    recorded_cost_count = 0
     try:
         with path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, 1):
@@ -989,7 +989,7 @@ def _recap_from_archive(path: Path) -> dict[str, Any]:
                     continue
                 try:
                     record = json.loads(line)
-                except json.JSONDecodeError:
+                except ValueError:
                     raise click.ClickException(f"Invalid archive record at {path}:{line_number}") from None
                 if not isinstance(record, dict):
                     raise click.ClickException(f"Invalid archive record at {path}:{line_number}")
@@ -997,24 +997,33 @@ def _recap_from_archive(path: Path) -> dict[str, Any]:
                 status = record.get("status")
                 if not isinstance(task_id, str) or not task_id or not isinstance(status, str) or not status:
                     raise click.ClickException(f"Missing task ID or status at {path}:{line_number}")
-                tasks.append(
-                    {
-                        "id": task_id,
-                        "title": record.get("title"),
-                        "status": status,
-                        "role": record.get("role"),
-                        "complexity": record.get("complexity"),
-                    }
-                )
-                completed += status == "done"
-                failed += status == "failed"
+                tasks_by_id[task_id] = {
+                    "id": task_id,
+                    "title": record.get("title"),
+                    "status": status,
+                    "role": record.get("role"),
+                    "complexity": record.get("complexity"),
+                }
+                # Count all recorded attempt costs, including those of retried tasks.
                 cost = record.get("cost_usd")
-                if type(cost) in (int, float) and isfinite(cost):
+                if cost is None:
+                    continue
+                if type(cost) not in (int, float):
+                    raise click.ClickException(f"Invalid archive cost at {path}:{line_number}")
+                try:
                     total_cost += cost
+                except OverflowError:
+                    raise click.ClickException(f"Archive cost is out of range at {path}:{line_number}") from None
+                if not isfinite(total_cost):
+                    raise click.ClickException(f"Archive cost is out of range at {path}:{line_number}")
+                recorded_cost_count += 1
     except (OSError, UnicodeError) as exc:
         raise click.ClickException(f"Cannot read archive {path}: {exc}") from exc
 
+    tasks = list(tasks_by_id.values())
     total = len(tasks)
+    completed = sum(task["status"] == "done" for task in tasks)
+    failed = sum(task["status"] == "failed" for task in tasks)
     return {
         "tasks": tasks,
         "summary": {
@@ -1023,7 +1032,10 @@ def _recap_from_archive(path: Path) -> dict[str, Any]:
             "failed": failed,
             "success_rate": round(completed / total * 100, 1) if total else 0.0,
         },
-        "cost_breakdown": {"total_cost_usd": round(total_cost, 4)},
+        "cost_breakdown": {
+            "total_cost_usd": round(total_cost, 4) if recorded_cost_count else None,
+            "records_with_cost": recorded_cost_count,
+        },
     }
 
 
@@ -1117,15 +1129,18 @@ def _render_recap(data: dict[str, Any], *, archive_only: bool) -> None:
     console.print(table)
     console.print()
 
-    if not archive_only:
-        _render_recap_workspace_details(data.get("diff_stats", {}), data.get("quality_scores", {}))
+    if archive_only:
+        recorded_cost = cost_breakdown.get("total_cost_usd")
+        if recorded_cost is None:
+            console.print("Recorded archive cost: Unavailable")
+        else:
+            console.print(f"Recorded archive cost: ${recorded_cost:.4f}")
+        return
+
+    _render_recap_workspace_details(data.get("diff_stats", {}), data.get("quality_scores", {}))
 
     # Cost breakdown
-    cost_table = Table(
-        title="Recorded Archive Cost" if archive_only else "Cost Breakdown",
-        show_header=True,
-        header_style="bold magenta",
-    )
+    cost_table = Table(title="Cost Breakdown", show_header=True, header_style="bold magenta")
     cost_table.add_column("Model")
     cost_table.add_column("Cost (USD)")
     cost_table.add_column("Tokens")
