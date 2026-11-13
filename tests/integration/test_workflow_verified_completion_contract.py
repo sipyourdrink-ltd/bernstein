@@ -219,6 +219,7 @@ class _LifecycleSpawner:
         self.procs: list[subprocess.Popen[bytes]] = []
         self.sessions: list[AgentSession] = []
         self.claim_refusals: list[str] = []
+        self.first_dispatch_returning = threading.Event()
         self._lock = threading.Lock()
 
     @property
@@ -269,6 +270,7 @@ class _LifecycleSpawner:
             self.plan.after_launch(self, task, session, proc)
         if self.plan.crash_after_launch:
             raise _SimulatedCrash("runner died after the spawn side effect, before confirming it")
+        self.first_dispatch_returning.set()
         return session
 
     def reap(self) -> None:
@@ -427,6 +429,19 @@ def _observe(e: _Env, sp: _LifecycleSpawner, run: _Run) -> None:
     run.raise_unexpected()
 
 
+def _observe_dispatched_attempt(e: _Env, sp: _LifecycleSpawner, run: _Run) -> Task:
+    """Require the child and native lifecycle transition before testing the sentinel."""
+    _wait_for(lambda: sp.first_dispatch_returning.is_set() or run.done(), "dispatch return or run end")
+    run.raise_unexpected()
+    assert sp.first_dispatch_returning.is_set(), "precondition: the dispatcher reached its return"
+    assert sp.procs and sp.sessions, "precondition: a controlled child was launched"
+    run.wait(OBSERVE_S)
+    run.raise_unexpected()
+    task = e.driver.task(sp.sessions[0].task_ids[0])
+    assert task is not None, "precondition: the dispatched task exists in the native store"
+    return task
+
+
 def _wait_exit(proc: subprocess.Popen[bytes]) -> int:
     return proc.wait(timeout=BOUND_S)
 
@@ -505,12 +520,10 @@ def test_live_claimed_attempt_does_not_release_dependents(env: _Env) -> None:
     """[PROPOSED #1] A returned session id for a live, claimed agent is not completion."""
     sp = env.spawner(_Plan(mode="block"))
     run = env.start(lambda: env.runner(sp).run(_spec(env), run_id="p1-live"))
-    _observe(env, sp, run)
-    if sp.procs:
-        assert sp.procs[0].poll() is None, "precondition: the agent child is still running"
-        task = env.driver.task(sp.spawned_task_ids()[0])
-        assert task is not None
-        assert task.status is TaskStatus.CLAIMED
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert sp.procs[0].poll() is None, "precondition: the agent child is still running"
+    assert task.status is TaskStatus.CLAIMED
+    assert task.claimed_by_session == sp.sessions[0].id
     assert env.sentinel_writes() == 0, (
         f"consumer ran while the agent attempt was still live and claimed; runner reported {run.statuses()}"
     )
@@ -525,12 +538,10 @@ def test_exit_zero_and_reported_done_without_acceptance_does_not_release(env: _E
 
     sp = env.spawner(_Plan(mode="0", after_launch=reported_done))
     run = env.start(lambda: env.runner(sp).run(_spec(env), run_id="p1-done"))
-    _observe(env, sp, run)
-    if sp.procs:
-        task = env.driver.task(sp.spawned_task_ids()[0])
-        assert task is not None
-        assert task.status is TaskStatus.DONE, "precondition: agent-reported DONE"
-        assert task.closed_at is None, "precondition: never closed (no acceptance)"
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert sp.procs[0].poll() == 0, "precondition: agent exited successfully"
+    assert task.status is TaskStatus.DONE, "precondition: agent-reported DONE"
+    assert task.closed_at is None, "precondition: never closed (no acceptance)"
     assert env.sentinel_writes() == 0, (
         f"consumer ran on exit 0 + reported DONE with no acceptance; runner reported {run.statuses()}"
     )
@@ -590,11 +601,8 @@ def test_failed_refused_or_rejected_attempt_never_releases_dependents(
     """[PROPOSED #2] Failure, refusal and rejected verification neither release nor auto-retry."""
     sp = env.spawner(_Plan(mode=mode, after_launch=outcome))
     run = env.start(lambda: env.runner(sp).run(_spec(env), run_id=f"p2-{native_status.value}"))
-    _observe(env, sp, run)
-    if sp.procs:
-        task = env.driver.task(sp.spawned_task_ids()[0])
-        assert task is not None
-        assert task.status is native_status, "precondition: native lifecycle outcome recorded"
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert task.status is native_status, "precondition: native lifecycle outcome recorded"
     produce = run.node("produce")
     assert produce is None or produce.status is not NodeStatus.SUCCESS, (
         f"{native_status.value} attempt reported as node success; runner reported {run.statuses()}"
@@ -885,9 +893,9 @@ def test_native_artifact_rejection_blocks_dependents(env: _Env) -> None:
 
     sp = env.spawner(_Plan(mode="0", after_launch=rejected))
     run = env.start(lambda: env.runner(sp).run(_spec(env), run_id="p7-reject"))
-    _observe(env, sp, run)
-    if verdicts:
-        assert verdicts[0].ok is False, "precondition: native artifact verifier rejected the output"
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert verdicts and verdicts[0].ok is False, "precondition: native artifact verifier rejected the output"
+    assert task.status is TaskStatus.OPEN, "precondition: verification rejection reopened the task"
     assert env.sentinel_writes() == 0, f"consumer released on a rejected artifact; runner reported {run.statuses()}"
 
 
