@@ -56,6 +56,10 @@ Pick the path that matches what you're trying to do right now.
 2. [First run](first-run.md) - go from "installed" to "first task completed."
 3. [Tutorial](quickstart-tutorial.md) - a longer walkthrough of a real orchestration.
 
+For non-code deliverables, see the [artifact guide](../operations/artifacts.md)
+to learn how the expected artifact and its checks relate to successful task
+completion.
+
 Installing on a bare Linux box instead of a workstation? See
 [Install on Linux](install-linux.md). Working in GitHub Codespaces? See the
 [remote quickstart](remote.md).
