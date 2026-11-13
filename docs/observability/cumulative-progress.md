@@ -31,22 +31,39 @@ Bar colour reflects completion: `dim` below 30%, `yellow` from 30-59%,
 
 ## Where the numbers come from
 
-**Run-level (status bar):** `_compute_run_pct()` divides the `done` count by
-the `total` count from the same status payload the TUI already polls
-(`core/routes` status/summary fields) and passes the result to
-`render_progress_bar()`. If `tasks_total` is zero, no bar is shown.
+**Run-level (status bar):** `_compute_run_pct()` uses `summary.total` and
+`summary.done` when those keys are present; otherwise it falls back to the
+status payload's top-level `total` and `completed`, respectively. The run
+percentage is `done / total * 100`. If the selected total is zero (or missing,
+which defaults to zero), `_compute_run_pct()` returns no percentage and the
+status bar shows no run-progress bar. For example, `summary: {"total": 4,
+"done": 1}` gives 25%; with no summary counts, top-level `{"total": 4,
+"completed": 1}` also gives 25%.
 
-**Per-task (task list):** `TaskProgress.from_api()` reads a task's raw API
-dict and computes a percentage with this priority order:
+**Per-task (task list):** `TaskProgress.from_api()` computes a value using
+these inputs, in priority order:
 
-1. An explicit `progress.percentage` field, if the server sent one.
-2. `completed_steps / total_steps`, if step counts are present.
-3. `tests_passing / tests_total`, if test counts are present.
-4. Otherwise `0.0`, and the column renders `—` instead of a bar unless
-   `files_changed` or a truthy `progress` field is also present.
+1. `progress.percentage`, if it is not `null` (including an explicit `0`).
+2. `progress.completed_steps / progress.total_steps`, when total steps is
+   greater than zero.
+3. `tests_passing / tests_total`, when total tests is greater than zero.
+4. Otherwise the computed percentage is `0`.
 
-A task with `status == "done"` always shows 100%, regardless of the fields
-above.
+For test counts, the parser first looks inside the `progress` object and, if a
+specific key is absent there, reads the legacy top-level `tests_passing` or
+`tests_total` field. For example, `{"progress": {"completed_steps": 1,
+"total_steps": 4, "tests_passing": 8, "tests_total": 10}}` uses the step
+ratio and shows 25%, not the test ratio of 80%. Without usable percentage or
+step counts, those test counts provide the percentage.
+
+The table shows a dash (`—`) when the computed value is zero and neither a
+truthy `progress` object nor a nonzero top-level `files_changed` count is
+present. Thus a task with no progress fields, such as `{}`, shows a dash. A
+top-level `{"files_changed": 2}` has no completion percentage to compute but
+shows an explicit 0% bar; likewise `{"progress": {"percentage": 0}}` shows
+0%. A task with `status: "done"` always shows 100%, even if an older reported
+percentage says otherwise (for example, `{"status": "done", "progress":
+{"percentage": 35}}` shows 100%).
 
 ## Limitations
 
