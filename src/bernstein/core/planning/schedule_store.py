@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.persistence.atomic_write import write_atomic_text
+from bernstein.core.persistence.file_locks import cross_process_lock
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -355,6 +356,12 @@ class ScheduleStore:
     def _path_for(self, schedule_id: str) -> Path:
         return self._dir / f"{schedule_id}.json"
 
+    def _lock_for(self, schedule_id: str) -> Path:
+        # A case-insensitive filesystem can resolve multiple spellings to the
+        # same record. The lock must serialize them before reading that record.
+        digest = hashlib.sha256(schedule_id.casefold().encode("utf-8")).hexdigest()
+        return self._dir / ".locks" / f"{digest}.lock"
+
     def add(
         self,
         *,
@@ -411,10 +418,6 @@ class ScheduleStore:
             ParamContract.from_schema(schema_list)
 
         schedule_id = _canonical_schedule_id(cron, clean_goal, clean_scenario, schema_list, params_map)
-        existing = self.get(schedule_id)
-        if existing is not None:
-            return existing
-
         created_at = float(now) if now is not None else time.time()
         schedule = Schedule(
             id=schedule_id,
@@ -427,7 +430,11 @@ class ScheduleStore:
             params_schema=schema_list,
             params=params_map,
         )
-        self._write(schedule)
+        with cross_process_lock(self._lock_for(schedule_id), timeout=10):
+            existing = self.get(schedule_id)
+            if existing is not None:
+                return existing
+            self._write(schedule)
         logger.info("Registered schedule %s (cron=%s)", schedule.id, schedule.cron)
         return schedule
 
@@ -455,9 +462,11 @@ class ScheduleStore:
     def remove(self, schedule_id: str) -> bool:
         """Remove a schedule. Returns True if it existed and was removed."""
         path = self._path_for(schedule_id)
-        if not path.exists():
-            return False
-        path.unlink()
+        with cross_process_lock(self._lock_for(schedule_id), timeout=10):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                return False
         logger.info("Removed schedule %s", schedule_id)
         return True
 
@@ -469,22 +478,10 @@ class ScheduleStore:
         a daemon restart can resume the catch-up policy from the last known
         fire (instead of treating every restart as a fresh start).
         """
-        schedule = self.get(schedule_id)
-        if schedule is None:
-            return
-        updated = Schedule(
-            id=schedule.id,
-            cron=schedule.cron,
-            goal=schedule.goal,
-            scenario_id=schedule.scenario_id,
-            misfire_policy=schedule.misfire_policy,
-            created_at=schedule.created_at,
-            last_fire_at=fire_time,
-            extra=schedule.extra.copy(),
-            params_schema=[s.copy() for s in schedule.params_schema],
-            params=schedule.params.copy(),
-        )
-        self._write(updated)
+        with cross_process_lock(self._lock_for(schedule_id), timeout=10):
+            schedule = self.get(schedule_id)
+            if schedule is not None:
+                self._write(replace(schedule, last_fire_at=fire_time))
 
     def advance_fire_cursor(self, schedule_id: str, cursor_epoch: float) -> None:
         """Mark a fire window as processed *without* claiming it fired.
@@ -499,48 +496,34 @@ class ScheduleStore:
         already decided about. Both are consulted when computing the next
         fire; only ``last_fire_at`` is reported.
         """
-        schedule = self.get(schedule_id)
-        if schedule is None:
-            return
-        extra = dict(schedule.extra)
-        if schedule.fire_cursor_at >= cursor_epoch:
-            return
-        extra[FIRE_CURSOR_KEY] = cursor_epoch
-        self._write(
-            Schedule(
-                id=schedule.id,
-                cron=schedule.cron,
-                goal=schedule.goal,
-                scenario_id=schedule.scenario_id,
-                misfire_policy=schedule.misfire_policy,
-                created_at=schedule.created_at,
-                last_fire_at=schedule.last_fire_at,
-                extra=extra,
-                params_schema=[s.copy() for s in schedule.params_schema],
-                params=dict(schedule.params),
-            ),
-        )
+        with cross_process_lock(self._lock_for(schedule_id), timeout=10):
+            schedule = self.get(schedule_id)
+            if schedule is None or schedule.fire_cursor_at >= cursor_epoch:
+                return
+            self._write(replace(schedule, extra={**schedule.extra, FIRE_CURSOR_KEY: cursor_epoch}))
 
     def record_catch_up_skip(self, schedule_id: str, skipped_windows: list[int]) -> None:
         """Advance the cursor and retain the pending receipt in the same write."""
-        schedule = self.get(schedule_id)
-        if schedule is None:
-            return
-        extra = {
-            **schedule.extra,
-            FIRE_CURSOR_KEY: max(schedule.fire_cursor_at, skipped_windows[-1]),
-            PENDING_CATCH_UP_RECEIPT_KEY: skipped_windows,
-        }
-        self._write(replace(schedule, extra=extra))
+        with cross_process_lock(self._lock_for(schedule_id), timeout=10):
+            schedule = self.get(schedule_id)
+            if schedule is None:
+                return
+            extra = {
+                **schedule.extra,
+                FIRE_CURSOR_KEY: max(schedule.fire_cursor_at, skipped_windows[-1]),
+                PENDING_CATCH_UP_RECEIPT_KEY: skipped_windows,
+            }
+            self._write(replace(schedule, extra=extra))
 
     def clear_catch_up_receipt(self, schedule_id: str) -> None:
         """Clear a pending receipt after its own file is published."""
-        schedule = self.get(schedule_id)
-        if schedule is None or PENDING_CATCH_UP_RECEIPT_KEY not in schedule.extra:
-            return
-        extra = dict(schedule.extra)
-        del extra[PENDING_CATCH_UP_RECEIPT_KEY]
-        self._write(replace(schedule, extra=extra))
+        with cross_process_lock(self._lock_for(schedule_id), timeout=10):
+            schedule = self.get(schedule_id)
+            if schedule is None or PENDING_CATCH_UP_RECEIPT_KEY not in schedule.extra:
+                return
+            extra = dict(schedule.extra)
+            del extra[PENDING_CATCH_UP_RECEIPT_KEY]
+            self._write(replace(schedule, extra=extra))
 
     def _write(self, schedule: Schedule) -> None:
         """Write a schedule atomically to its JSON path.
