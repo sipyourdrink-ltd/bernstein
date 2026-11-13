@@ -41,10 +41,23 @@ def embed_chunk(chunk_text: str, embedder_id: str) -> list[float]:
     ...
 ```
 
-On second invocation with the same arguments the call is served from
+A repeated call with the same arguments can be served from
 `.sdd/runtime/memo/<aa>/<rest>.bin` (the SHA-256 hex digest split after
-its first byte) without re-execution. Edit the function body, redeploy,
-the next call misses cache and re-derives.
+its first byte) when a stored value other than `None` is found. For
+example, the first `embed_chunk("hello", "model-v1")` call computes and
+stores an embedding; a second call with those same arguments is a cache
+hit and returns that embedding without running the function again. If the
+function returns `None`, the wrapper treats that value like a cache miss,
+so a repeated call computes it again. Edit the function body, redeploy,
+and the next call misses cache and re-derives.
+
+The key uses the arguments as passed to the wrapper: positional argument
+order is preserved, and keyword arguments are sorted by name (so keyword
+order does not matter). Arguments are not bound to the function signature
+before hashing, and omitted defaults are not inserted. Consequently,
+`f(1)` and `f(x=1)` have different keys, as do `f()` and `f(x=default)`
+even if those calls produce the same result. The `site` name labels the
+metrics; it is not part of the key.
 
 The decorator is already applied at three call sites:
 
