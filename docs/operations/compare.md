@@ -32,9 +32,19 @@ bernstein compare SPEC_PATH --adapters NAME[,NAME...]
   [--no-sidecar]         skip writing the JSON sidecar
 ```
 
-Cap is 4 adapters per run. Asking for more exits with `2` and an
-explicit error. Duplicates are rejected. The degenerate 1-adapter case
-is allowed for harness symmetry.
+`--adapters` is a comma-separated list: names are trimmed and empty entries
+are dropped before validation. The resulting list must contain one to four
+names. For example, `--adapters " claude, , codex "` becomes `claude,codex`.
+An empty resulting list or a list of more than four names is rejected by the
+CLI with exit code `2` before a comparison starts. Names that are duplicates
+after trimming are also rejected before any adapter executes.
+
+An unregistered name is different: it produces that adapter's individual
+failure row (for example, `fail(2)` with an `unknown adapter` error), while
+the other listed adapters still run. Per-adapter failures are shown in the
+summary; they are not the CLI validation error for an empty or oversized list.
+
+The degenerate one-adapter case is allowed for harness symmetry.
 
 Adapter results are processed in the order given to `--adapters`. The
 runner waits for each adapter to complete before invoking the next; adapters
