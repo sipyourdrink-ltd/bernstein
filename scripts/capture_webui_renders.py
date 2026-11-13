@@ -246,10 +246,9 @@ def gui_server(
 ) -> Iterator[str]:
     """Boot ``bernstein gui serve`` in *workdir* and yield its base URL.
 
-    ``dashboard_password`` configures dashboard auth for the seeded captures:
-    the diff drawer reads the ``/api/v1/dashboard/*`` mirror, which the
-    general-API bearer does not unlock, so the capture logs a dashboard
-    session in with this password instead.
+    The demo dashboard password prevents issuing a startup token grant.
+    The seeded diff drawer also uses this password to log in to its
+    dashboard API, which has separate auth from the general API.
     """
     port = free_port()
     base = f"http://127.0.0.1:{port}"
