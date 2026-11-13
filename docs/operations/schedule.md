@@ -73,6 +73,38 @@ bernstein schedule list --json
 bernstein schedule show <id> --json
 ```
 
+### Show a schedule or preview its graph
+
+Without `--at`, `bernstein schedule show ID` displays the stored schedule
+record (or the record as JSON with `--json`). This reads the schedule; it
+does not preview or fire it.
+
+Add `--at TIME` to preview the graph projection for a particular instant.
+`TIME` may be an integer Unix epoch in seconds or an ISO-8601 timestamp,
+including a `Z` suffix or an explicit UTC offset. A timestamp without a
+timezone is interpreted as UTC, not as the host's local time. For example,
+these two commands name the same instant and produce the same graph hash:
+
+```bash
+bernstein schedule show <id> --at 1700000000
+bernstein schedule show <id> --at 2023-11-14T22:13:20+00:00
+bernstein schedule show <id> --at 1700000000 --json
+```
+
+In plain output, the preview prints only the projected `graph_hash`. With
+`--json`, it prints these fields:
+
+- `schedule_id`: the schedule being previewed;
+- `fire_time`: the timestamp normalized to an integer Unix epoch in seconds;
+- `graph_hash`: the deterministic hash of the projected graph;
+- `rev`: the projection revision;
+- `recurrence`: the schedule recurrence (for example, `cron:0 9 * * *`).
+
+The preview computes a projection for comparison; it does not dispatch a
+scheduled run or change stored schedule state. In particular, it creates no
+receipt, journal row, or audit-chain entry, and does not update
+`last_fire_at`.
+
 ## Restart semantics
 
 The supervisor persists `last_fire_at` to the schedule's JSON file on
