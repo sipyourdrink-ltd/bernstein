@@ -525,18 +525,14 @@ class ClaudeCodeAdapter(CLIAdapter):
         cmd.extend(["--json-schema", _RESULT_SCHEMA])
 
         if mcp_config:
-            # `--strict-mcp-config` beside it, always: "only use MCP servers from
-            # --mcp-config, ignoring all other MCP configurations". Without it Claude
-            # Code merges its OWN discovered servers on top of this payload -- ones
-            # registered with `claude mcp add` at user or local scope, a repo's
-            # `.mcp.json`, plugin-provided servers and account connectors -- so a
-            # spawned agent started servers bernstein never chose (#5965).
-            #
-            # This payload is still whatever the caller built, which includes
-            # `~/.claude/mcp.json`: bernstein's own loader reads that file (the claude
-            # CLI does not), so its servers still reach the agent, as do the task's
-            # `mcp_servers` and the bernstein bridge.
-            cmd.extend(["--mcp-config", json.dumps(mcp_config), "--strict-mcp-config"])
+            # Keep the caller's payload, including servers loaded from
+            # `~/.claude/mcp.json`, task `mcp_servers`, and the Bernstein bridge.
+            cmd.extend(["--mcp-config", json.dumps(mcp_config)])
+
+        # Without this flag Claude Code merges its own discovered servers
+        # (user/local registrations, repo `.mcp.json`, plugins, and connectors)
+        # into the worker configuration (#5965).
+        cmd.append("--strict-mcp-config")
 
         if system_addendum:
             cmd.extend(["--append-system-prompt", system_addendum])
