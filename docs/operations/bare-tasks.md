@@ -5,7 +5,9 @@ planner or agent. In the web UI, open **Tasks** and select **Create task** or
 **New from prompt**. Enter a title and prompt, with a role if needed. A
 confirmed creation opens the new task. If creation cannot be confirmed,
 select **Check task** before retrying. The lookup works even when the active
-list filter would hide the task.
+list filter would hide the task. The lookup stays available if you dismiss the
+dialog or reload the same tab. Select **Start a new task instead** to discard
+the lookup and unlock a new submission.
 
 The equivalent REST call is `POST /api/v1/tasks` (legacy
 `POST /tasks` remains supported):
