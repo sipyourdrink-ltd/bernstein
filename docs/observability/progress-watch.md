@@ -1,24 +1,29 @@
 # ProgressWatch - agent liveness via session-log growth
 
-ProgressWatch is a small observability primitive that decides whether a
-spawned CLI agent is "stuck or just thinking" without parsing the
-agent's own stdout. It watches a structured session log on disk: if the
-log file's mtime or size moves forward, the session log is active. Growth
-indicates activity, but does not establish that work was completed. If it
-has not moved for `agents.progress_watch.inactivity_seconds`, the
-watcher records a stall and asks the dispatch loop to escalate.
+ProgressWatch is a small, caller-driven observability building block that can
+help a caller decide whether a spawned CLI agent is "stuck or just thinking"
+without parsing the agent's own stdout. It watches a structured session log on
+disk: if the log file's mtime or size moves forward, the log is active. Growth
+indicates activity, but does not establish that work was completed. If it has
+not moved for the inactivity threshold, the watcher records a stall event.
+
+ProgressWatch does not start itself or connect itself to the default dispatch
+runtime. A caller must create it, register sessions, call `tick()` on its own
+cadence, and decide what to do with returned events and verdicts. The default
+runtime currently has no ProgressWatch caller: it does not register logs, tick
+the watcher, forward stall events, or act on kill verdicts.
 
 This is an activity signal, not a completion percentage. For run and task
 completion estimates and how they differ from other observability signals, see
 [Cumulative progress tracking](cumulative-progress.md).
 
 The watcher does not spawn its own thread and does not kill processes
-directly. The dispatch loop tick (every 30s by default) calls
-`ProgressWatch.tick()` and inspects the returned `StallEvent` list.
-When a session has been idle past
-`agents.progress_watch.kill_after_inactivity_seconds`,
-`kill_if_stale(session_id)` returns a `sigkill` verdict that the loop
-uses to decide what signal to send.
+directly. `tick()` returns newly-detected `StallEvent` objects and also buffers
+them for `drain_pending_events()`; these are data for the caller, not actions
+or automatic lifecycle-hook emissions. `kill_if_stale(session_id)` returns a
+`KillVerdict` (`none`, `sigterm`, or `sigkill`) but sends no signal. A caller
+that owns the process and lifecycle hook bus would need to choose and perform
+any signal or event forwarding itself.
 
 ## Public surface
 
@@ -29,29 +34,33 @@ uses to decide what signal to send.
 | `ProgressWatch.tick()` | Sample every registered log. Returns newly-detected stalls. |
 | `ProgressWatch.drain_pending_events()` | Read and clear the buffered stall events. |
 | `ProgressWatch.kill_if_stale(session_id)` | Return the kill verdict for one session (`none`/`sigterm`/`sigkill`). |
-| `CLIAdapter.supports_session_log_watch` | Class attribute; `True` when the adapter exposes a structured log path. |
+| `CLIAdapter.supports_session_log_watch` | Class capability flag; `True` when the adapter can expose a structured log path (not a runtime connection). |
 | `CLIAdapter.session_log_path_for(session_id)` | Return the absolute log path for the given Bernstein session, or `None`. |
 
-## Configuration
+## Defaults and timing
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `agents.progress_watch.enabled` | `true` | Master switch for the watcher. |
-| `agents.progress_watch.inactivity_seconds` | `120` | Idle gap before a stall is emitted. |
-| `agents.progress_watch.kill_after_inactivity_seconds` | `300` | Idle gap before the watcher escalates to SIGKILL. |
+The watcher has constructor defaults, not working operator settings. The
+`agents.progress_watch.*` names are not read from runtime configuration, and
+there is no enabled switch connected to the default runtime. Callers can
+provide per-instance `inactivity_seconds` and
+`kill_after_inactivity_seconds` arguments; their defaults are `120` seconds
+before a stall event and `300` seconds before a `sigkill` verdict. These are
+also exposed as `DEFAULT_INACTIVITY_SECONDS` and
+`DEFAULT_KILL_AFTER_INACTIVITY_SECONDS` constants.
 
-These defaults are also exposed as constants on
-`bernstein.core.observability.progress_watch` for callers that want to
-build a watcher without parsing config:
-
-* `DEFAULT_INACTIVITY_SECONDS`
-* `DEFAULT_KILL_AFTER_INACTIVITY_SECONDS`
-* `DEFAULT_POLL_INTERVAL_SECONDS`
+`DEFAULT_POLL_INTERVAL_SECONDS` is `30` seconds, a suggested caller cadence;
+it does not configure an active default dispatch loop. Event timing uses
+`time.time()` (wall-clock Unix timestamps) by default, and callers can inject
+a clock. The fake-clock tests inject a manually advanced clock to check idle
+thresholds and event timestamps deterministically.
 
 ## Lifecycle event
 
-When a stall is detected, the dispatch loop forwards the
-`StallEvent` onto the lifecycle hook bus:
+`LifecycleEvent.AGENT_PROGRESS_STALLED` names the event a caller may choose to
+forward. The watcher only returns and buffers `StallEvent` data; it does not
+publish this lifecycle event, and the default runtime does not forward it.
+A caller that integrates with the lifecycle hook bus can forward a payload
+with this shape:
 
 ```text
 event:   agent.progress_stalled
@@ -67,11 +76,11 @@ The event name is also available as
 
 ## Per-adapter log paths
 
-The watcher itself is adapter-agnostic. Adapters opt in by setting
-`supports_session_log_watch = True` and overriding
-`session_log_path_for(session_id)`. The default returns `None`, which
-makes the dispatch loop skip the adapter and fall back to plain
-process-exit detection.
+The watcher itself is adapter-agnostic. An adapter can set
+`supports_session_log_watch = True` and override
+`session_log_path_for(session_id)` to provide a path to a caller. The inherited
+value is `False` and the inherited path method returns `None`; these adapter
+capabilities do not connect ProgressWatch to the default dispatch runtime.
 
 | Adapter | `supports_session_log_watch` | Log location |
 | --- | --- | --- |
@@ -82,9 +91,10 @@ process-exit detection.
 | `gemini` | no (planned) | `~/.gemini/sessions/<id>.log` |
 | `opencode` | no (planned) | `~/.opencode/sessions/<id>.jsonl` |
 
-Adapters not in this table use the inherited default and rely on
-process-exit detection. New adapters can opt in at any time by adding
-the override; no changes to the watcher itself are required.
+Adapters not in this table use the inherited default and do not provide a
+session-log path. This table describes adapter capabilities only; it does not
+imply that the default dispatch runtime registers or watches any of them.
+New adapters can provide the override without changes to the watcher itself.
 
 ## Operational notes
 
