@@ -109,7 +109,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **Source:** `web/src/routes/Fleet.tsx`.
 - **What it shows:** a multi-project supervisor view with one card per installation, showing health, agent count, today's cost and pending approvals.
 - **Actions:** open a project card to view its tasks, search across projects to see the match count, or enter a task ID to steer a running worker.
-- **Empty state:** when the backend reports a stub with no projects, the screen shows "No fleet aggregator attached" and an **Open Tasks** action.
+- **Empty state:** when the backend reports a stub with no projects, the screen shows "No fleet aggregator attached". When an aggregator is attached but has no projects, it shows "No projects yet". Both empty states include the **Open Tasks** action, which navigates to Tasks.
 
 ## Settings (`/ui/settings`)
 
