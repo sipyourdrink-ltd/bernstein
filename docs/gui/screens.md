@@ -99,7 +99,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 
 - **Source:** `web/src/routes/Missions.tsx`.
 - **What it shows:** the outcome-level timeline over a multi-day run - phase lanes with per-phase state, gate receipt, and envelope burn.
-- **Provenance:** every element links to the receipt / evidence bundle it was derived from; the `mission_status_hash` is shown so two operators can confirm they are looking at the same state.
+- **Provenance:** gate-task IDs link to their evidence bundles. Phase receipt hashes are displayed as text identifiers, not links. The `mission_status_hash` is also an identifier, shown so two operators can confirm they are looking at the same state; it is not an evidence link.
 - **Unverified state:** when work-ledger chain verification fails (`ledger_verified === false`) the screen switches to an explicit unverified banner instead of best-effort rendering.
 - **Endpoints:** `GET /api/v1/missions/*` (`src/bernstein/core/routes/missions.py`) - a deterministic projection folded from the mission's work-ledger chain; the server holds no mission-side state.
 - **Replaces TUI widget:** none - mission timelines had no TUI surface.
