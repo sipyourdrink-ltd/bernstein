@@ -15,10 +15,11 @@ If `bernstein --version` doesn't work yet, finish the [install page](install.md)
 
 ---
 
-## Step 1: Pick (and authenticate) one CLI agent
+## Step 1: Pick (and authenticate) one CLI agent for this walkthrough
 
-Bernstein orchestrates **other** CLI coding agents - it doesn't talk to LLM APIs directly.
-You need at least one agent installed and logged in. Most people start with Claude Code:
+This walkthrough uses a CLI coding agent; Bernstein also supports other adapter types. See the [adapter catalog](../adapters/index.md) for the other options.
+
+For this CLI walkthrough, Bernstein orchestrates **other** CLI coding agents - it doesn't talk to LLM APIs directly. You need at least one agent installed and logged in. Most people start with Claude Code:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
