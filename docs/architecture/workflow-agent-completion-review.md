@@ -198,7 +198,7 @@ Column key:
 | 8 | `test_agent_loop_waits_for_the_current_attempt[live,reported-done]` | proposed | RED ×2: 3 predicate runs and 3 dispatches, both with live children and with clean exit plus unaccepted `DONE` | GREEN for live case only |
 | 9 | `test_legacy_unproven_agent_success_checkpoint_is_not_trusted` | proposed | RED: a version 1 agent success released the consumer (no respawn) | GREEN |
 | 9 | `test_legacy_command_checkpoint_resume_is_unchanged`, `test_legacy_condition_skip_checkpoint_resume_is_unchanged` | existing | GREEN | GREEN |
-| - | `test_harness_sentinel_dispatcher_and_reaper_are_sound`, two `test_native_*` facts | existing / native fact | GREEN | GREEN |
+| - | `test_harness_sentinel_dispatcher_and_reaper_are_sound` and the `test_native_*` facts | existing / native fact | GREEN | Historical simulation predates the stop replay case |
 
 Totals:
 - Base: 18 failed, 8 passed (about 4 s, repeated 3 times with the same result).
@@ -244,6 +244,10 @@ the sentinel exactly once.
 uv run python -m pytest -q tests/integration/test_workflow_runner.py tests/integration/test_workflow_verified_completion_contract.py
 ```
 
+The proposed checks with reproduced failures use strict expected-failure
+markers. Fixture failures and unexpected passes fail the suite. Remove
+the corresponding marker and expected-failure wrapper as each property lands.
+
 **Migration and rollback.**
 - Stages 1 and 2 roll back cleanly only after in-flight attempts are resolved
   (section 3).
@@ -279,11 +283,12 @@ by the native close/verification path and bound to the attempt.
 ## 8. Reproduction and limits
 
 ```bash
-uv run python -m pytest -q -p no:randomly tests/integration/test_workflow_verified_completion_contract.py
+uv run python -m pytest -q --runxfail -p no:randomly tests/integration/test_workflow_verified_completion_contract.py
 ```
 
-- On the revalidated main above, the harness is expected to report 19
-  failed and 8 passed. The earlier base and simulation results are historical.
+- The raw reproduction on the revalidated base reports 22 failed and 9
+  passed. A normal run reports those 22 as expected failures and runs the
+  nine controls normally. The earlier base and simulation results are historical.
 - It is POSIX-only: it uses process groups, with procfs liveness where
   available and a signal-0 PID probe otherwise.
 - It runs on Python 3.12 or later. This review used 3.12.3.

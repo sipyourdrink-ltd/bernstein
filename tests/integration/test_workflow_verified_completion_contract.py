@@ -67,6 +67,22 @@ from bernstein.core.workflows.workflow_runner import (
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group child fixtures")
 
+
+class _ProposedContractGap(AssertionError):
+    """Only a reproduced contract assertion can count as an expected failure."""
+
+
+_proposed_gap = pytest.mark.xfail(strict=True, raises=_ProposedContractGap, reason="Proposed workflow contract #6639")
+
+
+@contextlib.contextmanager
+def _known_contract_gap() -> Iterator[None]:
+    try:
+        yield
+    except AssertionError as exc:
+        raise _ProposedContractGap(str(exc)) from exc
+
+
 #: Window in which a premature dependency release becomes visible.
 OBSERVE_S = 1.0
 #: Hard cap on any single wait in this module.
@@ -515,6 +531,7 @@ def test_harness_sentinel_dispatcher_and_reaper_are_sound(env: _Env) -> None:
 # ---------------------------------------------------------------------------
 
 
+@_proposed_gap
 def test_live_claimed_attempt_does_not_release_dependents(env: _Env) -> None:
     """[PROPOSED #1] A returned session id for a live, claimed agent is not completion."""
     sp = env.spawner(_Plan(mode="block"))
@@ -523,11 +540,13 @@ def test_live_claimed_attempt_does_not_release_dependents(env: _Env) -> None:
     assert sp.procs[0].poll() is None, "precondition: the agent child is still running"
     assert task.status is TaskStatus.CLAIMED
     assert task.claimed_by_session == sp.sessions[0].id
-    assert env.sentinel_writes() == 0, (
-        f"consumer ran while the agent attempt was still live and claimed; runner reported {run.statuses()}"
-    )
+    with _known_contract_gap():
+        assert env.sentinel_writes() == 0, (
+            f"consumer ran while the agent attempt was still live and claimed; runner reported {run.statuses()}"
+        )
 
 
+@_proposed_gap
 def test_exit_zero_and_reported_done_without_acceptance_does_not_release(env: _Env) -> None:
     """[PROPOSED #1] Process exit 0 plus an agent-reported DONE is not native acceptance."""
 
@@ -541,9 +560,10 @@ def test_exit_zero_and_reported_done_without_acceptance_does_not_release(env: _E
     assert sp.procs[0].poll() == 0, "precondition: agent exited successfully"
     assert task.status is TaskStatus.DONE, "precondition: agent-reported DONE"
     assert task.closed_at is None, "precondition: never closed (no acceptance)"
-    assert env.sentinel_writes() == 0, (
-        f"consumer ran on exit 0 + reported DONE with no acceptance; runner reported {run.statuses()}"
-    )
+    with _known_contract_gap():
+        assert env.sentinel_writes() == 0, (
+            f"consumer ran on exit 0 + reported DONE with no acceptance; runner reported {run.statuses()}"
+        )
 
 
 def test_gate_accepted_attempt_positive_control_has_no_native_interface() -> None:
@@ -594,6 +614,7 @@ def _reject_outcome(sp: _LifecycleSpawner, task: Task, session: AgentSession, pr
     ],
     ids=["failed", "refused", "verification_rejected"],
 )
+@_proposed_gap
 def test_failed_refused_or_rejected_attempt_never_releases_dependents(
     env: _Env, mode: str, outcome: Callable[..., None], native_status: TaskStatus
 ) -> None:
@@ -603,9 +624,10 @@ def test_failed_refused_or_rejected_attempt_never_releases_dependents(
     task = _observe_dispatched_attempt(env, sp, run)
     assert task.status is native_status, "precondition: native lifecycle outcome recorded"
     produce = run.node("produce")
-    assert produce is None or produce.status is not NodeStatus.SUCCESS, (
-        f"{native_status.value} attempt reported as node success; runner reported {run.statuses()}"
-    )
+    with _known_contract_gap():
+        assert produce is None or produce.status is not NodeStatus.SUCCESS, (
+            f"{native_status.value} attempt reported as node success; runner reported {run.statuses()}"
+        )
     assert env.sentinel_writes() == 0, f"consumer released after {native_status.value}"
     assert sp.spawn_count() <= 1, "runner retried the attempt automatically"
 
@@ -625,6 +647,7 @@ def test_spawn_exception_fails_node_and_blocks_dependents(env: _Env) -> None:
     assert env.sentinel_writes() == 0
 
 
+@_proposed_gap
 def test_missing_completion_authority_blocks_before_dispatch(env: _Env) -> None:
     """[PROPOSED] A configured spawner alone cannot authorize agent dispatch."""
     spawner = env.spawner(_Plan(mode="block"))
@@ -634,7 +657,8 @@ def test_missing_completion_authority_blocks_before_dispatch(env: _Env) -> None:
     run = env.start(lambda: runner.run(_spec(env), run_id="no-authority"))
     assert run.wait(BOUND_S), "runner did not return without completion authority"
     run.raise_unexpected()
-    assert spawner.spawn_count() == 0, "agent dispatched without completion authority"
+    with _known_contract_gap():
+        assert spawner.spawn_count() == 0, "agent dispatched without completion authority"
     assert env.sentinel_writes() == 0
     produce = run.node("produce")
     consume = run.node("consume")
@@ -661,6 +685,7 @@ def _runner_process_main(config_path: str) -> None:
         driver.close()
 
 
+@_proposed_gap
 def test_agent_deadline_survives_runner_restart(env: _Env, tmp_path: Path) -> None:
     """[PROPOSED #3] A restart neither resets the attempt's timeout budget nor skips its cancellation."""
     rid = "p3-deadline"
@@ -700,9 +725,10 @@ def test_agent_deadline_survives_runner_restart(env: _Env, tmp_path: Path) -> No
         json.loads(Path(cfg["result"]).read_text(encoding="utf-8")) if Path(cfg["result"]).exists() else "unfinished"
     )
     assert started.exists(), f"precondition: phase 1 dispatched the agent (log: {env.fixture_dir / 'phase1.log'})"
-    assert env.sentinel_writes() == 0, (
-        f"phase 1: consumer ran before the attempt was accepted or timed out; runner process reported {phase1}"
-    )
+    with _known_contract_gap():
+        assert env.sentinel_writes() == 0, (
+            f"phase 1: consumer ran before the attempt was accepted or timed out; runner process reported {phase1}"
+        )
 
     # Contract path: the runner is waiting inside the attempt. Crash it, let the deadline lapse with no runner alive.
     with contextlib.suppress(ProcessLookupError):
@@ -762,6 +788,7 @@ def _cancel_unacknowledged(
     ],
     ids=["acknowledged", "unacknowledged"],
 )
+@_proposed_gap
 def test_cancelled_attempt_never_releases_or_retries(
     env: _Env, ignore_sigterm: bool, cancel: Callable[..., None], native_status: TaskStatus
 ) -> None:
@@ -776,13 +803,15 @@ def test_cancelled_attempt_never_releases_or_retries(
     else:
         assert task.status is TaskStatus.CANCELLED, "precondition: cancellation acknowledged"
     produce = run.node("produce")
-    assert produce is None or produce.status is not NodeStatus.SUCCESS, (
-        f"cancelled attempt reported as node success: {run.statuses()}"
-    )
+    with _known_contract_gap():
+        assert produce is None or produce.status is not NodeStatus.SUCCESS, (
+            f"cancelled attempt reported as node success: {run.statuses()}"
+        )
     assert env.sentinel_writes() == 0, "consumer released after cancellation"
     assert sp.spawn_count() == 1, "cancelled attempt was retried"
 
 
+@_proposed_gap
 def test_pending_cancellation_keeps_run_resumable(env: _Env) -> None:
     """[PROPOSED #4] A returned run with no stop acknowledgement can resume without a new dispatch."""
     rid = "p4-pending-resume"
@@ -802,14 +831,21 @@ def test_pending_cancellation_keeps_run_resumable(env: _Env) -> None:
     assert replayed is not None and replayed.status is TaskStatus.STOP_REQ
     assert (replayed.version, replayed.result_summary) == (stop_version, stop_summary)
     assert sp.procs[0].poll() is None, "precondition: the controlled child never acknowledged the stop"
-    assert run_complete_marker_exists(env.workdir, rid) is None, (
-        "a pending cancellation cannot mark the workflow complete"
-    )
+    with _known_contract_gap():
+        assert run_complete_marker_exists(env.workdir, rid) is None, (
+            "a pending cancellation cannot mark the workflow complete"
+        )
     assert env.sentinel_writes() == 0
     produce = run.node("produce")
     assert produce is not None and produce.status is not NodeStatus.SUCCESS
     again = env.spawner(_Plan(mode="block"))
-    resumed = env.start(lambda: env.runner(again).resume(spec, run_id=rid))
+    unresolved_events: list[str] = []
+
+    def audit(event_type: str, resource_id: str, details: dict[str, Any]) -> None:
+        if event_type == "workflow.attempt_unresolved":
+            unresolved_events.append(resource_id)
+
+    resumed = env.start(lambda: env.runner(again, audit=audit).resume(spec, run_id=rid))
     assert resumed.wait(BOUND_S), "resume did not report the unresolved attempt"
     resumed.raise_unexpected()
     assert resumed.result is not None
@@ -819,6 +855,7 @@ def test_pending_cancellation_keeps_run_resumable(env: _Env) -> None:
     assert run_complete_marker_exists(env.workdir, rid) is None
     assert again.spawned_task_ids() == [task.id], "resume re-dispatched a cancelled attempt"
     assert env.sentinel_writes() == 0
+    assert "produce" in unresolved_events
 
 
 # ---------------------------------------------------------------------------
@@ -849,6 +886,7 @@ def test_resume_after_crash_before_dispatch_dispatches_once(env: _Env) -> None:
     "window",
     ["lost_dispatch_ack", "before_terminal_checkpoint"],
 )
+@_proposed_gap
 def test_resume_after_crash_around_dispatch_does_not_respawn(env: _Env, window: str) -> None:
     """[PROPOSED #5] A crash after launch and before a terminal checkpoint never duplicates the agent."""
     rid = f"p5-{window.replace('_', '-')}"
@@ -877,7 +915,8 @@ def test_resume_after_crash_around_dispatch_does_not_respawn(env: _Env, window: 
     _wait_for(lambda: sp.spawn_count() >= 2 or run.done(), "respawn or resume end", timeout=BOUND_S)
     run.wait(OBSERVE_S)
     run.raise_unexpected()
-    assert sp.spawn_count() == 1, f"resume respawned the in-flight attempt: {sp.spawned_task_ids()}"
+    with _known_contract_gap():
+        assert sp.spawn_count() == 1, f"resume respawned the in-flight attempt: {sp.spawned_task_ids()}"
     produce = run.node("produce")
     assert produce is None or produce.status is not NodeStatus.SUCCESS
     assert env.sentinel_writes() == 0
@@ -898,6 +937,7 @@ def test_resume_after_crash_around_dispatch_does_not_respawn(env: _Env, window: 
         "tampered_artifact_receipt_same_task_id",
     ],
 )
+@_proposed_gap
 def test_stale_or_foreign_evidence_cannot_release_dependents(env: _Env, tmp_path: Path, evidence: str) -> None:
     """[PROPOSED #6] Evidence for another run/node/tenant/attempt, or tampered evidence, authorizes nothing."""
     rid = "p6-foreign"
@@ -920,7 +960,8 @@ def test_stale_or_foreign_evidence_cannot_release_dependents(env: _Env, tmp_path
     _observe(env, sp, run)
     if sp.procs:
         assert sp.procs[0].poll() is None, "precondition: the current attempt is live and unaccepted"
-    assert env.sentinel_writes() == 0, f"consumer released on {evidence}; runner reported {run.statuses()}"
+    with _known_contract_gap():
+        assert env.sentinel_writes() == 0, f"consumer released on {evidence}; runner reported {run.statuses()}"
 
 
 # ---------------------------------------------------------------------------
@@ -928,6 +969,7 @@ def test_stale_or_foreign_evidence_cannot_release_dependents(env: _Env, tmp_path
 # ---------------------------------------------------------------------------
 
 
+@_proposed_gap
 def test_native_artifact_rejection_blocks_dependents(env: _Env) -> None:
     """[PROPOSED #7] A natively rejected artifact (verify_artifact fails, janitor reopens) releases nothing."""
     verdicts: list[Any] = []
@@ -946,9 +988,11 @@ def test_native_artifact_rejection_blocks_dependents(env: _Env) -> None:
     task = _observe_dispatched_attempt(env, sp, run)
     assert verdicts and verdicts[0].ok is False, "precondition: native artifact verifier rejected the output"
     assert task.status is TaskStatus.OPEN, "precondition: verification rejection reopened the task"
-    assert env.sentinel_writes() == 0, f"consumer released on a rejected artifact; runner reported {run.statuses()}"
+    with _known_contract_gap():
+        assert env.sentinel_writes() == 0, f"consumer released on a rejected artifact; runner reported {run.statuses()}"
 
 
+@_proposed_gap
 def test_verified_artifact_and_closed_task_without_attempt_acceptance_block_dependents(env: _Env) -> None:
     """[PROPOSED #7] A valid receipt and CLOSED task do not establish attempt-bound acceptance."""
     verified_task_ids: list[str] = []
@@ -969,9 +1013,10 @@ def test_verified_artifact_and_closed_task_without_attempt_acceptance_block_depe
     assert verified_task_ids == [task.id], "precondition: native artifact verification passed for the current task"
     assert task.status is TaskStatus.CLOSED and task.closed_at is not None
     assert task.claimed_by_session == sp.sessions[0].id
-    assert env.sentinel_writes() == 0, (
-        f"consumer released on a verified receipt and CLOSED without attempt acceptance; runner reported {run.statuses()}"
-    )
+    with _known_contract_gap():
+        assert env.sentinel_writes() == 0, (
+            f"consumer released on a verified receipt and CLOSED without attempt acceptance; runner reported {run.statuses()}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -980,6 +1025,7 @@ def test_verified_artifact_and_closed_task_without_attempt_acceptance_block_depe
 
 
 @pytest.mark.parametrize("reported_done", [False, True], ids=["live", "reported-done"])
+@_proposed_gap
 def test_agent_loop_waits_for_the_current_attempt(env: _Env, reported_done: bool) -> None:
     """[PROPOSED #8] No predicate evaluation and no next iteration while the current attempt is unresolved."""
     predicate_log = env.workdir / "predicate.log"
@@ -1007,10 +1053,11 @@ def test_agent_loop_waits_for_the_current_attempt(env: _Env, reported_done: bool
     else:
         assert task.status is TaskStatus.CLAIMED and sp.procs[0].poll() is None
     predicate_runs = len(predicate_log.read_text(encoding="utf-8")) if predicate_log.exists() else 0
-    assert (predicate_runs, sp.spawn_count()) == (0, 1), (
-        f"loop advanced on an unresolved attempt: {predicate_runs} predicate runs, "
-        f"{sp.spawn_count()} dispatches {sp.spawned_task_ids()}"
-    )
+    with _known_contract_gap():
+        assert (predicate_runs, sp.spawn_count()) == (0, 1), (
+            f"loop advanced on an unresolved attempt: {predicate_runs} predicate runs, "
+            f"{sp.spawn_count()} dispatches {sp.spawned_task_ids()}"
+        )
     assert env.sentinel_writes() == 0
 
 
@@ -1060,6 +1107,7 @@ def _write_v1_checkpoint(
     (state_dir / "produce.node.json").write_text(json.dumps(checkpoint), encoding="utf-8")
 
 
+@_proposed_gap
 def test_legacy_unproven_agent_success_checkpoint_is_not_trusted(env: _Env) -> None:
     """[PROPOSED #9] A v1 agent 'success' with only a session id needs reconciliation: no release, no blind respawn."""
     rid = "p9-legacy-agent"
@@ -1070,7 +1118,8 @@ def test_legacy_unproven_agent_success_checkpoint_is_not_trusted(env: _Env) -> N
     run.wait(OBSERVE_S)
     run.raise_unexpected()
     assert sp.spawn_count() == 0, "legacy attempt was re-dispatched blindly"
-    assert env.sentinel_writes() == 0, f"unproven legacy agent success released the consumer: {run.statuses()}"
+    with _known_contract_gap():
+        assert env.sentinel_writes() == 0, f"unproven legacy agent success released the consumer: {run.statuses()}"
 
 
 def test_legacy_command_checkpoint_resume_is_unchanged(env: _Env) -> None:
