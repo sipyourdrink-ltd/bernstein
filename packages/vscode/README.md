@@ -26,6 +26,8 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 | `Bernstein: Prioritize Task` | Move a task to the top of the queue (context menu) |
 | `Bernstein: Open Task Output` | Open output for a task's assigned agent |
 | `Bernstein: Inspect Agent` | Show agent details: role, model, runtime, cost, tasks |
+| `Bernstein: Approve Task` | Approve a task pending approval (inline action and context menu) |
+| `Bernstein: Reject Task` | Reject a task pending approval (inline action and context menu) |
 
 ## Configuration
 
