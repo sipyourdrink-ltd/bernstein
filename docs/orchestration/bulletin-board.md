@@ -59,9 +59,25 @@ Helper posters exist for common message shapes:
 `post_api_endpoint(agent_id, method, route, response=...)`, both of which
 post `finding`/`status` messages with a formatted `content` string.
 
-`board.summary(limit=10)` renders the most recent messages as
-`- agent_id: content` lines; this is what gets injected into a newly
-spawned agent's prompt as recent team activity (`multi_cell.py` passes
+`board.summary(limit=10)` returns up to ten messages by default; `board.summary()`
+uses the same limit. Unless a `horizon` is supplied, all messages are eligible,
+and unless `max_per_author` (or its `per_author_cap` alias) is supplied, there is
+no author cap.
+
+The default type weights rank messages in this order: **blocker > alert >
+finding > dependency > status**. Each message's age is measured in board
+sequence positions, not wall-clock time. The default `step_size=5` lowers a
+message's weight by `step_decay=0.1` for each completed group of five sequence
+positions: `weight = type weight - (floor(sequence age / 5) × 0.1)`. Messages
+are sorted by adjusted weight first, then newest-first when weights tie. For
+example, an older blocker at sequence age 5 has weight `5.0 - 0.1 = 4.9`,
+while a newer status at age 0 has weight `1.0`; the blocker appears first even
+though it is older.
+
+The REST `GET /bulletin?since=<ts>` timestamp filter is separate: it selects
+messages whose timestamps are later than `since`, and does not apply the
+summary's type/sequence-age ranking. The summary is what gets injected into a
+newly spawned agent's prompt as recent team activity (`multi_cell.py` passes
 `bulletin.summary()` into `spawner_core`'s `bulletin_summary` parameter).
 
 ## Storage: in-memory, per server process
