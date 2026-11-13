@@ -218,6 +218,18 @@ def test_stderr_diagnostics_are_not_part_of_a_stdout_429_response(tmp_path: Path
     assert adapter.rate_limit_meter.hits_in_window() == 1
 
 
+def test_final_stderr_limit_error_takes_priority_over_earlier_stdout_429(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    _write_log(log_path, "HTTP/2 429 Too Many Requests; retrying")
+    _write_log(log_path.with_suffix(".stderr.log"), "Fatal: quota exceeded. The spending limit has been reached.")
+
+    with pytest.raises(StandingCapError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 0
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: unrecognised 429 body falls back to retryable
 # ---------------------------------------------------------------------------

@@ -974,6 +974,8 @@ class CLIAdapter(ABC):
             for index in range(len(stream) - 1, -1, -1):
                 if re.search(r"\bHTTP(?:/[\d.]+)?\s+429\b", stream[index], re.IGNORECASE):
                     return "\n".join(stream[index:])
+            if stream and CLIAdapter._is_rate_limit_error([stream[-1]]):
+                return stream[-1]
         return fallback
 
     @staticmethod
