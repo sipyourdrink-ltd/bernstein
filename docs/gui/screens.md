@@ -80,7 +80,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **Chain status banner:** 4-col card grid - chain status (verified), head (#ID + truncated hash), Sigstore anchor (rekor entry), rotated (age + chunk).
 - **Filters bar:** search · actor · action · time, separated by hairline dividers, mono uppercase labels above each value, "Reset" ghost button on right.
 - **Table:** Timestamp (ISO mono, color-coded operator vs system) · Actor · Action · Resource · Hash (mono truncated `…`) · Chain status icon (verified / rebuilt).
-- **Verify chain modal:** triggered by primary "Verify chain". Shows last verified head, walked range, sigstore transparency anchor pointer, "Re-verify from chunk #" button.
+- **Verify chain modal:** triggered by primary "Verify chain". Shows last verified head, walked range, and Sigstore transparency anchor pointer. Rechecking refetches verification for the full chain; any displayed chunk number is context only, not a recheck scope selector. A separate scope control would be needed to recheck from a selected chunk.
 - **Endpoints:** `GET /api/v1/audit?event_type=&search=&from=&to=&page=&page_size=` → `{items,total,page,page_size}`. Export: `POST /api/v1/audit/export?format=csv|jsonl`.
 - **Replaces TUI widget:** none - audit chain inspection had no TUI surface.
 
