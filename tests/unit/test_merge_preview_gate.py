@@ -308,6 +308,40 @@ def test_preview_worktree_is_removed_after_a_conflict(repo: Path) -> None:
     assert "merge-preview" not in _worktree_list(repo)
 
 
+@pytest.mark.parametrize(
+    ("path", "display"),
+    [
+        pytest.param("予算.txt", "予算.txt", id="unicode"),
+        pytest.param(" budget.txt", " budget.txt", id="leading-space"),
+        pytest.param(
+            "budget\rnotes.txt",
+            r"budget\rnotes.txt",
+            id="carriage-return",
+            marks=pytest.mark.skipif(sys.platform == "win32", reason="Windows disallows carriage returns in filenames"),
+        ),
+        pytest.param(
+            r"budget\rnotes.txt",
+            r"budget\\rnotes.txt",
+            id="literal-backslash",
+            marks=pytest.mark.skipif(sys.platform == "win32", reason="Windows uses backslash as a path separator"),
+        ),
+    ],
+)
+def test_merge_preview_conflict_preserves_path(repo: Path, path: str, display: str) -> None:
+    _run(["git", "config", "core.quotePath", "true"], repo)
+    session_id = "qa-conflict-path"
+    wt = _agent_worktree(repo, session_id)
+    _commit(wt, path, "agent side\n", "agent edits file")
+    _commit(repo, path, "run side\n", "run branch edits file")
+
+    with pytest.raises(MergePreviewConflict) as excinfo:
+        with merge_preview(repo, f"agent/{session_id}", session_id=session_id, task_id="t-conflict"):
+            pytest.fail("the preview must not be entered when the merge conflicts")
+
+    assert excinfo.value.conflicting_files == [path]
+    assert excinfo.value.display_paths == display
+
+
 def test_missing_agent_branch_is_a_preview_error_not_a_silent_pass(repo: Path) -> None:
     with pytest.raises(MergePreviewError):
         with merge_preview(repo, "agent/never-existed", session_id="s", task_id="t"):

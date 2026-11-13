@@ -52,9 +52,9 @@ class LeaderboardEntry:
         model: Adapter identifier (e.g. ``claude-opus-4-7``).
         model_version: Provider-reported model version string.
         resolved: Whether the agent's patch passed all required tests.
-        cost_usd: Wall-clock cost in USD for this single task.
+        cost_usd: Reported cost in USD for this task.
         duration_seconds: End-to-end wall-clock time for this single task.
-        run_at: ISO-8601 UTC timestamp of when the task started.
+        run_at: ISO-8601 UTC timestamp attached to the result.
         extra: Free-form per-suite metadata (language, repo visibility,
             rebench-month, etc.). Kept loose intentionally - full schema
             lands when the per-suite loaders do.
@@ -129,13 +129,12 @@ def run_single_task(
         model: Adapter / model identifier (e.g. ``claude-opus-4-7``).
         model_version: Provider-reported model version string.
         resolved: True iff the agent's patch satisfied the suite's grading.
-        cost_usd: Wall-clock cost; defaults to 0.0 when running offline /
-            with a mocked adapter.
+        cost_usd: Cost in USD supplied by the caller. Defaults to 0.0.
         duration_seconds: Wall-clock time; defaults to 0.0 for synthetic
             inputs.
         extra: Optional free-form per-suite metadata.
-        run_at: ISO-8601 UTC timestamp; defaults to ``datetime.now(UTC)``.
-            Exposed so tests can pin a deterministic value.
+        run_at: ISO-8601 UTC timestamp. None uses the current UTC time
+            formatted as an ISO-8601 string.
 
     Returns:
         A populated :class:`LeaderboardEntry`.

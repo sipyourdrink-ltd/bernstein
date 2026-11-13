@@ -17,6 +17,7 @@ from bernstein.core.evidence.render_receipt import (
     RenderDelta,
     RenderReceipt,
     Viewport,
+    first_property_difference,
     render_delta,
 )
 
@@ -532,3 +533,55 @@ def test_render_delta_round_trips_through_dict() -> None:
 
     incomparable = render_delta(base, _receipt(route="/other"))
     assert RenderDelta.from_dict(incomparable.to_dict()) == incomparable
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        {},
+        {
+            ("root.b", "style.color"): "blue",
+            ("root.a", "style.display"): "block",
+            ("root.a", "style.color"): "red",
+        },
+    ],
+)
+def test_first_property_difference_equal_ignores_insertion_order(base: dict[tuple[str, str], str]) -> None:
+    head = dict(reversed(tuple(base.items())))
+    assert first_property_difference(base, head) is None
+
+
+@pytest.mark.parametrize("reverse_base", [False, True])
+@pytest.mark.parametrize("reverse_head", [False, True])
+def test_first_property_difference_selects_changed_key_in_stable_order(reverse_base: bool, reverse_head: bool) -> None:
+    base = {
+        ("root.z", "style.color"): "red",
+        ("root.a", "style.display"): "block",
+        ("root.a", "style.color"): "red",
+        ("root.0", "style.color"): "gray",
+    }
+    head = {
+        ("root.0", "style.color"): "gray",
+        ("root.a", "style.display"): "flex",
+        ("root.a", "style.color"): "blue",
+        ("root.z", "style.color"): "blue",
+    }
+    if reverse_base:
+        base = dict(reversed(tuple(base.items())))
+    if reverse_head:
+        head = dict(reversed(tuple(head.items())))
+    base_items, head_items = list(base.items()), list(head.items())
+
+    assert first_property_difference(base, head) == ("root.a", "style.color")
+    assert list(base.items()) == base_items
+    assert list(head.items()) == head_items
+
+
+@pytest.mark.parametrize("missing_from_base", [False, True])
+@pytest.mark.parametrize("whole_element", [False, True])
+def test_first_property_difference_reports_missing_properties(missing_from_base: bool, whole_element: bool) -> None:
+    present = {("root.a", "style.display"): "block", ("root.a", "style.color"): ""}
+    missing = {} if whole_element else {("root.a", "style.display"): "block"}
+    base, head = (missing, present) if missing_from_base else (present, missing)
+
+    assert first_property_difference(base, head) == ("root.a", "style.color")

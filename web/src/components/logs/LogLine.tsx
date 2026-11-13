@@ -49,22 +49,22 @@ const LEVEL_TONE: Record<string, string> = {
 };
 
 const ANSI_FG_CLASS: Record<string, string> = {
-  'ansi-black': 'text-zinc-700 dark:text-zinc-400',
-  'ansi-red': 'text-red-500',
-  'ansi-green': 'text-emerald-500',
-  'ansi-yellow': 'text-amber-500',
-  'ansi-blue': 'text-sky-500',
-  'ansi-magenta': 'text-fuchsia-500',
-  'ansi-cyan': 'text-cyan-500',
-  'ansi-white': 'text-zinc-200',
-  'ansi-bright-black': 'text-zinc-500',
-  'ansi-bright-red': 'text-red-400',
-  'ansi-bright-green': 'text-emerald-400',
-  'ansi-bright-yellow': 'text-amber-400',
-  'ansi-bright-blue': 'text-sky-400',
-  'ansi-bright-magenta': 'text-fuchsia-400',
-  'ansi-bright-cyan': 'text-cyan-400',
-  'ansi-bright-white': 'text-zinc-100',
+  'ansi-black': 'text-zinc-900 dark:text-zinc-300',
+  'ansi-red': 'text-red-800 dark:text-red-300',
+  'ansi-green': 'text-emerald-800 dark:text-emerald-300',
+  'ansi-yellow': 'text-amber-800 dark:text-amber-300',
+  'ansi-blue': 'text-blue-800 dark:text-sky-300',
+  'ansi-magenta': 'text-fuchsia-800 dark:text-fuchsia-300',
+  'ansi-cyan': 'text-cyan-800 dark:text-cyan-300',
+  'ansi-white': 'text-zinc-800 dark:text-zinc-200',
+  'ansi-bright-black': 'text-zinc-700 dark:text-zinc-200',
+  'ansi-bright-red': 'text-red-900 dark:text-red-200',
+  'ansi-bright-green': 'text-emerald-900 dark:text-emerald-200',
+  'ansi-bright-yellow': 'text-amber-900 dark:text-amber-200',
+  'ansi-bright-blue': 'text-blue-900 dark:text-sky-200',
+  'ansi-bright-magenta': 'text-fuchsia-900 dark:text-fuchsia-200',
+  'ansi-bright-cyan': 'text-cyan-900 dark:text-cyan-200',
+  'ansi-bright-white': 'text-zinc-900 dark:text-zinc-100',
 };
 
 const ANSI_BG_CLASS: Record<string, string> = {
@@ -81,7 +81,7 @@ function segmentClass(seg: AnsiSegment): string {
   if (seg.fg && ANSI_FG_CLASS[seg.fg]) parts.push(ANSI_FG_CLASS[seg.fg]);
   if (seg.bg && ANSI_BG_CLASS[seg.bg]) parts.push(ANSI_BG_CLASS[seg.bg]);
   if (seg.bold) parts.push('font-semibold');
-  if (seg.dim) parts.push('opacity-60');
+  if (seg.dim) parts.push('opacity-95');
   if (seg.italic) parts.push('italic');
   if (seg.underline) parts.push('underline');
   return parts.join(' ');
@@ -125,8 +125,9 @@ function spliceMatches(
         className={cn(
           cls,
           h.active
-            ? 'bg-warning/40 text-foreground ring-1 ring-warning/60'
-            : 'bg-accent/25 text-foreground',
+            ? 'bg-warning/40 ring-1 ring-warning/60'
+            : 'bg-accent/25',
+          'text-foreground dark:text-foreground',
           'rounded-[2px] px-0.5',
         )}
       >

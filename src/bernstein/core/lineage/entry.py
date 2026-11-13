@@ -252,6 +252,7 @@ def canonicalise(entry: LineageEntry) -> bytes:
 
 
 def entry_hash(entry: LineageEntry) -> str:
+    """Hash the canonical lineage entry and prefix the digest with sha256:."""
     return "sha256:" + hashlib.sha256(canonicalise(entry)).hexdigest()
 
 

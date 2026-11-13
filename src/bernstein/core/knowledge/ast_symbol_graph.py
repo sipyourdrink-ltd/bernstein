@@ -298,20 +298,6 @@ def _extract_calls(node: ast.AST) -> list[str]:
     return calls
 
 
-def _extract_referenced_names(node: ast.AST) -> list[str]:
-    """Extract names referenced (not just called) in a function body.
-
-    Catches attribute accesses and bare name references.
-    """
-    names: list[str] = []
-    for child in ast.walk(node):
-        if isinstance(child, ast.Name) and not isinstance(child.ctx, ast.Store):
-            names.append(child.id)
-        elif isinstance(child, ast.Attribute):
-            names.append(child.attr)
-    return names
-
-
 def _process_import_node(node: ast.Import, imports: dict[str, str]) -> None:
     """Add entries from an ``import x`` statement to the imports dict."""
     for alias in node.names:

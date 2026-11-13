@@ -653,7 +653,7 @@ and no state-changing request is sent:
 
 A task that is stuck, blocked, or unfinished has no approval to grant. Finish
 work you are executing with `bernstein_complete`, report a blocker with
-`bernstein_post_message`, or abandon the work with `bernstein task cancel <task_id>`.
+`bernstein_post_message`, or abandon the work with `bernstein cancel <task_id>`. The hint above contains the older spelling.
 
 ### `planned` is decided on the plan, not on the task
 

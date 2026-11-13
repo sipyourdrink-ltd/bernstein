@@ -112,7 +112,7 @@ static scan alone.
 
 ## Decision
 
-**Keep the chain opt-in in this release. Adopt on-by-default as the target once
+**Keep the chain opt-in for this release. Adopt on-by-default as the target once
 the migration steps below are in place. This PR lands the measurement, the
 migration-safety invariant (locked by tests), and this record; it does not flip
 the default.**

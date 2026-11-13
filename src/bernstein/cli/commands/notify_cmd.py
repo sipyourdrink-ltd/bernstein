@@ -32,13 +32,13 @@ __all__ = ["notify_group"]
 def _load_notifications_config(config_path: Path) -> NotificationsConfig:
     """Load and validate the ``notifications`` block from ``bernstein.yaml``."""
     if not config_path.exists():
-        raise click.ClickException(f"config not found: {config_path}")
+        raise click.ClickException(f"Configuration file not found: {config_path}")
     try:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
-        raise click.ClickException(f"invalid YAML in {config_path}: {exc}") from exc
+        raise click.ClickException(f"Invalid YAML in {config_path}: {exc}") from exc
     if not isinstance(raw, dict):
-        raise click.ClickException(f"top-level YAML in {config_path} must be a mapping")
+        raise click.ClickException(f"The top-level YAML in {config_path} must be a mapping.")
     return NotificationsConfig.from_raw(raw.get("notifications"))
 
 
@@ -93,11 +93,11 @@ def notify_test(sink_id: str, event_kind: str, config_path: Path) -> None:
     sink_cfg = next((s for s in config.sinks if s.id == sink_id), None)
     if sink_cfg is None:
         raise click.ClickException(
-            f"sink {sink_id!r} not found in {config_path}. "
-            f"Available: {', '.join(s.id for s in config.sinks) or '(none)'}",
+            f"Sink {sink_id!r} not found in {config_path}. "
+            f"Available sinks: {', '.join(s.id for s in config.sinks) or '(none)'}.",
         )
     if not sink_cfg.enabled:
-        raise click.ClickException(f"sink {sink_id!r} is disabled in config")
+        raise click.ClickException(f"Sink {sink_id!r} is disabled in the configuration.")
 
     runtime_dir = _resolve_runtime_dir(config_path)
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -117,7 +117,7 @@ def notify_test(sink_id: str, event_kind: str, config_path: Path) -> None:
         register_in_registry=False,
     )
     if not bridge.sinks:
-        raise click.ClickException(f"failed to build sink {sink_id!r}; check logs")
+        raise click.ClickException(f"Failed to build sink {sink_id!r}. Check the logs.")
 
     event = _build_synthetic_event(NotificationEventKind(event_kind), sink_id)
     asyncio.run(_run_test(bridge, event))

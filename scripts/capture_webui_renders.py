@@ -144,15 +144,13 @@ SEEDED_DEPENDENCY_UPGRADES: tuple[str, ...] = (
     "langchain-core",
     "langchain-openai",
     "langchain-text-splitters",
-    "langgraph",
-    "langgraph-checkpoint",
-    "langgraph-checkpoint-sqlite",
     "langsmith",
     "llama-index-core",
     "lxml",
     "markdown",
     "marshmallow",
     "mistune",
+    "multidict",
     "numpy",
     "oauthlib",
     "openpyxl",
@@ -162,6 +160,7 @@ SEEDED_DEPENDENCY_UPGRADES: tuple[str, ...] = (
     "paramiko",
     "pdfminer-six",
     "pillow",
+    "platformdirs",
     "protobuf",
     "pyarrow",
     "pyasn1",
@@ -185,6 +184,7 @@ SEEDED_DEPENDENCY_UPGRADES: tuple[str, ...] = (
     "urllib3",
     "werkzeug",
     "xgrammar",
+    "zipp",
 )
 SEEDED_CLAIMED = 11
 

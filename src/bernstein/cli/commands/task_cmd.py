@@ -176,7 +176,7 @@ def verify_claim(receipt_path: str, backlog_path: Path, audit_dir: Path) -> None
     default="medium",
     show_default=True,
 )
-@click.option("--depends-on", multiple=True, metavar="TASK_ID", help="Task IDs this depends on.")
+@click.option("--depends-on", multiple=True, metavar="TASK_ID", help="Task IDs this task depends on.")
 @click.option(
     "--criterion-profile",
     "criterion_profile",
@@ -277,7 +277,7 @@ def add_task(
     # a malformed declaration is a usage error naming the offending field,
     # never a task that silently completes as code_diff.
     if artifact_kind is None and (artifact_output is not None or artifact_criteria):
-        raise click.UsageError("--artifact-output / --artifact-criterion require --artifact-kind.")
+        raise click.UsageError("--artifact-kind is required when using --artifact-output or --artifact-criterion.")
     if artifact_kind is not None:
         from bernstein.core.tasks.artifacts import ArtifactSpecError, parse_artifact_spec
 

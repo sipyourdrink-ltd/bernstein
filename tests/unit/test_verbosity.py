@@ -48,6 +48,38 @@ class TestVerbosityFlags:
         assert result.exit_code != 0
         assert "cannot" in result.output.lower() or "error" in result.output.lower()
 
+    @pytest.mark.parametrize("verbose", [True, False])
+    def test_package_handler_redacts_child_messages(self, verbose: bool, capsys: pytest.CaptureFixture[str]) -> None:
+        apply_verbosity(verbose=verbose, quiet=not verbose)
+        child = logging.getLogger("bernstein.redaction-test")
+        child.error("Contact %s@%s", "person", "example.com")
+        child.error("Authorization: Bearer %s", "synthetic-credential")
+        child.error("Failure: %s", ValueError("person@example.com"))
+        child.error("Malformed %d", "synthetic-credential")
+        stderr = capsys.readouterr().err
+        assert stderr.count("Contact [REDACTED]") == 1
+        assert "Authorization: Bearer [REDACTED]" in stderr
+        assert "Failure: [REDACTED]" in stderr
+        assert "[invalid log message]" in stderr
+        assert "synthetic-credential" not in stderr
+        assert "person@example.com" not in stderr
+
+    def test_handler_formats_each_argument_once(self, capsys: pytest.CaptureFixture[str]) -> None:
+        class ChangingArgument:
+            calls = 0
+
+            def __str__(self) -> str:
+                self.calls += 1
+                return "initial value" if self.calls == 1 else "person@example.com"
+
+        apply_verbosity(verbose=True, quiet=False)
+        argument = ChangingArgument()
+        logging.getLogger("bernstein.redaction-test").error("Contact %s", argument)
+        stderr = capsys.readouterr().err
+        assert argument.calls == 1
+        assert "Contact initial value" in stderr
+        assert "person@example.com" not in stderr
+
     def test_verbosity_constants(self) -> None:
         assert QUIET == -1
         assert NORMAL == 0

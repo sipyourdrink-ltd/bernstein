@@ -67,6 +67,10 @@ with JiraDataCenterAdapter(config) as adapter:
         # hand ticket.id (issue key) to the orchestrator's routing layer
 ```
 
+In the normalized ticket record, `ticket.id` (Ticket ID) contains the Jira
+issue key (for example, `ENG-123`). Jira's internal issue ID is retained
+separately in the record's raw metadata.
+
 The filter accepts:
 
 | Key       | Meaning                                                       |

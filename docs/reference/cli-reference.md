@@ -14,7 +14,7 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 
 ## Root command flags
 
-`bernstein` itself accepts these flags (defined at `cli/main.py:482-572`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
+`bernstein` itself accepts these flags (defined on `cli` in `src/bernstein/cli/main.py`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -42,6 +42,9 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 | `-v, --verbose` | off | Show debug-level output. |
 | `-q, --quiet` | off | Suppress all non-error output. |
 | `-t, --task PATTERN` | none | Run only backlog tasks matching PATTERN. |
+| `--sandbox BACKEND` | none | Override the sandbox backend selected for the run. |
+| `--allow-paid` | off | Allow selection of paid sandbox backends. |
+| `--refine SPEC` | none | Parse and validate an iterative refinement spec. The root runner does not consume it yet. |
 | `--auto-pr` | off | Auto-open a GitHub PR when all tasks complete. |
 | `--activity-log [PATH]` | off | Write activity to a log file. Default path `.sdd/logs/activity.log`. |
 
@@ -250,7 +253,10 @@ pipeline with at most one model call: draft (structured requirement
 extraction), approve (the requirement-set hash is bound into the audit
 chain), and compile (a deterministic, model-free transformation to a task
 graph). Each task node carries the content hashes of the requirement lines it
-implements, so every artefact traces back to spec lines through lineage.
+implements, so every artefact traces back to spec lines through lineage. An
+unreadable spec or a spec with no EARS-shaped requirements exits with status
+`1` and a diagnostic on stderr. Command-line usage errors exit with status
+`2`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -405,10 +411,16 @@ A subcommand group; defaults to `bernstein logs tail`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--archive PATH` | `.sdd/archive/tasks.jsonl` | Path to task archive. |
+| `--archive PATH` | none | Read task counts and recorded costs from a local JSONL archive (typically `.sdd/archive/tasks.jsonl`). |
 | `--since DURATION` | none | Build the report from workspace files instead of the task server (`45m`, `6h`, `2d`; a bare number is minutes). |
 | `--workdir PATH` | `.` | Project root, used with `--since`. |
 | `--as-json` | off | Emit raw JSON. |
+
+By default, recap queries the task server. Use `--archive` for a local archive
+report without the server. `--archive` and `--since` cannot be combined.
+Archive counts use the last entry for each task. Recorded cost sums the
+entries with a known cost, including retries. It is unavailable if the file
+contains no cost data.
 
 With `--since` the summary is the "since you were away" report: completed and
 failed tasks, provider errors, and estimated cost read from `.sdd/` alone, so
@@ -2014,7 +2026,10 @@ example widening `viewer` to `operator`) breaks its signature and the token
 stops validating. Every issue and revoke is mirrored onto the audit chain
 (`dashboard.token_grant`), and every login and write authorization is a
 signed governance decision in the `dashboard-auth` lineage run - recompute
-them offline with `bernstein governance verify dashboard-auth`.
+them offline with `bernstein govern verify dashboard-auth --bindings FILE`,
+where `FILE` contains the signed role bindings produced by
+`dashboard_role_bindings` in `bernstein.core.server.dashboard_tokens`.
+The dashboard generates these bindings in memory.
 
 | Subcommand | Purpose |
 |---|---|
@@ -2029,7 +2044,6 @@ root containing `.sdd/`.
 bernstein auth dashboard-token issue --principal alice --scope viewer
 bernstein auth dashboard-token list
 bernstein auth dashboard-token revoke 3f1a9c2d5e7b0a41
-bernstein governance verify dashboard-auth
 ```
 
 Startup posture: `bernstein gui serve` on a loopback host without any

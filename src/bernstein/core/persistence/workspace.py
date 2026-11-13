@@ -7,20 +7,65 @@ the correct working directory.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import json as _json
 import logging
+import os
 import subprocess
+import sys
+import tempfile
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.config.platform_compat import IS_WINDOWS
 from bernstein.core.persistence.atomic_write import write_atomic_json
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+_AT_FDCWD = -100  # Linux: resolve relative paths from the working directory.
+_RENAME_NOREPLACE = 1  # Linux
+_RENAME_EXCL = 4  # macOS
+
+
+def _publish_clone(staged: Path, destination: Path) -> bool:
+    """Install a staged checkout without replacing a concurrently created path."""
+    if IS_WINDOWS:
+        # Windows rename fails if its destination already exists.
+        try:
+            staged.rename(destination)
+        except FileExistsError:
+            return False
+        return True
+
+    # POSIX rename can replace an empty directory. Use the platform's exclusive
+    # operation so publication never leaves a placeholder or replaces a checkout.
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_name, destination_name = os.fsencode(staged), os.fsencode(destination)
+    try:
+        if sys.platform == "darwin":
+            rename = libc.renamex_np
+            rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+            result = rename(source_name, destination_name, _RENAME_EXCL)
+        elif sys.platform.startswith("linux"):
+            rename = libc.renameat2
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            result = rename(_AT_FDCWD, source_name, _AT_FDCWD, destination_name, _RENAME_NOREPLACE)
+        else:
+            raise OSError(errno.ENOTSUP, "Exclusive directory rename is unavailable", destination)
+    except AttributeError as exc:
+        raise OSError(errno.ENOTSUP, "Exclusive directory rename is unavailable", destination) from exc
+    if result == 0:
+        return True
+    error = ctypes.get_errno()
+    if error == errno.EEXIST:
+        return False
+    raise OSError(error, os.strerror(error), destination)
 
 
 def _topological_sort(
@@ -182,13 +227,34 @@ class Workspace:
                 continue
 
             abs_path.parent.mkdir(parents=True, exist_ok=True)
-            cmd = ["git", "clone", "--branch", repo.branch, repo.url, str(abs_path)]
-            logger.info("Cloning %s -> %s", repo.url, abs_path)
+            logger.info("Cloning workspace repository %r", repo.name)
             try:
-                subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+                # Stage the clone beside the destination. An interrupted clone
+                # must not leave a directory that later runs mistake for a repo.
+                with tempfile.TemporaryDirectory(prefix=".bernstein-clone-", dir=abs_path.parent) as staging:
+                    staged_repo = Path(staging) / "repo"
+                    subprocess.run(
+                        ["git", "clone", "--branch", repo.branch, repo.url, str(staged_repo)],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=True,
+                        timeout=120,
+                    )
+                    try:
+                        published = _publish_clone(staged_repo, abs_path)
+                    except OSError as exc:
+                        logger.warning("Could not publish clone '%s': %s", repo.name, exc)
+                        continue
+                    if not published:
+                        logger.debug("Repo '%s' appeared during clone", repo.name)
+                        continue
                 cloned.append(repo.name)
+            except subprocess.TimeoutExpired:
+                logger.warning("Timed out cloning '%s' after 120s", repo.name)
             except subprocess.CalledProcessError as exc:
-                logger.warning("Failed to clone '%s': %s", repo.name, exc.stderr.strip())
+                logger.warning("Failed to clone workspace repository %r: exit_code=%d", repo.name, exc.returncode)
 
         return cloned
 
@@ -287,9 +353,10 @@ class Workspace:
                 encoding="utf-8",
                 errors="replace",
                 check=True,
+                timeout=30,
             )
             return result.stdout.strip()
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.SubprocessError, OSError):
             return "unknown"
 
     @staticmethod
@@ -304,15 +371,16 @@ class Workspace:
                 encoding="utf-8",
                 errors="replace",
                 check=True,
+                timeout=30,
             )
             return result.stdout.strip() == ""
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.SubprocessError, OSError):
             return False
 
     @staticmethod
     def _git_ahead_behind(repo_path: Path) -> tuple[int, int]:
         """Return (ahead, behind) counts relative to upstream."""
-        with suppress(subprocess.CalledProcessError, OSError, ValueError):
+        with suppress(subprocess.SubprocessError, OSError, ValueError):
             result = subprocess.run(
                 ["git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
                 cwd=str(repo_path),
@@ -321,6 +389,7 @@ class Workspace:
                 encoding="utf-8",
                 errors="replace",
                 check=True,
+                timeout=30,
             )
             parts = result.stdout.strip().split()
             if len(parts) == 2:

@@ -165,6 +165,14 @@ class TestGatewayReplay:
         assert result is not None
         assert result["result"] == "second"
 
+    def test_warns_when_replay_reader_stops(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        with patch("bernstein.core.wal.WALReader.iter_entries", side_effect=OSError("private diagnostic")):
+            replay = GatewayReplay(run_id="replay-run", sdd_dir=tmp_path / ".sdd")
+
+        assert replay.indexed_count == 0
+        assert "MCP replay stopped reading the WAL after indexing 0 responses (OSError)" in caplog.text
+        assert "private diagnostic" not in caplog.text
+
     def test_handles_missing_wal_gracefully(self, tmp_path: Any) -> None:
         """GatewayReplay with a nonexistent WAL does not raise; index is empty."""
         from pathlib import Path

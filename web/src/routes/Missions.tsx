@@ -56,13 +56,13 @@ const PHASE_PILL: Record<string, PillKind> = {
 function phaseIcon(state: string) {
   switch (state) {
     case 'passed':
-      return <CheckCircle2 className="h-4 w-4 text-[var(--success,#16a34a)]" aria-hidden />;
+      return <CheckCircle2 className="h-4 w-4 text-success" aria-hidden />;
     case 'active':
       return <Target className="h-4 w-4 text-primary" aria-hidden />;
     case 'halted':
       return <Flag className="h-4 w-4 text-destructive" aria-hidden />;
     case 'unverified':
-      return <ShieldAlert className="h-4 w-4 text-[var(--warning,#d97706)]" aria-hidden />;
+      return <ShieldAlert className="h-4 w-4 text-warning" aria-hidden />;
     default:
       return <CircleDashed className="h-4 w-4 text-muted-foreground" aria-hidden />;
   }
@@ -125,7 +125,7 @@ function PhaseLane({
             <div
               className={cn(
                 'h-full rounded-full',
-                pct >= 100 ? 'bg-destructive' : pct >= 80 ? 'bg-[var(--warning,#d97706)]' : 'bg-primary',
+                pct >= 100 ? 'bg-destructive' : pct >= 80 ? 'bg-warning' : 'bg-primary',
               )}
               style={{ width: `${phase.budget_usd ? pct : 0}%` }}
             />
@@ -227,7 +227,7 @@ function MissionDetail({ missionId }: { missionId: string }) {
           {unverified ? (
             <AlertTriangle className="h-3.5 w-3.5 text-destructive" aria-hidden />
           ) : (
-            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success,#16a34a)]" aria-hidden />
+            <CheckCircle2 className="h-3.5 w-3.5 text-success" aria-hidden />
           )}
           <span>{projection.entry_count} ledger entries</span>
         </div>

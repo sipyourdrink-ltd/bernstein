@@ -407,6 +407,10 @@ def build_article12_bundle(
 
     Returns:
         An :class:`Article12Bundle` describing the produced pack.
+
+    Raises:
+        ValueError: If ``since`` compares greater than or equal to
+            ``until`` as a string.
     """
     if since >= until:
         raise ValueError(f"since={since!r} must be < until={until!r}")

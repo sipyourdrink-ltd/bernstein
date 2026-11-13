@@ -153,7 +153,10 @@ def _default_gh_runner(argv: list[str]) -> str:
             check=False,
             capture_output=True,
             text=True,
+            timeout=30,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise GhInvocationError("gh timed out after 30s") from exc
     except FileNotFoundError as exc:
         raise GhInvocationError(f"gh binary not on PATH: {exc}") from exc
     if completed.returncode != 0:
@@ -466,9 +469,7 @@ def resolve_pr_number(
     runner = git_runner if git_runner is not None else _default_git_runner
     try:
         raw = runner(["git", "config", "--get", _GIT_CONFIG_KEY], workdir).strip()
-    except subprocess.CalledProcessError:
-        return None
-    except FileNotFoundError:
+    except (subprocess.SubprocessError, FileNotFoundError):
         return None
     if not raw:
         return None
@@ -491,6 +492,7 @@ def _default_git_runner(argv: list[str], workdir: Path | None) -> str:
         capture_output=True,
         text=True,
         cwd=str(workdir) if workdir else None,
+        timeout=30,
     )
     return completed.stdout
 

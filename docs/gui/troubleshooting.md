@@ -151,7 +151,9 @@ drops auth (never on a network-exposed host).
 
 ## Sidebar Approvals badge stuck at zero
 
-- Badge count comes from `useQuery(['approvals','queue'])`. If the queue endpoint returns `[]` even when approvals exist, the SSE stream isn't hydrating the cache.
+- Badge count comes from the `['approvals', 'queue']` query in `AppShell.tsx`, using the length of `pending` (or `items` as a fallback). In DevTools Network, inspect `GET /api/v1/approvals/queue`: a successful response with an empty list, such as `{"pending": []}`, means the queue read succeeded and reported no pending approvals. It is not evidence that SSE updates failed. If approvals are expected, investigate the queue response rather than assuming the stream failed to hydrate the cache.
+- A failed queue read (for example, a network error or HTTP 401/5xx) is not an empty queue. The query propagates errors to React Query for retry/backoff (up to three retries), rather than returning an empty list. The badge can still show zero when no successful data is available, or keep the previous count if data was already cached. Check the queue request's status and error in DevTools rather than treating a zero badge as proof that the queue is empty.
+- The queue query polls every 10 seconds independently of streamed updates. Successful polls refresh the badge even if the SSE connection is interrupted; the stream does not need to hydrate the cache for polling to work.
 - With auth enabled (which a default loopback `bernstein gui serve` guarantees), the GUI opens `GET /api/v1/events` through its authenticated fetch reader. A 401 means the saved GUI bearer was refused; reauthenticate rather than waiting for polling to repair it.
 - Verify `GET /api/v1/events` stays pending with a 200 response in DevTools Network. The fetch reader reconnects after a clean disconnect with capped backoff.
 - If SSE is blocked by a corporate proxy that buffers responses, the live updates will not arrive - the page will only refresh on poll. Bypass the proxy or use `bernstein gui serve --dev` against a local dev session.

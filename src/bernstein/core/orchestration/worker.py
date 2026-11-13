@@ -480,7 +480,12 @@ def _monitor_logs(
 
 
 def main() -> None:
-    """Entry point for bernstein-worker."""
+    """Run the worker command from the process arguments.
+
+    Raises:
+        SystemExit: With the worker's exit status, including argument and
+            launch failures or the wrapped command's exit status.
+    """
     parser = argparse.ArgumentParser(
         description="Bernstein agent worker - wraps CLI agents for process visibility",
     )

@@ -40,7 +40,8 @@ for chunk in chunks:
 Each `ReviewChunk` carries `path`, `start_line` / `end_line` (1-indexed,
 inclusive), the top-level `symbols`, the source `text`, a one-line
 `header` (`# <path> L<start>-<end> - symbols: ...`) and `language`
-(`python` or `text` for the fallback). No shipped reviewer prompt
+(`python` for syntax-aware chunks; `text` for line-based fallback
+chunks). No shipped reviewer prompt
 consumes the chunks yet; callers render them.
 
 ## Configuration

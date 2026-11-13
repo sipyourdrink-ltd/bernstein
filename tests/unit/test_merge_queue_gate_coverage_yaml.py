@@ -93,6 +93,10 @@ ADVISORY_BY_DECISION = {
         "pre-merge autosync). Its own header already records that none of these is a "
         "required check."
     ),
+    "webui-regression.yml": (
+        "Runs component and browser regression tests on relevant pull requests. Reviewers check the "
+        "result before accepting a web UI slice. The existing merge queue required contexts are unchanged."
+    ),
     "webui-render-recapture.yml": (
         "Recaptures the web UI renders on a runner and uploads them as a review artifact when a "
         "web/** change moves the SPA bundle. It is evidence for the reviewer, not a gate: the check "

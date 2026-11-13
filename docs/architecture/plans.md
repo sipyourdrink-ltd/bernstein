@@ -86,7 +86,7 @@ alias).
 | `priority` | int 1-5 | `2` | 1 = highest, 5 = lowest. Affects orchestrator ordering when multiple steps are ready. |
 | `scope` | enum | `medium` | `small` (<30min), `medium` (30-90min), `large` (90min+). Influences cost/model picks. |
 | `complexity` | enum | `medium` | `low`, `medium`, `high`. Drives router/cascade tier choice. |
-| `dispatch_tier` | enum | `local` | Backend tier for the step: `local`, `edge`, `search`, `research`, or `sandbox`. Uses the runtime’s configured backend mapping. |
+| `dispatch_tier` | enum | `local` | Backend tier for the step: `local`, `edge`, `search`, `research`, or `sandbox`. Uses the runtime’s configured backend mapping. An explicit tier is preserved; for example, `dispatch_tier: local` keeps the step on `local`. Generated work without an explicit tier can be classified from task type and dispatch hints. Hand-written plans that omit it default to `local`. |
 | `model` | string | - | Override model with an adapter/provider-specific identifier, such as `provider/model-name`. |
 | `effort` | enum | - | Effort knob: `low`, `normal`, `high`, `max`. |
 | `estimated_minutes` | int | `30` | Used by the duration predictor and plan cost estimate. |

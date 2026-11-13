@@ -7,7 +7,9 @@ crashes, or aborted experiments.
 ## Overview
 
 `bernstein worktrees` inspects and reaps worktrees the orchestrator
-left behind. The classifier in
+left behind. The **project workspace** is the project root the command
+inspects; a **task worktree** is an individual checkout managed beneath
+that workspace. The classifier in
 `src/bernstein/core/worktrees/classifier.py` is the single source of
 truth for state. The CLI module
 (`src/bernstein/cli/commands/worktrees_cmd.py`) handles I/O:

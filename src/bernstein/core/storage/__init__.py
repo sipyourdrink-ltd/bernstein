@@ -34,8 +34,9 @@ trade-offs per provider.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from bernstein.core.storage.buffered import BufferedSink, BufferedSinkStats
-from bernstein.core.storage.conformance import ArtifactSinkConformance
 from bernstein.core.storage.registry import (
     default_registry,
     get_sink,
@@ -70,3 +71,16 @@ __all__ = [
     "normalise_key",
     "register_sink",
 ]
+
+
+if TYPE_CHECKING:
+    from bernstein.core.storage.conformance import ArtifactSinkConformance
+
+
+def __getattr__(name: str) -> type[ArtifactSinkConformance]:
+    # Keep the public test helper importable without loading pytest in production.
+    if name == "ArtifactSinkConformance":
+        from bernstein.core.storage.conformance import ArtifactSinkConformance
+
+        return ArtifactSinkConformance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

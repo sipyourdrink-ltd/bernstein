@@ -65,6 +65,9 @@ def get_templates_dir(workdir: Path) -> Path:
     compatibility, then falls back to the package's bundled defaults so
     that ``bernstein`` works right after ``pip install`` without requiring
     ``bernstein init`` first.
+
+    Args:
+        workdir: Project root to search for local templates.
     """
     dot_bernstein = workdir / ".bernstein" / "templates"
     if dot_bernstein.is_dir():

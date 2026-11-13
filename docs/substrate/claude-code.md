@@ -1,5 +1,9 @@
 # Register Bernstein in Claude Code
 
+Claude Code has two distinct roles: as an MCP host, it calls Bernstein's
+tools; as a coding tool, it is driven by Bernstein through an adapter.
+This guide covers the host role, not the adapter role.
+
 Claude Code auto-discovers MCP servers from a project-local `.mcp.json`
 file. `bernstein desktop-register --host claude-code` merges a `bernstein`
 entry into that file in the current working directory, so any Claude Code

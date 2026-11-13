@@ -8,7 +8,7 @@ tags:
 
 # Screens
 
-Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
+Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabulary developer reference. Routes: `web/src/App.tsx`. Screen components: `web/src/routes/`. Design tokens: `web/src/index.css`.
 
 ## Screenshots
 
@@ -58,12 +58,17 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 
 - **Source:** `web/src/routes/Approvals.tsx`.
 - **Layout:** 2-column grid `440px 1fr`. Left = queue. Right = selected approval (Why card · Diff · Action bar).
-- **Queue row:** tool name (mono pill), role pill, target line (mono), agent + task footer, risk score chip (low / moderate / elevated / high), wait time.
-- **Why? card:** shield icon + "N reasons · M mitigations". Bulleted reasons, color-dotted by severity.
+- The queue shows the tool, role, submitting session and wait time. Select a request to inspect its arguments and any supplied reasons.
 - **Diff card:** sticky filename + +/− counts, mono 11.5 px, `+` lines green wash, `−` lines red wash, `max-height: 240px` with internal scroll.
-- **Action bar:** primary "Approve once" + danger "Deny" + ghost "Always allow / Always deny" + kbd hints (`A` / `D`).
-- **Endpoints:** `GET /api/v1/approvals/queue?session_id=`, `POST /api/v1/approvals/{approval_id}/resolve` with `{decision: allow|reject|always, reason}`. Updates from `/api/v1/events` increment the sidebar badge.
+- Use "Approve once" or "Deny" for the selected request. With its queue row focused, `A` approves and `D` denies. Up and Down move focus and selection in the queue. The server checks expiry. If the server reports the request has expired or changed, review the refreshed queue before deciding.
+- The screen polls `GET /api/v1/approvals/queue` and sends the selected request's nonce with the `allow` or `reject` decision to `POST /api/v1/approvals/{approval_id}/resolve`.
 - **Replaces TUI widget:** `approval_panel.py`.
+
+## Governance (`/ui/governance`)
+
+- **Source:** `web/src/routes/Governance.tsx`.
+- Choose or drop a run receipt and select **Verify receipt**. The browser sends the original file to `POST /api/v1/governance/verify-receipt`.
+- The screen shows the server's verdict and any errors. A successful check uses the key embedded in the receipt and displays the `integrity-only` tier.
 
 ## Audit (`/ui/audit`)
 
@@ -95,3 +100,23 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 - **Unverified state:** when work-ledger chain verification fails (`ledger_verified === false`) the screen switches to an explicit unverified banner instead of best-effort rendering.
 - **Endpoints:** `GET /api/v1/missions/*` (`src/bernstein/core/routes/missions.py`) - a deterministic projection folded from the mission's work-ledger chain; the server holds no mission-side state.
 - **Replaces TUI widget:** none - mission timelines had no TUI surface.
+
+## Fleet (`/ui/fleet`)
+
+- **Source:** `web/src/routes/Fleet.tsx`.
+- **What it shows:** a multi-project supervisor view with one card per installation, showing health, agent count, today's cost and pending approvals.
+- **Actions:** open a project card to view its tasks, search across projects to see the match count, or enter a task ID to steer a running worker.
+- **Empty state:** when the backend reports a stub with no projects, the screen shows "No fleet aggregator attached" and an **Open Tasks** action.
+
+## Settings (`/ui/settings`)
+
+- **Source:** `web/src/routes/Settings.tsx`.
+- **Preferences:** choose System, Light or Dark theme, and toggle the browser's fleet-mode preference. Reload after changing fleet mode for the topbar control to reflect the new value.
+- **Auth token:** save, show/hide or clear the bearer token used for `/api/v1` requests. The token is stored only in this browser's localStorage.
+- **Scope:** these are per-user browser preferences; server-side telemetry settings and the fleet roster are not yet wired into this screen.
+
+## Vocabulary (`/ui/vocabulary`)
+
+- **Source:** `web/src/routes/Vocabulary.tsx`.
+- **Standalone reference:** a developer reference rendered outside the dashboard shell, rather than an operational dashboard screen.
+- **What it shows:** runtime CSS token names, resolved values and previews; Tailwind type-scale samples; and shared empty, error and loading states, status dots and pills.

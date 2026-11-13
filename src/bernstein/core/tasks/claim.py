@@ -38,10 +38,6 @@ _THREAD_LOCKS: dict[Path, threading.Lock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
 
 
-def _empty_str_set() -> set[str]:
-    return set()
-
-
 def _empty_str_list() -> list[str]:
     return []
 

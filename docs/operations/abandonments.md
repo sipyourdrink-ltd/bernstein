@@ -6,8 +6,7 @@ silently half-completing or being killed by the watchdog.
 ## Overview
 
 `abandon` is a first-class agent verb. When an adapter calls
-`ctx.abandon(reason, detail)` (or an operator runs the future
-`bernstein task abandon`), the task store:
+`ctx.abandon(reason, detail)`, the task store:
 
 1. Flips the task to terminal `ABANDONED` (distinct from `FAILED`).
 2. Appends a row to `.sdd/runtime/abandonments.jsonl`.

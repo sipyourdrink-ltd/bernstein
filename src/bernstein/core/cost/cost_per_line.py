@@ -13,6 +13,8 @@ class CostLineTask(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class CostEfficiency:
+    """Current and historical cost estimates normalized by changed lines."""
+
     current_cost_per_line: float
     run_avg_cost_per_line: float
     historical_avg_cost_per_line: float

@@ -3399,14 +3399,13 @@ class AgentSpawner:
 
             probe_adapter = get_adapter(adapter_name)
         except Exception as exc:
-            logger.info(
+            logger.warning(
                 "_primary_adapter_supports_sampling: provider_name=%r model=%r -> "
-                "adapter=%r could not be probed (%s: %s); treating as supports_sampling=False",
+                "adapter=%r could not be probed (%s); treating as supports_sampling=False",
                 provider_name,
                 model_config.model,
                 adapter_name,
                 type(exc).__name__,
-                exc,
             )
             return False
 
@@ -7101,15 +7100,15 @@ class AgentSpawner:
     ) -> list[str]:
         """Build the CLI command to run inside the container.
 
-        Reads the prompt from the prompt file instead of passing it as
-        a command-line argument (which can hit ARG_MAX limits).
+        The generated command reads the prompt from the mounted session file
+        at execution time.
 
         Args:
-            _prompt_file: Path to the prompt file (part of interface;
+            prompt_file: Path to the prompt file (part of interface;
                 the container path is reconstructed from session_id).
             model_config: Model and effort config.
             session_id: Session ID for the worker wrapper.
-            _mcp_config: MCP configuration dict (part of interface).
+            mcp_config: MCP configuration dict (part of interface).
 
         Returns:
             Command argument list.

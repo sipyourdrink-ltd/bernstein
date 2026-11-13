@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -49,15 +50,17 @@ def _get_suite(name: str):
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     _BUILTIN = {
-        "gate-evasion-v1": build_gate_evasion_suite_v1,
-        "goal-drift-v1": build_goal_drift_suite,
-        "golden-v1": build_golden_suite_v1,
-        "tool-surface-v1": build_tool_surface_suite,
-        "leakage-v1": build_leakage_suite_v1,
+        "gate-evasion-v1": (build_gate_evasion_suite_v1, ("CTL-SEC-04",)),
+        "goal-drift-v1": (build_goal_drift_suite, ("CTL-ROB-02",)),
+        "golden-v1": (build_golden_suite_v1, ("CTL-ROB-01",)),
+        "tool-surface-v1": (build_tool_surface_suite, ("CTL-SEC-02",)),
+        "leakage-v1": (build_leakage_suite_v1, ("CTL-SEC-03",)),
     }
 
     if name in _BUILTIN:
-        return _BUILTIN[name]()
+        builder, control_ids = _BUILTIN[name]
+        # Reconstruction validates the declaration and starts with an uncached hash.
+        return replace(builder(), measurement_control_ids=control_ids)
 
     path = Path(name)
     if path.suffix == ".json" and path.exists():
@@ -279,14 +282,14 @@ def _load_trusted_keys(entries: tuple[str, ...]) -> dict[str, bytes]:
     "--trajectory",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
-    help="Path to trajectory JSON file (events and diff).",
+    help="Path to the trajectory JSON file (events and diff).",
 )
 @click.option(
     "--diff",
     "diff_file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
-    help="Path to git diff file for goal-drift suite.",
+    help="Path to the git diff file for the goal-drift suite.",
 )
 @click.option(
     "--threshold",

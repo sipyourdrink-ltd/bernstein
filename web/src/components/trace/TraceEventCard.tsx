@@ -28,7 +28,7 @@ function highlight(text: string, query: string): React.ReactNode {
   return (
     <>
       {text.slice(0, idx)}
-      <mark className="rounded-sm bg-warning/30 px-0.5 text-warning-foreground">
+      <mark className="rounded-sm bg-warning/30 px-0.5 text-foreground">
         {text.slice(idx, idx + query.length)}
       </mark>
       {text.slice(idx + query.length)}
