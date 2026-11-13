@@ -56,10 +56,36 @@ role_model_policy:
 ```
 
 The value is validated against the closed vocabulary
-(`verbose` / `balanced` / `terse`) at parse time. A style whose mapped
-template file is missing raises a typed `ResponseStyleTemplateError`
-during config validation - not at spawn time - so a dangling template
-reference fails fast.
+(`verbose` / `balanced` / `terse`) at parse time. During seed loading,
+availability is checked for styles declared under `role_model_policy`
+(including its `default` entry). A missing template for a declared
+non-neutral style raises a typed `ResponseStyleTemplateError` during seed
+validation, not at spawn time. Seed validation does not check a future
+`Task.metadata['mode']`; that per-task mode is resolved when a worker starts,
+and a missing template it selects is reported while rendering that worker's
+addendum.
+
+## Template lookup and neutral rendering
+
+For each lookup, Bernstein first checks whether the project has a
+`templates/mode_profiles/` directory. If it does, that directory takes
+precedence over the bundled directory; if it does not, the bundled directory
+is used. The directory is chosen before checking for the individual mapped
+file, with no per-file fallback: when a project directory is selected, a
+mapped file must be present there whenever a style needs it.
+
+`balanced` is the exception: rendering it returns an empty addendum before
+looking up or reading `smart.yaml`, so it needs no template file. For example,
+if the project's selected directory contains only `fast.yaml` (the `terse`
+template):
+
+- `terse` loads `fast.yaml` and renders its addendum.
+- `verbose` needs `deep.yaml` and fails with `ResponseStyleTemplateError`
+  because that file is missing. If `verbose` is declared in the seed, this is
+  caught during seed validation; if chosen by task metadata, it is caught
+  when that worker's addendum is rendered.
+- `balanced` renders an empty addendum and succeeds without reading or
+  requiring `smart.yaml`.
 
 ## Resolution order
 
