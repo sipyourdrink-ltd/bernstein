@@ -59,7 +59,9 @@ session start and `get_instrumenter()` at each hook point. Before
 | `call_id` | str | dedup key |
 | `ts_start`, `ts_end`, `wall_ms` | see above | |
 | `tool` | str | tool name |
-| `args` | dict | truncated to 500 chars per string value (`_ARG_VALUE_TRUNCATE_CHARS`) — never the full tool result, only the call's own arguments |
+| `args` | dict | recursively keeps the first 500 chars per string value (`_ARG_VALUE_TRUNCATE_CHARS`), plus `...[truncated]` when cut |
+| `result` | any\|null | tool return value as a bounded preview, keeping the first 500 chars of each string recursively (plus `...[truncated]` when cut); `null` when no result is supplied |
+| `coverage` | object | optional coverage metadata (e.g. file count, corpus digest, completeness/truncation status, and exit status); recorded separately and not subject to the recursive result preview limit |
 | `success` | bool | |
 | `error` | str\|null | |
 
@@ -69,7 +71,8 @@ session start and `get_instrumenter()` at each hook point. Before
 |-------|------|-------|
 | `idx` | int | message index, used as dedup key |
 | `role` | str | |
-| `content_length` | int | shape only — message content is never recorded, by design |
+| `content_length` | int | full message-content length measured before any truncation; retained for shape-only records too |
+| `content` | str | optional message content, keeping the first 20,000 chars plus `...[truncated]` when cut; omit for shape-only records |
 | `tool_calls` | list[str] | present if the message triggered tool calls |
 | `ts` | str | ISO-8601 |
 
