@@ -8,10 +8,13 @@ Bernstein keeps a two-tier knowledge layer over task transcripts.
    themes and drafts a human-readable report at
    `.sdd/runtime/syntheses/<date>.md`.
 
-The synthesis is **HITL-gated**. Reports land on disk with
-`approved: false` in their frontmatter until an operator runs the
-synthesize command with `--apply`. No role prompt is mutated by the
-synthesizer alone; it always produces review artefacts.
+The synthesis is **HITL-gated**. A normal run writes a report to disk
+with `approved: false` in its frontmatter. Use `--apply` to mark the
+report approved. A preview (`--dry-run`) prints the report to stdout and
+does not write a file; if combined with `--apply`, only the printed report
+is marked approved. Without `--dry-run`, `--apply` writes an approved
+report to the same dated location as a normal report. No role prompt is
+mutated by the synthesizer alone; it always produces review artefacts.
 
 ## CLI surface
 
@@ -25,7 +28,7 @@ bernstein knowledge diary show task-42
 # Run the synthesis pass over the last 14 days.
 bernstein knowledge synthesize --since 14d
 
-# Render to stdout without writing.
+# Preview to stdout without writing.
 bernstein knowledge synthesize --since 7d --dry-run
 
 # Approve and persist (the HITL gate).
@@ -33,6 +36,10 @@ bernstein knowledge synthesize --since 7d --apply
 ```
 
 `--since` accepts `NNd`, `NNh`, `NNm`, `NNs`, or a bare integer (days).
+The lookback is converted to whole days, with a one-day minimum; it is not
+a rolling hour, minute, or second window. For example, `12h` and `36h`
+each select one day, while `49h` selects two days. An integer without a
+suffix is interpreted as days.
 
 ## Diary shape
 
