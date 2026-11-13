@@ -8,7 +8,7 @@ tags:
 
 # Screens
 
-Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
+Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabulary developer reference. Routes: `web/src/App.tsx`. Screen components: `web/src/routes/`. Design tokens: `web/src/index.css`.
 
 ## Screenshots
 
@@ -100,3 +100,23 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 - **Unverified state:** when work-ledger chain verification fails (`ledger_verified === false`) the screen switches to an explicit unverified banner instead of best-effort rendering.
 - **Endpoints:** `GET /api/v1/missions/*` (`src/bernstein/core/routes/missions.py`) - a deterministic projection folded from the mission's work-ledger chain; the server holds no mission-side state.
 - **Replaces TUI widget:** none - mission timelines had no TUI surface.
+
+## Fleet (`/ui/fleet`)
+
+- **Source:** `web/src/routes/Fleet.tsx`.
+- **What it shows:** a multi-project supervisor view with one card per installation, showing health, agent count, today's cost and pending approvals.
+- **Actions:** open a project card to view its tasks, search across projects to see the match count, or enter a task ID to steer a running worker.
+- **Empty state:** when the backend reports a stub with no projects, the screen shows "No fleet aggregator attached" and an **Open Tasks** action.
+
+## Settings (`/ui/settings`)
+
+- **Source:** `web/src/routes/Settings.tsx`.
+- **Preferences:** choose System, Light or Dark theme, and toggle the browser's fleet-mode preference. Reload after changing fleet mode for the topbar control to reflect the new value.
+- **Auth token:** save, show/hide or clear the bearer token used for `/api/v1` requests. The token is stored only in this browser's localStorage.
+- **Scope:** these are per-user browser preferences; server-side telemetry settings and the fleet roster are not yet wired into this screen.
+
+## Vocabulary (`/ui/vocabulary`)
+
+- **Source:** `web/src/routes/Vocabulary.tsx`.
+- **Standalone reference:** a developer reference rendered outside the dashboard shell, rather than an operational dashboard screen.
+- **What it shows:** runtime CSS token names, resolved values and previews; Tailwind type-scale samples; and shared empty, error and loading states, status dots and pills.
