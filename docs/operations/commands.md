@@ -75,7 +75,9 @@ bernstein status     # task summary
 bernstein ps         # running agents (PID files + a live process-table cross-check, so it still lists survivors after stop --force removed the PID files)
 bernstein cost       # spend by model/task
 bernstein doctor     # pre-flight checks
-bernstein recap      # post-run summary
+bernstein recap      # post-run summary (default: live task-server data)
+bernstein recap --archive path/to/tasks.jsonl  # local recap from a named task archive; no server
+bernstein recap --since 6h                   # local workspace recap for the last 6 hours; no server
 bernstein export     # shareable HTML/Markdown report of the latest run
 bernstein trace <ID> # agent decision trace
 bernstein changelog --hours 48  # changelog from agent-produced diffs
@@ -89,6 +91,9 @@ bernstein debug bundle   # collect logs, config, and state for bug reports
 bernstein skills list    # discoverable skill packs (progressive disclosure)
 bernstein skills show <name>  # print a skill body with its references
 ```
+
+`--archive` and `--since` select separate recap sources and cannot be combined.
+Without either option, `bernstein recap` uses the live task server by default.
 
 `bernstein run --dry-run` exits with status `1` and writes a diagnostic to
 stderr if it cannot load its plan or fetch tasks from the task server.
