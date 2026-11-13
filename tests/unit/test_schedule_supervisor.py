@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -415,6 +416,21 @@ class TestSupervisorTickCatchUpPolicy:
         assert [event.raw_payload["fire_time"] for event in fired] == [last_fire + 60]
         assert [receipt.skipped_windows for receipt in receipts if receipt.counterfactual] == [(last_fire + 120, now)]
         assert restarted.tick(now=now + 2) == []
+
+    @pytest.mark.parametrize("cursor", [None, "invalid"])
+    def test_catch_up_tolerates_invalid_saved_cursor(self, tmp_path: Path, cursor: str | None) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Every minute", misfire_policy="catch_up")
+        schedule_path = store.directory / f"{schedule.id}.json"
+        data = json.loads(schedule_path.read_text(encoding="utf-8"))
+        data["extra"]["fire_cursor_at"] = cursor
+        schedule_path.write_text(json.dumps(data), encoding="utf-8")
+        supervisor = ScheduleSupervisor(store, lambda _event: None, _StubAuditLog(), catch_up_limit=1)
+        now = int(datetime(2030, 1, 1, 12, tzinfo=UTC).timestamp())
+
+        assert [receipt.fire_time for receipt in supervisor.tick(now=now) if receipt.dispatched] == [now]
+        receipts = supervisor.tick(now=now + 180)
+        assert [receipt.skipped_windows for receipt in receipts if receipt.counterfactual] == [(now + 120, now + 180)]
 
 
 @pytest.mark.parametrize(("previous_year", "next_year"), [(2024, 2028), (2096, 2104)])

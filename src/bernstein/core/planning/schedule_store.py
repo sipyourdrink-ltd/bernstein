@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 import time
 from dataclasses import asdict, dataclass, field, replace
@@ -89,6 +90,15 @@ class Schedule:
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
     params_schema: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     params: dict[str, Any] = field(default_factory=dict[str, Any])
+
+    @property
+    def fire_cursor_at(self) -> float:
+        """Return the saved cursor, treating legacy or malformed values as absent."""
+        try:
+            value = float(self.extra.get(FIRE_CURSOR_KEY, 0.0))
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        return value if math.isfinite(value) else 0.0
 
 
 class CronParseError(ValueError):
@@ -493,7 +503,7 @@ class ScheduleStore:
         if schedule is None:
             return
         extra = dict(schedule.extra)
-        if float(extra.get(FIRE_CURSOR_KEY, 0.0)) >= cursor_epoch:
+        if schedule.fire_cursor_at >= cursor_epoch:
             return
         extra[FIRE_CURSOR_KEY] = cursor_epoch
         self._write(
@@ -518,7 +528,7 @@ class ScheduleStore:
             return
         extra = {
             **schedule.extra,
-            FIRE_CURSOR_KEY: max(float(schedule.extra.get(FIRE_CURSOR_KEY, 0.0)), skipped_windows[-1]),
+            FIRE_CURSOR_KEY: max(schedule.fire_cursor_at, skipped_windows[-1]),
             PENDING_CATCH_UP_RECEIPT_KEY: skipped_windows,
         }
         self._write(replace(schedule, extra=extra))

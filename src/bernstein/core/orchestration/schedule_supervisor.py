@@ -173,14 +173,7 @@ def _last_processed_window(schedule: Schedule) -> float:
     Scheduling reads this; operator-facing surfaces read ``last_fire_at``,
     which only ever records a window that actually dispatched.
     """
-    from bernstein.core.planning.schedule_store import FIRE_CURSOR_KEY
-
-    raw = (schedule.extra or {}).get(FIRE_CURSOR_KEY, 0.0)
-    try:
-        cursor = float(raw)
-    except (TypeError, ValueError):
-        cursor = 0.0
-    return max(float(schedule.last_fire_at), cursor)
+    return max(float(schedule.last_fire_at), schedule.fire_cursor_at)
 
 
 def _matches_day(parsed: ParsedCron, dt: datetime) -> bool:
