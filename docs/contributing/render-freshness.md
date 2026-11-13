@@ -124,6 +124,10 @@ holds for these too. They used to be outside the capture script entirely —
 photographs of a live run, carried forward as `adopted` on every rebind — which
 is exactly the rot the gate exists to prevent, so the exemption is closed.
 
+All published web UI renders use the same 1440 by 900 viewport at device
+scale 1 in light mode. Capture runs use temporary demo projects and an
+isolated Bernstein server environment.
+
 When the bundle moves and the renders do not, the check fails and names the
 renders to re-capture. **What this proves:** nobody shipped a UI change while
 leaving the published screenshots behind. **What it does not prove:** that any
