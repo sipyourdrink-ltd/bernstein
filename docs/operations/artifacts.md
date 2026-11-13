@@ -64,9 +64,9 @@ coding task.
 
 ### Declaring one
 
-The contract is declared where tasks are declared (issue #3110). One strict
-parser (`parse_artifact_spec` in `core/tasks/artifacts.py`) sits behind every
-surface, so they cannot drift.
+The contract is declared where tasks are declared (issue #3110). Plan, backlog,
+CLI, and API declarations share one strict parser (`parse_artifact_spec` in
+`core/tasks/artifacts.py`). Scenario templates use a separate loader, noted below.
 
 **On a plan step** (`stages[].steps[].artifact_spec`):
 
@@ -83,6 +83,30 @@ stages:
             - type: hash_stable
               value: 'sha256:...'
 ```
+
+**On a scenario task template** (`tasks[].artifact_spec`):
+
+```yaml
+id: weekly-report
+name: Weekly report
+tasks:
+  - title: Produce the weekly report
+    role: analyst
+    artifact_spec:
+      kind: report
+      output_path: reports/weekly.md
+```
+
+Set `kind` to `report` for a report, or `dataset` for JSONL data (for example,
+`output_path: out/rows.jsonl`). Use a workdir-relative `output_path` for the
+file the agent should produce. Invoking the scenario passes each template's
+`artifact_spec` through to the created task, including the `POST /tasks` payload
+for a non-default spec. See the [routine scenarios guide](../routine-scenarios.md)
+for the invocation flow.
+
+The scenario loader uses `ArtifactSpec.from_dict`, not the strict declaration
+parser: an omitted spec or an invalid kind falls back to `code_diff`. The default
+spec is omitted from the task-create payload.
 
 **On a backlog entry** (YAML frontmatter, same block):
 
@@ -105,19 +129,19 @@ bernstein add-task "Produce the weekly report" \
   --artifact-criterion 'hash_stable:sha256:...'
 ```
 
-The declared block accepts exactly four keys - `kind` (required), `output_path`
-(required for every kind except `code_diff`), `canonicalisation` (optional; only
-the kind's default rule ships), and `criteria` (optional list of
-`{type, value}`). `output_path` is where the agent writes its deliverable; it
-must stay workdir-relative. A task constructed through the Python API may leave
-it empty to get the `.sdd/outbox/<task-id>/artifact` default, but a declaration
-names it explicitly.
+For plan, backlog, CLI, and API declarations, the block accepts exactly four keys -
+`kind` (required), `output_path` (required for every kind except `code_diff`),
+`canonicalisation` (optional; only the kind's default rule ships), and `criteria`
+(optional list of `{type, value}`). `output_path` is where the agent writes its
+deliverable; it must stay workdir-relative. A task constructed through the Python
+API may leave it empty to get the `.sdd/outbox/<task-id>/artifact` default, but a
+declaration names it explicitly.
 
-**Malformed declarations are refused at load, with the offending field
-named.** An unknown kind, a missing or workdir-escaping `output_path`, an
-unknown key, or a malformed criterion stops the plan load (or refuses the
-backlog file / CLI invocation / `POST /tasks` body) - it never silently becomes
-a `code_diff` task that completes on a git SHA. A refused backlog file is
+**Malformed plan, backlog, CLI, and API declarations are refused at load, with
+the offending field named.** An unknown kind, a missing or workdir-escaping
+`output_path`, an unknown key, or a malformed criterion stops the plan load (or
+refuses the backlog file / CLI invocation / `POST /tasks` body) - it never silently
+becomes a `code_diff` task that completes on a git SHA. A refused backlog file is
 skipped with the field named in the log while the rest of the scan continues.
 The same validated payload rides `POST /tasks` (`artifact_spec` on the create
 body) and comes back on every task response, so the declaration survives the
