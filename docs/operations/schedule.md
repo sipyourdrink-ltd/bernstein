@@ -279,17 +279,28 @@ the live schedule store.
 
 ### Recurrence rules: cron and RFC-5545 RRULE
 
-The recurrence rule that produced the fire instant is folded into the
-projection, so the `graph_hash` distinguishes a daily digest from an
-hourly one. Both forms are accepted and canonicalised (part order,
-`BY*` list order, and case do not perturb the hash):
+The recurrence rule that produced the fire instant is canonicalised before
+it is folded into the schedule projection. Equivalent spellings therefore
+produce identical canonical text and the same projection identity:
 
-- cron: `0 9 * * *` or `cron:0 9 * * *`;
-- RRULE: `RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=9` (RFC-5545 subset).
+- cron: `0 9 * * *` and `cron:0 9 * * *` both become
+  `cron:0 9 * * *`;
+- RRULE field and weekday order: `RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR`
+  and `RRULE:BYDAY=FR,MO,WE;FREQ=WEEKLY` both become
+  `RRULE:FREQ=WEEKLY;BYDAY=FR,MO,WE`.
 
-Canonicalisation lives in
+RRULE parts are emitted in a fixed order, and weekday values in `BYDAY` are
+sorted. With blank recurrence input, the `recurrence` field is omitted from
+the projected identity; it is not included with an empty value. A malformed
+nonempty rule raises `RecurrenceParseError` instead of being projected. For
+example, the duplicate field in `RRULE:FREQ=DAILY;FREQ=WEEKLY` is rejected.
+
+The recurrence can distinguish otherwise identical schedules (for example,
+a daily rule from an hourly one). Canonicalisation lives in
 `src/bernstein/core/orchestration/recurrence.py` and adds no runtime
-dependency (the in-tree cron parser plus a small RRULE part parser).
+dependency (the in-tree cron parser plus a small RRULE part parser). The
+behavior is covered by `tests/unit/test_recurrence.py` and
+`tests/unit/test_schedule_projection_2302.py`.
 
 ### Webhook and file-change triggers
 
