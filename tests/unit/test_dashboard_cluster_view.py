@@ -380,6 +380,33 @@ async def test_invalid_bandit_fields_do_not_break_expert_cluster_view(monkeypatc
         assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
 
 
+@pytest.mark.asyncio
+async def test_large_cost_values_do_not_break_cluster_dashboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/costs": {
+                "spent_usd": 0.01,
+                "budget_usd": 1.0,
+                "percentage_used": 1e308,
+                "per_model": {"model": 1e20, "negative": -1e20},
+            },
+        },
+    )
+    frame = _fetch_all()
+    monkeypatch.setattr(dashboard_app, "_fetch_all", lambda: frame)
+    app = BernsteinApp()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_toggle_expert()
+        app._apply_data(frame)
+        await pilot.pause()
+        assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
+
+
 def test_invalid_dashboard_status_and_cost_numbers_are_safe(monkeypatch: pytest.MonkeyPatch) -> None:
     _serve(
         monkeypatch,

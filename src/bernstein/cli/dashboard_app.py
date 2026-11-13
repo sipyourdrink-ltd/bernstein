@@ -946,7 +946,7 @@ class BernsteinApp(App[None]):
         pct = float(costs.get("percentage_used", 0.0))
         bar.spent_usd = spent
         bar.budget_usd = budget
-        bar.budget_pct = pct * 100
+        bar.budget_pct = pct
         bar.per_model = costs.get("per_model", {})
         terminal_tasks = max(1, bar.done + bar.failed) if (bar.done + bar.failed) > 0 else 0
         bar.avg_cost_per_task = spent / terminal_tasks if terminal_tasks else 0.0
@@ -1005,14 +1005,14 @@ class BernsteinApp(App[None]):
         elif pct >= 0.95 and not getattr(self, "_alert_95", False):
             self._alert_95 = True  # type: ignore[attr-defined]
             self.notify(
-                f"Budget critical: ${spent:.2f} / ${budget:.2f} ({int(pct * 100)}%)",
+                f"Budget critical: ${spent:.2f} / ${budget:.2f} ({pct:.0%})",
                 severity="error",
                 timeout=10,
             )
         elif pct >= 0.80 and not getattr(self, "_alert_80", False):
             self._alert_80 = True  # type: ignore[attr-defined]
             self.notify(
-                f"Budget warning: ${spent:.2f} / ${budget:.2f} ({int(pct * 100)}%)",
+                f"Budget warning: ${spent:.2f} / ${budget:.2f} ({pct:.0%})",
                 severity="warning",
                 timeout=8,
             )

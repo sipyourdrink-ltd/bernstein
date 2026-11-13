@@ -414,14 +414,14 @@ class BigStats(Static):
             t.append(f" / ${self.budget_usd:.2f}", style="bold")
             # Budget bar
             bw = 20
-            bp = min(self.budget_pct, 1.0)
+            bp = min(1.0, max(0.0, self.budget_pct))
             bf = int(bp * bw)
             bar_color = f"bold {budget_color(self.budget_pct)}"
             t.append("  \u2590", style="dim")
             for i in range(bw):
                 t.append("\u2588" if i < bf else "\u2591", style=bar_color if i < bf else "dim")
             t.append("\u258c", style="dim")
-            t.append(f" {int(self.budget_pct * 100)}%", style=bar_color)
+            t.append(f" {self.budget_pct:.0%}", style=bar_color)
 
         # Burn rate
         if self.elapsed > 0 and self.spent_usd > 0:
