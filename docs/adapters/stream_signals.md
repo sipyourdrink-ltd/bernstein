@@ -12,24 +12,41 @@ can join the same event bus without inventing a per-adapter event API.
 
 ## Grammar
 
-Every canonical signal lives on a single line.
+### Canonical producer format
+
+Every canonical signal lives on a single line. Producers emit this compact
+form (the same form returned by `format_signal`):
 
 ```
-BERNSTEIN:<KIND>[ <json-object>]
+BERNSTEIN:<KIND>[ <compact-json-object>]
 ```
 
-Rules:
+For example, canonical output for a question with a payload is:
 
-| Rule | Notes |
+```
+BERNSTEIN:QUESTION {"id":"q-1","options":["yes","no"],"question":"Proceed?"}
+```
+
+| Rule | Canonical form |
 |---|---|
 | Prefix | Literal `BERNSTEIN:` (case-sensitive, colon included). |
-| Kind | One of the canonical kinds below, ALL-CAPS. |
+| Kind | One of the canonical kinds below, ALL-CAPS, immediately after the prefix. |
 | Separator | One space between kind and payload. |
-| Payload | Optional JSON **object** (never an array, scalar, or `null`). |
+| Payload | Optional compact JSON **object** (never an array, scalar, or `null`). |
 | Encoding | UTF-8. Single line; no embedded newlines. |
 
-Lines that don't match this grammar are treated as plain stdout and
-ignored by the parser.
+### Whitespace accepted by the parser
+
+`parse_signal` is more tolerant than the canonical producer format: it
+strips surrounding whitespace, accepts whitespace after the prefix, and
+accepts whitespace between the kind and payload. For example, this padded
+input parses to the same kind and payload as the canonical question above:
+
+`  BERNSTEIN:   QUESTION    {"id": "q-1", "options": ["yes", "no"], "question": "Proceed?"}  `
+
+This tolerance does not make the prefix case-insensitive, and any supplied
+payload must still decode to a JSON object. Lines that do not parse as a
+recognized signal are treated as plain stdout and ignored.
 
 ## Canonical kinds
 
