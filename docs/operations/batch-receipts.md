@@ -1,7 +1,8 @@
 # Signed batch pass receipts
 
-A batch pass walks a flat list of items (accounts, files, records) and the
-batch ledger chains the successes so a resumed pass skips them. The ledger
+A batch (`batch_id`) is the caller's collection of items, and a pass
+(`pass_id`) is one traversal of that collection. The batch ledger chains the
+successes so a resumed pass skips them. The ledger
 answers "which items are done". It says nothing checkable about the rest of
 the pass: which items failed and on what error, how many attempts each took,
 what the worker exited with, what its output ended on. A pass that exited 0
