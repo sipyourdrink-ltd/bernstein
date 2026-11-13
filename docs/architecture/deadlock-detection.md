@@ -21,16 +21,20 @@ feature - an agent editing the same file too many times in a window - not
 covered on this page) and file-lock waits. For deadlocks specifically:
 
 - `record_lock_wait(waiting_agent_id, wanted_files, held_by, *, lock_timestamps=None)`
-  records that an agent is blocked on files held by other agents, and
-  remembers when each blocking lock was acquired.
-- `detect_deadlocks(lock_mgr)` builds a directed wait-for graph
-  (`waiting_agent → holder_agent`) from the recorded waits plus the live
-  state of `FileLockManager.all_locks()`, then runs an iterative DFS
-  (`_find_cycles`) to find every simple cycle.
-- For each cycle found, `_oldest_lock_holder()` picks the agent holding the
-  lock with the smallest `locked_at` timestamp as the **victim** - the
-  rationale being that releasing the longest-held lock unblocks the agent
-  that has been waiting relatively more of the deadlock's lifetime.
+  records the files an agent wants and stores supplied acquisition timestamps
+  for blocking locks.
+- `detect_deadlocks(lock_mgr)` rebuilds a directed wait-for graph
+  (`waiting_agent → holder_agent`) on every check: it resolves each recorded
+  wanted file against the current state of `FileLockManager.all_locks()`, then
+  runs an iterative DFS (`_find_cycles`) to find every simple cycle. A wanted
+  file that is no longer locked, or is now held by the waiting agent itself,
+  contributes no edge. The stored wait does not freeze the owner from when the
+  wait was recorded.
+- For each cycle found, `_oldest_lock_holder()` picks the participant holding
+  the current lock with the smallest `locked_at` timestamp as the **victim** -
+  the rationale being that releasing the longest-held lock unblocks the agent
+  that has been waiting relatively more of the deadlock's lifetime. Reports
+  with the same participant set are deduplicated, regardless of cycle order.
 - `clear_wait(agent_id)` removes an agent's wait-for entries; callers are
   expected to call it when an agent acquires its locks, exits, or is
   killed, so stale entries don't produce phantom deadlock reports.
@@ -46,7 +50,7 @@ later in the tick after budget-violation checks).
 
 ## The Wait-For Graph
 
-`detect_deadlocks()` builds its cycle-finding graph using waits registered by `record_lock_wait()`. In the orchestrator, `Orchestrator._check_file_overlap` sees every file lock conflict when considering task batches. It defers batches when files are already locked, and records this wait in the `LoopDetector`. The wait is cleared when the batch is successfully claimed and spawned by an agent (in `task_lifecycle.py`), and when recovery logic releases an agent’s locks (for example, deadlock victim selection in `check_loops_and_deadlocks()`). This end-to-end wiring ensures that the wait-for graph stays current.
+`detect_deadlocks()` builds its cycle-finding graph using wanted files registered by `record_lock_wait()`, but resolves each file's owner from the live lock table on every check. In the orchestrator, `Orchestrator._check_file_overlap` sees every file lock conflict when considering task batches. It defers batches when files are already locked, and records this wait in the `LoopDetector`. For example, if A holds `foo` and waits for `bar` held by B, while B waits for `foo`, the current graph has A → B → A. If A releases `foo` before the next check, B's recorded wait for `foo` has no current owner, so B → A disappears and the cycle is gone (A → B may remain). Likewise, if `foo` is now held by B, B's own wait contributes no edge. The wait is cleared when the batch is successfully claimed and spawned by an agent (in `task_lifecycle.py`), and when recovery logic releases an agent’s locks (for example, deadlock victim selection in `check_loops_and_deadlocks()`).
 
 ## Source
 
