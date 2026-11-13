@@ -22,7 +22,8 @@ day one.
 
 The primitive is a single dataclass with `write` / `read` / `list_keys`
 (and `clear`) methods. No third-party dependencies, no schema migrations, no
-locking primitives beyond what the POSIX append gives.
+locking primitives beyond what the POSIX append gives. A key names a stream; each
+write appends one event to that stream. Each stream has one JSONL file.
 
 ```python
 from pathlib import Path
