@@ -440,7 +440,6 @@ export default function Tasks() {
   const [activeTab, setActiveTab] = useState<DetailTab>('Summary');
   const [createFocus, setCreateFocus] = useState<'title' | 'prompt' | null>(null);
   const createTrigger = useRef<HTMLButtonElement | null>(null);
-  const createFromEmptyState = useRef(false);
   const drawerCreateTrigger = useRef<HTMLElement | null>(null);
   const headerCreateButton = useRef<HTMLButtonElement | null>(null);
 
@@ -542,8 +541,7 @@ export default function Tasks() {
   const selected = items.find((t) => t.id === selectedId) ?? null;
 
   const openCreate = (focus: 'title' | 'prompt', trigger: HTMLButtonElement, fromEmptyState = false) => {
-    createTrigger.current = trigger;
-    createFromEmptyState.current = fromEmptyState;
+    createTrigger.current = fromEmptyState ? headerCreateButton.current : trigger;
     setCreateFocus(focus);
   };
 
@@ -622,9 +620,9 @@ export default function Tasks() {
       {createFocus && (
         <CreateTaskDialog
           initialFocus={createFocus}
-          onRestoreFocus={(outcomeUnknown) => {
+          onRestoreFocus={() => {
             const trigger = createTrigger.current;
-            if (trigger?.isConnected && !(outcomeUnknown && createFromEmptyState.current)) {
+            if (trigger?.isConnected) {
               trigger.focus();
             } else {
               headerCreateButton.current?.focus();
@@ -635,7 +633,7 @@ export default function Tasks() {
             if (outcomeUnknown) void refreshAfterCreate();
           }}
           onCreated={(taskId) => {
-            drawerCreateTrigger.current = createFromEmptyState.current ? headerCreateButton.current : createTrigger.current;
+            drawerCreateTrigger.current = createTrigger.current;
             setCreateFocus(null);
             setActiveTab('Summary');
             setSelectedId(taskId);

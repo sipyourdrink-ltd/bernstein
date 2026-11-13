@@ -27,7 +27,7 @@ export function CreateTaskDialog({
   onCreated,
 }: {
   initialFocus: 'title' | 'prompt';
-  onRestoreFocus: (outcomeUnknown: boolean) => void;
+  onRestoreFocus: () => void;
   onClose: (outcomeUnknown: boolean) => void;
   onCreated: (taskId: string) => void;
 }) {
@@ -44,7 +44,7 @@ export function CreateTaskDialog({
       try {
         const response = await apiPost<{ id?: unknown }>('/tasks', task, { signal: AbortSignal.timeout(15_000) });
         const id = response?.id;
-        if (typeof id === 'string' && id.length > 0 && id === id.trim()) return id;
+        if (typeof id === 'string' && /^[a-f0-9]{12}$/.test(id)) return id;
       } catch (error) {
         if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
           throw error;
@@ -99,7 +99,7 @@ export function CreateTaskDialog({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            if (!created.current) onRestoreFocus(outcomeUnknown);
+            if (!created.current) onRestoreFocus();
           }}
         >
           <Dialog.Title className="text-h2">Create task</Dialog.Title>
