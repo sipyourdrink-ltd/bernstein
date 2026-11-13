@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
-from bernstein.core.agents import project_context as _project_context
 from bernstein.core.spawn_prompt import (
     _DIR_CACHE,
     _FILE_CACHE,
@@ -23,6 +22,7 @@ from bernstein.core.spawn_prompt import (
     _render_prompt,
 )
 
+from bernstein.core.agents import project_context as _project_context
 from bernstein.templates.renderer import TemplateError
 
 
