@@ -35,7 +35,7 @@ function readRecoveryId(): string | null {
 function rememberRecoveryId(id: string | null, rejection?: string) {
   inMemoryRecoveryId = id;
   recoveryRejection = rejection;
-  if (!id) recoveryDraft = null;
+  if (!id && !rejection) recoveryDraft = null;
   try {
     if (id) window.sessionStorage.setItem(recoveryKey, id);
     else window.sessionStorage.removeItem(recoveryKey);
@@ -78,7 +78,9 @@ export function CreateTaskDialog({
   const [validationError, setValidationError] = useState('');
   const storedRecoveryId = useSyncExternalStore(subscribeToRecovery, readRecoveryId);
   const rejection = useSyncExternalStore(subscribeToRecovery, () => recoveryRejection);
-  const [initialDraft] = useState(() => recoveryDraft?.id === storedRecoveryId ? recoveryDraft : null);
+  const [initialDraft] = useState(() =>
+    recoveryDraft && (recoveryDraft.id === storedRecoveryId || rejection) ? recoveryDraft : null,
+  );
   const ownCreateId = useRef<string | null>(null);
   const recoveryId = ownCreateId.current === storedRecoveryId && submitting.current ? null : storedRecoveryId;
   const createInFlight = useIsMutating({ mutationKey: createMutationKey }) > 0;
@@ -141,8 +143,8 @@ export function CreateTaskDialog({
 
   useLayoutEffect(() => {
     if (recoveryId) checkButton.current?.focus();
-    else if (rejection) titleInput.current?.focus();
-  }, [recoveryId, rejection]);
+    else if (rejection && !busy) titleInput.current?.focus();
+  }, [recoveryId, rejection, busy]);
 
   function close() {
     if (!busy && !submitting.current && !checking.current) onClose(recoveryId !== null);

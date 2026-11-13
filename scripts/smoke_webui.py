@@ -565,6 +565,7 @@ def check_task_creation_survives_route_remount(page: Page, base: str) -> None:
         assert len(attempts) == len(pending) == 1
         pending[0].fulfill(status=400, json={"detail": "Choose the qa role."})
         expect(form.get_by_role("alert")).to_have_text("Choose the qa role.")
+        expect(form.get_by_label("Title")).to_be_focused()
         expect(form.get_by_label("Title")).to_have_value(title)
         role = form.get_by_label("Role (optional)")
         expect(role).to_be_enabled()
@@ -580,6 +581,42 @@ def check_task_creation_survives_route_remount(page: Page, base: str) -> None:
         page.keyboard.press("Escape")
     finally:
         page.unroute(tasks_url, hold_create)
+
+
+def check_task_creation_rejected_while_away(page: Page, base: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = "Task rejected while the operator is away"
+    prompt = "Keep the original draft available for correction."
+    pending: list[Route] = []
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    header.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill(prompt)
+    form.get_by_label("Role (optional)").fill("incorrect")
+    page.route(tasks_url, lambda route: pending.append(route), times=1)
+    try:
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        page.go_back()
+        expect(page).to_have_url(f"{base}/ui/settings")
+        assert len(pending) == 1
+        pending[0].fulfill(status=400, json={"detail": "Choose the qa role."})
+        page.wait_for_function("sessionStorage.getItem('bernstein.unconfirmed-task-id') === null")
+        page.go_forward()
+        expect(page).to_have_url(f"{base}/ui/tasks")
+        header.click()
+        expect(form.get_by_role("alert")).to_have_text("Choose the qa role.")
+        expect(form.get_by_label("Title")).to_be_focused()
+        expect(form.get_by_label("Title")).to_have_value(title)
+        expect(form.get_by_label("Prompt")).to_have_value(prompt)
+        expect(form.get_by_label("Role (optional)")).to_have_value("incorrect")
+        expect(form.get_by_role("button", name="Check task", exact=True)).to_have_count(0)
+        form.get_by_role("button", name="Cancel", exact=True).click()
+    finally:
+        page.unroute(tasks_url)
 
 
 def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
@@ -840,6 +877,7 @@ def main() -> None:
             check_task_creation_during_initial_list(page, base, headers)
             check_unconfirmed_task_lookup(page, base, headers)
             check_task_creation_survives_route_remount(page, base)
+            check_task_creation_rejected_while_away(page, base)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)
