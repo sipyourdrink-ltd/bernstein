@@ -3,10 +3,12 @@
 **How do I write a plan YAML so Bernstein executes it?**
 
 A plan is a declarative YAML file that describes a goal as a directed graph
-of tasks. Stages run sequentially (with explicit `depends_on` overrides),
-steps inside a stage run in parallel. Bernstein loads the plan, validates
-the graph, materialises each step as a `Task` row, and lets the orchestrator
-schedule it. Anything you can do at the CLI by typing
+of tasks. Stage ordering is explicit: a stage's tasks depend on tasks in the
+stages named in its `depends_on` field; a stage gets no implicit prerequisite
+from its position in the file. Steps inside a stage can run in parallel,
+subject to available workers and other scheduling constraints. Bernstein loads
+the plan, validates the graph, materialises each step as a `Task` row, and lets
+the orchestrator schedule it. Anything you can do at the CLI by typing
 `bernstein run --goal "..."` you can also describe declaratively as a plan
 and re-run with `bernstein run --from-plan path/to/plan.yaml` - same
 contract, reproducible inputs.
@@ -25,11 +27,14 @@ The runtime model is simple:
 - A **plan** has one or more **stages**.
 - A **stage** has one or more **steps**.
 - A **step** becomes a **task** the orchestrator schedules onto an agent.
-- **Stages** run sequentially by default; declare `depends_on` to skip the
-  default ordering or to express cross-stage parallelism.
-- **Steps within a stage** run in parallel - the loader marks each step in
-  stage `B` as `depends_on` every step title in stages `B.depends_on`, so
-  no work in `B` starts until all of `A`'s steps are done.
+- **Stages** have no implicit ordering from their position in the plan. Every
+  step in a stage depends on every step in the stages named in its
+  `depends_on`; without that field, the stage gets no prerequisite from any
+  earlier stage. Whether ready steps actually run in parallel still depends
+  on available workers and other scheduling constraints.
+- **Steps within a stage** can run in parallel - the loader marks each step in
+  stage `B` as depending on every step title in stages `B.depends_on`, so
+  no work in `B` starts until all of the named predecessor stages' steps are done.
 
 This is the same data model the manager agent emits when planning from a
 free-text goal, just expressed by hand.
@@ -46,7 +51,7 @@ Source-of-truth files:
 | Key | Type | Required | Meaning |
 |-----|------|----------|---------|
 | `name` | string | yes | Short plan name; appears in logs and is used as the orchestration goal. |
-| `stages` | list | yes | Ordered execution stages (≥1). |
+| `stages` | list | yes | Stages listed in plan order; cross-stage prerequisites are declared with `depends_on`. |
 | `description` | string | no | Free-text summary of what the plan changes. |
 | `cli` | string | no | Adapter for the run (`auto`, `claude`, `codex`, ...); the `--cli` flag wins. Per-step `cli` overrides this. |
 | `budget` | string \| number | no | Spending cap (`"$10"`, `5.00`). `bernstein run --from-plan` applies it as the run cost cap; `--budget` / `--max-cost-usd` on the command line wins. |
@@ -341,8 +346,8 @@ nodes:
         condition: "status == 'done'"
 ```
 
-Use the plain plan format for linear or sequential-stage work; reach for
-the workflow DSL only when you need conditional edges or retry loops.
+Use the plain plan format for linear work with explicit stage dependencies;
+reach for the workflow DSL only when you need conditional edges or retry loops.
 
 ### Context files and the recorded attachment set
 
@@ -373,7 +378,24 @@ see [operations/task_format.md](../operations/task_format.md). Source:
 
 ## Working example: small backend feature
 
-A minimal plan with three stages and a dependency override:
+A minimal two-stage plan makes the predecessor explicit:
+
+```yaml
+name: two-step
+stages:
+  - name: prepare
+    steps:
+      - title: Prepare inputs
+  - name: deliver
+    depends_on: [prepare]
+    steps:
+      - title: Deliver result
+```
+
+Without `depends_on: [prepare]`, `deliver` would receive no prerequisite
+from `prepare`, regardless of their order in this file.
+
+A larger plan with three stages and explicit dependencies:
 
 ```yaml
 name: rate-limit-api
