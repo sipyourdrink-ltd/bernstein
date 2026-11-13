@@ -103,7 +103,7 @@ class TestCleanupAllStaleWithLockDetection:
         def fake_cleanup(self: WorktreeManager, sid: str) -> None:
             cleanups.append(sid)
 
-        with patch.object(WorktreeManager, "cleanup", fake_cleanup):
+        with patch.object(WorktreeManager, "_cleanup_locked", fake_cleanup):
             mgr = WorktreeManager(repo_root=tmp_path)
             cleaned = mgr.cleanup_all_stale()
 
@@ -130,7 +130,7 @@ class TestCleanupAllStaleWithLockDetection:
             def fake_cleanup(self: WorktreeManager, sid: str) -> None:
                 cleanups.append(sid)
 
-            with patch.object(WorktreeManager, "cleanup", fake_cleanup):
+            with patch.object(WorktreeManager, "_cleanup_locked", fake_cleanup):
                 mgr = WorktreeManager(repo_root=td)
                 cleaned = mgr.cleanup_all_stale()
 
@@ -154,7 +154,7 @@ class TestCleanupAllStaleWithLockDetection:
         def fake_cleanup(self: WorktreeManager, sid: str) -> None:
             cleanups.append(sid)
 
-        with patch.object(WorktreeManager, "cleanup", fake_cleanup):
+        with patch.object(WorktreeManager, "_cleanup_locked", fake_cleanup):
             mgr = WorktreeManager(repo_root=tmp_path)
             cleaned = mgr.cleanup_all_stale()
 
