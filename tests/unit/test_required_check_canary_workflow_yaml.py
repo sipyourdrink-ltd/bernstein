@@ -8,8 +8,9 @@ weaken the canary AND drift the required context in the same PR.
 
 Invariants exercised here:
 
-1. ``ci.yml`` exposes a ``ci-gate`` job whose ``name:`` is exactly
-   ``CI gate``.
+1. ``ci.yml`` exposes a ``ci-gate`` job whose ``name:`` resolves to
+   ``CI gate`` on ready pull requests and merge groups, with a separate
+   name for skipped draft pull requests.
 2. Exactly two files under ``.github/workflows/*.yml`` emit a check-run
    named ``CI gate``: ``ci.yml`` (real aggregator) and
    ``ci-gate-stub.yml`` (synthetic emitter for PRs whose diff is fully
@@ -60,6 +61,10 @@ WORKFLOWS_DIR = Path(".github/workflows")
 
 REQUIRED_CONTEXT = "CI gate"
 REQUIRED_JOB_KEY = "ci-gate"
+DRAFT_AWARE_GATE_NAME = (
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.draft"
+    f" && 'CI deferred (draft)' || '{REQUIRED_CONTEXT}' }}}}"
+)
 RPM_SMOKE_JOB_KEY = "install-smoke-rpm"
 TOPOLOGY_REPORT_PATH = "docs/operations/ci-topology.md"
 TOPOLOGY_REPORT_UNIGNORE = f"!{TOPOLOGY_REPORT_PATH}"
@@ -107,14 +112,14 @@ def test_ci_gate_job_exists(ci_doc: dict[str, object]) -> None:
     )
 
 
-def test_ci_gate_name_is_literal_required_context(ci_doc: dict[str, object]) -> None:
+def test_ci_gate_name_preserves_the_required_context_outside_drafts(ci_doc: dict[str, object]) -> None:
     jobs = ci_doc.get("jobs")
     assert isinstance(jobs, dict)
     job = jobs[REQUIRED_JOB_KEY]
     assert isinstance(job, dict)
-    assert job.get("name") == REQUIRED_CONTEXT, (
-        f"ci-gate.name must equal {REQUIRED_CONTEXT!r}. "
-        "Branch protection's required context is keyed on this exact string."
+    assert job.get("name") == DRAFT_AWARE_GATE_NAME, (
+        f"ci-gate must publish {REQUIRED_CONTEXT!r} on ready PRs and every merge group. "
+        "A skipped draft must use a different name because GitHub treats skipped jobs as successful."
     )
 
 
@@ -122,7 +127,7 @@ def test_test_macos_name_may_be_templated(ci_doc: dict[str, object]) -> None:
     """`test-macos` is no longer pinned to a literal `name:`.
 
     Branch protection's required context is `CI gate` alone (see
-    `test_ci_gate_name_is_literal_required_context` above), not this job's
+    `test_ci_gate_name_preserves_the_required_context_outside_drafts` above), not this job's
     display name, so it may template like the `test` matrix job does (e.g.
     to carry a shard index). This test exists so a future change cannot
     silently reintroduce the stale literal-name lock without the removal
@@ -288,6 +293,23 @@ def test_canary_asserts_required_context_name(canary_text: str) -> None:
     """The literal expected context names must appear in the canary env block."""
     assert f'REQUIRED_CONTEXT: "{REQUIRED_CONTEXT}"' in canary_text
     assert f'REQUIRED_JOB_KEY: "{REQUIRED_JOB_KEY}"' in canary_text
+
+
+def test_canary_verifier_accepts_the_workflow_contract(canary_doc: dict[str, object]) -> None:
+    jobs = canary_doc["jobs"]
+    assert isinstance(jobs, dict)
+    step = next(s for s in jobs["verify"]["steps"] if s.get("name") == "Verify required-check invariants")
+    match = re.search(r"<<'PY'\n(.*?)\n\s*PY\b", step["run"], re.DOTALL)
+    assert match is not None, "the canary verifier must keep its Python heredoc"
+    proc = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(match.group(1))],
+        env=step["env"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -520,6 +542,28 @@ def test_ci_gate_rollup_still_fails_on_real_failure_under_merge_group(
         "CI gate roll-up must FAIL when a real required job fails under "
         f"merge_group.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )
+
+
+@pytest.mark.parametrize(
+    ("event", "planner_result", "expected"),
+    [
+        ("merge_group", "skipped", 0),
+        ("push", "skipped", 0),
+        ("workflow_dispatch", "skipped", 0),
+        ("pull_request", "skipped", 1),
+        ("pull_request", "failure", 1),
+        ("merge_group", "cancelled", 1),
+    ],
+)
+def test_ci_gate_rollup_accepts_planner_skip_only_outside_pull_requests(
+    ci_doc: dict[str, object], tmp_path: Path, event: str, planner_result: str, expected: int
+) -> None:
+    needs = dict(_MERGE_GROUP_NEEDS)
+    needs["plan-affected-tests"] = {"result": planner_result}
+    needs["test-macos"] = {"result": "success"}
+    needs["adapter-integration-macos"] = {"result": "success"}
+    proc = _run_rollup(tmp_path, _ci_gate_rollup_script(ci_doc), needs=needs, event=event, plan={})
+    assert proc.returncode == expected, proc.stdout + proc.stderr
 
 
 def test_ci_gate_rollup_passes_on_push(ci_doc: dict[str, object], tmp_path: Path) -> None:
@@ -765,6 +809,8 @@ def _merge_group_context_emitters() -> dict[str, list[str]]:
                 continue
             published = _api_published_contexts(body)
             name = body.get("name")
+            if name == DRAFT_AWARE_GATE_NAME:
+                name = REQUIRED_CONTEXT
             if isinstance(name, str):
                 published.add(name)
             for context in published:
@@ -780,7 +826,7 @@ def test_required_context_has_a_merge_group_emitter(context: str) -> None:
         f"No workflow publishes the required context {context!r} on a "
         "`merge_group` event. Enabling the merge queue would wedge every merge: "
         "the queue blocks forever on a required check that never reports. Add a "
-        "`merge_group:` trigger and either a job whose `name:` is exactly this "
+        "`merge_group:` trigger and either a job whose `name:` resolves to this "
         "context, or a job that publishes it via scripts/publish_required_check.py. "
         f"Contexts currently reachable on merge_group: {sorted(emitters)}"
     )
