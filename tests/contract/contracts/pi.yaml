@@ -5,6 +5,8 @@
 # suite (tests/unit/test_adapter_pi.py). `--no-extensions` keeps the
 # operator's own pi extensions (and the MCP servers they add) out of a
 # spawned agent (#5965); a pi release that drops it must fail here.
+# `--mode` (json) keeps the runner log growing while the agent works, which
+# is the only liveness signal pi gives (#6943).
 adapter: pi
 binary: pi
 install:
@@ -18,6 +20,7 @@ auth:
   basis: api_key
 required_flags:
   - "--no-extensions"
+  - "--mode"
 required_subcommands: []
 expected_models:
   command: []

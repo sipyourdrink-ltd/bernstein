@@ -183,6 +183,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `openhands.py`                  | OpenHands CLI adapter |
 | `osv_scanner.py`                | Feed-pinned OSV-Scanner adapter and SARIF normalization |
 | `pi.py`                         | Pi (pi-coding-agent) CLI adapter |
+| `pi_json_launcher.py`           | Run ``pi --mode json`` with pi's own text-mode exit semantics (issue #6943) |
 | `plandex.py`                    | Plandex CLI adapter |
 | `plugin_sdk.py`                 | Adapter plugin SDK for third-party agent integration |
 | `python_runtime.py`             | Generic Python-invoked agent-runtime adapter (#2959) |
