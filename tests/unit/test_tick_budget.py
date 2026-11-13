@@ -111,9 +111,13 @@ class TestPhaseRecord:
 
 
 class TestTickBudgetSummary:
-    def test_over_budget_flag(self, clock: SimpleNamespace) -> None:
-        budget = TickBudget(budget_ms=0.0)
+    @pytest.mark.parametrize(("elapsed_ms", "over_budget"), [(10, False), (11, True)])
+    def test_budget_boundary(self, clock: SimpleNamespace, elapsed_ms: int, over_budget: bool) -> None:
+        budget = TickBudget(budget_ms=10.0)
         budget.start()
-        clock.now_ns += 1_000_000
+        clock.now_ns += elapsed_ms * 1_000_000
+
+        assert budget.has_remaining() is False
         summary = budget.summary()
-        assert summary.over_budget is True
+        assert summary.total_elapsed_ms == elapsed_ms
+        assert summary.over_budget is over_budget
