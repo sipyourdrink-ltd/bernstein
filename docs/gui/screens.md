@@ -37,7 +37,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **Source:** `web/src/routes/Tasks.tsx`.
 - **Layout:** 2-column grid `1fr 380px`. Left = filter chips + table. Right = selected-task drawer.
 - **Data shown:** task ID, title + branch, agent, role pill, duration (color-coded if stalled), progress bar, cost.
-- **Filter chips:** All · Running · Queued · Stalled · Done · 24h · Failed (with counts).
+- **Filter chips:** All · Running · Queued · Stalled · Done · Failed (with counts). Selecting **Done** sends `status=done` without a time-window parameter; it is not limited to the last 24 hours.
 - **Operator search syntax:** mono input parses `agent:` / `status:` / `role:` token prefixes.
 - **Drawer tabs:** Summary · Diff · Gates · Artifacts · Logs · Deps · Trace · Steer (Steer disabled with a reason on terminal tasks).
 - **Artifacts:** task-scoped evidence posted by workers, including reports, tables, and preview links, with version history and a progress strip.
