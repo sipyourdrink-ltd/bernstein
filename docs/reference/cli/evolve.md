@@ -6,9 +6,23 @@
 - **`bernstein evolve review`** - list upgrade proposals waiting on a human, including the change contract component and sandbox verdict for each.
 - **`bernstein evolve approve <PROPOSAL_ID>`** - approve one proposal.
 - **`bernstein evolve status`** - show the evolution history table.
-- **`bernstein evolve export <OUTPUT>`** - write a static HTML or Markdown report.
+- **`bernstein evolve export [OUTPUT]`** - write a static HTML or Markdown report.
 
 `bernstein evolve run` needs an initialised workspace. In a directory with no `.sdd/`, it exits before starting rather than creating state behind your back.
+
+## Exporting a report
+
+`bernstein evolve export [OUTPUT]` reads evolution data from the project selected by `--dir` (the project root containing `.sdd/`). The optional `OUTPUT` argument selects the report's path; it is independent of `--dir`. `OUTPUT` defaults to `evolution_report` and `--format` defaults to HTML. With both omitted, the command writes `evolution_report.html` in the current working directory. Relative output paths are also resolved from the current working directory, not from the project directory selected with `--dir`.
+
+Use `--format html` for HTML or `--format md` / `--format markdown` for Markdown (the aliases are case-insensitive). The selected format determines the renderer. A recognized `.html` or `.md` output suffix is retained; otherwise the selected format supplies the `.html` or `.md` suffix. Thus the suffix does not select the renderer.
+
+For example, from a directory separate from the project, this reads the project at `sample-project` and writes `evolution-summary.md` in the current working directory:
+
+```sh
+bernstein evolve export evolution-summary --format markdown --dir sample-project
+```
+
+If the selected project has no recorded evolution cycles, the command exits with status 1 and does not write a report.
 
 ## The run-ledger to draft to issue contour
 
