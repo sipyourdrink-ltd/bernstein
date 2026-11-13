@@ -426,7 +426,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | File              | Purpose |
 |-------------------|---------|
 | `comparative.py`  | Comparative Benchmark Suite for Bernstein |
-| `golden.py`       | Golden test suite for the Bernstein orchestrator |
+| `golden.py`       | Golden test suite for Bernstein, covering routing, planning, and execution outcomes |
 | `programbench.py` | ProgramBench evaluation harness for Bernstein |
 | `reproducible.py` | Reproducible benchmark suite for Bernstein |
 | `swe_bench.py`    | SWE-Bench evaluation harness for Bernstein |
