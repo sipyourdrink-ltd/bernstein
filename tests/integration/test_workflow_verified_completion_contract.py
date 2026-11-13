@@ -990,7 +990,7 @@ def test_native_task_store_replay_does_not_preserve_attempt_identity(tmp_path: P
         assert replayed.status is TaskStatus.CLOSED
         assert replayed.claimed_by_session is None, "session binding is not restored by replay"
         assert replayed.closed_at is None, "closure time is not restored by replay"
-        assert replayed.version != live_version, "CAS version is not restored by replay"
+        assert replayed.version == live_version, "CAS version is restored by replay"
 
         driver.call(lambda s: s.create(TaskCreate(id="wf-produce-nf", title="again", description="d", role="backend")))
         again = driver.task("wf-produce-nf")

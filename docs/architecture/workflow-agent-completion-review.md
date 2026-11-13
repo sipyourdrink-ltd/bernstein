@@ -52,7 +52,7 @@ section 7; the original base observations below are historical.
 |---|---|---|
 | Crash-safe runner state | `write_atomic_json` (`core/persistence/atomic_write.py`): temp file, fsync, replace, directory fsync. It already writes `spec_snapshot.json` and `<node>.node.json`. | Checkpoints are terminal only (`STATE_VERSION = 1`, `workflow_runner.py:176`). `load_node_state` never reads `version` (`:273`). |
 | Session and process identity | `AgentSession` (`core/tasks/models.py:1202`): `id`, `pid`, `task_ids`, `spawn_ts`. The id is minted inside `spawn_for_tasks` (`core/agents/spawner_core.py:4653`). | A caller cannot supply the id beforehand. No durable task-to-session lookup exists on the spawner. |
-| Dispatch evidence after a restart | `TaskStore` status replay. After a claim, `CLAIMED` survives a restart. | Replay restores only `status`, `assigned_agent`, `result_summary` and `tenant_id` from later lines (`core/tasks/task_store_core.py:774-781`). `claimed_by_session`, `version` and `closed_at` come back unset or reset (pinned by `test_native_task_store_replay_does_not_preserve_attempt_identity`). Server boot also reopens stale claims (`core/server/server_app.py:1190`). |
+| Dispatch evidence after a restart | `TaskStore` status replay. After a claim, `CLAIMED` survives a restart. | Replay restores task status and CAS version from later records (`core/tasks/task_store_core.py:836-849`). The claim session and closure timestamp remain unset (pinned by `test_native_task_store_replay_does_not_preserve_attempt_identity`). Server boot also reopens stale claims (`core/server/server_app.py:1190`). |
 | Idempotent registration | None | `TaskStore.create` overwrites a record with the same id, so a CLOSED task becomes OPEN (`task_store_core.py:1631`). Look up before creating. |
 | Deadline | `Task.deadline` (`models.py:578`) | `_task_to_record` never persists it. No persisted absolute deadline exists anywhere. |
 | Cancellation and acknowledgement | `reap_process_group` returns `ProcessReapReceipt.confirmed_dead` (`core/config/platform_compat.py:347,691`). The cooperative path is `TaskStore.cancel_cascade(..., cooperative=True)` (STOP_REQ) followed by `confirm_stop` (CANCELLED) (`task_store_core.py:3338,3432`). | `AgentSpawner.kill` returns `None` (`spawner_core.py:7370`). The cooperative acknowledgement path needs the orchestrator tick (`core/agents/stop_reaper.py`). |
@@ -122,7 +122,7 @@ This is one contract, versioned as `workflow.agent_attempt/2`.
 | In-memory wait | It is lost on a crash, and the agent is respawned on resume. |
 | `WALWriter` under `.sdd/runtime/wal/` | Orchestrator startup scans, recovers and closes other runs' WALs (`core/orchestration/orchestrator.py:3773-3885`). |
 | `EventJournal.record` | It drops `OSError` silently. |
-| Re-deriving the attempt from TaskStore replay | Replay loses the session, version and closure time. |
+| Re-deriving the attempt from TaskStore replay | Replay restores the CAS version and loses the claim session and closure time. |
 | CLOSED or DONE as acceptance | Neither carries an attempt or output binding, and CLOSED can be reached without verification. |
 | Artifact receipt alone | It has no attempt or tenant, and it survives a reopen. |
 | A runner-side verifier or receipt | A second authority. The draft forbids it. |
