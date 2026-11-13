@@ -730,16 +730,19 @@ def test_agent_deadline_survives_runner_restart(env: _Env, tmp_path: Path) -> No
             f"phase 1: consumer ran before the attempt was accepted or timed out; runner process reported {phase1}"
         )
 
-    # Contract path: the runner is waiting inside the attempt. Crash it, let the deadline lapse with no runner alive.
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(runner_proc.pid, signal.SIGKILL)
-    runner_proc.wait(timeout=BOUND_S)
+    # Crash the waiting runner while its agent remains alive in a separate process group.
+    child_pid = int(started.read_text(encoding="utf-8"))
+    assert runner_proc.poll() is None, f"precondition: runner exited before the crash: {phase1}"
+    assert _pid_alive(child_pid), "precondition: the dispatched child is live before the crash"
+    os.killpg(runner_proc.pid, signal.SIGKILL)
+    assert runner_proc.wait(timeout=BOUND_S) == -signal.SIGKILL
     remaining = dispatched_at + AGENT_TIMEOUT_S + 0.3 - time.monotonic()
     if remaining > 0:
         time.sleep(remaining)
 
     env.driver = _StoreDriver(tmp_path / "sdd")  # restarted owner replays the phase-1 journal
     sp = env.spawner(_Plan(mode="block"))
+    assert _pid_alive(child_pid), "precondition: the original child is still live when resume takes ownership"
     resumed_at = time.monotonic()
     run = env.start(lambda: env.runner(sp).resume(load_workflow_spec_from_text(spec_text), run_id=rid))
     assert run.wait(BOUND_S), "resume did not return within the harness bound"
@@ -751,7 +754,7 @@ def test_agent_deadline_survives_runner_restart(env: _Env, tmp_path: Path) -> No
     assert produce is not None
     assert produce.status is not NodeStatus.SUCCESS
     assert env.sentinel_writes() == 0
-    assert not any(_pid_alive(pid) for pid in env.logged_children()), "expired attempt was not cancelled"
+    assert not _pid_alive(child_pid), "resume did not cancel the original expired child"
 
 
 # ---------------------------------------------------------------------------

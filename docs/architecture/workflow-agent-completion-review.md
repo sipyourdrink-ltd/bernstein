@@ -69,6 +69,8 @@ verify reconciliation without redispatch.
 The crash cases now prove a live child and no terminal checkpoint before
 restart. The second hook runs before the terminal checkpoint. Coverage
 after durable dispatch acknowledgement awaits an implementation seam.
+The separate deadline case checks that SIGKILL interrupts the running
+workflow process and that its original agent PID stays live until resume.
 The v1 resume tests use literal v1 records, so changes to the current
 writer cannot silently update the compatibility fixtures.
 
