@@ -64,6 +64,39 @@ All five pass the shared `ArtifactSinkConformance` test suite
 only against `LocalFsSink`; the cloud sinks run the same suite in the
 integration folder behind emulator-availability gates.
 
+## Local filesystem listing and metadata
+
+`LocalFsSink.list(prefix)` treats the prefix as a path under the sink root,
+not as a general string-prefix filter. An empty prefix (`""`) lists every
+file beneath the root. A directory prefix (for example, `"reports"` or
+`"reports/"`) lists files recursively beneath that directory; it does not
+include similarly named siblings such as `reports-old/`. A prefix naming an
+exact file returns that file's key. A missing prefix returns an empty list.
+Directories are not listed as artifacts. Results are in ascending
+lexicographic order, and every returned key is relative to the sink root
+(with `/` separators), never an absolute filesystem path.
+
+For a local file, `stat` supplies `size_bytes` and `last_modified_unix`
+(the file size in bytes and modification time as a Unix timestamp). The
+optional `etag` and `content_type` fields are both `None`: the local sink
+does not provide an ETag or retain MIME metadata. A directory is not an
+artifact, so stat on a directory or a missing key raises `FileNotFoundError`.
+
+```python
+from pathlib import Path
+
+from bernstein.core.storage import LocalFsSink
+
+async def inspect_local_artifacts() -> None:
+    sink = LocalFsSink(Path(".sdd"))
+    reports = await sink.list("reports")
+    # e.g. ["reports/daily.json", "reports/monthly.json"]
+    print(reports)
+    metadata = await sink.stat("reports/daily.json")
+    print(metadata.size_bytes, metadata.last_modified_unix)
+    # metadata.etag and metadata.content_type are None for LocalFsSink.
+```
+
 ## Durability: `BufferedSink`
 
 The WAL crash-safety contract requires a `durable=True` write to be on
