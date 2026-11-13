@@ -1,5 +1,14 @@
 # Bare tasks
 
+## Choose an entry point
+
+Use `bernstein_create_task`, **Tasks → Create task**, or `POST /api/v1/tasks`
+for an individual queued task without starting a planner. Use an
+[administrative run](administrative-runs.md) when you need a named container for
+several manually handled tasks: creating the run starts it empty, and you add
+tasks to it separately. Its member tasks remain manually claimable and are
+excluded from automatic worker launch.
+
 Use `bernstein_create_task` to queue a brief for a worker without starting a
 planner or agent. In the web UI, open **Tasks** and select **Create task** or
 **New from prompt**. Enter a title and prompt, with a role if needed. A
