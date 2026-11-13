@@ -26,7 +26,10 @@ task batch and assigns one of three levels:
 A task is **never** fast-pathed regardless of text match when any of these
 hold: `role` is `manager`, `architect`, or `security`; `complexity` is
 `HIGH`; `scope` is `LARGE`; `priority == 1`; or the task explicitly requests
-`model: opus`.
+`model: opus`. After these exclusions, classification checks L0 title patterns,
+then L1 title-and-description patterns, then the metadata fallback: a task with
+`complexity: LOW` and `scope: SMALL` is L1 even if it matches no pattern. Tasks
+that meet none of those rules are L2.
 
 `try_fast_path_batch()` only handles single-task batches classified `L0`. It
 claims the task, runs the matched executor
@@ -46,12 +49,13 @@ compare against.
 
 ## Configuration
 
-Fast-path is on by default with the built-in patterns above. To override or
-disable it, add a `fast_path:` block to `.sdd/config/routing.yaml`:
+Fast-path is on by default with the built-in patterns above. To override its
+patterns or disable pattern matching, add a `fast_path:` block to
+`.sdd/config/routing.yaml`:
 
 ```yaml
 fast_path:
-  enabled: true          # false disables L0/L1 classification entirely
+  enabled: true          # false disables pattern matching
   l0_patterns:
     - pattern: "\\b(format|formatting|black|prettier)\\b"
       action: ruff_format
@@ -64,10 +68,13 @@ fast_path:
 ```
 
 `load_fast_path_config()` is called once, at orchestrator startup, if
-`.sdd/config/routing.yaml` exists. `enabled: false` clears both pattern
-lists, so every task falls through to `L2`. Setting `l0_patterns` or
-`l1_patterns` replaces the built-in list wholesale (not a merge); a malformed
-regex in an entry is skipped with a warning, not fatal to the load.
+`.sdd/config/routing.yaml` exists. `enabled: false` clears both pattern lists,
+so it disables pattern-based L0/L1 matches, not the metadata fallback. For
+example, with `enabled: false`, an otherwise eligible task with
+`complexity: LOW` and `scope: SMALL` is still classified as L1 by its metadata.
+Setting `l0_patterns` or `l1_patterns` replaces the built-in list wholesale
+(not a merge); a malformed regex in an entry is skipped with a warning, not
+fatal to the load.
 
 There is no hardcoded fallback model for `L1`: if `fast_path.l1_model` is
 never set (no `routing.yaml`, or the key omitted), `get_l1_model_config()`
@@ -85,17 +92,20 @@ specific model.
   absolute path, a `..` component, or a symlinked component leaving the
   tree - is skipped with a warning rather than edited. The rest of the
   entries still run.
-- Classification is purely text-pattern-based. L0 rules match the task
-  title only, because an L0 match replaces the agent with a deterministic
+- Classification uses both text patterns and task metadata. L0 rules match the
+  task title only, because an L0 match replaces the agent with a deterministic
   tool; a description that mentions lint or formatting as context does not
-  route the task to ruff. L1 rules match title + description. There is no
-  dry-run or confidence threshold exposed to the operator beyond the fixed
-  `confidence` field recorded internally.
-- L0/L1 classification only ever narrows toward the deterministic/cheap path
-  when the task text matches; it never widens L2 tasks down. A high-value
-  rewrite that happens to be titled "format the module" would match L0
-  unless it also trips one of the exclusion rules (role, complexity, scope,
-  priority, explicit `opus` request).
+  route the task to ruff. L1 rules match title + description. Only after those
+  pattern checks, an otherwise eligible `LOW`-complexity, `SMALL`-scope task
+  receives metadata-based L1 classification. The exclusions above take
+  precedence over both pattern and metadata rules. There is no dry-run or
+  confidence threshold exposed to the operator beyond the fixed `confidence`
+  field recorded internally.
+- L0/L1 classification can narrow toward the deterministic/cheap path from
+  either a matching pattern or eligible task metadata; it never widens L2 tasks
+  down. A high-value rewrite that happens to be titled "format the module"
+  would match L0 unless it also trips one of the exclusion rules (role,
+  complexity, scope, priority, explicit `opus` request).
 
 ## Source
 
