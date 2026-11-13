@@ -447,3 +447,20 @@ def test_narrative_docs_have_no_cli_drift() -> None:
         + "\n".join(stats)
         + f"\nTotal checked={total_checked} skipped={total_skipped}"
     )
+
+
+def test_volunteer_docs_have_no_cli_drift() -> None:
+    surface = _surface()
+    volunteer_docs = REPO_ROOT / "docs" / "volunteer"
+    for name in ("README.md", "donor-guide.md"):
+        page = volunteer_docs / name
+        examples = extract(page.read_text(encoding="utf-8"))
+        assert examples.checked, f"{name}: no CLI examples found"
+        failures = check(examples, surface, f"volunteer/{name}")
+        assert not failures, "\n".join(failures)
+
+        for invocation in examples.checked:
+            if invocation.tokens[:2] == ("volunteer", "browse"):
+                assert {"--index", "--help"} & set(invocation.flags), (
+                    f"{name}:{invocation.line}: volunteer browse examples need --index"
+                )
