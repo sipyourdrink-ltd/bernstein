@@ -96,19 +96,14 @@ SCREENS: dict[str, str] = {
 #: Screen name -> SPA route, captured against the *seeded* project: the
 #: populated task board with the diff drawer open, and the agent panel the
 #: front page links to. Kept separate from ``SCREENS`` because they need a
-#: different project, a larger viewport and per-screen interaction.
+#: different project and per-screen interaction.
 SEEDED_SCREENS: dict[str, str] = {
     "agents-panel": "/ui/agents",
     "agents-diffs": "/ui/tasks",
 }
 
-#: Matches the committed renders. Device scale factor 1 on purpose: a retina
-#: capture would quadruple the byte size of every screenshot in the docs.
-VIEWPORT = {"width": 1260, "height": 638}
-
-#: The seeded screens are the front page's feature renders and match the
-#: dimensions they were first published at.
-SEEDED_VIEWPORT = {"width": 1712, "height": 1490}
+#: Shared dimensions for all published renders, at one device pixel per CSS pixel.
+VIEWPORT = {"width": 1440, "height": 900}
 
 #: The SPA polls after mount, so a screenshot taken at "network idle" can still
 #: catch a spinner. This is the settle margin on top of it.
@@ -229,32 +224,50 @@ def wait_for_boot(url: str, process: subprocess.Popen[bytes], log: Path) -> None
     raise SystemExit(f"the GUI did not answer on {url} within {BOOT_TIMEOUT_S}s:\n{log.read_text()}")
 
 
+def _demo_environment(workdir: Path) -> dict[str, str]:
+    # The server also resolves configuration through Path.home().
+    # Give only the demo child process its own home.
+    demo_home = workdir / "home"
+    demo_home.mkdir(exist_ok=True)
+    return {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(demo_home),
+        "USERPROFILE": str(demo_home),
+        "XDG_CONFIG_HOME": str(demo_home / ".config"),
+        "XDG_DATA_HOME": str(demo_home / ".local/share"),
+        "XDG_STATE_HOME": str(demo_home / ".local/state"),
+        "XDG_CACHE_HOME": str(demo_home / ".cache"),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+
+
 @contextlib.contextmanager
 def gui_server(
     executable: str,
     workdir: Path,
     token: str,
     dashboard_password: str | None = None,
+    *,
+    isolated: bool = False,
 ) -> Iterator[str]:
     """Boot ``bernstein gui serve`` in *workdir* and yield its base URL.
 
-    ``dashboard_password`` configures dashboard auth for the seeded captures:
-    the diff drawer reads the ``/api/v1/dashboard/*`` mirror, which the
-    general-API bearer does not unlock, so the capture logs a dashboard
-    session in with this password instead.
+    The demo dashboard password prevents issuing a startup token grant.
+    The seeded diff drawer also uses this password to log in to its
+    dashboard API, which has separate auth from the general API.
     """
     port = free_port()
     base = f"http://127.0.0.1:{port}"
     log_path = workdir / "serve.log"
-    env = {
-        **os.environ,
-        # Resolved by create_app() as the general-API bearer, and seeded into
-        # the browser as the same value.
-        "BERNSTEIN_AUTH_TOKEN": token,
-    }
+    env = _demo_environment(workdir) if isolated else os.environ.copy()
+    # The server and the browser use the same temporary general-API bearer.
+    env["BERNSTEIN_AUTH_TOKEN"] = token
+    if isolated:
+        env["BERNSTEIN_AUDIT_KEY_PATH"] = str(workdir / "demo-audit.key")
     if dashboard_password is not None:
         env["BERNSTEIN_DASHBOARD_PASSWORD"] = dashboard_password
-    print(f"booting `bernstein gui serve` on {base} in {workdir}")
+    print(f"booting `bernstein gui serve` on {base}")
     with log_path.open("wb") as log_file:
         process = subprocess.Popen(
             [executable, "gui", "serve", "--no-open", "--host", "127.0.0.1", "--port", str(port)],
@@ -264,7 +277,13 @@ def gui_server(
             stderr=subprocess.STDOUT,
         )
     try:
-        wait_for_boot(f"{base}/ui/", process, log_path)
+        try:
+            wait_for_boot(f"{base}/ui/", process, log_path)
+        except SystemExit as error:
+            message = str(error).replace(token, "[redacted]")
+            if dashboard_password:
+                message = message.replace(dashboard_password, "[redacted]")
+            raise SystemExit(message) from None
         yield base
     finally:
         process.terminate()
@@ -283,6 +302,7 @@ def _git(project_dir: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.name=Bernstein Demo", "-c", "user.email=demo@example.invalid", *args],
         cwd=project_dir,
+        env=_demo_environment(project_dir),
         check=True,
         capture_output=True,
     )
@@ -347,8 +367,8 @@ def seed_project(project_dir: Path) -> None:
         "    client = flask_app.test_client()\n"
         '    assert client.get("/queues/nope").status_code == 404\n'
     )
-    _git(project_dir, "init", "--quiet")
-    _git(project_dir, "add", "-A")
+    _git(project_dir, "init", "--quiet", "--template=")
+    _git(project_dir, "add", "--", "app.py", "requirements.txt", "tests/test_app.py")
     _git(project_dir, "commit", "--quiet", "-m", "Initial service")
 
     # The working-tree edits the diff drawer renders: a new endpoint, its
@@ -474,6 +494,8 @@ def _stage_screens(page: Any, screens: dict[str, str], base: str, staging: Path)
     for name, route in screens.items():
         page.goto(f"{base}{route}", wait_until="domcontentloaded")
         page.wait_for_timeout(SETTLE_MS)
+        if name == "settings":
+            page.get_by_text("No token stored", exact=False).wait_for(state="visible")
         if name == "agents-diffs":
             # Drawer on the completed build task, Diff tab: the working-tree
             # diff of the seeded repo.
@@ -482,7 +504,7 @@ def _stage_screens(page: Any, screens: dict[str, str], base: str, staging: Path)
             page.get_by_role("button", name="Diff", exact=True).click()
             page.wait_for_timeout(SETTLE_MS)
         shot = staging / f"webui-{name}.png"
-        page.screenshot(path=str(shot))
+        page.screenshot(path=str(shot), animations="disabled")
         optimize(shot)
         print(f"  captured webui-{name}.png")
 
@@ -509,11 +531,22 @@ def capture(screens: dict[str, str], base: str, token: str, staging: Path | None
             target = Path(stack.enter_context(tempfile.TemporaryDirectory(dir=ASSET_DIR, prefix=".staging-")))
         else:
             target = staging
-        browser = playwright.chromium.launch()
+        browser = playwright.chromium.launch(headless=True)
         try:
-            page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1)
+            page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1, color_scheme="light")
             _authenticate(page, base, token)
-            _stage_screens(page, screens, base, target)
+            _stage_screens(page, {name: route for name, route in screens.items() if name != "settings"}, base, target)
+            if "settings" in screens:
+                # Settings visibly summarizes the localStorage token. Supply
+                # auth at the request boundary in a fresh page instead.
+                settings = browser.new_page(viewport=VIEWPORT, device_scale_factor=1, color_scheme="light")
+                settings.route(
+                    f"{base}/api/v1/**",
+                    lambda route: route.continue_(
+                        headers={**route.request.headers, "Authorization": f"Bearer {token}"}
+                    ),
+                )
+                _stage_screens(settings, {"settings": screens["settings"]}, base, target)
         finally:
             browser.close()
         if staging is not None:
@@ -543,9 +576,9 @@ def capture_seeded(
             target = Path(stack.enter_context(tempfile.TemporaryDirectory(dir=ASSET_DIR, prefix=".staging-")))
         else:
             target = staging
-        browser = playwright.chromium.launch()
+        browser = playwright.chromium.launch(headless=True)
         try:
-            page = browser.new_page(viewport=SEEDED_VIEWPORT, device_scale_factor=1)
+            page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1, color_scheme="light")
             _authenticate(page, base, token)
             status = page.evaluate(
                 """async (password) => {
@@ -586,6 +619,7 @@ def main(argv: list[str] | None = None) -> int:
     seeded = {name: SEEDED_SCREENS[name] for name in requested if name in SEEDED_SCREENS}
     executable = resolve_bernstein(args.bernstein)
     token = secrets.token_urlsafe(32)
+    dashboard_password = secrets.token_urlsafe(32)
 
     written: list[Path] = []
     with tempfile.TemporaryDirectory(dir=ASSET_DIR, prefix=".staging-") as tmp:
@@ -593,14 +627,17 @@ def main(argv: list[str] | None = None) -> int:
         if zero_state:
             with (
                 tempfile.TemporaryDirectory(prefix="bernstein-webui-capture-") as workdir,
-                gui_server(executable, Path(workdir), token) as base,
+                gui_server(
+                    executable, Path(workdir), token, dashboard_password=dashboard_password, isolated=True
+                ) as base,
             ):
                 capture(zero_state, base, token, staging=staging)
         if seeded:
-            dashboard_password = secrets.token_urlsafe(32)
             with tempfile.TemporaryDirectory(prefix="bernstein-webui-capture-seeded-") as workdir:
                 seed_project(Path(workdir))
-                with gui_server(executable, Path(workdir), token, dashboard_password=dashboard_password) as base:
+                with gui_server(
+                    executable, Path(workdir), token, dashboard_password=dashboard_password, isolated=True
+                ) as base:
                     seed_backlog(base, token)
                     capture_seeded(seeded, base, token, dashboard_password, staging=staging)
         # Only now, with every requested screen in hand - see publish().

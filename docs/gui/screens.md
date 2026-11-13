@@ -14,23 +14,23 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 
 ![Tasks page with Diff drawer open](../assets/webui-agents-diffs.png)
 
-![Agents grid with token meter drawer](../assets/webui-agents-panel.png)
+![Demo agent grid with an open agent drawer and token counter](../assets/webui-agents-panel.png)
 
-![Tasks — empty state, filter chips and Create task button](../assets/webui-tasks.png)
+![Empty Tasks screen with status filters and task creation controls](../assets/webui-tasks.png)
 
-![Agents — agent card grid view](../assets/webui-agents.png)
+![Agents screen with no sessions](../assets/webui-agents.png)
 
-![Approvals — empty approvals queue](../assets/webui-approvals.png)
+![Empty Approvals queue](../assets/webui-approvals.png)
 
-![Audit — audit log with chain status and filters](../assets/webui-audit.png)
+![Audit log with chain status and filters](../assets/webui-audit.png)
 
-![Costs — KPI cards, sparkline and by-adapter table](../assets/webui-costs.png)
+![Costs overview with spend totals and empty chart and tables](../assets/webui-costs.png)
 
-![Fleet — fleet management scaffold](../assets/webui-fleet.png)
+![Fleet overview with search and steering controls](../assets/webui-fleet.png)
 
-![Missions — mission timeline, zero state](../assets/webui-missions.png)
+![Missions screen with no missions](../assets/webui-missions.png)
 
-![Settings — settings placeholder screen](../assets/webui-settings.png)
+![Settings for theme, access token and fleet mode](../assets/webui-settings.png)
 
 ## Tasks (`/ui/tasks`, default route)
 
