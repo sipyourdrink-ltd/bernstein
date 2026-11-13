@@ -77,9 +77,30 @@ bernstein doctor migrations --json   # machine-readable output
 bernstein doctor migrations --apply  # run pending migrations forward
 ```
 
-The command reports the current schema version, the latest version this
-build knows about, and a table splitting migrations into applied and
-pending.
+The command reports the current schema version (the on-disk stamp), the
+latest version this build knows about, and a table splitting known migrations
+into applied and pending. `--json` emits the same post-operation snapshot as
+`schema_version`, `latest_version`, `applied`, and `pending`. With no
+`--apply`, this is read-only: it does not run migrations. With `--apply`, the
+command runs pending migrations first, then reports the resulting stamp and
+migration lists. After a successful apply, `schema_version` is the last version
+applied (normally the latest known version) and `pending` is empty.
+
+A failed step has a different outcome from that normal table or JSON snapshot.
+The runner records an in-memory report with the failing exception text in
+`error`, the versions still to run in `pending` (including the failed step),
+`exit_code` 1, and `to_version` at the last successfully stamped version. Its
+`applied` list contains steps completed in this run. The runner then re-raises
+the original exception; it does not return that report. Consequently,
+`bernstein doctor migrations --apply` does not print the normal table or JSON
+snapshot for a failed step. The stamp stays at the last successful version,
+so a later read-only invocation shows the remaining known versions as pending.
+
+If the stamp is newer than this build knows, the read-only command still just
+reports that stamp and the versions known to this build; it does not try to
+migrate. `--apply` refuses to proceed, prints the future-version error and
+exits with code `3` (without printing the normal table or JSON snapshot). Do
+not edit the stamp to work around this; use a build that understands the state.
 
 ## Adding a migration
 
