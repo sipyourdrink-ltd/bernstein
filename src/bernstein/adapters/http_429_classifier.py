@@ -57,7 +57,8 @@ class _PatternRule:
 
 
 _SPEND_EXHAUSTION = (
-    r"(?:spend(?:ing)?|daily) limit (?:of [^\n]+? )?(?:has been |was |is )?(?:reached|exceeded|exhausted)\b|"
+    r"(?:spend(?:ing)?|daily) limit (?:of \$?[0-9]+(?:[.,][0-9]+)* )?"
+    r"(?:has been |was |is )?(?:reached|exceeded|exhausted)\b|"
     r"\b(?:hit|reached|exceeded) (?:the |your |its )?(?:daily |(?:daily )?spend(?:ing)? )limit\b"
 )
 
