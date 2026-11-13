@@ -193,6 +193,31 @@ class TestFetchAndResume:
             assert reader.verify(expected_head=last.entry_hash).ok
             assert ledger.bucket_path.read_bytes().startswith(intact)
 
+    @pytest.mark.parametrize("local_copy", ["partial", "missing"])
+    def test_dry_run_projects_anchored_extension_without_writing(self, project: Path, local_copy: str) -> None:
+        ledger = _seed(project)
+        intact = ledger.bucket_path.read_bytes()
+        completion = ledger.append(kind=KIND_TASK_COMPLETED, task_id="t2")
+        anchor_ledger(project, ledger.ledger_dir, run_id="run-a")
+        ledger.close()
+        local_before = intact + completion.canonical_line().encode("utf-8")[:20]
+        if local_copy == "partial":
+            ledger.bucket_path.write_bytes(local_before)
+        else:
+            ledger.bucket_path.unlink()
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        report = json.loads(result.stdout)
+        assert report["head_hash"] == completion.entry_hash
+        assert report["completed_tasks"] == ["t1", "t2"]
+        assert report["resume_frontier"] == []
+        if local_copy == "partial":
+            assert ledger.bucket_path.read_bytes() == local_before
+        else:
+            assert not ledger.bucket_path.exists()
+
     def test_resume_append_failure_keeps_json_parseable(self, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _seed(project)
 

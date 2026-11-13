@@ -543,19 +543,10 @@ def fetch_ledger_ref(repo_dir: Path, run_id: str, *, remote: str = "origin") -> 
     return sha
 
 
-def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> MaterializeResult:
-    """Materialize the anchored chain for *run_id* into *ledger_dir*.
-
-    The anchored chain is verified end to end before a byte is written.
-    An existing local ledger is compared against it: identical chains are
-    a no-op, an anchored extension fast-forwards the local file, a local
-    extension refuses (anchor instead), and a diverged pair refuses with
-    the exact fork position (two divergent resumes are never merged).
-
-    Raises:
-        LedgerGitError: Missing ref, broken anchored chain, or local-ahead.
-        LedgerDivergenceError: When local and anchored chains diverge.
-    """
+def plan_ledger_materialization(
+    repo_dir: Path, run_id: str, ledger_dir: Path
+) -> tuple[MaterializeResult, list[LedgerEntry]]:
+    """Verify the anchored chain and compare it with local history without writing."""
     rows, meta = read_anchored_rows(repo_dir, run_id)
     head_hash = _verify_anchored(rows, meta, run_id)
     anchored = _anchored_entries(rows)
@@ -578,10 +569,23 @@ def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> Materia
                 f"run 'bernstein ledger anchor {run_id}' instead."
             )
             raise LedgerGitError(msg)
-        if relation.relation == "identical":
-            return MaterializeResult(action="unchanged", head_hash=head_hash, entry_count=len(anchored))
-        action = "fast-forwarded"
+        action = "unchanged" if relation.relation == "identical" else "fast-forwarded"
 
+    return MaterializeResult(action=action, head_hash=head_hash, entry_count=len(anchored)), anchored
+
+
+def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> MaterializeResult:
+    """Write the verified anchored chain if it is an extension or no local ledger exists.
+
+    Raises:
+        LedgerGitError: Missing ref, broken anchored chain, or local-ahead.
+        LedgerDivergenceError: When local and anchored chains diverge.
+    """
+    result, anchored = plan_ledger_materialization(repo_dir, run_id, ledger_dir)
+    if result.action == "unchanged":
+        return result
+
+    reader = LedgerReader(ledger_dir)
     ledger_dir.mkdir(parents=True, exist_ok=True)
     payload = "\n".join(entry.canonical_line() for entry in anchored) + "\n"
     tmp_path = ledger_dir / ".bucket.materialize.tmp"
@@ -594,12 +598,12 @@ def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> Materia
         except OSError:  # pragma: no cover -- permissions are best-effort
             logger.debug("ledger permission tightening failed for %s", ledger_dir, exc_info=True)
 
-    verification = LedgerReader(ledger_dir).verify(expected_head=head_hash)
+    verification = reader.verify(expected_head=result.head_hash)
     if not verification.ok:  # pragma: no cover -- defensive round-trip check
         msg = f"materialized ledger failed re-verification: {'; '.join(verification.errors[:3])}"
         raise LedgerGitError(msg)
 
-    return MaterializeResult(action=action, head_hash=head_hash, entry_count=len(anchored))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -657,5 +661,6 @@ __all__ = [
     "ledger_ref",
     "list_ledger_runs",
     "materialize_ledger",
+    "plan_ledger_materialization",
     "read_anchored_rows",
 ]

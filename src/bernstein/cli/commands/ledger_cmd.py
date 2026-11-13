@@ -35,6 +35,7 @@ from bernstein.core.persistence.ledger_git import (
     gc_ledger_ref,
     list_ledger_runs,
     materialize_ledger,
+    plan_ledger_materialization,
 )
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_RESUMED,
@@ -321,39 +322,37 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
     root = (workdir or Path.cwd()).resolve()
     ledger_dir = _ledger_dir(workdir, run_id)
     reader = LedgerReader(ledger_dir)
-
-    # A fresh clone has the anchored ref but no materialized file yet.
-    if not reader.exists():
-        try:
-            materialize_ledger(root, run_id, ledger_dir)
-        except LedgerDivergenceError as exc:
-            click.echo(f"Divergence detected: {exc}", err=True)
-            raise SystemExit(EXIT_DIVERGED) from None
-        except LedgerGitError as exc:
-            click.echo(f"No work ledger for run {run_id!r}: {exc}", err=True)
-            click.echo("After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.", err=True)
-            raise SystemExit(EXIT_NO_LEDGER) from None
-
-    result = reader.verify(allow_interrupted_tail=True)
-    if not result.ok:
-        click.echo(f"Refusing to resume run {run_id!r}: the chain does not verify.", err=True)
-        _print_errors(result.errors)
-        raise SystemExit(EXIT_VERIFY_FAILED)
+    has_local = reader.exists()
+    if has_local:
+        result = reader.verify(allow_interrupted_tail=True)
+        if not result.ok:
+            click.echo(f"Refusing to resume run {run_id!r}: the chain does not verify.", err=True)
+            _print_errors(result.errors)
+            raise SystemExit(EXIT_VERIFY_FAILED)
 
     # Divergence gate: when an anchored chain exists it must be identical
     # to, an extension of, or an ancestor of the local chain. Two chains
     # extending the same parent entry are two divergent resumes.
+    entries = reader.entries()
+    materialized_action = "none"
     try:
-        materialize_result = materialize_ledger(root, run_id, ledger_dir)
-        materialized_action = materialize_result.action
+        if dry_run:
+            plan, anchored = plan_ledger_materialization(root, run_id, ledger_dir)
+            if plan.action in ("created", "fast-forwarded"):
+                entries = iter(anchored)
+        else:
+            materialized_action = materialize_ledger(root, run_id, ledger_dir).action
     except LedgerDivergenceError as exc:
         click.echo(f"Divergence detected: {exc}", err=True)
         raise SystemExit(EXIT_DIVERGED) from None
-    except LedgerGitError:
+    except LedgerGitError as exc:
+        if not has_local:
+            click.echo(f"No work ledger for run {run_id!r}: {exc}", err=True)
+            click.echo("After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.", err=True)
+            raise SystemExit(EXIT_NO_LEDGER) from None
         # No anchored ref, or local ahead of the anchor: both fine to resume.
-        materialized_action = "none"
 
-    state = replay_state(reader.entries(), run_id=run_id)
+    state = replay_state(entries, run_id=run_id)
 
     if output_json:
         console.print_json(
