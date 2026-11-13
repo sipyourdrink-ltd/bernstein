@@ -63,9 +63,11 @@ not several pieces of its body:
 ```python
 # report.py
 
+
 def build_report():
     # ... long body ...
     return report
+
 
 chunks = chunk_for_review("report.py", budget_tokens=400)
 # chunks[0] contains the complete build_report; its estimate can exceed 400.
