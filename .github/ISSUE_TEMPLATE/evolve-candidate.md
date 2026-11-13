@@ -35,3 +35,25 @@ are optional.
 ### Effort
 
 <!-- S / M / L - rough guess. Leave blank if unsure. -->
+
+### Friction receipt (optional)
+
+<!--
+If you hit this failure on a real bernstein install you can attach a friction
+receipt to get your issue admitted without collaborator status.
+
+A receipt proves you actually ran into the failure: it carries the command,
+version, environment fingerprint, and an Ed25519 signature from your install's
+key pair.  Generate one with:
+
+    bernstein evolve receipt generate --command "your command" > receipt.json
+
+Then paste the receipt_hash field here and attach receipt.json to the issue.
+
+receipt_hash: <64-char SHA-256 hex>
+
+Receipt-admitted candidates are capped at L0–L2 (never L3) and at
+3 per install per day.
+-->
+
+**receipt_hash:** <!-- paste here -->
