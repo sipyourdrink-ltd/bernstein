@@ -215,7 +215,16 @@ def validate_phase_output(phase: Phase | str, payload: object) -> list[PhaseSche
 
     Returns a list rather than raising so the caller can decide whether
     to short-circuit on the first error or surface the full set to the
-    re-fire seed.  An empty list means the payload is valid.
+    re-fire seed. An empty list means the payload is valid.
+
+    Invalid input produces :class:`PhaseSchemaError` entries. An
+    unrecognized phase produces exactly one root-level error: ``phase``
+    contains the supplied phase name and ``schema_id`` and ``field_path``
+    are empty. For a recognized phase with a non-object payload, validation
+    produces exactly one root-level error with the selected schema's
+    ``schema_id``. For object payloads, validation errors are ordered by
+    their absolute field paths, lexicographically by path components;
+    ``field_path`` is the slash-joined path.
 
     Args:
         phase: Phase whose schema to use.
