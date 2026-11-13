@@ -87,6 +87,7 @@ from pathlib import Path
 
 from bernstein.core.storage import LocalFsSink
 
+
 async def inspect_local_artifacts() -> None:
     sink = LocalFsSink(Path(".sdd"))
     reports = await sink.list("reports")
