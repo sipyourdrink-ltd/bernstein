@@ -44,9 +44,23 @@ tasks:
 yields one `frozenset[TaskNode]` per batch:
 
 - All-`[P]` ready tasks merge into a single concurrent batch.
-- Any serial task in the ready set runs alone; remaining `[P]` siblings
-  form a pure parallel batch on the next iteration.
+- If the ready set includes serial tasks, the walker yields the lowest-ID
+  serial task alone. After each batch it recomputes readiness from the
+  remaining tasks and completed dependencies; ready siblings that waited
+  can then form a batch on the next step.
 - Cycles raise `TaskDagCycleError` with the unresolved task ids.
+
+For example, `T001` is ready first alongside `T003`; `T002` becomes ready
+only after `T001` completes:
+
+```text
+- [ ] [T001] Wire the base service
+- [ ] [T002] [P] Add its adapter -> T001
+- [ ] [T003] [P] Add an independent helper
+```
+
+The batches are `T001`, then `T002` and `T003` together. The CLI renders
+these as a one-task `SERIAL` batch followed by a two-task `PARALLEL` batch.
 
 ## CLI
 
@@ -58,7 +72,10 @@ bernstein tasks plan dag --file specs/mvp-tasks.md  # alias
 ```
 
 Output marks each batch as `SERIAL` or `PARALLEL` and lists user-story
-rollback groups at the end.
+rollback groups at the end. The marker describes the rendered batch width:
+every one-task batch is marked `SERIAL`, even when that task is marked
+`[P]` (parallel-safe); only batches with multiple tasks are marked
+`PARALLEL`.
 
 ## Scheduler consumption
 
