@@ -4,7 +4,8 @@
 definitions living outside the built-in role templates under
 `templates/roles/`. Every entry contributes `CatalogAgent` records to a
 `CatalogRegistry`; when a task's role matches a loaded agent, that agent's
-system prompt replaces the built-in role template for that spawn (see
+system prompt replaces the built-in role template for that spawn except for
+`manager`, which keeps its built-in prompt (see
 [role_model_policy](CONFIG.md#role_model_policy-per-role-agent-configuration)
 for the adapter/model side of per-role configuration - catalogs control the
 *prompt*, not the CLI/model).
@@ -22,12 +23,15 @@ catalogs:
   - name: local-specialists
     type: plugin
     path: ./agent-catalog
-    priority: 60          # higher priority wins role conflicts; default 50
+    priority: 60          # catalog entry priority; default 50
     enabled: true          # default true
 ```
 
-Multiple entries are allowed; they are tried in descending `priority`
-order. An entry with `enabled: false` is parsed but never loaded.
+Multiple entries are allowed; enabled entries are loaded in descending
+catalog `priority` order. Generic skill agents inherit their entry’s priority
+for matching. Plugin agents use a matching priority of 100. The matcher
+compares loaded agents as described below. An entry with `enabled: false`
+is parsed but never loaded.
 
 ## The `plugin` catalog type
 
@@ -107,8 +111,50 @@ time. The orchestrator then loads every enabled `generic`/`plugin` entry's
 agents into the registry's matchable pool before handing the registry to
 the spawner - the same registry a task's `role` is matched against on
 every spawn. A match's `system_prompt` replaces the built-in role template
-for that task, and a `tools` list (when present) is appended as a
-"Preferred tools" hint.
+for that task, except for the `manager` role, which keeps the built-in
+prompt. A `tools` list, when present, is appended to the catalog prompt
+as a "Preferred tools" hint.
+
+## How loaded agents are matched
+
+Catalog load order and task matching are separate steps. Once loaded, a task
+is matched against the agents as follows:
+
+- **Exact role first.** If one or more loaded agents have the requested role,
+  only those agents are considered. If none of them declare capabilities,
+  the agent with the lowest numeric matching `priority` is selected. If any
+  exact-role candidate declares capabilities, the description must contain
+  at least one whitespace-delimited token longer than three characters. The
+  score then uses both those tokens and substring matches in the full
+  lowercased description. For example, `api` can match `Build API`. The best
+  candidate must meet the minimum score. The lower numeric `priority`
+  breaks ties. If the task has no usable
+  keywords or no candidate meets the threshold, there is no match. An exact
+  role with declared capabilities but inadequate overlap does not trigger a
+  search among related roles.
+- **Related roles only if there is no exact-role agent.** With usable task
+  keywords, the matcher considers only roles listed as affine to the requested
+  role (for example, `backend` and `architect`). It ranks eligible agents by
+  capability and description keyword overlap, with a role-affinity bonus, then
+  breaks score ties by the lower numeric `priority`. It requires a minimum
+  composite score. No qualifying candidate means no match.
+- **Built-in prompt on no match.** When matching returns no agent, including
+  when no agents are loaded, the spawner keeps the built-in role template.
+  A match with a system prompt replaces the template for roles other than
+  `manager`.
+
+For example, suppose two loaded `backend` agents have these capabilities:
+
+| Agent | Capabilities | Matching priority |
+|---|---|---:|
+| `ApiBuilder` | `rest`, `api`, `service` | 70 |
+| `DataSpecialist` | `database`, `queries` | 20 |
+
+For “Build a REST API service,” `ApiBuilder` wins on capability overlap even
+though its priority number is higher. If their capability scores were tied,
+`DataSpecialist` would win because its numeric priority is lower. If neither
+agent declared capabilities, `DataSpecialist` would be selected by that
+priority alone.
 
 A registry built from an empty (or absent) `catalogs:` config is
 unaffected: no `generic`/`plugin` entries means nothing to load, and the
