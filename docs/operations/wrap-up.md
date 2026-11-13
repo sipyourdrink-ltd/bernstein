@@ -35,6 +35,36 @@ for task status).
 | `git_diff_stat` | `git diff --stat` from the estimated session-start commit to `HEAD`; if that start commit cannot be found or that diff has no usable output, falls back to `git diff --stat HEAD` for uncommitted changes |
 | `completed_task_ids` | IDs of `done` tasks, so a later PR-open step can link each task's verification-evidence bundle |
 
+The **Next session** section includes only tasks whose status is `open`. It sorts
+by numeric priority in ascending order (the smaller number comes first); a task
+with no priority is treated as priority 2. Tasks with equal priorities keep
+their input order. At most 10 task rows are shown. If there are more, the brief
+adds a line reporting how many remain beyond those 10. A non-empty role is
+shown after the title in parentheses; a task without a role has no role suffix.
+For example, rows for priorities 1, 2, and 3 (with 12 open tasks total) can
+look like this:
+
+```text
+Remaining open tasks (by priority):
+  [1] Fix login (backend)
+  [2] Update help text
+  [3] Add report export (analytics)
+  [3] Add CSV export
+  [3] Improve report filters
+  [3] Add report tests
+  [3] Document report API
+  [3] Add report metrics
+  [3] Review report permissions
+  [3] Polish report layout
+  … and 2 more
+```
+
+When there are no open tasks, the section instead says:
+
+```text
+No open tasks remaining. Consider running `bernstein evolve` to generate new work.
+```
+
 When there are no completed (`done`) tasks, `changes_summary` uses the most
 recent session summary's `changes_summary` when available; otherwise it says
 `No tasks completed this session.`
