@@ -61,9 +61,8 @@ from bernstein.core.workflows import NodeStatus, WorkflowExecution, WorkflowRunn
 from bernstein.core.workflows.workflow_runner import (
     AuditEmitter,
     NodeExecution,
-    record_node_state,
-    record_spec_snapshot,
     run_complete_marker_exists,
+    spec_digest,
 )
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group child fixtures")
@@ -929,17 +928,52 @@ def test_agent_loop_waits_for_the_current_attempt(env: _Env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_v1_checkpoint(e: _Env, rid: str, spec: Any, node: NodeExecution) -> None:
-    digest = record_spec_snapshot(e.workdir, rid, spec, manifest_source=spec.name)
-    record_node_state(e.workdir, rid, node, digest)
+def _write_v1_checkpoint(
+    e: _Env,
+    rid: str,
+    spec: Any,
+    *,
+    status: str = "success",
+    session_id: str = "",
+    iterations: int = 0,
+    exit_code: int | None = None,
+    condition_skipped: bool = False,
+) -> None:
+    """Seed the original on-disk format independently of the current writer."""
+    digest = spec_digest(spec)
+    state_dir = e.workdir / "runs" / rid
+    state_dir.mkdir(parents=True)
+    snapshot = {
+        "version": 1,
+        "spec_name": spec.name,
+        "spec_version": spec.version,
+        "spec_digest": digest,
+        "node_ids": ["produce", "consume"],
+        "source": spec.name,
+    }
+    checkpoint = {
+        "version": 1,
+        "spec_digest": digest,
+        "node_id": "produce",
+        "status": status,
+        "iterations": iterations,
+        "exit_code": exit_code,
+        "stdout": "",
+        "stderr": "",
+        "session_id": session_id,
+        "error": "",
+        "wall_time_seconds": 0.0,
+        "condition_skipped": condition_skipped,
+    }
+    (state_dir / "spec_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    (state_dir / "produce.node.json").write_text(json.dumps(checkpoint), encoding="utf-8")
 
 
 def test_legacy_unproven_agent_success_checkpoint_is_not_trusted(env: _Env) -> None:
     """[PROPOSED #9] A v1 agent 'success' with only a session id needs reconciliation: no release, no blind respawn."""
     rid = "p9-legacy-agent"
     spec = _spec(env)
-    legacy = NodeExecution(node_id="produce", status=NodeStatus.SUCCESS, iterations=1, session_id="backend-1e9ac700")
-    _write_v1_checkpoint(env, rid, spec, legacy)
+    _write_v1_checkpoint(env, rid, spec, session_id="backend-1e9ac700", iterations=1)
     sp = env.spawner(_Plan(mode="block"))
     run = env.start(lambda: env.runner(sp).resume(spec, run_id=rid))
     run.wait(OBSERVE_S)
@@ -957,7 +991,7 @@ def test_legacy_command_checkpoint_resume_is_unchanged(env: _Env) -> None:
         f'command: "printf c >> {shlex.quote(str(producer_log))}"',
     )
     spec = load_workflow_spec_from_text(text)
-    _write_v1_checkpoint(env, rid, spec, NodeExecution(node_id="produce", status=NodeStatus.SUCCESS, exit_code=0))
+    _write_v1_checkpoint(env, rid, spec, iterations=1, exit_code=0)
     execution = WorkflowRunner(workdir=env.workdir).resume(spec, run_id=rid)
     assert execution.succeeded is True
     assert not producer_log.exists()
@@ -967,11 +1001,12 @@ def test_legacy_command_checkpoint_resume_is_unchanged(env: _Env) -> None:
 def test_legacy_condition_skip_checkpoint_resume_is_unchanged(env: _Env) -> None:
     """[EXISTING] A v1 intentional (``when``) skip still unblocks its consumer on resume."""
     rid = "p9-legacy-skip"
-    spec = _spec(env, produce_extra='    when: "false"')
-    skipped = NodeExecution(node_id="produce", status=NodeStatus.SKIPPED, condition_skipped=True)
-    _write_v1_checkpoint(env, rid, spec, skipped)
+    predicate_log = env.workdir / "predicate.log"
+    spec = _spec(env, produce_extra=f'    when: "printf c >> {shlex.quote(str(predicate_log))}; false"')
+    _write_v1_checkpoint(env, rid, spec, status="skipped", condition_skipped=True)
     execution = WorkflowRunner(workdir=env.workdir).resume(spec, run_id=rid)
     assert execution.succeeded is True
+    assert not predicate_log.exists(), "resuming a persisted skip re-evaluated the predicate"
     assert env.sentinel_writes() == 1
 
 
