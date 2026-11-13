@@ -56,12 +56,21 @@ bernstein abandonments list   [--workdir PATH] [--limit N] [--json]
 bernstein abandonments stats  [--workdir PATH] [--json]
 ```
 
-- `list` prints the most recent rows (newest first; default 20).
-- `stats` reports `total` and counts by reason, role, and adapter (`by_reason`,
-  `by_role`, and `by_adapter`). These are abandonment counts, not rates.
+- `list` prints at most `--limit` rows (default 20), ordered newest first.
+  A non-positive limit returns no rows. With `--json`, the result is a JSON
+  array of row objects (`[]` when there are no valid rows in the selected
+  limit).
+- `stats` summarizes every valid ledger row in the project, not just the rows
+  shown by `list`. Its JSON object has `total` and the grouped row-count maps
+  `by_reason`, `by_role`, and `by_adapter`. These are counts, not rates; a
+  malformed or invalid ledger row is skipped.
 
 Pass `--json` (or set the global `--json` flag) for machine-readable
-output.
+output. If `list` has no rows to display (including when `--limit` is
+non-positive), it prints `No abandonments recorded.`; JSON `list` returns
+`[]`. If the project has no valid ledger rows, text `stats` prints the same
+message and JSON `stats` returns
+`{"total": 0, "by_reason": {}, "by_role": {}, "by_adapter": {}}`.
 
 ## Examples
 
@@ -71,7 +80,7 @@ Last twenty:
 bernstein abandonments list --limit 20
 ```
 
-Find roles abandoning more than expected:
+Inspect abandonment counts by role:
 
 ```bash
 bernstein abandonments stats --json | jq '.by_role'
@@ -90,7 +99,10 @@ The separate `abandon_rate_by_role` and `abandon_rate_by_adapter` helpers
 compute rates as abandons divided by abandons plus completed tasks. They
 require completed-task counts as input (`completed_by_role` or
 `completed_by_adapter`) to supply the denominator; these rates are not fields
-in the `stats` output.
+in the `stats` output. For example, 2 valid abandonment rows for `backend`
+produce a `by_role.backend` count of 2. If there were also 8 completed
+backend tasks, the role rate would be `2 / (2 + 8) = 0.2` (20%); the stats
+command cannot calculate that rate without the separate completed-task count.
 
 ## Troubleshooting
 
