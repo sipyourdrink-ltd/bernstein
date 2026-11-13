@@ -198,23 +198,21 @@ def check_trace_highlight_contrast(page: Page, drawer: Locator, base: str, task_
             ratio = mark.evaluate(
                 r"""mark => {
                     const rgb = color => color.match(/[\d.]+/g).map(Number);
+                    const composite = (under, [red, green, blue, alpha = 1]) =>
+                        [red, green, blue].map((channel, i) => channel * alpha + under[i] * (1 - alpha));
                     const layers = [];
                     for (let node = mark; node; node = node.parentElement) {
                         const layer = rgb(getComputedStyle(node).backgroundColor);
                         layers.push(layer);
                         if ((layer[3] ?? 1) === 1) break;
                     }
-                    const background = layers.reverse().reduce(
-                        (under, [red, green, blue, alpha = 1]) =>
-                            [red, green, blue].map((channel, i) => channel * alpha + under[i] * (1 - alpha)),
-                        [255, 255, 255],
-                    );
+                    const background = layers.reverse().reduce(composite, [255, 255, 255]);
                     const luminance = color => color
                         .slice(0, 3)
                         .map(channel => channel / 255)
                         .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
                         .reduce((sum, channel, i) => sum + channel * [0.2126, 0.7152, 0.0722][i], 0);
-                    const foreground = luminance(rgb(getComputedStyle(mark).color));
+                    const foreground = luminance(composite(background, rgb(getComputedStyle(mark).color)));
                     const backdrop = luminance(background);
                     return (Math.max(foreground, backdrop) + 0.05) / (Math.min(foreground, backdrop) + 0.05);
                 }"""
