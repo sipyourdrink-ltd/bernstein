@@ -5,15 +5,17 @@
 Spawning an agent is not free: Bernstein has to create a git worktree
 (5–15 s on a non-trivial repo), optionally start an MCP server process,
 and warm up the adapter's CLI. The **warm pool** pays that cost ahead of
-time. A small number of "ready" slots - each backed by a pre-created
-worktree and (optionally) a pre-started MCP process - sit idle until a
-task arrives, at which point the spawner claims a slot instead of
-provisioning from scratch.
+time. It tracks a small number of `PoolSlot` records. A ready record may be
+backed by a pre-created worktree and (optionally) a pre-started MCP process,
+but `ready` does not mean the worktree is provisioned. Today the orchestrator
+adds speculative ready records with an empty worktree path; when the worker
+launcher claims one, it releases the unprovisioned record and creates a new
+worktree instead of reusing one.
 
-If you only have time for one sentence: **the pool tracks pre-provisioned
-worktree slots that the spawner can claim instead of running
-`git worktree add`, but today the orchestrator sizes it itself and no code
-fills it with real worktrees, so spawns take the cold path**. The rest of
+If you only have time for one sentence: **the pool tracks slot records, and a
+provisioned worktree slot can let the spawner skip `git worktree add`; today,
+however, the orchestrator adds speculative records with empty paths, so the
+worker launcher creates a new worktree and takes the cold path**. The rest of
 this page explains the slot lifecycle, the configuration surface, and the
 current wiring.
 
@@ -21,16 +23,19 @@ current wiring.
 
 ## What is a worktree slot?
 
-A **worktree slot** is one pre-provisioned unit of the warm pool: a
-ready-to-claim git worktree (plus, optionally, a pre-started MCP server
-process) reserved for the next agent spawn. Each slot is a `PoolSlot`
-object with its own `slot_id`, a target role, a `worktree_path` on
-disk, and a `ready → claimed → expired` lifecycle. When a task
-arrives, the spawner claims a ready slot and skips the 5–15 s
-`git worktree add` cold-start. `WarmPoolConfig.max_slots` caps the total
-number of slots ever added to the pool (ready, claimed and expired all
-count, and slots are never removed), not the number idle at once.
+A **worktree slot** is a `PoolSlot` record with its own `slot_id`, a target
+role, a `worktree_path`, and a `ready → claimed → expired` lifecycle. `ready`
+is a status, not a guarantee that a worktree exists: a **provisioned** slot
+has a worktree at its path (and may have a pre-started MCP server process),
+while an unprovisioned slot has an empty path. Today, the orchestrator adds
+speculative ready records with empty paths. When the worker launcher claims
+one, it releases that record and creates a new worktree instead of using the
+slot as a pre-provisioned worktree. A provisioned ready slot can skip the
+5–15 s `git worktree add` cold-start.
 
+`WarmPoolConfig.max_slots` caps the total number of slots ever added to the
+pool (ready, claimed and expired all count, and slots are never removed), not
+the number idle at once or the number of agents that can run concurrently.
 Worktree slots are about spawn latency. They are distinct from the
 concurrency slots that adaptive parallelism manages (how many agents
 run at once) and from cluster `--slots` (how many workers a remote node
