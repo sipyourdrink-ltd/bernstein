@@ -19,6 +19,7 @@ import json
 import logging
 import sys
 import time
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -976,12 +977,61 @@ def _recap_since(since: str, workdir: str, *, as_json: bool) -> None:
     console.print(format_away_report(summary))
 
 
+def _recap_from_archive(path: Path) -> dict[str, Any]:
+    """Build a recap from the terminal records in an explicit JSONL archive."""
+    tasks: list[dict[str, Any]] = []
+    total_cost = 0.0
+    completed = failed = 0
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    raise click.ClickException(f"Invalid archive record at {path}:{line_number}") from None
+                if not isinstance(record, dict):
+                    raise click.ClickException(f"Invalid archive record at {path}:{line_number}")
+                task_id = record.get("task_id") or record.get("id")
+                status = record.get("status")
+                if not isinstance(task_id, str) or not task_id or not isinstance(status, str) or not status:
+                    raise click.ClickException(f"Missing task ID or status at {path}:{line_number}")
+                tasks.append(
+                    {
+                        "id": task_id,
+                        "title": record.get("title"),
+                        "status": status,
+                        "role": record.get("role"),
+                        "complexity": record.get("complexity"),
+                    }
+                )
+                completed += status == "done"
+                failed += status == "failed"
+                cost = record.get("cost_usd")
+                if type(cost) in (int, float) and isfinite(cost):
+                    total_cost += cost
+    except (OSError, UnicodeError) as exc:
+        raise click.ClickException(f"Cannot read archive {path}: {exc}") from exc
+
+    total = len(tasks)
+    return {
+        "tasks": tasks,
+        "summary": {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "success_rate": round(completed / total * 100, 1) if total else 0.0,
+        },
+        "cost_breakdown": {"total_cost_usd": round(total_cost, 4)},
+    }
+
+
 @click.command("recap")
 @click.option(
     "--archive",
-    default=".sdd/archive/tasks.jsonl",
-    show_default=True,
-    help="Path to the task archive.",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Read this local task archive instead of contacting the task server.",
 )
 @click.option(
     "--since",
@@ -1002,19 +1052,31 @@ def _recap_since(since: str, workdir: str, *, as_json: bool) -> None:
     default=False,
     help="Output raw JSON.",
 )
-def recap(archive: str, since: str | None, workdir: str, as_json: bool) -> None:
+def recap(archive: Path | None, since: str | None, workdir: str, as_json: bool) -> None:
     """Post-run summary: tasks, pass/fail, cost.
 
-    Reads the task archive and prints a summary of what happened.
+    Reads from the task server by default. With ``--archive``, reports task
+    counts and recorded costs from a local JSONL file. An unreadable or
+    invalid archive exits with status 1.
 
     With ``--since`` the summary is built from the workspace's own
     ``.sdd/`` metrics and task journal instead of the task server, so it
     still answers "what happened while I was away" after the run has ended.
     """
     if since is not None:
+        if archive is not None:
+            raise click.UsageError("--archive and --since select different report sources; choose one.")
         _recap_since(since, workdir, as_json=as_json)
         return
 
+    data = _recap_from_archive(archive) if archive is not None else _recap_from_server()
+    if as_json:
+        console.print_json(json.dumps(data))
+    else:
+        _render_recap(data, archive_only=archive is not None)
+
+
+def _recap_from_server() -> dict[str, Any]:
     try:
         data = server_get("/recap", raise_on_auth_error=True)
     except ServerAuthError:
@@ -1027,17 +1089,14 @@ def recap(archive: str, since: str | None, workdir: str, as_json: bool) -> None:
 
         server_unreachable().print()
         raise SystemExit(1)
+    return data
 
-    if as_json:
-        console.print_json(json.dumps(data))
-        return
 
+def _render_recap(data: dict[str, Any], *, archive_only: bool) -> None:
     from rich.table import Table
 
     tasks = data.get("tasks", [])
     summary = data.get("summary", {})
-    diff_stats = data.get("diff_stats", {})
-    quality_scores = data.get("quality_scores", {})
     cost_breakdown = data.get("cost_breakdown", {})
 
     total = summary.get("total", len(tasks))
@@ -1057,6 +1116,35 @@ def recap(archive: str, since: str | None, workdir: str, as_json: bool) -> None:
 
     console.print(table)
     console.print()
+
+    if not archive_only:
+        _render_recap_workspace_details(data.get("diff_stats", {}), data.get("quality_scores", {}))
+
+    # Cost breakdown
+    cost_table = Table(
+        title="Recorded Archive Cost" if archive_only else "Cost Breakdown",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    cost_table.add_column("Model")
+    cost_table.add_column("Cost (USD)")
+    cost_table.add_column("Tokens")
+    cost_table.add_column("Invocations")
+
+    total_cost = cost_breakdown.get("total_cost_usd", 0.0)
+    for model_data in cost_breakdown.get("per_model", []):
+        model = model_data.get("model", "unknown")
+        cost = model_data.get("cost_usd", 0.0)
+        tokens = model_data.get("tokens", 0)
+        invocations = model_data.get("invocations", 0)
+        cost_table.add_row(model, f"${cost:.4f}", str(tokens), str(invocations))
+
+    cost_table.add_row("TOTAL", f"${total_cost:.4f}", "", "")
+    console.print(cost_table)
+
+
+def _render_recap_workspace_details(diff_stats: dict[str, Any], quality_scores: dict[str, Any]) -> None:
+    from rich.table import Table
 
     # Git diff stats
     diff_table = Table(title="Git Diff Stats", show_header=True, header_style="bold green")
@@ -1084,25 +1172,6 @@ def recap(archive: str, since: str | None, workdir: str, as_json: bool) -> None:
 
     console.print(quality_table)
     console.print()
-
-    # Cost breakdown
-    cost_table = Table(title="Cost Breakdown", show_header=True, header_style="bold magenta")
-    cost_table.add_column("Model")
-    cost_table.add_column("Cost (USD)")
-    cost_table.add_column("Tokens")
-    cost_table.add_column("Invocations")
-
-    total_cost = cost_breakdown.get("total_cost_usd", 0.0)
-    for model_data in cost_breakdown.get("per_model", []):
-        model = model_data.get("model", "unknown")
-        cost = model_data.get("cost_usd", 0.0)
-        tokens = model_data.get("tokens", 0)
-        invocations = model_data.get("invocations", 0)
-        cost_table.add_row(model, f"${cost:.4f}", str(tokens), str(invocations))
-
-    cost_table.add_row("TOTAL", f"${total_cost:.4f}", "", "")
-
-    console.print(cost_table)
 
 
 # ---------------------------------------------------------------------------

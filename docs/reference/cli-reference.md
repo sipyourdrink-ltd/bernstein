@@ -411,10 +411,13 @@ A subcommand group; defaults to `bernstein logs tail`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--archive PATH` | `.sdd/archive/tasks.jsonl` | Path to task archive. |
+| `--archive PATH` | none | Read task counts and recorded costs from a local JSONL archive (typically `.sdd/archive/tasks.jsonl`). |
 | `--since DURATION` | none | Build the report from workspace files instead of the task server (`45m`, `6h`, `2d`; a bare number is minutes). |
 | `--workdir PATH` | `.` | Project root, used with `--since`. |
 | `--as-json` | off | Emit raw JSON. |
+
+By default, recap queries the task server. Use `--archive` for a local archive
+report without the server. `--archive` and `--since` cannot be combined.
 
 With `--since` the summary is the "since you were away" report: completed and
 failed tasks, provider errors, and estimated cost read from `.sdd/` alone, so
