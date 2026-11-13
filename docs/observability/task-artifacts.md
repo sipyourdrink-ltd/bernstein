@@ -14,6 +14,10 @@ agent's account of itself.
 
 ## Artifact channel
 
+The `bernstein_post_artifact` operation records evidence posted during a run; it
+is distinct from a task's required deliverable. An [artifact contract](../operations/artifacts.md)
+defines the output file and criteria checked when the task completes.
+
 A worker posts an artifact with the `bernstein_post_artifact` MCP tool, scoped so
 it can attach artifacts only to a task whose claim it holds. Artifacts are typed:
 
