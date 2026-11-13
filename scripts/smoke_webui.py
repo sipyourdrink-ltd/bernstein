@@ -533,6 +533,47 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
         page.unroute(tasks_url, respond_to_create)
 
 
+def check_task_creation_survives_route_remount(page: Page, base: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = "Creation in progress during navigation"
+    pending: list[Route] = []
+    attempts: list[str] = []
+
+    def hold_create(route: Route) -> None:
+        attempts.append(route.request.post_data_json["id"])
+        pending.append(route)
+
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    header.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill("Complete the original request after returning.")
+    page.route(tasks_url, hold_create)
+    try:
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        page.go_back()
+        expect(page).to_have_url(f"{base}/ui/settings")
+        page.go_forward()
+        expect(page).to_have_url(f"{base}/ui/tasks")
+        header.click()
+        expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        expect(form.get_by_role("button", name="Start a new task instead", exact=True)).to_be_disabled()
+        expect(form.get_by_role("button", name="Check task", exact=True)).to_be_disabled()
+        assert len(attempts) == len(pending) == 1
+        pending[0].fulfill(response=pending[0].fetch())
+        check = form.get_by_role("button", name="Check task", exact=True)
+        expect(check).to_be_enabled()
+        check.click()
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        assert len(attempts) == 1
+        page.keyboard.press("Escape")
+    finally:
+        page.unroute(tasks_url, hold_create)
+
+
 def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
     list_url = f"{base}/api/v1/tasks?page=1"
     events_url = f"{base}/api/v1/events"
@@ -790,6 +831,7 @@ def main() -> None:
             check_task_creation_failures(page, base, headers)
             check_task_creation_during_initial_list(page, base, headers)
             check_unconfirmed_task_lookup(page, base, headers)
+            check_task_creation_survives_route_remount(page, base)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)
