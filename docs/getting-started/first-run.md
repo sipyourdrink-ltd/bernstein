@@ -83,9 +83,14 @@ Four things happened:
 A minimal `bernstein.yaml` looks like:
 
 ```yaml
-internal_llm_provider: claude   # or codex / gemini / aider - whatever you set up
+cli: claude                    # or codex / gemini / aider - whatever you set up
 budget: "$5"                    # spending cap for the run (accepts "$5", 5, or 5.0)
 ```
+
+`cli` selects the installed coding agent used for worker tasks. The separate
+`internal_llm_provider` setting configures Bernstein's internal LLM calls, such as
+planning and reviews; `internal_llm_model` selects the model for those calls.
+These internal settings do not select the worker adapter or replace `cli`.
 
 ---
 
