@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [คู่มือผู้บริจาค](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ครอบคลุมการรัน worker และงบประมาณที่คุณกำหนด [คู่มือโปรเจกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ครอบคลุมการประกาศ manifest และ [แบบจำลองภัยคุกคาม](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ระบุว่าขอบเขตแต่ละชั้นป้องกันอะไรและไม่ป้องกันอะไร ตัวรันแบบคำสั่งเดียวยังไม่ถูกปล่อยออกมา วันนี้คำสั่งย่อยที่ใช้งานได้คือ `verify`, `browse`, `budget`, `verify-bundle` และ `hub` มีการลงทะเบียน `autopilot` แล้ว แต่จะปฏิเสธการทำงานจนกว่าจะมีการพัฒนา `TaskSource`
 
 ### เนื้อหาเชิงลึกนอกเหนือจากหน้าแรก
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 เนื้อหาเชิงลึกทั้งหมดอยู่ใน [เว็บไซต์เอกสารคู่มือ](https://docs.bernstein.run/):
 

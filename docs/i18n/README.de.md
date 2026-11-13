@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 Der [Spenderleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt den Betrieb eines Workers und das Budget, das Sie setzen, der [Projektleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) das Deklarieren eines Manifests, und das [Bedrohungsmodell](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschreibt, wovor jede Grenze schützt und wovor nicht. Der Runner mit einem einzigen Befehl ist noch nicht veröffentlicht: Heute sind `verify`, `browse`, `budget`, `verify-bundle` und `hub` die funktionierenden Unterbefehle. `autopilot` ist registriert, verweigert aber die Ausführung, bis eine `TaskSource` implementiert ist.
 
 ### hinter den Kulissen
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Alle weiterführenden Details finden sich auf der [Dokumentations-Website](https://docs.bernstein.run/):
 

@@ -635,7 +635,7 @@ export default function Tasks() {
             if (outcomeUnknown) void refreshAfterCreate();
           }}
           onCreated={(taskId) => {
-            drawerCreateTrigger.current = createTrigger.current;
+            drawerCreateTrigger.current = createFromEmptyState.current ? headerCreateButton.current : createTrigger.current;
             setCreateFocus(null);
             setActiveTab('Summary');
             setSelectedId(taskId);

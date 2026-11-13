@@ -311,7 +311,10 @@ def check_task_creation(page: Page, base: str, headers: dict[str, str]) -> None:
         expect(task).to_be_ok()
         assert (task.json()["title"], task.json()["description"], task.json()["role"]) == (title, description, "qa")
         page.keyboard.press("Escape")
-        expect(trigger).to_be_focused()
+        return_target = (
+            page.get_by_role("button", name="Create task", exact=True).first if entry == "empty state" else trigger
+        )
+        expect(return_target).to_be_focused()
 
 
 def check_task_creation_failures(page: Page, base: str, headers: dict[str, str]) -> None:
@@ -346,6 +349,8 @@ def check_task_creation_failures(page: Page, base: str, headers: dict[str, str])
             route.fulfill(status=400, json={"detail": "Role unknown is not configured. Allowed roles: qa."})
         elif route.request.post_data_json["title"] == "Malformed task response":
             route.fulfill(status=201, json={"id": {"unexpected": True}})
+        elif route.request.post_data_json["title"] == "Padded task ID":
+            route.fulfill(status=201, json={"id": " 0123456789ab "})
         else:
             response = route.fetch()
             assert response.status == 201
@@ -367,14 +372,15 @@ def check_task_creation_failures(page: Page, base: str, headers: dict[str, str])
         expect(trigger).to_be_focused()
         expect(page.get_by_text("Task creation response loss", exact=True)).to_be_visible()
 
-        trigger.click()
-        form.get_by_label("Title").fill("Malformed task response")
-        form.get_by_label("Prompt").fill("Treat a malformed response as unconfirmed.")
-        submit.click()
-        expect(form.get_by_role("alert")).to_contain_text("Check the task list before retrying")
-        expect(submit).to_be_disabled()
-        cancel.click()
-        expect(trigger).to_be_focused()
+        for title in ("Malformed task response", "Padded task ID"):
+            trigger.click()
+            form.get_by_label("Title").fill(title)
+            form.get_by_label("Prompt").fill("Treat a malformed response as unconfirmed.")
+            submit.click()
+            expect(form.get_by_role("alert")).to_contain_text("Check the task list before retrying")
+            expect(submit).to_be_disabled()
+            cancel.click()
+            expect(trigger).to_be_focused()
     finally:
         page.unroute(tasks_url, respond_to_create)
         page.unroute(events_url)
@@ -427,6 +433,35 @@ def check_task_creation_during_initial_list(page: Page, base: str, headers: dict
         expect(header).to_be_focused()
     finally:
         page.unroute(tasks_url, unconfirmed_create)
+        page.unroute(list_url)
+        page.unroute(events_url)
+
+
+def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
+    list_url = f"{base}/api/v1/tasks?page=1"
+    events_url = f"{base}/api/v1/events"
+    page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
+    try:
+        page.route(list_url, lambda route: route.fulfill(json=[]), times=1)
+        page.goto(f"{base}/ui/tasks")
+        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+        trigger = page.get_by_role("button", name="Create task", exact=True)
+        trigger.last.click()
+        form = page.get_by_role("dialog", name="Create task", exact=True)
+        title = "Created before the empty task list refreshed"
+        form.get_by_label("Title").fill(title)
+        form.get_by_label("Prompt").fill("Keep focus on a stable control after closing the drawer.")
+        deferred: list[Route] = []
+        page.route(list_url, lambda route: deferred.append(route), times=1)
+        with page.expect_request(list_url):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        assert len(deferred) == 1
+        page.keyboard.press("Escape")
+        deferred[0].continue_()
+        expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
+        expect(trigger).to_be_focused()
+    finally:
         page.unroute(list_url)
         page.unroute(events_url)
 
@@ -656,6 +691,7 @@ def main() -> None:
             check_task_creation_failures(page, base, headers)
             check_task_creation_during_initial_list(page, base, headers)
             check_task_creation(page, base, headers)
+            check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()

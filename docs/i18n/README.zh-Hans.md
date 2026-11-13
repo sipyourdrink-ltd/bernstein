@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [捐献者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 讲运行 worker 以及你设定的预算，[项目指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 讲声明清单，[威胁模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 说明每一层边界防护什么、不防护什么。单条命令的运行器尚未发布：目前可用的子命令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。 `autopilot` 已注册，但在实现 `TaskSource` 之前会拒绝运行。
 
 ### 首页之外
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 所有深入内容都在[文档站点](https://docs.bernstein.run/)上：
 

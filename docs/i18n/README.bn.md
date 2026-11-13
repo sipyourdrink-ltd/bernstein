@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড। `autopilot` নিবন্ধিত আছে, কিন্তু `TaskSource` বাস্তবায়িত না হওয়া পর্যন্ত চলতে অস্বীকার করে।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 

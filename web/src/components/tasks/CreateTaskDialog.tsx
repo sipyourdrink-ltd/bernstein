@@ -43,7 +43,8 @@ export function CreateTaskDialog({
       if (!navigator.onLine) throw new Error('You are offline. Reconnect and retry.');
       try {
         const response = await apiPost<{ id?: unknown }>('/tasks', task, { signal: AbortSignal.timeout(15_000) });
-        if (typeof response?.id === 'string' && response.id.trim()) return response.id;
+        const id = response?.id;
+        if (typeof id === 'string' && id.length > 0 && id === id.trim()) return id;
       } catch (error) {
         if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
           throw error;

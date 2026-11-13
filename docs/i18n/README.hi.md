@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse`, `budget`, `verify-bundle` और `hub` काम करने वाले सब-कमांड हैं। `autopilot` पंजीकृत है, लेकिन `TaskSource` लागू होने तक चलने से इनकार करता है।
 
 ### पहले पन्ने से आगे
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 गहराई की हर चीज़ [डॉक्स साइट](https://docs.bernstein.run/) पर रहती है:
 

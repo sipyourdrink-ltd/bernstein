@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 La [guida del donatore](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) copre l'esecuzione di un worker e il budget che imposti, la [guida del progetto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) copre la dichiarazione di un manifesto, e il [modello delle minacce](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica cosa ciascun confine protegge e cosa no. L'esecutore a comando singolo non è ancora rilasciato: oggi `verify`, `browse`, `budget`, `verify-bundle` e `hub` sono i sottocomandi funzionanti. `autopilot` è registrato, ma rifiuta l’esecuzione finché non viene implementato un `TaskSource`.
 
 ### oltre la pagina principale
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Tutte le informazioni approfondite sono disponibili sul [sito della documentazione](https://docs.bernstein.run/):
 

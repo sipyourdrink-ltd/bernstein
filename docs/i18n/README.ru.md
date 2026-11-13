@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [Руководство донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описывает запуск воркера и бюджет, который вы задаёте, [руководство проекта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — объявление манифеста, а [модель угроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — что каждая граница защищает, а что нет. Запуск одной командой ещё не выпущен: сегодня работают подкоманды `verify`, `browse`, `budget`, `verify-bundle` и `hub`. `autopilot` зарегистрирован, но отказывается запускаться, пока не реализован `TaskSource`.
 
 ### за пределами первой страницы
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Всё глубокое живёт на [сайте документации](https://docs.bernstein.run/):
 
