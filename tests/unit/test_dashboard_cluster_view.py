@@ -177,7 +177,9 @@ def test_remote_claims_stop_at_initial_total_and_deduplicate_transitions(monkeyp
     assert not any("offset=2" in url for url, _ in server.requests)
 
 
-@pytest.mark.parametrize("cluster", [{}, {"nodes": "bad"}, {"nodes": [{"capacity": {"active_agents": "bad"}}]}])
+@pytest.mark.parametrize(
+    "cluster", [{}, {"nodes": "bad"}, {"nodes": [{}]}, {"nodes": [{"id": "n-1", "capacity": {"active_agents": "bad"}}]}]
+)
 def test_malformed_cluster_response_does_not_discard_the_poll(
     monkeypatch: pytest.MonkeyPatch, cluster: dict[str, Any]
 ) -> None:
@@ -188,6 +190,35 @@ def test_malformed_cluster_response_does_not_discard_the_poll(
 
     assert data["tasks"] == tasks
     assert data["cluster"] == {"nodes": [], "reachable": False}
+
+
+def test_remote_claims_ignore_invalid_status_and_timestamp_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks = [
+        {**_task("bad-status", "n-1"), "status": []},
+        {**_task("bad-owner", "n-1"), "claimed_by_session": {}},
+        {**_task("bad-time", "n-1"), "claimed_at": 10**400, "role": ["bad"]},
+        {**_task("bool-time", "n-1"), "claimed_at": True},
+    ]
+    node = _node("n-1", "worker-1")
+    node["labels"]["model"] = ["bad"]
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [node]},
+            "/tasks?status=claimed&limit=500&offset=0": {"tasks": [], "total": 0},
+            "/tasks?status=in_progress&limit=500&offset=0": {"tasks": tasks, "total": len(tasks)},
+        },
+    )
+
+    data = _fetch_all()
+
+    assert not data["server_unreachable"]
+    worker = data["cluster"]["nodes"][0]
+    assert worker["model"] == ""
+    assert [task["id"] for task in worker["tasks"]] == ["bad-time", "bool-time"]
+    assert all(task["elapsed_s"] is None for task in worker["tasks"])
+    assert worker["tasks"][0]["role"] == ""
 
 
 def test_remote_poll_skips_local_runtime_sources(monkeypatch: pytest.MonkeyPatch) -> None:

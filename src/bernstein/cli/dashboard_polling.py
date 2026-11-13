@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -171,11 +172,14 @@ def _fetch_all() -> dict[str, Any]:
     # HTTP read has to have failed before the whole server is called
     # unreachable: one route erroring is a broken route, and blanking a
     # working dashboard over it would hide the data that did arrive.
-    server_unreachable = all(result is None for result in (status, costs, quality, bandit, tasks))
+    cluster = _load_cluster_view(url, tasks)
+    server_unreachable = not (cluster and cluster["reachable"]) and all(
+        result is None for result in (status, costs, quality, bandit, tasks)
+    )
 
     return {
         "server_unreachable": server_unreachable,
-        "cluster": _load_cluster_view(url, tasks),
+        "cluster": cluster,
         "tasks": tasks,
         "status": status,
         "agents": agents,
@@ -206,7 +210,7 @@ def _fetch_held_tasks(url: str) -> list[dict[str, Any]] | None:
             if not isinstance(page, dict):
                 return None
             rows, total = page.get("tasks"), page.get("total")
-            if not isinstance(rows, list) or not isinstance(total, int) or total < 0:
+            if not isinstance(rows, list) or type(total) is not int or total < 0:
                 return None
             if first_total is None:
                 first_total = total
@@ -245,15 +249,22 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
     now = time.time() if now is None else now
     view_nodes: list[dict[str, Any]] = []
     for node in nodes:
-        if not isinstance(node, dict):
+        if not isinstance(node, dict) or not isinstance(node_id := node.get("id"), str) or not node_id:
             continue
+        labels = node.get("labels")
+        labels = labels if isinstance(labels, dict) else {}
+        display_node = {
+            **node,
+            "name": _display_text(node.get("name")),
+            "status": _display_text(node.get("status"), "unknown"),
+            "labels": {"adapter": _display_text(labels.get("adapter"))},
+        }
         try:
-            fields: dict[str, Any] = dict(_node_display_fields(node, now))
+            fields: dict[str, Any] = dict(_node_display_fields(display_node, now))
         except (AttributeError, OverflowError, TypeError, ValueError):
             logger.warning("Dashboard received an invalid cluster node")
             continue
-        labels = node.get("labels") or {}
-        fields["model"] = str(labels.get("model") or "") if isinstance(labels, dict) else ""
+        fields["model"] = _display_text(labels.get("model"))
         view_nodes.append(fields)
     if not view_nodes:
         return {"nodes": [], "reachable": False}
@@ -262,25 +273,41 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
     held_tasks = tasks if active_tasks is None else active_tasks
     held: dict[str, list[dict[str, Any]]] = {}
     for task in held_tasks if isinstance(held_tasks, list) else []:
-        if not isinstance(task, dict) or task.get("status") not in _NODE_HELD_STATUSES:
+        if not isinstance(task, dict):
             continue
+        status = task.get("status")
         owner = task.get("claimed_by_session")
-        if owner:
-            held.setdefault(str(owner), []).append(task)
+        task_id = task.get("id")
+        if not isinstance(status, str) or status not in _NODE_HELD_STATUSES:
+            continue
+        if not isinstance(owner, str) or not owner or not isinstance(task_id, str) or not task_id:
+            continue
+        held.setdefault(owner, []).append(
+            {
+                "id": task_id,
+                "role": _display_text(task.get("role")),
+                "title": _display_text(task.get("title")),
+                "elapsed_s": _claim_age(task.get("claimed_at"), now),
+            }
+        )
 
     for fields in view_nodes:
-        fields["tasks"] = [
-            {
-                "id": str(task.get("id", "")),
-                "role": str(task.get("role", "")),
-                "title": str(task.get("title", "")),
-                "elapsed_s": int(now - claimed_at)
-                if isinstance(claimed_at := task.get("claimed_at"), (int, float))
-                else None,
-            }
-            for task in held.get(fields["id"], [])
-        ]
+        fields["tasks"] = held.get(fields["id"], [])
     return {"nodes": view_nodes, "reachable": True}
+
+
+def _display_text(value: Any, default: str = "") -> str:
+    return value if isinstance(value, str) else default
+
+
+def _claim_age(claimed_at: Any, now: float) -> int | None:
+    if type(claimed_at) not in (int, float):
+        return None
+    try:
+        elapsed = now - claimed_at
+    except OverflowError:
+        return None
+    return max(0, int(elapsed)) if math.isfinite(elapsed) else None
 
 
 def _format_cluster_view(view: dict[str, Any]) -> str:
