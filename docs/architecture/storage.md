@@ -128,10 +128,20 @@ WAL.append() ──▶ LocalFsSink.write(durable=True)   ← synchronous fsync
    sink must call it on exit (the orchestrator does not use the storage
    sinks today).
 
-Reads prefer the remote sink - that's the crash-recovery path where
-the ephemeral local disk may be empty. They fall back to local when
-the remote is unreachable or doesn't have the key (e.g. the mirror is
-still pending).
+Buffered operations consult the two copies differently:
+
+| Operation | First copy checked | When the other copy is consulted |
+| --------- | ------------------ | -------------------------------- |
+| `read`    | Remote             | Falls back to local if remote raises `FileNotFoundError` or `SinkError`. |
+| `list`    | Local              | Always also lists remote, then returns the sorted union of both key lists with duplicates removed. If remote listing raises `SinkError`, it returns the local keys. |
+| `exists`  | Local              | Checks remote only if local says the key is absent. If remote raises `SinkError`, returns `False`. |
+| `stat`    | Local              | Falls back to remote only if local raises `FileNotFoundError`. |
+
+If both copies contain a key but their contents or metadata differ, `read`
+returns the remote bytes, which may be an older mirror of the local write;
+`stat` returns the local metadata. The read preference is useful for crash
+recovery when ephemeral local storage is empty, but it does not guarantee that
+the remote mirror is the newest copy.
 
 ## Sandbox integration
 
