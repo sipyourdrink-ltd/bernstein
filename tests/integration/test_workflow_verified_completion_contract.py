@@ -1135,7 +1135,7 @@ def test_native_task_store_replay_does_not_preserve_attempt_identity(tmp_path: P
 
 
 def test_native_stop_replay_does_not_preserve_claim_session(env: _Env) -> None:
-    """[NATIVE FACT] The current journal preserves a stop request without its claiming session."""
+    """[NATIVE FACT] Replay restores the stop request without its recorded claiming session."""
     sp = env.spawner(_Plan(mode="block", ignore_sigterm=True, after_launch=_cancel_unacknowledged))
     task_id = "wf-produce-stop-replay"
     session = sp.spawn_for_tasks([Task(id=task_id, title="produce", description="produce", role="backend")])
