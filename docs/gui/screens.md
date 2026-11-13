@@ -16,7 +16,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 
 ![Agents grid with token meter drawer](../assets/webui-agents-panel.png)
 
-![Tasks — empty state, filter chips and Run new task button](../assets/webui-tasks.png)
+![Tasks — empty state, filter chips and Create task button](../assets/webui-tasks.png)
 
 ![Agents — agent card grid view](../assets/webui-agents.png)
 
@@ -40,6 +40,8 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **Filter chips:** All · Running · Queued · Stalled · Done · 24h · Failed (with counts).
 - **Operator search syntax:** mono input parses `agent:` / `status:` / `role:` token prefixes.
 - **Drawer tabs:** Summary · Diff · Gates · Logs · Deps · Trace · Steer (Steer disabled with a reason on terminal tasks).
+- Use "Create task" or "New from prompt" to enter a title, prompt and optional role. The form submits to `POST /api/v1/tasks` and opens the drawer for the created task.
+- If the server's response cannot confirm creation, use **Check task** before submitting again.
 - **Actions:** Cancel run · Re-run · Change model · Change role · Kill session.
 - **Endpoints:** `GET /api/v1/tasks?status=&agent=&page=`, `POST /api/v1/tasks/{id}/{cancel,retry,prioritize,kill}`, `POST /api/v1/tasks/batch-ops`. SSE: `task_update`, `task_progress` over `/api/v1/events`.
 - **Replaces TUI widget:** `task_list.py` + `task_detail_overlay.py` + `dependency_graph.py`.
