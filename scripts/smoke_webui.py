@@ -197,9 +197,18 @@ def check_trace_highlight_contrast(page: Page, drawer: Locator, base: str, task_
             page.evaluate("(dark) => document.documentElement.classList.toggle('dark', dark)", dark)
             ratio = mark.evaluate(
                 r"""mark => {
+                    const sample = document.createElement('canvas').getContext('2d');
                     const rgba = color => {
-                        const [red, green, blue, alpha = 1] = color.match(/[\d.]+/g).map(Number);
-                        return [red, green, blue, alpha];
+                        if (/^rgba?\(/.test(color)) {
+                            const [red, green, blue, alpha = 1] = color.match(/[\d.]+/g).map(Number);
+                            return [red, green, blue, alpha];
+                        }
+                        // Convert other CSS color spaces into sRGB in the browser.
+                        sample.clearRect(0, 0, 1, 1);
+                        sample.fillStyle = color;
+                        sample.fillRect(0, 0, 1, 1);
+                        const [red, green, blue, alpha] = sample.getImageData(0, 0, 1, 1).data;
+                        return [red, green, blue, alpha / 255];
                     };
                     const over = (top, bottom) => {
                         const alpha = top[3] + bottom[3] * (1 - top[3]);
@@ -225,9 +234,9 @@ def check_trace_highlight_contrast(page: Page, drawer: Locator, base: str, task_
                         .map(channel => channel / 255)
                         .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
                         .reduce((sum, channel, i) => sum + channel * [0.2126, 0.7152, 0.0722][i], 0);
-                    const canvas = [255, 255, 255, 1];
-                    const foreground = luminance(over(ink, canvas));
-                    const backdrop = luminance(over(paper, canvas));
+                    const viewport = [255, 255, 255, 1];
+                    const foreground = luminance(over(ink, viewport));
+                    const backdrop = luminance(over(paper, viewport));
                     return (Math.max(foreground, backdrop) + 0.05) / (Math.min(foreground, backdrop) + 0.05);
                 }"""
             )
