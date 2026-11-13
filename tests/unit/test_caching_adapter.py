@@ -323,6 +323,12 @@ def test_model_vendor_forwards_the_wrapped_adapter_declaration(tmp_path: Path) -
     assert adapter.model_vendor == "anthropic"
 
 
+def test_model_vendor_assignment_updates_the_wrapped_adapter(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    adapter.model_vendor = "anthropic"
+
+    assert mock_inner.model_vendor == adapter.model_vendor == "anthropic"
+
+
 def test_model_vendor_defaults_to_empty_when_the_inner_adapter_declares_none(tmp_path: Path) -> None:
     """An undeclared vendor stays empty rather than guessing a name."""
     inner = MagicMock(spec=CLIAdapter)
