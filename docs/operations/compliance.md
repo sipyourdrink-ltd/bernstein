@@ -108,8 +108,9 @@ conformity assessment, and writes the evidence package to
 (`compliance_cmd.py:71-113`).
 
 The printed summary includes risk category, Annex III domain, conformity
-status (pass/fail/partial), justification, mandatory gaps, and the
-August 2027 compliance deadline (`compliance_cmd.py:141-182`).
+status (pass/fail/partial), justification, mandatory gaps, and the date
+each applicable obligation applies from, with its article (see
+[When each obligation applies](#when-each-obligation-applies)).
 
 ### `report` - pretty-print an existing evidence package
 
@@ -229,6 +230,9 @@ The EU AI Act surface is implemented in `bernstein.compliance.eu_ai_act`
 - **Article 6 + Annex III** - high-risk classification (eight domains:
   biometrics, critical infrastructure, education, employment, essential
   services, law enforcement, migration, justice).
+- **Article 6(1) + Annex I** - high-risk classification of a safety
+  component of, or itself, a product under Section A of Annex I
+  (`annex_i_section_a_product`).
 - **Article 43** - conformity assessment (pass / fail / partial per
   control).
 - **Article 50** - transparency obligations (limited risk).
@@ -242,18 +246,62 @@ What `bernstein compliance assess` writes:
     plain-language justification.
   - `report.conformity` - overall status, per-control pass/fail/partial
     counts, mandatory gaps.
-  - `report.compliance_summary` - next-step list and the August 2027
-    deadline (`Article 111(2)`).
+  - `report.compliance_summary` - next-step list, the dates that apply
+    (`deadline`, one line per obligation) and the same as structured rows
+    (`deadlines`: obligation, ISO date, article, source, "as of" date,
+    transitional rules).
   - `tech_doc` - the Annex IV technical document (system description,
     intended use, data sets, risk-management measures, post-market
     monitoring).
 
-Bernstein itself classifies as **limited risk** by default (transparency
-obligations only) under `bernstein_descriptor()`. Override the
-descriptor in code if your deployment falls into one of the Annex III
-domains - for example, an HR-screening use case (Annex III §4) shifts
-the classification to `high`, and the conformity assessment becomes
-mandatory before the August 2027 deadline.
+Bernstein itself classifies as **minimal risk** under
+`bernstein_descriptor()`: none of the Article 5, Annex III or Article 50
+flags are set. Override the descriptor in code if your deployment falls
+into one of the Annex III domains. For example, an HR-screening use case
+(Annex III §4) shifts the classification to `high`, and the Chapter III
+obligations then apply from the Annex III date below.
+
+### When each obligation applies
+
+As of 20 October 2026, from the Official Journal texts of
+Regulation (EU) 2024/1689 (OJ L, 2024/1689, 12.7.2024) and the amending
+Regulation (EU) 2026/1744, the Digital Omnibus on AI (OJ L, 2026/1744,
+24.7.2026, ELI: http://data.europa.eu/eli/reg/2026/1744/oj; in force
+27 July 2026). The omnibus postponed the high-risk dates and split them by
+category; it did not move Article 50.
+
+| Obligation | Applies from | Set by |
+|---|---|---|
+| Article 50 transparency | 2 August 2026 | Article 113, second paragraph |
+| High-risk, Annex III (Article 6(2)): Chapter III, Sections 1 to 3, including Article 12 record-keeping | 2 December 2027 | Article 113, third paragraph, point (c)(i) |
+| High-risk, Annex I (Article 6(1)): the same provisions | 2 August 2028 | Article 113, third paragraph, point (c)(ii) |
+| General-purpose AI models (Chapter V) | 2 August 2025 | Article 113, third paragraph, point (b) |
+
+Rules for systems already on the market sit beside these dates and do not
+replace them:
+
+- **Article 111(4).** Providers of AI systems that generate synthetic audio,
+  image, video or text content and were placed on the market before
+  2 August 2026 must comply with Article 50(2) by 2 December 2026.
+- **Article 111(2).** A high-risk system placed on the market or put into
+  service before its Chapter III date is covered only if, from that date, its
+  design changes significantly. This is a condition, not a date. High-risk
+  systems intended for use by public authorities must comply by
+  2 August 2030 either way.
+- **Article 111(3).** General-purpose AI models placed on the market before
+  2 August 2025 must comply by 2 August 2027.
+- **Article 2(2).** For Annex I products under Section B, only Article 6(1),
+  Article 60a and Articles 102 to 112 apply, so the Annex I date above is for
+  Section A products.
+
+`bernstein compliance assess` prints the date for the system's actual
+category and obligations. Each comes from one table, `AI_ACT_DEADLINES` in
+`src/bernstein/compliance/eu_ai_act.py`. A system that is both Annex III and
+Annex I, or high-risk and subject to Article 50, gets each date with its own
+reference. A prohibited (Article 5) system gets none, because it may not be
+deployed. Set `SystemDescriptor.annex_i_section_a_product` for a system that
+is high-risk under Article 6(1). Evidence packages written before this change
+still carry the old string; re-run `assess` to refresh one.
 
 What is *audited*: the conformity assessment runs against the same
 runtime snapshot consumed by `compliance check`. A policy gap (failing
