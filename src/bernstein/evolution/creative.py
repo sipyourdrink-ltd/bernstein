@@ -190,8 +190,10 @@ def issue_to_proposal(issue: GitHubIssue) -> VisionaryProposal:
     # "### Risk", "### Effort".
     def _extract_section(heading: str, text: str) -> str:
         pattern = rf"###\s+{re.escape(heading)}\s*\n(.*?)(?=\n###|\Z)"
-        m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-        return m.group(1).strip() if m else ""
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        value = match.group(1).strip() if match else ""
+        # GitHub Issue Forms write this placeholder for empty text fields.
+        return "" if value == "_No response_" else value
 
     why = _extract_section("Problem", body) or _extract_section("Why", body)
     what = _extract_section("Proposed solution", body) or _extract_section("What", body)

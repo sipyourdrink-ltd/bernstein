@@ -4,7 +4,7 @@ Subcommands:
 
 * ``bernstein agents-md generate`` -- print canonical AGENTS.md to stdout.
 * ``bernstein agents-md write [--target T]`` -- write one target's files.
-  ``T`` ∈ ``canonical | cursor | claude | aider | goose``. Default:
+  ``T`` ∈ ``canonical | cursor | claude | aider | goose | copilot``. Default:
   ``canonical``.
 * ``bernstein agents-md sync`` -- write *all* target formats; the
   killer-feature command.
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bernstein.core.knowledge.agents_md_generator import AgentsMdSection
 
 
-_TARGET_CHOICES = ("canonical", "cursor", "claude", "aider", "goose")
+_TARGET_CHOICES = ("canonical", "cursor", "claude", "aider", "goose", "copilot")
 
 #: Exit code when a git checkout's default branch cannot be resolved. The
 #: generated context files are committed verbatim, so writing a wrong or
@@ -53,14 +53,15 @@ def agents_md_cmd(ctx: click.Context) -> None:
 
     Follows the canonical agents.md spec ("AGENTS.md is just standard
     Markdown" -- agents.md/) and the AAIF AGENTS.md project profile. Derives
-    one canonical IR from the repo, then renders to five target shapes:
+    one canonical IR from the repo, then renders to six target shapes:
     canonical AGENTS.md, Cursor ``.cursor/rules/*.mdc``, Claude
-    ``CLAUDE.md``, Aider ``CONVENTIONS.md``, and Goose ``.goosehints``.
+    ``CLAUDE.md``, Aider ``CONVENTIONS.md``, Goose ``.goosehints``, and GitHub
+    Copilot ``.github/copilot-instructions.md``.
 
     \b
     Examples:
       bernstein agents-md generate            # print canonical AGENTS.md
-      bernstein agents-md sync                # write all 5 target files
+      bernstein agents-md sync                # write all target files
       bernstein agents-md write --target cursor
       bernstein agents-md verify              # exit 1 if any file is stale
       bernstein agents-md diff --target claude
@@ -198,7 +199,7 @@ def agents_md_write(
     "git probes. Useful for CI clones that never fetch origin/HEAD.",
 )
 def agents_md_sync(workdir: Path, repo_name: str | None, dry_run: bool, default_branch: str | None) -> None:
-    """Write all target formats so all five files agree."""
+    """Write the generated instructions for all targets."""
     from bernstein.core.knowledge.agents_md_bridge import render_all
 
     sections, module_map_page, name = _generate_sections(workdir, repo_name, default_branch)
@@ -206,6 +207,9 @@ def agents_md_sync(workdir: Path, repo_name: str | None, dry_run: bool, default_
     written_total = 0
     planned_total = 0
     for target, output in outputs.items():
+        if target == "copilot" and _has_manual_copilot_instructions(workdir):
+            click.echo("Kept manual Copilot instructions. To replace them, run agents-md write --target copilot.")
+            continue
         written_total += _write_output(output, workdir, dry_run=dry_run)
         planned_total += len(output.files)
         if dry_run:
@@ -269,6 +273,8 @@ def agents_md_verify(workdir: Path, target: str, repo_name: str | None, default_
     drift_count = 0
     checked_count = 0
     for t in targets:
+        if t == "copilot" and target == "all" and _has_manual_copilot_instructions(workdir):
+            continue
         output = render(sections, t, repo_name=name, module_map_page=module_map_page)
         for rel, expected in output.files.items():
             checked_count += 1
@@ -352,6 +358,8 @@ def agents_md_diff(workdir: Path, target: str, repo_name: str | None, default_br
 
     any_diff = False
     for t in targets:
+        if t == "copilot" and target == "all" and _has_manual_copilot_instructions(workdir):
+            continue
         output = render(sections, t, repo_name=name, module_map_page=module_map_page)
         for rel, expected in output.files.items():
             on_disk = workdir / rel
@@ -493,6 +501,16 @@ def _render_target(
     from bernstein.core.knowledge.agents_md_bridge import render
 
     return render(sections, target, repo_name=repo_name, module_map_page=module_map_page)  # type: ignore[arg-type]
+
+
+def _has_manual_copilot_instructions(repo_root: Path) -> bool:
+    """Detect an existing Copilot file that has not been adopted by the generator."""
+    from bernstein.core.knowledge.agents_md_bridge import COPILOT_GENERATED_MARKER, COPILOT_INSTRUCTIONS_PATH
+
+    path = repo_root / COPILOT_INSTRUCTIONS_PATH
+    return path.is_file() and not any(
+        line.startswith(COPILOT_GENERATED_MARKER) for line in path.read_text(encoding="utf-8").splitlines()[:2]
+    )
 
 
 def _write_output(output: BridgeOutput, repo_root: Path, *, dry_run: bool) -> int:
