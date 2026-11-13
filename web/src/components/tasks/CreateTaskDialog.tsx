@@ -1,10 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useMutation } from '@tanstack/react-query';
-import { useRef, useState, type FormEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, apiGet, apiPost } from '@/lib/api';
 
 const fieldClass = 'w-full rounded-md border border-meta-foreground bg-background px-3 py-2 text-body text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card';
-const buttonClass = 'rounded-md border px-3 py-2 text-body-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:bg-secondary disabled:text-muted-foreground';
+const buttonClass = 'rounded-md border px-3 py-2 text-body-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:bg-secondary disabled:text-muted-foreground aria-disabled:cursor-not-allowed aria-disabled:bg-secondary aria-disabled:text-muted-foreground';
 
 const recoveryKey = 'bernstein.unconfirmed-task-id';
 
@@ -58,6 +58,8 @@ export function CreateTaskDialog({
   const titleInput = useRef<HTMLInputElement>(null);
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const checkButton = useRef<HTMLButtonElement>(null);
+  const submitButton = useRef<HTMLButtonElement>(null);
+  const checking = useRef(false);
   const submitting = useRef(false);
   const created = useRef(false);
   const [validationError, setValidationError] = useState('');
@@ -107,10 +109,15 @@ export function CreateTaskDialog({
       throw new Error('The task could not be checked. Try checking again.');
     },
     onSuccess: complete,
+    onSettled: () => { checking.current = false; },
   });
 
+  useLayoutEffect(() => {
+    if (recoveryId) checkButton.current?.focus();
+  }, [recoveryId]);
+
   function close() {
-    if (!submitting.current && !verify.isPending) onClose(recoveryId !== null);
+    if (!submitting.current && !checking.current) onClose(recoveryId !== null);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -128,6 +135,7 @@ export function CreateTaskDialog({
     setValidationError('');
     const random = crypto.getRandomValues(new Uint8Array(16));
     const id = Array.from(random, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    submitButton.current?.focus();
     submitting.current = true;
     create.mutate({ id, title, description, ...(role ? { role } : {}) });
   }
@@ -174,7 +182,11 @@ export function CreateTaskDialog({
             </fieldset>
             {error && <p role="alert" className="text-body text-destructive">{error}</p>}
             <div className="flex flex-wrap items-center justify-end gap-2">
-              {create.isPending && <span role="status" className="mr-auto text-body text-muted-foreground">Creating task...</span>}
+              {(create.isPending || verify.isPending) && (
+                <span role="status" className="mr-auto text-body text-muted-foreground">
+                  {create.isPending ? 'Creating task...' : 'Checking task...'}
+                </span>
+              )}
               {recoveryId && (
                 <>
                   <button
@@ -194,11 +206,15 @@ export function CreateTaskDialog({
                   <button
                     ref={checkButton}
                     type="button"
-                    disabled={verify.isPending}
-                    onClick={() => verify.mutate(recoveryId)}
+                    aria-disabled={verify.isPending || undefined}
+                    onClick={() => {
+                      if (checking.current) return;
+                      checking.current = true;
+                      verify.mutate(recoveryId);
+                    }}
                     className={`${buttonClass} border-meta-foreground bg-card hover:bg-secondary`}
                   >
-                    {verify.isPending ? 'Checking task...' : 'Check task'}
+                    Check task
                   </button>
                 </>
               )}
@@ -207,7 +223,7 @@ export function CreateTaskDialog({
                   Cancel
                 </button>
               </Dialog.Close>
-              <button type="submit" disabled={create.isPending || recoveryId !== null} className={`${buttonClass} border-primary bg-primary text-primary-foreground hover:bg-primary/90`}>
+              <button ref={submitButton} type="submit" disabled={recoveryId !== null} aria-disabled={create.isPending || undefined} className={`${buttonClass} border-primary bg-primary text-primary-foreground hover:bg-primary/90`}>
                 Create task
               </button>
             </div>

@@ -458,6 +458,8 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
     tasks_url = f"{base}/api/v1/tasks"
     title = "Task saved outside the current filter"
     saved_ids: list[str] = []
+    pending_create: list[Route] = []
+    pending_check: list[Route] = []
 
     def respond_to_create(route: Route) -> None:
         response = route.fetch()
@@ -465,7 +467,7 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
         task_id = response.json()["id"]
         assert route.request.post_data_json["id"] == task_id
         saved_ids.append(task_id)
-        route.fulfill(status=500, json={"detail": "The task response could not be delivered."})
+        pending_create.append(route)
 
     page.goto(f"{base}/ui/tasks")
     page.get_by_role("button", name="Failed").click()
@@ -477,13 +479,28 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
     form.get_by_label("Prompt").fill("Look up the exact task despite response loss.")
     page.route(tasks_url, respond_to_create, times=1)
     try:
-        form.get_by_role("button", name="Create task", exact=True).click()
+        submit = form.get_by_role("button", name="Create task", exact=True)
+        submit.press("Enter")
+        expect(submit).to_have_attribute("aria-disabled", "true")
+        expect(submit).to_be_focused()
+        for key in ("Tab", "Shift+Tab", "Enter"):
+            page.keyboard.press(key)
+            expect(submit).to_be_focused()
+        assert len(saved_ids) == len(pending_create) == 1
+        pending_create[0].fulfill(status=500, json={"detail": "The task response could not be delivered."})
         expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
-        assert len(saved_ids) == 1
         task_url = f"{tasks_url}/{saved_ids[0]}"
-        page.route(task_url, lambda route: route.fulfill(status=404, json={"detail": "Not found"}), times=1)
+        page.route(task_url, lambda route: pending_check.append(route), times=1)
         check = form.get_by_role("button", name="Check task", exact=True)
-        check.click()
+        expect(check).to_be_focused()
+        with page.expect_request(task_url):
+            check.press("Enter")
+        expect(check).to_have_attribute("aria-disabled", "true")
+        for key in ("Tab", "Shift+Tab", "Enter"):
+            page.keyboard.press(key)
+            expect(check).to_be_focused()
+        assert len(pending_check) == 1
+        pending_check[0].fulfill(status=404, json={"detail": "Not found"})
         expect(form.get_by_role("alert")).to_contain_text("The task is not visible yet")
         expect(form.get_by_role("button", name="Create task", exact=True)).to_be_disabled()
         form.get_by_role("button", name="Cancel", exact=True).click()
