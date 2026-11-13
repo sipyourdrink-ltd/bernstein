@@ -46,6 +46,21 @@ The related integration selection (`test_workflow_runner.py`,
 42 tests. Main now includes the abort regression and fix discussed in
 section 7; the original base observations below are historical.
 
+### Revalidation on main 11481be64e5e
+
+The offline harness now reports **19 failed, 8 passed** on Python 3.13.
+Including the existing runner tests gives **19 failed, 36 passed**. The
+additional failure directly tests proposed rule 4: a runner with a working
+spawner and no completion authority must fail before dispatch. Current main
+calls the spawner once. The test observes dispatch and dependent execution.
+It does not prescribe which run bookkeeping can be written before refusal.
+
+The crash cases now prove a live child and no terminal checkpoint before
+restart. The second hook runs before the terminal checkpoint. Coverage
+after durable dispatch acknowledgement awaits an implementation seam.
+The v1 resume tests use literal v1 records, so changes to the current
+writer cannot silently update the compatibility fixtures.
+
 ## 2. Native interfaces (verified at base)
 
 | Need | Existing native carrier | Gap |
@@ -254,8 +269,8 @@ by the native close/verification path and bound to the attempt.
 uv run python -m pytest -q -p no:randomly tests/integration/test_workflow_verified_completion_contract.py
 ```
 
-- The run is expected to be RED (18 failed, 8 passed) until stages 1 to 3b
-  land.
+- On the revalidated main above, the harness is expected to report 19
+  failed and 8 passed. The earlier base and simulation results are historical.
 - It is POSIX-only: it uses process groups, with procfs liveness where
   available and a signal-0 PID probe otherwise.
 - It runs on Python 3.12 or later. This review used 3.12.3.
