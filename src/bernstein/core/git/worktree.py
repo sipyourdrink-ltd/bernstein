@@ -30,6 +30,7 @@ from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_lis
 from bernstein.core.git.git_pr import _MERGE_DENY_EXACT, _MERGE_DENY_PREFIXES
 from bernstein.core.git.salvage import SalvageResult, salvage_worktree
 from bernstein.core.git.worktree_isolation import validate_worktree_isolation
+from bernstein.core.persistence.file_locks import LockTimeout, cross_process_lock
 from bernstein.core.platform_compat import IS_WINDOWS, process_alive, robust_rmtree
 
 if TYPE_CHECKING:
@@ -1150,25 +1151,12 @@ class WorktreeManager:
         self._require_inside_base_dir(worktree_path)
         branch_name = f"agent/{session_id}"
 
-        if worktree_path.exists():
-            raise WorktreeError(f"Worktree path '{worktree_path}' already exists")
-
-        self._base_dir.mkdir(parents=True, exist_ok=True)
-
-        # Pre-flight: detect and auto-repair stale locks / invalid HEAD
-        health_warnings = _check_git_health(self.repo_root)
-        for warning in health_warnings:
-            logger.warning("Git health pre-check: %s", warning)
-
-        result = worktree_add(self.repo_root, worktree_path, branch_name)
-
-        if not result.ok:
-            stderr = result.stderr.strip()
-            if "already exists" in stderr:
-                raise WorktreeError(
-                    f"Branch '{branch_name}' already exists. Delete it manually or call cleanup() first. Git: {stderr}"
-                )
-            raise WorktreeError(f"git worktree add failed for session '{session_id}': {stderr}")
+        create_lock = self._base_dir / ".locks" / "create" / f"{session_id}.lock"
+        try:
+            with cross_process_lock(create_lock, timeout=60):
+                self._add_checkout(session_id, worktree_path, branch_name)
+        except LockTimeout as exc:
+            raise WorktreeError(f"Timed out waiting to create worktree for session '{session_id}'") from exc
 
         logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
 
@@ -1217,8 +1205,47 @@ class WorktreeManager:
 
         return worktree_path
 
+    def _add_checkout(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
+        """Run git worktree add with the per-session creation lock held."""
+        if worktree_path.exists():
+            raise WorktreeError(f"Worktree path '{worktree_path}' already exists")
+
+        for warning in _check_git_health(self.repo_root):
+            logger.warning("Git health pre-check: %s", warning)
+
+        try:
+            result = worktree_add(self.repo_root, worktree_path, branch_name)
+        except BaseException:
+            self._undo_failed_checkout(session_id, worktree_path, branch_name)
+            raise
+        if result.ok:
+            return
+
+        if self._undo_failed_checkout(session_id, worktree_path, branch_name):
+            raise WorktreeError(f"git worktree add failed for session '{session_id}': {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        if "already exists" in stderr:
+            raise WorktreeError(
+                f"Branch '{branch_name}' already exists. Delete it manually or call cleanup() first. Git: {stderr}"
+            )
+        raise WorktreeError(f"git worktree add failed for session '{session_id}': {stderr}")
+
+    def _undo_failed_checkout(self, session_id: str, worktree_path: Path, branch_name: str) -> bool:
+        """Roll back a checkout that Git registered before reporting failure."""
+        try:
+            if not self.owns(worktree_path):
+                return False
+            head = run_git(["symbolic-ref", "--quiet", "HEAD"], worktree_path, timeout=10)
+            if not head.ok or head.stdout.strip() != f"refs/heads/{branch_name}":
+                return False
+        except Exception as exc:
+            logger.warning("Could not identify the failed checkout for %s: %s", session_id, exc)
+            return False
+        self._undo_partial_create(session_id, worktree_path, branch_name)
+        return True
+
     def _undo_partial_create(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
-        """Undo a partially-created worktree after a post-``worktree_add`` step fails.
+        """Undo a partially-created worktree after checkout or setup fails.
 
         Removes the worktree and deletes the agent branch so ``create`` never
         leaves either behind.  Deliberately does *not* run the salvage path

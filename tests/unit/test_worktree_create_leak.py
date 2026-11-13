@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from bernstein.core.git.worktree import WorktreeManager
+from bernstein.core.git.worktree import WorktreeError, WorktreeManager
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -54,6 +55,39 @@ def _worktrees(repo: Path) -> list[str]:
 
 def _branches(repo: Path) -> list[str]:
     return sorted(_git(repo, "branch", "--list", "--format=%(refname:short)").splitlines())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Fixture uses an executable POSIX Git hook")
+def test_create_checkout_hook_failure_removes_worktree_and_branch(repo: Path) -> None:
+    hooks = repo / ".git" / "lane-j-test-hooks"
+    hooks.mkdir()
+    _git(repo, "config", "core.hooksPath", str(hooks))
+    hook = hooks / "post-checkout"
+    hook.write_text("#!/bin/sh\nprintf '%s\\n' 'test checkout failed' >&2\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    manager = WorktreeManager(repo_root=repo)
+    before_worktrees = _worktrees(repo)
+    before_branches = _branches(repo)
+
+    with pytest.raises(WorktreeError, match="test checkout failed"):
+        manager.create("sess-checkout-failure")
+
+    assert _worktrees(repo) == before_worktrees
+    assert _branches(repo) == before_branches
+
+
+def test_create_branch_collision_preserves_existing_ref(repo: Path) -> None:
+    session = "existing-branch"
+    branch = f"agent/{session}"
+    _git(repo, "branch", branch)
+    original_ref = _git(repo, "rev-parse", branch)
+    manager = WorktreeManager(repo_root=repo)
+
+    with pytest.raises(WorktreeError, match="already exists"):
+        manager.create(session)
+
+    assert _git(repo, "rev-parse", branch) == original_ref
+    assert not (repo / ".sdd" / "worktrees" / session).exists()
 
 
 def test_create_raise_after_worktree_exists_leaves_no_worktree_or_branch(
