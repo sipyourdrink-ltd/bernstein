@@ -43,7 +43,14 @@ bernstein gui qr [--url URL] [--rotate] [--passphrase-file PATH]
 
 ## Offline behaviour
 
-The service worker pre-caches the SPA shell (`index.html`, manifest, offline page, icons) on install and falls back to the offline page on navigation failures. The endpoints `/api/projects` and `/api/cost` are cached stale-while-revalidate so a flaky train Wi-Fi still shows the last fleet snapshot.
+The service worker pre-caches the SPA shell (`index.html`, manifest, offline page, icons) on install. Navigations are network-first; if the network fails, it serves cached `/ui/index.html`, falling back to `/ui/offline.html` if the shell is unavailable.
+
+Runtime stale-while-revalidate caching applies only to these GET paths (and their subpaths):
+
+- Legacy: `/api/projects` and `/api/cost`
+- v1: `/api/v1/projects` and `/api/v1/cost`
+
+A response is added to the runtime cache only after a successful HTTP 200, so an offline read can use cached data only if that same endpoint was successfully read while online before. The v1 Fleet screen instead calls `apiGet('/fleet/projects')`, which resolves to `/api/v1/fleet/projects`; that path is not in the service worker's runtime list. The app shell can therefore load offline, but the service worker does not provide a cached Fleet projects snapshot (a fresh offline Fleet load reports a project-read error).
 
 ## Onboarding URL anatomy
 
@@ -60,5 +67,5 @@ The token lives in the URL fragment so it never appears in webserver access logs
 | QR scans and opens the SPA at the tunnel URL                  | `bernstein gui serve --tunnel`, scan with phone   |
 | iOS "Add to Home Screen" promotes the app                     | Safari -> share sheet -> Add to Home Screen       |
 | Android "Install app" prompt fires                            | Chrome -> menu -> Install app                     |
-| Offline-mode shows the cached fleet snapshot                  | Toggle airplane mode after first open             |
+| Offline Fleet load uses the cached shell, not a service-worker Fleet snapshot | Open Fleet online, then load it in a fresh page while offline; expect the Fleet project read to fail |
 | Rotating credentials does not break the existing tunnel       | `bernstein gui qr --rotate`                       |
