@@ -49,7 +49,7 @@ section 7; the original base observations below are historical.
 ### Revalidation on main 11481be64e5e
 
 Including the existing runner tests, the Python 3.13 baseline reports
-**21 failed, 36 passed**. One additional failure directly tests proposed rule 4: a runner with a working
+**22 failed, 36 passed**. One additional failure directly tests proposed rule 4: a runner with a working
 spawner and no completion authority must fail before dispatch. Current main
 calls the spawner once. The test observes dispatch and dependent execution.
 It does not prescribe which run bookkeeping can be written before refusal.
@@ -59,6 +59,9 @@ attempt-bound acceptance. It leaves the accepted-artifact positive control open.
 The loop test now also covers an agent that exited successfully and reported
 `DONE` without acceptance. The runner evaluates the predicate and dispatches
 three iterations in both the live and reported-done cases.
+An unacknowledged cancellation leaves the controlled child alive and the task
+in `STOP_REQ`, yet the runner writes `run_complete.json`. The new resume test
+fails on that marker before it can verify reconciliation without redispatch.
 
 The crash cases now prove a live child and no terminal checkpoint before
 restart. The second hook runs before the terminal checkpoint. Coverage
@@ -183,6 +186,7 @@ Column key:
 | 2 (rule 4) | `test_missing_completion_authority_blocks_before_dispatch` | proposed | RED on current main: the spawner was called once without a completion authority | Not run in the historical simulation |
 | 3 | `test_agent_deadline_survives_runner_restart` | proposed | RED: phase 1 released the consumer and never timed out | GREEN |
 | 4 | `test_cancelled_attempt_never_releases_or_retries[acknowledged,unacknowledged]` | proposed | RED ×2: CANCELLED (`confirmed_dead`) and STOP_REQ (child alive) both reported success | GREEN |
+| 4 | `test_pending_cancellation_keeps_run_resumable` | proposed | RED on current main: live child and STOP_REQ coexist with a run-complete marker | Not run in the historical simulation |
 | 5 | `test_resume_after_crash_before_dispatch_dispatches_once` | proposed, already met | GREEN: known not started, dispatched once | GREEN |
 | 5 | `test_resume_after_crash_around_dispatch_does_not_respawn[lost_dispatch_ack,before_terminal_checkpoint]` | proposed | RED ×2: spawn counter 2 for the same task id. The latter hook fires before the terminal checkpoint and does not establish durable dispatch acknowledgement. | GREEN |
 | 6 | `test_stale_or_foreign_evidence_cannot_release_dependents[5 kinds]` | proposed | RED ×5: other run, other node, foreign tenant, stale attempt, tampered receipt | GREEN |

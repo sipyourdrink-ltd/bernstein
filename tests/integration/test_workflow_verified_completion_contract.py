@@ -782,15 +782,31 @@ def test_cancelled_attempt_never_releases_or_retries(
     assert env.sentinel_writes() == 0, "consumer released after cancellation"
     assert sp.spawn_count() == 1, "cancelled attempt was retried"
 
-    # A native reaper can acknowledge cancellation after the callback. Only
-    # exercise resume here if the attempt actually remained unresolved.
-    if task.status is TaskStatus.STOP_REQ and run.done() and run_complete_marker_exists(env.workdir, rid) is None:
-        again = env.spawner(_Plan(mode="block"))
-        resumed = env.start(lambda: env.runner(again).resume(spec, run_id=rid))
-        resumed.wait(OBSERVE_S)
-        resumed.raise_unexpected()
-        assert again.spawn_count() == 1, "resume re-dispatched a cancelled attempt"
-        assert env.sentinel_writes() == 0
+
+def test_pending_cancellation_keeps_run_resumable(env: _Env) -> None:
+    """[PROPOSED #4] A returned run with no stop acknowledgement can resume without a new dispatch."""
+    rid = "p4-pending-resume"
+    spec = _spec(env)
+    sp = env.spawner(_Plan(mode="block", ignore_sigterm=True, after_launch=_cancel_unacknowledged))
+    run = env.start(lambda: env.runner(sp).run(spec, run_id=rid))
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert run.wait(BOUND_S), "run did not report the unresolved attempt"
+    run.raise_unexpected()
+    task = env.driver.task(task.id)
+    assert task is not None and task.status is TaskStatus.STOP_REQ
+    assert sp.procs[0].poll() is None, "precondition: the controlled child never acknowledged the stop"
+    assert run_complete_marker_exists(env.workdir, rid) is None, (
+        "a pending cancellation cannot mark the workflow complete"
+    )
+    assert env.sentinel_writes() == 0
+    produce = run.node("produce")
+    assert produce is not None and produce.status is not NodeStatus.SUCCESS
+    again = env.spawner(_Plan(mode="block"))
+    resumed = env.start(lambda: env.runner(again).resume(spec, run_id=rid))
+    resumed.wait(OBSERVE_S)
+    resumed.raise_unexpected()
+    assert again.spawned_task_ids() == [task.id], "resume re-dispatched a cancelled attempt"
+    assert env.sentinel_writes() == 0
 
 
 # ---------------------------------------------------------------------------
