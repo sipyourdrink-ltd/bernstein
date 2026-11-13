@@ -1,0 +1,27 @@
+# Contract for the ralphex CLI (adapter: ralphex).
+#
+# Always-passed surface from src/bernstein/adapters/ralphex.py:
+# ``ralphex --no-color [--task-model <model[:effort]>] <plan-file>``.
+# ``--task-model`` is passed whenever a model is selected, so it is pinned:
+# losing it upstream would silently run every task on ralphex's default.
+#
+# ralphex ships as a Go module (``go install
+# github.com/umputun/ralphex/cmd/ralphex@latest``), which the drift workflow
+# has no install branch for, so install.method is "manual".
+adapter: ralphex
+binary: ralphex
+install:
+  method: manual
+  spec: "github.com/umputun/ralphex/cmd/ralphex"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "ANTHROPIC_API_KEY"
+  basis: api_key
+required_flags:
+  - "--no-color"
+  - "--task-model"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
