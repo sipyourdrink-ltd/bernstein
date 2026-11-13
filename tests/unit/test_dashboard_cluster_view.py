@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 import pytest
-from textual.widgets import Static
+from textual.widgets import RichLog, Static
 
 from bernstein.cli import dashboard_app
 from bernstein.cli.dashboard_app import BernsteinApp
@@ -143,7 +143,7 @@ def test_remote_claims_are_paginated_independently_of_the_task_board(monkeypatch
 
     data = _fetch_all()
 
-    assert data["tasks"] == legacy_tasks
+    assert [task["id"] for task in data["tasks"]] == [task["id"] for task in legacy_tasks]
     assert [t["id"] for t in data["cluster"]["nodes"][0]["tasks"]] == [
         *(t["id"] for t in claimed),
         "working",
@@ -188,7 +188,7 @@ def test_malformed_cluster_response_does_not_discard_the_poll(
 
     data = _fetch_all()
 
-    assert data["tasks"] == tasks
+    assert [task["id"] for task in data["tasks"]] == ["active"]
     assert data["cluster"] == {"nodes": [], "reachable": False}
 
 
@@ -219,6 +219,30 @@ def test_remote_claims_ignore_invalid_status_and_timestamp_values(monkeypatch: p
     assert [task["id"] for task in worker["tasks"]] == ["bad-time", "bool-time"]
     assert all(task["elapsed_s"] is None for task in worker["tasks"])
     assert worker["tasks"][0]["role"] == ""
+
+
+@pytest.mark.asyncio
+async def test_malformed_legacy_rows_keep_the_remote_dashboard_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks = [{**_task("broken", "n-1"), "status": []}, {**_task("healthy", "n-1"), "priority": ["bad"]}]
+    _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/tasks": tasks,
+        },
+    )
+    frame = _fetch_all()
+    monkeypatch.setattr(dashboard_app, "_fetch_all", lambda: frame)
+
+    app = BernsteinApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._apply_data(frame)
+        await pilot.pause()
+        assert "worker-1" in str(app.query_one("#cluster-nodes", Static).render())
+        assert set(app._task_titles) == {"healthy"}
+        assert not any("Server not responding" in line.text for line in app.query_one(RichLog).lines)
 
 
 def test_remote_poll_skips_local_runtime_sources(monkeypatch: pytest.MonkeyPatch) -> None:

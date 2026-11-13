@@ -468,6 +468,7 @@ non-online states yellow, `offline` dim. A node that stops heartbeating keeps
 its row, with a growing heartbeat age, until the node reaper marks it.
 
 The cluster panel reads `/cluster/status` and pages active claims by status.
+Claims can change between requests. The next poll refreshes the displayed list.
 Against a remote server the dashboard panels skip local runtime data and disable local
 save, local task comparison, and hot restart. Press `q` to quit without
 draining. A loopback server with no registered nodes keeps the single-machine

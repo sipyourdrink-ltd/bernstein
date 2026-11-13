@@ -586,9 +586,8 @@ class BernsteinApp(App[None]):
     def _apply_data(self, data: dict[str, Any]) -> None:
         """Apply fetched data to widgets (main thread, non-blocking)."""
         status = data.get("status") or {}
-        self._log_phase_transitions(status, data.get("agents") or [])
-
         self._server_unreachable = bool(data.get("server_unreachable"))
+        self._log_phase_transitions(status, data.get("agents") or [])
         self._update_tasks(data.get("tasks"))
         tasks = data.get("tasks") or []
         costs: dict[str, Any] = data.get("costs") or {}
@@ -626,7 +625,7 @@ class BernsteinApp(App[None]):
         runtime = status.get("runtime", {}) if isinstance(status.get("runtime", {}), dict) else {}
         self._announce_config_diff(runtime)
 
-        if not isinstance(status, dict) or not status:
+        if self._server_unreachable:
             if not getattr(self, "_logged_no_server", False):
                 log.write("[yellow]Server not responding yet...[/yellow]")
                 self._logged_no_server = True  # type: ignore[attr-defined]

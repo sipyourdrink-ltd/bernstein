@@ -157,7 +157,7 @@ Une exécution en cours est observable depuis l'une ou l'autre des interfaces op
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — le tableau de bord terminal | `bernstein gui serve` — le tableau de bord navigateur |
+| `bernstein live` — le tableau de bord terminal (nœuds de calcul distants) | `bernstein gui serve` — le tableau de bord navigateur |
 
 ### prouver une exécution
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

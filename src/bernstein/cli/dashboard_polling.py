@@ -136,8 +136,6 @@ def _fetch_all() -> dict[str, Any]:
     (can be slow with 400+ tasks). We fetch agents first so the TUI
     shows activity even while tasks are loading.
     """
-    from typing import cast
-
     # One resolution for the whole batch: see _get.
     url = server_url()
 
@@ -157,11 +155,9 @@ def _fetch_all() -> dict[str, Any]:
     quality = _get("/quality", url)
     bandit = _get("/routing/bandit", url)
     # Use /status for task counts instead of fetching all 400+ task objects
-    tasks = _get("/tasks", url)
-    pending_approval = 0
-    if isinstance(tasks, list):
-        task_dicts = cast("list[dict[str, Any]]", tasks)
-        pending_approval = sum(1 for td in task_dicts if td.get("status") == "pending_approval")
+    raw_tasks = _get("/tasks", url)
+    tasks = _dashboard_task_rows(raw_tasks)
+    pending_approval = sum(1 for task in tasks or [] if task["status"] == "pending_approval")
     # Verification nudge: read from status response (already included by /status route)
     verification_nudge: dict[str, Any] = {}
     if isinstance(status, dict):
@@ -174,7 +170,7 @@ def _fetch_all() -> dict[str, Any]:
     # working dashboard over it would hide the data that did arrive.
     cluster = _load_cluster_view(url, tasks)
     server_unreachable = not (cluster and cluster["reachable"]) and all(
-        result is None for result in (status, costs, quality, bandit, tasks)
+        result is None for result in (status, costs, quality, bandit, raw_tasks)
     )
 
     return {
@@ -193,6 +189,30 @@ def _fetch_all() -> dict[str, Any]:
         "verification_nudge": verification_nudge,
         "activity_summaries": activity_summaries,
     }
+
+
+def _dashboard_task_rows(data: Any) -> list[dict[str, Any]] | None:
+    """Keep invalid task rows out of the rendered dashboard frame."""
+    if not isinstance(data, list):
+        return None
+    tasks: dict[str, dict[str, Any]] = {}
+    for task in data:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        status = task.get("status", "open")
+        if not isinstance(task_id, str) or not task_id or not isinstance(status, str):
+            continue
+        priority = task.get("priority", 2)
+        progress = task.get("progress", 0)
+        tasks[task_id] = {
+            **task,
+            "status": status,
+            "title": _display_text(task.get("title"), "?"),
+            "priority": priority if type(priority) is int else 2,
+            "progress": _dashboard_progress(progress),
+        }
+    return list(tasks.values())
 
 
 #: Task states in which a worker node is holding the task.
@@ -298,6 +318,14 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
 
 def _display_text(value: Any, default: str = "") -> str:
     return value if isinstance(value, str) else default
+
+
+def _dashboard_progress(progress: Any) -> int:
+    if type(progress) is int:
+        return progress
+    if type(progress) is float and math.isfinite(progress):
+        return int(progress)
+    return 0
 
 
 def _claim_age(claimed_at: Any, now: float) -> int | None:

@@ -157,7 +157,7 @@ Trwający przebieg można obserwować w dowolnym interfejsie operatora. Oba korz
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — panel w terminalu | `bernstein gui serve` — panel w przeglądarce |
+| `bernstein live` — panel w terminalu (zdalne węzły robocze) | `bernstein gui serve` — panel w przeglądarce |
 
 ### udowodnij poprawność przebiegu
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

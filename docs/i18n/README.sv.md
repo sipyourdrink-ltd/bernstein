@@ -157,7 +157,7 @@ En pågående körning kan följas från båda operatörsgränssnitten. Båda l�
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — terminalpanelen | `bernstein gui serve` — webbläsarpanelet |
+| `bernstein live` — terminalpanelen (fjärranslutna arbetsnoder) | `bernstein gui serve` — webbläsarpanelet |
 
 ### bevisa en körning
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

@@ -157,7 +157,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![Терминальный дашборд в две колонки: слева агенты с живыми логами, справа доска задач, снизу лента активности во всю ширину и строка стоимости](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![Браузерный дашборд со списком из шестидесяти двух задач, одиннадцать выполняются, одна раскрыта до диффа рабочего дерева](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — терминальный дашборд | `bernstein gui serve` — браузерный дашборд |
+| `bernstein live` — терминальный дашборд (удалённые рабочие узлы) | `bernstein gui serve` — браузерный дашборд |
 
 ### проверить прогон
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
