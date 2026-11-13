@@ -18,6 +18,28 @@ viable adapter.
 | `bernstein.plugins.hookspecs` | `provide_tracker_adapter` hookspec |
 | `bernstein.cli.commands.trackers_cmd` | `bernstein trackers list` / `trackers test` |
 
+## Ticket record
+
+`Ticket` is the normalized record for an external work item returned by
+`pull_open_tickets`. Its `id` is the stable tracker-side identifier used by
+adapter methods; `external_url` is the browser URL for human follow-up. They
+are distinct values and must not be used interchangeably.
+
+The frozen `Ticket` dataclass has these fields:
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `id` | `str` | required | Stable tracker-side identifier. |
+| `external_url` | `str` | required | Browser URL for the work item. |
+| `title` | `str` | required | Short title. |
+| `body` | `str` | required | Long-form description; may be empty. |
+| `status` | `str` | required | Current status reported by the tracker. |
+| `labels` | `tuple[str, ...]` | `()` | Label or tag strings; lowercase is preferred. |
+| `etag` | `str | None` | `None` | Opaque revision token for optimistic concurrency. |
+| `routing_hint` | `RoutingHint` | `RoutingHint()` | Optional routing metadata. |
+| `raw` | `dict[str, Any]` | `{}` | Tracker-specific payload for adapter use. |
+| `cost_cap_usd` | `float | None` | `None` | Optional hard USD ceiling for the agent run; `0.0` halts immediately. |
+
 ## Required methods
 
 | Method | Required | Description |
