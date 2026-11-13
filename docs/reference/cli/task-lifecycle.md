@@ -253,7 +253,7 @@ Internally, both strategies converge on the same task FSM transition `DONE → C
 
 ## End-to-end script example
 
-A single bash flow that creates a task, watches it complete, and merges. Assumes the Bernstein server is already running (`bernstein start` or a previous `bernstein run`).
+A single bash flow that creates a task, watches it complete, and checks the automatic merge result. Assumes the Bernstein server is already running (`bernstein start` or a previous `bernstein run`) and that the normal verification-and-merge path is enabled.
 
 ```bash
 #!/usr/bin/env bash
@@ -268,7 +268,7 @@ TASK_JSON=$(bernstein --json add-task "Add SBOM endpoint" \
 TASK_ID=$(echo "$TASK_JSON" | jq -r .id)
 echo "Created $TASK_ID"
 
-# 2. Poll until the task reaches a terminal-ish state.
+# 2. Wait for the task to finish agent work.
 while :; do
   STATUS=$(bernstein --json list-tasks \
     | jq -r --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
@@ -284,16 +284,35 @@ if bernstein --json pending | jq -e --arg id "$TASK_ID" '.[] | select(.task_id =
   bernstein approve "$TASK_ID"
 fi
 
-# 4. Trigger the merge (if the run wasn't already auto-merging).
-bernstein merge
+# 4. Normally verification and merge happen automatically after approval.
+# Wait for that path to close the task; report unsuccessful terminal states.
+while :; do
+  STATUS=$(bernstein --json list-tasks \
+    | jq -r --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
+  case "$STATUS" in
+    closed) break ;;
+    failed|cancelled)
+      echo "task $TASK_ID finished in state $STATUS, not closed"; exit 1 ;;
+    "")  echo "task $TASK_ID disappeared from server"; exit 1 ;;
+    *)   sleep 5 ;;
+  esac
+done
 
-# 5. Final state - anything other than `closed` means the merge failed.
+# 5. Confirm the resulting state rather than assuming a merge happened.
+FINAL_STATUS=$(bernstein --json list-tasks \
+  | jq -er --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
+if [[ "$FINAL_STATUS" != closed ]]; then
+  echo "expected task $TASK_ID to be closed, got $FINAL_STATUS"; exit 1
+fi
+echo "Task $TASK_ID is $FINAL_STATUS"
+```
+
+If automatic merging is not enabled and a completed task needs a manual merge, select it explicitly (the task must still be `done` and its agent branch must exist):
+
+```bash
+bernstein merge pick --pick "$TASK_ID"
 bernstein --json list-tasks \
   | jq --arg id "$TASK_ID" '.[] | select(.id == $id)'
 ```
 
-Notes:
-
-- All four state-mutating commands (`add-task`, `approve`, `reject`, `cancel`) are safe to retry. The server / orchestrator dedupes on `task_id`.
-- Treat `cancelled` / `failed` / `closed` as terminal in scripts. `done` is **not** terminal - it precedes verification + merge.
-- For long-running orchestrations, prefer `bernstein watch` (streams events) over a polling loop. (`cli/watch_cmd.py:252`.)
+The second command checks the task's actual state; do not assume the merge invocation itself moved it to `closed`. The bare `bernstein merge` group prints help when no selection is supplied.
