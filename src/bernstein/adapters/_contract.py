@@ -848,6 +848,11 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         event_channel=EventChannel.STREAM_JSON,
     ),
     "openhands": AdapterStrategy(),
+    "openclaw": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
     "pi": AdapterStrategy(),
     "plandex": AdapterStrategy(),
     # Generic Python-invoked agent runtime adapter (#2959).
@@ -1254,6 +1259,7 @@ _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
         "gpt_researcher",
         "junie",
         "muse",
+        "openclaw",
         "opencode",
         "python_runtime",
         "q_dev",

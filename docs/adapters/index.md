@@ -48,6 +48,7 @@ These are the most exercised adapters in the test matrix.
   (see [`agy.md`](agy.md) for the lane split).
 - `copilot` - GitHub Copilot CLI.
 - `goose` - Block Goose.
+- [OpenClaw](openclaw.md) - One embedded headless turn per task.
 - `muse` - Muse Code, Meta's terminal coding agent, driven headless via
   `muse exec` (see [`muse.md`](muse.md)).
 
