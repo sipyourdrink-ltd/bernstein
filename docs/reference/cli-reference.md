@@ -356,8 +356,9 @@ hand-assembled as a request with a bearer header.
 | `bernstein recap` | Post-run summary. | `cli/commands/advanced_cmd.py:558` |
 | `bernstein retro` | Detailed retrospective. | `cli/commands/advanced_cmd.py:299` |
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
-| `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
-| `bernstein runs report` | Finished runs with a classified outcome. | `cli/commands/runs_cmd.py` |
+| `bernstein history FILE_PATH` | Archived task records matching the file's recorded ownership. | `cli/commands/maintenance_cmd.py:history_cmd` |
+| `bernstein runs report` | Classified outcomes from the run ledger. | `cli/commands/runs_cmd.py:50` |
+| `bernstein runs scorecard RUN_ID` | Build or verify one run's scorecard. | `cli/commands/runs_cmd.py:171` |
 | `bernstein runs helpers RUN_ID` | Agent-written helpers captured for a run. | `cli/commands/runs_cmd.py` |
 | `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
 | `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
@@ -366,6 +367,21 @@ hand-assembled as a request with a bearer header.
 | `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
 | `bernstein report postmortem` | Failed-task postmortem. | `cli/commands/postmortem_cmd.py:12` |
 | `bernstein insights` | Analytics and insights from task traces. Skeleton: no analysis is computed yet. | `cli/commands/insights_cmd.py:25` |
+
+#### `bernstein history FILE_PATH`
+
+Look up archived terminal tasks that recorded ownership of a file. This is a
+recorded task/file association, not git history: a match does not establish
+which commits changed the file.
+
+| Argument / flag | Default | Meaning |
+|---|---|---|
+| `FILE_PATH` | required | File path to match against archived tasks' recorded `owned_files`. |
+| `--limit N` | `10` | Maximum number of matching tasks to show. |
+| `--workdir PATH` | `.` | Project root containing `.sdd/archive/tasks.jsonl`. |
+| `--json` | off | Print an object with the normalized `file` path and matching `tasks` array. |
+
+For example: `bernstein history src/bernstein/main.py --limit 5 --workdir .`
 
 #### `bernstein status`
 
@@ -441,7 +457,16 @@ Group over the runs recorded in the work ledger.
 
 | Subcommand | Flags | Purpose |
 |---|---|---|
-| `report` | `--since DURATION`, `--workdir PATH`, `--json` | Finished runs with a classified outcome and one line of evidence. |
+| `report` | `--since DURATION`, `--workdir PATH`, `--json` | Run ledger outcomes with one line of evidence each. |
+| `scorecard RUN_ID` | `--workdir PATH`, `--verify` / `--no-verify`, `--json` | Build a per-run scorecard, or verify an existing artifact against the live ledger. |
+
+These commands answer different questions:
+
+| Command | Input | Data source | Output |
+|---|---|---|---|
+| `bernstein history FILE_PATH` | Required file path. | Archived tasks' recorded `owned_files`. | Matching archived task records, newest first. |
+| `bernstein runs report` | Optional `--since` filter; no positional argument. | Run directories with entries in the project `.sdd/` ledger. | Classified outcome and evidence for each run. |
+| `bernstein runs scorecard RUN_ID` | Required run ID. | That run's work ledger (and, in verify mode, its existing scorecard artifact). | A written scorecard, or a verification result. |
 
 ##### `bernstein runs report`
 
@@ -457,7 +482,22 @@ carries the outcome class and the one line of evidence it was classified from:
 `pr-opened` (a branch was published), `gate-failed` (a quality gate blocked the
 run), `no-changes` (zero commits over base), `infra-error` (adapter or transport
 death, or no wrap-up was ever recorded), and `wedged` (the run ended with open
-tasks nothing could spawn).
+tasks nothing could spawn). The report also includes runs that are still
+executing. Without a wrap-up record, a live run can appear as `infra-error`.
+
+##### `bernstein runs scorecard RUN_ID`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `RUN_ID` | required | Run whose scorecard to build or verify (positional). |
+| `--workdir PATH` | current directory | Project root. |
+| `--verify` / `--no-verify` | off | Recompute from the live ledger and compare with the existing scorecard artifact instead of creating one. |
+| `--json` | off | In build mode, print an object containing `artifact`, `sha256` and `content`; in verify mode, print `ok`, `artifact_sha256`, `recomputed_sha256`, `description` and `artifact_path`. |
+
+By default, writes a content-addressed scorecard under
+`.sdd/runs/<run_id>/scorecard/`. Use `--verify` only after a scorecard has
+been created; it compares the stored artifact with a fresh projection of the
+run's live work ledger and reports whether they match.
 
 ##### `bernstein runs helpers`
 
