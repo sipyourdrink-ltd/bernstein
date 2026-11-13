@@ -19,12 +19,14 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
+from typing import IO
 
 import pytest
 
 from bernstein.core.git import worktree as worktree_module
 from bernstein.core.git.git_basic import GitResult
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
+from bernstein.core.persistence import file_locks
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -34,6 +36,7 @@ def _git(repo: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
     ).stdout
 
 
@@ -94,6 +97,18 @@ def test_create_branch_collision_preserves_existing_ref(repo: Path) -> None:
     assert not (repo / ".sdd" / "worktrees" / session).exists()
 
 
+def _signal_lock_contention(monkeypatch: pytest.MonkeyPatch, ready: Event) -> None:
+    real_try_lock = file_locks._os_try_lock
+
+    def observe_try_lock(handle: IO[bytes]) -> bool:
+        acquired = real_try_lock(handle)
+        if not acquired:
+            ready.set()
+        return acquired
+
+    monkeypatch.setattr(file_locks, "_os_try_lock", observe_try_lock)
+
+
 def test_failed_checkout_does_not_remove_concurrently_adopted_worktree(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -106,34 +121,34 @@ def test_failed_checkout_does_not_remove_concurrently_adopted_worktree(
     saved_commit = _git(previous, "rev-parse", "HEAD")
     session = "replacement-session"
     checked_out = Event()
-    adoption_started = Event()
-    adopted = Event()
+    replacement_ready = Event()
     real_add = worktree_module.worktree_add
+    _signal_lock_contention(monkeypatch, replacement_ready)
 
     def fail_after_checkout(cwd: Path, path: Path, branch: str) -> GitResult:
         result = real_add(cwd, path, branch)
         assert result.ok
         checked_out.set()
-        assert adoption_started.wait(timeout=5)
-        adopted.wait(timeout=1)
+        # The replacement either finished on an unlocked implementation or
+        # tried to acquire the slot lock and is waiting for our rollback.
+        assert replacement_ready.wait(timeout=45)
         return GitResult(1, "", "test checkout failed")
 
     monkeypatch.setattr(worktree_module, "worktree_add", fail_after_checkout)
 
     def adopt_after_cleanup() -> Path:
-        assert checked_out.wait(timeout=5)
-        adoption_started.set()
+        assert checked_out.wait(timeout=45)
         adopter.cleanup(session)
         replacement = adopter.adopt(previous, session)
-        adopted.set()
+        replacement_ready.set()
         return replacement
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         creating = pool.submit(creator.create, session)
         replacing = pool.submit(adopt_after_cleanup)
         with pytest.raises(WorktreeError, match="test checkout failed"):
-            creating.result(timeout=10)
-        replacement = replacing.result(timeout=10)
+            creating.result(timeout=100)
+        replacement = replacing.result(timeout=100)
 
     assert (replacement / "saved.txt").read_text(encoding="utf-8") == "saved work"
     assert _git(repo, "rev-parse", f"agent/{session}") == saved_commit
@@ -143,25 +158,23 @@ def test_stale_cleanup_rechecks_liveness_after_concurrent_create(repo: Path, mon
     creator = WorktreeManager(repo, salvage_on_cleanup=False)
     janitor = WorktreeManager(repo, salvage_on_cleanup=False)
     before_lock_write = Event()
-    cleanup_started = Event()
-    liveness_checked = Event()
+    janitor_ready = Event()
     real_write = worktree_module.write_worktree_lock
     real_check = janitor._is_session_live
+    _signal_lock_contention(monkeypatch, janitor_ready)
 
-    def delay_lock_write(*args: object, **kwargs: object) -> Path:
+    def delay_lock_write(repo_root: Path, session_id: str, pid: int) -> Path:
         before_lock_write.set()
-        assert cleanup_started.wait(timeout=5)
-        liveness_checked.wait(timeout=2)
-        return real_write(*args, **kwargs)
+        assert janitor_ready.wait(timeout=45)
+        return real_write(repo_root, session_id, pid)
 
     def observe_liveness(session_id: str) -> bool:
         live = real_check(session_id)
-        liveness_checked.set()
+        janitor_ready.set()
         return live
 
     def scan() -> int:
-        assert before_lock_write.wait(timeout=5)
-        cleanup_started.set()
+        assert before_lock_write.wait(timeout=45)
         return janitor.cleanup_all_stale()
 
     monkeypatch.setattr(worktree_module, "write_worktree_lock", delay_lock_write)
@@ -169,8 +182,8 @@ def test_stale_cleanup_rechecks_liveness_after_concurrent_create(repo: Path, mon
     with ThreadPoolExecutor(max_workers=2) as pool:
         creating = pool.submit(creator.create, "new-session")
         cleaning = pool.submit(scan)
-        created = creating.result(timeout=10)
-        cleaned = cleaning.result(timeout=10)
+        created = creating.result(timeout=100)
+        cleaned = cleaning.result(timeout=100)
 
     assert cleaned == 0
     assert created.is_dir()
