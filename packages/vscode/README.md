@@ -38,7 +38,6 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 | `bernstein.refreshInterval` | number | `5` | Tree view polling interval in seconds |
 | `bernstein.showNotifications` | boolean | `true` | Show notification toasts for task completions and failures |
 | `bernstein.costWarningThreshold` | number | `80` | Show a cost warning when budget usage exceeds this percentage |
-| `bernstein.autoStart` | boolean | `false` | Automatically start Bernstein when opening a workspace with a `.sdd` directory |
 
 ## Requirements
 
