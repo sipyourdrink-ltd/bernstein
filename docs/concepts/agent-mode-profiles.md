@@ -27,11 +27,23 @@ default mapping is:
 | GPT-5.x, o-series | `deep` | longer turns (120), narrower tools (Read/Grep/Glob/Bash), temperature 0.3 |
 | Small / fast (Qwen, Haiku) | `fast` | one tool subset, short turn budget |
 
-Override per task via `metadata["mode"]` (a profile name known to the registry):
+Override per task via `metadata["mode"]` with a profile name known to the
+registry:
 
 ```python
 task.metadata["mode"] = "fast"
 ```
+
+Selection follows this order:
+
+1. A string in `task.metadata["mode"]` that matches a registry profile.
+2. The selected model's family default.
+3. `smart`, if no profile resolves for that family.
+
+An unknown name (for example, a typo) or a non-string value is ignored, so
+selection falls through to the model-family default and then to `smart` if
+needed. For example, `"reseracher"` on a GPT-5.2 task selects its family
+default, `deep`, rather than failing.
 
 Inspect a model's resolved profile:
 
@@ -55,16 +67,27 @@ max_turns: 80
 expected_runtime_minutes: 15
 ```
 
+The YAML is discovered by the profile-application step (`apply_mode_to_spawn`)
+on its first enabled invocation in a process. It loads profiles once per
+process from the project's `templates/mode_profiles/` directory when that
+directory exists; otherwise, it loads from the bundled templates. YAML
+profiles extend the in-code registry, and a YAML profile with an existing name
+replaces that registry entry. Calling `select_mode` by itself does not load
+YAML. Thus, a task with `metadata["mode"] = "researcher"` passed to
+`select_mode` before the application step has loaded the YAML does not find that
+override and falls through to the model-family default (for a GPT-5.2 model,
+`deep`).
+
 ## Configuration
 
 | Knob | Default | Controls |
-|---|--:|---|
-| `defaults.MODE_PROFILES_ENABLED` | `true` | Master switch. |
-| `templates/mode_profiles/*.yaml` | three profiles shipped | Profile registry, loaded at startup. |
-| Per-task `metadata["mode"]` | none | Force a profile for one task. |
+|---|---:|---|
+| `defaults.MODE_PROFILES_ENABLED` | `true` | Enables profile loading and application for spawns. |
+| `templates/mode_profiles/*.yaml` | Three bundled profiles | YAML profiles loaded on the first enabled profile-application call per process; an existing project directory takes precedence over bundled templates. |
+| Per-task `metadata["mode"]` | None | Selects a known registry profile; unknown or non-string values fall through to model-family selection. |
 
-Spawn metrics carry a `mode_profile` Prometheus label, so you can
-graph `bernstein_agent_spawns_by_mode_total{mode_profile="deep"}` to see distribution.
+Spawn metrics carry a `mode_profile` Prometheus label. Use
+`bernstein_agent_spawns_by_mode_total{mode_profile="deep"}` to see distribution.
 
 ## Limitations
 
