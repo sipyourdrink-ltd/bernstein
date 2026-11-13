@@ -73,15 +73,34 @@ A downstream parser:
 
 1. Searches the comment body for the literal fence
    `` ```bernstein-failure-v1\n ``.
-2. Reads until the next closing ``` fence appearing on its own line.
+2. Reads until the next ``\n``` `` marker.
 3. Passes the inner text to a YAML 1.1+ `safe_load`.
-4. Validates that the result is a mapping with at least
-   `reason_code`, `category`, `transient`, `next_action`,
-   `evidence_path`.
-5. Falls back to the legacy free-text path when any step fails.
+4. Returns a successfully parsed mapping without checking the consumer's
+   required fields or their types.
+5. Leaves schema validation and fallback to the consumer.
 
 The reference parser is `parse_failure_comment` in
-`bernstein.core.orchestration.failure_taxonomy`.
+`bernstein.core.orchestration.failure_taxonomy`. It normalizes LF, CRLF,
+and bare-CR line endings to LF before searching. The opening fence must be
+the literal tagged fence followed by a newline. If the opening fence or a
+subsequent closing marker is absent, it returns an empty result (`raw ==
+""`, `payload == {}`). A present but empty YAML block also yields those
+values because it parses to a non-mapping, so the result fields alone do
+not distinguish it from a missing block. If a non-empty block is found but
+its YAML is malformed or parses to a non-mapping, it returns that block in
+`raw` and an empty `payload`.
+
+A parsed mapping can be partial. For example, a block containing only
+`reason_code: timeout` yields `{"reason_code": "timeout"}`; extraction
+does not enforce the fields in the documented schema. Before trusting
+any fields, a consumer must validate that the result is a mapping with
+`reason_code`, `category`, `transient`, `next_action`, and
+`evidence_path`, and check their types and allowed values. If extraction
+or schema validation fails—including when required fields are missing—
+reject the structured result and fall back to the legacy free-text path;
+do not infer defaults for missing fields. After schema validation, an
+unrecognised reason code maps to `unknown` and uses the default escalation
+policy described above.
 
 ## Worked example
 
