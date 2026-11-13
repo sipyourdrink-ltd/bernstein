@@ -411,7 +411,7 @@ class TestJsonlFileWriting:
         collector._write_metric_point(MetricType.API_USAGE, 1.0, {})
         collector.flush()
         metric_file = _single_metric_file(collector._metrics_dir, MetricType.API_USAGE)
-        assert metric_file.name == f"{MetricType.API_USAGE.value}_{_FIXED_METRIC_NOW.date().isoformat()}.jsonl"
+        assert metric_file.name == f"api_usage_{_FIXED_METRIC_NOW.date().isoformat()}.jsonl"
 
     def test_write_metric_fires_plugin_hook(self, collector: MetricsCollector) -> None:
         """Verify metric recording fires the on_metric_record plugin hook."""
