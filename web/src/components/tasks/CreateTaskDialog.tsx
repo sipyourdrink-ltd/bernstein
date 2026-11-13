@@ -36,7 +36,6 @@ function readRecoveryId(): string | null {
 function rememberRecoveryId(id: string | null, rejection?: string) {
   inMemoryRecoveryId = id;
   recoveryRejection = rejection;
-  if (confirmedRecoveryId !== id) confirmedRecoveryId = null;
   if (!id && !rejection) recoveryDraft = null;
   try {
     if (id) window.sessionStorage.setItem(recoveryKey, id);
@@ -53,7 +52,8 @@ export function useConfirmedTaskCreation() {
 
 export function consumeConfirmedTaskCreation(taskId: string): boolean {
   if (confirmedRecoveryId !== taskId) return false;
-  rememberRecoveryId(null);
+  confirmedRecoveryId = null;
+  for (const listener of recoveryListeners) listener();
   return true;
 }
 
@@ -91,6 +91,7 @@ export function CreateTaskDialog({
   const storedRecoveryId = useSyncExternalStore(subscribeToRecovery, readRecoveryId);
   const rejection = useSyncExternalStore(subscribeToRecovery, () => recoveryRejection);
   const confirmedId = useConfirmedTaskCreation();
+  const [initialRecoveryId] = useState(readRecoveryId);
   const [initialDraft] = useState(() =>
     recoveryDraft && (recoveryDraft.id === storedRecoveryId || rejection) ? recoveryDraft : null,
   );
@@ -108,9 +109,8 @@ export function CreateTaskDialog({
   function confirm(taskId: string) {
     if (readRecoveryId() !== taskId) return;
     if (!mounted.current) {
-      rememberRecoveryId(null);
       confirmedRecoveryId = taskId;
-      for (const listener of recoveryListeners) listener();
+      rememberRecoveryId(null);
       return;
     }
     created.current = true;
@@ -119,10 +119,12 @@ export function CreateTaskDialog({
   }
 
   useLayoutEffect(() => {
-    if (busy || !confirmedId || !consumeConfirmedTaskCreation(confirmedId)) return;
+    if (busy || !confirmedId || confirmedId !== initialRecoveryId || !consumeConfirmedTaskCreation(confirmedId)) {
+      return;
+    }
     created.current = true;
     onCreated(confirmedId);
-  }, [busy, confirmedId, onCreated]);
+  }, [busy, confirmedId, initialRecoveryId, onCreated]);
 
   const create = useMutation({
     mutationKey: createMutationKey,

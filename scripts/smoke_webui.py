@@ -661,7 +661,14 @@ def check_task_creation_success_after_remount(page: Page, base: str, *, settleme
                 expect(palette.get_by_role("textbox")).to_be_focused()
                 page.keyboard.press("Escape")
                 expect(palette).to_have_count(0)
-            page.get_by_role("button", name="View created task", exact=True).click()
+            view_created = page.get_by_role("button", name="View created task", exact=True)
+            if settlement == "with form closed":
+                page.get_by_role("button", name="Done", exact=False).first.click()
+                header.click()
+                expect(form.get_by_label("Title")).to_have_value("")
+                form.get_by_role("button", name="Cancel", exact=True).click()
+                expect(view_created).to_be_visible()
+            view_created.click()
         expect(detail).to_be_visible()
         assert page.evaluate("sessionStorage.getItem('bernstein.unconfirmed-task-id')") is None
         page.keyboard.press("Escape")

@@ -545,7 +545,6 @@ export default function Tasks() {
   const selected = items.find((t) => t.id === selectedId) ?? null;
 
   const openCreate = (focus: 'title' | 'prompt', trigger: HTMLButtonElement, fromEmptyState = false) => {
-    if (confirmedTaskId) consumeConfirmedTaskCreation(confirmedTaskId);
     createTrigger.current = fromEmptyState ? headerCreateButton.current : trigger;
     setCreateFocus(focus);
   };
