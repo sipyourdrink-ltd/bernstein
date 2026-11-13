@@ -44,13 +44,19 @@ Source: `schema_registry.py`.
 
 `check_compatibility(old_version, new_version)` returns a
 `CompatibilityResult(compatible, breaking_changes, warnings)`.
-`compatible` is `True` only when `breaking_changes` is empty. Rules,
-in the order the code checks them:
+`compatible` is `True` only when `breaking_changes` is empty. This
+comparison is a structural summary of how the declared schemas differ;
+it does **not** establish that any particular existing payload validates
+against either version. In particular, promoting a field that already
+exists as optional in `old` to required in `new` is not reported as a
+breaking change here, even though payloads that omit it fail validation
+against `new`. Rules, in the order the code checks them:
 
 | Change | Classified as |
 |---|---|
 | A field required in `old` is missing from `new.fields` entirely | Breaking |
 | A field required in `new` did not exist in `old.fields` at all | Breaking |
+| A field optional in `old` is promoted to required in `new` | No breaking change in this summary |
 | A field present in both versions changed its type tag | Breaking |
 | An optional field present in `old` was dropped in `new` | Warning |
 | A new optional field was added in `new` | Warning |
@@ -103,27 +109,24 @@ registry = SchemaRegistry()
 registry.register(
     SchemaVersion(
         version=1,
-        fields={"name": "str", "priority": "int"},
-        required_fields=frozenset({"name"}),
+        fields={"name": "str", "owner": "str"},
+        required_fields=frozenset({"name"}),  # owner is optional
     )
 )
 registry.register(
     SchemaVersion(
         version=2,
-        fields={"name": "str", "priority": "int", "owner": "str"},
+        fields={"name": "str", "owner": "str"},
         required_fields=frozenset({"name", "owner"}),
     )
 )
 
 compat = registry.check_compatibility(1, 2)
-assert not compat.compatible  # "owner" is newly required in v2
-print(compat.breaking_changes)
+assert compat.compatible
+assert compat.breaking_changes == ()  # optional -> required is not breaking here
 
-result = registry.validate_payload({"name": "fix bug"}, version=1)
-assert result.valid
-
-migrated = registry.migrate_payload({"name": "fix bug", "priority": 2}, from_version=1, to_version=2)
-# migrated == {"name": "fix bug", "priority": 2}; "owner" is still missing
+result = registry.validate_payload({"name": "fix bug"}, version=2)
+assert not result.valid  # owner is required in v2, so this payload fails
 ```
 
 ## Limitations
