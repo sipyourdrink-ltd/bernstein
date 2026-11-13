@@ -803,8 +803,13 @@ def test_pending_cancellation_keeps_run_resumable(env: _Env) -> None:
     assert produce is not None and produce.status is not NodeStatus.SUCCESS
     again = env.spawner(_Plan(mode="block"))
     resumed = env.start(lambda: env.runner(again).resume(spec, run_id=rid))
-    resumed.wait(OBSERVE_S)
+    assert resumed.wait(BOUND_S), "resume did not report the unresolved attempt"
     resumed.raise_unexpected()
+    assert resumed.result is not None
+    produce = resumed.node("produce")
+    assert produce is not None and produce.status is NodeStatus.FAILED
+    assert produce.error.startswith("attempt_unresolved:")
+    assert run_complete_marker_exists(env.workdir, rid) is None
     assert again.spawned_task_ids() == [task.id], "resume re-dispatched a cancelled attempt"
     assert env.sentinel_writes() == 0
 
