@@ -21,8 +21,23 @@ Source:
 
 ## Where manifests live
 
-Manifests are `templates/teams/<name>.toml`, discovered project-local
-first (your workdir's `templates/teams/`) then the bundled defaults.
+Manifests are `templates/teams/<name>.toml`. The resolver searches these
+locations in priority order:
+
+1. `<workdir>/.bernstein/templates/teams/` (project-local)
+2. `<workdir>/templates/teams/` (project-local)
+3. The bundled defaults' `templates/teams/` directory
+
+The first file with a given name wins. Higher-priority files shadow a
+same-named file in every lower-priority directory both in `bernstein team
+list` (which shows the winning source) and when resolving a name with
+`bernstein team show` or `bernstein.yaml`. For example, if both
+`<workdir>/.bernstein/templates/teams/backend-crew.toml` and
+`<workdir>/templates/teams/backend-crew.toml` exist, the `.bernstein` file
+is listed and used; the other copy is hidden. If the winning file is
+invalid, `team list` reports it as invalid and name resolution reports a
+validation error rather than falling back to the lower-priority copy.
+
 Reference one from `bernstein.yaml`:
 
 ```yaml
