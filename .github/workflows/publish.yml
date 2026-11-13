@@ -49,12 +49,33 @@ permissions: {}
 # name, the npm version, and the ref every job checks out.
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-  CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.ref != ''
-    && inputs.ref || inputs.tag) || github.ref }}
 
 jobs:
+  trusted-source:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-trusted-main-ref.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.ref || inputs.tag) || github.ref }}
+
+  trusted-rpm-source:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-trusted-main-ref.yml
+    with:
+      ref: ${{ inputs.copr_only && github.ref || inputs.tag || github.ref }}
+
   # Protocol compatibility gate - blocks release if breaking changes found
   protocol-gate:
+    needs: trusted-source
     name: Protocol Compatibility Gate
     runs-on: ubuntu-latest
     # A single-channel republish re-releases nothing, so the release gates
@@ -71,7 +92,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -146,6 +167,7 @@ jobs:
 
   # Safety: run tests before publishing even on manual tag push
   test:
+    needs: trusted-source
     name: Verify tests pass
     runs-on: ubuntu-latest
     if: ${{ !inputs.copr_only && !inputs.registry_only }}
@@ -159,7 +181,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -170,6 +192,7 @@ jobs:
         run: uv run python scripts/run_tests.py -k release -x
 
   version-check:
+    needs: trusted-source
     name: Verify tag matches pyproject.toml
     runs-on: ubuntu-latest
     if: ${{ !inputs.copr_only && !inputs.registry_only }}
@@ -183,7 +206,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
       - name: Compare tag to pyproject.toml version
         run: |
@@ -199,7 +222,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, protocol-gate, version-check]
+    needs: [trusted-source, test, protocol-gate, version-check]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -210,7 +233,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -222,9 +245,13 @@ jobs:
           path: dist/
 
   publish:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: build
+    needs: [trusted-source, build]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -260,9 +287,13 @@ jobs:
           skip-existing: true
 
   github-release:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [trusted-source, build]
     timeout-minutes: 10
     # Approval stays only on the `publish` job below: that is the one job in
     # this graph whose OIDC exchange is scoped to the pypi environment (PyPI
@@ -287,7 +318,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -376,6 +407,10 @@ jobs:
   # environment approval, rather than spending the propagation budget before
   # the sdist exists. Normal needs semantics also skip single-channel replays.
   dispatch-homebrew:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Dispatch Homebrew after PyPI publication
     runs-on: ubuntu-latest
     needs: [publish, github-release]
@@ -397,6 +432,10 @@ jobs:
         run: gh workflow run publish-homebrew.yml --ref main -f version="${TAG#v}"
 
   publish-npm:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Publish npm wrapper
     runs-on: ubuntu-latest
     # The npm wrapper publishes through OIDC trusted publishing: the registry
@@ -405,7 +444,7 @@ jobs:
     # long-lived NPM_TOKEN is stored anywhere. `id-token: write` is what mints
     # that token; the environment keeps the publisher binding narrow.
     environment: release-channels
-    needs: build
+    needs: [trusted-source, build]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -417,7 +456,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
       # zizmor cache-poisoning: explicit no-cache on tag-triggered npm publish
       # so a transitive lockfile bump can't be cached and re-served.
@@ -493,11 +532,11 @@ jobs:
   rpm-install-smoke:
     name: RPM install smoke (${{ matrix.image }})
     runs-on: ubuntu-latest
-    needs: publish
+    needs: [trusted-rpm-source, publish]
     # Mirrors the publish-copr condition: run on the tag path once PyPI has
     # published (the spec installs the release from PyPI at build time), and
     # on a channel-only republish where the upstream graph is skipped.
-    if: ${{ always() && (inputs.copr_only || needs.publish.result == 'success') }}
+    if: ${{ always() && needs.trusted-rpm-source.result == 'success' && (inputs.copr_only || needs.publish.result == 'success') }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -532,7 +571,7 @@ jobs:
           # Same ref logic as publish-copr below: a republished tag can
           # predate the smoke harness, so in that mode the packaging sources
           # come from the dispatch ref instead of the tag.
-          ref: ${{ inputs.copr_only && github.ref || inputs.tag || github.ref }}
+          ref: ${{ needs.trusted-rpm-source.outputs.sha }}
           persist-credentials: false
       - name: Wait for the release to be visible on PyPI
         run: |
@@ -564,13 +603,17 @@ jobs:
     # `copr` environment carries COPR_CONFIG and the same reviewer gate and
     # branch/tag restriction as `pypi`.
     environment: copr
-    needs: [publish, rpm-install-smoke]
+    needs: [trusted-rpm-source, publish, rpm-install-smoke]
     # `always()` so a channel-only republish still runs with the upstream
     # release graph skipped; the PyPI result still gates the normal tag path.
     # The install smoke gates both paths: Copr accepting a build says nothing
     # about whether the result installs, so a failed smoke must stop the
     # submission rather than let Copr publish a package that does not work.
-    if: ${{ always() && needs.rpm-install-smoke.result == 'success' && (inputs.copr_only || needs.publish.result == 'success') }}
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (always() && needs.trusted-rpm-source.result == 'success' && needs.rpm-install-smoke.result == 'success' && (inputs.copr_only || needs.publish.result == 'success'))
     # Comfortably above COPR_WATCH_SECONDS below, so the watch always ends on
     # its own deadline rather than being cancelled part-way through.
     timeout-minutes: 30
@@ -587,7 +630,7 @@ jobs:
         with:
           # A republished tag can predate the spec renderer, so in that mode the
           # packaging sources come from the dispatch ref instead of the tag.
-          ref: ${{ inputs.copr_only && github.ref || inputs.tag || github.ref }}
+          ref: ${{ needs.trusted-rpm-source.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -666,11 +709,15 @@ jobs:
   publish-mcp-registry:
     name: Publish MCP registry listing
     runs-on: ubuntu-latest
-    needs: publish
+    needs: [trusted-source, publish]
     # Mirrors the publish-copr condition: run on the tag path once PyPI has
     # published, and on a registry-only republish where the upstream graph
     # is skipped.
-    if: ${{ always() && (inputs.registry_only || needs.publish.result == 'success') }}
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (always() && needs.trusted-source.result == 'success' && (inputs.registry_only || needs.publish.result == 'success'))
     # Wider than the other publish jobs: the GHCR-image wait step below polls
     # for the OCI image the listing pins (built in parallel by
     # publish-docker.yml, up to ~14 min) before submitting.
@@ -693,7 +740,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
       # Stdlib only, on purpose: this job installs no dependencies, so a
       # step here must not import the package. Regenerating the manifests

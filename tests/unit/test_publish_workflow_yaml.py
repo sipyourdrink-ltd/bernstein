@@ -150,7 +150,7 @@ def test_copr_job_publishes_from_the_tag_trigger_not_the_release_event(workflow:
     # submission waits for the PyPI publish; the install smoke must also have
     # passed, because Copr accepting a build says nothing about whether the
     # result installs (#3559).
-    assert job.get("needs") == ["publish", SMOKE_JOB]
+    assert job.get("needs") == ["trusted-rpm-source", "publish", SMOKE_JOB]
 
 
 def test_copr_job_fails_the_workflow_when_the_submission_fails(workflow: dict[str, Any]) -> None:
@@ -321,7 +321,8 @@ def test_copr_replay_checks_out_packaging_sources_that_carry_the_builder(workflo
         for step in job["steps"]
         if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
     )
-    ref = checkout["with"]["ref"]
+    assert checkout["with"]["ref"] == "${{ needs.trusted-rpm-source.outputs.sha }}"
+    ref = workflow["jobs"]["trusted-rpm-source"]["with"]["ref"]
     assert "inputs.copr_only" in ref
 
 

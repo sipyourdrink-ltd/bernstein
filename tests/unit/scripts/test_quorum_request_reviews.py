@@ -83,7 +83,15 @@ def test_author_pushers_coauthors_and_the_maintainer_are_never_asked(rr, roster)
 
 def test_maintainer_and_automation_changes_ask_nobody(rr, roster) -> None:
     assert rr.plan_requests(_pr(rr, author="owner", contributors={"owner"}), roster, set(), {}) == []
-    assert rr.plan_requests(_pr(rr, author="the-conductor[bot]"), roster, set(), {}) == []
+    pr = _pr(rr, author="the-conductor[bot]")
+    pr.bot_authored = True
+    assert rr.plan_requests(pr, roster, set(), {}) == []
+
+
+def test_mixed_automation_changes_get_contributor_reviews(rr, roster) -> None:
+    bot = "the-conductor[bot]"
+    pr = _pr(rr, author=bot, contributors={bot, "core1"})
+    assert rr.plan_requests(pr, roster, set(), {}) == ["core2", "comm1"]
 
 
 def test_a_standing_changes_requested_pauses_the_asking(rr, roster) -> None:
@@ -111,9 +119,9 @@ def test_request_load_counts_standing_requests(rr) -> None:
     assert rr.request_load(prs) == {"a": 2, "b": 1}
 
 
-def test_only_contributor_changes_get_the_full_evaluation(rr, roster) -> None:
+def test_bot_openers_get_the_full_evaluation_before_review_requests(rr, roster) -> None:
     assert rr.needs_a_look({"user": {"login": "outsider"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "outsider"}, "draft": True}, roster)
     assert not rr.needs_a_look({"user": {"login": "owner"}, "draft": False}, roster)
-    assert not rr.needs_a_look({"user": {"login": "the-conductor[bot]"}, "draft": False}, roster)
-    assert not rr.needs_a_look({"user": {"login": "github-actions[bot]"}, "draft": False}, roster)
+    assert rr.needs_a_look({"user": {"login": "the-conductor[bot]"}, "draft": False}, roster)
+    assert rr.needs_a_look({"user": {"login": "github-actions[bot]"}, "draft": False}, roster)

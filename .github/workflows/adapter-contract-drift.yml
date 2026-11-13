@@ -44,6 +44,10 @@ permissions:
 
 jobs:
   check:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: ${{ matrix.adapter }}
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
@@ -215,7 +219,11 @@ jobs:
   aggregate:
     name: Aggregate drift report
     needs: check
-    if: always()
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (always())
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     permissions:

@@ -4,6 +4,31 @@ Operator-facing notes on Bernstein's CI workflows. Focused on the
 matrix policy and the failure-class interventions; for the per-step
 documentation read the inline comments in `.github/workflows/ci.yml`.
 
+## Carry-over pull requests
+
+Treat `fleet/carry-*` as a contributor branch even though its Git objects
+are stored upstream. Build and review checks retain their read-only token
+scopes. Jobs with write permissions, secrets, environments or privileged
+runner access skip carry events at job admission. Dispatches to a carry ref
+use the same boundary. The post-CI release dispatcher resolves a synthetic
+merge-queue ref to its source PR and requires the whole tested group to be
+on main before permitting the privileged release job.
+Release, SBOM and tunnel workflows with a separate checkout ref resolve it
+without write permissions, verify that the exact commit is already on main,
+and pin the downstream checkout to that commit.
+
+Before any carry ref is created or updated, run `scripts/verify_carry_head.py`
+from trusted main. The exact head to publish must contain the original
+contributor head and current upstream main, with its `.github` tree
+identical to main's. Merge main into the carry branch to preserve the
+contributor's commit IDs and inherit the guarded workflow definitions.
+Review the resulting head before pushing it.
+
+Carry PRs keep the ordinary contributor quorum. A bot-opened PR qualifies
+for the automation exemption only when the complete PR commit list belongs
+to that bot and GitHub verifies that the bot signed each commit. Missing authorship evidence
+leaves the ordinary review requirements in force.
+
 ## TL;DR
 
 | Topic | Status | Where |

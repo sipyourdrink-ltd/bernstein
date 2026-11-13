@@ -49,6 +49,10 @@ permissions: {}
 
 jobs:
   compute:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Compute trunk red-rate and toggle the andon marker
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10

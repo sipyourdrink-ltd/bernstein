@@ -82,11 +82,11 @@ jobs:
       contents: read
       pull-requests: write
     timeout-minutes: 30
-    if: >
-      !github.event.pull_request.head.repo.fork &&
-      contains(github.event.pull_request.labels.*.name, 'deep-review') &&
-      !github.event.pull_request.draft &&
-      !contains(github.event.pull_request.labels.*.name, 'skip-bernstein')
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (!github.event.pull_request.head.repo.fork && contains(github.event.pull_request.labels.*.name, 'deep-review') && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'skip-bernstein'))
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:

@@ -45,6 +45,10 @@ permissions: {}
 
 jobs:
   digest:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Build and publish weekly digest
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10

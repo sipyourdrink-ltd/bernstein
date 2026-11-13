@@ -32,7 +32,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cifuzz-weekly.yml | CIFuzz (ClusterFuzzLite) | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cifuzz-weekly-${{ github.ref }}"} | 1 |
 | .github/workflows/cleanup-runs.yml | Cleanup Action Runs | workflow_dispatch | {"cancel-in-progress": "false", "group": "cleanup-runs-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-e2e.yml | cluster-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-e2e-${{ github.ref }}"} | 1 |
-| .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
+| .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 2 |
 | .github/workflows/codeql.yml | CodeQL Security Analysis | pull_request, push, schedule | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/contributor-recognition.yml | Contributor recognition | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "contributor-recognition"} | 1 |
@@ -63,10 +63,10 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-queue-hygiene.yml | PR queue hygiene | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "pr-queue-hygiene"} | 1 |
 | .github/workflows/project-pulse.yml | Project pulse | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "project-pulse"} | 1 |
-| .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
-| .github/workflows/publish-extension.yml | Publish VS Code Extension | push, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
-| .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
-| .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 11 |
+| .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 2 |
+| .github/workflows/publish-extension.yml | Publish VS Code Extension | push, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 2 |
+| .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 2 |
+| .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 13 |
 | .github/workflows/quorum-rerun.yml | quorum rerun | pull_request_review, schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "quorum-rerun-${{ github.event.pull_request.number \|\| 'sweep' }}"} | 1 |
 | .github/workflows/quorum.yml | quorum | merge_group, pull_request, pull_request_review, workflow_dispatch | {"cancel-in-progress": "true", "group": "quorum-${{ github.event.pull_request.number \|\| inputs.pr \|\| github.event.merge_group.head_ref \|\| github.ref }}"} | 1 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
@@ -74,7 +74,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/rendering-lane.yml | Rendering lane | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "rendering-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| format('branch-{0}-{1}', github.ref, github.sha) }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 1 |
-| .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
+| .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 2 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/security-control-reachability.yml | Security control reachability | pull_request, push | {"cancel-in-progress": "true", "group": "security-control-reachability-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/soc2-evidence-weekly.yml | soc2-evidence-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
@@ -86,6 +86,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trufflehog.yml | trufflehog (secret scanning) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "trufflehog-${{ github.ref }}"} | 1 |
 | .github/workflows/trunk-health-slo.yml | Trunk Health SLO | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-health-slo"} | 1 |
 | .github/workflows/typecheck-ts.yml | TypeScript typecheck | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
+| .github/workflows/verify-trusted-main-ref.yml | Verify trusted main ref | workflow_call | - | 1 |
 | .github/workflows/volunteer-verify.yml | Volunteer receipt verification check run | pull_request_target | {"cancel-in-progress": "true", "group": "volunteer-verify-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/webui-regression.yml | Web UI regression | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "webui-regression-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/webui-render-recapture.yml | Web UI render recapture | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "webui-render-recapture-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
@@ -116,7 +117,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cifuzz-weekly.yml | cifuzz: Build and run fuzzers |
 | .github/workflows/cleanup-runs.yml | cleanup |
 | .github/workflows/cluster-e2e.yml | cluster-e2e: cluster-e2e (linux) |
-| .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: cluster-tunnel-e2e (linux) |
+| .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: cluster-tunnel-e2e (linux)<br>trusted-source |
 | .github/workflows/codeql.yml | analyze: CodeQL (${{ matrix.language }}) |
 | .github/workflows/contract-drift-autofix.yml | autofix: Detect and patch contract drift |
 | .github/workflows/contributor-recognition.yml | render: Collect and render the recognition drafts |
@@ -147,10 +148,10 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-policy.yml | pr-policy: PR policy |
 | .github/workflows/pr-queue-hygiene.yml | hygiene |
 | .github/workflows/project-pulse.yml | pulse: Collect and publish the project pulse |
-| .github/workflows/publish-docker.yml | publish: Build and push image to GHCR |
-| .github/workflows/publish-extension.yml | publish |
-| .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
-| .github/workflows/publish.yml | build: Build<br>dispatch-homebrew: Dispatch Homebrew after PyPI publication<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-copr: Publish RPM to Copr<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>rpm-install-smoke: RPM install smoke (${{ matrix.image }})<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
+| .github/workflows/publish-docker.yml | publish: Build and push image to GHCR<br>trusted-source |
+| .github/workflows/publish-extension.yml | publish<br>trusted-source |
+| .github/workflows/publish-homebrew.yml | trusted-source<br>update-formula: Update Homebrew formula |
+| .github/workflows/publish.yml | build: Build<br>dispatch-homebrew: Dispatch Homebrew after PyPI publication<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-copr: Publish RPM to Copr<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>rpm-install-smoke: RPM install smoke (${{ matrix.image }})<br>test: Verify tests pass<br>trusted-rpm-source<br>trusted-source<br>version-check: Verify tag matches pyproject.toml |
 | .github/workflows/quorum-rerun.yml | rerun |
 | .github/workflows/quorum.yml | quorum: quorum |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs published channels |
@@ -158,7 +159,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/rendering-lane.yml | rendering: Rendering fetcher (browser-backed) |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
 | .github/workflows/runner-canary.yml | canary: Runner canary |
-| .github/workflows/sbom.yml | sbom: Generate SBOM |
+| .github/workflows/sbom.yml | sbom: Generate SBOM<br>trusted-source |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/security-control-reachability.yml | gate: Unreached security controls (#5053) |
 | .github/workflows/soc2-evidence-weekly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
@@ -170,6 +171,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trufflehog.yml | trufflehog: trufflehog scan |
 | .github/workflows/trunk-health-slo.yml | compute: Compute trunk red-rate and toggle the andon marker |
 | .github/workflows/typecheck-ts.yml | typecheck: typecheck (${{ matrix.package }}) |
+| .github/workflows/verify-trusted-main-ref.yml | verify |
 | .github/workflows/volunteer-verify.yml | verify: Verify volunteer receipt |
 | .github/workflows/webui-regression.yml | test: Web UI component and browser tests |
 | .github/workflows/webui-render-recapture.yml | recapture: Recapture the web UI renders |
@@ -200,7 +202,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cifuzz-weekly.yml | workflow: {"contents": "read"}<br>cifuzz: {"actions": "read", "contents": "read"} | GITHUB_TOKEN |
 | .github/workflows/cleanup-runs.yml | workflow: {"contents": "read"}<br>cleanup: {"actions": "write"} | GITHUB_TOKEN |
 | .github/workflows/cluster-e2e.yml | workflow: {"contents": "read"} | - |
-| .github/workflows/cluster-tunnel-e2e.yml | workflow: {"contents": "read"} | CF_TUNNEL_HOSTNAME, CF_TUNNEL_TOKEN |
+| .github/workflows/cluster-tunnel-e2e.yml | workflow: {"contents": "read"}<br>trusted-source: {"contents": "read"} | CF_TUNNEL_HOSTNAME, CF_TUNNEL_TOKEN |
 | .github/workflows/codeql.yml | workflow: {"contents": "read"}<br>analyze: {"actions": "read", "contents": "read", "security-events": "write"} | - |
 | .github/workflows/contract-drift-autofix.yml | workflow: {"contents": "read"}<br>autofix: {"contents": "write", "issues": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
 | .github/workflows/contributor-recognition.yml | render: {"contents": "read", "issues": "write"} | - |
@@ -225,24 +227,24 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-deep-tests.yml | workflow: {"contents": "read"}<br>bandit-medium-and-high: {"contents": "read"}<br>crosshair-pure-fns: {"contents": "read"}<br>hypothesis-deep: {"contents": "read"}<br>mutmut-full: {"contents": "read"}<br>pip-audit-deep: {"contents": "read"}<br>schemathesis-deep: {"contents": "read"}<br>stress-leak-suite: {"contents": "read"}<br>unit-python-314: {"contents": "read"} | - |
 | .github/workflows/nightly-drift-sweep.yml | workflow: {"contents": "read"}<br>sweep: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/pentest.yml | workflow: {"contents": "read"} | - |
-| .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
+| .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
 | .github/workflows/pr-queue-hygiene.yml | workflow: {"contents": "read"}<br>hygiene: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/project-pulse.yml | pulse: {"contents": "write", "issues": "write", "pull-requests": "read"} | - |
-| .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
-| .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
-| .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
-| .github/workflows/publish.yml | build: {"contents": "read"}<br>dispatch-homebrew: {"actions": "write"}<br>github-release: {"actions": "write", "attestations": "write", "contents": "write", "id-token": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read", "id-token": "write"}<br>rpm-install-smoke: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN |
+| .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"}<br>trusted-source: {"contents": "read"} | GITHUB_TOKEN |
+| .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"}<br>trusted-source: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
+| .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>trusted-source: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
+| .github/workflows/publish.yml | build: {"contents": "read"}<br>dispatch-homebrew: {"actions": "write"}<br>github-release: {"actions": "write", "attestations": "write", "contents": "write", "id-token": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read", "id-token": "write"}<br>rpm-install-smoke: {"contents": "read"}<br>test: {"contents": "read"}<br>trusted-rpm-source: {"contents": "read"}<br>trusted-source: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN |
 | .github/workflows/quorum-rerun.yml | workflow: {"contents": "read"}<br>rerun: {"actions": "write", "contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
-| .github/workflows/quorum.yml | workflow: {"contents": "read"}<br>quorum: {"contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
+| .github/workflows/quorum.yml | workflow: {"contents": "read"}<br>quorum: {"contents": "read", "pull-requests": "read"} | - |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/rendering-lane.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
 | .github/workflows/runner-canary.yml | - | - |
-| .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
+| .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"}<br>trusted-source: {"contents": "read"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
 | .github/workflows/security-control-reachability.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/soc2-evidence-weekly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED, SOC2_EVIDENCE_SINK |
@@ -254,6 +256,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trufflehog.yml | workflow: {"contents": "read"}<br>trufflehog: {"contents": "read", "pull-requests": "read"} | - |
 | .github/workflows/trunk-health-slo.yml | compute: {"actions": "read", "issues": "write"} | - |
 | .github/workflows/typecheck-ts.yml | workflow: {"contents": "read"}<br>typecheck: {"contents": "read"} | - |
+| .github/workflows/verify-trusted-main-ref.yml | workflow: {"contents": "read"}<br>verify: {"contents": "read"} | - |
 | .github/workflows/volunteer-verify.yml | verify: {"checks": "write", "contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
 | .github/workflows/webui-regression.yml | workflow: {"contents": "read"}<br>test: {"contents": "read"} | - |
 | .github/workflows/webui-render-recapture.yml | workflow: {"contents": "read"}<br>recapture: {"contents": "read"} | - |
@@ -263,7 +266,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 
 | Caller workflow | Reusable workflow calls |
 | --- | --- |
+| .github/workflows/cluster-tunnel-e2e.yml | trusted-source -> ./.github/workflows/verify-trusted-main-ref.yml (needs: -) |
 | .github/workflows/post-ci-dispatcher.yml | auto-heal -> ./.github/workflows/auto-heal.yml (needs: meta)<br>auto-release -> ./.github/workflows/auto-release.yml (needs: meta)<br>bisect-on-red -> ./.github/workflows/bisect-on-red.yml (needs: meta) |
+| .github/workflows/publish-docker.yml | trusted-source -> ./.github/workflows/verify-trusted-main-ref.yml (needs: -) |
+| .github/workflows/publish-extension.yml | trusted-source -> ./.github/workflows/verify-trusted-main-ref.yml (needs: -) |
+| .github/workflows/publish-homebrew.yml | trusted-source -> ./.github/workflows/verify-trusted-main-ref.yml (needs: -) |
+| .github/workflows/publish.yml | trusted-rpm-source -> ./.github/workflows/verify-trusted-main-ref.yml (needs: -)<br>trusted-source -> ./.github/workflows/verify-trusted-main-ref.yml (needs: -) |
+| .github/workflows/sbom.yml | trusted-source -> ./.github/workflows/verify-trusted-main-ref.yml (needs: -) |
 
 ## Artifact Hand-Offs
 

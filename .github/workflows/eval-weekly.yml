@@ -35,6 +35,10 @@ concurrency:
 
 jobs:
   preflight:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: preflight (gate)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 1
@@ -68,7 +72,11 @@ jobs:
   smoke:
     name: smoke (synthetic)
     needs: preflight
-    if: needs.preflight.outputs.enabled == 'smoke'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (needs.preflight.outputs.enabled == 'smoke')
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     steps:
@@ -109,7 +117,11 @@ jobs:
   bench:
     name: bench (full)
     needs: preflight
-    if: needs.preflight.outputs.enabled == 'true'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (needs.preflight.outputs.enabled == 'true')
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 240
     env:

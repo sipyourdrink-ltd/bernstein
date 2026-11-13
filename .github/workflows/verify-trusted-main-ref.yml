@@ -1,0 +1,50 @@
+name: Verify trusted main ref
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to resolve before admitting a privileged job
+        required: true
+        type: string
+    outputs:
+      sha:
+        description: Exact commit verified as an ancestor of main
+        value: ${{ jobs.verify.outputs.sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+    steps:
+      - name: Resolve and verify the effective ref
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TARGET_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          lower_ref="$(printf '%s' "$TARGET_REF" | tr '[:upper:]' '[:lower:]')"
+          case "$lower_ref" in
+            ''|fleet/carry-*|refs/heads/fleet/carry-*|refs/tags/fleet/carry-*)
+              echo "::error::ref is missing or belongs to a carry branch"
+              exit 1
+              ;;
+          esac
+          encoded="$(python3 -c 'import sys; from urllib.parse import quote; print(quote(sys.argv[1], safe=""))' "$TARGET_REF")"
+          sha="$(gh api "repos/$REPO/commits/$encoded" --jq '.sha')"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          status="$(gh api "repos/$REPO/compare/main...$sha" --jq '.status')"
+          if [[ "$status" != behind && "$status" != identical ]]; then
+            echo "::error::the selected commit is outside main history"
+            exit 1
+          fi
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"

@@ -330,7 +330,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: drift-check
-    if: needs.drift-check.result == 'success' || needs.drift-check.result == 'failure'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (needs.drift-check.result == 'success' || needs.drift-check.result == 'failure')
     permissions:
       contents: read
       pull-requests: write

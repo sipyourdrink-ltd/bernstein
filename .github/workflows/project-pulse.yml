@@ -52,6 +52,10 @@ env:
 
 jobs:
   pulse:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Collect and publish the project pulse
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 20
