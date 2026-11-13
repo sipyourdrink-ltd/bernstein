@@ -25,6 +25,7 @@ from bernstein.core.tenanting import request_tenant_id
 from bernstein.core.webhook_signatures import verify_hmac_sha256
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bernstein.core.models import TriggerEvent
@@ -199,6 +200,7 @@ def _mint_trigger_receipt(
     authenticated: bool,
     refusal_reason: str = "",
     task_ids: tuple[str, ...] = (),
+    policy_refusal: Callable[[], str] | None = None,
 ) -> TriggerAdmission | None:
     """Admit or refuse the inbound trigger and mint its signed receipt.
 
@@ -252,6 +254,7 @@ def _mint_trigger_receipt(
             budget=RefusalBudget(root),
             intent=intent,
             task_ids=task_ids,
+            policy_refusal=policy_refusal,
         )
     except (OSError, RuntimeError, ValueError):
         logger.exception("automation bridge: could not mint a trigger receipt for %s", request.url.path)
@@ -291,10 +294,10 @@ def get_alerts(request: Request) -> JSONResponse:
 
 @router.post("/webhook", response_model=WebhookTaskResponse, status_code=201)
 async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookTaskResponse | JSONResponse:
-    """Create a task directly from a generic inbound webhook payload.
+    """Create a task from a generic inbound webhook payload.
 
-    The endpoint is intentionally small and separate from the trigger-manager
-    flow: callers POST a task-shaped payload and Bernstein creates one task.
+    After authentication, matching trigger rules can suppress task creation.
+    Policy suppressions are recorded in trigger history and return HTTP 409.
     ``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )
     and each request must carry a fresh ``X-Bernstein-Timestamp`` header
     plus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over
@@ -318,7 +321,62 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
         refusal = _mint_trigger_receipt(request, raw_body, authenticated=False, refusal_reason=refusal_reason)
         return _with_receipt(response, refusal)
 
-    admission = _mint_trigger_receipt(request, raw_body, authenticated=True)
+    tenant_id = request_tenant_id(request)
+    manager = _get_trigger_manager(request)
+    gate: TriggerGateResult | None = None
+    policy_status = 409
+    policy_detail = ""
+
+    def check_policy() -> str:
+        nonlocal gate, policy_status, policy_detail
+        assert manager is not None
+        from bernstein.core.orchestration.trigger_manager import compute_dedup_key
+        from bernstein.core.trigger_sources.webhook import normalize_webhook
+
+        event = normalize_webhook(request.url.path, request.method, {}, body.model_dump())
+        event.metadata["webhook_headers_unverified"] = True
+        event.metadata["cooldown_scope"] = tenant_id
+        event.sha = hashlib.sha256(tenant_id.encode() + b"\0" + raw_body).hexdigest()
+        try:
+            gate = manager.gate_direct_task(event)
+        except (OSError, OverflowError, TypeError, ValueError):
+            logger.warning("Could not evaluate generic webhook trigger policy", exc_info=True)
+            policy_status = 503
+            policy_detail = "Generic webhook trigger policy is unavailable"
+            return "trigger_policy_unavailable"
+        if not gate.suppressed:
+            return ""
+        policy_detail = f"Trigger suppressed: {gate.reason}"
+        if gate.reason == "deduplicated" and gate.trigger_name is not None:
+            policy_status = 503
+            policy_detail = "Generic webhook delivery outcome is unconfirmed"
+            key = compute_dedup_key(gate.trigger_name, event)
+            try:
+                confirmed = any(
+                    isinstance(row, dict)
+                    and row.get("dedup_key") == key
+                    and row.get("task_id")
+                    and row.get("produced", True)
+                    for row in manager.get_fire_history(limit=None)
+                )
+            except (OSError, ValueError):
+                logger.warning("Could not read generic webhook trigger history", exc_info=True)
+                confirmed = False
+            if not confirmed:
+                return "trigger_delivery_unconfirmed"
+            policy_status = 409
+            policy_detail = f"Trigger suppressed: {gate.reason}"
+        _record_generic_trigger_outcome(manager, gate, tenant_id)
+        return "trigger_policy_suppressed"
+
+    admission = _mint_trigger_receipt(
+        request, raw_body, authenticated=True, policy_refusal=check_policy if manager is not None else None
+    )
+    if admission is None and manager is not None and gate is None and not policy_detail:
+        check_policy()
+    if policy_detail:
+        return _with_receipt(JSONResponse(status_code=policy_status, content={"detail": policy_detail}), admission)
+
     if admission is not None and not admission.admitted:
         return _with_receipt(
             JSONResponse(
@@ -329,13 +387,34 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
         )
 
     store = _get_store(request)
-    effective_body = body.model_copy(update={"tenant_id": request_tenant_id(request)})
+    effective_body = body.model_copy(update={"tenant_id": tenant_id})
     if effective_body.estimated_minutes is None:
         score = estimate_difficulty(effective_body.description)
         effective_body.estimated_minutes = minutes_for_level(score.level)
     task = await store.create(effective_body)
+    if manager is not None and gate is not None:
+        _record_generic_trigger_outcome(manager, gate, tenant_id, task_id=task.id)
     receipt = admission.receipt.to_dict() if admission is not None and admission.receipt is not None else None
     return WebhookTaskResponse(task=task_to_response(task), receipt=receipt)
+
+
+def _record_generic_trigger_outcome(
+    manager: TriggerManager, gate: TriggerGateResult, tenant_id: str, *, task_id: str = ""
+) -> None:
+    if gate.trigger_name is None:
+        return
+    try:
+        manager.record_fire(
+            trigger_name=gate.trigger_name,
+            source="webhook",
+            task_id=task_id,
+            dedup_key=gate.dedup_key or "",
+            summary=f"Generic webhook suppressed: {gate.reason}" if gate.suppressed else "Generic webhook delivery",
+            produced=bool(task_id),
+            cooldown_scope=tenant_id,
+        )
+    except OSError:
+        logger.warning("Could not append generic webhook trigger history", exc_info=True)
 
 
 def _with_receipt(response: JSONResponse, admission: TriggerAdmission | None) -> JSONResponse:

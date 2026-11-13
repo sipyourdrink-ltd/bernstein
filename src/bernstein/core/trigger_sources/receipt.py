@@ -59,7 +59,7 @@ else:
     import fcntl  # type: ignore[no-redef]
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -703,6 +703,7 @@ def admit_trigger(
     budget: RefusalBudget | None = None,
     intent: dict[str, Any] | None = None,
     task_ids: tuple[str, ...] = (),
+    policy_refusal: Callable[[], str] | None = None,
 ) -> TriggerAdmission:
     """Admit or refuse one inbound trigger, minting a signed receipt either way.
 
@@ -741,6 +742,8 @@ def admit_trigger(
         intent: Normalised trigger intent to project; defaults to the decoded
             body when it is a JSON object.
         task_ids: Task ids the admission created, when already known.
+        policy_refusal: Optional policy check after authentication and replay
+            adjudication. An empty result permits admission.
 
     Returns:
         A :class:`TriggerAdmission`.
@@ -769,6 +772,8 @@ def admit_trigger(
             reason = refusal_reason or REFUSAL_UNAUTHENTICATED
         elif enforce_replay and ledger.seen(trigger_id):
             reason = REFUSAL_REPLAYED_TRIGGER
+        elif policy_refusal is not None:
+            reason = policy_refusal()
 
         # Only the unauthenticated path is budgeted. Producing a replay refusal
         # requires a valid signature, so that path is already gated by the secret.
