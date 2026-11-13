@@ -206,6 +206,18 @@ def test_startup_configuration_does_not_turn_transient_429_into_standing_cap(
     assert adapter.rate_limit_meter.hits_in_window() == 1
 
 
+def test_stderr_diagnostics_are_not_part_of_a_stdout_429_response(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    _write_log(log_path, "HTTP/2 429 Too Many Requests; retry in 3 seconds")
+    _write_log(log_path.with_suffix(".stderr.log"), "Loaded project spending limit: $10\nRequest failed.")
+
+    with pytest.raises(RateLimitError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 1
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: unrecognised 429 body falls back to retryable
 # ---------------------------------------------------------------------------
