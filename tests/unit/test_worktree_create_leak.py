@@ -16,10 +16,14 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 
+from bernstein.core.git import worktree as worktree_module
+from bernstein.core.git.git_basic import GitResult
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
 
 
@@ -88,6 +92,51 @@ def test_create_branch_collision_preserves_existing_ref(repo: Path) -> None:
 
     assert _git(repo, "rev-parse", branch) == original_ref
     assert not (repo / ".sdd" / "worktrees" / session).exists()
+
+
+def test_failed_checkout_does_not_remove_concurrently_adopted_worktree(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    creator = WorktreeManager(repo, salvage_on_cleanup=False)
+    adopter = WorktreeManager(repo, salvage_on_cleanup=False)
+    previous = adopter.create("previous-session")
+    (previous / "saved.txt").write_text("saved work", encoding="utf-8")
+    _git(previous, "add", "saved.txt")
+    _git(previous, "commit", "-m", "save work")
+    saved_commit = _git(previous, "rev-parse", "HEAD")
+    session = "replacement-session"
+    checked_out = Event()
+    adoption_started = Event()
+    adopted = Event()
+    real_add = worktree_module.worktree_add
+
+    def fail_after_checkout(cwd: Path, path: Path, branch: str) -> GitResult:
+        result = real_add(cwd, path, branch)
+        assert result.ok
+        checked_out.set()
+        assert adoption_started.wait(timeout=5)
+        adopted.wait(timeout=1)
+        return GitResult(1, "", "test checkout failed")
+
+    monkeypatch.setattr(worktree_module, "worktree_add", fail_after_checkout)
+
+    def adopt_after_cleanup() -> Path:
+        assert checked_out.wait(timeout=5)
+        adoption_started.set()
+        adopter.cleanup(session)
+        replacement = adopter.adopt(previous, session)
+        adopted.set()
+        return replacement
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        creating = pool.submit(creator.create, session)
+        replacing = pool.submit(adopt_after_cleanup)
+        with pytest.raises(WorktreeError, match="test checkout failed"):
+            creating.result(timeout=10)
+        replacement = replacing.result(timeout=10)
+
+    assert (replacement / "saved.txt").read_text(encoding="utf-8") == "saved work"
+    assert _git(repo, "rev-parse", f"agent/{session}") == saved_commit
 
 
 def test_create_raise_after_worktree_exists_leaves_no_worktree_or_branch(

@@ -21,7 +21,9 @@ import re as _re
 import shutil
 import subprocess
 import time
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,12 +32,12 @@ from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_lis
 from bernstein.core.git.git_pr import _MERGE_DENY_EXACT, _MERGE_DENY_PREFIXES
 from bernstein.core.git.salvage import SalvageResult, salvage_worktree
 from bernstein.core.git.worktree_isolation import validate_worktree_isolation
-from bernstein.core.persistence.file_locks import LockTimeout, cross_process_lock
+from bernstein.core.persistence.file_locks import cross_process_lock
 from bernstein.core.platform_compat import IS_WINDOWS, process_alive, robust_rmtree
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -1119,6 +1121,20 @@ class WorktreeManager:
         if resolved.parent != base:
             raise WorktreeError(f"Worktree path '{worktree_path}' resolves outside the worktree base '{base}'")
 
+    @contextmanager
+    def _lock_slots(self, *session_ids: str) -> Iterator[None]:
+        """Serialize manager mutations of a slot, including checkout and rollback."""
+        # Case-insensitive filesystems can alias two spellings of the same slot.
+        keys = {sha256(os.fsencode(session_id.casefold())).hexdigest() for session_id in session_ids}
+        with ExitStack() as locks:
+            try:
+                for key in sorted(keys):
+                    lock_path = self._base_dir / ".locks" / "mutation" / f"{key}.lock"
+                    locks.enter_context(cross_process_lock(lock_path, timeout=60))
+            except OSError as exc:
+                raise WorktreeError(f"Could not lock worktree session(s) {', '.join(session_ids)}: {exc}") from exc
+            yield
+
     def create(self, session_id: str) -> Path:
         """Create a git worktree for *session_id* and return its path.
 
@@ -1148,18 +1164,14 @@ class WorktreeManager:
         # the worktree) before anything touches the filesystem.
         validate_worktree_slug(session_id)
         worktree_path = self._base_dir / session_id
-        self._require_inside_base_dir(worktree_path)
         branch_name = f"agent/{session_id}"
+        with self._lock_slots(session_id):
+            self._require_inside_base_dir(worktree_path)
+            self._add_checkout(session_id, worktree_path, branch_name)
+            self._finish_create(session_id, worktree_path, branch_name)
+        return worktree_path
 
-        create_lock = self._base_dir / ".locks" / "create" / f"{session_id}.lock"
-        try:
-            with cross_process_lock(create_lock, timeout=60):
-                self._add_checkout(session_id, worktree_path, branch_name)
-        except LockTimeout as exc:
-            raise WorktreeError(f"Timed out waiting to create worktree for session '{session_id}'") from exc
-
-        logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
-
+    def _finish_create(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
         # The worktree and agent branch now exist.  Every remaining step runs
         # inside an undo handler so that a failure - including a cancellation
         # delivered mid-setup, which is a BaseException rather than an
@@ -1203,10 +1215,10 @@ class WorktreeManager:
             self._undo_partial_create(session_id, worktree_path, branch_name)
             raise
 
-        return worktree_path
+        logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
 
     def _add_checkout(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
-        """Run git worktree add with the per-session creation lock held."""
+        """Run git worktree add with the session slot lock held."""
         if worktree_path.exists():
             raise WorktreeError(f"Worktree path '{worktree_path}' already exists")
 
@@ -1307,8 +1319,12 @@ class WorktreeManager:
                 the worktree back before raising.
         """
         validate_worktree_slug(session_id)
-        self._require_inside_base_dir(worktree_path)
         old_id = worktree_path.name
+        with self._lock_slots(old_id, session_id):
+            self._require_inside_base_dir(worktree_path)
+            return self._adopt_locked(worktree_path, old_id, session_id)
+
+    def _adopt_locked(self, worktree_path: Path, old_id: str, session_id: str) -> Path:
         if old_id == session_id:
             return worktree_path
         target = self._base_dir / session_id
@@ -1358,11 +1374,18 @@ class WorktreeManager:
         Args:
             session_id: The session whose worktree should be removed.
         """
+        self._last_salvage = None
+        try:
+            with self._lock_slots(session_id):
+                self._cleanup_locked(session_id)
+        except WorktreeError as exc:
+            logger.warning("Could not clean up worktree for %s: %s", session_id, exc)
+
+    def _cleanup_locked(self, session_id: str) -> None:
         worktree_path = self._base_dir / session_id
         branch_name = f"agent/{session_id}"
 
         # 0. Salvage uncommitted work BEFORE anything destructive happens.
-        self._last_salvage = None
         if self._salvage_on_cleanup and worktree_path.exists():
             try:
                 self._last_salvage = salvage_worktree(
