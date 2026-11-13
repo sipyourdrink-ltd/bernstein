@@ -28,8 +28,14 @@ locations in priority order:
 2. `<workdir>/templates/teams/` (project-local)
 3. The bundled defaults' `templates/teams/` directory
 
-The first file with a given name wins. Higher-priority files shadow a
-same-named file in every lower-priority directory both in `bernstein team
+The resolver looks up manifests by the filename stem: for example,
+`backend-crew` refers to `backend-crew.toml`. Lookup and shadowing use this
+stem, not the manifest's declared `name`. For a valid manifest, `team list`
+and `team show` display the declared name. If a manifest is invalid,
+`team list` displays the filename stem and the validation error instead.
+
+The first file with a given stem wins. Higher-priority files shadow a
+same-stem file in every lower-priority directory both in `bernstein team
 list` (which shows the winning source) and when resolving a name with
 `bernstein team show` or `bernstein.yaml`. For example, if both
 `<workdir>/.bernstein/templates/teams/backend-crew.toml` and
@@ -76,7 +82,15 @@ bernstein team list --workdir /path/to/project
 Prints one manifest in full: digest, source, coordination settings, each
 role's model policy and response profile, and the pinned role template
 digests. It also prints the exact `team_manifest: <name>@<digest>`
-reference to pin it.
+reference to pin it. The command argument is the filename stem, but the
+heading and printed reference use the declared name for a valid manifest.
+
+For example, if `templates/teams/backend-crew.toml` declares
+`name = "platform-team"`, run `bernstein team show backend-crew`. The
+printed reference uses `platform-team`, not `backend-crew`; that reference
+will not resolve by filename unless a manifest with the `platform-team`
+stem exists. Keep the filename stem and declared name equal if you want the
+printed reference to resolve as written.
 
 ```bash
 bernstein team show backend-crew
