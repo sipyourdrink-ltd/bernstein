@@ -32,8 +32,16 @@ superseding [ADR-006](decisions/006-no-embedded-llm.md).
 
 ## No database for run state
 
-All persistent orchestrator state is plain text under `.sdd/` — YAML,
-Markdown, JSONL, JSON. No embedded database, no hidden in-memory state.
+In the default local workspace, persistent orchestrator state and run
+artifacts are plain text under `.sdd/` — YAML, Markdown, JSONL, JSON.
+The default task store is the memory backend with JSONL persistence at
+`.sdd/runtime/tasks.jsonl`. These local run artifacts remain inspectable
+in an editor.
+
+The task-store factory also supports optional PostgreSQL and Redis-backed
+coordination modes. Those alternatives are configured separately and may
+store task records in PostgreSQL rather than in local files; they are not
+the local default.
 
 A feature that requires run state to move behind a schema is out of
 scope. State you cannot open in an editor is state you cannot read
