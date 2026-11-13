@@ -753,24 +753,27 @@ def test_cancelled_attempt_never_releases_or_retries(
     spec = _spec(env)
     sp = env.spawner(_Plan(mode="block", ignore_sigterm=ignore_sigterm, after_launch=cancel))
     run = env.start(lambda: env.runner(sp).run(spec, run_id=rid))
-    _observe(env, sp, run)
-    if sp.procs:
-        task = env.driver.task(sp.spawned_task_ids()[0])
-        assert task is not None
-        assert task.status is native_status, "precondition: native cancellation state"
+    task = _observe_dispatched_attempt(env, sp, run)
+    if ignore_sigterm:
+        assert task.status in {TaskStatus.STOP_REQ, TaskStatus.CANCELLED}, "precondition: cancellation requested"
+    else:
+        assert task.status is TaskStatus.CANCELLED, "precondition: cancellation acknowledged"
     produce = run.node("produce")
     assert produce is None or produce.status is not NodeStatus.SUCCESS, (
-        f"cancelled attempt reported as node success; runner reported {run.statuses()}"
+        f"cancelled attempt reported as node success: {run.statuses()}"
     )
     assert env.sentinel_writes() == 0, "consumer released after cancellation"
-    if run.done() and run_complete_marker_exists(env.workdir, rid) is None:
+    assert sp.spawn_count() == 1, "cancelled attempt was retried"
+
+    # A native reaper can acknowledge cancellation after the callback. Only
+    # exercise resume here if the attempt actually remained unresolved.
+    if task.status is TaskStatus.STOP_REQ and run.done() and run_complete_marker_exists(env.workdir, rid) is None:
         again = env.spawner(_Plan(mode="block"))
         resumed = env.start(lambda: env.runner(again).resume(spec, run_id=rid))
         resumed.wait(OBSERVE_S)
         resumed.raise_unexpected()
         assert again.spawn_count() == 1, "resume re-dispatched a cancelled attempt"
         assert env.sentinel_writes() == 0
-    assert sp.spawn_count() == 1, "cancelled attempt was retried"
 
 
 # ---------------------------------------------------------------------------
