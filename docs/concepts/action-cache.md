@@ -69,10 +69,12 @@ a repeated call with the same key can reuse the first result:
 ```python
 calls = 0
 
+
 def live_call():
     global calls
     calls += 1
     return ("answer", None, None, 0.0)
+
 
 first = cache.get_or_call(model_id="opus", prompt="p", live_call=live_call)
 second = cache.get_or_call(model_id="opus", prompt="p", live_call=live_call)
