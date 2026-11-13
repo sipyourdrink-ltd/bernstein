@@ -72,6 +72,7 @@ from bernstein.core.agents.spawn_rate_limiter import SpawnRateLimiter, SpawnRate
 
 # Import sub-module functions
 from bernstein.core.agents.spawner_merge import (
+    _do_merge,
     finalize_agent_trace,
     merge_and_cleanup_worktree,
     merge_worktree_branch,
@@ -2288,6 +2289,39 @@ class AgentSpawner:
             warm_pool=self._warm_pool,
             workdir=self._workdir,
             merge_worktree_branch_fn=self._merge_worktree_branch,
+            merge_queue=self._merge_queue,
+            quality_gate_config=self._quality_gate_config,
+            run_id=getattr(self, "_run_id", ""),
+        )
+
+    def register_remote_worktree(self, session_id: str, worktree_path: Path) -> None:
+        """Register a worktree checked out for a remote completion's branch (issue #6611).
+
+        The gates that grade a local agent find its tree through
+        :meth:`get_worktree_path`; registering the remote branch's checkout the
+        same way makes them grade that tree, and lets :meth:`cleanup_worktree`
+        remove it and its branch like any other session's.
+        """
+        self._worktree_paths[session_id] = worktree_path
+        self._worktree_roots[session_id] = self._workdir.resolve()
+
+    def merge_remote_branch(self, session: AgentSession) -> MergeResult | None:
+        """Land ``agent/<session.id>`` for a completion that has no live agent (issue #6611).
+
+        A worker outside the host hands its output back as a posted artifact;
+        the janitor materialises it as ``agent/remote-<task>-v<n>`` and grades
+        the merged tree. This merges that branch through the same serialisation
+        (merge queue or per-repo lock) and acceptance gates a local agent's
+        reap goes through: the default-branch guard, the blast-radius ceiling,
+        the signed file scope, the quality gates, landed provenance and the
+        push. ``session`` is the synthetic session the branch is named after;
+        the caller owns its worktree and cleans up after the result.
+        """
+        return _do_merge(
+            session,
+            self._workdir.resolve(),
+            self._merge_locks,
+            self._merge_worktree_branch,
             merge_queue=self._merge_queue,
             quality_gate_config=self._quality_gate_config,
             run_id=getattr(self, "_run_id", ""),

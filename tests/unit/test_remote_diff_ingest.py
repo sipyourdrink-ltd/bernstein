@@ -229,7 +229,7 @@ def test_alive_exit_pass_routes_remote_completion_through_preview(monkeypatch, t
     assert fn is _verify_against_merge_preview
     # (verify_fn, task, workdir, branch, session_id, preview_setup, ...)
     assert args[3] == "agent/remote-remote-task-1-v1"
-    assert args[4] == "remote-remote-task-1"
+    assert args[4] == "remote-remote-task-1-v1"
 
 
 def test_alive_exit_pass_without_artifact_grades_run_checkout(monkeypatch, tmp_path: Path, caplog) -> None:
