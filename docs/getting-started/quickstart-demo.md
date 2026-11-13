@@ -55,9 +55,10 @@ bernstein demo --flask-todo --real --adapter codex
    - a pytest suite covering the API (role: `qa`)
 3. Starts a task server on port 8056 and bootstraps orchestration
    (`bootstrap_from_goal`) against those tasks.
-4. Polls `/status` every 2 seconds, printing each task's completion or
-   failure as it happens, until every task reaches `done`/`failed` or the
-   timeout elapses.
+4. Polls `/status` every 2 seconds, reporting each task attempt's completion or
+   failure as it happens. A failed attempt does not stop polling, since a retry
+   may get a new task ID. Polling ends when the count of completed seeded
+   lineages reaches the seeded count (three), or the deadline expires.
 5. Stops the server, spawner, and watchdog processes it started.
 6. Prints a summary table (tasks completed, elapsed time, Python files
    produced, API cost) and, unless `--keep` is passed, deletes the temp
