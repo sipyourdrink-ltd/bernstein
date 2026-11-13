@@ -921,6 +921,31 @@ def test_native_artifact_rejection_blocks_dependents(env: _Env) -> None:
     assert env.sentinel_writes() == 0, f"consumer released on a rejected artifact; runner reported {run.statuses()}"
 
 
+def test_verified_artifact_and_closed_task_without_attempt_acceptance_block_dependents(env: _Env) -> None:
+    """[PROPOSED #7] A valid receipt and CLOSED task do not establish attempt-bound acceptance."""
+    verified_task_ids: list[str] = []
+
+    def close_without_acceptance(
+        sp: _LifecycleSpawner, task: Task, session: AgentSession, proc: subprocess.Popen[bytes]
+    ) -> None:
+        assert _wait_exit(proc) == 0
+        paths = _record_report(env.workdir / ".sdd", task.id, "report body")
+        assert _verify_report(paths, task.id).ok
+        verified_task_ids.append(task.id)
+        sp.driver.call(lambda s: s.complete(task.id, "agent reported DONE"))
+        sp.driver.call(lambda s: s.close(task.id))
+
+    sp = env.spawner(_Plan(mode="0", after_launch=close_without_acceptance))
+    run = env.start(lambda: env.runner(sp).run(_spec(env), run_id="p7-unbound"))
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert verified_task_ids == [task.id], "precondition: native artifact verification passed for the current task"
+    assert task.status is TaskStatus.CLOSED and task.closed_at is not None
+    assert task.claimed_by_session == sp.sessions[0].id
+    assert env.sentinel_writes() == 0, (
+        f"consumer released on a verified receipt and CLOSED without attempt acceptance; runner reported {run.statuses()}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Matrix 8 - agent loops advance only after acceptance
 # ---------------------------------------------------------------------------
