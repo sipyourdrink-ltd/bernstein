@@ -123,7 +123,7 @@ flowchart LR
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

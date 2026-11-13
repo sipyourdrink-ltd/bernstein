@@ -123,7 +123,7 @@ flowchart LR
 كل عقدة يأخذها وكيل تسمح المرحلة بدوره؛ وتبقى أسوار الأدوار وبوابات الموافقة قائمة مهما فعل الوكيل داخل المهمة. عقدة الكود تكتمل خلف بوابات الدمج في git worktree خاص بها. العقد أعلاه تكتمل بشكل مختلف: [عقد المخرجات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) يسمّي الناتج (تقرير، مجموعة بيانات، فحص، سجل إجراءات)، وتُغلق العقدة بإيصال lineage موقّع بدل commit. المجدوِل نفسه، السجل نفسه، التحقق دون اتصال نفسه - سواء حمل المخطط كودًا أو بحثًا أو تغيير عمليات أو مزيجًا من الثلاثة. مخططات جاهزة للبرمجيات والبحث والوثائق والمؤسسات ومسارات المساهمين في [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### التثبيت في 30 ثانية
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

@@ -123,7 +123,7 @@ flowchart LR
 Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i bramki zatwierdzeń trzymają niezależnie od tego, co agent robi w zadaniu. Węzeł kodowy kończy się za merge gates we własnym git worktree. Węzły powyżej kończą się inaczej: [kontrakt artefaktu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nazywa rezultat (raport, dataset, skan, log działań), a węzeł zamyka podpisany kwit lineage zamiast commita. Ten sam scheduler, ten sam journal, ta sama weryfikacja offline - niezależnie czy graf niesie kod, badania, zmianę ops czy miks wszystkich trzech. Gotowe grafy dla softu, badań, dokumentacji, enterprise i procesów kontrybutorskich leżą w [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

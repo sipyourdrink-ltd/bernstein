@@ -123,7 +123,7 @@ flowchart LR
 Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los gates de aprobación se mantienen haga lo que haga el agente dentro de la tarea. Un nodo de código termina tras merge gates en su propio git worktree. Los nodos de arriba terminan distinto: un [contrato de artefacto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nombra el entregable (informe, dataset, escaneo, registro de acciones) y el nodo se cierra con un recibo de lineage firmado en lugar de un commit. Mismo planificador, mismo journal, misma verificación offline - ya lleve el grafo código, investigación, un cambio de ops o una mezcla de los tres. Hay grafos listos para software, investigación, documentación, enterprise y flujos de contribución en [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

@@ -151,6 +151,45 @@ def test_remote_claims_are_paginated_independently_of_the_task_board(monkeypatch
     assert any("offset=500" in url for url, _ in server.requests)
 
 
+def test_remote_claims_stop_at_initial_total_and_deduplicate_transitions(monkeypatch: pytest.MonkeyPatch) -> None:
+    task = _task("transitioning", "n-1", status="claimed")
+    server = _serve(
+        monkeypatch,
+        REMOTE,
+        {
+            "/cluster/status": {"nodes": [_node("n-1", "worker-1")]},
+            "/tasks?status=claimed&limit=500&offset=0": {"tasks": [task], "total": 2},
+            "/tasks?status=claimed&limit=500&offset=1": {
+                "tasks": [_task("other", "n-1", status="claimed")],
+                "total": 5,
+            },
+            "/tasks?status=in_progress&limit=500&offset=0": {
+                "tasks": [_task("transitioning", "n-1")],
+                "total": 1,
+            },
+        },
+    )
+
+    view = _load_cluster_view(REMOTE, [])
+
+    assert view is not None
+    assert [t["id"] for t in view["nodes"][0]["tasks"]] == ["transitioning", "other"]
+    assert not any("offset=2" in url for url, _ in server.requests)
+
+
+@pytest.mark.parametrize("cluster", [{}, {"nodes": "bad"}, {"nodes": [{"capacity": {"active_agents": "bad"}}]}])
+def test_malformed_cluster_response_does_not_discard_the_poll(
+    monkeypatch: pytest.MonkeyPatch, cluster: dict[str, Any]
+) -> None:
+    tasks = [_task("active", "n-1")]
+    _serve(monkeypatch, REMOTE, {"/cluster/status": cluster, "/tasks": tasks})
+
+    data = _fetch_all()
+
+    assert data["tasks"] == tasks
+    assert data["cluster"] == {"nodes": [], "reachable": False}
+
+
 def test_remote_poll_skips_local_runtime_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     from bernstein.cli import dashboard_polling
 

@@ -123,7 +123,7 @@ flowchart LR
 Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en goedkeuringsgates houden stand wat de agent binnen de taak ook doet. Een code-node eindigt achter merge gates in zijn eigen git worktree. De nodes hierboven eindigen anders: een [artefactcontract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) benoemt het resultaat (rapport, dataset, scan, actielog) en de node sluit af met een ondertekend lineage-bewijs in plaats van een commit. Dezelfde scheduler, hetzelfde journal, dezelfde offline verificatie - of de graaf nu code, onderzoek, een ops-wijziging of een mix van alle drie levert. Kant-en-klare grafen voor software, onderzoek, docs, enterprise en contributor-workflows staan in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

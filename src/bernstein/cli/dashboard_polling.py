@@ -197,21 +197,26 @@ _NODE_HELD_STATUSES = frozenset({"claimed", "in_progress"})
 
 def _fetch_held_tasks(url: str) -> list[dict[str, Any]] | None:
     """Read active claims separately from the capped dashboard task list."""
-    tasks: list[dict[str, Any]] = []
+    tasks: dict[str, dict[str, Any]] = {}
     for status in sorted(_NODE_HELD_STATUSES):
         offset = 0
-        while True:
+        first_total: int | None = None
+        while first_total is None or offset < first_total:
             page = _get(f"/tasks?status={status}&limit=500&offset={offset}", url)
             if not isinstance(page, dict):
                 return None
             rows, total = page.get("tasks"), page.get("total")
-            if not isinstance(rows, list) or not isinstance(total, int):
+            if not isinstance(rows, list) or not isinstance(total, int) or total < 0:
                 return None
-            tasks.extend(rows)
-            offset += len(rows)
-            if not rows or offset >= total:
+            if first_total is None:
+                first_total = total
+            if not rows:
                 break
-    return tasks
+            for row in rows:
+                if isinstance(row, dict) and isinstance(task_id := row.get("id"), str):
+                    tasks[task_id] = row
+            offset += len(rows)
+    return list(tasks.values())
 
 
 def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[str, Any] | None:
@@ -229,12 +234,31 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
     can still supply claims in the dashboard's existing task list.
     """
     status = _get("/cluster/status", url)
-    raw_nodes = status.get("nodes") if isinstance(status, dict) else None
-    nodes: list[dict[str, Any]] = [n for n in raw_nodes if isinstance(n, dict)] if isinstance(raw_nodes, list) else []
-    if is_loopback(url) and not nodes:
-        return None
+    nodes = status.get("nodes") if isinstance(status, dict) else None
+    if not isinstance(nodes, list) or not nodes:
+        if is_loopback(url):
+            return None
+        return {"nodes": [], "reachable": isinstance(nodes, list)}
 
-    active_tasks = _fetch_held_tasks(url) if nodes else []
+    from bernstein.cli.commands.cluster_cmd import _node_display_fields
+
+    now = time.time() if now is None else now
+    view_nodes: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        try:
+            fields: dict[str, Any] = dict(_node_display_fields(node, now))
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            logger.warning("Dashboard received an invalid cluster node")
+            continue
+        labels = node.get("labels") or {}
+        fields["model"] = str(labels.get("model") or "") if isinstance(labels, dict) else ""
+        view_nodes.append(fields)
+    if not view_nodes:
+        return {"nodes": [], "reachable": False}
+
+    active_tasks = _fetch_held_tasks(url)
     held_tasks = tasks if active_tasks is None else active_tasks
     held: dict[str, list[dict[str, Any]]] = {}
     for task in held_tasks if isinstance(held_tasks, list) else []:
@@ -244,14 +268,7 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
         if owner:
             held.setdefault(str(owner), []).append(task)
 
-    from bernstein.cli.commands.cluster_cmd import _node_display_fields
-
-    now = time.time() if now is None else now
-    view_nodes: list[dict[str, Any]] = []
-    for node in nodes:
-        fields: dict[str, Any] = dict(_node_display_fields(node, now))
-        labels = node.get("labels") or {}
-        fields["model"] = str(labels.get("model") or "") if isinstance(labels, dict) else ""
+    for fields in view_nodes:
         fields["tasks"] = [
             {
                 "id": str(task.get("id", "")),
@@ -263,8 +280,7 @@ def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[s
             }
             for task in held.get(fields["id"], [])
         ]
-        view_nodes.append(fields)
-    return {"nodes": view_nodes, "reachable": isinstance(status, dict)}
+    return {"nodes": view_nodes, "reachable": True}
 
 
 def _format_cluster_view(view: dict[str, Any]) -> str:

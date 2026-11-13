@@ -123,7 +123,7 @@ flowchart LR
 Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate persetujuan tetap berlaku apa pun yang dilakukan agen di dalam tugas. Node kode selesai di balik merge gate dalam git worktree-nya sendiri. Node di atas selesai dengan cara lain: [kontrak artefak](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) menamai hasilnya (laporan, dataset, pemindaian, log aksi), dan node ditutup dengan tanda terima lineage yang ditandatangani, bukan commit. Penjadwal yang sama, journal yang sama, verifikasi offline yang sama - entah graf itu membawa kode, riset, perubahan ops, atau campuran ketiganya. Graf siap pakai untuk software, riset, dokumentasi, enterprise, dan alur kontributor ada di [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

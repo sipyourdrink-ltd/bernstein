@@ -123,7 +123,7 @@ flowchart LR
 Jokaisen solmun ottaa agentti, jonka roolin vaihe sallii; rooliaidat ja hyväksyntäportit pitävät riippumatta siitä, mitä agentti tekee tehtävän sisällä. Koodisolmu päättyy merge-porttien taakse omassa git worktreessään. Yllä olevat solmut päättyvät toisin: [artefaktisopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nimeää tuloksen (raportti, datasetti, skannaus, toimiloki), ja solmu sulkeutuu allekirjoitetulla lineage-kuitilla commitin sijaan. Sama skeduloija, sama journal, sama offline-verifiointi - kantoi graafi sitten koodia, tutkimusta, ops-muutosta tai näiden sekoitusta. Valmiit graafit ohjelmistoille, tutkimukselle, dokumentaatiolle, enterprise-käyttöön ja kontribuutiovirroille ovat [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### asennus 30 sekunnissa
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

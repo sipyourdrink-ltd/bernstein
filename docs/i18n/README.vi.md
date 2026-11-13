@@ -123,7 +123,7 @@ flowchart LR
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

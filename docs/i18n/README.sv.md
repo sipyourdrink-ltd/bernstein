@@ -123,7 +123,7 @@ flowchart LR
 Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkännandegrindar håller oavsett vad agenten gör i uppgiften. En kodnod avslutas bakom merge gates i sitt eget git worktree. Noderna ovan avslutas annorlunda: ett [artefaktkontrakt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) namnger leveransen (rapport, dataset, skanning, åtgärdslogg) och noden stängs med ett signerat lineage-kvitto i stället för en commit. Samma schemaläggare, samma journal, samma offlineverifiering - oavsett om grafen levererar kod, forskning, en ops-ändring eller en blandning av alla tre. Färdiga grafer för mjukvara, forskning, dokumentation, enterprise och bidragsflöden finns i [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installera på 30 sekunder
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
