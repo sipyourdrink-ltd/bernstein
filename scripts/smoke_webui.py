@@ -619,6 +619,37 @@ def check_task_creation_rejected_while_away(page: Page, base: str) -> None:
         page.unroute(tasks_url)
 
 
+def check_task_creation_success_after_remount(page: Page, base: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = "Task confirmed after returning to Tasks"
+    pending: list[Route] = []
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    header.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill("Open the confirmed task when the operator returns.")
+    page.route(tasks_url, lambda route: pending.append(route), times=1)
+    try:
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        page.go_back()
+        expect(page).to_have_url(f"{base}/ui/settings")
+        page.go_forward()
+        expect(page).to_have_url(f"{base}/ui/tasks")
+        header.click()
+        expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        assert len(pending) == 1
+        pending[0].fulfill(response=pending[0].fetch())
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        assert page.evaluate("sessionStorage.getItem('bernstein.unconfirmed-task-id')") is None
+        page.keyboard.press("Escape")
+        expect(header).to_be_focused()
+    finally:
+        page.unroute(tasks_url)
+
+
 def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
     list_url = f"{base}/api/v1/tasks?page=1"
     events_url = f"{base}/api/v1/events"
@@ -878,6 +909,7 @@ def main() -> None:
             check_unconfirmed_task_lookup(page, base, headers)
             check_task_creation_survives_route_remount(page, base)
             check_task_creation_rejected_while_away(page, base)
+            check_task_creation_success_after_remount(page, base)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)

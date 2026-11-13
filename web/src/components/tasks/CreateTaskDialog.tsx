@@ -16,6 +16,7 @@ const outcomeUnknownMessage = 'Task creation could not be confirmed. Check the t
 let inMemoryRecoveryId: string | null = null;
 let recoveryDraft: TaskInput | null = null;
 let recoveryRejection: string | undefined;
+let confirmedRecoveryId: string | null = null;
 const recoveryListeners = new Set<() => void>();
 
 function subscribeToRecovery(listener: () => void) {
@@ -35,6 +36,7 @@ function readRecoveryId(): string | null {
 function rememberRecoveryId(id: string | null, rejection?: string) {
   inMemoryRecoveryId = id;
   recoveryRejection = rejection;
+  if (confirmedRecoveryId !== id) confirmedRecoveryId = null;
   if (!id && !rejection) recoveryDraft = null;
   try {
     if (id) window.sessionStorage.setItem(recoveryKey, id);
@@ -78,6 +80,7 @@ export function CreateTaskDialog({
   const [validationError, setValidationError] = useState('');
   const storedRecoveryId = useSyncExternalStore(subscribeToRecovery, readRecoveryId);
   const rejection = useSyncExternalStore(subscribeToRecovery, () => recoveryRejection);
+  const confirmedId = useSyncExternalStore(subscribeToRecovery, () => confirmedRecoveryId);
   const [initialDraft] = useState(() =>
     recoveryDraft && (recoveryDraft.id === storedRecoveryId || rejection) ? recoveryDraft : null,
   );
@@ -92,12 +95,24 @@ export function CreateTaskDialog({
     return () => { mounted.current = false; };
   }, []);
 
-  function complete(taskId: string) {
-    if (!mounted.current) return;
-    if (readRecoveryId() === taskId) rememberRecoveryId(null);
+  function confirm(taskId: string) {
+    if (readRecoveryId() !== taskId) return;
+    if (!mounted.current) {
+      confirmedRecoveryId = taskId;
+      for (const listener of recoveryListeners) listener();
+      return;
+    }
     created.current = true;
+    rememberRecoveryId(null);
     onCreated(taskId);
   }
+
+  useLayoutEffect(() => {
+    if (busy || !confirmedId || readRecoveryId() !== confirmedId) return;
+    created.current = true;
+    rememberRecoveryId(null);
+    onCreated(confirmedId);
+  }, [busy, confirmedId, onCreated]);
 
   const create = useMutation({
     mutationKey: createMutationKey,
@@ -118,7 +133,7 @@ export function CreateTaskDialog({
       }
       throw new Error(outcomeUnknownMessage);
     },
-    onSuccess: complete,
+    onSuccess: confirm,
     onSettled: () => { submitting.current = false; },
   });
 
@@ -137,7 +152,7 @@ export function CreateTaskDialog({
       }
       throw new Error('The task could not be checked. Try checking again.');
     },
-    onSuccess: complete,
+    onSuccess: confirm,
     onSettled: () => { checking.current = false; },
   });
 
