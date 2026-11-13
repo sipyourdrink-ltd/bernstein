@@ -174,9 +174,10 @@ context_files:
 ### Reading cache metrics
 
 ```bash
-bernstein cost --by model       # shows cost breakdown including cache savings
-curl http://127.0.0.1:8052/status | jq '.metrics.cache_hit_rate'
+bernstein cost --json | jq '.cache_hit_rate'
 ```
+
+The `cache_hit_rate` field is a percentage (for example, `72.2`). It is `null` when there are no cache observations.
 
 Target: cache hit rate ≥ 50% in runs with 10+ agent turns per session.
 
