@@ -126,7 +126,7 @@ class TestWriteSubcommand:
 
 
 class TestSyncSubcommand:
-    def test_sync_writes_all_five_targets(self, demo_repo: Path) -> None:
+    def test_sync_writes_all_targets(self, demo_repo: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(
             agents_md_cmd,
@@ -138,7 +138,28 @@ class TestSyncSubcommand:
         assert (demo_repo / "CONVENTIONS.md").is_file()
         assert (demo_repo / ".aider.conf.yml").is_file()
         assert (demo_repo / ".goosehints").is_file()
+        assert (demo_repo / ".github" / "copilot-instructions.md").is_file()
         assert (demo_repo / ".cursor" / "rules").is_dir()
+
+    def test_sync_preserves_manual_copilot_instructions(self, demo_repo: Path) -> None:
+        path = demo_repo / ".github" / "copilot-instructions.md"
+        path.parent.mkdir()
+        path.write_text("Custom Copilot instructions\n", encoding="utf-8")
+        runner = CliRunner()
+        args = ["--workdir", str(demo_repo), "--repo-name", "demo"]
+
+        sync = runner.invoke(agents_md_cmd, ["sync", *args])
+        assert sync.exit_code == 0, sync.output
+        assert "Kept manual Copilot instructions" in sync.output
+        assert path.read_text(encoding="utf-8") == "Custom Copilot instructions\n"
+        verify = runner.invoke(agents_md_cmd, ["verify", *args])
+        assert verify.exit_code == 0, verify.output
+
+        write = runner.invoke(agents_md_cmd, ["write", "--target", "copilot", *args])
+        assert write.exit_code == 0, write.output
+        assert "AUTO-GENERATED" in path.read_text(encoding="utf-8")
+        verify = runner.invoke(agents_md_cmd, ["verify", "--target", "copilot", *args])
+        assert verify.exit_code == 0, verify.output
 
 
 # ---------------------------------------------------------------------------

@@ -6,18 +6,16 @@ sitting in a meeting on a borrowed laptop, or just curious without
 committing to a local install - GitHub Codespaces provides a one-click
 cloud sandbox that runs the project's devcontainer.
 
-## Time: about 60 seconds
+## Open the Codespace
 
 1. Click the **Open in Codespaces** badge in the project README.
-2. Wait for the container to build. The first build takes roughly a
-   minute; subsequent starts are fast. The `postCreate` step installs
-   `bernstein` and runs `bernstein --help` so you can confirm the CLI
-   is on the path.
+2. Wait for the container to build. The setup step installs the locked
+   development dependencies and runs `uv run --locked bernstein --help`.
 3. In the integrated terminal:
 
    ```bash
-   bernstein init --remote
-   bernstein --help
+   uv run --locked bernstein init --remote
+   uv run --locked bernstein --help
    ```
 
    The `--remote` flag tells `bernstein init` to skip local-binary
@@ -29,7 +27,7 @@ cloud sandbox that runs the project's devcontainer.
    trivial goal:
 
    ```bash
-   bernstein -g "list files in the repo and summarise the layout"
+   uv run --locked bernstein -g "list files in the repo and summarise the layout"
    ```
 
 ## How the project recognises Codespaces
@@ -48,10 +46,10 @@ cloud sandbox that runs the project's devcontainer.
 - The Codespaces session is yours, not a hosted Bernstein sandbox.
   You supply adapter API keys via your own Codespaces user secrets and
   are billed for compute by GitHub.
-- The devcontainer pre-installs `bernstein` and `pipx`, but it does not
-  install any third-party agent CLI. Pick whichever adapter you want
-  (Claude Code, Codex, Gemini, etc.) and install it inside the
-  container before running an agent task.
+- The devcontainer provides Bernstein in the uv project environment.
+  Install the third-party agent CLI you want to use
+  (Claude Code, Codex, Gemini, etc.) inside the container before running
+  an agent task.
 - A fresh container has no cached state. Plan-only or dry-run modes
   are a good way to confirm the setup before spending API budget.
 

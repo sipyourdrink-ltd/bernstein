@@ -126,7 +126,7 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
 
 === "Dev container"
 
-    The repo ships a `.devcontainer/` (Python 3.12, pipx, port 8052 forwarded)
+    The repo ships a `.devcontainer/` (Python 3.13, uv, port 8052 forwarded)
     for GitHub Codespaces / VS Code Dev Containers. It is aimed at working
     **on** Bernstein itself; to use Bernstein in your own project, pick one of
     the other methods.

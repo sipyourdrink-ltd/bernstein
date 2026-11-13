@@ -117,7 +117,8 @@ jobs:
             exit 1
           fi
 
-          # Run the verification check
+          # Keep the report outside the checked-out contributor workspace.
+          export VERIFICATION_RESULT_PATH="${RUNNER_TEMP}/verification_result.json"
           uv run python << 'PYEOF'
           import os
           import sys
@@ -159,8 +160,7 @@ jobs:
           )
 
           # Store result in output files for the next step
-          result_path = Path('.qwen/verification_result.json')
-          result_path.parent.mkdir(parents=True, exist_ok=True)
+          result_path = Path(os.environ['VERIFICATION_RESULT_PATH'])
 
           gate_comparisons_serializable = []
           for comp in result.gate_comparisons:
@@ -192,7 +192,7 @@ jobs:
           print(f"Summary: {result.summary}")
           PYEOF
 
-          echo "verification_result_path=.qwen/verification_result.json" >> "$GITHUB_OUTPUT"
+          printf 'verification_result_path=%s\n' "$VERIFICATION_RESULT_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Post or update verification check run
         env:
