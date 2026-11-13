@@ -245,9 +245,6 @@ def _register_mcp_discovery(workdir: Path) -> None:
     logger.debug("Registered Bernstein MCP server in %s", mcp_path)
 
 
-# Install PII redaction on the root logger so all handlers receive sanitised
-# messages - no email, phone, SSN, or credit-card number reaches disk/stdout.
-install_pii_filter()
 console = Console()
 
 # Constants - re-export for backward compat
@@ -1649,6 +1646,7 @@ if __name__ == "__main__":
                 level=logging.INFO,
                 format="%(asctime)s %(levelname)s %(name)s: %(message)s",
             )
+        install_pii_filter()
         _watchdog_seed_path = Path(_args.seed_path) if _args.seed_path else None
         logger.info("watchdog __main__: starting with seed_path=%s", _watchdog_seed_path)
         run_watchdog(Path.cwd(), _args.port, adapter=_args.adapter, model=_args.model, seed_path=_watchdog_seed_path)

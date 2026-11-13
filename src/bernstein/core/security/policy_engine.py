@@ -564,6 +564,7 @@ def _run_git(run_dir: Path, args: list[str]) -> str:
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=30,
     )
     if completed.returncode != 0:
         return ""

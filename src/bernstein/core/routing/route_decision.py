@@ -392,7 +392,7 @@ def format_routing_reasons(
     """Format human-readable routing reasons.
 
     Args:
-        _task_id: Task identifier (part of interface).
+        task_id: Task identifier (part of interface).
         adapter: Adapter chosen.
         model: Model chosen.
         effort: Effort level.

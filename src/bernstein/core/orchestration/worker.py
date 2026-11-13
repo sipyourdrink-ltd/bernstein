@@ -382,7 +382,8 @@ def _handle_tool_error(
     error_msg = f"Tool {tool} failed with exit code {exit_code_str}"
     logger.warning("Tool error detected (policy=%s): %s", tool_abort_policy, error_msg)
 
-    pm.fire_tool_error(session_id, tool, error_msg)
+    if pm is not None:
+        pm.fire_tool_error(session_id, tool, error_msg)
 
     cascaded = abort_chain.abort_tool(
         session_id,
@@ -441,9 +442,13 @@ def _monitor_logs(
         return
 
     from bernstein.core.abort_chain import AbortChain
-    from bernstein.plugins.manager import get_plugin_manager
+    from bernstein.plugins.manager import PluginQuarantineUnavailable, get_plugin_manager
 
-    pm = get_plugin_manager(workdir)
+    try:
+        pm = get_plugin_manager(workdir, record_declaration_failures=True)
+    except PluginQuarantineUnavailable:
+        logger.warning("Tool-error plugin notification unavailable; continuing abort monitoring")
+        pm = None
     signals_dir = workdir / ".sdd" / "runtime" / "signals"
     abort_chain = AbortChain(signals_dir=signals_dir)
     policy = _build_abort_policy(tool_abort_policy)
@@ -475,7 +480,12 @@ def _monitor_logs(
 
 
 def main() -> None:
-    """Entry point for bernstein-worker."""
+    """Run the worker command from the process arguments.
+
+    Raises:
+        SystemExit: With the worker's exit status, including argument and
+            launch failures or the wrapped command's exit status.
+    """
     parser = argparse.ArgumentParser(
         description="Bernstein agent worker - wraps CLI agents for process visibility",
     )

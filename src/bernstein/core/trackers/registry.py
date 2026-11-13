@@ -30,13 +30,22 @@ registrations last. Two adapters with the same ``name`` raise
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
+from bernstein.core.security.declaration_quarantine import (
+    DeclarationQuarantineEntry,
+    DeclarationQuarantineStore,
+    declaration_id,
+)
+from bernstein.core.security.redactor import redact_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from pathlib import Path
 
     from bernstein.core.trackers.contract import AbstractTrackerAdapter
 
@@ -140,6 +149,7 @@ class TrackerRegistry:
             DuplicateTrackerError: When ``name`` is already registered
                 and ``overwrite`` is ``False``.
         """
+        normalized_capabilities = tuple(capabilities)
         if overwrite:
             self._guard.forget(name)
         module_name = provenance or caller_module_name()
@@ -156,7 +166,7 @@ class TrackerRegistry:
             source=source,
             provenance=provenance,
             # Normalize caller-supplied iterables to an immutable tuple.
-            capabilities=tuple(capabilities),
+            capabilities=normalized_capabilities,
         )
         self._entries[name] = entry
         return entry
@@ -378,7 +388,13 @@ def register_tracker(
     )
 
 
-def discover_plugin_trackers(plugin_manager: Any | None = None) -> int:
+def discover_plugin_trackers(
+    plugin_manager: Any | None = None,
+    *,
+    registry: TrackerRegistry | None = None,
+    quarantine_store: DeclarationQuarantineStore | None = None,
+    record_failures: bool = True,
+) -> int:
     """Populate the registry with plugin-contributed tracker adapters.
 
     Iterates over loaded pluggy plugins, calls
@@ -404,7 +420,9 @@ def discover_plugin_trackers(plugin_manager: Any | None = None) -> int:
             log.warning("Could not obtain plugin manager: %s", exc)
             return 0
 
-    registry = get_registry()
+    if registry is None:
+        registry = get_registry()
+    disabled = {entry.declaration_id for entry in quarantine_store.load()} if quarantine_store is not None else set()
     added = 0
     registered_names = getattr(pm, "_registered_names", [])
     inner_pm = getattr(pm, "_pm", None)
@@ -415,15 +433,69 @@ def discover_plugin_trackers(plugin_manager: Any | None = None) -> int:
 
     for plugin_name in registered_names:
         plugin = inner_pm.get_plugin(plugin_name)
-        if plugin is None or not hasattr(plugin, "provide_tracker_adapter"):
+        if plugin is None:
+            continue
+        origin = plugin.__name__ if isinstance(plugin, ModuleType) else type(plugin).__module__
+        entry_id = declaration_id("tracker", plugin_name, origin, None)
+        if entry_id in disabled:
             continue
         try:
-            result = plugin.provide_tracker_adapter()
+            hook = getattr(plugin, "provide_tracker_adapter", None)
+            if hook is None:
+                continue
+            result = hook()
         except Exception as exc:
-            log.warning("Plugin %r provide_tracker_adapter raised: %s", plugin_name, exc)
+            reason, _ = redact_text(str(exc))
+            log.warning("Plugin %r provide_tracker_adapter raised: %s", plugin_name, reason)
+            if quarantine_store is not None and record_failures:
+                disabled.add(entry_id)
+                try:
+                    quarantine_store.record_failure(
+                        DeclarationQuarantineEntry(
+                            declaration_id=entry_id,
+                            kind="tracker",
+                            source_name=plugin_name,
+                            origin=origin,
+                            skill_name=None,
+                            reason=reason,
+                            error_type=type(exc).__name__,
+                            at=time.time(),
+                        )
+                    )
+                except Exception:
+                    log.exception("Could not persist tracker quarantine for plugin %r", plugin_name)
             continue
         added += _register_plugin_result(registry, plugin_name, result)
     return added
+
+
+def discover_workspace_trackers(workdir: Path, *, record_failures: bool) -> TrackerRegistry:
+    """Build a workspace view without reusing plugin factories from other discovery calls."""
+    from bernstein.plugins.manager import get_plugin_manager
+
+    registry = TrackerRegistry()
+    for entry in get_registry():
+        if entry.source != "plugin":
+            registry.register(
+                entry.name,
+                entry.factory,
+                summary=entry.summary,
+                source=entry.source,
+                provenance=entry.provenance,
+                capabilities=entry.capabilities,
+            )
+    root = workdir.resolve()
+    try:
+        discover_plugin_trackers(
+            get_plugin_manager(root),
+            registry=registry,
+            quarantine_store=DeclarationQuarantineStore(root),
+            record_failures=record_failures,
+        )
+    except Exception as exc:
+        reason, _ = redact_text(str(exc))
+        log.warning("Workspace tracker discovery failed: %s", reason)
+    return registry
 
 
 def _register_plugin_result(
@@ -465,6 +537,11 @@ def _register_plugin_result(
                 plugin_name,
                 registration.name,
                 exc,
+            )
+        except (TypeError, ValueError) as exc:
+            reason, _ = redact_text(str(exc))
+            log.warning(
+                "Plugin %r returned an invalid registration for tracker %r: %s", plugin_name, registration.name, reason
             )
     return count
 

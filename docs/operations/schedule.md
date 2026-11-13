@@ -84,7 +84,8 @@ every successful fire. A daemon restart resumes from disk:
   intermediate window the operator can replay.
 - **`catch_up` policy** (opt-in). The supervisor dispatches one fire per
   missed window up to the catch-up cap (default `16`). The remainder
-  fold into a counterfactual receipt.
+  fold into a counterfactual receipt and the scheduler advances past them.
+  If a collision defers a window, the next tick starts at that window.
 
 The catch-up cap exists so a long outage cannot blow the task queue when
 an operator opted into catch-up. Increase the cap inside the supervisor
@@ -195,6 +196,8 @@ Not supported (out of scope for #1798; revisit if operators ask):
 Cron evaluation runs in UTC. The host timezone is not part of the
 deterministic contract; keeping evaluation in UTC means two operators
 on different timezones still fire at the same instant.
+Schedules on February 29 continue at the next leap day, including across
+century years that are not leap years.
 
 ## Fire as a hash, not a trigger (#2302)
 

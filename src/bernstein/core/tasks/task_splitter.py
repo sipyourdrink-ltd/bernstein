@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from bernstein.core.tasks.models import Scope, Task
+from bernstein.core.tasks.task_body import dispatch_hints_payload
 
 if TYPE_CHECKING:
     import httpx
@@ -100,9 +101,12 @@ class TaskSplitter:
                 "complexity": draft.complexity.value,
                 "estimated_minutes": min(draft.estimated_minutes or 30, 60),
                 "owned_files": list(draft.owned_files),
+                "dispatch_tier": draft.dispatch_tier.value,
                 "repo": task.repo,
                 "parent_task_id": task.id,
             }
+            if hints := dispatch_hints_payload(draft):
+                body["metadata"] = {"dispatch_hints": hints}
             if parent_context:
                 body["parent_context"] = parent_context
             response = self.client.post(f"{self.server_url}/tasks", json=body)

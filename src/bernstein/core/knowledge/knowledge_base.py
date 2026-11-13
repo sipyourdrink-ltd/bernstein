@@ -155,15 +155,7 @@ def _subsystem_context(rel_path: str, workdir: Path) -> str:
 
 
 def _find_importers(_rel_path: str, _workdir: Path) -> list[str]:
-    """Find files that import the given file.
-
-    Args:
-        rel_path: Relative path to the file.
-        workdir: Project root directory.
-
-    Returns:
-        List of relative paths to importing files.
-    """
+    """Return an empty importer list until dependency discovery is implemented."""
     # Simplified implementation for now
     return []
 
@@ -438,7 +430,7 @@ class TaskContextBuilder:
                         lines = grep_result.stdout.strip().split("\n")
                         result[fpath] = [ln for ln in lines if ln]
         except Exception as e:
-            logger.debug(f"import_graph failed for {filename}: {e}")
+            logger.debug("import_graph failed for %s: %s", filename, e)
 
         return result
 

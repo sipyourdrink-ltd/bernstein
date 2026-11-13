@@ -121,11 +121,18 @@ Flags:
 There is no dedicated `dr verify` subcommand today. The supported drill is:
 
 1. `bernstein dr backup --to ./drill.tar.gz`
-2. Move to a scratch dir.
-3. `bernstein dr restore --from ./drill.tar.gz --dry-run`
-4. Confirm `Files: ` matches the backup's printed `file_count`.
-5. Optionally `bernstein dr restore --from ./drill.tar.gz --sdd /tmp/.sdd-restored`
-   then `bernstein doctor --workspace /tmp` to revalidate.
+2. `bernstein dr restore --from ./drill.tar.gz --dry-run`
+3. Inspect the archive entries and compare the printed SHA256 prefix with
+   the one from the backup.
+4. To check a restored workspace, restore into a fresh scratch directory,
+   compare the restored file count with the backup, and run `doctor` from
+   that directory:
+
+   ```bash
+   scratch="$(mktemp -d)"
+   bernstein dr restore --from ./drill.tar.gz --sdd "$scratch/.sdd"
+   (cd "$scratch" && bernstein doctor)
+   ```
 
 For ad-hoc integrity checks, the WAL itself is hash-chained - running
 the orchestrator against a restored workspace will fail loudly if the
@@ -219,7 +226,11 @@ For a complete loss of the orchestrator host:
           the archived WALs attached - the diverging `seq` is the first
           decision that differed and is the starting point for the
           investigation.
-   - `bernstein dr backup --to /tmp/drill.tar.gz --dry-run` (sanity).
+   - Inspect the backup without restoring it:
+     ```bash
+     bernstein dr restore --from /backup/bernstein-latest.tar.gz.enc \
+                          --decrypt --password "$(cat /vault/dr.pw)" --dry-run
+     ```
 7. **Resume external triggers**: if any cron/CI/webhook was paused
    during failover, re-enable now.
 

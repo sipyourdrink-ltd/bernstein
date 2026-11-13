@@ -40,7 +40,7 @@ localStorage.setItem("bernstein_token", "<value of BERNSTEIN_AUTH_TOKEN>")
 
 ## Dashboard tokens
 
-The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; every grant and write authorization is a signed governance record (`bernstein governance verify dashboard-auth`).
+The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; token grants are audit events and write authorizations are signed governance records in the `dashboard-auth` lineage run.
 
 ## Theme
 

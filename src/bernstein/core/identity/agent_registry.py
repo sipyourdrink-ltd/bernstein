@@ -38,6 +38,9 @@ and an explicit permission set recorded on a delegation scope are comparable
 rather than re-derived here. Delegation scopes contribute only from runs whose
 recomputed authority checks also passed: a hop that widened its parent is a real
 event (so its parties are listed) but is not evidence of authority in force.
+Open and pre-upgrade runs retain their intact, authority-checked scopes and are
+listed in ``incomplete_runs``; that inventory makes no completeness claim.
+A closed run with a mismatched declaration contributes nothing.
 
 An agent with nothing in force is listed with an empty ceiling rather than
 dropped -- an agent that exists and may currently do nothing is exactly what an
@@ -192,6 +195,7 @@ class AgentRegistryProjection:
     agents: tuple[AgentPrincipal, ...] = ()
     errors: tuple[str, ...] = ()
     as_of: int = 0
+    incomplete_runs: tuple[str, ...] = ()
 
     def agent(self, agent_id: str) -> AgentPrincipal | None:
         """Return the entry for ``agent_id``, or ``None`` when it is absent."""
@@ -207,6 +211,7 @@ class AgentRegistryProjection:
             "as_of": self.as_of,
             "errors": list(self.errors),
             "version": REGISTRY_VERSION,
+            **({"incomplete_runs": list(self.incomplete_runs)} if self.incomplete_runs else {}),
         }
 
 
@@ -352,17 +357,25 @@ def _fold_grants(builders: dict[str, _Builder], *, root: Path, key: bytes, now: 
                 builder.ceiling |= _expand_ceiling(issued_record.capability_ceiling)
 
 
-def _fold_delegation(builders: dict[str, _Builder], *, root: Path, key: bytes, now: int, errors: list[str]) -> None:
+def _fold_delegation(
+    builders: dict[str, _Builder],
+    *,
+    root: Path,
+    key: bytes,
+    now: int,
+    errors: list[str],
+    incomplete_runs: list[str],
+) -> None:
     """Fold every tamper-verified delegation chain under ``root`` into ``builders``."""
     for run_id in _run_ids(Path(root) / "delegation"):
-        result = delegation.verify_run_chain(root=Path(root), run_id=run_id, key=key)
+        result = delegation.verify_run(run_id, root=Path(root), key=key)
         if not result.chain_ok:
             errors.append(f"delegation/{run_id}: " + "; ".join(result.errors))
             continue
-        if not result.valid:
-            # Tamper evidence held, so the hops are real events and their
-            # parties are listed; the recomputed authority checks did not, so
-            # nothing in this run is evidence of a ceiling in force.
+        if result.incomplete:
+            incomplete_runs.append(run_id)
+        if not result.authority.ok:
+            # Intact events establish parties even when authority checks fail.
             errors.append(f"delegation/{run_id}: authority checks did not pass; scopes not counted toward a ceiling")
         for receipt in result.receipts:
             for role, name in (
@@ -384,7 +397,7 @@ def _fold_delegation(builders: dict[str, _Builder], *, root: Path, key: bytes, n
                 )
             if receipt.issuer:
                 builders[receipt.issuer].delegation_refs.append(f"{run_id}#{receipt.hop_index}")
-            if not result.valid or receipt.scope is None or not receipt.audience:
+            if not result.authority.ok or receipt.scope is None or not receipt.audience:
                 continue
             scope = DelegationScope.from_body(receipt.scope)
             if scope.not_after is not None and now >= scope.not_after:
@@ -420,7 +433,8 @@ def project_agents(
     builders: dict[str, _Builder] = {}
     errors: list[str] = []
     _fold_grants(builders, root=Path(root), key=key, now=now, errors=errors)
-    _fold_delegation(builders, root=Path(root), key=key, now=now, errors=errors)
+    incomplete_runs: list[str] = []
+    _fold_delegation(builders, root=Path(root), key=key, now=now, errors=errors, incomplete_runs=incomplete_runs)
 
     agents = tuple(
         AgentPrincipal(
@@ -437,7 +451,9 @@ def project_agents(
         )
         for builder in sorted(builders.values(), key=lambda b: b.agent_id)
     )
-    return AgentRegistryProjection(agents=agents, errors=tuple(errors), as_of=int(now))
+    return AgentRegistryProjection(
+        agents=agents, errors=tuple(errors), as_of=int(now), incomplete_runs=tuple(sorted(incomplete_runs))
+    )
 
 
 def render_registry(projection: AgentRegistryProjection) -> str:
@@ -502,7 +518,14 @@ def verify_registry(
             parts.append("established by the chain but absent: " + ", ".join(missing))
         return RegistryVerification(ok=False, reason="; ".join(parts), invented=invented, missing=missing)
 
-    if json.dumps(stored, sort_keys=True, separators=(",", ":")) != render_registry(recomputed):
+    expected = recomputed.to_body()
+    # Version-1 snapshots predate this informational completeness marker. Compare
+    # every original field exactly; an explicitly supplied marker must match too.
+    if "incomplete_runs" not in stored:
+        expected.pop("incomplete_runs", None)
+    if json.dumps(stored, sort_keys=True, separators=(",", ":")) != json.dumps(
+        expected, sort_keys=True, separators=(",", ":")
+    ):
         return RegistryVerification(
             ok=False,
             reason="stored projection does not match the recomputation from the chain",

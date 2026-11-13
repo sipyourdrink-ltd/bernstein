@@ -36,7 +36,7 @@ export CLM_MODEL="meta-llama/Llama-3-8B-Instruct"
 Then run as normal:
 
 ```bash
-bernstein -g "fix the failing test" --adapter clm
+bernstein run --goal "fix the failing test" --cli clm
 ```
 
 For Ollama specifically, the adapter auto-discovers the endpoint from
@@ -47,112 +47,60 @@ required by default.
 
 ## Certifying an endpoint
 
-`bernstein endpoints certify` qualifies any OpenAI-compatible base URL
-against the conformance suite and writes a signed certification record to
-disk.  The record is the claim: "this endpoint behaved contract-correctly
-at qualification time."
+`bernstein endpoints certify` runs conformance probes against the target
+and writes an Ed25519-signed receipt with the probe transcript and per-role verdicts.
 
 ```bash
 bernstein endpoints certify \
   --base-url http://my-nim-host:8000/v1 \
-  --token    "$CLM_TOKEN" \
-  --model    "meta-llama/Llama-3-8B-Instruct"
+  --api-key-env CLM_TOKEN \
+  --model "meta-llama/Llama-3-8B-Instruct"
 ```
 
-The command:
-
-1. Runs the conformance probe suite against the target URL (hermetic
-   — no external network calls beyond the target itself).
-2. Collects the pass/fail result for each probe.
-3. Writes a signed certification record to
-   `.sdd/certs/endpoints/<fingerprint>.json`, where `fingerprint` is the
-   SHA-256 of `(base_url, model, timestamp)`.
-4. Anchors the record in the HMAC audit chain as an
-   `endpoint.certification` event (requires `--audit` or
-   `BERNSTEIN_AUDIT=1`).
+The receipt is stored at `.sdd/endpoints/certifications/<fingerprint>.json`.
+The fingerprint is derived from the normalized base URL and the model.
+The command records an anchor in the certification lineage spine and
+mirrors the seal in the HMAC audit chain.
 
 ### Options
 
 | Flag | Default | Description |
 |---|---|---|
-| `--base-url` | — | **Required.** Base URL of the OpenAI-compatible server (without trailing `/`). |
-| `--token` | `""` | Bearer token forwarded as `Authorization: Bearer …`. Pass an empty string for servers that require no auth. |
-| `--model` | — | **Required.** Model id to use for conformance probes. |
-| `--out` | `.sdd/certs/endpoints/` | Directory to write the certification record. |
-| `--strict` | `false` | Fail if any optional probe fails (not just required ones). |
-| `--timeout` | `30` | Per-probe HTTP timeout in seconds. |
+| `--base-url` | — | **Required.** Base URL of the OpenAI-compatible server. |
+| `--api-key-env` | — | Name of the variable holding the bearer token. Omit for endpoints that need no authentication. |
+| `--model` | First model from `/models` | Model to use for the probes. |
+| `--engine` | Empty | Runtime label stored in the receipt, such as `ollama` or `nim`. |
+| `--timeout` | `60` | Per-probe response budget in seconds. |
+| `--role` | Low-stakes local roles | Role to evaluate. Repeat for multiple roles. |
+| `--json` | Off | Print results as JSON. |
 
-### Example output
+For an endpoint that requires no token:
 
-```
+```bash
 bernstein endpoints certify \
   --base-url http://localhost:11434/v1 \
-  --token    "" \
-  --model    "llama3"
-
-✔  probe: GET /v1/models               200 OK
-✔  probe: POST /v1/chat/completions    200 OK (non-streaming)
-✔  probe: POST /v1/chat/completions    200 OK (streaming, SSE)
-✔  probe: tool_calls round-trip        present in response
-✔  probe: finish_reason present        stop
-✔  probe: role=assistant present       true
-
-Certification written to .sdd/certs/endpoints/a3f8...c21.json
-Audit chain anchor:   endpoint.certification  sha256=a3f8...c21
+  --model llama3
 ```
 
 ---
 
 ## Verifying a certification record offline
 
+Run verification from the workspace that holds the receipt and lineage:
+
 ```bash
 bernstein endpoints verify \
-  --cert .sdd/certs/endpoints/a3f8...c21.json
+  --base-url http://localhost:11434/v1 \
+  --model llama3
 ```
 
-`verify` re-reads the record, re-checks the Ed25519 signature against the
-install identity, and confirms the audit-chain anchor (when `--audit-dir`
-is provided).  No network call to the endpoint is made — the record is
-self-contained.
+Verification looks up the stored receipt by base URL and model. It checks
+the endpoint identity, the Ed25519 signature and the certification spine
+anchor using the audit key. It makes no request to the endpoint.
 
-```
-bernstein endpoints verify \
-  --cert .sdd/certs/endpoints/a3f8...c21.json \
-  --audit-dir .sdd/audit/
-
-✔  signature valid   (install key fp: ed25519/abc123)
-✔  audit anchor      endpoint.certification @ 2026-07-24T10:31:00Z
-✔  probes passed     6/6 required, 0 optional failures
-   base_url          http://localhost:11434/v1
-   model             llama3
-   certified_at      2026-07-24T10:31:00Z
-```
-
----
-
-## Certification record schema
-
-The `.sdd/certs/endpoints/<fp>.json` file is a signed JSON object:
-
-```jsonc
-{
-  "schema":        "bernstein.endpoint.certification.v1",
-  "base_url":      "http://localhost:11434/v1",
-  "model":         "llama3",
-  "certified_at":  "2026-07-24T10:31:00Z",
-  "probes": [
-    { "id": "models_list",          "required": true,  "passed": true },
-    { "id": "chat_completions",     "required": true,  "passed": true },
-    { "id": "chat_streaming",       "required": true,  "passed": true },
-    { "id": "tool_calls",           "required": false, "passed": true },
-    { "id": "finish_reason",        "required": true,  "passed": true },
-    { "id": "assistant_role",       "required": true,  "passed": true }
-  ],
-  "passed":        true,
-  "install_key_fp": "ed25519/abc123...",
-  "signature":      "<detached JWS, RFC 7515 §A.5>"
-}
-```
+The receipt contains the signed endpoint identity, engine label, suite
+version, probe transcript, role verdicts and timestamp. It also carries
+the signer's public key, signature and lineage entry hash.
 
 ---
 
@@ -176,23 +124,19 @@ Any server speaking the same OpenAI wire surface qualifies the same way.
 
 ```yaml
 local_endpoints:
-  - name: local-llama
+  local-llama:
     base_url: http://localhost:11434/v1
-    token: ""
     model: llama3
-    cert: .sdd/certs/endpoints/a3f8...c21.json   # written by `bernstein endpoints certify`
 
-roles:
-  lint:
-    adapter: clm
-    endpoint: local-llama    # routes lint tasks to the local endpoint
-  test-writer:
-    adapter: clm
+role_model_policy:
+  linter:
+    endpoint: local-llama
+  test_writer:
     endpoint: local-llama
 ```
 
-Bernstein validates the cert at config-load time and refuses to dispatch
-merge-critical roles to an uncertified endpoint.
+Merge-critical roles require a receipt that certifies the assigned role.
+Pass `--role ROLE` when certifying an endpoint for one of those roles.
 
 ---
 
@@ -201,19 +145,15 @@ merge-critical roles to an uncertified endpoint.
 **"CLM adapter requires CLM_ENDPOINT, CLM_TOKEN, CLM_MODEL to be set"**
 — Export the three required env vars before calling `bernstein`.
 
-**Probe `chat_streaming` fails against llama.cpp**
-— Older `llama-server` builds (< b3000) do not stream SSE correctly.
-Upgrade to a current build or pass `--no-stream` to the adapter.
+**The tool-calling probe fails**
+— Check the per-role verdicts. Tool calling is required for merge-critical
+roles and `test_writer`. Choose an endpoint and model that support it for
+those roles.
 
-**Probe `tool_calls` fails (optional)**
-— Not all models support tool-calling. This probe is optional and does
-not block certification. Bernstein will refuse tool-call tasks against
-the endpoint at runtime.
-
-**Offline verify fails with "signature mismatch"**
-— The cert was written by a different Bernstein install.  Re-certify on
-the current machine, or export your install key and pass it via
-`--install-key <pem>` to `bernstein endpoints verify`.
+**Offline verification reports a signature or lineage error**
+— Use the original receipt and certification spine with the corresponding
+audit key. If those records are unavailable and the endpoint is reachable,
+run certification again in the current workspace.
 
 ---
 

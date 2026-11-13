@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from bernstein.core.mcp_gateway import GatewayReplay, MCPGateway, ToolMetrics
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -161,6 +164,14 @@ class TestGatewayReplay:
         result = replay.find_response("tools/call", {"name": "read_file"})
         assert result is not None
         assert result["result"] == "second"
+
+    def test_warns_when_replay_reader_stops(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        with patch("bernstein.core.wal.WALReader.iter_entries", side_effect=OSError("private diagnostic")):
+            replay = GatewayReplay(run_id="replay-run", sdd_dir=tmp_path / ".sdd")
+
+        assert replay.indexed_count == 0
+        assert "MCP replay stopped reading the WAL after indexing 0 responses (OSError)" in caplog.text
+        assert "private diagnostic" not in caplog.text
 
     def test_handles_missing_wal_gracefully(self, tmp_path: Any) -> None:
         """GatewayReplay with a nonexistent WAL does not raise; index is empty."""
@@ -446,3 +457,331 @@ class TestProxiedCallAnchoring:
             gateway._anchor_proxied_call("tools/call", {"name": "echo", "arguments": {}})
 
         assert "Failed to anchor proxied mcp.stateless_call" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_live_capability_snapshot_waits_for_initialized_notification(
+    tmp_path: Any, caplog: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import EVENT_MCP_CAPABILITY_DRIFT, AuditChainStore
+
+    script = tmp_path / "stdio_upstream.py"
+    script.write_text(
+        """
+import json
+import sys
+
+tools = json.loads(sys.argv[1])
+initialized = False
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request["method"]
+    if method == "notifications/initialized":
+        initialized = True
+        continue
+    response = {"jsonrpc": "2.0", "id": request["id"]}
+    if method == "initialize":
+        response["result"] = {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "fixture", "version": "1"},
+        }
+    elif method == "tools/list" and initialized and tools is not None:
+        cursor = request.get("params", {}).get("cursor")
+        if cursor is None:
+            response["result"] = {"tools": [{"name": tools[0]}], "nextCursor": "next-page"}
+        else:
+            response["result"] = {"tools": [{"name": tools[1]}]}
+    else:
+        response["error"] = {"code": -32603, "message": "fixture tool list unavailable"}
+    print(json.dumps(response), flush=True)
+""",
+        encoding="utf-8",
+    )
+    import json
+
+    chain = AuditChainStore(tmp_path / ".sdd" / "audit", key=b"fixture-only-gateway-capability-key")
+    store = ServerCapabilitiesStore(str(tmp_path))
+
+    async def connect(tools: list[str] | None) -> None:
+        gateway = MCPGateway(
+            upstream_cmd=[sys.executable, str(script), json.dumps(tools)],
+            wal_writer=_make_wal_writer(tmp_path),
+            server_name="fixture",
+            capabilities_store=store,
+            audit_chain=chain,
+        )
+        prior = store.get_digest("fixture")
+        await gateway.start()
+        try:
+            assert store.get_digest("fixture") == prior
+            reply = await gateway.handle_jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "fixture-client", "version": "1"},
+                    },
+                }
+            )
+            assert reply is not None and "result" in reply
+            assert store.get_digest("fixture") == prior
+            assert await gateway.handle_jsonrpc({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+            assert gateway._capability_task is not None
+            await gateway._capability_task
+        finally:
+            await gateway.stop()
+            assert gateway._reader_task is not None
+            await gateway._reader_task
+
+    await connect(["alpha", "beta"])
+    original = store.get_capabilities("fixture")
+    assert original is not None and original.tool_names == {"alpha", "beta"}
+    await connect(["alpha", "gamma"])
+    updated = ServerCapabilitiesStore(str(tmp_path)).get_capabilities("fixture")
+    assert updated is not None and updated.tool_names == {"alpha", "gamma"}
+    assert updated.capability_digest != original.capability_digest
+    events = chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)
+    assert len(events) == 2
+    assert events[-1].details["added_tools"] == ["gamma"]
+    assert events[-1].details["removed_tools"] == ["beta"]
+    await connect(None)
+    assert "Capability drift check failed" in caplog.text
+    assert store.get_digest("fixture") == updated.capability_digest
+    assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 2
+
+    def unavailable(**_kwargs: Any) -> None:
+        raise OSError("fixture audit unavailable")
+
+    with monkeypatch.context() as patch_audit:
+        patch_audit.setattr("bernstein.core.protocols.mcp.mcp_gateway.record_mcp_capability_drift", unavailable)
+        await connect(["alpha", "delta"])
+    assert store.get_digest("fixture") == updated.capability_digest
+    assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 2
+    await connect(["alpha", "delta"])
+    assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 3
+
+    def invalid_store(*_args: Any) -> None:
+        raise TypeError("fixture capability store shape is invalid")
+
+    with monkeypatch.context() as patch_store:
+        patch_store.setattr(MCPGateway, "_process_capability_drift", invalid_store)
+        await connect(["alpha", "epsilon"])
+    assert "fixture capability store shape is invalid" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_initialized_notification_does_not_wait_for_optional_probe(tmp_path: Any) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    gateway = MCPGateway(
+        upstream_cmd=[],
+        wal_writer=_make_wal_writer(tmp_path),
+        capabilities_store=ServerCapabilitiesStore(str(tmp_path)),
+        audit_chain=AuditChainStore(tmp_path / "audit", key=b"fixture-only-probe-key"),
+    )
+    gateway._proc = SimpleNamespace(returncode=0)
+    gateway._upstream_tools_available = True
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def probe() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    with (
+        patch.object(gateway, "_send_upstream", new_callable=AsyncMock),
+        patch.object(gateway, "_check_capability_drift", side_effect=probe),
+    ):
+        await asyncio.wait_for(
+            gateway.handle_jsonrpc({"jsonrpc": "2.0", "method": "notifications/initialized"}), timeout=1
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await gateway.stop()
+    assert cancelled.is_set()
+
+
+def test_capability_store_preserves_other_writers(tmp_path: Path) -> None:
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+
+    first = ServerCapabilitiesStore(str(tmp_path))
+    second = ServerCapabilitiesStore(str(tmp_path))
+    first.set_capabilities("first", frozenset({"alpha"}), "alpha-v1")
+    second.set_capabilities("second", frozenset({"beta"}), "beta-v1")
+    previous = first.set_capabilities("second", frozenset({"beta"}), "beta-v2")
+
+    assert previous is not None
+    assert previous.capability_digest == "beta-v1"
+    assert second.get_digest("second") == "beta-v2"
+    assert second.get_digest("first") == "alpha-v1"
+
+
+def test_gateway_writers_record_same_observation_once(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import EVENT_MCP_CAPABILITY_DRIFT, AuditChainStore
+
+    audit_dir = tmp_path / ".sdd" / "audit"
+    key = b"fixture-only-capability-observation-key"
+    ready = Barrier(4)
+
+    def observe(index: int) -> None:
+        gateway = MCPGateway(
+            upstream_cmd=[],
+            wal_writer=_make_wal_writer(tmp_path, f"observer-{index}"),
+            server_name="test",
+            capabilities_store=ServerCapabilitiesStore(str(tmp_path)),
+            audit_chain=AuditChainStore(audit_dir, key=key),
+        )
+        ready.wait(timeout=10)
+        gateway._process_capability_drift(("one", "two"))
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(observe, range(4)))
+    events = AuditChainStore(audit_dir, key=key).query(event_type=EVENT_MCP_CAPABILITY_DRIFT)
+    assert len(events) == 1
+    assert events[0].details["previous_digest"] is None
+    assert ServerCapabilitiesStore(str(tmp_path)).get_digest("test") == events[0].details["current_digest"]
+
+
+def test_gateway_cli_observation_is_explicit_and_persists_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands import gateway_cmd
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import EVENT_MCP_CAPABILITY_DRIFT, AuditChainStore
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "fixture-audit.key"))
+    tools = ("first",)
+
+    async def run(gateway: MCPGateway, *, transport: str, port: int) -> None:
+        gateway._process_capability_drift(tools)
+
+    monkeypatch.setattr(gateway_cmd, "_run_gateway", run)
+    runner = CliRunner()
+    args = ["start", "--upstream", "unused-fixture", "--server-name", "toolbox"]
+    baseline = runner.invoke(gateway_cmd.gateway_group, args)
+    assert baseline.exit_code == 0, baseline.output
+    assert not (tmp_path / ".sdd" / "audit").exists()
+    assert not (tmp_path / "fixture-audit.key").exists()
+
+    missing_name = runner.invoke(gateway_cmd.gateway_group, ["start", "--upstream", "unused", "--observe-capabilities"])
+    assert missing_name.exit_code == 2
+    assert "requires a stable --server-name" in missing_name.output
+
+    key_path = tmp_path / "fixture-audit.key"
+    missing_key = runner.invoke(gateway_cmd.gateway_group, [*args, "--observe-capabilities"])
+    assert missing_key.exit_code == 1
+    assert not key_path.exists()
+    key_path.touch(mode=0o600)
+    empty_key = runner.invoke(gateway_cmd.gateway_group, [*args, "--observe-capabilities"])
+    assert empty_key.exit_code == 1
+    assert not (tmp_path / ".sdd" / "audit").exists()
+    key_path.write_bytes(b"7" * 64)
+
+    first = runner.invoke(gateway_cmd.gateway_group, [*args, "--observe-capabilities"])
+    assert first.exit_code == 0, first.output
+    store = ServerCapabilitiesStore(str(tmp_path))
+    prior = store.get_digest("toolbox")
+    assert prior is not None
+    tools = ("second",)
+    second = runner.invoke(gateway_cmd.gateway_group, [*args, "--observe-capabilities"])
+    assert second.exit_code == 0, second.output
+    events = AuditChainStore(tmp_path / ".sdd" / "audit").query(event_type=EVENT_MCP_CAPABILITY_DRIFT)
+    assert len(events) == 2
+    assert events[-1].details["previous_digest"] == prior
+    assert store.get_digest("toolbox") == events[-1].details["current_digest"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_can_forward_while_observation_persists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from threading import Event
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = Event()
+    finished = Event()
+    gateway = MCPGateway(
+        upstream_cmd=[],
+        wal_writer=_make_wal_writer(tmp_path),
+        server_name="test",
+        capabilities_store=ServerCapabilitiesStore(str(tmp_path)),
+        audit_chain=AuditChainStore(tmp_path / ".sdd" / "audit", key=b"fixture-only-capability-observation-key"),
+    )
+    gateway._upstream_tools_available = True
+
+    async def respond(message: dict[str, Any], request_id: str) -> tuple[dict[str, Any], float]:
+        result = {"tools": [{"name": "demo"}]} if message["method"] == "tools/list" else {"ok": True}
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}, 0
+
+    def blocked_persistence(_tools: tuple[str, ...]) -> None:
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(timeout=3)
+        finished.set()
+
+    monkeypatch.setattr(gateway, "_send_request", respond)
+    monkeypatch.setattr(gateway, "_process_capability_drift", blocked_persistence)
+    observation = asyncio.create_task(gateway._check_capability_drift())
+    gateway._capability_task = observation
+    session_started = asyncio.Event()
+
+    async def session_with_cleanup() -> None:
+        try:
+            session_started.set()
+            await asyncio.Event().wait()
+        finally:
+            await gateway.stop()
+
+    session = asyncio.create_task(session_with_cleanup())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        response = await asyncio.wait_for(
+            gateway.handle_jsonrpc({"jsonrpc": "2.0", "id": "ordinary-request", "method": "ping"}), timeout=2
+        )
+        assert response is not None and response["result"] == {"ok": True}
+        assert not observation.done()
+    finally:
+        await session_started.wait()
+        session.cancel()
+        stop = asyncio.create_task(gateway.stop())
+        concurrent_stop = asyncio.create_task(gateway.stop())
+        retry_stop = None
+        try:
+            completed, _ = await asyncio.wait({session, stop, concurrent_stop}, timeout=0.1)
+            assert not completed
+            stop.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await stop
+            retry_stop = asyncio.create_task(gateway.stop())
+            completed, _ = await asyncio.wait({concurrent_stop, retry_stop}, timeout=0.1)
+            assert not completed
+        finally:
+            release.set()
+            await asyncio.gather(stop, return_exceptions=True)
+            await concurrent_stop
+            if retry_stop is not None:
+                await retry_stop
+            with pytest.raises(asyncio.CancelledError):
+                await session
+    assert finished.is_set()
+    assert observation.cancelled()

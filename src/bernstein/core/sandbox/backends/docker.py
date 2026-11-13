@@ -624,6 +624,23 @@ class DockerSandboxBackend:
         await session.shutdown()
         self._sessions.pop(session.session_id, None)
 
+    def _leaked_container(self, session_id: str) -> Any:
+        """Attach an existing container by its exact Bernstein session label."""
+        container = self._get_client().containers.get(f"bernstein-{session_id}")
+        labels = container.attrs.get("Config", {}).get("Labels", {}) or {}
+        if labels.get("bernstein.sandbox") != "docker" or labels.get("bernstein.sandbox.session_id") != session_id:
+            raise ValueError(f"container ownership does not match sandbox session {session_id!r}")
+        return container
+
+    def leaked_session_size_bytes(self, session_id: str) -> int:
+        """Measure writable-layer disk use without creating or resuming a session."""
+        container = self._leaked_container(session_id)
+        info = self._get_client().api.inspect_container(container.id, size=True)
+        size = info.get("SizeRw")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise ValueError("Docker did not report writable-layer disk usage")
+        return size
+
     async def destroy_all(self) -> None:
         """Destroy every session this backend still tracks.
 

@@ -1393,7 +1393,11 @@ class StreamableHTTPTransport:
         """The folded status body (#3087): liveness + counts + cost (+ tasks)."""
         status_filter = arguments.get("status") or None
         detail = bool(arguments.get("detail", False))
-        data = json.loads(await self._proxy_get("/status"))
+        try:
+            data = json.loads(await self._proxy_get("/status"))
+        except httpx.TransportError as exc:
+            logger.warning("MCP status could not reach the task server: %s", exc)
+            return json.dumps({"live": True, "error": str(exc), "hint": "Task server may be restarting"})
         tasks: list[dict[str, Any]] | None = None
         if status_filter:
             tasks = json.loads(await self._proxy_get("/tasks", params={"status": str(status_filter)}))
@@ -1412,6 +1416,10 @@ class StreamableHTTPTransport:
                 "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
             },
         }
+        from bernstein.mcp.server import _status_readiness  # pyright: ignore[reportPrivateUsage]
+
+        if (readiness := _status_readiness(data)) is not None:
+            body["readiness"] = readiness
         if detail:
             body["per_role"] = per_role_raw
         if tasks is not None:

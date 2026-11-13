@@ -72,7 +72,19 @@ def gateway_group() -> None:
     show_default=True,
     help="Logical MCP server name recorded into the gateway WAL for historical analytics.",
 )
-def start_cmd(upstream: str, transport: str, port: int, run_id: str | None, server_name: str) -> None:
+@click.option(
+    "--observe-capabilities",
+    is_flag=True,
+    help="Record upstream tool names and audit changes. Requires a stable --server-name and an existing audit key.",
+)
+def start_cmd(
+    upstream: str,
+    transport: str,
+    port: int,
+    run_id: str | None,
+    server_name: str,
+    observe_capabilities: bool = False,
+) -> None:
     """Start the MCP gateway proxy.
 
     In stdio mode the gateway acts as an MCP stdio server - point your MCP
@@ -91,13 +103,35 @@ def start_cmd(upstream: str, transport: str, port: int, run_id: str | None, serv
     from bernstein.core.mcp_gateway import MCPGateway
     from bernstein.core.wal import WALWriter
 
+    if observe_capabilities and (not server_name.strip() or server_name.strip() == "unknown"):
+        raise click.UsageError("--observe-capabilities requires a stable --server-name")
+
     effective_run_id = run_id or f"gw-{uuid.uuid4().hex[:8]}"
     sdd_dir = _SDD_DIR
-    sdd_dir.mkdir(parents=True, exist_ok=True)
-
-    wal_writer = WALWriter(run_id=effective_run_id, sdd_dir=sdd_dir)
     upstream_cmd = shlex.split(upstream)
-    gateway = MCPGateway(upstream_cmd=upstream_cmd, wal_writer=wal_writer, server_name=server_name)
+    capabilities_store = audit_chain = None
+    if observe_capabilities:
+        from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+        from bernstein.core.security.audit import AuditKeyMissingError, AuditKeyPermissionError, load_audit_key
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        try:
+            key = load_audit_key()
+        except (AuditKeyMissingError, AuditKeyPermissionError, OSError) as exc:
+            raise click.ClickException(f"Cannot observe capabilities without an existing audit key: {exc}") from exc
+        if len(key) < 32:
+            raise click.ClickException("Cannot observe capabilities with an empty or incomplete audit key")
+        capabilities_store = ServerCapabilitiesStore(str(sdd_dir.parent))
+        audit_chain = AuditChainStore(sdd_dir / "audit", key=key)
+    sdd_dir.mkdir(parents=True, exist_ok=True)
+    wal_writer = WALWriter(run_id=effective_run_id, sdd_dir=sdd_dir)
+    gateway = MCPGateway(
+        upstream_cmd=upstream_cmd,
+        wal_writer=wal_writer,
+        server_name=server_name,
+        capabilities_store=capabilities_store,
+        audit_chain=audit_chain,
+    )
 
     if transport == "sse":
         console.print(

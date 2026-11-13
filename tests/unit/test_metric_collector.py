@@ -2,13 +2,81 @@
 
 from __future__ import annotations
 
+import json
+import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from bernstein.core.metric_collector import MetricsCollector, MetricType, ProviderStatus
 
-from bernstein.core.observability.metric_collector import _MAX_FLUSH_ATTEMPTS
+from bernstein.core.observability.metric_collector import (
+    _MAX_FLUSH_ATTEMPTS,
+    CacheBaselineCollector,
+    CacheBaselineDrop,
+)
+
+
+def test_cache_baseline_drop_preserves_warning_and_event(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    collector = CacheBaselineCollector(tmp_path / "metrics")
+    drop = CacheBaselineDrop(
+        baseline_name="cache%hit",
+        previous_value=123.456,
+        current_value=107.949,
+        drop_percentage=0.1256,
+        threshold=0.1,
+        timestamp=datetime(2026, 1, 2, tzinfo=UTC),
+        metadata={"reason": "capacity"},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.observability.metric_collector"):
+        collector.record_drop(drop)
+
+    assert caplog.record_tuples == [
+        (
+            "bernstein.core.observability.metric_collector",
+            logging.WARNING,
+            "Cache baseline drop recorded: cache%hit dropped by 12.6% (123.46 → 107.95)",
+        )
+    ]
+    assert (
+        collector.cache_drops_file.read_text(encoding="utf-8")
+        == json.dumps(
+            {
+                "baseline_name": "cache%hit",
+                "previous_value": 123.456,
+                "current_value": 107.949,
+                "drop_percentage": 0.1256,
+                "threshold": 0.1,
+                "timestamp": "2026-01-02T00:00:00+00:00",
+                "metadata": {"reason": "capacity"},
+            }
+        )
+        + "\n"
+    )
+
+
+def test_cache_baseline_warning_uses_deferred_formatting(tmp_path: Path) -> None:
+    collector = CacheBaselineCollector(tmp_path / "metrics")
+    drop = CacheBaselineDrop(
+        baseline_name="cache%hit",
+        previous_value=8.0,
+        current_value=7.0,
+        drop_percentage=0.125,
+        threshold=0.1,
+    )
+
+    with patch("bernstein.core.observability.metric_collector.logger.warning") as warning:
+        collector.record_drop(drop)
+
+    warning.assert_called_once_with(
+        "Cache baseline drop recorded: %s dropped by %.1f%% (%.2f → %.2f)",
+        "cache%hit",
+        12.5,
+        8.0,
+        7.0,
+    )
 
 
 def test_complete_task_writes_metrics_and_updates_provider_health(tmp_path: Path) -> None:

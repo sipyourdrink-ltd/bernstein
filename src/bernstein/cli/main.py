@@ -692,7 +692,7 @@ def _validate_evolve_mode(evolve: bool, budget: float, max_cycles: int, yes: boo
     is_flag=False,
     flag_value=".sdd/logs/activity.log",
     default=None,
-    help="Write activity to log file. Default: .sdd/logs/activity.log",
+    help="Write activity to a log file. Default: .sdd/logs/activity.log.",
 )
 @click.option(
     "--sandbox",

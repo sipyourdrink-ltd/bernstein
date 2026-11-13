@@ -432,8 +432,9 @@ def schedule_run(interval: float, once: bool) -> None:
     trigger_manager: Any | None = None
     try:
         from bernstein.core.orchestration.trigger_manager import TriggerManager
+        from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
 
-        trigger_manager = TriggerManager(sdd)
+        trigger_manager = TriggerManager(sdd, quarantine_store=DeclarationQuarantineStore(sdd.parent))
     except Exception as exc:  # pragma: no cover - defensive
         click.echo(
             f"warning: trigger manager unavailable ({exc}); fires will queue locally",

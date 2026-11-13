@@ -152,7 +152,7 @@ def render_queue_review_prompt(
         open_tasks: Tasks waiting to be claimed.
         claimed_tasks: Tasks currently being worked on.
         failed_tasks: Tasks that failed (recent).
-        _server_url: Task server URL (part of interface).
+        server_url: Task server URL (part of interface).
 
     Returns:
         Rendered prompt string.

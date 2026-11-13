@@ -27,7 +27,7 @@ All magic numbers, timeouts, and thresholds are centralized in `src/bernstein/co
 - `role_model_policy`
 - `local_endpoints`
 - `storage`
-- `notify` (webhook/email/desktop notification settings)
+- `notify` (webhook and desktop notifications), `smtp` (email)
 - `network` (IP allowlist)
 - `tuning` (override defaults from `core/defaults.py`)
 
@@ -57,6 +57,43 @@ role_model_policy:
 internal_llm_provider: gemini
 internal_llm_model: gemini-pro
 ```
+
+### Run settings
+
+| Setting | Type and default | Effect |
+|---------|------------------|--------|
+| `evolution_enabled` | Boolean, `true` in the seed parser | Controls the orchestrator's self-evolution loop. Full-schema validation disables it by default when `internal_llm_provider` is `none` and rejects explicit `true` in that case. |
+| `judge_model`, `judge_provider` | Optional strings, both `null` | Override the janitor's LLM judge. Each unset field uses the janitor's own default. |
+| `max_cost_per_agent` | Nonnegative USD amount, runtime default `0.0` | Limits spend per agent. `0` means unlimited. The full-schema default is `null`. |
+| `cost_autopilot` | Boolean, `false` | With a positive run budget, enables automatic model downgrades starting at 80% of the budget by default. |
+| `test_agent` | Mapping | `always_spawn` defaults to `false`, `model` to `sonnet`, and `trigger` to its supported value `on_task_complete`. |
+| `orchestration.test_followup` | Boolean, `true` | Schedules one bounded test-authoring follow-up when the branch changes `src/` without changing `tests/`. `BERNSTEIN_TEST_FOLLOWUP` can override it. |
+| `tier_adapters` | String-to-string mapping, `{}` | Sets adapter names for `edge`, `search`, `research`, and `sandbox` dispatch tiers. An explicit role or task adapter takes precedence. |
+| `tenants` | List of mappings, `[]` | Each entry has a unique `id`, an optional scalar USD `budget`, and an optional `allowed_agents` list (`agents` is an alias). |
+| `visual` | Optional mapping, `null` | Display defaults are `splash: true`, `crt_effects: true`, `scanlines: false`, and `splash_tier: auto`. The other splash tiers are `tier1`, `tier2`, and `tier3`. |
+
+See [Cost envelopes](cost-envelopes.md) for `cost.envelopes`.
+
+### Model fallback
+
+`model_fallback` is an optional mapping for fallback after provider errors.
+
+| Field | Type | Default |
+|-------|------|---------|
+| `fallback_chain` | Ordered list of model names | `[]` |
+| `strike_limit` | Positive integer | `3` |
+| `include_timeouts` | Boolean | `true` |
+| `trigger_codes` | List of HTTP status codes | `[429, 503, 529]` |
+
+### Full-schema validation
+
+`config_version` is an integer used by full-schema migrations. The current
+version and default are both `1`. Full validation also declares `auto_decompose`
+(boolean, default `true` with an enabled internal provider), `auto_merge`
+(boolean, default `true`), and optional `role_config`, `remote`, `agency`, and
+`arch_conformance` mappings. These declarations describe the Pydantic model.
+The run seed parser has a separate set of settings. For example, the
+orchestrator resolves `auto_merge` from its runtime run configuration.
 
 ### `internal_llm_provider` - Orchestrator scheduling model
 
@@ -116,6 +153,21 @@ Within a role, file-affinity batching respects conflicting per-task `cli`,
 files from two groups cannot combine those groups when their explicit hints
 conflict. Compatible groups can still share a batch up to `max_tasks_per_agent`.
 
+`max_tokens` is an optional positive integer for the role's token ceiling.
+Endpoint and credential settings are documented in the
+[adapter capability contract](../adapters/capability_contract.md).
+
+For a role that uses the OpenAI Agents runner, `council` can run independent
+candidates and synthesize their output with a judge. Set a nonempty
+`candidates` list and a `judge` mapping. Each entry has a `model` string and
+optional `base_url` and `api_key_env` strings. `timeout` is a positive number
+of seconds and defaults to `60`.
+
+The Pydantic role-policy model also declares `temperature` and `top_p`
+(optional numbers), `top_k` (optional integer), and `extra_params` (mapping,
+default `{}`). The run seed parser accepts `max_tokens` from this group.
+See the adapter capability contract for sampling through mode profiles.
+
 ### Escalation ladder (opt-in)
 
 `role_model_policy.<role>.ladder` declares an ordered, evidence-gated
@@ -140,7 +192,10 @@ catalogs:
 
 Full schema, the `source_kind` field for `file`/`directory` sources, and
 how a match changes a spawned prompt: see
-[agent catalogs](agent-catalogs.md).
+[agent catalogs](agent-catalogs.md). The run catalog loader defaults `type`
+to `agency` and `priority` to `50`. The Pydantic `CatalogEntry` default for
+`priority` is `100`. The `60` in the example sets an explicit priority.
+`agent_catalog` is a legacy optional path to a single Agency catalog.
 
 ---
 
@@ -193,6 +248,21 @@ Two consequences worth knowing:
   tree is refused rather than written.
 - The orchestrator's config hot-reload watches the newest mtime across both
   layers, so an overlay write is picked up on the next tick.
+
+The runtime gate and the Pydantic schema have separate defaults:
+
+| Field | Runtime gate | Pydantic model |
+|-------|--------------|----------------|
+| `quality_gates.lint` | `true` | `false` |
+| `quality_gates.test_command` | `uv run python scripts/run_tests.py -x` | `pytest tests/ -x -q` |
+| `quality_gates.type_check_command` | `pyright` | `pyright .` |
+
+Partial overlay validation retains explicitly supplied settings. It leaves
+omitted fields to the other layers and the runtime defaults. The Pydantic
+model also declares `verify_citations` and `verify_citations_offline`
+(booleans, both `false`) and `verify_citations_allowed_hosts` (optional list
+of strings, default `null`). These are schema fields without a corresponding
+run quality-gate setting.
 
 #### The one in-tree exemption: `.claude/mcp.json`
 
@@ -301,12 +371,19 @@ Key default groups:
 
 | Group | Examples |
 |-------|---------|
-| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s`, `stalled_manager_threshold_s`, `max_agent_runtime_s`, `stalled_run_grace_s`, `stalled_run_ticks` |
+| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s`, `stalled_manager_threshold_s`, `max_agent_runtime_s`, `stalled_run_grace_s`, `stalled_run_ticks`, `max_dead_agents_kept` (default `20`) |
 | `SpawnDefaults` | `spawn_backoff_base_s`, `spawn_backoff_max_s`, `max_spawn_failures` |
 | `TaskDefaults` | Retry limits, deadline windows |
-| `AgentDefaults` | Heartbeat intervals, max dead agents kept, `max_turns` |
+| `AgentDefaults` | Heartbeat intervals, `max_turns` |
 | `MemoryChainDefaults` | `default_scope` (`user`/`agent`/`run`/`app`), `retention_days` (reporting horizon only; the append-only chain is always retained in full) |
 | `SLODefaults` | `error_budget_min_failures` |
+
+Other accepted `tuning` groups are `action_cache`, `approval`, `best_of_n`,
+`catalog`, `compaction`, `cost`, `gate`, `janitor`, `lineage`, `mcp_tool_search`,
+`parallelism`, `phase_pipeline`, `plan`, `protocol`, `rework_ledger`,
+`schema_retry`, `security`, `token`, and `trigger`. Field names, types, and
+defaults are defined in the corresponding dataclasses in
+`src/bernstein/core/defaults.py`.
 
 ### 4.1) Agent run-length limits (SDK turns, error budget, wall-clock)
 
@@ -476,13 +553,15 @@ import is not timed.
 
 ## Notifications
 
-Seed-level notification settings support:
+Set `notify.webhook` to an optional URL string. `on_complete` and
+`on_failure` default to `true`; `desktop` defaults to `false`.
 
-- webhook notifications
-- SMTP email notifications
-- optional desktop notifications
-
-These are consumed by the notification manager and task lifecycle hooks.
+For run email delivery, use a separate top-level `smtp` mapping. `host` is a
+required string and `port` is a required integer. `username`, `password`, and
+`from_address` default to empty strings. `to_addresses` defaults to an empty
+list of strings. The driver-specific `email_smtp` sink in the
+[Notifications guide](notifications.md#email_smtp) uses its own fields and
+port default.
 
 ---
 
@@ -498,6 +577,26 @@ Configuration surface includes:
 For security-sensitive deployments, prefer explicit config in `bernstein.yaml` over implicit defaults.
 
 ---
+
+### CORS
+
+`cors` accepts a mapping or boolean. `true` uses the default configuration.
+Omitting `cors` or setting it to `false` leaves the server's localhost defaults
+in place. The mapping accepts the following fields:
+
+| Field | Type | Default |
+|-------|------|---------|
+| `allowed_origins` | List of strings | `http://localhost:*`, `http://127.0.0.1:*` |
+| `allow_methods` | List of strings | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` |
+| `allow_headers` | List of strings | `["*"]` |
+| `allow_credentials` | Boolean | `true` |
+| `max_age` | Nonnegative integer, seconds | `600` |
+
+### MCP manifest signing
+
+Set `mcp.signing_mode` to `warn` (default), `strict`, or `off`.
+`BERNSTEIN_MCP_SIGNING_MODE` overrides it at runtime. See
+[MCP signing](../security/mcp-signing.md) for behavior and evidence.
 
 ## Bootstrap and merge safety
 
@@ -825,8 +924,9 @@ four-layer precedence and the `bernstein profile` perf command are
 unchanged. Contexts live under `.sdd/fleet/contexts/`, with `active.json`
 recording the activation.
 
-Precedence with a context active (highest first): session > project >
-**context** > global > default.
+Standalone CLI precedence with a context active is session > project >
+**context** > global > default. A caller such as the dashboard runtime view can supply a seed override,
+which takes precedence. See [global config](global-config.md#precedence).
 
 ### Verification
 

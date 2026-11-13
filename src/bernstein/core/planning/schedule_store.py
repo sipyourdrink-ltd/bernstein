@@ -18,10 +18,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
+
+from bernstein.core.persistence.atomic_write import write_atomic_text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,6 +49,7 @@ MisfirePolicy = Literal["skip", "catch_up"]
 #: dispatched. Kept out of ``last_fire_at`` so a canceled window never reads
 #: as a successful fire on the doctor / status surfaces.
 FIRE_CURSOR_KEY = "fire_cursor_at"
+PENDING_CATCH_UP_RECEIPT_KEY = "pending_catch_up_receipt"
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,15 @@ class Schedule:
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
     params_schema: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     params: dict[str, Any] = field(default_factory=dict[str, Any])
+
+    @property
+    def fire_cursor_at(self) -> float:
+        """Return the saved cursor, treating legacy or malformed values as absent."""
+        try:
+            value = float(self.extra.get(FIRE_CURSOR_KEY, 0.0))
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        return value if math.isfinite(value) else 0.0
 
 
 class CronParseError(ValueError):
@@ -490,7 +503,7 @@ class ScheduleStore:
         if schedule is None:
             return
         extra = dict(schedule.extra)
-        if float(extra.get(FIRE_CURSOR_KEY, 0.0)) >= cursor_epoch:
+        if schedule.fire_cursor_at >= cursor_epoch:
             return
         extra[FIRE_CURSOR_KEY] = cursor_epoch
         self._write(
@@ -508,20 +521,38 @@ class ScheduleStore:
             ),
         )
 
+    def record_catch_up_skip(self, schedule_id: str, skipped_windows: list[int]) -> None:
+        """Advance the cursor and retain the pending receipt in the same write."""
+        schedule = self.get(schedule_id)
+        if schedule is None:
+            return
+        extra = {
+            **schedule.extra,
+            FIRE_CURSOR_KEY: max(schedule.fire_cursor_at, skipped_windows[-1]),
+            PENDING_CATCH_UP_RECEIPT_KEY: skipped_windows,
+        }
+        self._write(replace(schedule, extra=extra))
+
+    def clear_catch_up_receipt(self, schedule_id: str) -> None:
+        """Clear a pending receipt after its own file is published."""
+        schedule = self.get(schedule_id)
+        if schedule is None or PENDING_CATCH_UP_RECEIPT_KEY not in schedule.extra:
+            return
+        extra = dict(schedule.extra)
+        del extra[PENDING_CATCH_UP_RECEIPT_KEY]
+        self._write(replace(schedule, extra=extra))
+
     def _write(self, schedule: Schedule) -> None:
         """Write a schedule atomically to its JSON path.
 
-        Atomic write via ``tmp + os.replace`` so a crash mid-write leaves
-        either the old file or the new file intact; never half a
-        document. The supervisor loads schedules on every tick and a torn
-        write would either skip a fire (silent loss) or trip a JSON
-        decode (loud, but breaks the supervisor).
+        A unique staging file per write keeps concurrent publishers from
+        sharing a temporary path. The supervisor sees a complete document
+        before or after the atomic replacement.
         """
         path = self._path_for(schedule.id)
-        tmp = path.with_suffix(path.suffix + ".tmp")
         payload = asdict(schedule)
-        tmp.write_text(json.dumps(payload, sort_keys=True, indent=2))
-        tmp.replace(path)
+        # Keep the schedule file's existing umask-based permissions.
+        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2), mode=0o666)
 
 
 def _load_schedule(path: Path) -> Schedule | None:

@@ -7,6 +7,7 @@ import stat
 import sys
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -19,6 +20,11 @@ from bernstein.core.trigger_manager import (
     load_trigger_configs,
     render_task_payload,
 )
+from click.testing import CliRunner
+
+from bernstein.cli.commands.triggers_cmd import triggers_group
+from bernstein.core.security.audit_chain import EVENT_DECLARATION_QUARANTINED, AuditChainStore
+from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1208,3 +1214,164 @@ class TestFileWatchSource:
         # Coalesced event should have deduplicated files
         assert "/tmp/a.py" in events[0].changed_files
         assert "/tmp/b.py" in events[0].changed_files
+
+
+def test_one_malformed_task_template_does_not_discard_other_triggers(sdd_dir: Path) -> None:
+    path = sdd_dir / "config" / "triggers.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "triggers": [
+                    {"name": "broken", "source": "webhook", "task": {"priority": "invalid"}},
+                    {"name": "healthy", "source": "webhook"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert [config.name for config in TriggerManager(sdd_dir).configs] == ["healthy"]
+
+
+def test_runtime_quarantine_requires_explicit_reenable(sdd_dir: Path) -> None:
+    path = sdd_dir / "config" / "triggers.yaml"
+    bad = {"name": "broken", "source": "webhook", "task": {"priority": "invalid"}}
+    healthy = {"name": "healthy", "source": "webhook"}
+    path.write_text(yaml.safe_dump({"triggers": [bad, healthy]}), encoding="utf-8")
+    store = DeclarationQuarantineStore(sdd_dir.parent)
+
+    assert [config.name for config in load_trigger_configs(path)] == ["healthy"]
+    assert not store.path.exists()
+    assert not (sdd_dir / "audit").exists()
+
+    manager = TriggerManager(sdd_dir, quarantine_store=store)
+    assert [config.name for config in manager.configs] == ["healthy"]
+    (entry,) = store.load()
+    assert entry.kind == "routine"
+    assert entry.source_name == "broken"
+    assert entry.error_type == "ValueError"
+
+    bad["task"] = {"priority": 1}
+    path.write_text(yaml.safe_dump({"triggers": [bad, healthy]}), encoding="utf-8")
+    assert [config.name for config in manager.configs] == ["healthy"]
+    assert store.reenable(entry.declaration_id, actor="operator")
+    assert [config.name for config in manager.configs] == ["broken", "healthy"]
+    events = AuditChainStore(sdd_dir / "audit").query(event_type=EVENT_DECLARATION_QUARANTINED)
+    assert len(events) == 1
+
+
+def test_manual_fire_honors_quarantine_and_list_reports_it(sdd_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = sdd_dir / "config" / "triggers.yaml"
+    routine = {"name": "repairable", "source": "webhook", "task": {"priority": "invalid"}}
+    path.write_text(yaml.safe_dump({"triggers": [routine]}), encoding="utf-8")
+    store = DeclarationQuarantineStore(sdd_dir.parent)
+    TriggerManager(sdd_dir, quarantine_store=store)
+    (marker,) = store.load()
+
+    routine["task"] = {"priority": 1}
+    path.write_text(yaml.safe_dump({"triggers": [routine]}), encoding="utf-8")
+    monkeypatch.chdir(sdd_dir.parent)
+    runner = CliRunner()
+    listing = runner.invoke(triggers_group, ["list"])
+    assert listing.exit_code == 0, listing.output
+    assert "quarantined" in listing.output
+    assert store.load() == [marker]
+
+    fired = runner.invoke(triggers_group, ["fire", "repairable"], input="n\n")
+    assert fired.exit_code == 1, fired.output
+    assert "not found" in fired.output
+    assert "Create task(s)" not in fired.output
+
+
+@pytest.mark.parametrize("fields", [{}, {"source": []}])
+def test_named_routine_with_invalid_source_is_quarantined(sdd_dir: Path, fields: dict[str, Any]) -> None:
+    path = sdd_dir / "config" / "triggers.yaml"
+    path.write_text(yaml.safe_dump({"triggers": [{"name": "broken", **fields}]}), encoding="utf-8")
+    store = DeclarationQuarantineStore(sdd_dir.parent)
+
+    assert TriggerManager(sdd_dir, quarantine_store=store).configs == []
+    (marker,) = store.load()
+    assert marker.source_name == "broken"
+    assert marker.reason == "source must be a non-empty string"
+
+
+def test_direct_tasks_keep_the_quarantine_gate(sdd_dir: Path) -> None:
+    path = sdd_dir / "config" / "triggers.yaml"
+    routine = {"name": "push-verification", "source": "github_push", "task": {"priority": "invalid"}}
+    path.write_text(yaml.safe_dump({"triggers": [routine]}), encoding="utf-8")
+    store = DeclarationQuarantineStore(sdd_dir.parent)
+    manager = TriggerManager(sdd_dir, quarantine_store=store)
+    event = TriggerEvent(source="github_push", timestamp=time.time())
+    gate = manager.gate_direct_task(event)
+    assert (gate.trigger_name, gate.suppressed, gate.reason) == (
+        "push-verification",
+        True,
+        "declaration quarantined",
+    )
+
+    routine["task"] = {"priority": 1}
+    path.write_text(yaml.safe_dump({"triggers": [routine]}), encoding="utf-8")
+    assert manager.gate_direct_task(event).suppressed
+
+    (marker,) = store.load()
+    assert store.reenable(marker.declaration_id, actor="operator")
+    gate = manager.gate_direct_task(event)
+    assert gate.trigger_name == "push-verification"
+    assert not gate.suppressed
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        {"triggers": {}},
+        {"triggers": "invalid"},
+        {"triggers": [], "defaults": None},
+        {"triggers": [], "defaults": {"max_tasks_per_minute": float("inf")}},
+    ],
+)
+def test_unreadable_direct_policy_suppresses_fallback(sdd_dir: Path, declaration: dict[str, Any]) -> None:
+    path = sdd_dir / "config" / "triggers.yaml"
+    path.write_text(yaml.safe_dump(declaration), encoding="utf-8")
+    manager = TriggerManager(sdd_dir, quarantine_store=DeclarationQuarantineStore(sdd_dir.parent))
+    event = TriggerEvent(source="github_push", timestamp=time.time())
+    gate = manager.gate_direct_task(event)
+    assert (gate.trigger_name, gate.suppressed, gate.reason) == (
+        "triggers.yaml",
+        True,
+        "trigger policy unavailable",
+    )
+
+    path.write_text("triggers: []\n", encoding="utf-8")
+    gate = manager.gate_direct_task(event)
+    assert gate.trigger_name is None
+    assert not gate.suppressed
+
+
+def test_inaccessible_trigger_policy_blocks_direct_task_and_recovers(
+    sdd_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.routes.webhooks import _get_trigger_manager
+
+    path = sdd_dir / "config" / "triggers.yaml"
+    path.write_text("triggers: [{name: push, source: github_push}]\n", encoding="utf-8")
+    store = DeclarationQuarantineStore(sdd_dir.parent)
+    manager = TriggerManager(sdd_dir, quarantine_store=store)
+    event = TriggerEvent(source="github_push", timestamp=time.time())
+    real_stat = type(path).stat
+
+    def denied_stat(target, *args, **kwargs):
+        if target == path:
+            raise PermissionError("trigger policy denied")
+        return real_stat(target, *args, **kwargs)
+
+    with monkeypatch.context() as blocked:
+        blocked.setattr(type(path), "stat", denied_stat)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(sdd_dir=sdd_dir)))
+        route_manager = _get_trigger_manager(request)
+        assert route_manager is not None
+        assert route_manager.gate_direct_task(event).suppressed
+        assert manager.gate_direct_task(event).suppressed
+
+    gate = manager.gate_direct_task(event)
+    assert gate.trigger_name == "push"
+    assert not gate.suppressed

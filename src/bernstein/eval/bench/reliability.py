@@ -591,6 +591,8 @@ class ReliabilityVerificationStatus(Enum):
 
 @dataclass
 class TaskReliabilityVerification:
+    """Replay verification outcome and verdicts for one reliability task."""
+
     task_id: str
     status: ReliabilityVerificationStatus
     detail: str = ""
@@ -600,6 +602,8 @@ class TaskReliabilityVerification:
 
 @dataclass
 class ReliabilityVerificationResult:
+    """Reliability receipt verification with recomputed metrics and task outcomes."""
+
     receipt_hash: str
     suite_hash: str
     k: int

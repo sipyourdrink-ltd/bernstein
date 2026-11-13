@@ -13,7 +13,7 @@ import importlib.metadata
 import importlib.util
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from bernstein.eval.bench.gate_evasion_suite import (
     _GATE_TOOL_MODULE,
@@ -53,6 +53,15 @@ _BASELINE_KEYS = frozenset(
         "content_sha256",
     }
 )
+
+
+class _MeasuredCase(TypedDict):
+    case_class: str
+    gate_that_must_flag: str
+    expected_verdict: str
+    actual_verdict: str
+    caught: bool
+    verdict_basis: str
 
 
 def _canonical(value: Any) -> bytes:
@@ -120,8 +129,9 @@ def _validate_counts(payload: dict[str, Any]) -> None:
     cases = payload["cases"]
     if not isinstance(cases, list) or not cases:
         raise ValueError("gate-evasion results contain no cases")
-    ids = [entry.get("case_class") if isinstance(entry, dict) else None for entry in cases]
-    if any(not isinstance(i, str) for i in ids) or ids != sorted(set(ids)):
+    raw_ids = [entry.get("case_class") if isinstance(entry, dict) else None for entry in cases]
+    ids = [case_id for case_id in raw_ids if isinstance(case_id, str)]
+    if len(ids) != len(raw_ids) or ids != sorted(set(ids)):
         raise ValueError("gate-evasion cases must have unique, sorted class IDs")
     for entry in cases:
         _check_case_result(entry)
@@ -158,7 +168,7 @@ def measure_gate_evasion(corpus_dir: Path | str = DEFAULT_EVASION_CORPUS_DIR) ->
         raise ValueError("suite task list is incomplete or duplicated")
     score, _bundle = run_gate_evasion_suite(corpus_dir=corpus_dir)
     expected = {case.class_name: case for case in cases}
-    measured = []
+    measured: list[_MeasuredCase] = []
     for result in score.results:
         case = expected.get(result.case_class)
         if case is None:

@@ -160,13 +160,13 @@ Hook mapping:
 
 ## Quality Gates
 
-Run automated checks after tasks complete. Log results, alert on failure, optionally block the orchestrator.
+Run automated checks on each task's change. Log results, alert on failure, block promotion on failure.
 
 ### Bundled
 
 | Plugin | Description | Install |
 |--------|-------------|---------|
-| `SecurityScanGate` | Runs `bandit` (or any configurable command) after every task completes. Records results to `.sdd/metrics/custom_gates.jsonl`. | `examples.plugins.quality_gate_plugin:SecurityScanGate` |
+| `SecurityScanGate` | Runs `bandit` (or any configurable command) on every task. A failed required scan blocks the task. The runner records results in the project root at `.sdd/runtime/gates/<task_id>.json` and metrics in `.sdd/metrics/quality_gates.jsonl`. | Copy `examples/plugins/quality_gate_plugin.py` to `.bernstein/gates/`, then add `security_scan_cmd` to `quality_gates.pipeline` |
 
 **SecurityScanGate** - configuration:
 
@@ -178,7 +178,7 @@ export BERNSTEIN_SECURITY_CMD="semgrep --config=auto . --quiet"
 export BERNSTEIN_SECURITY_CMD="trivy fs . --exit-code 1 --severity HIGH,CRITICAL"
 ```
 
-**Note**: The plugin gate is a *soft gate* - it records and alerts but does not block the orchestrator. For hard blocking, use `quality_gates:` in `bernstein.yaml`.
+**Note**: `SecurityScanGate` returns `blocked=False` so the pipeline controls blocking. Set `required: false` on the `security_scan_cmd` step in `quality_gates.pipeline` for an advisory scan. The runner keeps its reports and metrics outside the temporary agent worktree. When this example is importable, registering it under `plugins:` emits a migration warning; use `.bernstein/gates/` or `bernstein.gates` and the pipeline instead.
 
 ### Community
 

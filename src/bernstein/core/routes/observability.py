@@ -434,7 +434,7 @@ def _get_quality_score_distribution(workdir: Path, _done_tasks: list[Any]) -> di
 
     Args:
         workdir: Repository root directory.
-        done_tasks: List of completed tasks.
+        _done_tasks: Reserved parameter.
 
     Returns:
         Dictionary with average score, grade distribution, and recent scores.

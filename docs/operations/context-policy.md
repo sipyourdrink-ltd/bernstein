@@ -82,19 +82,15 @@ explicit configuration is present.
 
 ## Verifying context
 
-Run `bernstein context verify` to check that a run's context matches the
-current configuration:
+Run `bernstein context verify` to recompute a task's recorded context capsule
+offline and check it against the audit chain and run journal:
 
 ```bash
-# Verify context for a specific task
-bernstein context verify --task-id <task_id>
-
-# Verify context for the current run
-bernstein context verify --run-id <run_id>
+bernstein context verify <task_id>
 ```
 
-If the current context policy differs from what was used during the run, the
-verify command reports the diverging fields.
+To verify a signed run receipt, use
+[`bernstein verify receipt`](../reference/cli/verify.md).
 
 ## Declared context manifest
 

@@ -298,7 +298,7 @@ def _generate_archive_report(
     "--archive",
     default=".sdd/archive/tasks.jsonl",
     show_default=True,
-    help="Path to archive file.",
+    help="Path to the archive file.",
 )
 def retro(
     since: float | None,
@@ -981,7 +981,7 @@ def _recap_since(since: str, workdir: str, *, as_json: bool) -> None:
     "--archive",
     default=".sdd/archive/tasks.jsonl",
     show_default=True,
-    help="Path to task archive.",
+    help="Path to the task archive.",
 )
 @click.option(
     "--since",
@@ -3383,12 +3383,33 @@ def quarantine_store_path(workdir: str | Path = ".") -> Path:
 
 @click.group("quarantine")
 def quarantine_group() -> None:
-    """Inspect and clear cross-run task quarantine.
+    """Inspect task quarantine and explicitly re-enable failed declarations.
 
     Quarantine state lives in the workspace at ``.sdd/runtime/quarantine.json``
     and is written by the orchestrator, so these commands read and write it
     directly and do not need a running task server.
     """
+
+
+@quarantine_group.command("re-enable")
+@click.argument("declaration_id")
+@click.option("--workdir", "-w", default=".", type=click.Path(exists=True, file_okay=False), show_default=True)
+def _quarantine_reenable(declaration_id: str, workdir: str) -> None:
+    """Clear a declaration failure marker and journal the local operator.
+
+    Exit codes: 0 released; 1 no matching declaration or state/audit failure.
+    """
+    import getpass
+
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+
+    try:
+        released = DeclarationQuarantineStore(Path(workdir)).reenable(declaration_id, actor=getpass.getuser())
+    except (OSError, ValueError, TypeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not released:
+        raise click.ClickException(f"No quarantined declaration {declaration_id!r}.")
+    click.echo(f"Re-enabled declaration {declaration_id}.")
 
 
 @quarantine_group.command("list")

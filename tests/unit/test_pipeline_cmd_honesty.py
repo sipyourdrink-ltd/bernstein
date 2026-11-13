@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.pipeline_cmd import pipeline_group
@@ -93,3 +94,23 @@ def test_a_yaml_syntax_error_is_an_error_message_not_a_traceback(tmp_path: Path)
     assert code != 0
     assert "Error:" in output
     assert "Traceback" not in output
+
+
+def test_pipeline_uses_explicit_project_for_tracker_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.core.trackers.registry import TrackerRegistry
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = project / "bernstein.yaml"
+    config.write_text(_VALID, encoding="utf-8")
+    called = []
+
+    def discover(workdir: Path, *, record_failures: bool) -> TrackerRegistry:
+        called.append((workdir, record_failures))
+        return TrackerRegistry()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("bernstein.core.trackers.registry.discover_workspace_trackers", discover)
+    result = CliRunner().invoke(pipeline_group, ["run", "--config", str(config), "--state-root", str(project / ".sdd")])
+    assert result.exit_code == 0, result.output
+    assert called == [(project.resolve(), True)]

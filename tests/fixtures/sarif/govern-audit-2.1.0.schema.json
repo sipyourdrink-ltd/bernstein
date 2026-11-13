@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Offline SARIF 2.1.0 governance output profile",
+  "$comment": "Validates the emitted subset of OASIS SARIF 2.1.0, with rules and physical locations required for code scanning. No external references. This is a restricted profile, not a copy of the complete OASIS schema.",
+  "type": "object",
+  "required": [
+    "version",
+    "runs"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "version": {
+      "const": "2.1.0"
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/run"
+      },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "message": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "rule": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shortDescription": {
+          "$ref": "#/definitions/message"
+        }
+      },
+      "additionalProperties": false
+    },
+    "location": {
+      "type": "object",
+      "required": [
+        "physicalLocation"
+      ],
+      "properties": {
+        "physicalLocation": {
+          "type": "object",
+          "required": [
+            "artifactLocation"
+          ],
+          "properties": {
+            "artifactLocation": {
+              "type": "object",
+              "required": [
+                "uri"
+              ],
+              "properties": {
+                "uri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "format": "uri-reference"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "ruleId",
+        "message",
+        "locations"
+      ],
+      "properties": {
+        "ruleId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ruleIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": [
+            "notApplicable",
+            "pass",
+            "fail",
+            "review",
+            "open",
+            "informational"
+          ]
+        },
+        "level": {
+          "enum": [
+            "none",
+            "note",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "$ref": "#/definitions/message"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/location"
+          },
+          "minItems": 1
+        },
+        "properties": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "tool",
+        "results"
+      ],
+      "properties": {
+        "tool": {
+          "type": "object",
+          "required": [
+            "driver"
+          ],
+          "properties": {
+            "driver": {
+              "type": "object",
+              "required": [
+                "name",
+                "rules"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "informationUri": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/rule"
+                  },
+                  "minItems": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/result"
+          },
+          "minItems": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -358,7 +358,8 @@ class Lease:
 
         Only a file this lease still owns is unlinked: once another claimant
         has reclaimed an expired lease, releasing the stale handle must not
-        delete the new holder's record.
+        delete the new holder's record. An unreadable record or one without
+        this lease's ID is left untouched.
         """
         if self.released:
             return
@@ -367,8 +368,8 @@ class Lease:
         try:
             with _reclaim_guard(self.path):
                 recorded = _read_lease(self.path)
-                if recorded is not None and recorded.get("lease_id") != self.lease_id:
-                    logger.debug("lease release: %s already reclaimed by another holder", self.path)
+                if recorded is None or recorded.get("lease_id") != self.lease_id:
+                    logger.debug("lease release: %s no longer verifiably owned by this holder", self.path)
                     return
                 try:
                     self.path.unlink()

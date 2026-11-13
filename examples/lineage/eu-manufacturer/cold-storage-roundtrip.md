@@ -54,8 +54,8 @@ bernstein-verify pack examples/lineage/eu-manufacturer/expected-pack.zip
 
 ## What round-tripping does NOT prove
 
-- That the original operator HMAC key is still trusted. (Key rotation is a
-  separate procedure - `bernstein lineage rotate-hmac`.)
+- That the original operator HMAC key is still trusted. Verify its trust
+  and rotation history separately.
 - That the agent identities are still in use. Cards are historical evidence,
   not active credentials.
 - That the underlying source code in `src/` still compiles. Lineage anchors

@@ -1,11 +1,17 @@
 # Volunteer sandbox profile
 
-The sandbox profile is the containment boundary derived from the project's manifest and the donor's resource limits. It is a pure function — the same manifest always produces the same `sandbox_sha256` on any compliant donor.
+The sandbox profile records a containment decision derived from the project
+manifest, the donor's limits and available backends. The same inputs produce
+the same profile digest.
+
+The current claimed-task runner starts a host process in a Git worktree with
+a filtered environment and a wall-clock cap. The profile records the selected
+backend and resource settings for callers that integrate a sandbox backend.
 
 ## Derivation
 
 ```
-manifest.json  +  donor_limits  →  sandbox_profile  →  sandbox_sha256
+manifest + donor limits + backend availability and consent → profile → digest
 ```
 
 Inputs to the derivation:
@@ -13,47 +19,25 @@ Inputs to the derivation:
 - `manifest.allowed_paths`
 - `manifest.egress_allowlist`
 - `manifest.max_wall_clock_minutes`
-- Donor flags: `--cpu`, `--memory`, `--no-network`
+- Available backends and donor consent for plain-container execution
+- Optional donor memory and wall-clock ceilings supplied through the runner API
 
-The donor's resource flags override the manifest's implicit defaults but cannot loosen restrictions (e.g. a manifest with `egress_allowlist: []` blocks all egress regardless of donor flags).
+The tighter ceiling applies. The effective egress allowlist includes the
+manifest entries and the built-in package registries.
 
-## Sandbox types
+## Profile settings
 
-### `container` (rootless)
+| Setting | Profile value |
+|---------|---------------|
+| Backend | Selected from the available backends subject to the manifest and donor consent |
+| Network | Effective egress allowlist |
+| Memory | Ceiling of 2 GiB, lowered by an optional donor memory limit |
+| CPU | Default quota supplied by the profile |
+| Time | Lower of the manifest and optional donor wall-clock limits |
 
-Linux namespace isolation using `unshare`. The worker runs as a non-root user inside a new PID, mount, network, and IPC namespace. No capabilities are retained.
+## Result bundle
 
-| Resource | Restriction |
-|----------|-------------|
-| Filesystem | chroot to repo root; read/write limited to `allowed_paths` globs |
-| Network | New namespace; no host network unless `egress_allowlist` is populated |
-| PIDs | New PID namespace; max processes limited by donor `--pids` flag |
-| Memory | Limited by donor `--memory` flag (default 2 GiB) |
-| CPU | Cgroup v2 shares limited by donor `--cpu` flag (default 2 cores) |
-| Time | `max_wall_clock_minutes` enforced via `RLIMIT_CPU` |
-
-### `none`
-
-No containment applied. The task runs in the donor's ordinary environment. Only `allowed_paths` file restrictions apply.
-
-> **Warning:** `sandbox: "none"` is only appropriate for fully trusted communities. Use only with `local_ok: true` in the manifest.
-
-## Receipt fields
-
-The produced receipt includes:
-
-| Field | Description |
-|-------|-------------|
-| `sandbox_sha256` | Digest of the derived sandbox profile |
-| `sandbox_type` | `"container"` or `"none"` |
-| `wall_clock_seconds` | Observed elapsed time |
-| `exit_codes` | Exit code per gate command |
-
-## Verifying containment
-
-A receipt's `sandbox_sha256` can be independently recomputed by:
-1. Loading the manifest from the checkout
-2. Applying the same donor flags
-3. Hashing the canonical profile JSON
-
-Mismatches indicate the donor used a non-compliant sandbox or the manifest changed between submission and verification.
+The signed result bundle records the profile digest in `sandbox_profile`.
+To recompute the digest, load the manifest at the attested base commit and
+derive the profile with the same backend and donor inputs. The digest binds
+the declared profile. Runtime enforcement depends on the caller.

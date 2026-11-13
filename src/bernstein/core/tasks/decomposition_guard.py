@@ -29,6 +29,8 @@ def get_default_root_rank() -> int:
 
 
 class DecompositionRefusalCode:
+    """Reasons the decomposition rank guard refuses a further split."""
+
     DECOMPOSITION_RANK_EXHAUSTED = "DECOMPOSITION_RANK_EXHAUSTED"
     DECOMPOSITION_RANK_NON_DECREASING = "DECOMPOSITION_RANK_NON_DECREASING"
 

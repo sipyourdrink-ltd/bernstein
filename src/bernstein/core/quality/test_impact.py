@@ -13,9 +13,7 @@ import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
-
-from typing_extensions import TypedDict
+from typing import Any, TypedDict, cast
 
 logger = logging.getLogger(__name__)
 

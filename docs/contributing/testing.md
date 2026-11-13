@@ -34,7 +34,7 @@ locally without waiting for the cloud runner.
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
-| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes, the access-token prompt | local only (`cd web && npm test`; not run in CI) |
+| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes, the access-token prompt | Web UI regression workflow and local (`cd web && npm test`) |
 
 ## Web UI tests
 
@@ -55,6 +55,21 @@ server or make network requests.
 installed before React loads, and drives it with real DOM events: the 401
 path in `src/lib/api.ts` and the shell's access-token prompt. `fetch` is
 stubbed; nothing listens on a port.
+
+Run the Vitest and Testing Library component tests with
+`cd web && npm run test:components`.
+
+The Playwright smoke starts a real GUI server in a temporary project and
+exercises the shipped bundle, including token recovery and task cancellation
+with backend readback. From the repository root, install Chromium and run it:
+
+```bash
+uv run --locked --extra gui python -m playwright install chromium
+uv run --locked --extra gui python scripts/smoke_webui.py
+```
+
+The Web UI regression workflow runs all three test layers on relevant pull
+requests.
 
 Test-count drop vs merge base (#4873)
 
@@ -115,11 +130,11 @@ a test report. The diagnostic identifies a possible cause, not proof that
 the guard caused every worker failure. Rerun with a higher cap to confirm:
 
 ```bash
-BERNSTEIN_MEM_GUARD_GB=8 uv run pytest tests/unit -n 8 -q
+BERNSTEIN_MEM_GUARD_GB=8 uv run --with pytest-xdist pytest path/to/test_file.py -n 8 -q
 ```
 
-pytest-xdist is not in the dev group; install it into your environment
-yourself (`uv pip install pytest-xdist`). macOS does not let a process
+`--with pytest-xdist` supplies the optional plugin for this run. Replace the
+example path with the file that failed. macOS does not let a process
 lower `RLIMIT_AS`, so the cap is a no-op there and only the per-test RSS
 check applies.
 
@@ -157,7 +172,7 @@ uv tool install semgrep
 uv tool run semgrep --config .semgrep.yml --severity ERROR --error src/
 
 # Bandit (production HIGH-only with baseline)
-uv run bandit -r src/ -ll --severity-level high -b .bandit-baseline.json
+uv run bandit -r src/ --severity-level high -b .bandit-baseline.json
 
 # pip-audit
 uv run pip-audit --strict
@@ -165,8 +180,8 @@ uv run pip-audit --strict
 # Beartype claw - runs the lineage-signer unit tests under runtime type
 # enforcement (allow-list: tests/_beartype_claw.py)
 BEARTYPE_USE_CLAW=enable \
-  uv run pytest tests/unit/ -q --no-cov \
-  -k 'lineage_signer or lineage_record or lineage_export'
+  uv run pytest tests/unit/test_lineage_signer.py tests/unit/test_lineage_record.py \
+  tests/unit/test_lineage_export.py -q --no-cov
 
 # Pyright strict zone
 uv run pyright --project pyrightconfig.strict.json
@@ -185,13 +200,13 @@ uv run mypy src
 uv run pytest tests/unit/cli/test_doctor_environment_type_contract.py -q
 
 # Vulture
-vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
+uv run vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
-# Diff-cover (after a coverage run). The floor is the committed
+# Diff-cover (after a coverage run on the files under review). The floor is the committed
 # diff_coverage_floor_percent in .coverage-baseline.json (LEVEL 1 of the
 # coverage ratchet); the weekly bump nudges it up. See
 # docs/operations/coverage-ratchet.md.
-uv run pytest tests/unit/ --cov=src/bernstein --cov-report=xml
+uv run pytest path/to/test_file.py --cov=src/bernstein --cov-report=xml
 FLOOR=$(uv run python scripts/coverage_ratchet.py show-floor --baseline .coverage-baseline.json)
 uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under="$FLOOR"
 
@@ -376,14 +391,12 @@ is a flake waiting to happen.
 uv run python scripts/run_tests.py --parallel 4
 
 # One file or one test, same runner:
-uv run python scripts/run_tests.py tests/unit/test_foo.py
-uv run python scripts/run_tests.py tests/unit/test_foo.py::test_bar
+uv run python scripts/run_tests.py tests/unit/test_no_network_guard.py
+uv run python scripts/run_tests.py tests/unit/test_no_network_guard.py::test_guard_allows_localhost_hostname
 
-# Or straight pytest:
-uv run pytest tests/unit/ -q --no-cov
-
-# The guard's own meta-tests:
+# Or straight pytest for one file:
 uv run pytest tests/unit/test_no_network_guard.py -q --no-cov
+
 ```
 
 ## Multi-adapter pentest fan-out

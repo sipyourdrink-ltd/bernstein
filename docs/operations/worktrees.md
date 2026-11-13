@@ -7,7 +7,9 @@ crashes, or aborted experiments.
 ## Overview
 
 `bernstein worktrees` inspects and reaps worktrees the orchestrator
-left behind. The classifier in
+left behind. The **project workspace** is the project root the command
+inspects; a **task worktree** is an individual checkout managed beneath
+that workspace. The classifier in
 `src/bernstein/core/worktrees/classifier.py` is the single source of
 truth for state. The CLI module
 (`src/bernstein/cli/commands/worktrees_cmd.py`) handles I/O:
@@ -268,3 +270,92 @@ integration branch. Open the directory and commit/push or salvage the
 work. Once it is clean and merged, `gc` reaps it normally. To delete it
 regardless - destroying the unsaved work - rerun with `--force-unsaved`
 (an extra confirmation is required).
+
+## Task-terminal lane sweep
+
+`bernstein worktrees sweep` (also `bernstein sandbox sweep`) lists worktrees
+and audited sandbox sessions whose owning tasks are recorded finished in the
+task store. All owners of a batch sandbox must be finished. A missing task
+record is unknown, never proof of completion. A live PID does not hide a leak;
+`worktrees list` retains its existing PID/trace display rules.
+
+Only worktree lanes can be removed. Sandbox lanes are marked **report only
+(removal: #6571)** in the preview and remain untouched by apply, regardless of
+approval. Sweep never stops or removes a container. Sandbox contents and
+process liveness are not probed; their unsaved-work value is `null` (`?`), not
+`false`. Sandbox removal is a separate workflow tracked by #6571.
+
+```bash
+bernstein worktrees sweep --workdir .
+bernstein sandbox sweep --json
+bernstein sandbox sweep --measure-disk
+bernstein worktrees sweep --apply --removal-approval removal.json
+```
+
+The default and `--dry-run` are read-only, including no audit writes, signing
+keys or GC lock creation. `--dry-run` outranks `--apply`. The legacy `worktrees
+gc` also accepts `--dry-run` as an alias of `--dry`; its CLI preview now makes
+no audit writes. Its existing `--yes` deletion opt-in remains supported.
+
+Rows include task ids, age and disk bytes. Worktree bytes are measured locally.
+Text output also prints each lane's full resource id and removal status on a
+plain line after the table, so narrow terminals do not split or truncate ids.
+Sandbox disk usage is `null` (`?` in the table) unless `--measure-disk` is passed
+and the backend implements `leaked_session_size_bytes(session_id)`. Docker
+reports writable-layer bytes, excluding shared images and external volumes.
+Measurement never creates or resumes a session. Other backends report unknown.
+
+Removal uses the existing destructive-operation approval model in a separate
+`removal` class. The preview prints `lane.remove:<digest>` as the exact request
+`operation`; JSON rows carry it as `removal_operation`. The digest binds the
+worktree resources, paths, task owners and recorded lifetimes. Sandbox rows
+are excluded from the digest and the removal set; changes to report-only
+sandboxes do not change the approved worktree operation. `removal.json` contains
+`request` (the serialized `ApprovalRequest`) and `responses` (serialized
+`ApprovalResponse` objects) from the approval workflow. At least two distinct
+approvers must approve that request before its expiry; any denial vetoes it.
+This is separate from ordinary execution approval. A file from a different
+preview does not authorize this plan. For example, its shape is:
+
+```json
+{
+  "request": {
+    "request_id": "removal-request-id",
+    "operation": "lane.remove:<digest from preview>",
+    "reason": "remove reviewed leaked lanes",
+    "requester": "operator",
+    "channels": ["cli"],
+    "created_at": "2026-11-07T12:00:00+00:00",
+    "expires_at": "2026-11-07T12:05:00+00:00",
+    "required_approvals": 2
+  },
+  "responses": [
+    {"request_id": "removal-request-id", "channel": "cli", "approver": "owner", "approved": true, "timestamp": "2026-11-07T12:01:00+00:00"},
+    {"request_id": "removal-request-id", "channel": "cli", "approver": "reviewer", "approved": true, "timestamp": "2026-11-07T12:02:00+00:00"}
+  ]
+}
+```
+
+Under the shared GC lock, removal verifies the source audit chain and
+recomputes the full worktree removal digest before the first deletion. A
+changed plan aborts without deleting any worktrees. It also rereads task
+status and ownership before each deletion. Unsaved work and live worker PIDs
+veto worktree removal, including for corrupt directories. Both checks run
+again immediately before removal, on a best-effort basis: workers do not take
+the GC lock, so a write or spawn after the final check can race with deletion.
+Vetoed worktrees remain listed and their skipped outcomes are journaled.
+Sweep does not accept `--force-unsaved`; that flag belongs only to the separate
+legacy `gc` workflow. Every worktree intent, skip and result is recorded as
+`lane.remove`, naming `task_ids`, `approval_class` and `removal_approval_id`.
+An audit append failure before deletion prevents it. Report-only sandboxes
+produce no removal intent or `sandbox.session_destroy` event.
+
+Apply reports worktrees as `removed`, `skipped`, `failed`, or `not_attempted`;
+sandboxes remain `report_only`, with reason `report only (removal: #6571)`.
+JSON keeps the listing shape and adds `removal_status`, plus `removal_reason`
+for a skip or report-only row, or `removal_error` for a failure. If a worktree
+fails, the sweep stops, reports earlier removals and all remaining lanes, and
+exits 1; it does not claim an atomic rollback. If deletion succeeds but the
+following audit append fails, the outcome remains `removed` with its audit
+error, and the command still exits 1. A fully vetoed plan exits 0 with `0
+removed`; automation must inspect `removal_status` to distinguish that outcome.

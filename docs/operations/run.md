@@ -23,6 +23,34 @@ operator inspection without seed contents. Older snapshots remain readable.
 The path identifies the selected file, not an immutable snapshot: edits to
 that file are revalidated on the next launch.
 
+## Internal selected-task attachment preview
+
+No CLI or REST attachment execution is exposed yet. Internal callers must
+explicitly `await store.initialize_store_identity()` before using
+`await store.preview_attachment(manifest_json, existing_pools)`. Initialization
+creates `<jsonl_path>.identity.json` once, with exactly
+`{"schema_version":"task-store-identity/v1","store_id":"<uuid4 hex>"}`.
+Legacy stores need this step too; restart/restore must preserve the file.
+Back up the identity alongside the task JSONL and any attachment state.
+
+The closed `task-attach/v1` JSON manifest requires `run_id` (`attach-` plus
+32 lowercase hex characters), `store_id` (32 lowercase hex characters),
+`tenant_id`, nonempty `tasks` (`task_id`, integer `version >= 1`), `limits`
+(`max_accepted_claims`, `max_concurrency`, `max_elapsed_seconds`, all integers
+at least 1, and `resources`: existing `pool`, integer `max_slots >= 0`), and
+`derived_work` (`max_retries_per_task`, integer at least 0). Unknown/missing
+keys, duplicate keys/task IDs, coercions and nonfinite numbers are rejected.
+The pool must be valid and `ENFORCE`; slots add a ceiling without taking grants.
+
+Preview validates identity, tenant and exact task versions under the store
+lock and returns detached `tasks` sorted by ID plus `manifest_sha256`: SHA-256
+of the complete compact, sorted-key UTF-8 JSON with Unicode unescaped.
+Dependencies never expand the selection. Preview creates no files or identity,
+changes no task/history/audit state, takes no leases/grants and launches nothing.
+Attachment IDs never populate administrative `TaskCreate.run_id`. Future
+execution permits only bounded retries, with descendants charged to the original
+task's retry allowance; decomposition and follow-ups are forbidden.
+
 ## Image attachments (`--attach`)
 
 `bernstein run` accepts one or more `--attach <path>` arguments to

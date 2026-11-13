@@ -104,6 +104,8 @@ class SandboxSession(ABC):
             construction.
         session_id: Opaque identifier chosen by the backend. Stable for
             the session's lifetime.
+        removal_evidence: Optional backend-specific identity evidence,
+            copied into the create audit event. Never include credentials.
         workdir: Logical path inside the sandbox where the workspace
             root lives. Adapters that still run as local subprocesses
             use this as ``cwd``; adapters refactored in oai-002b will
@@ -113,6 +115,7 @@ class SandboxSession(ABC):
     backend_name: str
     session_id: str
     workdir: str
+    removal_evidence: Mapping[str, str] | None = None
 
     @abstractmethod
     async def read(self, path: str) -> bytes:
@@ -281,9 +284,81 @@ class SandboxBackend(Protocol):
         ...
 
 
+class SandboxReattachStatus(StrEnum):
+    """Outcomes of attaching to an existing resource for removal."""
+
+    ATTACHED = "attached"
+    UNSUPPORTED = "unsupported"
+    NOT_FOUND = "not_found"
+    IDENTITY_MISMATCH = "identity_mismatch"
+    ERROR = "error"
+
+
+class SandboxRemovalStatus(StrEnum):
+    """Only REMOVED confirms that removal succeeded."""
+
+    REMOVED = "removed"
+    NOT_FOUND = "not_found"
+    IDENTITY_MISMATCH = "identity_mismatch"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class SandboxReattachResult:
+    """An identity-verified handle only on ATTACHED; failures expose none."""
+
+    status: SandboxReattachStatus
+    session: SandboxSession | None = None
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, SandboxReattachStatus):
+            raise ValueError("status must be a SandboxReattachStatus")
+        if (self.status == SandboxReattachStatus.ATTACHED) != (self.session is not None):
+            raise ValueError("only attached requires and permits a session handle")
+
+
+@dataclass(frozen=True)
+class SandboxRemovalResult:
+    """Explicit removal outcome; NOT_FOUND is not successful removal."""
+
+    status: SandboxRemovalStatus
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, SandboxRemovalStatus):
+            raise ValueError("status must be a SandboxRemovalStatus")
+
+
+@runtime_checkable
+class SandboxRemovalBackend(Protocol):
+    """Optional extension; absence means removal is unsupported.
+
+    Implementations must validate backend-specific evidence and resource
+    identity before returning a handle or removing anything. Malformed
+    evidence, invalid results and exceptions fail closed. Never fall back
+    to create or resume: resume restores snapshots, not existing resources.
+    """
+
+    async def reattach_for_removal(self, session_id: str, *, evidence: Mapping[str, str]) -> SandboxReattachResult:
+        """Attach only to the existing resource matching session_id and evidence."""
+        ...
+
+    async def destroy_for_removal(
+        self, session: SandboxSession, *, evidence: Mapping[str, str]
+    ) -> SandboxRemovalResult:
+        """Recheck identity before removal; only REMOVED confirms success."""
+        ...
+
+
 __all__ = [
     "ExecResult",
     "SandboxBackend",
     "SandboxCapability",
+    "SandboxReattachResult",
+    "SandboxReattachStatus",
+    "SandboxRemovalBackend",
+    "SandboxRemovalResult",
+    "SandboxRemovalStatus",
     "SandboxSession",
 ]

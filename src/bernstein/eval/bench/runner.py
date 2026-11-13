@@ -186,9 +186,14 @@ class HoldoutIsolationError(ValueError):
 
 @dataclass
 class BenchRunner:
-    """
-    Runs a :class:`BenchSuite` end-to-end and produces a
-    :class:`SubmissionBundle`.
+    """Run a :class:`BenchSuite` and produce a :class:`SubmissionBundle`.
+
+    Attributes:
+        suite: Benchmark suite containing the tasks to evaluate.
+        adapter: Adapter used to run and score tasks.
+        scheduler_config: Configuration passed to the adapter when it runs a task.
+        budget_usd: When reported cumulative cost reaches this amount,
+            remaining tasks are refused. None disables the budget check.
     """
 
     suite: BenchSuite

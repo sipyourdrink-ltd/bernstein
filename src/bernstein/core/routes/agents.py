@@ -201,6 +201,7 @@ def _synthesize_agents_from_tasks(store: Any, now: float, tenant_id: str) -> lis
 
 
 def task_ids_first(task: Any) -> str | None:
+    """Return the task ID as a string, or None if it is empty or absent."""
     return str(getattr(task, "id", "")) or None
 
 

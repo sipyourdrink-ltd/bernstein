@@ -268,10 +268,15 @@ following:
 
 - one spawn-frozen tool-signing identity;
 - an identity envelope valid for that exact run, request, intent, call index,
-  journal head, audit predecessor, and anchor;
+  audit predecessor, and anchor;
 - one immediately following `toolcall.enforced_dispatch` with the same
   attestation reference and intent digest; and
 - no duplicate request id or attestation consumption.
+
+The projection does not yet compare the envelope's signed journal head with
+the run anchor. The writer refuses to sign after the journal head moves, and
+the verdict walk checks the head, but `verified_tool_call_ids` does not; that
+check is tracked in #7013.
 
 `LineageEntry.tool_call_id` is matched against that request-id projection.
 When authenticated evidence is explicitly supplied, a missing match is a

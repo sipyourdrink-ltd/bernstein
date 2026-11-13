@@ -445,11 +445,11 @@ class OdataHttpClient:
                     headers=headers,
                 )
             except Exception as exc:  # pragma: no cover - transport failure
-                logger.warning("OData transport error: %s %s", method, url)
+                logger.warning("OData transport error: method=%s error_type=%s", method, type(exc).__name__)
                 raise OdataError(f"OData transport error: {exc}") from exc
 
             status = getattr(resp, "status_code", 0)
-            logger.debug("OData %s %s -> %s headers=%s", method, url, status, self.sanitize_headers(headers))
+            logger.debug("OData request: method=%s status=%s", method, status)
 
             if status == 429:
                 retry_after = _parse_retry_after(resp)
@@ -608,11 +608,11 @@ class OdataPollSource:
         if cursor.mode == "delta" and cursor.delta_link:
             try:
                 return self._poll_delta(cursor)
-            except OdataError as exc:
+            except OdataError:
                 # Fall back to watermark polling WITHOUT losing the cursor: the
                 # maintained watermark is the resume position. Do not re-probe
                 # this cycle (probed stays True so we do not thrash).
-                logger.info("OData delta read failed (%s); falling back to watermark polling", exc)
+                logger.info("OData delta read failed; falling back to watermark polling")
                 cursor = replace(cursor, mode="watermark", delta_link="")
                 return self._poll_watermark(cursor, allow_probe=False)
 

@@ -5,9 +5,12 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import logging
-from abc import ABC, abstractmethod
+import sys
+from abc import abstractmethod
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
+
+from bernstein.plugins import _QualityGate
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,13 +20,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GatePlugin(ABC):
+class GatePlugin(_QualityGate):
     """Base class for user-defined quality gates."""
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Unique gate name."""
 
     @property
     def required(self) -> bool:
@@ -47,7 +45,13 @@ class GatePlugin(ABC):
 
 
 class GatePluginRegistry:
-    """Discover and manage quality-gate plugins."""
+    """Discover and manage quality-gate plugins.
+
+    Args:
+        workdir: Project root containing the local ``.bernstein/gates`` directory.
+        built_in_names: Gate names reserved for built-in gates. None means
+            no names are reserved by this registry.
+    """
 
     def __init__(self, workdir: Path, *, built_in_names: set[str] | frozenset[str] | None = None) -> None:
         self._workdir = workdir
@@ -97,9 +101,14 @@ class GatePluginRegistry:
                 logger.warning("Skipping gate plugin %s: unable to create import spec", py_file)
                 continue
             module = importlib.util.module_from_spec(spec)
+            # Register before executing: ``@dataclass`` under
+            # ``from __future__ import annotations`` resolves the class's module
+            # through ``sys.modules`` and raises AttributeError if it is missing.
+            sys.modules[module_name] = module
             try:
                 spec.loader.exec_module(module)
             except Exception as exc:  # pragma: no cover - exercised through tests
+                sys.modules.pop(module_name, None)
                 logger.warning("Failed to load gate plugin %s: %s", py_file, exc)
                 continue
             self._register_module_plugins(module, source=str(py_file))

@@ -286,6 +286,14 @@ registry and drives `build_pipeline_from_yaml`, performing a single sweep
 across configured trackers and recording the sweep into the HMAC-chained audit
 log (`tracker_pipeline.sweep`).
 
+A failing `provide_tracker_adapter` hook records a one-shot declaration
+quarantine in the project containing the selected `--config` file. Other
+plugins and built-in trackers remain available. Fix the hook and run
+`bernstein quarantine re-enable DECLARATION_ID --workdir PROJECT` before
+the next sweep can invoke it. `bernstein trackers list` respects existing
+markers in the current workspace without writing new ones. See
+[declaration initialization quarantine](../operations/declaration-quarantine.md).
+
 ## What is deliberately out of scope
 
 * Tracker adapter implementations themselves (separate per-tracker tickets).

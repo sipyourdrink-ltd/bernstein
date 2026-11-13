@@ -14,7 +14,7 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 
 ## Root command flags
 
-`bernstein` itself accepts these flags (defined at `cli/main.py:482-572`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
+`bernstein` itself accepts these flags (defined on `cli` in `src/bernstein/cli/main.py`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -42,6 +42,9 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 | `-v, --verbose` | off | Show debug-level output. |
 | `-q, --quiet` | off | Suppress all non-error output. |
 | `-t, --task PATTERN` | none | Run only backlog tasks matching PATTERN. |
+| `--sandbox BACKEND` | none | Override the sandbox backend selected for the run. |
+| `--allow-paid` | off | Allow selection of paid sandbox backends. |
+| `--refine SPEC` | none | Parse and validate an iterative refinement spec. The root runner does not consume it yet. |
 | `--auto-pr` | off | Auto-open a GitHub PR when all tasks complete. |
 | `--activity-log [PATH]` | off | Write activity to a log file. Default path `.sdd/logs/activity.log`. |
 
@@ -250,7 +253,10 @@ pipeline with at most one model call: draft (structured requirement
 extraction), approve (the requirement-set hash is bound into the audit
 chain), and compile (a deterministic, model-free transformation to a task
 graph). Each task node carries the content hashes of the requirement lines it
-implements, so every artefact traces back to spec lines through lineage.
+implements, so every artefact traces back to spec lines through lineage. An
+unreadable spec or a spec with no EARS-shaped requirements exits with status
+`1` and a diagnostic on stderr. Command-line usage errors exit with status
+`2`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -986,7 +992,8 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein govern posture` | Score the install's governance posture from chain-evidenced facts only: per-control coverage over the lineage log, no configuration read. Names every contributing chain event, the weights version, and its own denominator (the weight that was measurable). Signed with the audit-chain key; `--json-output` prints the canonical document. | `cli/commands/governance_cmd.py` |
 | `bernstein govern inventory --render` | Emit the inventory topology graph from a store as mermaid or dot. Same store, same bytes. | `cli/commands/govern_cmd.py` |
 | `bernstein govern reconcile` | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it. | `cli/commands/govern_cmd.py` |
-| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--json`. Opt-in areas, such as `duplication` (duplicate implementations in the install), run only when `--only` names them. | `cli/commands/govern_audit_cmd.py` |
+| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--format text\|json\|sarif` (`--json` remains an alias). `--quiet` suppresses reports and check-crash warnings. The default gate fails on unmeasurable checks; `--strict` distinguishes missing prerequisites. See the [exit-code table](../operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Declared findings do not affect the exit code. Opt-in areas, such as `duplication` (duplicate implementations in the install), run only when `--only` names them. | `cli/commands/govern_audit_cmd.py` |
+| `bernstein govern audit --since <HASH> --against <HASH>` | Compare two stored audit reports by their full SHA-256 hashes. Both anchors must verify with the existing audit key. Accepts text or JSON and reads only the stored reports and their lineage. | `cli/commands/govern_audit_cmd.py` |
 | `bernstein govern audit-keys` | Check whether verifier keys are stale relative to the install identity. | `cli/commands/governance_cmd.py` |
 | `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
@@ -2013,7 +2020,10 @@ example widening `viewer` to `operator`) breaks its signature and the token
 stops validating. Every issue and revoke is mirrored onto the audit chain
 (`dashboard.token_grant`), and every login and write authorization is a
 signed governance decision in the `dashboard-auth` lineage run - recompute
-them offline with `bernstein governance verify dashboard-auth`.
+them offline with `bernstein govern verify dashboard-auth --bindings FILE`,
+where `FILE` contains the signed role bindings produced by
+`dashboard_role_bindings` in `bernstein.core.server.dashboard_tokens`.
+The dashboard generates these bindings in memory.
 
 | Subcommand | Purpose |
 |---|---|
@@ -2028,7 +2038,6 @@ root containing `.sdd/`.
 bernstein auth dashboard-token issue --principal alice --scope viewer
 bernstein auth dashboard-token list
 bernstein auth dashboard-token revoke 3f1a9c2d5e7b0a41
-bernstein governance verify dashboard-auth
 ```
 
 Startup posture: `bernstein gui serve` on a loopback host without any
