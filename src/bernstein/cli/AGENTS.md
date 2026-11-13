@@ -11,6 +11,8 @@ The top-level `bernstein` command (`pyproject.toml` `[project.scripts]` maps it 
 | `helpers.py` | Shared console and utility helpers |
 | `run_cmd.py` | `bernstein run` entry; bootstrap/confirm split into siblings |
 | `commands/governance_cmd.py` | The `bernstein govern` group: `verify`, `plan`, and the `audit`, `reconcile`, `inventory` and `lane` subcommands that live in `govern_*_cmd.py` |
+| `commands/govern_audit_cmd.py`, `commands/status_cmd.py` | `govern audit` runs the doctor checks as opt-in producers `INS-001` to `INS-020`: each wraps the `_doctor_check_*` helper that `bernstein doctor` calls (#5073). `BERNSTEIN_GOVERN_AUDIT_SENTINEL=1` adds a synthetic failure. The audit journals it when selected and dispatches notifications when configured and enabled (#5091) |
+| `commands/audit_cmd.py` | `bernstein audit verify`: one pass per integrity pillar; with an audit key, the read-only hash-tile pillar checks tiles against successfully authenticated segment bytes (#6548) |
 | `commands/trust_cmd.py` | `bernstein trust`: the one sanctioned writer of `.sdd/runtime/workspace_trust.json` |
 | `commands/verify_cmd.py`, `commands/verify_kinds.py` | `bernstein verify <artefact-path>` dispatches on the artefact's kind through a registry (#5103) |
 | `commands/seal_cmd.py` | `bernstein seal`: anchors a run's sealed head outside this install (#4205) |
@@ -24,10 +26,11 @@ The top-level `bernstein` command (`pyproject.toml` `[project.scripts]` maps it 
 - Legacy flat import paths (`bernstein.cli.<module>`) are served by a meta-path finder in `__init__.py`; when moving a module, extend the redirect rather than leaving a shim file behind.
 - The CLI surface is tracked for reduction (issue #3147): prefer a subcommand on an existing group (`govern`, `identity`, `adapters`, `worktrees`) over a new top-level command.
 - Non-zero exit codes are operator contract; declare them as named constants and document them in the command docstring (`commands/resume_cmd.py` is the model).
+- `INSTALLATION_CHECKS` in `commands/govern_audit_cmd.py` maps stable IDs to doctor helpers in display order: append a pair, never renumber or reuse one. Each helper is wrapped by `doctor_producer` (`../core/checks/adapters.py`), which keeps the doctor rows and returns the audit `Finding`, so the two commands report one observation.
 - Repository-authored commands (plugin and lifecycle hooks, workflow command nodes) run only in a trusted workspace. Nothing grants trust implicitly; only `bernstein trust` writes the record (`commands/trust_cmd.py`).
 
 ## Testing
 
 Single files only, e.g. `uv run pytest tests/unit/test_agents_md_cmd.py -x -q`; most commands have a matching `test_<name>_cmd.py` under `tests/unit/`, and newer ones sit under `tests/unit/cli/`.
 
-<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->
+<!-- Reviewed 2026-11-11 against main 535af7532; the notes above still hold. -->
