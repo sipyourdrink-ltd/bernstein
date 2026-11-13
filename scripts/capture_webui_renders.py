@@ -225,11 +225,18 @@ def wait_for_boot(url: str, process: subprocess.Popen[bytes], log: Path) -> None
 
 
 def _demo_environment(workdir: Path) -> dict[str, str]:
-    # Leave out host-specific service config, credentials and Git overrides.
+    # The server also resolves configuration through Path.home().
+    # Give only the demo child process its own home.
+    demo_home = workdir / "home"
+    demo_home.mkdir(exist_ok=True)
     return {
         "PATH": os.environ.get("PATH", os.defpath),
-        "XDG_CONFIG_HOME": str(workdir / ".config"),
-        "XDG_DATA_HOME": str(workdir / ".local/share"),
+        "HOME": str(demo_home),
+        "USERPROFILE": str(demo_home),
+        "XDG_CONFIG_HOME": str(demo_home / ".config"),
+        "XDG_DATA_HOME": str(demo_home / ".local/share"),
+        "XDG_STATE_HOME": str(demo_home / ".local/state"),
+        "XDG_CACHE_HOME": str(demo_home / ".cache"),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
     }
@@ -361,7 +368,7 @@ def seed_project(project_dir: Path) -> None:
         '    assert client.get("/queues/nope").status_code == 404\n'
     )
     _git(project_dir, "init", "--quiet", "--template=")
-    _git(project_dir, "add", "-A")
+    _git(project_dir, "add", "--", "app.py", "requirements.txt", "tests/test_app.py")
     _git(project_dir, "commit", "--quiet", "-m", "Initial service")
 
     # The working-tree edits the diff drawer renders: a new endpoint, its

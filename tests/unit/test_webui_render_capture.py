@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -192,8 +193,17 @@ def test_demo_environment_omits_machine_specific_overrides(
 
     assert "BERNSTEIN_FLEET_CONFIG" not in env
     assert "GIT_DIR" not in env
-    assert env["XDG_CONFIG_HOME"] == str(tmp_path / ".config")
-    assert env["XDG_DATA_HOME"] == str(tmp_path / ".local/share")
+    demo_home = tmp_path / "home"
+    child_home = subprocess.check_output(
+        [sys.executable, "-c", "from pathlib import Path; print(Path.home())"],
+        env=env,
+        text=True,
+    ).strip()
+    assert Path(child_home) == demo_home
+    assert env["XDG_CONFIG_HOME"] == str(demo_home / ".config")
+    assert env["XDG_DATA_HOME"] == str(demo_home / ".local/share")
+    assert env["XDG_STATE_HOME"] == str(demo_home / ".local/state")
+    assert env["XDG_CACHE_HOME"] == str(demo_home / ".cache")
 
 
 def test_a_run_that_fails_part_way_leaves_every_render_untouched(capturer: Any, assets: Path, monkeypatch: Any) -> None:
