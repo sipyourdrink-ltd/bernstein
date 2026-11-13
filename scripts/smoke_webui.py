@@ -273,6 +273,478 @@ def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> 
     assert task.json()["status"] == "cancelled"
 
 
+def check_task_creation(page: Page, base: str, headers: dict[str, str]) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    for index, entry in enumerate(("header", "prompt", "empty state"), start=1):
+        page.goto(f"{base}/ui/tasks")
+        if entry == "empty state":
+            page.get_by_role("button", name="Failed").click()
+            expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+            trigger = page.get_by_role("button", name="Create task", exact=True).last
+        elif entry == "prompt":
+            trigger = page.get_by_role("button", name="New from prompt", exact=True)
+        else:
+            trigger = page.get_by_role("button", name="Create task", exact=True)
+        trigger.click()
+        form = page.get_by_role("dialog", name="Create task", exact=True)
+        expect(form.get_by_label("Prompt" if entry == "prompt" else "Title")).to_be_focused()
+        if entry == "header":
+            page.keyboard.press("Escape")
+            expect(trigger).to_be_focused()
+            trigger.click()
+            expect(form.get_by_label("Title")).to_be_focused()
+            page.mouse.click(1, 1)
+            expect(form).to_be_hidden()
+            expect(trigger).to_be_focused()
+            trigger.click()
+        title = f"Task creation smoke {index}"
+        description = f"Created from the {entry} control."
+        form.get_by_label("Title").fill(title)
+        form.get_by_label("Prompt").fill(description)
+        form.get_by_label("Role (optional)").fill("qa")
+        with page.expect_response(lambda reply: reply.url == tasks_url and reply.request.method == "POST") as created:
+            form.get_by_role("button", name="Create task", exact=True).click()
+        assert created.value.status == 201
+        task_id = created.value.json()["id"]
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        task = page.request.get(f"{tasks_url}/{task_id}", headers=headers)
+        expect(task).to_be_ok()
+        assert (task.json()["title"], task.json()["description"], task.json()["role"]) == (title, description, "qa")
+        page.keyboard.press("Escape")
+        return_target = (
+            page.get_by_role("button", name="Create task", exact=True).first if entry == "empty state" else trigger
+        )
+        expect(return_target).to_be_focused()
+
+
+def check_task_creation_failures(page: Page, base: str, headers: dict[str, str]) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    events_url = f"{base}/api/v1/events"
+    page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
+    page.goto(f"{base}/ui/tasks")
+    trigger = page.get_by_role("button", name="Create task", exact=True).first
+    trigger.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    submit = form.get_by_role("button", name="Create task", exact=True)
+    cancel = form.get_by_role("button", name="Cancel", exact=True)
+    form.get_by_label("Title").fill("Task creation response loss")
+    form.get_by_label("Prompt").fill("Confirm the task list before repeating this request.")
+    role = form.get_by_label("Role (optional)")
+    role.fill("unknown")
+
+    page.context.set_offline(True)
+    try:
+        submit.click()
+        expect(form.get_by_role("alert")).to_contain_text("You are offline")
+        expect(cancel).to_be_enabled()
+    finally:
+        page.context.set_offline(False)
+
+    saved_ids: list[str] = []
+
+    def respond_to_create(route: Route) -> None:
+        if route.request.method != "POST":
+            route.continue_()
+        elif route.request.post_data_json.get("role") == "unknown":
+            route.fulfill(status=400, json={"detail": "Role unknown is not configured. Allowed roles: qa."})
+        elif route.request.post_data_json["title"] == "Malformed task response":
+            route.fulfill(status=201, json={"id": {"unexpected": True}})
+        elif route.request.post_data_json["title"] == "Padded task ID":
+            route.fulfill(status=201, json={"id": " 0123456789ab "})
+        elif route.request.post_data_json["title"] == "Invalid task ID":
+            route.fulfill(status=201, json={"id": "wrong-id"})
+        else:
+            response = route.fetch()
+            assert response.status == 201
+            saved_ids.append(response.json()["id"])
+            route.fulfill(status=500, json={"detail": "The task response could not be delivered."})
+
+    page.route(tasks_url, respond_to_create)
+    try:
+        submit.click()
+        expect(form.get_by_role("alert")).to_contain_text("Allowed roles: qa.")
+        expect(role).to_be_enabled()
+        role.fill("qa")
+        submit.click()
+        expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
+        expect(submit).to_be_disabled()
+        assert len(saved_ids) == 1
+        expect(page.request.get(f"{tasks_url}/{saved_ids[0]}", headers=headers)).to_be_ok()
+        cancel.click()
+        expect(trigger).to_be_focused()
+        expect(page.get_by_text("Task creation response loss", exact=True)).to_be_visible()
+        trigger.click()
+        form.get_by_role("button", name="Check task", exact=True).click()
+        expect(page.get_by_role("dialog", name="Task creation response loss", exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(trigger).to_be_focused()
+
+        for title in ("Malformed task response", "Padded task ID", "Invalid task ID"):
+            trigger.click()
+            form.get_by_label("Title").fill(title)
+            form.get_by_label("Prompt").fill("Treat a malformed response as unconfirmed.")
+            submit.click()
+            expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
+            expect(submit).to_be_disabled()
+            form.get_by_role("button", name="Start a new task instead", exact=True).click()
+            expect(submit).to_be_enabled()
+            cancel.click()
+            expect(trigger).to_be_focused()
+    finally:
+        page.unroute(tasks_url, respond_to_create)
+        page.unroute(events_url)
+
+
+def check_task_creation_during_initial_list(page: Page, base: str, headers: dict[str, str]) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    list_url = f"{tasks_url}?page=1"
+    events_url = f"{base}/api/v1/events"
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+
+    def unconfirmed_create(route: Route) -> None:
+        response = route.fetch()
+        assert response.status == 201
+        route.fulfill(status=500, json={"detail": "The task response could not be delivered."})
+
+    def submit_from(trigger: Locator, title: str) -> None:
+        trigger.click()
+        form.get_by_label("Title").fill(title)
+        form.get_by_label("Prompt").fill("Check the refreshed list after response loss.")
+        form.get_by_role("button", name="Create task", exact=True).click()
+        expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
+
+    page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
+    page.route(tasks_url, unconfirmed_create)
+    try:
+        snapshot = page.request.get(list_url, headers=headers)
+        expect(snapshot).to_be_ok()
+        stale_routes: list[Route] = []
+        page.route(list_url, lambda route: stale_routes.append(route), times=1)
+        with page.expect_request(list_url):
+            page.goto(f"{base}/ui/tasks")
+        title = "Created while the initial list was loading"
+        submit_from(header, title)
+        assert len(stale_routes) == 1
+        with page.expect_request(list_url):
+            form.get_by_role("button", name="Cancel", exact=True).click()
+        stale_routes[0].fulfill(response=snapshot)
+        expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
+        expect(header).to_be_focused()
+        header.click()
+        form.get_by_role("button", name="Check task", exact=True).click()
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
+
+        title = "Created from an empty task list"
+        page.route(list_url, lambda route: route.fulfill(json=[]), times=1)
+        page.reload()
+        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+        submit_from(page.get_by_role("button", name="Create task", exact=True).last, title)
+        form.get_by_role("button", name="Cancel", exact=True).click()
+        expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
+        expect(header).to_be_focused()
+        header.click()
+        form.get_by_role("button", name="Check task", exact=True).click()
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
+    finally:
+        page.unroute(tasks_url, unconfirmed_create)
+        page.unroute(list_url)
+        page.unroute(events_url)
+
+
+def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = "Task saved outside the current filter"
+    saved_ids: list[str] = []
+    pending_create: list[Route] = []
+    pending_check: list[Route] = []
+
+    def respond_to_create(route: Route) -> None:
+        response = route.fetch()
+        assert response.status == 201
+        task_id = response.json()["id"]
+        assert route.request.post_data_json["id"] == task_id
+        saved_ids.append(task_id)
+        pending_create.append(route)
+
+    page.goto(f"{base}/ui/tasks")
+    page.get_by_role("button", name="Failed").click()
+    expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    page.get_by_role("button", name="Create task", exact=True).last.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill("Look up the exact task despite response loss.")
+    page.route(tasks_url, respond_to_create, times=1)
+    try:
+        submit = form.get_by_role("button", name="Create task", exact=True)
+        submit.press("Enter")
+        expect(submit).to_have_attribute("aria-disabled", "true")
+        expect(submit).to_be_focused()
+        page.mouse.click(1, 1)
+        expect(form).to_be_visible()
+        for key in ("Tab", "Shift+Tab", "Control+k", "Enter"):
+            page.keyboard.press(key)
+            expect(submit).to_be_focused()
+        expect(page.get_by_role("dialog", name="Command palette")).to_have_count(0)
+        assert len(saved_ids) == len(pending_create) == 1
+        pending_create[0].fulfill(status=500, json={"detail": "The task response could not be delivered."})
+        expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
+        task_url = f"{tasks_url}/{saved_ids[0]}"
+        page.route(task_url, lambda route: pending_check.append(route), times=1)
+        check = form.get_by_role("button", name="Check task", exact=True)
+        expect(check).to_be_focused()
+        with page.expect_request(task_url):
+            check.press("Enter")
+        expect(check).to_have_attribute("aria-disabled", "true")
+        page.mouse.click(1, 1)
+        expect(form).to_be_visible()
+        for key in ("Tab", "Shift+Tab", "Control+k", "Enter"):
+            page.keyboard.press(key)
+            expect(check).to_be_focused()
+        expect(page.get_by_role("dialog", name="Command palette")).to_have_count(0)
+        assert len(pending_check) == 1
+        pending_check[0].fulfill(status=404, json={"detail": "Not found"})
+        expect(form.get_by_role("alert")).to_contain_text("The task is not visible yet")
+        expect(form.get_by_role("button", name="Create task", exact=True)).to_be_disabled()
+        form.get_by_role("button", name="Cancel", exact=True).click()
+        expect(header).to_be_focused()
+        header.click()
+        expect(form.get_by_label("Title")).to_have_value(title)
+        expect(check).to_be_focused()
+        expect(form.get_by_role("button", name="Create task", exact=True)).to_be_disabled()
+        page.reload()
+        page.get_by_role("button", name="Failed").click()
+        header.click()
+        expect(check).to_be_focused()
+        expect(form.get_by_role("button", name="Create task", exact=True)).to_be_disabled()
+        with page.expect_request(task_url) as readback:
+            check.click()
+        assert readback.value.method == "GET"
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        expect(page.request.get(task_url, headers=headers)).to_be_ok()
+        assert len(saved_ids) == 1
+        page.keyboard.press("Escape")
+        expect(header).to_be_focused()
+        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+    finally:
+        page.unroute(tasks_url, respond_to_create)
+
+
+def check_task_creation_survives_route_remount(page: Page, base: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = "Creation in progress during navigation"
+    pending: list[Route] = []
+    attempts: list[str] = []
+
+    def hold_create(route: Route) -> None:
+        attempts.append(route.request.post_data_json["id"])
+        pending.append(route)
+
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    header.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill("Complete the original request after returning.")
+    page.route(tasks_url, hold_create)
+    try:
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        page.go_back()
+        expect(page).to_have_url(f"{base}/ui/settings")
+        page.go_forward()
+        expect(page).to_have_url(f"{base}/ui/tasks")
+        header.click()
+        expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        expect(form.get_by_role("button", name="Start a new task instead", exact=True)).to_be_disabled()
+        expect(form.get_by_role("button", name="Check task", exact=True)).to_be_disabled()
+        assert len(attempts) == len(pending) == 1
+        pending[0].fulfill(status=400, json={"detail": "Choose the qa role."})
+        expect(form.get_by_role("alert")).to_have_text("Choose the qa role.")
+        expect(form.get_by_label("Title")).to_be_focused()
+        expect(form.get_by_label("Title")).to_have_value(title)
+        role = form.get_by_label("Role (optional)")
+        expect(role).to_be_enabled()
+        expect(form.get_by_role("button", name="Check task", exact=True)).to_have_count(0)
+        role.fill("qa")
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        assert len(attempts) == len(pending) == 2
+        assert attempts[0] != attempts[1]
+        pending[1].fulfill(response=pending[1].fetch())
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        page.keyboard.press("Escape")
+    finally:
+        page.unroute(tasks_url, hold_create)
+
+
+def check_task_creation_rejected_while_away(page: Page, base: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = "Task rejected while the operator is away"
+    prompt = "Keep the original draft available for correction."
+    pending: list[Route] = []
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    header.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill(prompt)
+    form.get_by_label("Role (optional)").fill("incorrect")
+    page.route(tasks_url, lambda route: pending.append(route), times=1)
+    try:
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        page.go_back()
+        expect(page).to_have_url(f"{base}/ui/settings")
+        assert len(pending) == 1
+        pending[0].fulfill(status=400, json={"detail": "Choose the qa role."})
+        page.wait_for_function("sessionStorage.getItem('bernstein.unconfirmed-task-id') === null")
+        page.go_forward()
+        expect(page).to_have_url(f"{base}/ui/tasks")
+        header.click()
+        expect(form.get_by_role("alert")).to_have_text("Choose the qa role.")
+        expect(form.get_by_label("Title")).to_be_focused()
+        expect(form.get_by_label("Title")).to_have_value(title)
+        expect(form.get_by_label("Prompt")).to_have_value(prompt)
+        expect(form.get_by_label("Role (optional)")).to_have_value("incorrect")
+        expect(form.get_by_role("button", name="Check task", exact=True)).to_have_count(0)
+        form.get_by_role("button", name="Cancel", exact=True).click()
+    finally:
+        page.unroute(tasks_url)
+
+
+def check_task_creation_success_after_remount(page: Page, base: str, *, settlement: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    title = f"Task confirmed after returning to Tasks ({settlement})"
+    pending: list[Route] = []
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    header.click()
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    form.get_by_label("Title").fill(title)
+    form.get_by_label("Prompt").fill("Open the confirmed task when the operator returns.")
+    page.route(tasks_url, lambda route: pending.append(route), times=1)
+    try:
+        with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        page.go_back()
+        expect(page).to_have_url(f"{base}/ui/settings")
+        assert len(pending) == 1
+        if settlement == "while away":
+            pending[0].fulfill(response=pending[0].fetch())
+            expect(page.get_by_role("heading", name="Settings", exact=True)).to_be_visible()
+        page.go_forward()
+        expect(page).to_have_url(f"{base}/ui/tasks")
+        palette = page.get_by_role("dialog", name="Command palette")
+        if settlement == "with form open":
+            header.click()
+            expect(form.get_by_text("Creating task...", exact=True)).to_be_visible()
+        elif settlement == "with palette open":
+            page.keyboard.press("Control+k")
+            expect(palette.get_by_role("textbox")).to_be_focused()
+        else:
+            expect(form).to_have_count(0)
+        if settlement != "while away":
+            pending[0].fulfill(response=pending[0].fetch())
+        detail = page.get_by_role("dialog", name=title, exact=True)
+        if settlement != "with form open":
+            expect(page.get_by_role("status").filter(has_text="Task created.")).to_have_count(1)
+            expect(detail).to_have_count(0)
+            if settlement == "with palette open":
+                expect(palette.get_by_role("textbox")).to_be_focused()
+                page.keyboard.press("Escape")
+                expect(palette).to_have_count(0)
+            view_created = page.get_by_role("button", name="View created task", exact=True)
+            if settlement == "with form closed":
+                page.get_by_role("button", name="Done", exact=False).first.click()
+                header.click()
+                expect(form.get_by_label("Title")).to_have_value("")
+                form.get_by_role("button", name="Cancel", exact=True).click()
+                expect(view_created).to_be_visible()
+            view_created.click()
+        expect(detail).to_be_visible()
+        assert page.evaluate("sessionStorage.getItem('bernstein.unconfirmed-task-id')") is None
+        page.keyboard.press("Escape")
+        expect(header).to_be_focused()
+    finally:
+        page.unroute(tasks_url)
+
+
+def check_task_creation_keeps_two_background_confirmations(page: Page, base: str) -> None:
+    tasks_url = f"{base}/api/v1/tasks"
+    page.goto(f"{base}/ui/settings")
+    page.get_by_role("navigation").get_by_role("link", name="Tasks", exact=True).click()
+    header = page.get_by_role("button", name="Create task", exact=True).first
+    form = page.get_by_role("dialog", name="Create task", exact=True)
+    pending: list[Route] = []
+    titles = ["First background confirmation", "Second background confirmation"]
+    try:
+        for title in titles:
+            header.click()
+            form.get_by_label("Title").fill(title)
+            form.get_by_label("Prompt").fill("Keep each created task available for review.")
+            page.route(tasks_url, lambda route: pending.append(route), times=1)
+            with page.expect_request(lambda request: request.url == tasks_url and request.method == "POST"):
+                form.get_by_role("button", name="Create task", exact=True).click()
+            page.go_back()
+            expect(page).to_have_url(f"{base}/ui/settings")
+            route = pending[-1]
+            route.fulfill(response=route.fetch())
+            page.wait_for_function("sessionStorage.getItem('bernstein.unconfirmed-task-id') === null")
+            page.go_forward()
+            expect(page).to_have_url(f"{base}/ui/tasks")
+        expect(page.get_by_role("status").filter(has_text="2 tasks created.")).to_have_count(1)
+        view_created = page.get_by_role("button", name="View created task", exact=True)
+        for index, title in enumerate(titles):
+            view_created.click()
+            expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(view_created if index == 0 else header).to_be_focused()
+        expect(view_created).to_have_count(0)
+        assert len(pending) == 2
+    finally:
+        page.unroute(tasks_url)
+
+
+def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
+    list_url = f"{base}/api/v1/tasks?page=1"
+    events_url = f"{base}/api/v1/events"
+    page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
+    try:
+        page.route(list_url, lambda route: route.fulfill(json=[]), times=1)
+        page.goto(f"{base}/ui/tasks")
+        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+        trigger = page.get_by_role("button", name="Create task", exact=True)
+        trigger.last.click()
+        form = page.get_by_role("dialog", name="Create task", exact=True)
+        form.get_by_role("button", name="Cancel", exact=True).click()
+        expect(trigger.first).to_be_focused()
+        trigger.last.click()
+        title = "Created before the empty task list refreshed"
+        form.get_by_label("Title").fill(title)
+        form.get_by_label("Prompt").fill("Keep focus on a stable control after closing the drawer.")
+        deferred: list[Route] = []
+        page.route(list_url, lambda route: deferred.append(route), times=1)
+        with page.expect_request(list_url):
+            form.get_by_role("button", name="Create task", exact=True).click()
+        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+        assert len(deferred) == 1
+        page.keyboard.press("Escape")
+        deferred[0].continue_()
+        expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
+        expect(trigger).to_be_focused()
+    finally:
+        page.unroute(list_url)
+        page.unroute(events_url)
+
+
 def check_approvals(
     page: Page,
     base: str,
@@ -302,6 +774,11 @@ def check_approvals(
         page.route(url, lambda route: deferred.append(route), times=1)
         with page.expect_request(url):
             row.press(key)
+        # The request event may arrive before Playwright invokes its route handler.
+        for _ in range(100):
+            if deferred:
+                break
+            page.wait_for_timeout(10)
         assert len(deferred) == 1
         return deferred[0]
 
@@ -490,10 +967,20 @@ def main() -> None:
             check_routes(page, base, dashboard_password, headers)
             check_task(page, base, created.json()["id"], headers)
             check_approvals(page, base, headers, approvals, queue_dir)
+            check_task_creation_failures(page, base, headers)
+            check_task_creation_during_initial_list(page, base, headers)
+            check_unconfirmed_task_lookup(page, base, headers)
+            check_task_creation_survives_route_remount(page, base)
+            check_task_creation_rejected_while_away(page, base)
+            for settlement in ("while away", "with form closed", "with form open", "with palette open"):
+                check_task_creation_success_after_remount(page, base, settlement=settlement)
+            check_task_creation_keeps_two_background_confirmations(page, base)
+            check_task_creation(page, base, headers)
+            check_task_creation_empty_state_focus(page, base)
             check_governance_receipt(page, base)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()
-    print("Web UI route, drawer, authentication, approval, task cancellation and receipt smoke passed", flush=True)
+    print("Web UI route, drawer, auth, task, approval and receipt smoke passed", flush=True)
 
 
 if __name__ == "__main__":

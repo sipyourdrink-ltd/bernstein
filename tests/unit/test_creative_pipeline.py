@@ -6,15 +6,39 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bernstein.core.git.github import GitHubIssue
 from bernstein.evolution.creative import (
     AnalystVerdict,
     CreativePipeline,
     PipelineResult,
     VisionaryProposal,
+    issue_to_proposal,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_issue_form_omissions_use_proposal_defaults() -> None:
+    issue = GitHubIssue(
+        number=1,
+        title="A proposal",
+        url="https://example.invalid/1",
+        body=(
+            "### Problem\n\nReal problem\n\n"
+            "### Proposed solution\n\n_No response_\n\n"
+            "### Impact\n\n_No response_\n\n"
+            "### Risk\n\n_No response_\n\n"
+            "### Effort\n\nNone"
+        ),
+    )
+    proposal = issue_to_proposal(issue)
+    assert proposal.why == "Real problem"
+    assert proposal.what == "### Problem"
+    assert proposal.impact == "Addresses community-reported need: A proposal"
+    assert proposal.risk == "Unknown - community issue; requires feasibility review."
+    assert proposal.effort_estimate == "M"
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

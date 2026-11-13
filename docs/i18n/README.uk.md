@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`. `autopilot` зареєстровано, але він відмовляється запускатися, доки не реалізовано `TaskSource`.
 
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
@@ -255,7 +255,7 @@ bernstein volunteer browse --budget 60
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | де виникає цінність і коли Bernstein не є потрібним інструментом |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативні YAML DAG із вузлів agent / command / loop |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI (створення й перегляд завдань) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | експериментально: запуск агентів на Cloudflare Workers із синхронізацією робочого простору в R2 під власним акаунтом. Хостинг-сервіс `api.bernstein.run` ще не доступний |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | квитанції запитів тільки для читання, а також драйвер запитів, який зв'язує кожен результат зі знімком схеми |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | спрямовуйте ролі на визначення агентів за межами вбудованих шаблонів — загальний каталог YAML/SKILL.md або дерево плагінів Claude Code |

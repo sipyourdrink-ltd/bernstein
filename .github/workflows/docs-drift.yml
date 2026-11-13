@@ -44,6 +44,7 @@ on:
       - "CLAUDE.md"
       - "CONVENTIONS.md"
       - ".goosehints"
+      - ".github/copilot-instructions.md"
       - "README.md"
       - "CONTRIBUTING.md"
       # Sources the playbook's governance rows name. Without these the
@@ -70,6 +71,7 @@ on:
       - "CLAUDE.md"
       - "CONVENTIONS.md"
       - ".goosehints"
+      - ".github/copilot-instructions.md"
       - "README.md"
       - "CONTRIBUTING.md"
       # Sources the playbook's governance rows name. Without these the

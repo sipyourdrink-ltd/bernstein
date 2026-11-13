@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [捐献者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 讲运行 worker 以及你设定的预算，[项目指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 讲声明清单，[威胁模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 说明每一层边界防护什么、不防护什么。单条命令的运行器尚未发布：目前可用的子命令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。 `autopilot` 已注册，但在实现 `TaskSource` 之前会拒绝运行。
 
 ### 首页之外
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 所有深入内容都在[文档站点](https://docs.bernstein.run/)上：
 
@@ -255,7 +255,7 @@ bernstein volunteer browse --budget 60
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 价值落在哪里，以及 Bernstein 何时是错误工具 |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 智能体/命令/循环节点的声明式 YAML DAG |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | 与 TUI 使用同一 API 的浏览器仪表盘 |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | 与 TUI 使用同一 API 的浏览器仪表盘 (创建和查看任务) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 实验性：在你的账户上通过 R2 workspace 同步在 Cloudflare Workers 上运行智能体。托管的 `api.bernstein.run` 服务尚不可用 |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 只读查询收据，外加把每个结果绑定到其推导时所依据的 schema 快照的查询驱动 |
 | [智能体目录](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 让角色指向内置模板之外的智能体定义：通用的 YAML/SKILL.md 目录，或 Claude Code 插件布局的目录树 |

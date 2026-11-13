@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 [Przewodnik darczyńcy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) opisuje uruchamianie workera i budżet, który ustawiasz, [przewodnik projektu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) - deklarowanie manifestu, a [model zagrożeń](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) mówi, przed czym każda granica chroni, a przed czym nie. Uruchamianie jedną komendą nie zostało jeszcze wydane: dziś działają podkomendy `verify`, `browse`, `budget`, `verify-bundle` i `hub`. `autopilot` jest zarejestrowany, ale odmawia uruchomienia, dopóki nie zostanie zaimplementowane `TaskSource`.
 
 ### poza stroną główną
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.bernstein.run/):
 
@@ -255,7 +255,7 @@ Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | gdzie tkwi wartość i w jakich sytuacjach Bernstein nie jest odpowiednim narzędziem |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratywne grafy DAG w formacie YAML złożone z węzłów agent / command / loop |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel przeglądarkowy korzystający z tego samego API co TUI |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel przeglądarkowy korzystający z tego samego API co TUI (tworzenie i przeglądanie zadań) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | funkcja eksperymentalna: uruchamianie agentów w Cloudflare Workers z synchronizacją przestrzeni roboczej w R2 na własnym koncie. Usługa hostowana `api.bernstein.run` nie jest jeszcze publicznie dostępna |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | pokwitowania zapytań tylko do odczytu oraz sterownik wiążący każdy wynik ze zrzutem schematu |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | przypisywanie ról do zewnętrznych definicji agentów — uniwersalne katalogi YAML/SKILL.md lub struktury wtyczek Claude Code |

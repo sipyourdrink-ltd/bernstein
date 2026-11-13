@@ -245,7 +245,7 @@ bernstein volunteer browse --budget 60
 De [donateursgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt het draaien van een worker en het budget dat je instelt, de [projectgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) behandelt het declareren van een manifest, en het [dreigingsmodel](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschrijft waartegen elke grens wel en niet beschermt. De runner met één commando is nog niet uitgebracht: vandaag zijn `verify`, `browse`, `budget`, `verify-bundle` en `hub` de werkende subcommando's. `autopilot` is geregistreerd, maar weigert te starten totdat een `TaskSource` is geïmplementeerd.
 
 ### voorbij de voorpagina
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernstein.run/):
 
@@ -255,7 +255,7 @@ Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernste
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | waar de waarde ligt en wanneer Bernstein het verkeerde gereedschap is |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declaratieve YAML-DAG's van agent- / commando- / lusknooppunten |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browserdashboard gebaseerd op dezelfde API als de TUI |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browserdashboard gebaseerd op dezelfde API als de TUI (taken aanmaken en bekijken) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimenteel: voer agents uit op Cloudflare Workers met R2-workspace-synchronisatie via uw eigen account. De gehoste dienst `api.bernstein.run` is nog niet beschikbaar |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | alleen-lezen query-ontvangstbewijzen, plus een querydriver die elk resultaat koppelt aan de gebruikte schemasnapshot |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | verwijs rollen naar externe agentdefinities buiten de ingebouwde sjablonen — een generieke YAML/SKILL.md-map of een Claude Code-plugin-structuur |

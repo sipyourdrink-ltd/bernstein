@@ -44,9 +44,9 @@ uv sync                             # install + lock
 uv run python scripts/run_tests.py  # tests (isolated per-file runner)
 uv run ruff check .                 # lint
 uv run ruff format .                # format
-uv run mypy src                     # type-check
 make test
 make lint
+make typecheck
 make install
 ```
 
