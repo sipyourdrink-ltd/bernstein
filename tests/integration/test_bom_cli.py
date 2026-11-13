@@ -95,7 +95,7 @@ class TestBOMEmit:
         assert result.exit_code == 0, result.output
         decoded = json.loads(result.output.strip())
         assert decoded["bomFormat"] == "CycloneDX"
-        assert decoded["specVersion"] == "1.5"
+        assert decoded["specVersion"] == "1.7"
 
     def test_emit_spdx_to_stdout(self, tmp_path: Path) -> None:
         snap_path = tmp_path / "snap.json"

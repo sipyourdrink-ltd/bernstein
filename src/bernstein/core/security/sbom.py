@@ -1,6 +1,6 @@
 """SBOM (Software Bill of Materials) generation for agent-produced artifacts.
 
-Generates CycloneDX 1.5 JSON SBOMs from project dependencies and optionally
+Generates CycloneDX 1.7 JSON SBOMs from project dependencies and optionally
 runs vulnerability scanning via ``osv-scanner`` or ``grype``.
 
 When an agent installs new packages the orchestrator can call:
@@ -32,9 +32,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# CycloneDX spec version emitted by this generator.
-_CYCLONEDX_SPEC_VERSION = "1.5"
+# CycloneDX spec version emitted by this generator. Pinned deliberately
+# (see the schema pin note in core/compliance/ai_bom_encoders/cyclonedx.py).
+_CYCLONEDX_SPEC_VERSION = "1.7"
 _BERNSTEIN_TOOL_NAME = "bernstein"
+
+#: Namespace for the serial number of a run-shaped dependency SBOM. CycloneDX
+#: constrains ``serialNumber`` to a UUID URN (``^urn:uuid:<uuid>$``), so a run
+#: id cannot be pasted into the URN; it is hashed into the namespace instead.
+#: bernstein-owned and version-suffixed, deliberately not the schema URI (that
+#: would rotate every serial on a specification bump), and distinct from the
+#: AI-BOM encoder's namespace -- distinct documents, distinct serial spaces.
+_SERIAL_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://bernstein.run/compliance/sbom-deps/v1")
+
+
+def _document_identity(run_id: str | None) -> tuple[str, dict[str, Any]]:
+    """Return the ``(serialNumber, metadata)`` pair for a dependency SBOM.
+
+    A run id makes the serial deterministic per run and keeps the readable id in
+    ``metadata.properties``; without one the serial is a random UUID URN, which
+    is equally schema-legal but carries no correlation key.
+    """
+    if run_id is None:
+        return f"urn:uuid:{uuid.uuid4()}", {}
+    return (
+        f"urn:uuid:{uuid.uuid5(_SERIAL_NAMESPACE, run_id)}",
+        {"properties": [{"name": "bernstein:run_id", "value": run_id}]},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +120,7 @@ class SBOMComponent:
     licenses: list[str] = field(default_factory=list)
 
     def to_cyclonedx_dict(self) -> dict[str, Any]:
-        """Serialise to a CycloneDX 1.5 component dict."""
+        """Serialise to a CycloneDX 1.7 component dict."""
         result: dict[str, Any] = {
             "type": self.component_type,
             "name": self.name,
@@ -122,7 +146,7 @@ class SBOMDocument:
     source: str = ""  # "pip", "npm", "requirements.txt", etc.
 
     def to_cyclonedx_dict(self) -> dict[str, Any]:
-        """Serialise to CycloneDX 1.5 JSON-compatible dict."""
+        """Serialise to CycloneDX 1.7 JSON-compatible dict."""
         import datetime
 
         ts = datetime.datetime.fromtimestamp(self.generated_at, tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -313,7 +337,7 @@ class SBOMGenerator:
     """Generate and scan SBOMs for a project.
 
     Supports:
-    - CycloneDX 1.5 JSON output
+    - CycloneDX 1.7 JSON output
     - SPDX 2.3 JSON output
     - Vulnerability scanning via osv-scanner or grype
 
@@ -332,20 +356,28 @@ class SBOMGenerator:
         self._scan_timeout_s = scan_timeout_s
         self._artifact_dir = workdir / ".sdd" / "artifacts" / "sbom"
 
-    def generate(self, *, source: str = "pip") -> SBOMDocument:
+    def generate(self, *, source: str = "pip", run_id: str | None = None) -> SBOMDocument:
         """Generate an SBOM from the project's installed Python packages.
 
         Args:
             source: Package source label (e.g., "pip", "npm", "requirements.txt").
+            run_id: Orchestration run the artifact belongs to. Given one, the
+                serial number is derived from it (same run, same serial, on every
+                machine) and the readable id is recorded in
+                ``metadata.properties[bernstein:run_id]``; without one the serial
+                is a random UUID URN, which is equally schema-legal but carries
+                no correlation key.
 
         Returns:
             SBOMDocument with all collected components.
         """
         components = _collect_python_packages()
+        serial_number, identity_metadata = _document_identity(run_id)
         return SBOMDocument(
-            serial_number=f"urn:uuid:{uuid.uuid4()}",
+            serial_number=serial_number,
             generated_at=time.time(),
             components=components,
+            metadata=identity_metadata,
             sbom_format=self._sbom_format,
             source=source,
         )
