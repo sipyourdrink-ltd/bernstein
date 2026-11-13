@@ -7,6 +7,9 @@ adapter also supports per-step CLI choice: a project field can name the
 CLI adapter (`claude`, `codex`, `aider`, ...) Bernstein should pick for
 each ticket.
 
+The adapter uses the project item ID for status changes and the linked
+work item ID for comments.
+
 The adapter implements `bernstein.core.trackers.AbstractTrackerAdapter`
 and lives under
 `bernstein.core.trackers.builtin.github_projects_adapter`. It is
