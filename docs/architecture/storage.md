@@ -119,14 +119,36 @@ WAL.append() ──▶ LocalFsSink.write(durable=True)   ← synchronous fsync
    the local `.sdd/` with the full `fsync` semantics from
    `atomic_write.write_atomic_bytes`. If the orchestrator dies after
    `write` returns, every line is already on the OS page cache barrier.
-2. **Remote next, asynchronously.** The same payload is queued for a
-   best-effort mirror to the configured remote sink. The queue is
-   bounded so a slow remote applies back-pressure rather than growing
-   unbounded.
-3. **Graceful shutdown.** `close()` blocks until every pending mirror
-   write drains (ACKed or failed); callers that construct a buffered
-   sink must call it on exit (the orchestrator does not use the storage
-   sinks today).
+2. **Remote next, asynchronously, with back-pressure.** After the local
+   write succeeds, the payload is queued for a best-effort mirror to the
+   configured remote sink. The queue is bounded. If it is full, the caller
+   waits for a queue slot; a slow remote therefore back-pressures producers
+   rather than allowing unbounded growth. Local persistence happens before
+   that wait.
+3. **Graceful shutdown.** Call `close()` to wait for queued and in-flight
+   mirror attempts to finish before the sinks are closed (the orchestrator
+   does not use the storage sinks today).
+
+`BufferedSink.stats()` reports mirror progress and outcomes:
+
+| Field | Meaning |
+| ----- | ------- |
+| `pending_writes` | Number of items currently waiting in the queue. |
+| `oldest_pending_age_seconds` | Age of the oldest item still in the queue; `0.0` if the queue is empty. |
+| `completed_mirrors` | Total remote writes that succeeded. |
+| `failed_mirrors` | Total remote writes that failed. |
+
+The pending count and oldest age describe queued items only. Once the
+background worker takes an item, it is no longer counted as pending, even
+while the remote write is still in progress. Thus an empty queue (and zero
+oldest pending age) does not prove that the mirror work has finished. Use
+`close()` when you need to wait for all attempts, then inspect the counters
+to learn their outcomes. Draining alone is not proof of success: failed
+attempts also leave the queue and are counted as `failed_mirrors`. The storage
+unit tests verify that `test_failed_mirror_counted` reports
+`failed_mirrors == 2` and `completed_mirrors == 1` after two failures and one
+success; `test_drain_waits_for_in_flight_mirror` confirms draining waits for a
+delayed in-flight write before reporting its final counters.
 
 Buffered operations consult the two copies differently:
 
