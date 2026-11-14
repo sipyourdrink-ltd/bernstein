@@ -266,9 +266,9 @@ Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.b
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | miten järjestelmä toimii konepellin alla |
 
 ### miksi tämä nimi?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein on nimetty yhdysvaltalaisen kapellimestarin ja säveltäjän Leonard Bernsteinin mukaan. Projekti orkestroi CLI-koodausagenttien ryhmää samaan tapaan kuin Bernstein johti New Yorkin filharmonikkoja: jokainen soittaja ajallaan, partituuri deterministinen, kapellimestari vastuussa lopputuloksesta.
+Bernstein on nimetty yhdysvaltalaisen kapellimestarin ja säveltäjän Leonard Bernsteinin mukaan. Projekti hallitsee AI-agenttien ryhmää samaan tapaan kuin Bernstein johti New Yorkin filharmonikkoja: jokainen soittaja ajallaan, partituuri deterministinen, kapellimestari vastuussa lopputuloksesta.
 
 kirjoitin bernsteinin, koska maksoin 400 dollaria kuukaudessa claude-laskuja ajaessani kolmea koodausagenttia rinnakkain ja sain epädeterministisiä merge-tuloksia. Apache 2.0, yhden kehittäjän ylläpitämä. Reaaliaikaiset tilastot: [bernstein.run](https://bernstein.run).
 

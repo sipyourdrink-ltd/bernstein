@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 底层工作原理 |
 
 ### 为什么叫这个名字？
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目像 Bernstein 指挥纽约爱乐乐团那样编排一支 CLI 编码智能体队伍：每个乐手准时到位，乐谱确定，指挥对结果负责。
+Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目像 Bernstein 指挥纽约爱乐乐团那样治理一支 AI 智能体队伍：每个乐手准时到位，乐谱确定，指挥对结果负责。
 
 我写 bernstein 是因为我每月为并行运行三个编码智能体支付 400 美元的 claude 账单，却得到不确定性的合并。Apache 2.0，单人维护。实时数据：[bernstein.run](https://bernstein.run)。
 

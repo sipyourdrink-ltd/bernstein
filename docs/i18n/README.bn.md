@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [আর্কিটেকচার](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | ভিতরে এটি কীভাবে কাজ করে |
 
 ### নামটি কেন?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein নামটি এসেছে মার্কিন কন্ডাক্টর ও সুরকার লিওনার্ড বার্নস্টাইন থেকে। এই প্রকল্প CLI কোডিং এজেন্টদের দলটিকে ঠিক সেভাবেই পরিচালনা করে যেভাবে বার্নস্টাইন নিউ ইয়র্ক ফিলহারমোনিক পরিচালনা করতেন: প্রত্যেক বাদক নিজের সংকেতে, স্কোর ডিটারমিনিস্টিক, আর ফলাফলের দায় কন্ডাক্টরের।
+Bernstein নামটি এসেছে মার্কিন কন্ডাক্টর ও সুরকার লিওনার্ড বার্নস্টাইন থেকে। এই প্রকল্প AI এজেন্টদের দলটিকে ঠিক সেভাবেই নিয়ন্ত্রণ করে যেভাবে বার্নস্টাইন নিউ ইয়র্ক ফিলহারমোনিক পরিচালনা করতেন: প্রত্যেক বাদক নিজের সংকেতে, স্কোর ডিটারমিনিস্টিক, আর ফলাফলের দায় কন্ডাক্টরের।
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, একজনই মেনটেইন করেন। লাইভ পরিসংখ্যান: [bernstein.run](https://bernstein.run)।
 

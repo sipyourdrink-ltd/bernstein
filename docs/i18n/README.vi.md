@@ -266,9 +266,9 @@ Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | nguyên lý hoạt động chi tiết bên trong |
 
 ### nguồn gốc tên gọi?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng và nhà soạn nhạc người Mỹ. Dự án điều phối một đội ngũ tác tử viết mã CLI giống như cách Bernstein chỉ huy Dàn nhạc giao hưởng New York: mỗi nhạc công vào đúng nhịp, bản tổng phổ mang tính tất định, nhạc trưởng chịu trách nhiệm về kết quả cuối cùng.
+Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng và nhà soạn nhạc người Mỹ. Dự án quản trị một đội ngũ tác tử AI giống như cách Bernstein chỉ huy Dàn nhạc giao hưởng New York: mỗi nhạc công vào đúng nhịp, bản tổng phổ mang tính tất định, nhạc trưởng chịu trách nhiệm về kết quả cuối cùng.
 
 tôi viết bernstein vì phải trả hóa đơn claude 400 đô la mỗi tháng khi chạy song song ba tác tử lập trình và nhận về các kết quả hợp nhất phi tất định. Giấy phép Apache 2.0, duy trì bởi một cá nhân. Thống kê trực tiếp: [bernstein.run](https://bernstein.run).
 

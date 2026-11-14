@@ -266,9 +266,9 @@ Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | zasada działania od strony technicznej |
 
 ### skąd taka nazwa?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Projekt nazwano na cześć Leonarda Bernsteina, amerykańskiego dyrygenta i kompozytora. Koordynuje on zespół agentów CLI niczym Bernstein orkiestrę New York Philharmonic: każdy muzyk wchodzi we właściwym momencie, partytura jest deterministyczna, a dyrygent odpowiada za efekt końcowy.
+Projekt nazwano na cześć Leonarda Bernsteina, amerykańskiego dyrygenta i kompozytora. Nadzoruje on zespół agentów AI niczym Bernstein orkiestrę New York Philharmonic: każdy muzyk wchodzi we właściwym momencie, partytura jest deterministyczna, a dyrygent odpowiada za efekt końcowy.
 
 stworzyłem bernsteina, ponieważ płaciłem 400 dolarów miesięcznie za rachunki w claude, uruchamiając trzy agenty równolegle i uzyskując niedeterministyczne scalenia. Licencja Apache 2.0, projekt rozwijany jednoosobowo. Statystyki na żywo: [bernstein.run](https://bernstein.run).
 

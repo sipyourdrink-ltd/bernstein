@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [아키텍처](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 내부 동작 |
 
 ### 이름의 유래
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트가 CLI 코딩 에이전트 무리를 지휘하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다.
+Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트가 AI 에이전트 무리를 통제하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, 단독 메인테이너. 가동 통계: [bernstein.run](https://bernstein.run).
 
