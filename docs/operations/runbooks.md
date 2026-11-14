@@ -4,10 +4,9 @@ Operational runbooks for automated remediation of common agent failure patterns.
 
 ## Overview
 
-Bernstein includes a runbook engine that pattern-matches agent error output against
-known failure modes and suggests (or automatically executes) remediation actions. When
-an agent fails with a recognized error, the `RunbookEngine` finds the first matching
-rule and returns the suggested fix before the task is retried.
+Bernstein includes a runbook engine for matching error output against known failure
+modes. Callers can pass the error text to `RunbookEngine.match` to get the first
+matching rule and its suggested fix. Matching itself does not execute the action.
 
 Runbooks are not LLM-driven. They use compiled regex patterns and deterministic
 matching, so they add near-zero latency to the failure path.
@@ -15,13 +14,15 @@ matching, so they add near-zero latency to the failure path.
 Key concepts:
 
 - **RunbookRule** -- a detect pattern (regex) paired with an action (shell command or instruction).
-- **RunbookEngine** -- iterates rules in order, returns the first match, and tracks execution history.
-- **RunbookMatch** -- the result of a successful match, with captured groups interpolated into the action string.
+- **RunbookEngine** -- searches its rules in order and returns the first match. Recording an action outcome is a separate operation.
+- **RunbookMatch** -- the result of a successful match, with the first captured group available for action-text substitution.
 
 ## Default rules
 
-The built-in rules are loaded automatically when no custom configuration is provided.
-They cover the most common agent failure patterns:
+The constructor uses the built-in rules when given no rules. The orchestrator
+constructs the engine with those defaults. It does not invoke matching on the run
+failure path or discover `.sdd/config/runbooks.json` automatically.
+The built-in rules cover the most common agent failure patterns:
 
 | Rule name           | Detect pattern                                                    | Action                                            | Auto-execute | Max retries |
 |---------------------|-------------------------------------------------------------------|---------------------------------------------------|:------------:|:-----------:|
@@ -36,12 +37,40 @@ They cover the most common agent failure patterns:
 | `timeout`           | `TimeoutError\|timed? ?out\|deadline exceeded`                   | Retry with increased timeout or reduced scope     | No           | 2           |
 | `test_failure`      | `FAILED tests/\|pytest.*failed\|AssertionError`                  | Review test output and fix failing assertions     | No           | 2           |
 
-Rules are evaluated in the order listed. The first match wins.
+Rules are evaluated in listed order. Each regex searches anywhere in the error text and
+matches case-insensitively; the first matching rule is returned as a `RunbookMatch`, even
+if later rules also match. Matching only produces this record: it does not run the action
+or record an execution outcome. Call `record_execution(...)` separately when an action
+outcome is to be recorded.
+
+For example, both candidate rules below match the same input, but `match` returns the
+first one. The example only inspects the suggested action; it performs no action and
+records no execution:
+
+```python
+from bernstein.core.observability.runbooks import RunbookEngine, RunbookRule
+
+rules = [
+    RunbookRule("package", r"Missing package: (\w+)", "install {module}"),
+    RunbookRule("fallback", r"missing package", "review the dependency"),
+]
+engine = RunbookEngine(rules=rules)
+error = "MISSING PACKAGE: demo_widget"
+
+assert rules[0].matches(error) is not None
+assert rules[1].matches(error) is not None
+result = engine.match(error)
+assert result is not None and result.rule.name == "package"
+assert result.interpolated_action == "install demo_widget"
+assert engine.executions == []
+```
 
 ## Custom rules via JSON config
 
-Override or extend the default rules by placing a JSON config file and loading it with
-`RunbookEngine.load_rules()`:
+`RunbookEngine.load_rules(config_path)` explicitly loads a rule list from JSON; it does
+not configure the engine by itself. Pass the returned list to `RunbookEngine(rules=...)`
+to use it. A nonempty supplied list replaces (rather than extends) the built-in rules.
+The constructor treats an empty list the same as no list and installs the built-ins.
 
 ```json
 {
@@ -64,8 +93,12 @@ Override or extend the default rules by placing a JSON config file and loading i
 }
 ```
 
-Save this as `.sdd/config/runbooks.json` and the engine picks it up on next run.
-If the file is absent or malformed, the engine falls back to the built-in defaults.
+Save this as `.sdd/config/runbooks.json`, then explicitly load it and construct the engine
+with the returned rules if you want to use these custom rules. The file is not picked up
+on the next run automatically. A missing or unreadable file, invalid JSON, or a
+missing required field selects the built-ins. A valid file with an empty
+`runbooks` list returns an empty list,
+but passing that list to the engine constructor still selects the built-in defaults.
 
 ### Field reference
 
@@ -74,11 +107,16 @@ If the file is absent or malformed, the engine falls back to the built-in defaul
 | `name`         | string | yes      | --      | Unique identifier for the rule                 |
 | `detect`       | string | yes      | --      | Regex pattern matched against agent error text |
 | `action`       | string | yes      | --      | Shell command or human-readable instruction    |
-| `auto_execute` | bool   | no       | `false` | If true, the action runs without confirmation  |
-| `max_retries`  | int    | no       | `2`     | Maximum automatic retries for this failure     |
+| `auto_execute` | bool   | no       | `false` | Flag carried by the rule for callers          |
+| `max_retries`  | int    | no       | `2`     | Retry count carried by the rule for callers   |
 
-Capture groups in the `detect` regex are interpolated into the `action` string using
-`{module}`, `{port}`, or `{file}` placeholders.
+The matching engine records these two fields as rule metadata. It does not execute an
+action or schedule a retry from either field.
+
+If a matching regex has capture groups, `RunbookMatch.interpolated_action` uses only its
+first capture group, replacing `{module}`, `{port}`, and `{file}` placeholders in the
+action text with that captured value. With no capture group (or an empty first group), the
+action text is returned unchanged.
 
 ## Operational scenario templates
 
