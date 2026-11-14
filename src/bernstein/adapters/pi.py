@@ -101,6 +101,8 @@ class PiAdapter(CLIAdapter):
                     wrapped_cmd,
                     cwd=workdir,
                     env=env,
+                    # Pi reads piped stdin before emitting, even in JSON mode.
+                    stdin=subprocess.DEVNULL,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
