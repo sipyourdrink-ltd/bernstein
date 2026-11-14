@@ -24,10 +24,13 @@ keeps a chronological history of cross-model verdicts per session:
   to the session's history. If the trailing run of `request_changes`
   verdicts reaches `consecutive_reject_threshold`, the session is added to
   the internal degraded set.
-- `should_restart(session_id, tokens_used)` returns `True` once a session is
-  flagged, or once `tokens_used` crosses `max_tokens_before_restart` (if
-  that ceiling is set above `0`).
-- `degraded_sessions()` returns the current set of flagged session IDs.
+- `should_restart(session_id, tokens_used)` returns `True` when the session is
+  flagged, or, if the detector is enabled, when `tokens_used` is at or above
+  a positive `max_tokens_before_restart` ceiling and the session has at least
+  one recorded verdict. This token-ceiling query does not add the session to
+  the flagged set.
+- `degraded_sessions()` returns the current set of sessions flagged by the
+  verdict checks (not sessions that only satisfy the token-ceiling query).
 - `build_recovery_context(session)` renders a markdown block summarising the
   review history (which tasks were approved/rejected and by which reviewer)
   plus a fixed list of guidance bullets (run tests and linter before
@@ -40,13 +43,21 @@ keeps a chronological history of cross-model verdicts per session:
   handled.
 
 `evict_degraded_sessions(orch)` (`src/bernstein/core/tasks/task_lifecycle.py`)
-runs each orchestrator tick, right after deadlock/loop detection and idle-agent recycling. For every
-session the detector has flagged: it checkpoints the session, stashes the
-recovery-context markdown on `orch._context_recovery` keyed by every task ID
-the session owned, writes a `SHUTDOWN` signal via the signal manager so the
-agent exits at its next heartbeat, and clears the detector's tracking state.
-The recovery context is picked up when the replacement agent's prompt is
-built for those task IDs.
+runs each orchestrator tick, right after deadlock/loop detection and idle-agent
+recycling. It evicts only sessions in `degraded_sessions()`: those flagged by
+consecutive verdicts. For every flagged session it checkpoints the session,
+stashes the recovery-context markdown on `orch._context_recovery` keyed by
+every task ID the session owned, writes a `SHUTDOWN` signal via the signal
+manager so the agent exits at its next heartbeat, and clears the detector's
+tracking state. The recovery context is picked up when the replacement agent's
+prompt is built for those task IDs. Thus a token-ceiling query can return
+`True` without causing automatic tick eviction on its own.
+
+The verdict flagging checks are separate: `min_tasks_before_detection` first
+requires enough recorded verdicts, then the trailing run of
+`request_changes` verdicts must reach `consecutive_reject_threshold`. Meeting
+the token ceiling does not bypass either verdict check or add a session to the
+flagged set.
 
 `record_verdict()` itself is called from `_run_cross_model_check()`
 (`task_lifecycle.py`) immediately after every cross-model review completes,
@@ -61,8 +72,8 @@ enabled and actually runs.
 |---|---|---|
 | `enabled` | `False` | Master on/off switch. Disabled by default. |
 | `consecutive_reject_threshold` | `2` | Consecutive `request_changes` verdicts that flag a session. |
-| `min_tasks_before_detection` | `1` | Minimum recorded verdicts before the threshold check runs, so one noisy review can't trigger a restart by itself. |
-| `max_tokens_before_restart` | `0` | Restart once cumulative session tokens reach this value, independent of verdict history. `0` disables the token ceiling. |
+| `min_tasks_before_detection` | `1` | Minimum recorded verdicts before the verdict-flagging threshold check runs. |
+| `max_tokens_before_restart` | `0` | `should_restart()` returns true once cumulative session tokens reach this positive value, provided at least one verdict is recorded; this query alone does not flag or automatically evict the session. `0` disables the token ceiling. |
 | `checkpoint_dir` | `.sdd/runtime/context_checkpoints` | Where checkpoint JSON files are written, relative to the project workdir. |
 
 Set it by constructing `OrchestratorConfig(context_degradation=ContextDegradationConfig(...))`
@@ -77,10 +88,10 @@ The detector is inert unless [cross-model verification](quality-pipeline.md#cros
 is also enabled - `record_verdict()` is only ever called from the
 cross-model review path, so a run with cross-model verification off never
 feeds this detector any data, regardless of the `context_degradation.enabled`
-setting. The `max_tokens_before_restart` ceiling is the only trigger that
-does not depend on cross-model verdicts, but it still only takes effect for
-a session that already has at least one recorded verdict (`should_restart`
-checks `session_id in self._history`).
+setting. The token ceiling query requires at least one recorded verdict, but does
+not require the verdict minimum or rejection threshold. It can return `True`
+independently of the verdict-flagging checks, while tick eviction still only
+handles sessions in the flagged set.
 
 ## Source
 
