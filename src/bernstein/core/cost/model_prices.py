@@ -104,6 +104,9 @@ MODEL_COSTS_PER_1M_TOKENS: dict[str, ModelUsdPer1MTokens] = {
     # tier, so every metered run reported ~50% of true spend. MiniMax-M3
     # lists no separate cache-write tier (cache_write is null); MiniMax-M2.7
     # prices cache reads and writes.
+    # Flash has its own flat rate; otherwise its ID matches the M3 stem.
+    # https://platform.minimax.io/docs/guides/pricing-paygo (2026-10-20).
+    "minimax-m3.1-flash": {"input": 0.15, "output": 0.6, "cache_read": 0.015, "cache_write": None},
     "minimax-m3": {"input": 0.6, "output": 2.4, "cache_read": 0.12, "cache_write": None},
     "minimax-m2.7": {"input": 0.3, "output": 1.2, "cache_read": 0.06, "cache_write": 0.375},
 }
