@@ -71,22 +71,27 @@ Evolve stops at the tracked issue. It does not open a pull request for what it f
 
 ## Dry run
 
-`--dry-run` prints what the scan found and performs no remote writes at all:
+`--dry-run` scans for failure-pattern drafts, prints the results, and skips the evolution loop. It is **not necessarily preview-only**: if GitHub sync is enabled, each discovered draft is also synced. A new fingerprint can create an issue; a fingerprint matching an existing issue can add a comment to it. These are remote writes, even with `--dry-run`.
 
 ```bash
 bernstein evolve run --dry-run
 ```
 
-It prints one row per draft - fingerprint prefix, pattern title, occurrence count, most recent run id - and returns without starting the evolution loop. No `gh` subprocess is spawned.
+The run is preview-only when the effective GitHub sync setting is off: neither `--github` is passed nor `evolve.github_sync: true` is set in the project's `bernstein.yaml` (or `bernstein.yml`). For example, this seed setting enables sync during a dry run:
 
-To preview what the sink would do against a real tracker, combine the flags:
+```yaml
+evolve:
+  github_sync: true
+```
+
+When sync is enabled, the following commands can create issues or comments for discovered drafts; `--github-repo` selects the target repository but does not itself enable sync:
 
 ```bash
 bernstein evolve run --dry-run --github
 bernstein evolve run --dry-run --github --github-repo owner/repo
 ```
 
-`--github` requires the `gh` CLI on `PATH` and authenticated. If it is not, the sync step is skipped with a warning rather than failing the command; run `gh auth login` first.
+If the scan finds no drafts, Evolve prints “No failure-pattern drafts found” and returns without syncing anything. When sync is enabled and drafts are found, the `gh` CLI must be on `PATH` and authenticated. Otherwise the sync step is skipped with a warning rather than failing the command; run `gh auth login` first.
 
 ## Options on `evolve run`
 
@@ -98,9 +103,9 @@ bernstein evolve run --dry-run --github --github-repo owner/repo
 | `--dir` | `.` | Project root - the parent of `.sdd/`. |
 | `--github` | off | Reconcile drafts and proposals against GitHub issues. |
 | `--github-repo` | inferred | Repo slug (`owner/repo`); inferred from the git remote when omitted. |
-| `--dry-run` | off | Print failure-pattern drafts and exit without running the loop. |
+| `--dry-run` | off | Print failure-pattern drafts and exit without the loop; GitHub sync still applies if enabled. |
 
-`--github` and `--github-repo` also read from an `evolve:` block in `bernstein.yaml` when the flag is not passed on the command line.
+The project seed's `evolve:` block may set `github_sync: true` and `github_repo: owner/repo`; `--github-repo` selects the target repository when supplied on the command line.
 
 ## What evolve does not write
 
