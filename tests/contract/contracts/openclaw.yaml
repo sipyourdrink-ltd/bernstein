@@ -1,0 +1,25 @@
+# The version verified with a real, isolated CLI against a loopback fixture.
+adapter: openclaw
+binary: openclaw
+install:
+  method: npm
+  spec: "openclaw@2026.11.3"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "BERNSTEIN_OPENCLAW_OPENAI_API_KEY"
+  basis: api_key
+help_command: ["openclaw", "agent", "exec", "--help"]
+required_flags:
+  - "--message-file"
+  - "--cwd"
+  - "--json"
+  - "--timeout"
+  - "--model"
+  - "--thinking"
+  - "--auth-env-only"
+  - "--config"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
