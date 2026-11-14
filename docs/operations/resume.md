@@ -83,6 +83,12 @@ Dry-run a resume plan to inspect the recovery state:
 bernstein resume task-9f3a --dry-run
 ```
 
+A successful dry run still prepares the resume: it persists an incremented
+`resume_count` and prints the plan. It returns before writing the resume
+signal, so this invocation does not request a worker start. This command is
+therefore not a read-only way to inspect a checkpoint; previewing consumes a
+resume count.
+
 Resume from a specific workdir (e.g. a fleet supervisor host):
 
 ```bash
