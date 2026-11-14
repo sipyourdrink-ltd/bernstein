@@ -1,7 +1,11 @@
-"""Centralized default values for the Bernstein orchestrator.
+"""Centralized default values for Bernstein, including scheduler, task, approval,
+cost, history, and other settings.
 
-All magic numbers, timeouts, thresholds, and tuning parameters live here.
-Override via bernstein.yaml ``tuning:`` section or environment variables.
+Scheduler defaults retain the ``OrchestratorDefaults`` / ``ORCHESTRATOR`` names
+and the ``orchestrator`` configuration section; task, approval, cost, and
+history-related defaults live alongside them. All magic numbers, timeouts,
+thresholds, and tuning parameters live here. Override via bernstein.yaml
+``tuning:`` section or environment variables.
 
 Usage::
 

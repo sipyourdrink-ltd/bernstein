@@ -13,7 +13,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `compat_redirect_ledger.py` | Compatibility ledger for legacy ``bernstein.core`` redirects |
 | `credential_scoping.py`     | Agent credential scope minimization for least-privilege API keys |
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
-| `defaults.py`               | Centralized default values for the Bernstein orchestrator |
+| `defaults.py`               | Centralized default values for Bernstein, including scheduler, task, approval, |
 | `diff_paths.py`             | Which repository-relative paths a unified diff touches |
 | `finding_verify.py`         | FindingVerifyReceipt - lineage-attested receipts for finding verify results |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
