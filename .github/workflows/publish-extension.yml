@@ -21,7 +21,23 @@ permissions:
   contents: read
 
 jobs:
+  trusted-source:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-trusted-main-ref.yml
+    with:
+      ref: ${{ github.sha }}
+
   publish:
+    needs: trusted-source
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     runs-on: ubuntu-latest
     environment: pypi
     timeout-minutes: 30
@@ -40,6 +56,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
 
       # zizmor cache-poisoning: cache is disabled (no `cache:` key); only

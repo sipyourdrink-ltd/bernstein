@@ -36,7 +36,23 @@ permissions:
   contents: read
 
 jobs:
+  trusted-source:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-trusted-main-ref.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+
   sbom:
+    needs: trusted-source
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Generate SBOM
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -51,7 +67,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
 
       - name: Resolve release for ref

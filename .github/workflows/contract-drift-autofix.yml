@@ -120,11 +120,11 @@ jobs:
     # Recursion guard: don't run on PRs the bot itself opened, and don't
     # run on legacy bot-contract-drift-* branches (kept for safety while
     # any old open bot PRs drain).
-    if: >
-      github.event.pull_request.user.login != 'github-actions[bot]' &&
-      github.event.pull_request.user.login != 'bernstein[bot]' &&
-      github.event.pull_request.user.login != 'bernstein-orchestrator[bot]' &&
-      !startsWith(github.event.pull_request.head.ref, 'bot/contract-drift-')
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.event.pull_request.user.login != 'github-actions[bot]' && github.event.pull_request.user.login != 'bernstein[bot]' && github.event.pull_request.user.login != 'bernstein-orchestrator[bot]' && !startsWith(github.event.pull_request.head.ref, 'bot/contract-drift-'))
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2

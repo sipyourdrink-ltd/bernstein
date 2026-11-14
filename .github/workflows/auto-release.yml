@@ -49,8 +49,11 @@ jobs:
     # `cancelled` excluded: usually means superseded by concurrency
     # or operator-cancelled, not a real failure worth alerting.
     if: >-
-      contains(fromJSON('["failure","timed_out","action_required"]'),
-        inputs.conclusion)
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (contains(fromJSON('["failure","timed_out","action_required"]'),
+         inputs.conclusion))
     permissions:
       contents: read
       issues: write
@@ -190,7 +193,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: detect-stale-alerts
-    if: inputs.conclusion == 'success' && needs.detect-stale-alerts.outputs.has_stale == 'true'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (inputs.conclusion == 'success' && needs.detect-stale-alerts.outputs.has_stale == 'true')
     permissions:
       contents: read
       issues: write
@@ -350,7 +357,11 @@ jobs:
   release:
     name: Tag release
     needs: gate
-    if: needs.gate.outputs.should_release == 'true'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (needs.gate.outputs.should_release == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Distribution is owned by workflows triggered by this job:

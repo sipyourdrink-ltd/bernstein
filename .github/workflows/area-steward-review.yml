@@ -35,7 +35,11 @@ permissions: {}
 jobs:
   request-steward:
     name: Request docs steward review
-    if: ${{ !github.event.pull_request.draft }}
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (!github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

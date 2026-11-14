@@ -54,6 +54,10 @@ concurrency:
 
 jobs:
   mutate:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: ${{ matrix.module }}
     runs-on: [self-hosted, linux, vps]
     # Hard total cap; per-module budgets enforced inside the harness.

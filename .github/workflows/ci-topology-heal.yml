@@ -67,7 +67,11 @@ jobs:
       pull-requests: write
     # Canonical repo only: forks have neither the autosync token nor the
     # branch-protection setup this flow assumes.
-    if: github.repository == 'sipyourdrink-ltd/bernstein'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.repository == 'sipyourdrink-ltd/bernstein')
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2

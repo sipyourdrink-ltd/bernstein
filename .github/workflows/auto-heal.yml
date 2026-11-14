@@ -84,9 +84,11 @@ jobs:
     # Recursion guard: skip when the failing run was itself a heal commit.
     # Conclusion / branch / canonical-repo gating already happened in the
     # dispatcher.
-    if: >
-      !startsWith(inputs.display_title, 'fix(ci-heal-v2):') &&
-      !startsWith(inputs.display_title, 'fix(ci-heal):')
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (!startsWith(inputs.display_title, 'fix(ci-heal-v2):') && !startsWith(inputs.display_title, 'fix(ci-heal):'))
     outputs:
       head_sha: ${{ steps.meta.outputs.head_sha }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
@@ -276,9 +278,11 @@ jobs:
   heal:
     name: Apply chosen strategy
     needs: triage
-    if: >
-      needs.triage.outputs.should_heal == 'true' &&
-      needs.triage.outputs.idempotent_skip != 'true'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (needs.triage.outputs.should_heal == 'true' && needs.triage.outputs.idempotent_skip != 'true')
     runs-on: ubuntu-latest
     environment: automation
     timeout-minutes: 25

@@ -40,13 +40,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  trusted-source:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-trusted-main-ref.yml
+    with:
+      ref: ${{ inputs.ref || github.ref }}
+
   cluster-tunnel-e2e:
+    needs: trusted-source
     name: cluster-tunnel-e2e (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # Only run on the upstream repo so PRs from forks don't try to
     # use the secrets (and silently skip).
-    if: github.repository == 'sipyourdrink-ltd/bernstein'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (github.repository == 'sipyourdrink-ltd/bernstein')
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -55,7 +71,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
 
       - name: Install uv

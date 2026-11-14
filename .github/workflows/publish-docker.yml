@@ -24,7 +24,23 @@ concurrency:
 permissions: {}
 
 jobs:
+  trusted-source:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-trusted-main-ref.yml
+    with:
+      ref: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+
   publish:
+    needs: trusted-source
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Build and push image to GHCR
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -69,7 +85,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ steps.ref.outputs.ref }}
+          ref: ${{ needs.trusted-source.outputs.sha }}
           persist-credentials: false
 
       - name: Log in to GitHub Container Registry
