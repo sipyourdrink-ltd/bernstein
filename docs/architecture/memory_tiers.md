@@ -21,7 +21,7 @@ annotation, and a `compact(ctx)` function. Cheapest first:
 
 | Tier | Module | Trigger | Cost weight | Reduction |
 |---|---|---|---|---|
-| `micro` | `micro.py` | turn >= 2, mild context use | 0.05 | Collapse long tool-call result bodies (structural, no LLM) |
+| `micro` | `micro.py` | turn >= 2 and context use > 0; lower-priority than `auto` and `time_based` | 0.05 | Collapse long tool-call result bodies (structural, no LLM) |
 | `time_based` | `time_based.py` | live session, idle >= 300 s | 0.10 | Drop blocks tagged `[age:N]` older than the cutoff |
 | `auto` | `auto.py` | live session, context use >= 70 percent | 0.50 | Strip media and summarise tool runs (LLM-backed when supplied) |
 | `session_memory` | `session_memory.py` | session complete | 1.00 | Build a durable cross-session summary; keep summary only |
@@ -43,8 +43,22 @@ trigger best matches the current pressure wins:
 1. `session_memory` - `session_complete` is set.
 2. `auto` - live session past the context threshold.
 3. `time_based` - live session idle past the threshold.
-4. `micro` - mild pressure on an active session.
+4. `micro` - at least two turns and positive context use.
 5. `none` - nothing fires.
+
+The micro predicate requires **both** a second (or later) turn and context use
+strictly greater than zero. A matching micro predicate does not guarantee that
+micro is selected: `auto` and `time_based` have priority, and completed sessions
+select `session_memory` first. The table shows the selected tier at the
+boundaries (unmentioned pressure values are zero):
+
+| Turn | Context used | Idle | Session complete | Selected tier | Why |
+|---:|---:|---:|:---:|---|---|
+| 2 | 0% | 0 s | no | `none` | Micro requires positive context use. |
+| 2 | >0% (below 70%) | 0 s | no | `micro` | Both micro conditions are met. |
+| 2 | >0% (below 70%) | exactly 300 s | no | `time_based` | Idle threshold matches and outranks micro. |
+| 2 | exactly 70% | exactly 300 s | no | `auto` | Auto outranks both time-based and micro. |
+| 2 | 0% | 0 s | yes | `session_memory` | Session completion has highest priority. |
 
 `BudgetPressure` carries four inputs:
 
