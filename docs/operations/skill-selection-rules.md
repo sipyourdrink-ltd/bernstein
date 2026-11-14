@@ -55,6 +55,29 @@ Axes:
   `upgrade_proposal`, `fix`, `research`), case-insensitive. When both
   axes are present, **both must match on the same task**.
 
+### Matching edge cases
+
+Path globs are matched against the task's `owned_files` strings, not
+normalized filesystem paths. Matching is case-sensitive: `src/API/*.py`
+matches `src/API/Users.py`, but does not match `src/api/Users.py` or
+`src/API/users.PY`. For example, this rule selects `api-conventions.md`
+for a task that owns `src/API/Users.py`:
+
+```yaml
+rules:
+  - owned_files: "src/API/*.py"
+    skills: [api-conventions]
+```
+
+The optional `task_type` axis has separate behavior for missing and
+unsupported task values. If a task has no `task_type` field, it is treated
+as `standard`, so it can match a rule specifying `task_type: standard`.
+A present but unsupported task type (for example `future_type`) matches
+no rule that specifies a `task_type`; it is not treated as `standard`.
+A rule with no `task_type` can still match that task by its `owned_files`
+glob. For instance, with the same `owned_files` path, a `standard` rule
+will not match `future_type`, but a path-only rule will.
+
 There is deliberately **no `role` axis** - role -> skill binding is
 owned by `ROLE_SKILL_MAP`, and the schema rejects a `role` key at load
 so the two layers cannot drift into conflict.
