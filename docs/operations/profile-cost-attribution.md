@@ -108,10 +108,38 @@ bernstein cost profile-report --json
 | `--json` | off | Emit raw JSON. |
 
 The report carries, per profile: task count, output tokens, cost USD,
-mean output tokens per task, and (joined from metrics) the verification
-pass rate. Comparable cohorts that clear the honesty rule are listed
-separately. Unlike `cost --by profile`, `profile-report` remains ledger-only;
-it does not fall back to task records when the ledger is missing or empty.
+mean output tokens per task, and a quality block when recorded verification
+verdicts join. The report joins the profile's distinct attributed task IDs to
+metrics task records by `task_id`. For repeated records of one task, the last
+record that contains `janitor_passed` supplies its verdict; a later record
+without `janitor_passed` does not erase an earlier verdict. Records with no
+verdict do not count as outcomes.
+
+The quality block's exact fields are `tasks_with_outcome` and
+`verdict_pass_rate`. `tasks_with_outcome` is the number of distinct attributed
+tasks with a joined verdict, and the rate is the fraction of those joined tasks
+whose verdict is pass. Thus, the denominator is `tasks_with_outcome`, not the
+profile's total task count. The whole `quality` block is omitted when no
+verdict joins.
+
+For example, suppose profile `terse` has distinct attributed task IDs `t-1`,
+`t-2`, and `t-3`, with these metrics records in order:
+
+```jsonl
+{"task_id":"t-1","janitor_passed":false}
+{"task_id":"t-1","janitor_passed":true}
+{"task_id":"t-1"}
+{"task_id":"t-2","janitor_passed":false}
+{"task_id":"t-3"}
+```
+
+For `t-1`, the last record carrying a verdict is the pass, and the later
+record without a verdict leaves that pass in effect. `t-2` joins as a failure;
+`t-3` has no verdict and does not join. The resulting quality block is
+`{"tasks_with_outcome":2,"verdict_pass_rate":0.5}`: one pass among two joined
+tasks. Comparable cohorts that clear the honesty rule are listed separately.
+Unlike `cost --by profile`, `profile-report` remains ledger-only; it does not
+fall back to task records when the ledger is missing or empty.
 
 ### Audit anchoring is mandatory
 
