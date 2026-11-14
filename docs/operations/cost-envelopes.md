@@ -82,10 +82,18 @@ bernstein cost --by envelope
   envelopes already over their hard cap in the ledger, for
   reporting/dashboard purposes.
 - **Forecast-to-cap** is a linear extrapolation (`remaining_usd /
-  burn_rate_usd_per_sec`) using the burn rate observed across the
-  ledger records in view. It returns `None` (rendered as `"--"`) when
-  fewer than two records exist or the observed window collapses to a
-  point - the rollup never prints a projection it cannot support.
+  burn_rate_usd_per_sec`). For the burn-rate window, the report uses the
+  span from the first to the last recorded timestamp when that span is
+  positive. If there is no first-to-last span, it uses elapsed time from
+  the first recorded timestamp to the report time, when that time has
+  elapsed. For example, one $0.10 record at 12:00 has no forecast in a
+  report taken at 12:00 because the window is zero; in a report at 12:10,
+  with a $1.00 soft cap, the 600-second window gives a burn rate of
+  about $0.000167 per second. The remaining $0.90 gives a forecast of
+  5,400 seconds (90 minutes). A zero burn rate or an unlimited soft
+  cap yields no forecast (`None` in the rollup and `null` in JSON). If
+  the soft cap has already been reached and the burn rate is positive,
+  the forecast is zero seconds.
 - **Unconfigured envelopes are never dropped.** An envelope name seen in
   the ledger but missing from `cost.envelopes` still gets a rollup row
   (`cap=0.0`, i.e. unlimited), so a config gap doesn't silently hide
