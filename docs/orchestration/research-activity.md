@@ -76,12 +76,32 @@ quoted span resolves to a page the run actually fetched.
 
 ## Cost caps
 
-`ResearchBudget` bounds how many sources a run may fetch and how much it may spend.
-The cap is a first-class refusal, checked before every fetch: the worker raises
-`ResearchBudgetExceeded` the moment a fetch would cross it, so a research task
-scheduled next to coding tasks stays inside its budget the same way a coding task
-does. Both modalities anchor into the same run journal through the one
-`dispatch_activity` path.
+`ResearchPlan.derive` deduplicates candidate source references while preserving their
+first-seen order. The worker walks that ordered plan and applies two independent
+limits:
+
+- `max_fetches` is the maximum number of planned sources it may fetch.
+- `max_cost_units` is a separate ceiling on total cost. Each fetch is charged the
+  fixed `cost_per_fetch` amount (1.0 cost unit by default).
+
+Before calling the fetch callback for each source, the worker checks both whether
+that source would exceed `max_fetches` and whether the projected cost
+(`spent + cost_per_fetch`) would exceed `max_cost_units`. The comparison is strict:
+a projected total equal to the cost ceiling is allowed. A rejected source is never
+passed to the fetch callback.
+
+For example, with `max_fetches=4`, `max_cost_units=1.5`, and
+`cost_per_fetch=1.0`, the first source is fetched for 1.0 cost unit. The projected
+total for the second source is 2.0, so it is rejected before its fetch callback is
+called. The first source's bytes may already have been stored in the content store,
+but because the run raises `ResearchBudgetExceeded` before report assembly, the
+worker returns no report or `ActivityResult` for dispatch. Conversely, a second
+fetch would be allowed if the cost ceiling were 2.0: reaching the ceiling exactly
+does not exceed it.
+
+This refusal keeps a research task scheduled next to coding tasks inside its
+budget; both modalities anchor completed work into the same run journal through
+the one `dispatch_activity` path.
 
 ## Offline verification
 
