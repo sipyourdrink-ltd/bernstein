@@ -120,8 +120,7 @@ def test_runner_prices_real_sdk_tool_roundtrip(
         item.get("reasoning_content") == "Preserve this reasoning across the tool round trip." for item in history
     )
     assert reasoning_replayed is (
-        model.startswith("MiniMax-")
-        and base_url in {"https://api.minimax.io/v1", "https://api.minimaxi.com/v1"}
+        model.startswith("MiniMax-") and base_url in {"https://api.minimax.io/v1", "https://api.minimaxi.com/v1"}
     )
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     usage = next(event for event in events if event["type"] == "usage")
