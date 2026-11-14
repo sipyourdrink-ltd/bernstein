@@ -162,16 +162,37 @@ The transitions are the methods on `WarmPool`:
 
 - **`add_slot(slot)`** - append a freshly-built `PoolSlot` to the pool.
   Beyond `max_slots`, additions are silently ignored.
-- **`claim_slot(role)`** - return the oldest `ready` slot matching
-  `role`, marking it `claimed`. Returns `None` if no match exists; the
-  spawner falls back to the cold path.
+- **`claim_slot(role)`** - return the first `ready` slot with that role in
+  insertion order, marking it `claimed`. It does not check the slot's age;
+  even an over-TTL slot is claimable until an explicit expiry sweep marks it
+  `expired`. Returns `None` if no matching ready slot exists; the spawner
+  falls back to the cold path.
 - **`release_slot(slot_id)`** - mark a slot `expired` once the agent
   releases its worktree. Called from `AgentSpawner._release_warm_pool_slot`
   (delegating to `release_warm_pool_slot` in `spawner_worktree.py`)
   during agent reaping.
-- **`expire_stale(now=None)`** - sweep ready slots older than
-  `slot_ttl_seconds` and move them to `expired`. Nothing calls it on a
-  schedule yet.
+- **`expire_stale(now=None)`** - sweep ready slots whose age is strictly
+  greater than `slot_ttl_seconds` and move them to `expired`. Slots exactly
+  at the TTL are not expired, and claimed or already expired slots are not
+  changed. Nothing calls the sweep on a schedule yet.
+
+For example, with `max_slots=2` and `slot_ttl_seconds=60`, add a `backend`
+slot created at `100.0` and a `qa` slot created at `110.0`. Before a sweep,
+`claim_slot("backend")` can still claim the first slot: claiming does not
+compare its age with the TTL. Instead, explicitly sweep at the fixed clock
+value `now=170.0`:
+
+```python
+pool.expire_stale(now=170.0)
+```
+
+The backend slot is 70 seconds old and expires; the qa slot is exactly 60
+seconds old and stays ready because expiry uses `>` rather than `>=`. The
+result is `pool.stats() == {"ready": 1, "claimed": 0, "expired": 1, "total": 2}`
+and `pool.available_roles() == ["qa"]` (before the sweep, the available roles
+were `["backend", "qa"]`). The expired backend record still occupies one of
+the two lifetime slots: adding another slot is rejected at the cap. Expiry
+changes the state and availability, not the total slot count.
 
 The pool itself never **creates** slots - they are added externally; today
 only `prepare_speculative_warm_pool` does so, with unprovisioned slots.
