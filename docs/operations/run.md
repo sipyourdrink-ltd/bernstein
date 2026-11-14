@@ -7,6 +7,10 @@ flags. Other run-related docs:
   generator.
 * [`runbooks.md`](runbooks.md) -- recovery playbooks for stuck or
   failed runs.
+* [`run-manifest.md`](run-manifest.md) -- inspect the saved declaration for a run;
+  [`team-manifests.md`](team-manifests.md) -- inspect reusable team definitions.
+* [`run-bom.md`](run-bom.md) -- inspect the bill of materials projected from a
+  run's recorded lineage.
 
 ## Selected policy during server recovery
 
