@@ -204,7 +204,7 @@ Setiap target melalui empat tahapan:
 Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengapa deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### perintah sehari-hari
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ Seluruh antarmuka operator (otomatisasi PR, jadwal, jembatan obrolan, daemon aut
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 Status eksekusi disimpan sebagai checkpoint ke `.sdd/runs/<run_id>/` pada setiap node. Melanjutkan eksekusi akan memvalidasi digest manifes pada awal eksekusi, sehingga perubahan spesifikasi akan ditolak, bukan dijalankan diam-diam sebagai manifes yang berbeda. Lihat [manifes workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).

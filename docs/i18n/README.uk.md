@@ -204,7 +204,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Чому планувальник написаний чистою мовою Python і на які компроміси це спирається: [чому детермінізм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### повсякденні команди
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).

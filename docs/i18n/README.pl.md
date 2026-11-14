@@ -204,7 +204,7 @@ Każdy cel realizowany jest w czterech etapach:
 Dlaczego harmonogram został zaimplementowany w czystym Pythonie i jakie niesie to kompromisy: [dlaczego determinizm](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### codzienne polecenia
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ Pełny zestaw funkcji operatora (automatyzacja PR, harmonogramy, integracje czat
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym węźle. Wznowienie weryfikuje skrót manifestu na starcie przebiegu, więc zmieniona specyfikacja zostaje odrzucona, zamiast po cichu wykonać inny manifest. Zobacz [manifesty workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).

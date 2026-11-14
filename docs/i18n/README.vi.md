@@ -204,7 +204,7 @@ Mỗi mục tiêu trải qua bốn giai đoạn:
 Lý do bộ lập lịch được xây dựng bằng Python thuần túy và các đánh đổi đi kèm: [tại sao tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ Toàn bộ tập lệnh điều hành (tự động hóa PR, lịch trình, cầ
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).

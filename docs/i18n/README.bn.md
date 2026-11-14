@@ -204,7 +204,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 শিডিউলার কেন সাদামাটা Python, আর তার বিনিময়ে কী ছাড়া হলো: [কেন ডিটারমিনিস্টিক](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)।
 
 ### রোজকার কমান্ড
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 রান অবস্থা প্রতিটি নোডে `.sdd/runs/<run_id>/`-এ চেকপয়েন্ট হয়। রান আবার শুরু করার সময় রানের শুরুতে ম্যানিফেস্ট ডাইজেস্ট যাচাই করা হয়, তাই স্পেসিফিকেশন পরিবর্তন প্রত্যাখ্যান করা হয়, ভিন্ন একটি ম্যানিফেস্ট নীরবে চালানোর বদলে। দেখুন [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)।

@@ -204,7 +204,7 @@ Elk doel doorloopt vier fasen:
 Waarom de planner in puur Python is geschreven en welke afwegingen daarbij horen: [waarom deterministisch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### dagelijkse commando's
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ Het volledige beheerderoppervlak (PR-automatisering, planningen, chat-koppelinge
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 De runstatus wordt bij elk knooppunt als checkpoint onder `.sdd/runs/<run_id>/` vastgelegd. Hervatten valideert de manifest-digest bij de start van de run, zodat een wijziging van de specificatie wordt geweigerd in plaats van stilzwijgend een ander manifest uit te voeren. Zie [workflow-manifesten](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).

@@ -204,7 +204,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 调度器为什么是纯 Python，以及这换来什么代价：[为什么确定性](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 每个节点上的运行状态都会作为检查点写入 `.sdd/runs/<run_id>/`。恢复在运行起始时校验清单摘要，因此规格变更会被拒绝，而不是静默地按另一份清单执行。见[工作流清单](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。

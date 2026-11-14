@@ -204,7 +204,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 शेड्यूलर सादा Python क्यों है, और इसके बदले क्या छोड़ा गया: [क्यों डिटर्मिनिस्टिक](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)।
 
 ### रोज़मर्रा के कमांड
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)।
