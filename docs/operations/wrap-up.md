@@ -32,7 +32,7 @@ for task status).
 | `changes_summary` | One line per `done` task, using the task's `result_summary` if present |
 | `learnings` | One line per `failed` task, quoting its `result_summary` (or noting no reason was recorded) |
 | `next_session_brief` | Up to 10 `open` tasks sorted by priority; suggests `bernstein evolve` if none remain |
-| `git_diff_stat` | `git diff --stat` from the estimated session-start commit to `HEAD`; if that start commit cannot be found or that diff has no usable output, falls back to `git diff --stat HEAD` for uncommitted changes |
+| `git_diff_stat` | See below for range priority, fallback behavior, and when the summary is empty. |
 | `completed_task_ids` | IDs of `done` tasks, so a later PR-open step can link each task's verification-evidence bundle |
 
 The **Next session** section includes only tasks whose status is `open`. It sorts
@@ -71,10 +71,14 @@ recent session summary's `changes_summary` when available; otherwise it says
 
 The session start commit is estimated from `saved_at` in
 `.sdd/runtime/session.json`: the command locates commits made after that
-timestamp and uses the parent of the oldest such commit as the start. It
-computes the diff against that commit and `HEAD`. If no usable start commit
-or start-to-`HEAD` stat is available, it falls back to the uncommitted diff
-against `HEAD`.
+timestamp and uses the parent of the oldest such commit as the start. A
+successful, nonempty stat for the start-to-`HEAD` range is used as the summary,
+so when commits and pending workspace edits both exist, the edits are omitted.
+If there is no starting commit, the range lookup fails, or the range produces
+an empty summary, wrap-up uses the stat against `HEAD` instead. That fallback
+includes staged and unstaged changes to tracked files, but not untracked files.
+If the fallback finds no tracked changes or fails, `git_diff_stat` is the empty
+string.
 
 ## `--stop` behaviour
 
