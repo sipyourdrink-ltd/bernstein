@@ -28,13 +28,24 @@ Decisions are logged by the routing layer through
 
 | Field | Use |
 |-------|-----|
-| `decision_kind` | e.g. `model_route`, `judge_pass` |
-| `predicted` | probability in `[0, 1]` |
-| `outcome` | observed binary outcome (`0` / `1`); `null` until known |
-| `ts` | epoch seconds |
+| `ts` | Timestamp in epoch seconds |
+| `decision_kind` | Decision category, e.g. `model_route` or `judge_pass` |
+| `policy_path` | Identifier of the policy that produced the probability |
+| `predicted_prob` | Predicted probability in `[0, 1]` |
+| `observed_outcome` | Eventual outcome, encoded as a JSON boolean: `true` or `false` |
+| `decision_id` | Optional identifier for correlating log records |
+| `metadata` | Optional auxiliary JSON object |
 
-The log is append-only JSONL. Malformed lines are skipped at read time
-with a debug log, never crashing the reader.
+A row is written once its outcome is known; `observed_outcome` is not a
+pending `null` value. For example, this is a valid JSONL record:
+
+```json
+{"ts": 1710000000.0, "decision_kind": "model_route", "policy_path": "router/v2", "predicted_prob": 0.8, "observed_outcome": true, "decision_id": "d-123", "metadata": {"slice": "router"}}
+```
+
+The log is append-only JSONL. Blank lines are ignored. An invalid nonblank
+row aborts parsing before time or kind filters can discard it. For example,
+a non-boolean `observed_outcome` raises `CalibrationLogError`.
 
 ## CLI
 
@@ -47,8 +58,11 @@ bernstein eval calibration report
   [--output FILE]          write JSON to file (stdout if omitted)
 ```
 
-The command emits a JSON report. Empty windows return
-`{"decisions": 0, "brier": null, ...}` instead of crashing.
+The command emits a JSON report. A missing log or a valid log with no
+rows matching the filters returns `{"decisions": 0, "brier": null, ...}`.
+This valid empty report is distinct from a malformed row: an invalid row
+aborts parsing and fails the report, even when a time or kind filter would
+otherwise discard that row.
 
 ## Examples
 
