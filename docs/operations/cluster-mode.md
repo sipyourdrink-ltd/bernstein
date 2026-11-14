@@ -446,6 +446,35 @@ $ bernstein cluster nodes --json-output
   `--json-output`. They read the endpoints below, so a stopped server prints a
   clear "cannot connect" hint instead of a stack trace.
 
+### Watching the whole cluster in `bernstein live`
+
+Point the TUI at the central the same way the CLI is pointed at it:
+
+```console
+$ BERNSTEIN_SERVER_URL=http://central:8052 BERNSTEIN_AUTH_TOKEN=<token> bernstein live
+```
+
+The AGENTS panel switches to a cluster view when the server URL is not a
+loopback address, or when a local server has registered worker nodes. It
+renders one line per node - name, status, adapter, `model` label when the node
+advertises one, claimed count, free/total slots, heartbeat age - and under each
+node the tasks it currently holds (`claimed` or `in_progress`), with task id,
+role, title and time since claim. Tasks are placed under a node by the
+`claimed_by_session` field of `GET /tasks`, which a worker sets to its node id
+when it claims.
+
+Node status is the server's: `online` is green, `degraded` and other
+non-online states yellow, `offline` dim. A node that stops heartbeating keeps
+its row, with a growing heartbeat age, until the node reaper marks it.
+
+The cluster panel reads `/cluster/status` and pages active claims by status.
+Claims can change between requests. The next poll refreshes the displayed list.
+Against a remote server the dashboard panels skip local runtime data and disable local
+save, local task comparison, hot restart, and local agent-limit controls.
+The header shows the remote cluster active count and capacity. Press `q` to quit without
+draining. A loopback server with no registered nodes keeps the single-machine
+view.
+
 Endpoints relevant to cluster operations:
 
 - `GET /cluster/nodes[?status=online|cordoned|draining|offline]` - full

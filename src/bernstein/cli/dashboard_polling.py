@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -135,43 +136,52 @@ def _fetch_all() -> dict[str, Any]:
     (can be slow with 400+ tasks). We fetch agents first so the TUI
     shows activity even while tasks are loading.
     """
-    from typing import cast
-
     # One resolution for the whole batch: see _get.
     url = server_url()
 
-    # Fast path: local files (instant, no HTTP)
-    agents = _load_agents()
-    quarantine = _load_quarantine()
-    guardrails = _load_guardrail_violations()
-    cache_stats = _load_cache_stats()
-    activity_summaries = _load_activity_summaries()
+    # Fast path: local files (instant, no HTTP). A remote central's agents are
+    # not in this machine's agents.json - whatever is there belongs to some
+    # other, local run - so a remote view does not read it at all.
+    local = is_loopback(url)
+    agents = _load_agents() if local else []
+    quarantine = _load_quarantine() if local else {}
+    guardrails = _load_guardrail_violations() if local else {}
+    cache_stats = _load_cache_stats() if local else {}
+    activity_summaries = _load_activity_summaries() if local else {}
 
     # Slow path: HTTP to task server (may take 1-3s with many tasks)
-    status = _get("/status", url)
-    costs = _get("/costs", url)
+    raw_status = _get("/status", url)
+    raw_costs = _get("/costs", url)
     quality = _get("/quality", url)
-    bandit = _get("/routing/bandit", url)
+    raw_bandit = _get("/routing/bandit", url)
+    status = _dashboard_status(raw_status)
+    costs = _dashboard_costs(raw_costs)
+    bandit = _dashboard_bandit(raw_bandit)
     # Use /status for task counts instead of fetching all 400+ task objects
-    tasks = _get("/tasks", url)
-    pending_approval = 0
-    if isinstance(tasks, list):
-        task_dicts = cast("list[dict[str, Any]]", tasks)
-        pending_approval = sum(1 for td in task_dicts if td.get("status") == "pending_approval")
+    raw_tasks = _get("/tasks", url)
+    tasks = _dashboard_task_rows(raw_tasks)
+    pending_approval = sum(1 for task in tasks or [] if task["status"] == "pending_approval")
     # Verification nudge: read from status response (already included by /status route)
-    verification_nudge: dict[str, Any] = {}
-    if isinstance(status, dict):
-        verification_nudge = status.get("verification_nudge", {}) or {}
+    nudge = status.get("verification_nudge") if status is not None else None
+    verification_nudge = nudge if isinstance(nudge, dict) else {}
 
     # An unreachable server and an idle one produce the same empty panels, so
     # the difference is carried explicitly rather than left to the log. Every
     # HTTP read has to have failed before the whole server is called
     # unreachable: one route erroring is a broken route, and blanking a
     # working dashboard over it would hide the data that did arrive.
-    server_unreachable = all(result is None for result in (status, costs, quality, bandit, tasks))
+    registry = _get("/cluster/status", url)
+    cluster = _project_cluster_view(url, tasks, registry)
+    server_unreachable = all(
+        result is None for result in (raw_status, raw_costs, quality, raw_bandit, raw_tasks, registry)
+    )
 
     return {
         "server_unreachable": server_unreachable,
+        "cluster": cluster,
+        "remote": not local,
+        "cluster_active_agents": _nonnegative_int(registry, "active_agents"),
+        "cluster_capacity": _nonnegative_int(registry, "total_capacity"),
         "tasks": tasks,
         "status": status,
         "agents": agents,
@@ -185,6 +195,285 @@ def _fetch_all() -> dict[str, Any]:
         "verification_nudge": verification_nudge,
         "activity_summaries": activity_summaries,
     }
+
+
+def _finite_number(value: Any) -> float:
+    if type(value) not in (int, float):
+        return 0.0
+    try:
+        numeric = float(value)
+    except OverflowError:
+        return 0.0
+    return numeric if math.isfinite(numeric) else 0.0
+
+
+def _dashboard_status(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict) or not data:
+        return None
+    status = dict(data)
+    total = max(0, int(_finite_number(status.get("total"))))
+    done = min(total, max(0, int(_finite_number(status.get("done")))))
+    failed = min(total - done, max(0, int(_finite_number(status.get("failed")))))
+    for key, value in (("total", total), ("done", done), ("failed", failed)):
+        if key in status:
+            status[key] = value
+    runtime = status.get("runtime")
+    if isinstance(runtime, dict):
+        runtime = dict(runtime)
+        for key in ("active_worktrees", "restart_count"):
+            if key in runtime:
+                runtime[key] = int(_finite_number(runtime[key]))
+        completed = runtime.get("last_completed")
+        if isinstance(completed, dict) and "seconds_ago" in completed:
+            runtime["last_completed"] = {**completed, "seconds_ago": _finite_number(completed.get("seconds_ago"))}
+        status["runtime"] = runtime
+    nudge = status.get("verification_nudge")
+    if isinstance(nudge, dict) and "unverified_count" in nudge:
+        status["verification_nudge"] = {**nudge, "unverified_count": int(_finite_number(nudge["unverified_count"]))}
+    return status
+
+
+def _dashboard_costs(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict) or not data:
+        return None
+    costs = dict(data)
+    for key in ("spent_usd", "budget_usd", "percentage_used"):
+        costs[key] = max(0.0, _finite_number(costs.get(key)))
+    per_model = costs.get("per_model")
+    costs["per_model"] = (
+        {name: _finite_number(value) for name, value in per_model.items()} if isinstance(per_model, dict) else {}
+    )
+    return costs
+
+
+def _dashboard_bandit(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict) or not data:
+        return None
+    frequencies = data.get("selection_frequency")
+    exploration = data.get("exploration_stats")
+    shadow = data.get("shadow_stats")
+    return {
+        **data,
+        "selection_frequency": {name: int(_finite_number(value)) for name, value in frequencies.items()}
+        if isinstance(frequencies, dict)
+        else {},
+        "exploration_stats": {
+            name: {key: _finite_number(stats.get(key)) for key in ("mean", "last")}
+            for name, stats in exploration.items()
+            if isinstance(stats, dict)
+        }
+        if isinstance(exploration, dict)
+        else {},
+        "shadow_stats": {
+            key: _finite_number(shadow.get(key))
+            for key in ("matched_outcomes", "pending_outcomes", "agreement_rate", "disagreement_count")
+        }
+        if isinstance(shadow, dict)
+        else {},
+        "total_completions": int(_finite_number(data.get("total_completions"))),
+        "exploration_rate": _finite_number(data.get("exploration_rate")),
+    }
+
+
+def _nonnegative_int(data: Any, key: str) -> int | None:
+    value = data.get(key) if isinstance(data, dict) else None
+    return value if type(value) is int and value >= 0 else None
+
+
+def _dashboard_task_rows(data: Any) -> list[dict[str, Any]] | None:
+    """Keep invalid task rows out of the rendered dashboard frame."""
+    if not isinstance(data, list):
+        return None
+    tasks: dict[str, dict[str, Any]] = {}
+    for task in data:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        status = task.get("status", "open")
+        if not isinstance(task_id, str) or not task_id or not isinstance(status, str):
+            continue
+        priority = task.get("priority", 2)
+        progress = task.get("progress", 0)
+        tasks[task_id] = {
+            **task,
+            "status": status,
+            "title": _display_text(task.get("title"), "?"),
+            "priority": priority if type(priority) is int else 2,
+            "progress": _dashboard_progress(progress),
+        }
+    return list(tasks.values())
+
+
+#: Task states in which a worker node is holding the task.
+_NODE_HELD_STATUSES = frozenset({"claimed", "in_progress"})
+
+
+def _fetch_held_tasks(url: str) -> tuple[list[dict[str, Any]], set[str]]:
+    """Read active claims separately from the capped dashboard task list."""
+    tasks: dict[str, dict[str, Any]] = {}
+    incomplete: set[str] = set()
+    for status in sorted(_NODE_HELD_STATUSES):
+        offset = 0
+        first_total: int | None = None
+        while first_total is None or offset < first_total:
+            page = _get(f"/tasks?status={status}&limit=500&offset={offset}", url)
+            if not isinstance(page, dict):
+                incomplete.add(status)
+                break
+            rows, total = page.get("tasks"), page.get("total")
+            if not isinstance(rows, list) or type(total) is not int or total < 0:
+                incomplete.add(status)
+                break
+            if first_total is None:
+                first_total = total
+            if not rows:
+                if offset < first_total:
+                    incomplete.add(status)
+                break
+            for row in rows:
+                if _is_held_task(row) and row["status"] == status:
+                    tasks[row["id"]] = row
+                else:
+                    incomplete.add(status)
+            offset += len(rows)
+    return list(tasks.values()), incomplete
+
+
+def _is_held_task(task: Any) -> bool:
+    if not isinstance(task, dict):
+        return False
+    status = task.get("status")
+    return (
+        isinstance(status, str)
+        and status in _NODE_HELD_STATUSES
+        and isinstance(task.get("id"), str)
+        and bool(task["id"])
+        and "claimed_by_session" in task
+        and (task["claimed_by_session"] is None or isinstance(task["claimed_by_session"], str))
+    )
+
+
+def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[str, Any] | None:
+    return _project_cluster_view(url, tasks, _get("/cluster/status", url), now)
+
+
+def _project_cluster_view(url: str, tasks: Any, registry: Any, now: float | None = None) -> dict[str, Any] | None:
+    """Project the central's node registry and claims into the AGENTS panel.
+
+    Worker nodes run their agents on their own machines, so nothing about them
+    reaches this machine's ``agents.json``; the central only knows them through
+    ``GET /cluster/status`` and the ``claimed_by_session`` each worker stamps on
+    the tasks it claims. Returns ``None`` when this is not a cluster view - a
+    loopback server with no registered nodes - so the panel keeps its local
+    behaviour. A remote server is always a cluster view, even when the read
+    fails: falling back to local files there would show another run's agents.
+
+    The active-claim query bypasses the legacy task-list cap. Older servers
+    can still supply claims in the dashboard's existing task list.
+    """
+    nodes = registry.get("nodes") if isinstance(registry, dict) else None
+    if not isinstance(nodes, list) or not nodes:
+        if is_loopback(url):
+            return None
+        return {"nodes": [], "reachable": isinstance(nodes, list)}
+
+    from bernstein.cli.commands.cluster_cmd import _node_display_fields
+
+    now = time.time() if now is None else now
+    view_nodes: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict) or not isinstance(node_id := node.get("id"), str) or not node_id:
+            continue
+        labels = node.get("labels")
+        labels = labels if isinstance(labels, dict) else {}
+        display_node = {
+            **node,
+            "name": _display_text(node.get("name")),
+            "status": _display_text(node.get("status"), "unknown"),
+            "labels": {"adapter": _display_text(labels.get("adapter"))},
+        }
+        try:
+            fields: dict[str, Any] = dict(_node_display_fields(display_node, now))
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            logger.warning("Dashboard received an invalid cluster node")
+            continue
+        fields["model"] = _display_text(labels.get("model"))
+        view_nodes.append(fields)
+    if not view_nodes:
+        return {"nodes": [], "reachable": False}
+
+    active_tasks, incomplete = _fetch_held_tasks(url)
+    fallback = tasks if incomplete and isinstance(tasks, list) else []
+    held_tasks = {task["id"]: task for task in fallback if _is_held_task(task) and task["status"] in incomplete}
+    held_tasks.update((task["id"], task) for task in active_tasks)
+    held: dict[str, list[dict[str, Any]]] = {}
+    for task in held_tasks.values():
+        owner = task.get("claimed_by_session")
+        if not owner:
+            continue
+        held.setdefault(owner, []).append(
+            {
+                "id": task["id"],
+                "role": _display_text(task.get("role")),
+                "title": _display_text(task.get("title")),
+                "elapsed_s": _claim_age(task.get("claimed_at"), now),
+            }
+        )
+
+    for fields in view_nodes:
+        fields["tasks"] = held.get(fields["id"], [])
+    return {"nodes": view_nodes, "reachable": True, "claims_complete": not incomplete}
+
+
+def _display_text(value: Any, default: str = "") -> str:
+    return value if isinstance(value, str) else default
+
+
+def _dashboard_progress(progress: Any) -> int:
+    if type(progress) is int:
+        return progress
+    if type(progress) is float and math.isfinite(progress):
+        return int(progress)
+    return 0
+
+
+def _claim_age(claimed_at: Any, now: float) -> int | None:
+    if type(claimed_at) not in (int, float):
+        return None
+    try:
+        elapsed = now - claimed_at
+    except OverflowError:
+        return None
+    return max(0, int(elapsed)) if math.isfinite(elapsed) else None
+
+
+def _format_cluster_view(view: dict[str, Any]) -> str:
+    """Render a cluster view as markup: one line per node, its claimed tasks under it."""
+    nodes: list[dict[str, Any]] = view.get("nodes") or []
+    if not nodes:
+        if not view.get("reachable"):
+            return "[yellow]Cluster status unavailable[/]"
+        return "[dim]No worker nodes registered with this server[/]"
+    lines = [f"[bold]CLUSTER[/] [dim]{len(nodes)} node(s)[/]"]
+    if view.get("claims_complete") is False:
+        lines.append("[yellow]Some active claims could not be loaded[/]")
+    for node in nodes:
+        status = node["status"]
+        style = "green" if status == "online" else "dim" if status == "offline" else "yellow"
+        model = f" {escape(node['model'])}" if node.get("model") else ""
+        lines.append(
+            f"[{style}]\u25cf[/] [bold]{escape(node['name'])}[/] [{style}]{escape(status)}[/] "
+            f"[dim]{escape(node['adapter'])}{model} \u00b7 {node['claimed']} claimed \u00b7 "
+            f"slots {node['slots']} \u00b7 hb {node['heartbeat']}[/]"
+        )
+        for task in node["tasks"]:
+            elapsed = _format_elapsed_label(task["elapsed_s"]) if task["elapsed_s"] is not None else "-"
+            title = task["title"] if len(task["title"]) <= 48 else task["title"][:47] + "\u2026"
+            lines.append(
+                f"  [dim]{escape(task['id'][:8])}[/] [{role_color(task['role'])}]{escape(task['role'].upper())}[/] "
+                f"{escape(title)} [dim]{elapsed}[/]"
+            )
+    return "\n".join(lines)
 
 
 def _load_agents() -> list[dict[str, Any]]:
@@ -358,7 +647,10 @@ def _task_retry_count(task: dict[str, Any]) -> int:
         for pattern in _RETRY_PATTERNS:
             match = pattern.search(value)
             if match is not None:
-                return int(match.group(1))
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    continue
     return int(typed) if isinstance(typed, int) else 0
 
 
@@ -385,6 +677,10 @@ def _format_relative_age(seconds_ago: float) -> str:
     return f"{delta_s // 86_400}d ago"
 
 
+def _completion_percent(done: int, total: int) -> int:
+    return 100 * min(max(0, done), total) // total if total > 0 else 0
+
+
 def _build_runtime_subtitle(
     *,
     git_branch: str,
@@ -406,7 +702,7 @@ def _build_runtime_subtitle(
     """
     if unreachable_url:
         return f"No connection to {unreachable_url} - showing no data, not an idle run"
-    progress_pct = int(done / total * 100) if total > 0 else 0
+    progress_pct = _completion_percent(done, total)
     parts = [f"Running for {_format_elapsed_label(elapsed_s)}"]
     if git_branch:
         parts.append(f"branch {git_branch}")
@@ -452,6 +748,9 @@ def _mini_cost_sparkline(values: list[float], *, width: int = 10) -> str:
     if not values:
         return _SPARK_CHARS[0] * width
     data = values[-width:]
+    scale = max(abs(min(data)), abs(max(data)))
+    if scale:
+        data = [value / scale for value in data]
     lo = min(data)
     hi = max(data)
     span = hi - lo if hi != lo else 1.0

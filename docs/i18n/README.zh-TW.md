@@ -126,7 +126,7 @@ flowchart LR
 每個節點由角色獲該階段允許的代理認領;無論代理在任務內做什麼,角色圍欄與核准閘門始終有效。程式碼節點在自己的 git worktree 裡、合併閘門之後完成。上面這些節點的完成方式不同:[工件契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(報告、資料集、掃描、操作日誌),節點以簽章的 lineage 收據而非提交收尾。同一個排程器、同一份日誌、同樣的離線驗證 - 無論圖裡裝的是程式碼、研究、維運變更,還是三者混合。面向軟體、研究、文件、企業與貢獻者工作流的現成圖都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — 終端機儀表板 | `bernstein gui serve` — 瀏覽器儀表板 |
+| `bernstein live` — 終端機儀表板 (遠端工作節點) | `bernstein gui serve` — 瀏覽器儀表板 |
 
 ### 證明一次執行
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

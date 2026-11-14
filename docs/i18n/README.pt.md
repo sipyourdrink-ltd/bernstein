@@ -126,7 +126,7 @@ flowchart LR
 Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de papel e gates de aprovação valem independente do que o agente faça dentro da tarefa. Um nó de código termina atrás de merge gates no seu próprio git worktree. Os nós acima terminam diferente: um [contrato de artefato](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomeia a entrega (relatório, dataset, varredura, log de ações) e o nó fecha com um recibo de lineage assinado em vez de um commit. Mesmo escalonador, mesmo journal, mesma verificação offline - leve o grafo código, pesquisa, uma mudança de ops ou uma mistura dos três. Grafos prontos para software, pesquisa, docs, enterprise e fluxos de contribuição vivem em [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ Uma execução em andamento pode ser assistida a partir de qualquer uma das inte
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — o dashboard no terminal | `bernstein gui serve` — o dashboard no navegador |
+| `bernstein live` — o dashboard no terminal (nós de trabalho remotos) | `bernstein gui serve` — o dashboard no navegador |
 
 ### comprovar uma execução
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

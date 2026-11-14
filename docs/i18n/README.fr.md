@@ -126,7 +126,7 @@ flowchart LR
 Chaque nœud est pris par un agent dont le rôle est autorisé par la phase ; les clôtures de rôle et les gates d'approbation tiennent quoi que fasse l'agent dans la tâche. Un nœud de code se termine derrière des merge gates dans son propre git worktree. Les nœuds ci-dessus se terminent autrement : un [contrat d'artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomme le livrable (rapport, dataset, scan, journal d'actions), et le nœud se clôt sur un reçu de lineage signé plutôt qu'un commit. Même ordonnanceur, même journal, même vérification hors ligne - que le graphe livre du code, de la recherche, un changement d'ops ou un mélange des trois. Des graphes prêts à l'emploi pour le logiciel, la recherche, la doc, l'enterprise et les workflows de contribution vivent dans [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installation en 30 secondes
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ Une exécution en cours est observable depuis l'une ou l'autre des interfaces op
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — le tableau de bord terminal | `bernstein gui serve` — le tableau de bord navigateur |
+| `bernstein live` — le tableau de bord terminal (nœuds de calcul distants) | `bernstein gui serve` — le tableau de bord navigateur |
 
 ### prouver une exécution
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

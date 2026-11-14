@@ -126,7 +126,7 @@ flowchart LR
 প্রতিটি নোড সেই এজেন্ট নেয় যার রোল ফেজটি অনুমোদন করে; এজেন্ট টাস্কের ভেতরে যা-ই করুক, রোলের বেড়া আর অনুমোদনের গেট বহাল থাকে। কোড নোড নিজের git worktree-তে merge গেটের পেছনে সম্পূর্ণ হয়। উপরের নোডগুলো অন্যভাবে শেষ হয়: [আর্টিফ্যাক্ট চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ডেলিভারেবলের নাম দেয় (রিপোর্ট, ডেটাসেট, স্ক্যান, অ্যাকশন লগ), আর নোডটি কমিটের বদলে স্বাক্ষরিত lineage রসিদে বন্ধ হয়। একই শিডিউলার, একই জার্নাল, একই অফলাইন যাচাই - গ্রাফ কোড বহন করুক, রিসার্চ, ops পরিবর্তন বা তিনটির মিশ্রণ। সফটওয়্যার, রিসার্চ, ডকস, এন্টারপ্রাইজ ও কন্ট্রিবিউটর ওয়ার্কফ্লোর তৈরি গ্রাফ আছে [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)-এ।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — টার্মিনাল ড্যাশবোর্ড | `bernstein gui serve` — ব্রাউজার ড্যাশবোর্ড |
+| `bernstein live` — টার্মিনাল ড্যাশবোর্ড (দূরবর্তী ওয়ার্কার নোড) | `bernstein gui serve` — ব্রাউজার ড্যাশবোর্ড |
 
 ### একটি রান প্রমাণ করুন
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

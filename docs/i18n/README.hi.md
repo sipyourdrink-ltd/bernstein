@@ -126,7 +126,7 @@ flowchart LR
 हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — टर्मिनल डैशबोर्ड | `bernstein gui serve` — ब्राउज़र डैशबोर्ड |
+| `bernstein live` — टर्मिनल डैशबोर्ड (दूरस्थ वर्कर नोड) | `bernstein gui serve` — ब्राउज़र डैशबोर्ड |
 
 ### रन को साबित कीजिए
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->

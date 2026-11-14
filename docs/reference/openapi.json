@@ -23688,6 +23688,17 @@
             ],
             "title": "Parent Session Id"
           },
+          "claimed_by_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By Session"
+          },
           "retry_count": {
             "type": "integer",
             "title": "Retry Count",

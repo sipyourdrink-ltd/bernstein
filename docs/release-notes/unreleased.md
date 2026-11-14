@@ -64,6 +64,8 @@ rather than as its own attribution is exempted by hand there, with the reason.
 
 ## Fixed
 
+- Show registered remote worker nodes and their claimed tasks in the `bernstein live` AGENTS panel.
+  ([#6753](https://github.com/sipyourdrink-ltd/bernstein/pull/6753))
 - Route `provider=openai` requests directly through the OpenAI API client.
   ([#6884](https://github.com/sipyourdrink-ltd/bernstein/pull/6884))
 - Validate and forward reasoning effort parameters before spawning tasks in the Codex adapter.
