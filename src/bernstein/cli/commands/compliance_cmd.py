@@ -698,7 +698,7 @@ def pack_group() -> None:
     "--lineage-dir",
     default=None,
     type=click.Path(path_type=Path),
-    help="Override path to lineage directory (default: <workdir>/.sdd/lineage).",
+    help="Override path to the lineage directory (default: <workdir>/.sdd/lineage).",
 )
 @click.option(
     "--agent-cards-dir",

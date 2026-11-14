@@ -1,6 +1,9 @@
 <div align="center">
 
-<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
+  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+</picture>
 
 <br>
 
@@ -123,7 +126,7 @@ flowchart LR
 Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en goedkeuringsgates houden stand wat de agent binnen de taak ook doet. Een code-node eindigt achter merge gates in zijn eigen git worktree. De nodes hierboven eindigen anders: een [artefactcontract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) benoemt het resultaat (rapport, dataset, scan, actielog) en de node sluit af met een ondertekend lineage-bewijs in plaats van een commit. Dezelfde scheduler, hetzelfde journal, dezelfde offline verificatie - of de graaf nu code, onderzoek, een ops-wijziging of een mix van alle drie levert. Kant-en-klare grafen voor software, onderzoek, docs, enterprise en contributor-workflows staan in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +138,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` toont ook de bevindingen `findings` van het auditcontract, die bij dezelfde installatieobservaties identiek zijn aan die van `bernstein govern audit --only INS --json`. Het normale doctor-rapport behoudt de bestaande weergave. Zie de [gebruikshandleiding voor doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) voor vaste controle-ID’s.
 
 pipx, pip, brew, dnf, npm en Docker worden behandeld in de [installatiehandleiding](https://docs.bernstein.run/en/latest/getting-started/install/); de geïsoleerde wheelhouse heeft een eigen [air-gap-handleiding](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+`bernstein worktrees sweep` toont een voorvertoning van werkbomen en sandboxsessies die voltooide taken hebben achtergelaten, met ouderdom en schijfgebruik. Alleen werkbomen kunnen worden verwijderd, met `--apply` en een afzonderlijke verwijderingsgoedkeuring. Sandboxen worden alleen in het rapport vermeld (verwijdering: #6571); `doctor` waarschuwt voor oudere achtergebleven resources. Zie de [opruimprocedure](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 Bij een mislukte initialisatie wordt de vaardigheid in [quarantaine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) geplaatst, met een blijvend opgeslagen reden en auditgebeurtenis. `bernstein status` toont het aantal; `doctor` en `govern audit` melden de uitgeschakelde declaraties. Verhelp de oorzaak en verwijder de markering expliciet met `bernstein quarantine re-enable DECLARATION_ID`.
 
@@ -155,10 +160,10 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — het terminaldashboard | `bernstein gui serve` — het browserdashboard |
+| `bernstein live` — het terminaldashboard (externe worker-nodes) | `bernstein gui serve` — het browserdashboard |
 
 ### een run bewijzen
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Determinisme is hier iets wat u controleert, niet iets wat u op goed vertrouwen aanneemt. Voer eenmaal uit met audit ingeschakeld en controleer wat is vastgelegd:
 
@@ -178,9 +183,13 @@ Het journaal wordt bij elke run geschreven; de lineage-ruggengraat staat altijd 
 
 Een run-receipt bindt de journaalkop, de lineage-kop (als er stappen zijn vastgelegd) en optioneel een auditketenbereik onder één met Ed25519 ondertekend subject met ingesloten openbare sleutel. Een controleur met dat bestand en de openbare sleutel van de beheerder kan bevestigen dat de ingesloten acties en ketens ongewijzigd zijn: geen HMAC-sleutel nodig, geen actieve `.sdd/`, en exitcode `2` met vermelding van de eerste afwijkende stap bij manipulatie. Dat ontvangstbewijs identificeert de ingesloten journaalstatus; om te bewijzen dat die status het volledige voltooide journaal is, is bovendien een onafhankelijk kop/telling-zegel vereist. Zonder `--public-key` controleert het bestand alleen de interne integriteit. Details in [deterministische replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
+Open **Governance** in de webinterface en gebruik **Verify a receipt** om een run-receipt op de server te controleren. De browser toont de uitkomst van de controle van alleen de integriteit en de herkomst van de sleutel. Zie [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
+
 Dezelfde controleerbaarheid geldt voor evaluatiecijfers. `bernstein bench run <suite> --reliability k` (ook geschreven als `bernstein eval --reliability k`) voert elke taak `k` keer uit onder vaste coördinatie en rapporteert een `pass^k`-ondergrens (alle `k` pogingen moeten slagen) naast het `pass@1`-plafond. Dat resultaat wordt verzegeld in een ondertekend ontvangstbewijs dat `bernstein bench reliability-verify` offline herberekenen kan, zodat een gemanipuleerde ondergrens faalt bij verificatie. Details: [pass^k betrouwbaarheidsondergrens](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 Gebruik `bernstein govern audit --format json` of `--format sarif` voor machineleesbare controleresultaten en `--strict --quiet` als goedkeuringscriterium in CI. Zie [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN` vergelijkt de keten van ontvangstbewijzen met de definitieve ketenkop en het aantal delegatiestappen, die in het uitvoeringsmanifest met een HMAC op basis van de auditsleutel zijn verzegeld. Zo worden het verwijderen van het keteneinde, vervanging en uitbreiding na afsluiting gedetecteerd, inclusief het herschrijven van de declaratie zonder sleutel. Als de declaratie wordt verwijderd, blijft de uitvoering onvolledig (exitcode `3`) en geldt deze nooit als geldig. Dit detecteert geen hergebruik van een oudere authentieke momentopname en biedt geen bescherming tegen een schrijver die de auditsleutel bezit. Zie de [werkwijze voor delegatieverificatie](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### hoe het werkt
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
@@ -220,9 +229,9 @@ De runstatus wordt bij elk knooppunt als checkpoint onder `.sdd/runs/<run_id>/` 
 Kwaliteitscontroles voor de repository: `bernstein readme-l10n verify` laat een PR falen waarvan de vertaalde README's afwijken van de Engelse bron (met vermelding van de verouderde sectie), `bernstein readme-l10n sync` werkt de koppelingen bij na Engelse wijzigingen. Zie [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### ondersteunde agents
-<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
+<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen en meer. De [adapterindex](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bevat installatiecommando's voor 30 ervan. `bernstein integrations list` somt alle 56 ingebouwde integraties op uit `src/bernstein/adapters/registry.py`, de enige bron van waarheid. 54 daarvan zijn selecteerbare agentadapters; de andere twee rijen zijn de teststub `mock` en het eindpuntprofiel `self-hosted-endpoints`. Elk ander programma met een `--prompt`-vlag werkt via de generieke wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen en meer. De [adapterindex](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bevat installatiecommando's voor 30 ervan. `bernstein integrations list` somt alle 57 ingebouwde integraties op uit `src/bernstein/adapters/registry.py`, de enige bron van waarheid. 55 daarvan zijn selecteerbare agentadapters; de andere twee rijen zijn de teststub `mock` en het eindpuntprofiel `self-hosted-endpoints`. Elk ander programma met een `--prompt`-vlag werkt via de generieke wrapper.
 
 Combineer agents binnen dezelfde run: goedkope lokale modellen voor routinematige code, krachtigere cloudmodellen voor architectuur. `bernstein integrations list --installed` toont wat er beschikbaar is op uw machine.
 
@@ -239,7 +248,7 @@ bernstein volunteer browse --budget 60
 De [donateursgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt het draaien van een worker en het budget dat je instelt, de [projectgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) behandelt het declareren van een manifest, en het [dreigingsmodel](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschrijft waartegen elke grens wel en niet beschermt. De runner met één commando is nog niet uitgebracht: vandaag zijn `verify`, `browse`, `budget`, `verify-bundle` en `hub` de werkende subcommando's. `autopilot` is geregistreerd, maar weigert te starten totdat een `TaskSource` is geïmplementeerd.
 
 ### voorbij de voorpagina
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernstein.run/):
 
@@ -249,7 +258,7 @@ Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernste
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | waar de waarde ligt en wanneer Bernstein het verkeerde gereedschap is |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declaratieve YAML-DAG's van agent- / commando- / lusknooppunten |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browserdashboard gebaseerd op dezelfde API als de TUI |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browserdashboard gebaseerd op dezelfde API als de TUI (taken aanmaken en bekijken) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimenteel: voer agents uit op Cloudflare Workers met R2-workspace-synchronisatie via uw eigen account. De gehoste dienst `api.bernstein.run` is nog niet beschikbaar |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | alleen-lezen query-ontvangstbewijzen, plus een querydriver die elk resultaat koppelt aan de gebruikte schemasnapshot |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | verwijs rollen naar externe agentdefinities buiten de ingebouwde sjablonen — een generieke YAML/SKILL.md-map of een Claude Code-plugin-structuur |
@@ -257,9 +266,9 @@ Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernste
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | hoe het onder de motorkap werkt |
 
 ### waarom deze naam?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componist. Het project orkestreert een team van CLI-coding-agents zoals Bernstein het New York Philharmonic dirigeerde: elke muzikant op het juiste moment, de partituur deterministisch, de dirigent verantwoordelijk voor het eindresultaat.
+Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componist. Het project bestuurt een team van AI-agents zoals Bernstein het New York Philharmonic dirigeerde: elke muzikant op het juiste moment, de partituur deterministisch, de dirigent verantwoordelijk voor het eindresultaat.
 
 ik heb bernstein geschreven omdat ik maandelijks $400 aan claude-rekeningen betaalde door drie coding-agents parallel te draaien en niet-deterministische merges kreeg. Apache 2.0, onderhouden door één persoon. Live statistieken: [bernstein.run](https://bernstein.run).
 

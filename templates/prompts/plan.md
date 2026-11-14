@@ -47,7 +47,7 @@ Rules:
    the same subpackage tree with no tests/UI work - that is the
    "horizontally phased" anti-pattern.
 
-Output a JSON array of tasks. Each task object must have exactly these fields:
+Output a JSON array of tasks. Use these fields:
 
 ```json
 [
@@ -68,6 +68,11 @@ Output a JSON array of tasks. Each task object must have exactly these fields:
   }
 ]
 ```
+
+Optionally include `dispatch_hints` with `estimated_changed_lines` (a
+nonnegative integer counting expected additions plus deletions) and
+`requires_shell` (a boolean, including whether tests need to run).
+Omit any hint you cannot estimate. Use concrete paths in `owned_files`.
 
 Completion signal types:
 - `path_exists` - a file or directory must exist

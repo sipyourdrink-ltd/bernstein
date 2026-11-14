@@ -9,6 +9,9 @@ computed from, and a period with no rows for the agent is reported as
 **UNVERIFIED** (not clean), per the absence-coverage contract in
 :mod:`bernstein.core.quality.absence_coverage`.
 
+:func:`aggregate_conduct` combines supplied run projections for a half-open
+period without discovering journals or changing their run-local evidence.
+
 Determinism
 -----------
 The fold is a *pure function*: the same row list, principal id, and time
@@ -27,6 +30,7 @@ A period whose filtered row list is empty is therefore reported as
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +43,9 @@ __all__ = [
     "CONDUCT_FOLD_SCHEMA_VERSION",
     "CONDUCT_FOLD_TYPE",
     "CompletionCoverageStatus",
+    "ConductAggregate",
     "ConductProjection",
+    "aggregate_conduct",
     "derive_conduct",
     "derive_conduct_from_path",
 ]
@@ -270,6 +276,121 @@ def _build_count(positions: Sequence[int]) -> _Count:
         count=len(positions),
         first_index=positions[0],
         last_index=positions[-1],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Supplied-run aggregation
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ConductAggregate:
+    """Totals and original per-run evidence for one principal and period.
+
+    ``counts`` contains scalar totals, while ``runs`` retains the complete
+    source projections, including each run-local event-index range. Indices
+    from different journals are never combined into a synthetic range.
+    Coverage inherits the source classifications; it does not establish
+    continuous journal coverage across the requested period.
+    """
+
+    principal_id: str
+    period_start: float
+    period_end: float
+    runs: tuple[ConductProjection, ...]
+
+    @property
+    def event_count(self) -> int:
+        """Total folded events across the supplied runs."""
+        return sum(run.event_count for run in self.runs)
+
+    @property
+    def coverage(self) -> CompletionCoverageStatus:
+        """Keep absent or partially unverified evidence unverified."""
+        if self.event_count and all(run.coverage == CompletionCoverageStatus.VERIFIED for run in self.runs):
+            return CompletionCoverageStatus.VERIFIED
+        return CompletionCoverageStatus.UNVERIFIED
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """Return totals for every count represented by the per-run fold."""
+        return {
+            name: sum(getattr(run, name).count for run in self.runs)
+            for name in (
+                "tool_calls",
+                "completed",
+                "failed",
+                "gated",
+                "gated_honoured",
+                "gated_overridden",
+                "delegated",
+            )
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return totals alongside the unchanged run projections."""
+        return {
+            "schema_version": CONDUCT_FOLD_SCHEMA_VERSION,
+            "principal_id": self.principal_id,
+            "period_start": self.period_start,
+            "period_end": self.period_end,
+            "coverage": self.coverage.value,
+            "event_count": self.event_count,
+            "counts": self.counts,
+            "ignored_event_types": sorted({event for run in self.runs for event in run.ignored_event_types}),
+            "runs": [run.to_dict() for run in self.runs],
+        }
+
+    def canonical_bytes(self) -> bytes:
+        """Return deterministic UTF-8 JSON bytes of the aggregate."""
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def aggregate_conduct(
+    projections: Sequence[ConductProjection],
+    *,
+    principal_id: str,
+    period_start: float,
+    period_end: float,
+) -> ConductAggregate:
+    """Combine supplied per-run projections overlapping ``[start, end)``.
+
+    Only projections for ``principal_id`` are eligible. Source projection
+    windows are inclusive (the :func:`derive_conduct` contract), so a source
+    ending exactly at the aggregate start overlaps, but one starting at the
+    aggregate end does not. An empty aggregate period selects no runs.
+
+    Projections are indivisible: counts and ranges are retained, not clipped
+    or re-derived without journal rows. Callers needing exact in-period counts
+    must supply projections already restricted to the desired event window.
+    Supply one projection per run to avoid double-counting the same evidence.
+    The function performs no journal discovery or I/O.
+
+    Raises:
+        ValueError: Period bounds are non-finite or the end precedes the start.
+    """
+    if not math.isfinite(period_start) or not math.isfinite(period_end) or period_end < period_start:
+        raise ValueError("period bounds must be finite and period_end must be >= period_start")
+
+    runs = tuple(
+        sorted(
+            (
+                run
+                for run in projections
+                if period_start < period_end
+                and run.principal_id == principal_id
+                and run.period_start < period_end
+                and run.period_end >= period_start
+            ),
+            key=lambda run: (run.run_id, run.canonical_bytes()),
+        )
+    )
+    return ConductAggregate(
+        principal_id=principal_id,
+        period_start=period_start,
+        period_end=period_end,
+        runs=runs,
     )
 
 

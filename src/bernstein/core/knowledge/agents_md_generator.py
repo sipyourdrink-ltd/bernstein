@@ -590,6 +590,8 @@ def _build_build_test(repo_path: Path) -> AgentsMdSection | None:
     """
     pairs: list[tuple[str, str]] = []
 
+    makefile = repo_path / "Makefile"
+    targets = _parse_make_targets(makefile) if makefile.is_file() else set()
     pyproj = repo_path / "pyproject.toml"
     if pyproj.is_file():
         text = pyproj.read_text(encoding="utf-8", errors="replace")
@@ -602,15 +604,15 @@ def _build_build_test(repo_path: Path) -> AgentsMdSection | None:
             pairs.append((f"{run}pytest", "tests"))
         if "ruff" in text:
             pairs.extend(((f"{run}ruff check .", "lint"), (f"{run}ruff format .", "format")))
-        if "mypy" in text or "pyright" in text:
-            pairs.append((f"{run}mypy src", "type-check"))
+        if "typecheck" not in targets:
+            if "pyright" in text:
+                pairs.append((f"{run}pyright", "type-check"))
+            elif "mypy" in text:
+                pairs.append((f"{run}mypy src", "type-check"))
 
-    makefile = repo_path / "Makefile"
-    if makefile.is_file():
-        targets = _parse_make_targets(makefile)
-        for t in ("test", "lint", "build", "install"):
-            if t in targets:
-                pairs.append((f"make {t}", ""))
+    for t in ("test", "lint", "typecheck", "build", "install"):
+        if t in targets:
+            pairs.append((f"make {t}", ""))
 
     package_json = repo_path / "package.json"
     if package_json.is_file():

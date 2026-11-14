@@ -26,7 +26,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
+from itertools import islice
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
@@ -55,6 +57,9 @@ _GOVERN_AUDIT_MODEL = "none"
 #: Sub-path (relative to the audit run's spine dir) the persisted reports land
 #: in, colocated with the spine so the artefact and its anchor share one root.
 _REPORT_SUBPATH = ("reports",)
+_INVENTORY_ARTIFACT = "inventory.json"
+_INVENTORY_ACTOR = "bernstein.govern"
+_INVENTORY_HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _canonical_bytes(payload: Any) -> bytes:
@@ -181,15 +186,21 @@ class AuditReport:
         return self._binding() | {"journal_entry_hash": self.journal_entry_hash}
 
     @classmethod
-    def from_dict(cls, row: dict[str, Any]) -> AuditReport:
+    def from_dict(cls, row: object) -> AuditReport:
         """Rebuild a report from a serialised row."""
+        if not isinstance(row, dict):
+            raise ValueError("audit report must be an object")
         raw_findings: object = row.get("findings") or []
         if not isinstance(raw_findings, list):
             raise ValueError("audit report findings must be a list")
         rows = cast("list[dict[str, Any]]", raw_findings)
+        try:
+            timestamp = int(row["timestamp"])
+        except OverflowError as exc:
+            raise ValueError("audit report timestamp is out of range") from exc
         return cls(
             findings=tuple(dict(f) for f in rows),
-            timestamp=int(row["timestamp"]),
+            timestamp=timestamp,
             inventory_hash=str(row.get("inventory_hash", "")),
             inventory_anchor=str(row.get("inventory_anchor", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
@@ -423,7 +434,7 @@ class AuditReportVerifyResult:
     Attributes:
         ok: True only when the spine is intact, the report's canonical bytes
             are anchored in it, the recorded anchor is that entry, and any
-            named inventory anchor is an entry on the same chain.
+            named inventory anchor precedes the report and binds its inventory identity.
         reason: Why verification failed (empty when ``ok``).
         report: The report that was checked, when one was loaded.
     """
@@ -432,12 +443,6 @@ class AuditReportVerifyResult:
     reason: str = ""
     report: AuditReport | None = None
     errors: tuple[str, ...] = field(default_factory=tuple)
-
-
-def _recompute_anchors(spine: LineageSpine, canonical: bytes) -> set[str]:
-    """Return all spine entry hashes whose content matches ``canonical`` bytes."""
-    want = content_hash_of(canonical)
-    return {entry.entry_hash for entry in spine.iter_entries() if entry.content_hash == want}
 
 
 def verify_audit_report(
@@ -455,8 +460,8 @@ def verify_audit_report(
       byte-flipped report matches no entry and is unverifiable, not merely
       different;
     * the recorded ``journal_entry_hash`` against those entries;
-    * the named ``inventory_anchor``, when present, as an entry on the same
-      chain, so a report cannot claim an inventory the chain never saw.
+    * the named ``inventory_anchor``, when present, as an earlier
+      inventory entry whose step id binds the named content identity.
     """
     spine = LineageSpine(lineage_root, run_id=GOVERN_AUDIT_RUN_ID, hmac_key=hmac_key)
     spine_result = spine.verify()
@@ -472,26 +477,45 @@ def verify_audit_report(
     except ValueError as exc:
         return AuditReportVerifyResult(ok=False, reason=f"report is malformed ({exc})", report=report)
 
-    recomputed = _recompute_anchors(spine, canonical)
-    if not recomputed:
+    want = content_hash_of(canonical)
+    matching_content = False
+    inventory_entry = None
+    for entry in islice(spine.iter_entries(), spine_result.count):
+        if entry.content_hash == want:
+            matching_content = True
+            if entry.entry_hash == report.journal_entry_hash:
+                break
+        if entry.entry_hash == report.inventory_anchor:
+            inventory_entry = entry
+    else:
         return AuditReportVerifyResult(
             ok=False,
-            reason="report is not anchored in the govern-audit spine",
-            report=report,
-        )
-    if report.journal_entry_hash not in recomputed:
-        return AuditReportVerifyResult(
-            ok=False,
-            reason="recorded journal_entry_hash does not match the spine anchor over the report bytes",
+            reason=(
+                "recorded journal_entry_hash does not match the spine anchor over the report bytes"
+                if matching_content
+                else "report is not anchored in the govern-audit spine"
+            ),
             report=report,
         )
 
+    if bool(report.inventory_hash) != bool(report.inventory_anchor):
+        return AuditReportVerifyResult(
+            ok=False, reason="inventory hash and inventory anchor must be supplied together", report=report
+        )
     if report.inventory_anchor:
-        anchors = {entry.entry_hash for entry in spine.iter_entries()}
-        if report.inventory_anchor not in anchors:
+        if inventory_entry is None:
+            return AuditReportVerifyResult(
+                ok=False, reason="referenced inventory anchor does not precede the report on the spine", report=report
+            )
+        if (
+            _INVENTORY_HASH.fullmatch(report.inventory_hash) is None
+            or inventory_entry.step_id != report.inventory_hash
+            or inventory_entry.artifact_path != _INVENTORY_ARTIFACT
+            or inventory_entry.actor != _INVENTORY_ACTOR
+        ):
             return AuditReportVerifyResult(
                 ok=False,
-                reason="referenced inventory anchor is not an entry on the govern-audit spine",
+                reason="referenced inventory anchor does not bind the declared inventory hash",
                 report=report,
             )
 

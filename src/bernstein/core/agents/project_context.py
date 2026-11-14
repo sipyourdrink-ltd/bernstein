@@ -11,6 +11,7 @@ one copy is what stops the two from drifting apart.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,7 +20,8 @@ if TYPE_CHECKING:
     from bernstein.core.tasks.models import Task
 
 # mtime-keyed, so an edit during a run is picked up without a restart.
-_FILE_CACHE: dict[str, tuple[float, str]] = {}
+_FILE_CACHE_MAX_ENTRIES = 512
+_FILE_CACHE: OrderedDict[str, tuple[float, str]] = OrderedDict()
 
 
 def read_cached(path: Path) -> str:
@@ -39,9 +41,13 @@ def read_cached(path: Path) -> str:
         return ""
     cached = _FILE_CACHE.get(key)
     if cached is not None and cached[0] == mtime:
+        _FILE_CACHE.move_to_end(key)
         return cached[1]
     content = path.read_text(encoding="utf-8")
     _FILE_CACHE[key] = (mtime, content)
+    _FILE_CACHE.move_to_end(key)
+    while len(_FILE_CACHE) > _FILE_CACHE_MAX_ENTRIES:
+        _FILE_CACHE.popitem(last=False)
     return content
 
 

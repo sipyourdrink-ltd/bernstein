@@ -331,6 +331,7 @@ def task_to_response(task: Task) -> TaskResponse:
         progress_log=cast("list[ProgressEntry]", task.progress_log).copy(),  # type: ignore[reportUnknownMemberType]
         version=task.version,
         parent_session_id=task.parent_session_id,
+        claimed_by_session=task.claimed_by_session,
         # expose typed retry bookkeeping so clients read the
         # single source of truth rather than regex-ing the title.
         retry_count=task.retry_count,
@@ -1804,7 +1805,7 @@ class TaskNotificationManager:
                 try:
                     await queue.put(notification)
                 except Exception as e:
-                    logger.warning(f"Failed to notify subscriber: {e}")
+                    logger.warning("Failed to notify subscriber: %s", e)
 
     # 2. Add generic type to return value
     async def subscribe(self) -> asyncio.Queue[AgentStatusNotification]:
@@ -1856,5 +1857,10 @@ async def notify_agent_status(
     await _task_notification_manager.notify_agent_status(notification)
 
     logger.info(
-        f"Agent status notification: {agent_id} ({role}) - {status} (task: {task_id}, progress: {progress:.0%})"
+        "Agent status notification: %s (%s) - %s (task: %s, progress: %.0f%%)",
+        agent_id,
+        role,
+        status,
+        task_id,
+        progress * 100,
     )

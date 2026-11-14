@@ -977,6 +977,41 @@ def check_audit_anchoring(workdir: Path | None = None) -> dict[str, Any]:
     }
 
 
+def check_leaked_lanes(
+    workdir: Path | None = None,
+    *,
+    max_age_seconds: float | None = None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Warn about task-terminal lanes older than the configured age (#5112)."""
+    from bernstein.cli.commands.worktrees_cmd import format_age
+    from bernstein.core.sandbox.leak_sweep import sweep_leaked_lanes
+
+    name = "Leaked lanes"
+    fix = "Preview: bernstein worktrees sweep (or bernstein sandbox sweep)"
+    try:
+        threshold = (
+            float(os.environ.get("BERNSTEIN_LEAK_MAX_AGE_SECONDS", "86400"))
+            if max_age_seconds is None
+            else max_age_seconds
+        )
+        import math
+
+        if not math.isfinite(threshold) or threshold < 0:
+            raise ValueError("leak age must be finite and non-negative")
+        lanes = sweep_leaked_lanes(workdir or Path.cwd(), now=now)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {"name": name, "status": _CHECK_WARN, "detail": f"leak check unavailable: {exc}", "fix": fix}
+    aged = [lane for lane in lanes if lane.age_seconds is not None and lane.age_seconds > threshold]
+    if not aged:
+        return {"name": name, "status": _CHECK_PASS, "detail": "no aged task-terminal lanes", "fix": ""}
+    detail = "; ".join(
+        f"{lane.kind} {lane.resource_id} ({', '.join(lane.task_ids)}, {format_age(lane.age_seconds or 0)})"
+        for lane in aged
+    )
+    return {"name": name, "status": _CHECK_WARN, "detail": detail, "fix": fix}
+
+
 def run_all_checks() -> list[dict[str, Any]]:
     """Run all health checks and return results."""
     checks: list[dict[str, Any]] = []
@@ -988,6 +1023,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks.extend(check_skill_revocations())
     checks.append(check_eval_gate_min_n_advisory())
     checks.append(check_audit_anchoring())
+    checks.append(check_leaked_lanes())
     checks.extend(check_api_keys())
     checks.extend(
         (
@@ -1222,7 +1258,7 @@ def _run_endpoint_certification(
     "--unattended",
     is_flag=True,
     default=False,
-    help="Run probes through spawner environment (unattended parity).",
+    help="Run probes through the spawner environment (unattended parity).",
 )
 @click.pass_context
 def doctor_cmd(

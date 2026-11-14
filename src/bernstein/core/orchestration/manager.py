@@ -39,6 +39,7 @@ from bernstein.core.orchestration.manager_models import (
 )
 from bernstein.core.orchestration.manager_parsing import (
     _parse_upgrade_details,
+    dispatch_distribution,
     parse_queue_review_response,
     parse_review_response,
     parse_tasks_response,
@@ -302,7 +303,7 @@ class ManagerAgent:
             from bernstein.core.orchestration.manager_parsing import _resolve_depends_on
 
             raw_tasks = parse_tasks_response(raw_response)
-            tasks = raw_dicts_to_tasks(raw_tasks)
+            tasks = raw_dicts_to_tasks(raw_tasks, classify_dispatch=True)
 
             if not tasks:
                 logger.warning("LLM returned no valid tasks")
@@ -340,7 +341,7 @@ class ManagerAgent:
                     try:
                         retry_raw = await call_llm(retry_prompt, model=self._model, provider=self._provider)
                         retry_parsed = parse_tasks_response(retry_raw)
-                        retry_tasks = raw_dicts_to_tasks(retry_parsed)
+                        retry_tasks = raw_dicts_to_tasks(retry_parsed, classify_dispatch=True)
                         if retry_tasks:
                             tasks = retry_tasks
                     except Exception as exc:
@@ -348,6 +349,7 @@ class ManagerAgent:
 
             for idx, task in enumerate(tasks, start=1):
                 logger.info("slice %d: %s · %s", idx, task.title, summarise_slice(task))
+            logger.info("Plan dispatch: %s", dispatch_distribution(tasks))
 
             # 7. Resolve dependency titles to IDs
             _resolve_depends_on(tasks)
@@ -380,16 +382,19 @@ class ManagerAgent:
             '- "scope": "small" or "medium"\n'
             '- "complexity": "low", "medium", or "high"\n'
             '- "estimated_minutes": integer <= 60\n'
-            '- "owned_files": array of file paths, optional\n\n'
+            '- "owned_files": array of concrete file paths, optional\n'
+            '- Optional "dispatch_hints": "estimated_changed_lines" (nonnegative integer, additions plus deletions) '
+            'and "requires_shell" (boolean, including tests); omit unknown values.\n\n'
             "Prefer independent subtasks that can be executed in separate agent sessions.\n\n"
             f"## Project context\n{context}"
         )
         raw = await call_llm(prompt, model=self._model, provider=self._provider)
         parsed = parse_tasks_response(raw)
-        subtasks = raw_dicts_to_tasks(parsed, id_prefix=f"{task.id}-subtask")
+        subtasks = raw_dicts_to_tasks(parsed, id_prefix=f"{task.id}-subtask", classify_dispatch=True)
         if not (min_subtasks <= len(subtasks) <= max_subtasks):
             raise ValueError(f"Expected {min_subtasks}-{max_subtasks} subtasks, got {len(subtasks)}")
-        return subtasks[:max_subtasks]
+        logger.info("Decomposition dispatch: %s", dispatch_distribution(subtasks))
+        return subtasks
 
     def decompose_sync(self, task: Task, *, min_subtasks: int = 2, max_subtasks: int = 5) -> list[Task]:
         """Synchronous wrapper around :meth:`decompose` for orchestrator call sites."""
@@ -794,7 +799,7 @@ if __name__ == "__main__":
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{server_url}/tasks/{args.task_id}")
             if resp.status_code != 200:
-                print(f"Task {args.task_id} not found.")
+                logger.error("Task %s not found (HTTP %d).", args.task_id, resp.status_code)
                 sys.exit(1)
 
             task_data = resp.json()

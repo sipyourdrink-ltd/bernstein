@@ -787,7 +787,7 @@ def score_patch_match(
         original: Original file content before the patch.
         patched: File content after the patch was applied.
         file_path: Path label for the result.
-        context_lines: Lines of context to include in snippets.
+        _context_lines: Reserved parameter.
 
     Returns:
         :class:`PatchMatchResult` with confidence score and diff metadata.
@@ -1451,7 +1451,11 @@ def record_token_escalation(
     trace.steps.append(step)
 
     logger.warning(
-        f"Token escalation recorded in trace {trace.trace_id}: "
-        f"{role} task {task_id} requested {requested_tokens} tokens "
-        f"(max: {max_allowed_tokens}) for {model}"
+        "Token escalation recorded in trace %s: %s task %s requested %s tokens (max: %s) for %s",
+        trace.trace_id,
+        role,
+        task_id,
+        requested_tokens,
+        max_allowed_tokens,
+        model,
     )

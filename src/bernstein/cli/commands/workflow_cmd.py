@@ -402,7 +402,7 @@ def _run_dsl_cmd(path: Path, *, dry_run: bool, console: Any) -> None:
     console.print(
         "[yellow]DSL workflows aren't executable via `workflow run` yet; "
         f"use `bernstein workflow run {name} --dry-run` for the plan or "
-        f"`bernstein workflow show {name}` for full structure.[/yellow]",
+        f"`bernstein workflow show {name}` for the full structure.[/yellow]",
     )
     raise SystemExit(1)
 

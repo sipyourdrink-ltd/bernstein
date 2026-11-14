@@ -78,8 +78,11 @@ project. Verify with `bernstein telemetry probe` after reloading VS Code.
 bernstein desktop-register --list
 ```
 
-The `cline` row should show `Registered: yes`. In Cline, the Bernstein
-tools appear in the MCP tool list once VS Code has reloaded.
+The `cline` row should show `Registered: yes`, confirming the saved
+registration.
+
+In Cline, the Bernstein tools appear in the MCP tool list once VS Code has
+reloaded.
 
 For machine-readable output:
 

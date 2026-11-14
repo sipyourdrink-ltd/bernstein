@@ -22,8 +22,10 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -51,6 +53,7 @@ class _Page:
         self._fail_on = fail_on
         self.shots: list[Path] = []
         self.goto_waits: list[str] = []
+        self.settings_actions: list[tuple[str, str]] = []
 
     def goto(self, url: str, **kwargs: object) -> None:
         wait_until = kwargs.get("wait_until")
@@ -61,10 +64,28 @@ class _Page:
     def wait_for_timeout(self, _ms: int) -> None:
         pass
 
-    def screenshot(self, path: str) -> None:
+    def route(self, url: str, handler: Any) -> None:
+        request = SimpleNamespace(headers={})
+        handler(
+            SimpleNamespace(request=request, continue_=lambda **kwargs: self.settings_actions.append(("route", url)))
+        )
+
+    def get_by_text(self, text: str, *, exact: bool) -> Any:
+        def wait_for(*, state: str) -> None:
+            self.settings_actions.append((state, text))
+
+        return SimpleNamespace(wait_for=wait_for)
+
+    def screenshot(self, path: str, *, animations: str) -> None:
+        assert animations == "disabled"
         target = Path(path)
         if self._fail_on and target.name == f"webui-{self._fail_on}.png":
             raise RuntimeError("the page never settled")
+        if target.name == "webui-settings.png":
+            assert self.settings_actions == [
+                ("route", "http://127.0.0.1:1234/api/v1/**"),
+                ("visible", "No token stored"),
+            ]
         target.write_bytes(b"\x89PNG\r\n\x1a\n" + target.name.encode())
         self.shots.append(target)
 
@@ -74,7 +95,12 @@ class _Browser:
         self._page = page
         self.closed = False
 
-    def new_page(self, **_: object) -> _Page:
+    def new_page(self, **options: object) -> _Page:
+        assert options == {
+            "viewport": {"width": 1440, "height": 900},
+            "device_scale_factor": 1,
+            "color_scheme": "light",
+        }
         return self._page
 
     def close(self) -> None:
@@ -92,7 +118,8 @@ def _install_stub_playwright(monkeypatch: pytest.MonkeyPatch, page: _Page) -> _B
 
     class _Chromium:
         @staticmethod
-        def launch() -> _Browser:
+        def launch(*, headless: bool) -> _Browser:
+            assert headless
             return browser
 
     class _Playwright:
@@ -143,6 +170,40 @@ def test_capture_waits_for_dom_content_not_network_idle(capturer: Any, assets: P
     capturer.capture({"tasks": "/ui/tasks"}, "http://127.0.0.1:1234", "token")
 
     assert page.goto_waits == ["domcontentloaded", "domcontentloaded"]
+
+
+def test_settings_authenticates_requests_without_displaying_demo_bearer(
+    capturer: Any, assets: Path, monkeypatch: Any
+) -> None:
+    page = _Page(fail_on=None)
+    _install_stub_playwright(monkeypatch, page)
+
+    assert capturer.capture({"settings": "/ui/settings"}, "http://127.0.0.1:1234", "token") == [
+        assets / "webui-settings.png"
+    ]
+
+
+def test_demo_environment_omits_machine_specific_overrides(
+    capturer: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BERNSTEIN_FLEET_CONFIG", "/example/unrelated-fleet.yml")
+    monkeypatch.setenv("GIT_DIR", "/example/unrelated-git")
+
+    env = capturer._demo_environment(tmp_path)
+
+    assert "BERNSTEIN_FLEET_CONFIG" not in env
+    assert "GIT_DIR" not in env
+    demo_home = tmp_path / "home"
+    child_home = subprocess.check_output(
+        [sys.executable, "-c", "from pathlib import Path; print(Path.home())"],
+        env=env,
+        text=True,
+    ).strip()
+    assert Path(child_home) == demo_home
+    assert env["XDG_CONFIG_HOME"] == str(demo_home / ".config")
+    assert env["XDG_DATA_HOME"] == str(demo_home / ".local/share")
+    assert env["XDG_STATE_HOME"] == str(demo_home / ".local/state")
+    assert env["XDG_CACHE_HOME"] == str(demo_home / ".cache")
 
 
 def test_a_run_that_fails_part_way_leaves_every_render_untouched(capturer: Any, assets: Path, monkeypatch: Any) -> None:

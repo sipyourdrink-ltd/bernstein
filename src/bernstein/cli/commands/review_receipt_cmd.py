@@ -30,6 +30,9 @@ import click
 from bernstein.cli.helpers import console
 from bernstein.core.security.audit import load_or_create_audit_key
 
+_EXIT_BAD_INPUT_OR_NO_RECEIPT = 1
+_EXIT_MISMATCH = 2
+
 
 def _lineage_root(workdir: Path) -> Path:
     return workdir / ".sdd" / "lineage"
@@ -186,13 +189,16 @@ def review_receipt_verify_cmd(
     fix-until-green sequence is walked: every pass must recompute, carry the
     previous pass's anchor, and name the same ruleset, and ``--diff`` is
     checked against the last pass. Exit codes: 0 = verified, 1 = no receipt /
-    bad input, 2 = mismatch (tamper).
+    bad input, 2 = mismatch (tamper) or command-line usage error.
     """
     from bernstein.core.review.receipt import verify_review_receipt
 
     root = Path(workdir).resolve()
-    issue_body = Path(issue_file).read_text(encoding="utf-8")
-    diff = Path(diff_file).read_bytes()
+    try:
+        issue_body = Path(issue_file).read_text(encoding="utf-8")
+        diff = Path(diff_file).read_bytes()
+    except (OSError, UnicodeError) as exc:
+        raise click.ClickException(f"Cannot read --issue or --diff: {exc}") from exc
 
     if chain:
         _verify_chain(root, pr_url=pr_url, issue_body=issue_body, diff=diff, rules_file=rules_file)
@@ -205,17 +211,17 @@ def review_receipt_verify_cmd(
         issue_body=issue_body,
         diff=diff,
     )
-    console.print()
-    console.print(f"[bold]Review receipt verify[/bold] pr={pr_url}")
     if result.ok:
+        console.print()
+        console.print(f"[bold]Review receipt verify[/bold] pr={pr_url}")
         console.print(f"  verdict {result.verdict}")
         console.print("[green]OK[/green] -- PR was reviewed against the ticket without operator override.")
         raise SystemExit(0)
     if result.receipt is None:
-        console.print(f"[yellow]NO RECEIPT[/yellow] -- {result.reason}")
-        raise SystemExit(1)
-    console.print(f"[red]MISMATCH[/red] -- {result.reason}")
-    raise SystemExit(2)
+        click.echo(f"NO RECEIPT -- {result.reason}", err=True)
+        raise SystemExit(_EXIT_BAD_INPUT_OR_NO_RECEIPT)
+    click.echo(f"MISMATCH -- {result.reason}", err=True)
+    raise SystemExit(_EXIT_MISMATCH)
 
 
 def _verify_chain(
@@ -232,7 +238,11 @@ def _verify_chain(
 
     digest = None
     if rules_file is not None:
-        digest = parse_ruleset(Path(rules_file).read_text(encoding="utf-8"), source=rules_file).digest
+        try:
+            rules_text = Path(rules_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise click.ClickException(f"Cannot read --rules: {exc}") from exc
+        digest = parse_ruleset(rules_text, source=rules_file).digest
 
     result = verify_review_chain(
         workdir=root,
@@ -243,16 +253,17 @@ def _verify_chain(
         diff=diff,
         ruleset_digest=digest,
     )
-    console.print()
-    console.print(f"[bold]Review chain verify[/bold] pr={pr_url}")
-    console.print(f"  passes  {result.passes}")
     if result.ok:
+        console.print()
+        console.print(f"[bold]Review chain verify[/bold] pr={pr_url}")
+        console.print(f"  passes  {result.passes}")
         console.print(f"  verdict {result.verdict}")
         console.print(f"  ruleset {result.ruleset_digest or '(none)'}")
         console.print("[green]OK[/green] -- every pass recomputed and the chain holds.")
         raise SystemExit(0)
+    click.echo(f"  passes  {result.passes}", err=True)
     if result.passes == 0:
-        console.print(f"[yellow]NO CHAIN[/yellow] -- {result.reason}")
-        raise SystemExit(1)
-    console.print(f"[red]MISMATCH[/red] -- {result.reason}")
-    raise SystemExit(2)
+        click.echo(f"NO CHAIN -- {result.reason}", err=True)
+        raise SystemExit(_EXIT_BAD_INPUT_OR_NO_RECEIPT)
+    click.echo(f"MISMATCH -- {result.reason}", err=True)
+    raise SystemExit(_EXIT_MISMATCH)

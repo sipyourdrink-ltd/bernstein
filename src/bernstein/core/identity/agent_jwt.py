@@ -729,9 +729,9 @@ def _retire_legacy_jwt_secret(base_dir: Path) -> None:
     except FileNotFoundError:
         return
     except OSError as exc:
-        logger.warning("Could not remove retired agent JWT secret %s: %s", for_log(legacy), type(exc).__name__)
+        logger.warning("Could not remove retired agent JWT secret: %s", type(exc).__name__)
         return
-    logger.info("Removed retired agent JWT secret %s; agent tokens are now signed with an out-of-tree key", legacy)
+    logger.info("Removed retired agent JWT secret; agent tokens are now signed with an out-of-tree key")
 
 
 def _record_mac_preimage(record: Mapping[str, Any]) -> bytes:

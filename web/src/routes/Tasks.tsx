@@ -10,11 +10,13 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEventHandler,
   type ReactNode,
+  type Ref,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { MoreHorizontal, Play, Command as CommandIcon, Search, X } from 'lucide-react';
+import { MoreHorizontal, Plus, Command as CommandIcon, Search, X } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '@/lib/api';
 import { useEventStream } from '@/lib/sse';
 import { TaskLogsPanel } from '@/components/logs';
@@ -24,6 +26,11 @@ import { TaskDepsPanel } from '@/components/deps/TaskDepsPanel';
 import { TaskTracePanel } from '@/components/trace/TaskTracePanel';
 import { TaskArtifactsPanel } from '@/components/artifacts';
 import { SteerPanel } from '@/components/steer/SteerPanel';
+import {
+  CreateTaskDialog,
+  consumeConfirmedTaskCreation,
+  useConfirmedTaskCreations,
+} from '@/components/tasks/CreateTaskDialog';
 import {
   formatUSD,
   formatDuration,
@@ -435,6 +442,10 @@ export default function Tasks() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page] = useState<number>(1);
   const [activeTab, setActiveTab] = useState<DetailTab>('Summary');
+  const [createFocus, setCreateFocus] = useState<'title' | 'prompt' | null>(null);
+  const createTrigger = useRef<HTMLButtonElement | null>(null);
+  const drawerCreateTrigger = useRef<HTMLElement | null>(null);
+  const headerCreateButton = useRef<HTMLButtonElement | null>(null);
 
   const parsed = useMemo(() => parseQuery(queryStr), [queryStr]);
   const chip = CHIPS.find((c) => c.key === activeChip) ?? CHIPS[0];
@@ -449,11 +460,11 @@ export default function Tasks() {
 
   const listQ = useQuery({
     queryKey: ['tasks', 'list', listPath],
-    queryFn: async (): Promise<TasksListResponse> => {
+    queryFn: async ({ signal }): Promise<TasksListResponse> => {
       // Backend returns either a wrapped {items, total, ...} OR a raw list
       // (legacy /tasks endpoint shape). Normalize here so the rest of the
       // component can assume the wrapped shape.
-      const raw = await apiGet<TasksListResponse | TaskRow[]>(listPath);
+      const raw = await apiGet<TasksListResponse | TaskRow[]>(listPath, { signal });
       if (Array.isArray(raw)) {
         return { items: raw, total: raw.length, page: 1, page_size: raw.length };
       }
@@ -533,22 +544,40 @@ export default function Tasks() {
 
   const selected = items.find((t) => t.id === selectedId) ?? null;
 
-  // Selection lifecycle: clear selection if the previously-selected row no
-  // longer exists (e.g. SSE invalidation removed it). Otherwise the detail
-  // query keeps thrashing on a 404 and the drawer renders stale fallback data.
-  // The drawer only opens on explicit user action - never auto-select.
+  const openCreate = (focus: 'title' | 'prompt', trigger: HTMLButtonElement, fromEmptyState = false) => {
+    createTrigger.current = fromEmptyState ? headerCreateButton.current : trigger;
+    setCreateFocus(focus);
+  };
+
+  const refreshAfterCreate = useCallback(async () => {
+    const filters = { queryKey: ['tasks', 'list'] };
+    // An uncached list request started before creation may still be in flight.
+    await qc.cancelQueries(filters);
+    await qc.invalidateQueries(filters);
+  }, [qc]);
+
+  const openCreatedTask = useCallback((taskId: string) => {
+    drawerCreateTrigger.current = createTrigger.current ?? headerCreateButton.current;
+    setCreateFocus(null);
+    setActiveTab('Summary');
+    setSelectedId(taskId);
+    void refreshAfterCreate();
+  }, [refreshAfterCreate]);
+
+  const confirmedTaskIds = useConfirmedTaskCreations();
+  const [confirmedTaskId] = confirmedTaskIds;
   useEffect(() => {
-    if (!listQ.data) return;
-    if (selectedId !== null && !items.some((t) => t.id === selectedId)) {
-      setSelectedId(null);
-    }
-  }, [selectedId, items, listQ.data]);
+    if (!createFocus && confirmedTaskId) void refreshAfterCreate();
+  }, [confirmedTaskIds, confirmedTaskId, createFocus, refreshAfterCreate]);
 
   const refetchList = () => {
     listQ.refetch();
   };
 
-  const closeDrawer = useCallback(() => setSelectedId(null), []);
+  const closeDrawer = useCallback(() => {
+    drawerCreateTrigger.current = null;
+    setSelectedId(null);
+  }, []);
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1">
@@ -560,8 +589,29 @@ export default function Tasks() {
           stalledCount={stalledCount}
           lastSync={lastSync}
           loading={listQ.isLoading}
+          onCreate={(event) => openCreate('title', event.currentTarget)}
+          onCreateFromPrompt={(event) => openCreate('prompt', event.currentTarget)}
+          createButtonRef={headerCreateButton}
         />
 
+        {confirmedTaskId && !createFocus && (
+          <div className="mt-2 flex items-center gap-3">
+            <span role="status" className="text-body text-foreground">
+              {confirmedTaskIds.length === 1 ? 'Task created.' : `${confirmedTaskIds.length} tasks created.`}
+            </span>
+            <button
+              type="button"
+              className="rounded-md border border-border bg-card px-2.5 py-1.5 text-body-md text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={(event) => {
+                if (!consumeConfirmedTaskCreation(confirmedTaskId)) return;
+                createTrigger.current = event.currentTarget;
+                openCreatedTask(confirmedTaskId);
+              }}
+            >
+              View created task
+            </button>
+          </div>
+        )}
         <SearchBar value={queryStr} onChange={setQueryStr} />
 
         <ChipsRow active={activeChip} counts={counts} onSelect={setActiveChip} />
@@ -588,10 +638,8 @@ export default function Tasks() {
                 title="No tasks yet"
                 description="Spin up the first run to populate this list."
                 action={{
-                  label: 'Run new task',
-                  onClick: () => {
-                    /* CTA handled by parent shell command palette */
-                  },
+                  label: 'Create task',
+                  onClick: (event) => openCreate('title', event.currentTarget, true),
                 }}
               />
             </div>
@@ -605,8 +653,32 @@ export default function Tasks() {
         </div>
       </section>
 
+      {createFocus && (
+        <CreateTaskDialog
+          initialFocus={createFocus}
+          onRestoreFocus={() => {
+            const trigger = createTrigger.current;
+            if (trigger?.isConnected) {
+              trigger.focus();
+            } else {
+              headerCreateButton.current?.focus();
+            }
+          }}
+          onClose={(outcomeUnknown) => {
+            setCreateFocus(null);
+            if (outcomeUnknown) void refreshAfterCreate();
+          }}
+          onCreated={openCreatedTask}
+        />
+      )}
+
       {/* ── Detail drawer (overlay) ─────────────────────────────────────── */}
-      <DrawerShell open={selectedId !== null} onClose={closeDrawer}>
+      <DrawerShell
+        open={selectedId !== null}
+        onClose={closeDrawer}
+        returnFocusTo={drawerCreateTrigger.current}
+        fallbackFocus={headerCreateButton}
+      >
         {selectedId === null ? null : detailQ.isLoading && !detailQ.data ? (
           <DrawerLoading id={selectedId} fallback={selected} onClose={closeDrawer} />
         ) : detailQ.isError && !detailQ.data ? (
@@ -681,10 +753,14 @@ function saveDrawerWidth(w: number): void {
 function DrawerShell({
   open,
   onClose,
+  returnFocusTo,
+  fallbackFocus,
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  returnFocusTo: HTMLElement | null;
+  fallbackFocus: { current: HTMLElement | null };
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -696,7 +772,7 @@ function DrawerShell({
   // restore focus to it on close (modal-best-practice).
   useLayoutEffect(() => {
     if (!open) return;
-    triggerRef.current = document.activeElement;
+    triggerRef.current = returnFocusTo ?? document.activeElement;
     // Move focus into the panel - the first focusable element wins.
     const node = panelRef.current;
     if (!node) return;
@@ -708,7 +784,7 @@ function DrawerShell({
     } else {
       node.focus();
     }
-  }, [open]);
+  }, [open, returnFocusTo]);
 
   // ESC closes; Tab is trapped within the panel.
   useEffect(() => {
@@ -755,10 +831,12 @@ function DrawerShell({
     if (open) return;
     const trigger = triggerRef.current as HTMLElement | null;
     triggerRef.current = null;
-    if (trigger && typeof trigger.focus === 'function') {
+    if (trigger?.isConnected && typeof trigger.focus === 'function') {
       trigger.focus();
+    } else if (trigger) {
+      fallbackFocus.current?.focus();
     }
-  }, [open]);
+  }, [open, fallbackFocus]);
 
   // Drag-to-resize handle. Width is the distance from the right edge of the
   // viewport to the drawer's left edge, so dragging the handle leftward
@@ -896,12 +974,18 @@ function Header({
   stalledCount,
   lastSync,
   loading,
+  onCreate,
+  onCreateFromPrompt,
+  createButtonRef,
 }: {
   totalCount: number;
   runningCount: number;
   stalledCount: number;
   lastSync: string | null;
   loading: boolean;
+  onCreate: MouseEventHandler<HTMLButtonElement>;
+  onCreateFromPrompt: MouseEventHandler<HTMLButtonElement>;
+  createButtonRef: Ref<HTMLButtonElement>;
 }) {
   return (
     <div className="mb-[14px] flex items-baseline justify-between gap-4">
@@ -928,13 +1012,16 @@ function Header({
       <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
+          ref={createButtonRef}
+          onClick={onCreate}
           className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-secondary"
         >
-          <Play className="size-3" strokeWidth={1.5} />
-          Run new task
+          <Plus className="size-3" strokeWidth={1.5} />
+          Create task
         </button>
         <button
           type="button"
+          onClick={onCreateFromPrompt}
           className="inline-flex items-center gap-1.5 rounded-md border border-foreground bg-foreground px-2.5 py-1.5 text-[12px] font-medium text-background transition-colors hover:bg-foreground/90"
         >
           <CommandIcon className="size-3" strokeWidth={1.5} />

@@ -1,12 +1,12 @@
 {
   "name": "Bernstein",
-  "image": "mcr.microsoft.com/devcontainers/python:3-3.12-bookworm",
-  "features": {
-    "ghcr.io/devcontainers-contrib/features/pipx-package:1": {
-      "package": "pipx"
-    }
+  "build": {
+    "dockerfile": "Dockerfile"
   },
-  "postCreateCommand": "pipx install -e . && bernstein --help",
+  "containerEnv": {
+    "UV_PYTHON": "3.13"
+  },
+  "postCreateCommand": "uv sync --locked --group dev && uv run --locked bernstein --help",
   "remoteEnv": {
     "BERNSTEIN_REMOTE_QUICKSTART": "1"
   },

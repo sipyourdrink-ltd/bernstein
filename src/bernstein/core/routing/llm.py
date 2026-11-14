@@ -421,7 +421,7 @@ class LLMOAuthRefreshHandler:
     def register_provider_refresh(self, provider: str, refresh_callback: Callable[[], str | None]) -> None:
         """Register OAuth refresh callback for an LLM provider."""
         self.refresh_callbacks[provider] = refresh_callback
-        logger.info(f"Registered OAuth refresh for LLM provider: {provider}")
+        logger.info("Registered OAuth refresh for LLM provider: %s", provider)
 
     def handle_llm_auth_error(self, provider: str, error_code: int, _error_message: str) -> bool:
         """Handle 401/403 errors from LLM providers."""
@@ -433,27 +433,27 @@ class LLMOAuthRefreshHandler:
 
         # Check cooldown
         if current_time - last_attempt < self.refresh_cooldown:
-            logger.debug(f"OAuth refresh cooldown active for LLM provider: {provider}")
+            logger.debug("OAuth refresh cooldown active for LLM provider: %s", provider)
             return False
 
         refresh_callback = self.refresh_callbacks.get(provider)
         if not refresh_callback:
-            logger.warning(f"No OAuth refresh registered for LLM provider: {provider}")
+            logger.warning("No OAuth refresh registered for LLM provider: %s", provider)
             return False
 
-        logger.info(f"Attempting OAuth refresh for LLM provider: {provider}")
+        logger.info("Attempting OAuth refresh for LLM provider: %s", provider)
         self.last_refresh_attempt[provider] = current_time
 
         try:
             new_token = refresh_callback()
             if new_token:
-                logger.info(f"OAuth refresh successful for LLM provider: {provider}")
+                logger.info("OAuth refresh successful for LLM provider: %s", provider)
                 return True
             else:
-                logger.warning(f"OAuth refresh failed for {provider}: no token returned")
+                logger.warning("OAuth refresh failed for %s: no token returned", provider)
                 return False
         except Exception as e:
-            logger.error(f"OAuth refresh error for {provider}: {e}")
+            logger.error("OAuth refresh error for %s: %s", provider, type(e).__name__)
             return False
 
 

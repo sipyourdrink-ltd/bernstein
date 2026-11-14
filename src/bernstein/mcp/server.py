@@ -263,8 +263,11 @@ def _get_journal_head(task_id: str) -> str:
         if journal_path.exists():
             journal = EventJournal.resume(run_id, sdd_dir)
             return journal.head()
-    except Exception:
-        pass
+    except FileNotFoundError:
+        # The journal may disappear between the existence check and resume.
+        return ""
+    except Exception as exc:
+        logger.warning("Could not read the task journal head (%s)", type(exc).__name__)
     return ""
 
 
@@ -508,6 +511,53 @@ async def _run_impl(
 _COMPACT_TASK_FIELDS = ("id", "title", "role", "status")
 
 
+def _status_readiness(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Project versioned coordinator observations without inferring execution readiness."""
+    evidence = data.get("execution_readiness")
+    if (
+        not isinstance(evidence, dict)
+        or type(evidence.get("schema_version")) is not int
+        or evidence["schema_version"] != 1
+    ):
+        return None
+    coordinator = evidence.get("coordinator")
+    if not isinstance(coordinator, dict) or coordinator.get("source") != "task_server_status":
+        return None
+    provenance = coordinator.get("provenance")
+    tenant_id = provenance.get("tenant_id") if isinstance(provenance, dict) else None
+    observed_at = coordinator.get("observed_at")
+    if not isinstance(tenant_id, str) or not tenant_id or not isinstance(observed_at, str):
+        return None
+    from datetime import datetime
+
+    try:
+        observed = datetime.fromisoformat(observed_at)
+    except ValueError:
+        return None
+    now = datetime.now(UTC)
+    if observed.tzinfo is None or observed > now:
+        return None
+    version = coordinator.get("version")
+    return {
+        "schema_version": 1,
+        "state": "unknown",
+        "transport": {
+            "state": "ready",
+            "source": "mcp_bridge",
+            "version": _package_version(),
+            "observed_at": now.isoformat(),
+        },
+        "coordinator": {
+            "state": "unknown",
+            "source": "task_server_status",
+            "version": version if isinstance(version, str) else None,
+            "observed_at": observed.isoformat(),
+        },
+        "scheduler": {"state": "unknown"},
+        "dispatch": {"state": "unknown"},
+    }
+
+
 async def _status_impl(server_url: str, *, status: str | None = None, detail: bool = False) -> str:
     """Liveness, counts, cost, and an optional status-filtered task list.
 
@@ -547,6 +597,8 @@ async def _status_impl(server_url: str, *, status: str | None = None, detail: bo
                 "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
             },
         }
+        if (readiness := _status_readiness(data)) is not None:
+            body["readiness"] = readiness
         if detail:
             body["per_role"] = per_role_raw
         if tasks is not None:
@@ -1810,6 +1862,35 @@ def _run_success_schema() -> dict[str, Any]:
     }
 
 
+def _status_readiness_schema() -> dict[str, Any]:
+    states = ["ready", "blocked", "unknown"]
+
+    def component(*, source: str | None = None) -> dict[str, Any]:
+        fields: dict[str, Any] = {"state": {"enum": states}}
+        if source is not None:
+            fields.update(
+                source={"const": source},
+                version={"type": ["string", "null"]},
+                observed_at={"type": "string", "format": "date-time"},
+            )
+        return {"type": "object", "required": list(fields), "properties": fields}
+
+    properties: dict[str, Any] = {
+        "schema_version": {"const": 1},
+        "state": {"enum": states},
+        "transport": component(source="mcp_bridge"),
+        "coordinator": component(source="task_server_status"),
+        "scheduler": component(),
+        "dispatch": component(),
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(properties),
+        "properties": properties,
+    }
+
+
 def _status_success_schema() -> dict[str, Any]:
     """Schema of the folded ``bernstein_status`` body."""
     count_field = {"type": "integer"}
@@ -1853,6 +1934,7 @@ def _status_success_schema() -> dict[str, Any]:
             },
             "per_role": {"type": "array", "items": {"type": "object"}},
             "status_filter": {"type": "string"},
+            "readiness": _status_readiness_schema(),
             "tasks": {"type": "array", "items": {"type": "object"}},
         },
     }

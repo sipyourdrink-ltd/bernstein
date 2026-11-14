@@ -5,6 +5,7 @@
   "batch_eligible": false,
   "cell_id": null,
   "claimed_at": null,
+  "claimed_by_session": null,
   "cli": null,
   "closed_at": null,
   "completed_at": null,

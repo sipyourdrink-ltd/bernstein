@@ -92,6 +92,27 @@ def sample_task() -> Task:
     )
 
 
+@pytest.mark.asyncio
+async def test_decompose_reports_selected_tiers(
+    templates_dir: Path, sample_task: Task, caplog: pytest.LogCaptureFixture
+) -> None:
+    manager = ManagerAgent("http://server", templates_dir, templates_dir)
+    response = json.dumps(
+        [
+            {"title": "Fetch documentation"},
+            {"title": "Clarify internal naming"},
+        ]
+    )
+    with (
+        patch("bernstein.core.orchestration.manager.call_llm", new_callable=AsyncMock, return_value=response) as call,
+        caplog.at_level("INFO", logger="bernstein.core.orchestration.manager"),
+    ):
+        tasks = await manager.decompose(sample_task)
+    assert [task.dispatch_tier.value for task in tasks] == ["search", "local"]
+    assert "dispatch_hints" in call.await_args.args[0]
+    assert "Decomposition dispatch: 2 tasks: 1 local, 0 edge, 1 search" in caplog.text
+
+
 VALID_PLAN_RESPONSE = json.dumps(
     [
         {

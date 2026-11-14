@@ -9,6 +9,7 @@ import os
 import stat
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -290,6 +291,37 @@ class TestRotation:
         assert "new_keyid" in details
         assert "old_keyid" in details
         assert details["new_keyid"] != details["old_keyid"]
+
+    def test_rotation_reports_failure_to_read_previous_key_id(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ks = AgentCardKeystore(tmp_path / "keys")
+        _, previous = ks.load_or_generate()
+
+        with patch(
+            "bernstein.core.security.agent_card_keystore.install_identity_keyid",
+            side_effect=[OSError("private diagnostic"), "new-key-id"],
+        ):
+            _, current = ks.rotate()
+
+        assert current != previous
+        assert ks.load_or_generate()[1] == current
+        assert "rotation could not read the previous key ID (OSError)" in caplog.text
+        assert "private diagnostic" not in caplog.text
+
+    def test_rotation_reports_audit_failure_after_persisting_key(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ks = AgentCardKeystore(tmp_path / "keys")
+        _, previous = ks.load_or_generate()
+
+        with patch("bernstein.core.security.audit.AuditLog.log", side_effect=OSError("private diagnostic")):
+            _, current = ks.rotate()
+
+        assert current != previous
+        assert ks.load_or_generate()[1] == current
+        assert "rotation could not confirm its audit event (OSError)" in caplog.text
+        assert "private diagnostic" not in caplog.text
 
 
 class TestSigner:

@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from bernstein.core.tunnels.drivers import register_default_drivers
 from bernstein.core.tunnels.drivers.bore import BoreDriver
 from bernstein.core.tunnels.drivers.cloudflared import CloudflaredDriver
 from bernstein.core.tunnels.drivers.ngrok import NgrokDriver
@@ -65,6 +66,29 @@ def _chdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
+
+def test_registry_refuses_to_replace_a_default_driver() -> None:
+    registry = TunnelRegistry()
+    register_default_drivers(registry)
+    first = registry.providers()["cloudflared"]
+
+    with pytest.raises(ValueError, match="Duplicate tunnel provider") as duplicate:
+        registry.register(_FakeProvider("cloudflared", "fake"))
+
+    assert "bernstein.core.tunnels.drivers" in str(duplicate.value)
+    assert __name__ in str(duplicate.value)
+    assert registry.providers()["cloudflared"] is first
+
+
+def test_registry_refuses_to_replace_a_constructor_driver() -> None:
+    first = _FakeProvider("fixture", "first")
+    registry = TunnelRegistry(providers={"fixture": first})
+
+    with pytest.raises(ValueError, match="Duplicate tunnel provider"):
+        registry.register(_FakeProvider("fixture", "second"))
+
+    assert registry.providers() == {"fixture": first}
 
 
 def test_registry_round_trip_across_restart(tmp_path: Path) -> None:

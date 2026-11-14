@@ -84,11 +84,23 @@ after.
 Dry run: nothing was reverted.
 ```
 
-`--dry-run` requires a task id. `--all` names no single task, so it has
-no change set to print; combining the two is a usage error rather than
-an empty report that would read as "this session changed nothing".
+The preview is selected by `--dry-run`; its arguments are handled as follows:
 
-An unresolvable task id exits non-zero with the reason.
+| Invocation | Preview behaviour |
+|---|---|
+| `bernstein undo <task_id> --dry-run` | Resolves and prints that task's change set. |
+| `bernstein undo --all --dry-run` | Refuses with a usage error because no task id identifies a change set; exits with status 2. |
+| `bernstein undo <task_id> --all --dry-run` | Prints the change set for `<task_id>`. In the preview path, `--all` is not used; the task id is what gets resolved. |
+
+A resolved empty change set is a successful preview, not an error: the
+panel says `<branch> changed no files.` and the command prints
+`Dry run: nothing was reverted.` before exiting with status 0. An unresolved
+task is different: the command prints the resolution reason as an error and
+exits with status 1, without presenting an empty-set report. For example, no
+worktree binding for the task does not mean that the task changed no files.
+
+Without `--dry-run`, `--all` follows the ordinary undo path; the preview
+argument behavior above does not describe that operation.
 
 ## Not yet implemented
 

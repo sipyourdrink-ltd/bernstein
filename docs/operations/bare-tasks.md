@@ -1,7 +1,24 @@
 # Bare tasks
 
+## Choose an entry point
+
+Use `bernstein_create_task`, **Tasks → Create task**, or `POST /api/v1/tasks`
+for an individual queued task without starting a planner. Use an
+[administrative run](administrative-runs.md) when you need a named container for
+several manually handled tasks: creating the run starts it empty, and you add
+tasks to it separately. Its member tasks remain manually claimable and are
+excluded from automatic worker launch.
+
 Use `bernstein_create_task` to queue a brief for a worker without starting a
-planner or agent. The equivalent REST call is `POST /api/v1/tasks` (legacy
+planner or agent. In the web UI, open **Tasks** and select **Create task** or
+**New from prompt**. Enter a title and prompt, with a role if needed. A
+confirmed creation opens the new task. If creation cannot be confirmed,
+select **Check task** before retrying. The lookup works even when the active
+list filter would hide the task. The lookup stays available if you dismiss the
+dialog or reload the same tab. Select **Start a new task instead** to discard
+the lookup and unlock a new submission.
+
+The equivalent REST call is `POST /api/v1/tasks` (legacy
 `POST /tasks` remains supported):
 
 ```json

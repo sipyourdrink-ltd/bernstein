@@ -153,7 +153,7 @@ def test_detect_ignores_non_manager_roles(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_handle_writes_failure_record_and_log_and_aborts(tmp_path: Path, capsys: Any) -> None:
+def test_handle_writes_failure_record_and_log_and_aborts(tmp_path: Path, capsys: Any, caplog: Any) -> None:
     now = 1_000.0
     session = _manager_session(spawn_ts=now - (STALL_THRESHOLD_S + 30.0))
     _write_hook_events(
@@ -189,10 +189,9 @@ def test_handle_writes_failure_record_and_log_and_aborts(tmp_path: Path, capsys:
     assert orch._stalled_manager_emitted is True
     assert orch._stalled_manager_diagnostic is diag
 
-    # Console message surfaced.
-    captured = capsys.readouterr()
-    assert "Manager session" in captured.out
-    assert REMEDIATION_DOC in captured.out
+    assert capsys.readouterr().out == ""
+    assert "Manager session" in caplog.text
+    assert REMEDIATION_DOC in caplog.text
 
     # Bulletin was posted with the alert.
     assert orch.bulletins == [("alert", f"stalled_manager: {diag.message()}")]

@@ -1,0 +1,65 @@
+name: Web UI regression
+
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'src/bernstein/gui/**'
+      - 'src/bernstein/core/routes/**'
+      - 'src/bernstein/core/server/**'
+      - 'scripts/capture_webui_renders.py'
+      - 'scripts/smoke_webui.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/webui-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webui-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Web UI component and browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up uv
+        uses: ./.github/actions/bootstrap
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies and run web tests
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run test:components
+
+      - name: Install GUI and browser dependencies
+        run: |
+          uv sync --locked --extra gui
+          uv run --locked --extra gui python -m playwright install --with-deps chromium
+
+      - name: Serve the shipped bundle and run the browser smoke
+        run: uv run --locked --extra gui python scripts/smoke_webui.py

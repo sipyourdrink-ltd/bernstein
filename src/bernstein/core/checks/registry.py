@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 import re
+from threading import RLock
 from typing import TYPE_CHECKING
 
 from bernstein.core.checks.contract import Finding, Verdict
+from bernstein.core.registry_guard import DuplicateGuard
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -36,6 +38,8 @@ class CheckRegistry:
 
     def __init__(self) -> None:
         self._checks: dict[str, Check] = {}
+        self._guard = DuplicateGuard("audit check")
+        self._lock = RLock()
 
     def register(self, check: Check) -> None:
         """Register a check.
@@ -59,18 +63,23 @@ class CheckRegistry:
         if not installation_id and (":" not in check_id or check_id.startswith(":") or check_id.endswith(":")):
             raise ValueError(f"check_id '{check_id}' must be namespaced with a colon delimiter or use INS-nnn")
 
-        if check_id in self._checks:
-            raise ValueError(f"Check with id '{check_id}' is already registered")
-
-        self._checks[check_id] = check
+        module = type(check).__module__
+        provenance = module if isinstance(module, str) and module else "<unknown>"
+        with self._lock:
+            self._guard.register(check_id, provenance)
+            self._checks[check_id] = check
 
     def unregister(self, check_id: str) -> None:
         """Unregister a check by its ID."""
-        self._checks.pop(check_id, None)
+        with self._lock:
+            self._checks.pop(check_id, None)
+            self._guard.forget(check_id)
 
     def clear(self) -> None:
         """Clear all registered checks."""
-        self._checks.clear()
+        with self._lock:
+            self._checks.clear()
+            self._guard = DuplicateGuard("audit check")
 
     def get_check(self, check_id: str) -> Check | None:
         """Retrieve a registered check by ID."""

@@ -17,13 +17,21 @@ something in the watched tree is saved.
 ```bash
 bernstein watch                        # watch the current directory
 bernstein watch src/                   # watch a subdirectory
-bernstein watch --glob "src/**/*.py"   # only re-run on Python source changes
+bernstein watch --glob "src/**/*.py"   # only react to matching changes
 ```
+
+For example, when run from the repository root, `bernstein watch src/`
+monitors `<repo>/src`, but the resulting `bernstein run --auto-approve`
+still runs with `<repo>` as its working directory. The watched directory
+selects which file changes are monitored; it does not change the working
+directory of the run. `--glob` filters changed paths relative to the watched
+directory (so with the default directory, `src/**/*.py` matches paths under
+`src/`).
 
 | Flag / argument | Default | Meaning |
 |---|---|---|
 | `DIRECTORY` (argument) | `.` | Directory to watch, recursively. |
-| `--glob PATTERN` | none | Restrict triggering changes to files matching this glob (e.g. `"src/**/*.py"`). |
+| `--glob PATTERN` | none | Restrict monitored file changes to paths matching this glob (e.g. `"src/**/*.py"`). |
 
 Requires the `watchdog` package (`pip install watchdog`); the command exits
 with an install hint if it isn't present.
@@ -31,21 +39,27 @@ with an install hint if it isn't present.
 ## How it behaves
 
 - Watches recursively with `watchdog.observers.Observer`, reacting to
-  create, modify, delete, and move events.
+  create, modify, delete, and move events. For a move, the destination path
+  is treated as the changed path (and is the path checked against `--glob`).
 - Changes inside `.sdd/`, `.git/`, `__pycache__/`, `node_modules/`,
   `.tox/`, `.venv/`, `venv/`, `dist/`, `build/`, `.pytest_cache/`,
   `.mypy_cache/`, `.ruff_cache/`, and `.eggs/` are always ignored,
   regardless of `--glob`.
 - Changed paths are debounced for 2 seconds: rapid successive saves collapse
   into a single re-run instead of firing one per keystroke/save.
-- After the debounce window fires, the command queries the task server for
-  open tasks (`GET /tasks?status=open`) and prints, per changed file, either
-  "no open tasks", how many open tasks are being re-run, or up to 3 task
-  IDs matched by mentioning the file's path or basename in their title or
-  description (falling back to *all* open tasks if none match by name).
-- It then spawns `python -m bernstein run --auto-approve` as a detached
-  background subprocess (stdout/stderr discarded) — one spawn per debounce
-  window, not one per matched task.
+- After the debounce window fires, the command queries the task server once
+  for open tasks (`GET /tasks?status=open`) and prints a task-list preview for
+  each changed file. If there are no open tasks, it reports that and does not
+  start a run. A task is considered affected when its title or description
+  mentions the file's path or basename; if none match, all open tasks are
+  considered affected. The preview shows the count when all open tasks are
+  affected, or up to 3 affected task IDs otherwise. With multiple changed files
+  in one debounce batch, it prints one preview per file but starts only one run
+  for the batch.
+- The preview is informational: the run processes all open tasks, not only
+  the tasks shown for a changed file. The command starts
+  `python -m bernstein run --auto-approve` as a detached background subprocess
+  (stdout/stderr discarded) when open tasks exist.
 - Runs until `Ctrl-C`; on exit it stops and joins the underlying
   `watchdog` observer.
 

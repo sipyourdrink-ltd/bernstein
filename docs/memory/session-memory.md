@@ -63,14 +63,24 @@ mem.recall(query, *, k=5, tag=None, task_id=None)
   an empty list. FTS5 operator characters are stripped so a copy-pasted
   string with colons or parentheses does not break the parser.
 - `k` is the maximum number of hits. Must be positive.
-- `tag` is an optional exact-tag filter applied after the MATCH narrows
-  the candidate set.
 - `task_id` scopes the search to one task. By default recall spans
   every task in the shared semantic index, which is what you want when
   an agent is looking for context from sibling tasks.
 
-Hits are ordered by BM25 rank (best first), ties broken by newest
-`ts_ns` first.
+Recall applies these steps in order:
+
+1. The FTS query is restricted to `task_id` when one is supplied.
+2. Matching rows are ranked by BM25 (best first), with ties broken by
+   newest `ts_ns` first.
+3. The ranked candidate window is selected: `k` candidates without a
+   `tag` filter, or `4 * k` candidates when `tag` is supplied.
+4. With `tag`, the candidate window is filtered to turns containing that
+   exact tag; at most `k` hits are returned.
+
+The tag filter runs after candidate selection, not across every matching
+row. As a result, a tagged recall can return fewer than `k` hits even if
+older rows matching the tag exist: those rows may fall outside the top
+`4 * k` ranked candidates.
 
 ### Auto-load at agent spawn
 

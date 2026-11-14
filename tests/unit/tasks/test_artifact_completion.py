@@ -583,3 +583,21 @@ def test_receipt_entry_omits_the_field_without_attachments(tmp_path: Path) -> No
     assert _run(tmp_path, task).ok
     entries = [entry for entry, _raw in LineageStore(tmp_path / ".sdd" / "lineage").read_log()]
     assert [e.attachment_digests for e in entries] == [None]
+
+
+def test_artifact_agent_card_lives_at_a_portable_path_the_gate_reads(tmp_path: Path) -> None:
+    """The card directory carries no ``:``, and the lineage gate still finds the card by content."""
+    import hashlib
+
+    from bernstein.core.lineage.gate import _load_cards
+    from bernstein.core.tasks.artifact_completion import ARTIFACT_AGENT_ID, ARTIFACT_KID, load_artifact_identity
+
+    sdd = tmp_path / ".sdd"
+    card, _ = load_artifact_identity(sdd)
+
+    (card_file,) = (sdd / "agents").glob("*/card.json")
+    assert card_file.parent.name == hashlib.sha256(ARTIFACT_AGENT_ID.encode("utf-8")).hexdigest()
+    assert ":" not in card_file.relative_to(tmp_path).as_posix()
+    cards, failures = _load_cards(sdd / "agents")
+    assert failures == []
+    assert cards[(ARTIFACT_AGENT_ID, ARTIFACT_KID)].public_key_pem == card.public_key_pem

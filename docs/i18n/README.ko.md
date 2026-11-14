@@ -1,6 +1,9 @@
 <div align="center">
 
-<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
+  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+</picture>
 
 <br>
 
@@ -123,7 +126,7 @@ flowchart LR
 각 노드는 페이즈가 허용하는 역할의 에이전트가 가져갑니다. 역할 울타리와 승인 게이트는 에이전트가 태스크 안에서 무엇을 하든 유지됩니다. 코드 노드는 자기만의 git worktree에서 머지 게이트 뒤로 완료됩니다. 위의 노드들은 다르게 끝납니다: [아티팩트 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)이 결과물(보고서, 데이터셋, 스캔, 액션 로그)을 지정하고, 노드는 커밋 대신 서명된 lineage 영수증으로 닫힙니다. 같은 스케줄러, 같은 저널, 같은 오프라인 검증 - 그래프가 코드를 나르든, 리서치든, ops 변경이든, 셋의 혼합이든. 소프트웨어, 리서치, 문서, 엔터프라이즈, 컨트리뷰터 워크플로용 기성 그래프는 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)에 있습니다.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +138,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json`은 감사 계약의 `findings`도 출력하며, 동일한 설치 관측 결과에 대해 `bernstein govern audit --only INS --json`의 결과와 일치합니다. 일반 doctor 보고서의 표시는 그대로 유지됩니다. 안정적인 검사 ID는 [doctor 운영 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)를 참조하세요.
 
 pipx, pip, brew, dnf, npm, Docker는 [설치 가이드](https://docs.bernstein.run/en/latest/getting-started/install/)를 보라. 에어갭 환경용 wheelhouse는 별도의 [에어갭 가이드](https://docs.bernstein.run/en/latest/installation/air-gap/)가 있다.
+
+`bernstein worktrees sweep`는 완료된 작업이 남긴 워크트리와 샌드박스 세션을 경과 시간 및 디스크 사용량과 함께 미리 보여 줍니다. 워크트리만 삭제할 수 있으며, `--apply`와 별도의 삭제 승인이 필요합니다. 샌드박스는 보고서에만 표시됩니다(삭제: #6571). `doctor`는 오래 남아 있는 리소스에 대해 경고합니다. [정리 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)를 참조하세요.
 
 스킬 초기화에 실패하면 원인과 감사 이벤트를 영구 기록하고 [격리](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)합니다. `bernstein status`는 개수를 표시하고, `doctor`와 `govern audit`는 비활성화된 선언을 보고합니다. 원인을 수정한 후 `bernstein quarantine re-enable DECLARATION_ID`로 표시를 명시적으로 해제하세요.
 
@@ -155,10 +160,10 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — 터미널 대시보드 | `bernstein gui serve` — 브라우저 대시보드 |
+| `bernstein live` — 터미널 대시보드 (원격 워커 노드) | `bernstein gui serve` — 브라우저 대시보드 |
 
 ### 실행을 증명하기
-<!-- l10n: en="prove a run" hash="sha256:540961d0846a" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 여기서 결정성은 믿는 것이 아니라 확인하는 것이다. 감사를 켜고 한 번 실행한 뒤, 기록된 내용을 검증하라:
 
@@ -178,9 +183,13 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 하나의 실행 영수증은 저널 헤드, 실행이 스파인 항목을 기록했다면 리니지 스파인 헤드, 그리고 선택적으로 감사 체인 범위를 하나의 Ed25519 서명 대상 아래 묶고 공개 키를 담는다. 그 파일과 오퍼레이터의 공개 키를 가진 리뷰어는 담긴 동작과 체인이 바뀌지 않았음을 확인할 수 있다. HMAC 키도, 살아 있는 `.sdd/`도 필요 없다. 변조되었다면 종료 코드 `2`로 처음 어긋난 단계를 지목한다. 이 영수증이 가리키는 것은 그 안에 담긴 저널 상태다. 그 상태가 완결된 저널 전체임을 증명하려면 독립적인 헤드/개수 봉인이 따로 있어야 한다. 파일만 있고 `--public-key` 고정이 없으면 검사는 무결성만 본다. 영수증이 내부적으로 일관됨은 증명하지만 누가 서명했는지는 증명하지 않으며, 판정에도 그렇게 적힌다. 자세한 내용은 [결정론적 리플레이](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)에 있다.
 
+웹 UI에서 **Governance**를 열고 **Verify a receipt**를 사용해 서버에서 실행 영수증을 확인합니다. 브라우저에는 무결성만 확인한 결과와 키의 출처가 표시됩니다. [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt)를 참고하세요.
+
 같은 검증 가능성이 평가 수치에도 적용된다. `bernstein bench run <suite> --reliability k`(`bernstein eval --reliability k`로도 쓴다)는 각 태스크를 고정된 협조 아래 `k`번 실행하고, `pass^k` 하한(`k`번 모두 통과)을 `pass@1` 상한과 나란히 보고한다. 그 결과는 서명된 영수증에 봉인되며 `bernstein bench reliability-verify`가 오프라인에서 다시 계산하므로, 조작된 하한은 검증에서 떨어진다. 자세한 내용: [pass^k 신뢰도 하한](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 기계가 읽을 수 있는 검사 결과에는 `bernstein govern audit --format json` 또는 `--format sarif`를, CI 통과 여부 판단에는 `--strict --quiet`를 사용하세요. 자세한 내용: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
+`bernstein delegation verify RUN`은 감사 키를 사용한 HMAC으로 실행 매니페스트에 봉인된 최종 헤드 및 홉 수와 영수증 체인을 비교하여 꼬리 삭제, 대체, 종료 후 체인 확장을 탐지합니다. 키 없이 선언을 다시 쓰는 행위도 탐지합니다. 선언을 제거하면 실행은 미완료 상태(종료 코드 `3`)로 남으며, 유효한 것으로 판정되지 않습니다. 이전의 진본 스냅샷을 재사용하는 것은 탐지하지 못하며, 감사 키를 가진 작성자로부터 보호하지도 못합니다. [위임 검증 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)를 참조하세요.
 
 ### 동작 방식
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
@@ -220,9 +229,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 리포지터리 위생 게이트: `bernstein readme-l10n verify`는 번역된 README가 영어 원문에서 벗어난 PR을 오래된 섹션 이름과 함께 실패시킨다. `bernstein readme-l10n sync`는 영어를 편집한 뒤 다시 묶는다. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)을 보라.
 
 ### 지원하는 에이전트
-<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
+<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 56건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 54건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 57건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 55건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
 
 한 실행 안에서 에이전트를 섞을 수 있다. 정형 작업에는 값싼 로컬 모델을, 설계에는 무거운 클라우드 모델을. `bernstein integrations list --installed`는 자기 머신에서 쓸 수 있는 것을 보여준다.
 
@@ -239,7 +248,7 @@ bernstein volunteer browse --budget 60
 [기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `budget`, `verify-bundle`, `hub` 입니다. `autopilot`은 등록되어 있지만 `TaskSource`가 구현될 때까지 실행을 거부합니다.
 
 ### 표지 너머
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 깊이 들어가는 내용은 모두 [문서 사이트](https://docs.bernstein.run/)에 있다:
 
@@ -249,7 +258,7 @@ bernstein volunteer browse --budget 60
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [누구를 위한 것인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 가치가 나오는 지점과 Bernstein이 맞지 않는 경우 |
 | [워크플로](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 에이전트 / 커맨드 / 루프 노드로 이루어진 선언적 YAML DAG |
-| [웹 UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI와 같은 API 위에서 도는 브라우저 대시보드 |
+| [웹 UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI와 같은 API 위에서 도는 브라우저 대시보드 (작업 생성 및 검토) |
 | [클라우드 실행](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 실험적: 자기 계정의 Cloudflare Workers에서 R2 워크스페이스 동기화와 함께 에이전트를 실행한다. 호스팅되는 `api.bernstein.run` 서비스는 아직 제공되지 않는다 |
 | [데이터 소스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 읽기 전용 쿼리 영수증, 그리고 각 결과를 유도된 스키마 스냅숏에 묶는 쿼리 드라이버 |
 | [에이전트 카탈로그](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 내장 템플릿 밖의 에이전트 정의를 역할이 가리키게 한다. 범용 YAML/SKILL.md 디렉터리, 또는 Claude Code 플러그인 레이아웃 트리 |
@@ -257,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [아키텍처](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 내부 동작 |
 
 ### 이름의 유래
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트가 CLI 코딩 에이전트 무리를 지휘하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다.
+Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트가 AI 에이전트 무리를 통제하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, 단독 메인테이너. 가동 통계: [bernstein.run](https://bernstein.run).
 

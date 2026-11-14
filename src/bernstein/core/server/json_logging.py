@@ -105,6 +105,7 @@ def setup_json_logging(level: int = logging.INFO) -> None:
         return
 
     from bernstein.core.correlation import CorrelationFilter
+    from bernstein.core.observability.log_redact import PiiRedactingFilter
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
@@ -117,6 +118,7 @@ def setup_json_logging(level: int = logging.INFO) -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter())
     handler.addFilter(CorrelationFilter())
+    handler.addFilter(PiiRedactingFilter())
     root_logger.addHandler(handler)
 
     logging.info("JSON structured logging enabled")
