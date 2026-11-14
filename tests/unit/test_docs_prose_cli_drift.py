@@ -47,10 +47,12 @@ Design decisions (the extractor is the whole design problem; see #3620):
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -405,8 +407,61 @@ def test_reverting_slice1_fix_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Corpus test: the gate over the pages a new reader lands on first.
+# Corpus tests: check narrative pages against the CLI.
 # ---------------------------------------------------------------------------
+
+
+def test_benchmark_docs_examples_parse_and_verify_signed_bundles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.eval.bench.bench_cli import bench_group
+
+    page = REPO_ROOT / "docs" / "eval" / "bench.md"
+    markdown = page.read_text(encoding="utf-8").replace("\\\n", " ")
+    markdown = re.sub(r"(?m)^UV_PYTHON=\S+ uv run --no-sync (?=bernstein bench )", "", markdown)
+    lines = markdown.splitlines()
+    # The example paths are placeholders. Parse options without checking the filesystem.
+    monkeypatch.setattr(click.Path, "convert", lambda _self, value, _param, _ctx: value)
+
+    parsed: dict[str, list[click.Context]] = {}
+    for invocation in extract(markdown).checked:
+        tokens = invocation.tokens
+        if len(tokens) < 2 or tokens[0] != "bench":
+            continue
+        name = tokens[1]
+        example = f"bernstein {' '.join(tokens)}"
+        command = bench_group.commands.get(name)
+        assert command is not None, f"{example}: unknown bench subcommand"
+        args = tokens[2:]
+        # Inline command names and signatures also appear as prose references.
+        is_shell_example = lines[invocation.line - 1].lstrip().startswith("bernstein ")
+        if not is_shell_example and all(_is_placeholder(token) for token in args):
+            continue
+        try:
+            # Context creation parses arguments without invoking the command.
+            with command.make_context(name, shlex.split(" ".join(args))) as context:
+                parsed.setdefault(name, []).append(context)
+        except click.UsageError as exc:
+            pytest.fail(f"{example}: {exc.format_message()}")
+        except click.exceptions.Exit as exc:
+            assert exc.exit_code == 0 and "--help" in args, example
+
+    runs = [context.params for context in parsed.get("run", [])]
+    suite_by_bundle = {run["out"]: run["suite"] for run in runs if not run["stub_signer"]}
+    stub_bundles = {run["out"] for run in runs if run["stub_signer"]}
+    conflicts = stub_bundles.intersection(suite_by_bundle)
+    assert not conflicts, f"stub runs would overwrite signed bundles: {sorted(conflicts)}"
+
+    verifications = [context.params for context in parsed.get("verify", [])]
+    assert verifications, "extractor found no signed bundle verification examples"
+    for params in verifications:
+        bundle = params["bundle"]
+        assert bundle in suite_by_bundle, f"{bundle}: verify an output from a documented signed run"
+        assert not params["stub_signer"] and not params["no_signature"], f"{bundle}: require the install signature"
+        assert params["suite"] == suite_by_bundle[bundle], f"{bundle}: use the suite that produced the bundle"
+        message = f"{bundle}: use --trusted-key FINGERPRINT=PATH"
+        assert params["trusted_keys"], message
+        for key in params["trusted_keys"]:
+            fingerprint, _, path = key.partition("=")
+            assert fingerprint.strip() and path.strip(), message
 
 
 def _corpus_pages() -> list[Path]:
