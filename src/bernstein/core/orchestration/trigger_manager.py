@@ -481,12 +481,15 @@ class TriggerGateResult:
     skip creating its task. When it is not suppressed, the caller must create
     the task and then call :meth:`TriggerManager.record_fire` with
     ``dedup_key`` so later cooldown/dedup checks see this fire.
+    ``dedup_expires_at`` identifies the particular reservation, so a reused
+    key cannot be confirmed by an outcome from an expired reservation.
     """
 
     trigger_name: str | None
     suppressed: bool
     reason: str | None
     dedup_key: str | None
+    dedup_expires_at: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -703,14 +706,19 @@ class TriggerManager:
         loaded at construction and says nothing about what another process
         claimed since.
         """
+        return self._claim_dedup_reservation(dedup_key, ttl_s)[0]
+
+    def _claim_dedup_reservation(self, dedup_key: str, ttl_s: int) -> tuple[bool, float]:
+        """Return the claim decision and its reservation expiry under one lock."""
         with self._dedup_lock():
             self._load_dedup_cache()
             expiry = self._dedup_cache.get(dedup_key)
             if expiry is not None and expiry > time.time():
-                return False
-            self._dedup_cache[dedup_key] = time.time() + ttl_s
+                return False, expiry
+            expiry = time.time() + ttl_s
+            self._dedup_cache[dedup_key] = expiry
             self._save_dedup_cache()
-            return True
+            return True, expiry
 
     # -- Cron state ---------------------------------------------------------
 
@@ -769,12 +777,14 @@ class TriggerManager:
 
     # -- Fire log -----------------------------------------------------------
 
-    def _record_fire(self, record: TriggerFireRecord) -> None:
+    def _record_fire(self, record: TriggerFireRecord, *, dedup_expires_at: float | None = None) -> None:
         """Append a fire record to the fire log."""
         path = self._runtime_dir / _FIRE_LOG_FILENAME
         entry = asdict(record)
         if record.cooldown_scope is None:
             entry.pop("cooldown_scope")
+        if dedup_expires_at is not None:
+            entry["dedup_expires_at"] = dedup_expires_at
         with path.open("a") as f:
             f.write(json.dumps(entry) + "\n")
 
@@ -1047,6 +1057,7 @@ class TriggerManager:
         *,
         produced: bool = True,
         cooldown_scope: str | None = None,
+        dedup_expires_at: float | None = None,
     ) -> None:
         """Record a trigger fire after task creation succeeds.
 
@@ -1068,7 +1079,7 @@ class TriggerManager:
             produced=produced,
             cooldown_scope=cooldown_scope,
         )
-        self._record_fire(record)
+        self._record_fire(record, dedup_expires_at=dedup_expires_at)
 
     # -- Direct-route governance ---------------------------------------------
 
@@ -1101,11 +1112,14 @@ class TriggerManager:
             # An enabled trigger for this source has matching filters -
             # governance now applies to this event.
             dedup_key = compute_dedup_key(trigger.name, event)
+            dedup_expires_at = None
             if event.source in {"gitlab_webhook", "webhook"}:
                 # A reserved delivery is reconciled even when cooldown history is unavailable.
                 with self._dedup_lock():
                     self._load_dedup_cache()
                     reserved = self._check_dedup(dedup_key)
+                    if reserved:
+                        dedup_expires_at = self._dedup_cache[dedup_key]
                 reason = "deduplicated" if reserved else self._check_conditions(trigger, event)
             else:
                 reason = self._check_conditions(trigger, event)
@@ -1113,15 +1127,16 @@ class TriggerManager:
                     reason = "deduplicated"
             if reason is not None:
                 logger.info("Trigger %s suppressed a direct %s task: %s", trigger.name, event.source, reason)
-                return TriggerGateResult(trigger.name, True, reason, None)
+                return TriggerGateResult(trigger.name, True, reason, None, dedup_expires_at)
 
             cooldown_s = trigger.conditions.get("cooldown_s", 300)
-            if not self.claim_dedup(dedup_key, max(cooldown_s, 300)):
+            claimed, dedup_expires_at = self._claim_dedup_reservation(dedup_key, max(cooldown_s, 300))
+            if not claimed:
                 logger.info("Trigger %s suppressed a direct %s task: deduplicated", trigger.name, event.source)
-                return TriggerGateResult(trigger.name, True, "deduplicated", None)
+                return TriggerGateResult(trigger.name, True, "deduplicated", None, dedup_expires_at)
             self._record_rate()
             logger.info("Trigger %s governance passed for a direct %s task", trigger.name, event.source)
-            return TriggerGateResult(trigger.name, False, None, dedup_key)
+            return TriggerGateResult(trigger.name, False, None, dedup_key, dedup_expires_at)
 
         if self._config_unreadable:
             return TriggerGateResult("triggers.yaml", True, "trigger policy unavailable", None)

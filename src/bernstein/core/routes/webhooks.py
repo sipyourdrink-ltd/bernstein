@@ -356,9 +356,10 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
             policy_detail = "Generic webhook delivery outcome is unconfirmed"
             key = compute_dedup_key(gate.trigger_name, event)
             try:
-                confirmed = any(
+                confirmed = gate.dedup_expires_at is not None and any(
                     isinstance(row, dict)
                     and row.get("dedup_key") == key
+                    and row.get("dedup_expires_at") == gate.dedup_expires_at
                     and row.get("task_id")
                     and row.get("produced", True)
                     for row in manager.get_fire_history(limit=None)
@@ -416,6 +417,7 @@ def _record_generic_trigger_outcome(
             summary=f"Generic webhook suppressed: {gate.reason}" if gate.suppressed else "Generic webhook delivery",
             produced=bool(task_id),
             cooldown_scope=tenant_id,
+            dedup_expires_at=gate.dedup_expires_at,
         )
     except OSError:
         logger.warning("Could not append generic webhook trigger history", exc_info=True)

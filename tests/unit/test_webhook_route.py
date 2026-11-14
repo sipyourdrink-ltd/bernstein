@@ -225,6 +225,48 @@ async def test_generic_webhook_reports_unconfirmed_reservation(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("second_succeeds", [False, True])
+async def test_generic_webhook_confirms_only_current_reservation_after_expiry(
+    app, client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, second_succeeds: bool
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from bernstein.core.orchestration import trigger_manager
+
+    sdd_dir = tmp_path / ".sdd"
+    config = sdd_dir / "config" / "triggers.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "triggers:\n  - name: inbound\n    source: webhook\n    conditions:\n      cooldown_s: 0\n", encoding="utf-8"
+    )
+    app.state.sdd_dir = sdd_dir
+    now = time.time()
+    # Advance only the policy clock; HTTP requests retain fresh HMAC timestamps.
+    monkeypatch.setattr(trigger_manager, "time", SimpleNamespace(time=lambda: now))
+    body = b'{"title":"Build","description":"Synthetic build event"}'
+
+    first = await client.post("/webhook", content=body, headers=_signed_headers(body))
+    assert first.status_code == 201, first.text
+
+    now += 301  # Expire the first reservation without removing its successful history row.
+    if second_succeeds:
+        second = await client.post("/webhook", content=body, headers=_signed_headers(body))
+        assert second.status_code == 201, second.text
+    else:
+        with patch.object(app.state.store, "create", new=AsyncMock(side_effect=RuntimeError("store unavailable"))):
+            second = await client.post("/webhook", content=body, headers=_signed_headers(body))
+            assert second.status_code == 500, second.text
+
+    retry = await client.post("/webhook", content=body, headers=_signed_headers(body))
+    assert retry.status_code == (409 if second_succeeds else 503), retry.text
+    assert retry.json()["receipt"]["outcome"] == "refused"
+    assert retry.json()["receipt"]["refusal_reason"] == (
+        "trigger_policy_suppressed" if second_succeeds else "trigger_delivery_unconfirmed"
+    )
+
+
+@pytest.mark.anyio
 async def test_generic_webhook_requires_authenticated_headers_for_header_filters(
     app, client: AsyncClient, tmp_path: Path
 ) -> None:
