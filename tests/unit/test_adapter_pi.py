@@ -32,7 +32,16 @@ class TestPiAdapterSpawn:
                 session_id="pi-s1",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "--no-extensions", "--model", "provider/model-name", "fix the bug"]
+        assert inner == [
+            "pi",
+            "--no-extensions",
+            "--print",
+            "--mode",
+            "json",
+            "--model",
+            "provider/model-name",
+            "fix the bug",
+        ]
 
     def test_spawn_leaves_model_selection_to_pi_for_auto(self, tmp_path: Path) -> None:
         adapter = PiAdapter()
@@ -45,7 +54,7 @@ class TestPiAdapterSpawn:
                 session_id="pi-s2",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "--no-extensions", "fix the bug"]
+        assert inner == ["pi", "--no-extensions", "--print", "--mode", "json", "fix the bug"]
 
     def test_pi_spawn_includes_mcp_isolation_flags(self, tmp_path: Path) -> None:
         """Pi reaches MCP servers only through extensions, and it discovers the
@@ -81,6 +90,23 @@ class TestPiAdapterSpawn:
                 session_id="pi-missing",
             )
         assert "npm install -g @mariozechner/pi-coding-agent" in str(excinfo.value)
+
+    def test_spawn_permission_error_does_not_retry_interactively(self, tmp_path: Path) -> None:
+        adapter = PiAdapter()
+        with (
+            patch(
+                "bernstein.adapters.pi.subprocess.Popen",
+                side_effect=PermissionError("not executable"),
+            ) as popen,
+            pytest.raises(RuntimeError, match="Permission denied executing pi"),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="auto", effort="high"),
+                session_id="pi-denied",
+            )
+        popen.assert_called_once()
 
 
 class TestPiAdapterName:

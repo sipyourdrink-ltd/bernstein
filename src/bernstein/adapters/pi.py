@@ -74,7 +74,9 @@ class PiAdapter(CLIAdapter):
         # loaded the operator's personal extensions -- their MCP servers
         # included -- into a run bernstein never configured them for (#5965).
         # bernstein passes pi no extension of its own, so none is lost.
-        cmd = ["pi", _NO_EXTENSIONS]
+        # Stream events to the runner log so log-mtime liveness sees active
+        # work, and exit after the prompt instead of opening the TUI (#6943).
+        cmd = ["pi", _NO_EXTENSIONS, "--print", "--mode", "json"]
         if model_config.model and model_config.model.lower() != "auto":
             cmd.extend(["--model", model_config.model])
         cmd.append(prompt)

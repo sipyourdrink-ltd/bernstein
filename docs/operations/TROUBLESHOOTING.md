@@ -372,6 +372,12 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 ## 12. Agent Timeout (Watchdog Kill)
 
+**Symptom:** A working `pi` agent is killed for a stale heartbeat while its runner log stays empty before its first artifact (#6943).
+
+**Cause:** Interactive Pi writes its TUI instead of streaming events to the redirected runner log, leaving log-mtime liveness without an activity signal.
+
+**Resolution:** The Pi adapter launches `pi --no-extensions --print --mode json` so non-interactive JSON events reach the runner log as the agent works. Update Bernstein if the spawned command lacks these flags. This uses the existing log-mtime liveness signal; it does not disable heartbeat escalation or increase its thresholds.
+
 **Symptom:** Agent is killed mid-task. Log shows `"Timeout after Xds: pid=... - sending SIGTERM"`.
 
 **Cause:** The agent exceeded its wall-clock timeout. Default is 1800s (30 min). Scope-based timeouts: small=15min, medium=30min, large=60min. XL roles (architect, security, manager) get 120min. Adaptive timeouts (`core/orchestration/adaptive_timeout.py`) can adjust these based on historical task durations. All timeout constants are in `src/bernstein/core/defaults.py` (`TASK.scope_timeout_s`, `TASK.xl_timeout_s`).
