@@ -204,7 +204,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 스케줄러가 순수 Python인 이유와 그 대가로 포기한 것은 [왜 결정론적인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)에 있다.
 
 ### 일상적인 명령
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:547c2c9b2951" -->
 
 ```bash
 cd your-project
@@ -221,7 +221,7 @@ PR 자동화, 스케줄, 채팅 브리지, autofix 데몬을 포함한 오퍼레
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth"  # the goal is not saved; it refills {goal} in unfinished nodes
 ```
 
 실행 상태는 노드마다 `.sdd/runs/<run_id>/`에 체크포인트된다. 재개는 실행 시작 시 매니페스트 다이제스트를 검증하므로, 명세가 바뀌었다면 다른 매니페스트를 조용히 실행하는 대신 거부된다. [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)를 보라.
