@@ -52,10 +52,37 @@ The default minimum sample count is `5`. Below this threshold,
 caller is expected to fall back to a documented uniform prior (the module
 exposes `DEFAULT_PRIOR = 0.5`) or another signal of its choice.
 
-Override via:
+Override resolution is, in order:
 
-- `BERNSTEIN_CONFIDENCE_MIN_SAMPLES` environment variable
-- `ConfidenceQuery(min_samples=...)` constructor argument
+1. An explicit `ConfidenceQuery(min_samples=...)` value, if supplied. This wins
+   over the environment setting; a value below `1` is clamped to `1`.
+2. A positive integer in `BERNSTEIN_CONFIDENCE_MIN_SAMPLES`, if set. A
+   nonpositive or malformed value is ignored and resolution falls back to the
+   built-in default (it does not clamp the environment value).
+3. The built-in default, `DEFAULT_MIN_SAMPLES` (`5`).
+
+For example, with a threshold of three, three recorded false outcomes produce
+an available estimate of zero:
+
+```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from bernstein.core.quality.empirical_confidence import ConfidenceQuery
+
+with TemporaryDirectory() as directory:
+    query = ConfidenceQuery(db_path=Path(directory) / "confidence.db", min_samples=3)
+    for _ in range(3):
+        query.record("router", "decision-a", False)
+    estimate = query.get("router", "decision-a")
+
+# estimate: Confidence(value=0.0, samples=3, insufficient_data=False, min_samples=3)
+```
+
+With only two false outcomes, the same query returns
+`Confidence(value=None, samples=2, insufficient_data=True, min_samples=3)`.
+That is unavailable because the sample count is below the threshold—not an
+observed confidence of zero.
 
 ## Routing integration
 
