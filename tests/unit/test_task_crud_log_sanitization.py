@@ -26,11 +26,15 @@ These tests drive the real FastAPI routes via TestClient and assert:
 from __future__ import annotations
 
 import logging
+import subprocess
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
+from bernstein.core.routes import task_crud
 from bernstein.core.server import create_app
 from bernstein.core.server.server_models import (
     _MAX_REASON_LEN,
@@ -158,3 +162,47 @@ def test_reopen_reason_plain_is_logged_verbatim(tmp_path: Path, caplog: pytest.L
     line = _reopen_log_line(caplog)
     assert task_id in line
     assert "reason=janitor rejected: flaky test" in line
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        ("fetch-failed", "exit 128"),
+        ("sha-mismatch", r"expected abcd\r\nefgh12, got dcba\r\nhgfe21"),
+        ("fetched", r"(abcd\r\nefgh12)"),
+        ("os-error", "OSError"),
+    ],
+)
+def test_remote_branch_fetch_logs_one_line(
+    outcome: str,
+    expected: str,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch = "agent/demo\r\ncontinued"
+    sha = "abcd\r\nefgh123"
+    diagnostic = "remote detail\r\ncontinued"
+    if outcome == "os-error":
+        run = Mock(side_effect=OSError(diagnostic))
+    elif outcome == "fetch-failed":
+        run = Mock(return_value=subprocess.CompletedProcess([], 128, "", diagnostic))
+    else:
+        local = sha if outcome == "fetched" else "dcba\r\nhgfe213"
+        run = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, local, ""),
+            ],
+        )
+    monkeypatch.setattr(task_crud, "_get_workdir", lambda _: tmp_path)
+    monkeypatch.setattr(subprocess, "run", run)
+
+    with caplog.at_level(logging.INFO, logger=task_crud.__name__):
+        task_crud._fetch_remote_agent_branch(Request({"type": "http"}), branch, sha)
+
+    (line,) = [record.getMessage() for record in caplog.records if record.name == task_crud.__name__]
+    assert len(line.splitlines()) == 1
+    assert r"agent/demo\r\ncontinued" in line
+    assert expected in line
+    assert "remote detail" not in line
