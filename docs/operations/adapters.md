@@ -6,22 +6,26 @@
 > this machine, which ones conform to the contract, and which ones are
 > missing binaries or have drifted?
 
-The command is a one-shot inventory. Re-running it is cheap (no
+The report is a one-shot check. Re-running it is cheap (no
 network, no agent spawn) and the output is consumable both by humans
 (Rich table) and by CI dashboards (`--format json`).
 
+The adapter registry inventory and conformance reports answer different
+questions. For the integrations catalog and adapter use cases, see the
+[integrations index](../adapters/index.md).
+
 ## TL;DR
 
-| Command                                         | When to use it |
-|-------------------------------------------------|----------------|
-| `bernstein adapters list`                       | Quick "what ships?" listing - one line per adapter, no contract probing |
-| `bernstein adapters list-status`                | Compact conformance status per adapter (Rich table) |
-| `bernstein adapters check`                      | Full table - binary path, version, capabilities, conformance, notes |
-| `bernstein adapters check <name>`               | Drill down to one adapter |
-| `bernstein adapters check --format json`        | CI-consumable payload keyed on `adapters` and `summary` |
-| `bernstein adapters check --strict`             | Exit non-zero on any `conformance == "fail"` row |
-| `bernstein adapters verify <name>`              | Re-derive the admission fingerprint and check it against the sealed receipt |
-| `bernstein adapters verify <name> --seal`       | Seal and anchor a fresh admission receipt from the current evidence |
+| Command | When to use it |
+|---------|----------------|
+| `bernstein integrations list` | Browse the integration catalog and its adapter use cases |
+| `bernstein adapters list` | Inventory registered adapters, source paths, and binary availability; use `--json` for JSON |
+| `bernstein adapters list-status` | Compact conformance report without version capture; use `--format json` for JSON |
+| `bernstein adapters check` | Full conformance report, including binary path and captured version; use `--format json` for JSON |
+| `bernstein adapters check <name>` | Full report for one named adapter, including version information |
+| `bernstein adapters check --strict` | Strict full report: only `ok` and `skip` rows exit 0, any `fail` row exits 1; an unknown named adapter exits 2 |
+| `bernstein adapters verify <name>` | Re-derive the admission fingerprint and check it against the sealed receipt |
+| `bernstein adapters verify <name> --seal` | Seal and anchor a fresh admission receipt from the current evidence |
 
 ## What every row contains
 
@@ -70,7 +74,9 @@ Field-by-field:
 `skip` is the default state for adapters that simply have no contract
 yet - operators see "we know about it, but we haven't promised what
 it does". `fail` is the only verdict that should ever turn red on a
-healthy install.
+healthy install. To distinguish a skipped check from successful
+conformance, inspect `conformance_detail`: it gives the reason for a
+`skip` and is empty for `ok`.
 
 ## JSON contract
 

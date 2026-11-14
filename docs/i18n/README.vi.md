@@ -1,6 +1,9 @@
 <div align="center">
 
-<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
+  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+</picture>
 
 <br>
 
@@ -123,7 +126,7 @@ flowchart LR
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -157,10 +160,10 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — bảng điều khiển terminal | `bernstein gui serve` — bảng điều khiển trình duyệt |
+| `bernstein live` — bảng điều khiển terminal (nút xử lý từ xa) | `bernstein gui serve` — bảng điều khiển trình duyệt |
 
 ### chứng minh một phiên chạy
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Tính tất định ở đây là điều bạn có thể tự kiểm chứng, không phải điều bạn chấp nhận dựa trên niềm tin. Chạy một lần với tính năng kiểm toán được bật, sau đó xác minh những gì đã ghi lại:
 
@@ -179,6 +182,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Nhật ký được ghi lại ở mọi phiên chạy; trục nguồn gốc luôn hoạt động và bổ sung một mục cho mỗi bước mang nguồn gốc, do đó một phiên chạy ngắn có thể kết thúc với trục rỗng nhưng hợp lệ. `bernstein audit verify` chỉ có chuỗi để kiểm tra khi phiên chạy được bắt đầu với `BERNSTEIN_AUDIT=1`, cấu hình tuân thủ hoặc `bernstein run --audit`. Cờ `--audit` thuộc về `bernstein run`; với dạng `bernstein -g` ở trên, hãy thiết lập biến môi trường.
 
 Biên lai phiên chạy liên kết phần đầu nhật ký, phần đầu trục nguồn gốc (khi có mục được ghi) và tùy chọn một khoảng chuỗi kiểm toán, dưới một đối tượng duy nhất ký bằng Ed25519 có nhúng khóa công khai. Người đánh giá có tệp này và khóa công khai của người điều hành có thể xác nhận các hành động và chuỗi nhúng không bị thay đổi: không cần khóa HMAC, không cần thư mục `.sdd/` đang hoạt động, và mã thoát `2` sẽ chỉ ra bước sai lệch đầu tiên nếu có can thiệp. Biên lai này xác thực trạng thái nhật ký được nhúng; để chứng minh trạng thái đó là nhật ký hoàn chỉnh đã kết thúc cần thêm một dấu niêm phong đầu/số lượng độc lập. Chỉ với tệp đơn lẻ mà không chỉ định `--public-key`, việc kiểm tra chỉ xác nhận tính toàn vẹn nội bộ. Chi tiết trong [phát lại tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+Trong giao diện web, mở **Governance** và dùng **Verify a receipt** để kiểm tra biên lai phiên chạy trên máy chủ. Trình duyệt hiển thị kết quả chỉ kiểm tra tính toàn vẹn và nguồn của khóa. Xem [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Khả năng kiểm chứng tương tự cũng áp dụng cho các chỉ số đánh giá. `bernstein bench run <suite> --reliability k` (còn viết là `bernstein eval --reliability k`) chạy mỗi nhiệm vụ `k` lần dưới sự điều phối cố định, sau đó báo cáo mức sàn `pass^k` (tất cả `k` lần thử phải thành công) bên cạnh mức trần `pass@1`. Kết quả đó được niêm phong trong biên lai có chữ ký mà `bernstein bench reliability-verify` tính toán lại ngoại tuyến, khiến mọi mức sàn giả mạo đều không vượt qua kiểm định. Chi tiết: [mức sàn độ tin cậy pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
@@ -224,9 +229,9 @@ Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.
 Cổng kiểm soát chất lượng kho lưu trữ: `bernstein readme-l10n verify` sẽ báo lỗi PR nếu các bản dịch README lệch khỏi bản gốc tiếng Anh (chỉ rõ phần lỗi thời), `bernstein readme-l10n sync` liên kết lại chúng sau khi chỉnh sửa tiếng Anh. Xem [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### các tác tử được hỗ trợ
-<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
+<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen và nhiều tác tử khác. [Mục lục bộ điều hợp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) cung cấp lệnh cài đặt cho 30 tác tử trong số đó. `bernstein integrations list` liệt kê toàn bộ 56 tích hợp sẵn có từ `src/bernstein/adapters/registry.py`, nguồn thông tin chuẩn xác duy nhất. 54 trong số đó là bộ điều hợp tác tử có thể lựa chọn; hai dòng còn lại là stub kiểm thử `mock` và hồ sơ điểm cuối `self-hosted-endpoints`. Mọi công cụ khác có gắn cờ `--prompt` đều hoạt động qua lớp bọc tổng quát.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen và nhiều tác tử khác. [Mục lục bộ điều hợp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) cung cấp lệnh cài đặt cho 30 tác tử trong số đó. `bernstein integrations list` liệt kê toàn bộ 57 tích hợp sẵn có từ `src/bernstein/adapters/registry.py`, nguồn thông tin chuẩn xác duy nhất. 55 trong số đó là bộ điều hợp tác tử có thể lựa chọn; hai dòng còn lại là stub kiểm thử `mock` và hồ sơ điểm cuối `self-hosted-endpoints`. Mọi công cụ khác có gắn cờ `--prompt` đều hoạt động qua lớp bọc tổng quát.
 
 Kết hợp các tác tử trong cùng một phiên chạy: mô hình cục bộ chi phí thấp cho mã khuôn mẫu, mô hình đám mây mạnh mẽ hơn cho kiến trúc. `bernstein integrations list --installed` hiển thị những gì đang khả dụng trên máy của bạn.
 
@@ -243,7 +248,7 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse`, `budget`, `verify-bundle` và `hub` là các lệnh con hoạt động. `autopilot` đã được đăng ký nhưng từ chối chạy cho đến khi có triển khai `TaskSource`.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
@@ -253,7 +258,7 @@ Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | nơi giá trị được phát huy và trường hợp Bernstein không phải là công cụ phù hợp |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | các DAG YAML khai báo gồm các nút tác tử / lệnh / vòng lặp |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | bảng điều khiển trình duyệt chạy trên cùng API mà TUI sử dụng |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | bảng điều khiển trình duyệt chạy trên cùng API mà TUI sử dụng (tạo và xem xét tác vụ) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | thử nghiệm: chạy tác tử trên Cloudflare Workers với đồng bộ không gian làm việc R2 trên tài khoản của riêng bạn. Dịch vụ lưu trữ `api.bernstein.run` hiện chưa mở |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | biên lai truy vấn chỉ đọc cùng trình điều khiển truy vấn liên kết từng kết quả với ảnh chụp nhanh lược đồ tương ứng |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | trỏ vai trò tới định nghĩa tác tử ngoài các mẫu dựng sẵn — thư mục YAML/SKILL.md tổng quát hoặc cấu trúc plugin Claude Code |
@@ -261,9 +266,9 @@ Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | nguyên lý hoạt động chi tiết bên trong |
 
 ### nguồn gốc tên gọi?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng và nhà soạn nhạc người Mỹ. Dự án điều phối một đội ngũ tác tử viết mã CLI giống như cách Bernstein chỉ huy Dàn nhạc giao hưởng New York: mỗi nhạc công vào đúng nhịp, bản tổng phổ mang tính tất định, nhạc trưởng chịu trách nhiệm về kết quả cuối cùng.
+Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng và nhà soạn nhạc người Mỹ. Dự án quản trị một đội ngũ tác tử AI giống như cách Bernstein chỉ huy Dàn nhạc giao hưởng New York: mỗi nhạc công vào đúng nhịp, bản tổng phổ mang tính tất định, nhạc trưởng chịu trách nhiệm về kết quả cuối cùng.
 
 tôi viết bernstein vì phải trả hóa đơn claude 400 đô la mỗi tháng khi chạy song song ba tác tử lập trình và nhận về các kết quả hợp nhất phi tất định. Giấy phép Apache 2.0, duy trì bởi một cá nhân. Thống kê trực tiếp: [bernstein.run](https://bernstein.run).
 

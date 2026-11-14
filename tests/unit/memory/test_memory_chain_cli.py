@@ -59,7 +59,8 @@ def test_verify_ok_exit_zero(tmp_path: Path) -> None:
         tmp_path,
     )
     assert result.exit_code == 0
-    assert "OK" in result.output
+    assert "OK" in result.stdout
+    assert result.stderr == ""
 
 
 def test_verify_no_entries_exit_one(tmp_path: Path) -> None:
@@ -69,7 +70,8 @@ def test_verify_no_entries_exit_one(tmp_path: Path) -> None:
         tmp_path,
     )
     assert result.exit_code == 1
-    assert "NO ENTRIES" in result.output
+    assert "NO ENTRIES" in result.stderr
+    assert result.stdout == ""
 
 
 def test_verify_tamper_exit_two(tmp_path: Path) -> None:
@@ -81,7 +83,8 @@ def test_verify_tamper_exit_two(tmp_path: Path) -> None:
         tmp_path,
     )
     assert result.exit_code == 2
-    assert "TAMPER" in result.output
+    assert "TAMPER" in result.stderr
+    assert result.stdout == ""
 
 
 def test_why_prints_run_and_step(tmp_path: Path) -> None:

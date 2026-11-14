@@ -1,6 +1,9 @@
 <div align="center">
 
-<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
+  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+</picture>
 
 <br>
 
@@ -123,7 +126,7 @@ flowchart LR
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -157,10 +160,10 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — панель у терміналі | `bernstein gui serve` — панель у браузері |
+| `bernstein live` — панель у терміналі (віддалені робочі вузли) | `bernstein gui serve` — панель у браузері |
 
 ### підтвердження виконання
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 Детермінізм тут — це властивість, яку ви перевіряєте, а не те, що приймається на віру. Запустіть один раз з увімкненим аудитом, а потім перевірте збережені записи:
 
@@ -179,6 +182,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Журнал записується під час кожного запуску; хребет походження завжди активний і додає запис для кожного кроку з історією походження, тому коротке виконання може завершитися дійсним, порожнім хребтом. `bernstein audit verify` перевіряє ланцюг лише тоді, коли запуск було ініційовано з `BERNSTEIN_AUDIT=1`, пресетом відповідності або `bernstein run --audit`. Прапорець `--audit` належить команді `bernstein run`; у формі `bernstein -g` вище встановіть змінну середовища.
 
 Квитанція виконання об'єднує заголовок журналу, заголовок хребта походження (якщо записувалися події) та, опціонально, діапазон ланцюга аудиту під єдиним суб'єктом, підписаним Ed25519 із вбудованим відкритим ключем. Рецензент із цим файлом та відкритим ключем оператора може переконатися, що вбудовані дії та ланцюги не змінювалися: без ключа HMAC, без активного `.sdd/`, і з кодом виходу `2` із зазначенням першого відмінного кроку в разі підробки. Ця квитанція ідентифікує стан журналу, який вона містить; доведення того, що цей стан є повним завершеним журналом, додатково вимагає незалежної печатки заголовка/кількості. З одним лише файлом без `--public-key` перевірка стосується виключно внутрішньої цілісності. Подробиці у розділі [детерміноване відтворення](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+У вебінтерфейсі відкрийте **Governance** і виберіть **Verify a receipt**, щоб перевірити квитанцію виконання на сервері. Браузер показує результат перевірки лише цілісності й джерело ключа. Див. [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 Така ж перевірюваність застосовується до оціночних показників. `bernstein bench run <suite> --reliability k` (також записується як `bernstein eval --reliability k`) запускає кожне завдання `k` разів за фіксованої координації, а потім звітує про нижню межу `pass^k` (усі `k` спроб мають бути успішними) разом із верхньою межею `pass@1`. Цей результат запечатується в підписаній квитанції, яку `bernstein bench reliability-verify` перераховує офлайн, тому сфальсифікована нижня межа не пройде верифікацію. Подробиці: [нижня межа надійності pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
@@ -224,9 +229,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 Гейти гігієни репозиторію: `bernstein readme-l10n verify` блокує PR, перекладені README якого відстали від англійського оригіналу (називаючи застарілий розділ), а `bernstein readme-l10n sync` оновлює зв'язки після змін в англійському тексті. Дивіться [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### підтримувані агенти
-<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
+<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen та інші. [Індекс адаптерів](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) містить команди встановлення для 30 з них. Команда `bernstein integrations list` перелічує всі 56 підключені інтеграції з файлу `src/bernstein/adapters/registry.py`, єдиного джерела істини. 54 з них — це доступні для вибору адаптери агентів; інші два рядки — тестова заглушка `mock` та профіль кінцевих точок `self-hosted-endpoints`. Будь-який інший інструмент із прапорцем `--prompt` працює через універсальну обгортку.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen та інші. [Індекс адаптерів](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) містить команди встановлення для 30 з них. Команда `bernstein integrations list` перелічує всі 57 підключені інтеграції з файлу `src/bernstein/adapters/registry.py`, єдиного джерела істини. 55 з них — це доступні для вибору адаптери агентів; інші два рядки — тестова заглушка `mock` та профіль кінцевих точок `self-hosted-endpoints`. Будь-який інший інструмент із прапорцем `--prompt` працює через універсальну обгортку.
 
 Комбінуйте агентів в одному запуску: дешеві локальні моделі для шаблонного коду, потужніші хмарні моделі для архітектури. Команда `bernstein integrations list --installed` показує, що доступно на вашому комп'ютері.
 
@@ -243,7 +248,7 @@ bernstein volunteer browse --budget 60
 [Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`. `autopilot` зареєстровано, але він відмовляється запускатися, доки не реалізовано `TaskSource`.
 
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
@@ -253,7 +258,7 @@ bernstein volunteer browse --budget 60
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | де виникає цінність і коли Bernstein не є потрібним інструментом |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативні YAML DAG із вузлів agent / command / loop |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI (створення й перегляд завдань) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | експериментально: запуск агентів на Cloudflare Workers із синхронізацією робочого простору в R2 під власним акаунтом. Хостинг-сервіс `api.bernstein.run` ще не доступний |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | квитанції запитів тільки для читання, а також драйвер запитів, який зв'язує кожен результат зі знімком схеми |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | спрямовуйте ролі на визначення агентів за межами вбудованих шаблонів — загальний каталог YAML/SKILL.md або дерево плагінів Claude Code |
@@ -261,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | як система влаштована зсередини |
 
 ### чому саме така назва?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein названо на честь Леонарда Бернстайна, американського диригента та композитора. Проєкт керує оркестром CLI-агентів кодування так само, як Бернстайн керував Нью-Йоркським філармонічним: кожен виконавець вступає вчасно, партитура детермінована, диригент відповідає за підсумковий результат.
+Bernstein названо на честь Леонарда Бернстайна, американського диригента та композитора. Проєкт керує командою AI-агентів так само, як Бернстайн керував Нью-Йоркським філармонічним: кожен виконавець вступає вчасно, партитура детермінована, диригент відповідає за підсумковий результат.
 
 я написав bernstein, тому що платив по $400 на місяць за рахунками claude, запускаючи три агенти кодування паралельно й отримуючи недетерміновані злиття. Ліцензія Apache 2.0, підтримується однією людиною. Статистика наживо: [bernstein.run](https://bernstein.run).
 

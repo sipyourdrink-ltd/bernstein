@@ -106,4 +106,4 @@ only that these exact bytes were projected from those chains, and that a named
 reviewer signed off on them.
 
 RBAC and budget verdicts are a different question with a different command —
-see `bernstein governance verify`.
+see `bernstein govern verify`.

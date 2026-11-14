@@ -285,16 +285,20 @@ class TestProgressBar:
 
 
 class TestBudgetColor:
-    @pytest.mark.parametrize("pct,expected", [(0.0, "green"), (0.5, "green"), (0.74, "green")])
-    def test_green_below_75(self, pct: float, expected: str) -> None:
-        assert _budget_color(pct) == expected
-
-    @pytest.mark.parametrize("pct,expected", [(0.75, "yellow"), (0.9, "yellow"), (0.99, "yellow")])
-    def test_yellow_at_75_to_99(self, pct: float, expected: str) -> None:
-        assert _budget_color(pct) == expected
-
-    @pytest.mark.parametrize("pct,expected", [(1.0, "bold red"), (1.5, "bold red")])
-    def test_red_at_100_or_more(self, pct: float, expected: str) -> None:
+    @pytest.mark.parametrize(
+        "pct,expected",
+        [
+            (0.0, "green"),
+            (0.5, "green"),
+            (0.74, "green"),
+            (0.75, "yellow"),
+            (0.9, "yellow"),
+            (0.99, "yellow"),
+            (1.0, "bold red"),
+            (1.5, "bold red"),
+        ],
+    )
+    def test_budget_color(self, pct: float, expected: str) -> None:
         assert _budget_color(pct) == expected
 
 

@@ -263,8 +263,11 @@ def _get_journal_head(task_id: str) -> str:
         if journal_path.exists():
             journal = EventJournal.resume(run_id, sdd_dir)
             return journal.head()
-    except Exception:
-        pass
+    except FileNotFoundError:
+        # The journal may disappear between the existence check and resume.
+        return ""
+    except Exception as exc:
+        logger.warning("Could not read the task journal head (%s)", type(exc).__name__)
     return ""
 
 

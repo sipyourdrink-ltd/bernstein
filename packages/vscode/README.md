@@ -6,7 +6,7 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 
 - **Sidebar views** - dedicated activity bar panel with Agents, Tasks, and Overview views
 - **Agent tree with delegation hierarchy** - see active agents, their roles, models, and parent/child relationships
-- **Task grouping** - tasks organized by status (open, in progress, done, failed) with inline actions
+- **Flat task list** - one row per task, not grouped by status; the icon at the start of each row indicates its status (hover for the exact status), and contextual actions depend on that status
 - **Dashboard webview** - at-a-glance stats: task breakdown, agent count, cost totals, alerts
 - **SSE real-time updates** - live streaming from the orchestrator, no manual refresh needed
 - **`@bernstein` chat participant** - query orchestrator status and costs from VS Code Chat
@@ -26,6 +26,8 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 | `Bernstein: Prioritize Task` | Move a task to the top of the queue (context menu) |
 | `Bernstein: Open Task Output` | Open output for a task's assigned agent |
 | `Bernstein: Inspect Agent` | Show agent details: role, model, runtime, cost, tasks |
+| `Bernstein: Approve Task` | Approve a task pending approval (inline action and context menu) |
+| `Bernstein: Reject Task` | Reject a task pending approval (inline action and context menu) |
 
 ## Configuration
 
@@ -36,7 +38,6 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 | `bernstein.refreshInterval` | number | `5` | Tree view polling interval in seconds |
 | `bernstein.showNotifications` | boolean | `true` | Show notification toasts for task completions and failures |
 | `bernstein.costWarningThreshold` | number | `80` | Show a cost warning when budget usage exceeds this percentage |
-| `bernstein.autoStart` | boolean | `false` | Automatically start Bernstein when opening a workspace with a `.sdd` directory |
 
 ## Requirements
 

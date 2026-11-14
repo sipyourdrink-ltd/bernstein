@@ -187,7 +187,7 @@ def supervisor_escalate(
     row = next((w for w in snapshot.workers if w.session_id == session_id), None)
     if row is None:
         raise click.ClickException(
-            f"session {session_id!r} not tracked in the supervisor snapshot",
+            f"Session {session_id!r} is not tracked in the supervisor snapshot.",
         )
 
     # Load (or generate) the install Ed25519 signing key.

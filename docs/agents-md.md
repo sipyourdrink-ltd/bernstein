@@ -26,8 +26,7 @@ markdown, no frontmatter - derived from the repository:
 | `.sdd/agents-md/*.md`        | Curated overlay sections                |
 
 From the same canonical IR the **bridge** (`agents_md_bridge.py`)
-translates to four downstream formats every supported CLI actually
-reads on disk in 2026:
+translates to five downstream formats read by the supported tools:
 
 | Target      | On-disk path(s)                                     |
 | ----------- | --------------------------------------------------- |
@@ -35,6 +34,7 @@ reads on disk in 2026:
 | Claude Code | `CLAUDE.md` at repo root                            |
 | Aider       | `CONVENTIONS.md` + `.aider.conf.yml` (`read:` entry) |
 | Goose       | `.goosehints` at repo root                          |
+| GitHub Copilot | `.github/copilot-instructions.md` with the canonical guidance |
 
 The legacy `.cursorrules` is intentionally not emitted - Cursor's docs
 no longer document it; `.cursor/rules/*.mdc` is the supported surface.
@@ -50,9 +50,11 @@ bernstein agents-md verify              # CI gate: exit 1 on any drift
 bernstein agents-md diff                # human-readable unified diff
 ```
 
-`--target T` accepts `canonical | cursor | claude | aider | goose`
+`--target T` accepts `canonical | cursor | claude | aider | goose | copilot`
 (plus `all` for `verify`/`diff`). All commands take `--workdir PATH`
-to operate on another repo.
+to operate on another repo. The all-target commands preserve existing
+hand-written Copilot instructions. To adopt the generated version, run
+`bernstein agents-md write --target copilot`.
 
 ### Default branch resolution
 
@@ -145,15 +147,15 @@ $ bernstein agents-md sync
   · CONVENTIONS.md  (aider)
   · .aider.conf.yml  (aider)
   · .goosehints  (goose)
-Synced 12 file(s) across 5 target(s) under .
+  · .github/copilot-instructions.md  (copilot)
+Synced 16 file(s) across 6 target(s) under .
 
 $ bernstein agents-md verify
-OK       all 12 file(s) in sync
+OK       all 16 file(s) in sync
 ```
 
-After `sync`, `verify` is green. The five surfaces all carry the same
-test command, the same module map, the same role definitions. The
-loop is one command.
+The generated instructions share the same test commands, module map,
+and role definitions.
 
 ## Authoring overlays
 

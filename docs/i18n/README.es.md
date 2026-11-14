@@ -1,6 +1,9 @@
 <div align="center">
 
-<img alt="Bernstein - the open-source governance layer for AI agents" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/banner-readme.webp" width="820">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
+  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+</picture>
 
 <br>
 
@@ -123,7 +126,7 @@ flowchart LR
 Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los gates de aprobación se mantienen haga lo que haga el agente dentro de la tarea. Un nodo de código termina tras merge gates en su propio git worktree. Los nodos de arriba terminan distinto: un [contrato de artefacto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nombra el entregable (informe, dataset, escaneo, registro de acciones) y el nodo se cierra con un recibo de lineage firmado en lugar de un commit. Mismo planificador, mismo journal, misma verificación offline - ya lleve el grafo código, investigación, un cambio de ops o una mezcla de los tres. Hay grafos listos para software, investigación, documentación, enterprise y flujos de contribución en [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -157,10 +160,10 @@ Una ejecución en curso se puede observar desde cualquiera de las dos interfaces
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — el panel de terminal | `bernstein gui serve` — el panel de navegador |
+| `bernstein live` — el panel de terminal (nodos de trabajo remotos) | `bernstein gui serve` — el panel de navegador |
 
 ### probar una ejecución
-<!-- l10n: en="prove a run" hash="sha256:a23aeb237bbe" -->
+<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
 
 El determinismo aquí es algo que verificas, no algo que aceptas por fe. Ejecuta una vez con auditoría habilitada y luego verifica lo que se registró:
 
@@ -179,6 +182,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 El journal se escribe en cada ejecución; la columna vertebral de linaje siempre está activa y gana una entrada por cada paso con linaje, por lo que una ejecución corta puede terminar con una columna válida y vacía. `bernstein audit verify` solo tiene una cadena para verificar cuando la ejecución se inició con `BERNSTEIN_AUDIT=1`, un preajuste de cumplimiento o `bernstein run --audit`. El flag `--audit` pertenece a `bernstein run`; en la forma `bernstein -g` anterior, establece la variable de entorno.
 
 Un recibo de ejecución vincula el encabezado del journal, el encabezado de la columna de linaje cuando la ejecución escribió entradas de linaje y, opcionalmente, un rango de cadena de auditoría, bajo un único sujeto firmado con Ed25519 con la clave pública incrustada. Un revisor con ese archivo y la clave pública del operador puede confirmar que las acciones y cadenas incrustadas no se modificaron: sin clave HMAC, sin `.sdd/` en vivo, y salida `2` indicando el primer paso divergente ante manipulaciones. Ese recibo identifica el estado del journal que incrusta; demostrar que ese estado es el journal terminado completo requiere adicionalmente un sello independiente de encabezado/conteo. Con el archivo solo y sin la fijación `--public-key`, la verificación es solo de integridad: prueba que el recibo es internamente consistente, no quién lo firmó, y el veredicto lo indica. Detalles en [reproducción determinista](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+En la interfaz web, abre **Governance** y usa **Verify a receipt** para comprobar un recibo de ejecución en el servidor. El navegador muestra el resultado de la comprobación exclusiva de la integridad y el origen de la clave. Consulta [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
 La misma verificabilidad se aplica a los números de evaluación. `bernstein bench run <suite> --reliability k` (también escrito como `bernstein eval --reliability k`) ejecuta cada tarea `k` veces bajo coordinación fija, luego reporta un límite inferior `pass^k` (todos los `k` intentos deben pasar) junto con el límite superior `pass@1`. Ese resultado queda sellado en un recibo firmado que `bernstein bench reliability-verify` recalcula offline, de modo que un límite inferior fabricado falla la verificación. Detalles: [límite de fiabilidad pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
@@ -224,9 +229,9 @@ El estado de ejecución guarda un punto de control en `.sdd/runs/<run_id>/` en c
 Puertas de higiene del repositorio: `bernstein readme-l10n verify` falla una PR cuyos READMEs traducidos se hayan desfasado de la fuente en inglés (indicando la sección obsoleta), `bernstein readme-l10n sync` los vuelve a vincular tras una edición en inglés. Consulta [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### agentes compatibles
-<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
+<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen y más. El [índice de adaptadores](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) incluye comandos de instalación para 30 de ellos. `bernstein integrations list` enumera las 56 integraciones conectadas desde `src/bernstein/adapters/registry.py`, la única fuente de verdad para lo que se resuelve. 54 de ellas son adaptadores de agentes seleccionables; las otras dos filas son el stub de prueba `mock` y el perfil de endpoints `self-hosted-endpoints`. Cualquier otra cosa con un flag `--prompt` funciona a través del contenedor genérico.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen y más. El [índice de adaptadores](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) incluye comandos de instalación para 30 de ellos. `bernstein integrations list` enumera las 57 integraciones conectadas desde `src/bernstein/adapters/registry.py`, la única fuente de verdad para lo que se resuelve. 55 de ellas son adaptadores de agentes seleccionables; las otras dos filas son el stub de prueba `mock` y el perfil de endpoints `self-hosted-endpoints`. Cualquier otra cosa con un flag `--prompt` funciona a través del contenedor genérico.
 
 Combina agentes en la misma ejecución: modelos locales económicos para código repetitivo, modelos en la nube más pesados para arquitectura. `bernstein integrations list --installed` muestra lo que está disponible en tu máquina.
 
@@ -243,7 +248,7 @@ bernstein volunteer browse --budget 60
 La [guía del donante](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cubre la ejecución de un worker y el presupuesto que fijas, la [guía del proyecto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cubre la declaración de un manifiesto, y el [modelo de amenazas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica qué protege y qué no cada frontera. El ejecutor de un solo comando aún no se ha publicado: hoy `verify`, `browse`, `budget`, `verify-bundle` y `hub` son los subcomandos que funcionan. `autopilot` está registrado, pero se niega a ejecutarse hasta que se implemente un `TaskSource`.
 
 ### más allá de la portada
-<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
+<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
 
 Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run/):
 
@@ -253,7 +258,7 @@ Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | dónde reside el valor y dónde Bernstein es la herramienta equivocada |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs declarativos en YAML de nodos de agente / comando / bucle |
-| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel de navegador sobre la misma API que utiliza la TUI |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel de navegador sobre la misma API que utiliza la TUI (crear y revisar tareas) |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: ejecuta agentes en Cloudflare Workers con sincronización de workspace en R2 contra tu propia cuenta. El servicio alojado `api.bernstein.run` aún no está disponible |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | recibos de consulta de solo lectura, más un controlador de consultas que vincula cada resultado con la instantánea del esquema a partir de la cual se obtuvo |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | apunta roles a definiciones de agentes fuera de las plantillas integradas: un directorio YAML/SKILL.md genérico o un árbol con estructura de plugin de Claude Code |
@@ -261,9 +266,9 @@ Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | cómo funciona por dentro |
 
 ### ¿por qué este nombre?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein lleva el nombre de Leonard Bernstein, el director de orquesta y compositor estadounidense. El proyecto orquesta a un equipo de agentes de codificación CLI de la misma manera que Bernstein dirigía la Filarmónica de Nueva York: cada músico a tiempo, la partitura determinista, el director responsable del resultado.
+Bernstein lleva el nombre de Leonard Bernstein, el director de orquesta y compositor estadounidense. El proyecto gobierna un equipo de agentes de IA de la misma manera que Bernstein dirigía la Filarmónica de Nueva York: cada músico a tiempo, la partitura determinista, el director responsable del resultado.
 
 escribí bernstein porque pagaba $400 al mes en facturas de claude ejecutando tres agentes de codificación en paralelo y obteniendo merges no deterministas. Apache 2.0, mantenido por una sola persona. Estadísticas en vivo: [bernstein.run](https://bernstein.run).
 

@@ -89,17 +89,9 @@ def dry_run_merge(
 ) -> MergeCheckResult:
     """Conceptualise a merge without executing any git commands.
 
-    Examines the branch names and working directory to build a
-    :class:`MergeCheckResult`.  The function never runs git so it is safe
-    to call from read-only contexts or in tests.
-
-    The merge strategy is determined by the number of source refs:
-
-    * A single source branch uses ``"fast-forward"`` when possible.
-    * Multiple sources (octopus merge) are not supported here; the
-      single-source path always selects ``"fast-forward"`` as the
-      preferred strategy, falling back to ``"recursive"`` if the
-      branches have diverged.
+    Uses branch names alone to choose a provisional strategy. Identical
+    names use fast-forward. Different names containing slashes in both
+    branches use recursive. Other names use fast-forward.
 
     Since no actual git commands are run the ``can_merge`` flag is set
     optimistically to ``True`` and ``conflict_files`` is left empty.
@@ -109,7 +101,7 @@ def dry_run_merge(
     Args:
         source: Source branch name (e.g. ``"agent/backend-abc123"``).
         target: Target branch name (e.g. ``"main"``).
-        workdir: Repository root directory.
+        _workdir: Reserved parameter.
         task_id: Optional task identifier to embed in the result.
 
     Returns:

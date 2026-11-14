@@ -145,10 +145,10 @@ def build_compaction_marker(reason: str = "", _ts: float | None = None) -> str:
 
     Args:
         reason: Human-readable compaction reason (e.g. ``"token_limit"``).
-        ts: Unix timestamp of the event.
+        _ts: Reserved parameter.
 
     Returns:
-        Rich markup string with the compaction marker and optional tooltip.
+        Rich markup string with the compaction marker and optional reason.
     """
     label = f"{COMPACTION_MARKER} compact"
     if reason:

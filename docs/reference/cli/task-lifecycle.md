@@ -4,7 +4,7 @@ Driving Bernstein from a script means knowing which command moves a task between
 
 > Source of truth for transitions: [`architecture/LIFECYCLE.md`](../../architecture/LIFECYCLE.md). All flag claims below are cited as `cli/<file>:<line>`.
 
-## The 12 task states
+## Task states
 
 | State | One-liner |
 |---|---|
@@ -18,6 +18,12 @@ Driving Bernstein from a script means knowing which command moves a task between
 | `BLOCKED` | Waiting on another task, resource, or approval. |
 | `WAITING_FOR_SUBTASKS` | Parent task waiting for child subtasks to complete. |
 | `CANCELLED` | Manually or programmatically cancelled. Terminal. |
+| `STOP_REQ` | Cancellation requested. The reaper waits for the worker group to exit. |
+| `SUSPENDED` | Parked mid-session. Resumable from an attested receipt. |
+| `ABANDONED` | Agent voluntarily ended the task with a structured reason. |
+| `BLOCKED_BY_ABANDON` | An abandoned dependency blocks the task. |
+| `BLOCKED_BY_FAILED_DEP` | An unsuccessful dependency blocks the task. If that dependency recovers while another prerequisite still has an unresolved failure, the task stays blocked and names that prerequisite. |
+| `REFUSED` | Worker reported a typed refusal. |
 | `ORPHANED` | Agent crashed mid-task; awaits crash recovery. |
 | `PENDING_APPROVAL` | Task completed but requires human approval before merge. Set directly by the approval subsystem (no FSM-managed exit). |
 
@@ -41,7 +47,7 @@ Create a single task on the running task server (`POST /tasks`).
 
 **Synopsis:** `bernstein add-task TITLE [flags]`
 
-**Flags:** *(source: `cli/commands/task_cmd.py:37-66`)*
+**Flags:** See `bernstein add-task --help`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -52,6 +58,11 @@ Create a single task on the running task server (`POST /tasks`).
 | `--scope` | `medium` | `small` / `medium` / `large`. |
 | `--complexity` | `medium` | `low` / `medium` / `high`. |
 | `--depends-on TASK_ID` | - | Task IDs this task depends on. Repeatable. |
+| `--criterion-profile PRESET` | none | Per-task preset such as `safety-first`, `speed-first`, `balanced`, or `cost-first`. |
+| `--mode` | none | Worker response style (`verbose`, `balanced`, `terse`) or mode profile (`fast`, `smart`, `deep`). |
+| `--artifact-kind` | none | Artifact type (`report`, `dataset`, `action_log`, `ops_result`, `finding`, or `blob`). Requires `--artifact-output`. |
+| `--artifact-output PATH` | none | Workdir-relative artifact path. |
+| `--artifact-criterion TYPE:VALUE` | none | Repeatable check of type `schema_valid`, `criteria_match`, or `hash_stable`. Requires `--artifact-kind`. |
 | `--dry-run` | off | Print the JSON payload without calling the API. |
 
 The command is registered as `task compose` internally and exposed as the visible `bernstein add-task` (see `cli/main.py:696`).
@@ -98,22 +109,26 @@ For a holistic view including dependency edges and the critical path, use `berns
 
 ## `bernstein pending`
 
-List tasks waiting for **human approval** in the `--approval review` flow.
+List tasks waiting for **human approval** before starting or after verification.
 
 **Synopsis:** `bernstein pending [flags]`
 
-**Flags:** *(source: `cli/commands/task_cmd.py:291-303`)*
+**Flags:** *(source: `cli/commands/pending_cmd.py`)*
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--workdir` | `.` | Project root (parent of `.sdd/`). |
+| `--kind` | `all` | Use `approval` for pre-spawn gates or `spawn` for post-completion review. |
 
-A task is "pending" when its task store has dropped a JSON file under `.sdd/runtime/pending_approvals/`. This happens automatically when `bernstein run --approval review` verifies a task and pauses awaiting your decision. The state is **not** `PENDING_APPROVAL` (which is the FSM enum used by the security/approval subsystem); the file-on-disk semaphore is what `bernstein pending` reads.
+The pre-spawn gate writes `.sdd/runtime/approvals/<task_id>.pending`.
+When the orchestrator is configured for post-completion review, it parks
+verified tasks under `.sdd/runtime/pending_approvals/<task_id>.json`.
 
-JSON output mode (`--json` on the root) emits the raw array of pending records - useful in scripts:
+JSON output mode (`--json` on the root) returns an object with
+`approval_pending` and `spawn_pending` arrays:
 
 ```bash
-bernstein --json pending | jq -r '.[].task_id' | while read tid; do
+bernstein --json pending | jq -r '.spawn_pending[].task_id' | while read tid; do
   bernstein approve "$tid"
 done
 ```
@@ -211,7 +226,7 @@ Two related but distinct gates.
 | `--validate-only` | off | Validate `--pipeline` schema and exit. No agents run. |
 | `--dry-run` | off | Print resolved pipeline; spawn nothing. |
 
-**`bernstein verify`** *(source: `cli/commands/verify_cmd.py`)* runs the **quality pipeline** (lint / tests / type-check / custom gates) on a specific task's artefact. It's the same gate the janitor runs automatically; calling it manually is useful when you want to re-run gates after fixing something out-of-band. See [`architecture/quality-pipeline.md`](../../architecture/quality-pipeline.md) for what the gates do.
+**[`bernstein verify`](verify.md)** builds and verifies signed run receipts and checks evidence such as WAL integrity and execution fingerprints. The janitor runs the [task quality pipeline](../../architecture/quality-pipeline.md) during task completion.
 
 ---
 
@@ -238,7 +253,7 @@ Internally, both strategies converge on the same task FSM transition `DONE → C
 
 ## End-to-end script example
 
-A single bash flow that creates a task, watches it complete, and merges. Assumes the Bernstein server is already running (`bernstein start` or a previous `bernstein run`).
+A single bash flow that creates a task, watches it complete, and checks the automatic merge result. Assumes the Bernstein server is already running (`bernstein start` or a previous `bernstein run`) and that the normal verification-and-merge path is enabled.
 
 ```bash
 #!/usr/bin/env bash
@@ -253,7 +268,7 @@ TASK_JSON=$(bernstein --json add-task "Add SBOM endpoint" \
 TASK_ID=$(echo "$TASK_JSON" | jq -r .id)
 echo "Created $TASK_ID"
 
-# 2. Poll until the task reaches a terminal-ish state.
+# 2. Wait for the task to finish agent work.
 while :; do
   STATUS=$(bernstein --json list-tasks \
     | jq -r --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
@@ -269,16 +284,35 @@ if bernstein --json pending | jq -e --arg id "$TASK_ID" '.[] | select(.task_id =
   bernstein approve "$TASK_ID"
 fi
 
-# 4. Trigger the merge (if the run wasn't already auto-merging).
-bernstein merge
+# 4. Normally verification and merge happen automatically after approval.
+# Wait for that path to close the task; report unsuccessful terminal states.
+while :; do
+  STATUS=$(bernstein --json list-tasks \
+    | jq -r --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
+  case "$STATUS" in
+    closed) break ;;
+    failed|cancelled)
+      echo "task $TASK_ID finished in state $STATUS, not closed"; exit 1 ;;
+    "")  echo "task $TASK_ID disappeared from server"; exit 1 ;;
+    *)   sleep 5 ;;
+  esac
+done
 
-# 5. Final state - anything other than `closed` means the merge failed.
+# 5. Confirm the resulting state rather than assuming a merge happened.
+FINAL_STATUS=$(bernstein --json list-tasks \
+  | jq -er --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
+if [[ "$FINAL_STATUS" != closed ]]; then
+  echo "expected task $TASK_ID to be closed, got $FINAL_STATUS"; exit 1
+fi
+echo "Task $TASK_ID is $FINAL_STATUS"
+```
+
+If automatic merging is not enabled and a completed task needs a manual merge, select it explicitly (the task must still be `done` and its agent branch must exist):
+
+```bash
+bernstein merge pick --pick "$TASK_ID"
 bernstein --json list-tasks \
   | jq --arg id "$TASK_ID" '.[] | select(.id == $id)'
 ```
 
-Notes:
-
-- All four state-mutating commands (`add-task`, `approve`, `reject`, `cancel`) are safe to retry. The server / orchestrator dedupes on `task_id`.
-- Treat `cancelled` / `failed` / `closed` as terminal in scripts. `done` is **not** terminal - it precedes verification + merge.
-- For long-running orchestrations, prefer `bernstein watch` (streams events) over a polling loop. (`cli/watch_cmd.py:252`.)
+The second command checks the task's actual state; do not assume the merge invocation itself moved it to `closed`. The bare `bernstein merge` group prints help when no selection is supplied.

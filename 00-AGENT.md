@@ -18,17 +18,10 @@ Machine-readable and verifiable agent entrypoint. Every fact here and in `docs/a
 | [docs/agent/.machine/facts.json](docs/agent/.machine/facts.json) | Structured machine-readable facts |
 | [docs/agent/90-notes/](docs/agent/90-notes/) | Deep architecture & governance design notes |
 
-## Golden Commands
+## Contributor commands
 
-| Command | Purpose |
-|---|---|
-| `uv sync` | Install dependencies and lock environment |
-| `uv run python scripts/run_tests.py <test-path>` | Run isolated unit tests |
-| `uv run ruff check .` | Lint codebase |
-| `uv run ruff format .` | Format codebase |
-| `uv run mypy src` | Typecheck core package |
-| `uv run bernstein agents-md verify` | Verify AGENTS.md mirrors are in sync |
-| `python3 scripts/check_docs_drift.py` | Verify documentation has not drifted |
+Use [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the root
+[Makefile](Makefile) for the lint, typecheck, and test commands.
 
 ## Rules for Agents Editing this Repo
 

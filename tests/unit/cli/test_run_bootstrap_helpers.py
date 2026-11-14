@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
+import httpx
 import pytest
 
 from bernstein.cli.run_bootstrap import (
@@ -272,6 +273,14 @@ def test_load_plan_goal_from_json(tmp_path: Path) -> None:
     assert _load_plan_goal(plan_file) == "Refactor the auth layer"
 
 
+def test_load_plan_goal_rejects_scalar_json(tmp_path: Path) -> None:
+    plan = tmp_path / "scalar.json"
+    plan.write_text("null", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Could not extract goal"):
+        _load_plan_goal(plan)
+
+
 def test_load_plan_goal_from_markdown(tmp_path: Path) -> None:
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n\n**Goal:** Add retry logic\n\n- task 1\n")
@@ -313,13 +322,90 @@ def test_save_plan_markdown_writes_under_runtime_plans(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_dry_run_tasks_plan_load_error_exits_one(tmp_path: Path) -> None:
+def test_load_dry_run_tasks_plan_load_error_exits_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A malformed plan file surfaces SystemExit(1), not a raw traceback."""
     bad_plan = tmp_path / "broken.yaml"
     bad_plan.write_text("this: is: not: valid: yaml: [unclosed\n")
     with pytest.raises(SystemExit) as exc:
         _load_dry_run_tasks(bad_plan)
     assert exc.value.code == 1
+
+    output = capsys.readouterr()
+    assert "Plan load error" in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize(
+    ("failure", "diagnostic"),
+    [
+        (httpx.ConnectError("offline"), "Task server not running"),
+        (httpx.ReadTimeout("timed out"), "Failed to fetch tasks"),
+    ],
+)
+def test_load_dry_run_tasks_server_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: httpx.RequestError,
+    diagnostic: str,
+) -> None:
+    def fail_get(*_args: object, **_kwargs: object) -> httpx.Response:
+        raise failure
+
+    monkeypatch.setattr(httpx, "get", fail_get)
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(None)
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert diagnostic in output.err
+    assert output.out == ""
+
+
+def test_load_dry_run_tasks_invalid_encoding(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan = tmp_path / "invalid.yaml"
+    plan.write_bytes(b"\xff")
+
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(plan)
+
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert "Plan load error" in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("setting", ["max_agents: two", "repos: 2"])
+def test_load_dry_run_tasks_invalid_staged_settings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], setting: str
+) -> None:
+    plan = tmp_path / "invalid.yaml"
+    plan.write_text(
+        f"name: Example\n{setting}\nstages:\n  - name: build\n    steps:\n      - title: Add feature\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(plan)
+
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert "Plan load error" in output.err
+    assert output.out == ""
+
+
+def test_load_dry_run_tasks_rejects_malformed_server_response(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_get(url: str, **_kwargs: object) -> httpx.Response:
+        return httpx.Response(200, request=httpx.Request("GET", url), json=[None])
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    with pytest.raises(SystemExit) as exc:
+        _load_dry_run_tasks(None)
+
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert "Expected a JSON list of task objects" in output.err
+    assert output.out == ""
 
 
 class TestLoadPlanGoalFromYaml:

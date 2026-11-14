@@ -1233,7 +1233,7 @@ def _doctor_render_table(
     "--unattended",
     is_flag=True,
     default=False,
-    help="Run probes through spawner environment (unattended parity).",
+    help="Run probes through the spawner environment (unattended parity).",
 )
 def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
@@ -1348,7 +1348,7 @@ def _detect_runtime_environment() -> str:
 @click.command("commit-stats")
 @click.option("--since", default=None, help="Date range start (e.g. 2025-01-01).")
 @click.option("--until", default=None, help="Date range end (e.g. 2025-12-31).")
-@click.option("--repo-dir", default=".", help="Path to git repository.")
+@click.option("--repo-dir", default=".", help="Path to the git repository.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
 def commit_stats_cmd(since: str | None, until: str | None, repo_dir: str, as_json: bool) -> None:
     """Show commit attribution by agent role.

@@ -152,11 +152,6 @@ class MCPServerCapabilities:
     first_contact_at: str
 
 
-def _canonicalize_tool_names(tool_names: frozenset[str]) -> str:
-    """Return JSON-canonicalized sorted tool name list for digest."""
-    return json.dumps(sorted(tool_names), separators=(",", ":"))
-
-
 class ServerCapabilitiesStore:
     """Persistent store for MCP server capabilities.
 
@@ -164,7 +159,7 @@ class ServerCapabilitiesStore:
     Capabilities are persisted to a JSON file at ``<sdd_dir>/.sdd/mcp_server_capabilities.json``.
     """
 
-    def __init__(self, sdd_dir: str):
+    def __init__(self, sdd_dir: str | Path) -> None:
         self._file_path = Path(sdd_dir) / ".sdd" / "mcp_server_capabilities.json"
         self._lock_path = self._file_path.with_suffix(".lock")
         self._capabilities: dict[str, MCPServerCapabilities] = {}

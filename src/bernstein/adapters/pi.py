@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 
-#: Pi's switch that turns off extension discovery (``-ne``); explicit ``-e``
+#: Pi's contract-declared switch that turns off extension discovery; explicit ``-e``
 #: paths would still load.
 _NO_EXTENSIONS = "--no-extensions"
 

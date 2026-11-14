@@ -335,8 +335,7 @@ def tick(
         respond: Callable that delivers a keystroke to a session.
         audit_path: JSONL file to append recovery events to. Created
             (parents included) on first write.
-        env: Optional env mapping for the feature gate; defaults to
-            ``os.environ``.
+        env: Environment for the feature gate. None reads ``os.environ``.
 
     Returns:
         :class:`WatchdogResult` summarising what happened. The result

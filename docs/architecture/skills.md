@@ -138,6 +138,17 @@ a WAL sink callback (default: an ``INFO`` log line) with
 which set ``error``); a name that is not found returns an error result
 without emitting the event.
 
+## Python lookups
+
+For Python callers, ``SkillLoader`` provides:
+
+- ``get(name: str) -> LoadedSkill`` returns the loaded skill with that name,
+  raising ``SkillNotFoundError`` if the name is not loaded.
+- ``has(name: str) -> bool`` returns ``True`` if the name is loaded, otherwise
+  ``False``.
+- ``list_all() -> list[LoadedSkill]`` returns all loaded skills in deterministic
+  alphabetical order by name.
+
 ## Sources
 
 Skills are aggregated from multiple sources into a single

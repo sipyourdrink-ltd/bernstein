@@ -127,7 +127,7 @@ def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: in
                 for path in changed:
                     if path.startswith(("test/", "tests/")) and path.endswith(".py"):
                         counts[path] += 1
-        except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
             logger.warning("could not derive test-to-source history for %s: %s", target, exc)
             result[target] = []
             continue
@@ -140,7 +140,7 @@ def extract_test_to_source_map(repo_root: Path, targets: list[str], *, limit: in
 
 
 def _git(repo_root: Path, *args: str) -> str:
-    return subprocess.check_output(("git", "-C", str(repo_root), *args), text=True, encoding="utf-8")
+    return subprocess.check_output(("git", "-C", str(repo_root), *args), text=True, encoding="utf-8", timeout=30)
 
 
 def _revert_pairs(records: list[tuple[str, str]]) -> set[str]:

@@ -696,7 +696,7 @@ class CIFixPipeline:
             logger.info("CI fix task posted to server: %s", task_id)
             return task_id
 
-        logger.warning("Failed to post CI fix task to server; writing to fallback")
+        logger.warning("Could not post the CI fix task to the server.")
         return ""
 
 

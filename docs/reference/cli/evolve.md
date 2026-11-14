@@ -6,9 +6,23 @@
 - **`bernstein evolve review`** - list upgrade proposals waiting on a human, including the change contract component and sandbox verdict for each.
 - **`bernstein evolve approve <PROPOSAL_ID>`** - approve one proposal.
 - **`bernstein evolve status`** - show the evolution history table.
-- **`bernstein evolve export <OUTPUT>`** - write a static HTML or Markdown report.
+- **`bernstein evolve export [OUTPUT]`** - write a static HTML or Markdown report.
 
 `bernstein evolve run` needs an initialised workspace. In a directory with no `.sdd/`, it exits before starting rather than creating state behind your back.
+
+## Exporting a report
+
+`bernstein evolve export [OUTPUT]` reads evolution data from the project selected by `--dir` (the project root containing `.sdd/`). The optional `OUTPUT` argument selects the report's path; it is independent of `--dir`. `OUTPUT` defaults to `evolution_report` and `--format` defaults to HTML. With both omitted, the command writes `evolution_report.html` in the current working directory. Relative output paths are also resolved from the current working directory, not from the project directory selected with `--dir`.
+
+Use `--format html` for HTML or `--format md` / `--format markdown` for Markdown (the aliases are case-insensitive). The selected format determines the renderer. A recognized `.html` or `.md` output suffix is retained; otherwise the selected format supplies the `.html` or `.md` suffix. Thus the suffix does not select the renderer.
+
+For example, from a directory separate from the project, this reads the project at `sample-project` and writes `evolution-summary.md` in the current working directory:
+
+```sh
+bernstein evolve export evolution-summary --format markdown --dir sample-project
+```
+
+If the selected project has no recorded evolution cycles, the command exits with status 1 and does not write a report.
 
 ## The run-ledger to draft to issue contour
 
@@ -57,22 +71,27 @@ Evolve stops at the tracked issue. It does not open a pull request for what it f
 
 ## Dry run
 
-`--dry-run` prints what the scan found and performs no remote writes at all:
+`--dry-run` scans for failure-pattern drafts, prints the results, and skips the evolution loop. It is **not necessarily preview-only**: if GitHub sync is enabled, each discovered draft is also synced. A new fingerprint can create an issue; a fingerprint matching an existing issue can add a comment to it. These are remote writes, even with `--dry-run`.
 
 ```bash
 bernstein evolve run --dry-run
 ```
 
-It prints one row per draft - fingerprint prefix, pattern title, occurrence count, most recent run id - and returns without starting the evolution loop. No `gh` subprocess is spawned.
+The run is preview-only when the effective GitHub sync setting is off: neither `--github` is passed nor `evolve.github_sync: true` is set in the project's `bernstein.yaml` (or `bernstein.yml`). For example, this seed setting enables sync during a dry run:
 
-To preview what the sink would do against a real tracker, combine the flags:
+```yaml
+evolve:
+  github_sync: true
+```
+
+When sync is enabled, the following commands can create issues or comments for discovered drafts; `--github-repo` selects the target repository but does not itself enable sync:
 
 ```bash
 bernstein evolve run --dry-run --github
 bernstein evolve run --dry-run --github --github-repo owner/repo
 ```
 
-`--github` requires the `gh` CLI on `PATH` and authenticated. If it is not, the sync step is skipped with a warning rather than failing the command; run `gh auth login` first.
+If the scan finds no drafts, Evolve prints “No failure-pattern drafts found” and returns without syncing anything. When sync is enabled and drafts are found, the `gh` CLI must be on `PATH` and authenticated. Otherwise the sync step is skipped with a warning rather than failing the command; run `gh auth login` first.
 
 ## Options on `evolve run`
 
@@ -84,9 +103,9 @@ bernstein evolve run --dry-run --github --github-repo owner/repo
 | `--dir` | `.` | Project root - the parent of `.sdd/`. |
 | `--github` | off | Reconcile drafts and proposals against GitHub issues. |
 | `--github-repo` | inferred | Repo slug (`owner/repo`); inferred from the git remote when omitted. |
-| `--dry-run` | off | Print failure-pattern drafts and exit without running the loop. |
+| `--dry-run` | off | Print failure-pattern drafts and exit without the loop; GitHub sync still applies if enabled. |
 
-`--github` and `--github-repo` also read from an `evolve:` block in `bernstein.yaml` when the flag is not passed on the command line.
+The project seed's `evolve:` block may set `github_sync: true` and `github_repo: owner/repo`; `--github-repo` selects the target repository when supplied on the command line.
 
 ## What evolve does not write
 

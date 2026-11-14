@@ -11,8 +11,8 @@ bernstein govern audit --list --only INS
 The doctor's JSON retains `checks` and `runtime` and adds `findings`. That array
 uses exactly the same schema and producers as the installation audit's JSON
 array. The text report, display order, readiness calculation, exit behavior and
-`--fix` workflow remain unchanged. Installation checks are opt-in in the audit
-registry: use `--only INS` to measure the host rather than just the workspace.
+`--fix` workflow remain unchanged. Use `bernstein govern audit --only INS` to select the installation checks
+and measure the host.
 The audit CLI explicitly composes the installation catalog into its runner;
 the core default registry remains independent of CLI doctor implementations.
 See [installation check composition](../sdd/installation-check-composition.md)
