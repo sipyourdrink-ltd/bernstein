@@ -960,30 +960,23 @@ class CLIAdapter(ABC):
 
     @staticmethod
     def _read_last_lines(log_path: Path, n: int = 10) -> list[str]:
-        """Return the last *n* lines from ``log_path`` and its ``.stderr.log`` sibling.
+        """Return the last *n* lines of one log stream."""
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return []
+        return text.splitlines()[-n:]
 
-        The Claude Code adapter pipes the upstream CLI's stdout through a
-        wrapper that decodes stream-json into human-readable lines, but
-        the wrapper drops anything that isn't valid NDJSON.  Rate-limit
-        banners and startup errors from the CLI usually arrive on stderr
-        (or as non-JSON stdout that the wrapper swallows), so they never
-        reach ``log_path`` and the rate-limit probe returns ``False``
-        even when the CLI clearly said "you've hit your limit".
-
-        Reading both ``log_path`` and ``log_path.with_suffix(".stderr.log")``
-        keeps the existing ``_is_rate_limit_error`` heuristic working for
-        every adapter without changing call sites.  Adapters that don't
-        write a separate stderr file are unaffected: the missing path is
-        ignored.
-        """
-        lines: list[str] = []
-        for candidate in (log_path, log_path.with_suffix(".stderr.log")):
-            try:
-                text = candidate.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            lines.extend(text.splitlines())
-        return lines[-n:] if lines else []
+    @staticmethod
+    def _startup_429_body(streams: tuple[list[str], list[str]], fallback: str) -> str:
+        """Extract a response body within one stream, preferring stderr."""
+        for stream in reversed(streams):
+            for index in range(len(stream) - 1, -1, -1):
+                if re.search(r"\bHTTP(?:/[\d.]+)?\s+429\b", stream[index], re.IGNORECASE):
+                    return "\n".join(stream[index:])
+            if stream and CLIAdapter._is_rate_limit_error([stream[-1]]):
+                return stream[-1]
+        return fallback
 
     @staticmethod
     def _is_rate_limit_error(lines: list[str]) -> bool:
@@ -1039,12 +1032,20 @@ class CLIAdapter(ABC):
         if exit_code == 0:
             return
 
-        tail_lines = self._read_last_lines(log_path, n=10)
+        stdout_lines = self._read_last_lines(log_path, n=10)
+        # Some wrappers drop non-JSON output from the main log and leave
+        # startup errors in the stderr sibling.
+        stderr_lines = self._read_last_lines(log_path.with_suffix(".stderr.log"), n=10)
+        tail_lines = (stdout_lines + stderr_lines)[-10:]
         tail_text = tail_lines[-1] if tail_lines else "(no log output)"
         if self._is_rate_limit_error(tail_lines):
-            # Distinguish a standing cap (won't clear this run) from a
-            # transient request-rate limit before touching the meter.
-            if classify_429(tail_text) is HTTP429Classification.STANDING:
+            # Keep each response with its own continuation lines, excluding
+            # startup diagnostics written before it or in the other stream.
+            body = self._startup_429_body((stdout_lines, stderr_lines), tail_text)
+            if (
+                classify_429(tail_text) is HTTP429Classification.STANDING
+                or classify_429(body, require_explicit_cap=True) is HTTP429Classification.STANDING
+            ):
                 raise StandingCapError(f"{provider_name} hit a standing cap during startup: {tail_text}")
             # Tap the meter once before raising so the panel and the
             # ``rate_limit.hit`` event both see the spawn-time 429.
