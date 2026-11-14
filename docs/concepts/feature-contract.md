@@ -92,15 +92,25 @@ features = [
 anchor = compute_anchor(features)
 
 # Status and evidence are mutable and do not change the digest.
-assert compute_anchor([
-    replace(features[0], passes=True, evidence_path="logs/create.txt"),
-    features[1],
-]) == anchor
+assert (
+    compute_anchor(
+        [
+            replace(features[0], passes=True, evidence_path="logs/create.txt"),
+            features[1],
+        ]
+    )
+    == anchor
+)
 # Specification changes and feature-list reordering do change the digest.
-assert compute_anchor([
-    replace(features[0], description="Create an operator guide"),
-    features[1],
-]) != anchor
+assert (
+    compute_anchor(
+        [
+            replace(features[0], description="Create an operator guide"),
+            features[1],
+        ]
+    )
+    != anchor
+)
 assert compute_anchor(list(reversed(features))) != anchor
 ```
 
