@@ -130,7 +130,7 @@ def test_abort_requested_property() -> None:
 def test_zero_timeout_returns_immediately() -> None:
     """wait(timeout_s=0) returns TIMEOUT without blocking."""
     wake = CapacityWake()
-    with patch.object(wake._any_event, "wait", wraps=wake._any_event.wait) as wait:
+    with patch.object(wake._any_event, "wait", return_value=False) as wait:
         assert wake.wait(timeout_s=0.0) == WakeReason.TIMEOUT
     wait.assert_called_once_with(timeout=0.0)
 
