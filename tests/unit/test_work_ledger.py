@@ -124,6 +124,28 @@ class TestRecoveryFailClosed:
         reopened = WorkLedger.open(ledger_dir)
         assert reopened.head_hash == head
 
+    @pytest.mark.parametrize("lost_newline_only", [False, True], ids=["partial-row", "missing-newline"])
+    def test_resume_and_append_after_interrupted_write(self, tmp_path: Path, lost_newline_only: bool) -> None:
+        ledger_dir = tmp_path / "ledger"
+        with WorkLedger.open(ledger_dir) as ledger:
+            _record_run(ledger)
+            original_prefix = ledger.bucket_path.read_bytes()
+            original_head = ledger.head_hash
+            pending = ledger.append(kind=KIND_TASK_COMPLETED, task_id="t3", payload={"commit": "ghi789"})
+            bucket = ledger.bucket_path
+        row = pending.canonical_line().encode("utf-8")
+        bucket.write_bytes(original_prefix + (row if lost_newline_only else row[:20]))
+
+        with WorkLedger.open(ledger_dir) as reopened:
+            expected_head = pending.entry_hash if lost_newline_only else original_head
+            assert reopened.head_hash == expected_head
+            delivered = reopened.append(kind=KIND_RUN_RESUMED, payload={"from_head": expected_head})
+
+        verified = LedgerReader(ledger_dir).verify(expected_head=delivered.entry_hash)
+        assert verified.ok, verified.errors
+        assert verified.entries == delivered.seq + 1
+        assert bucket.read_bytes().startswith(original_prefix)
+
     def test_interior_corruption_refused(self, tmp_path: Path) -> None:
         ledger_dir = tmp_path / "ledger"
         ledger = WorkLedger.open(ledger_dir)
