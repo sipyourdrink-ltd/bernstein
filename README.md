@@ -240,6 +240,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
+Building a CLI adapter? The [adapter plugin template](templates/adapter_plugin) generates a `CLIAdapter` with keyword-only `spawn`, asynchronous process launch, and PID/log tracking. See the [template contract](docs/operations/adapters.md#building-an-adapter-from-the-template).
+
 ### volunteer compute
 
 A project can mark issues as open to volunteers, and anyone can run one on their own machine without an account or a coordinator. The project declares what a task is allowed to do in a `volunteer.json` manifest - sandbox backend, network allowlist, wall-clock and memory ceilings - and a donor's own limits can only narrow that, never widen it. The receipt a finished task produces binds the result to the containment decision it ran under, so a maintainer can check months later what the work was actually permitted to touch.
