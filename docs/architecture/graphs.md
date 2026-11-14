@@ -28,9 +28,30 @@ while a **symbol graph node** represents a code symbol or file. The shared word
 - **"What code does a file change impact?"** - `knowledge_graph`. Backs the
   `GET /graph/impact` route and the `bernstein graph impact` CLI. Persists
   across runs, refreshed opportunistically.
+
 - **"Which symbols and neighbourhoods live in these files?"** - `ast_symbol_graph`.
   A pure-Python AST walk used as the ingestion stage for `knowledge_graph` and
   for token-efficient context extraction. Not intended as a standalone API.
+
+### File impact queries
+
+Pass a repository-relative path to select one file exactly:
+
+```console
+bernstein graph impact src/alpha/shared.py
+```
+
+An exact path match takes precedence. If there is no exact path match, the
+query falls back to the basename and can select every matching file in the
+graph. For example, when both `src/alpha/shared.py` and
+`src/beta/shared.py` are present, `bernstein graph impact shared.py`
+can match both; use either full path to select just that file.
+
+The reported downstream set follows dependencies transitively, is sorted by
+path, and excludes the matched starting file or files. If no file matches, the
+CLI reports that and exits with status 1. A successful match with no downstream
+files is different: the CLI reports “No downstream files found” and exits
+successfully.
 
 ## History
 
