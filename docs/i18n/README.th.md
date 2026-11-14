@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | การทำงานเชิงลึกภายในระบบ |
 
 ### ที่มาของชื่อ?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกรและคีตกวีชาวอเมริกัน โครงการนี้ประสานงานทีมเอเจนต์เขียนโค้ดบน CLI เหมือนที่ Bernstein อำนวยเพลงวง New York Philharmonic: ผู้เล่นทุกคนเข้าตรงจังหวะ โน้ตเพลงกำหนดผลลัพธ์แน่นอน และวาทยกรรับผิดชอบต่อผลงานในภาพรวม
+Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกรและคีตกวีชาวอเมริกัน โครงการนี้กำกับดูแลทีมเอเจนต์ AI เหมือนที่ Bernstein อำนวยเพลงวง New York Philharmonic: ผู้เล่นทุกคนเข้าตรงจังหวะ โน้ตเพลงกำหนดผลลัพธ์แน่นอน และวาทยกรรับผิดชอบต่อผลงานในภาพรวม
 
 ผมเขียน bernstein ขึ้นมาเพราะต้องจ่ายค่าบริการ claude เดือนละ $400 จากการรันเอเจนต์เขียนโค้ดสามตัวพร้อมกันแล้วได้ผลลัพธ์การรวมโค้ดที่ไม่แน่นอน ลิขสิทธิ์ Apache 2.0 ดูแลโดยผู้พัฒนาคนเดียว ดูสถิติสดได้ที่: [bernstein.run](https://bernstein.run)
 

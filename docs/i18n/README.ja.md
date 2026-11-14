@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [アーキテクチャ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 内部の仕組み |
 
 ### 名前の由来
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein の名は、アメリカの指揮者・作曲家レナード・バーンスタインに由来する。このプロジェクトが CLI コーディングエージェントの一団を指揮するさまは、バーンスタインがニューヨーク・フィルハーモニックを振ったのと同じである。奏者はそれぞれの合図で入り、スコアは決定論的で、指揮者は結果に責任を負う。
+Bernstein の名は、アメリカの指揮者・作曲家レナード・バーンスタインに由来する。このプロジェクトが AI エージェントの一団を統制するさまは、バーンスタインがニューヨーク・フィルハーモニックを振ったのと同じである。奏者はそれぞれの合図で入り、スコアは決定論的で、指揮者は結果に責任を負う。
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0、単独メンテナンス。稼働統計: [bernstein.run](https://bernstein.run)。
 

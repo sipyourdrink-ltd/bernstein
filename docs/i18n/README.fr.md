@@ -266,9 +266,9 @@ Toutes les ressources approfondies sont réunies sur le [site de documentation](
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | fonctionnement interne du système |
 
 ### pourquoi ce nom ?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein rend hommage à Leonard Bernstein, chef d'orchestre et compositeur américain. Le projet orchestre un ensemble d'agents CLI comme Bernstein dirigeait le New York Philharmonic : chaque interprète entre au bon moment, la partition est déterministe et le chef répond du résultat final.
+Bernstein rend hommage à Leonard Bernstein, chef d'orchestre et compositeur américain. Le projet gouverne un ensemble d'agents IA comme Bernstein dirigeait le New York Philharmonic : chaque interprète entre au bon moment, la partition est déterministe et le chef répond du résultat final.
 
 j'ai écrit bernstein après avoir constaté 400 $/mois de factures claude en exécutant trois agents de code en parallèle avec des fusions non déterministes. Apache 2.0, maintenu individuellement. Statistiques en direct : [bernstein.run](https://bernstein.run).
 

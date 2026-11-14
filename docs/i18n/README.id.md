@@ -266,9 +266,9 @@ Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstei
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | cara kerja arsitektur di balik layar |
 
 ### mengapa dinamai bernstein?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein dinamai berdasarkan Leonard Bernstein, konduktor dan komposer asal Amerika Serikat. Proyek ini mengorkestrasi tim agen pengodean CLI seperti Bernstein memimpin New York Philharmonic: setiap pemain masuk tepat waktu, partitur deterministik, konduktor bertanggung jawab atas hasil akhirnya.
+Bernstein dinamai berdasarkan Leonard Bernstein, konduktor dan komposer asal Amerika Serikat. Proyek ini mengatur tim agen AI seperti Bernstein memimpin New York Philharmonic: setiap pemain masuk tepat waktu, partitur deterministik, konduktor bertanggung jawab atas hasil akhirnya.
 
 saya menulis bernstein karena menghabiskan $400/bulan untuk tagihan claude saat menjalankan tiga agen pengodean secara paralel dan mendapatkan hasil merge yang non-deterministik. Berlisensi Apache 2.0, dikelola secara mandiri. Statistik langsung: [bernstein.run](https://bernstein.run).
 

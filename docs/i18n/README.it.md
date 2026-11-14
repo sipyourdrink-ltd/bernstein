@@ -266,9 +266,9 @@ Tutte le informazioni approfondite sono disponibili sul [sito della documentazio
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | funzionamento interno del sistema |
 
 ### perché questo nome?
-<!-- l10n: en="why the name?" hash="sha256:2444448b9e03" -->
+<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
 
-Bernstein prende il nome da Leonard Bernstein, celebre direttore d'orchestra e compositore statunitense. Il progetto dirige un team di agenti di codifica CLI nello stesso modo in cui Bernstein guidava la Filarmonica di New York: ogni esecutore al momento giusto, la partitura deterministica, il direttore responsabile del risultato complessivo.
+Bernstein prende il nome da Leonard Bernstein, celebre direttore d'orchestra e compositore statunitense. Il progetto governa un team di agenti IA nello stesso modo in cui Bernstein guidava la Filarmonica di New York: ogni esecutore al momento giusto, la partitura deterministica, il direttore responsabile del risultato complessivo.
 
 ho creato bernstein perché spendevo 400 $/mese in fatture claude eseguendo tre agenti di codifica in parallelo e ottenendo merge non deterministici. Apache 2.0, mantenuto da una sola persona. Statistiche in tempo reale: [bernstein.run](https://bernstein.run).
 
