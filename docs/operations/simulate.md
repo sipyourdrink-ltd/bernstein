@@ -30,7 +30,7 @@ Source: `src/bernstein/cli/commands/simulate_cmd.py` and
 
 ```text
 bernstein simulate PLAN
-  [--from-traces N]      max historical records per (role, adapter); default 50
+  [--from-traces N]      max history samples per (role, adapter); default 50
   [--seed S]             RNG seed; identical seed + plan + traces -> byte-identical report; default 42
   [--budget-cap USD]     non-zero exit when predicted p90 spend exceeds this
   [--out FILE]           write report.json or report.md sidecar
@@ -38,6 +38,36 @@ bernstein simulate PLAN
   [--traces-dir DIR]     default .sdd/traces if present, else cold-start
   [--format md|json]     stdout format; sidecar follows --out extension
 ```
+
+## How historical samples are used
+
+`--from-traces` does not cap the same population for every estimate:
+
+- **Cost** uses recorded cost samples from `.sdd/metrics/cost.jsonl`, filtered
+  by role and adapter. The limit keeps at most that many samples for each pair.
+- **Latency** uses valid, non-negative duration samples from the `latency_seconds`
+  or `duration_s` fields in trace rows, independently
+  for each role and adapter. The loader visits `*.jsonl` files in filename
+  order and rows in each file in order; after collecting the duration samples,
+  it keeps their tail up to the requested limit. Rows without a usable duration
+  do not contribute a latency sample.
+- **Abandonment** uses every accepted trace row for a role and adapter pair,
+  including rows with no usable duration. The limit does not truncate this
+  population, so changing it does not change the observed abandonment rate.
+
+For example, suppose one trace file contains these rows in order, all for
+`backend` / `mock`:
+
+```json
+{"role":"backend","adapter":"mock","status":"completed","latency_seconds":10}
+{"role":"backend","adapter":"mock","status":"abandoned"}
+{"role":"backend","adapter":"mock","status":"completed","latency_seconds":30}
+```
+
+With `--from-traces 1`, the latency sample is `[30]`; with
+`--from-traces 2`, it is `[10, 30]`. In both cases the abandonment rate is
+`1/3`, because all three trace rows count, including the abandoned row without
+a duration.
 
 Determinism: same seed + plan + trace history yields a byte-identical
 report. CI can lock the seed and diff reports against a stored fixture.
