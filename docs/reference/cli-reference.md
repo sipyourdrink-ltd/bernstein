@@ -65,6 +65,12 @@ The commands are organised below by purpose, not alphabetically. Use the table i
 - Hidden subcommands (`task compose`, `task sync`, etc.) are documented in the [Hidden commands](#hidden-commands) section at the end.
 - Flags marked `auth` require a logged-in session (`bernstein login`).
 
+#### Top-level shortcuts
+
+A shortcut in the first command position expands to the command and any additional words in its alias value, followed by the arguments supplied by the caller. For example, the built-in `i` shortcut has the value `init --wizard`, so `bernstein i --dir ./demo` expands to `bernstein init --wizard --dir ./demo`.
+
+User-defined aliases are loaded from `~/.bernstein/aliases.yaml` when the CLI process starts. User mappings can override built-in shortcuts. Alias values are split on whitespace into command-line words before the caller's original arguments are appended.
+
 ---
 
 ## Run & control
