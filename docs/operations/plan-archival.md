@@ -27,7 +27,8 @@ bernstein plan show PLAN_ID
 - `bernstein plan show PLAN_ID` - prints the archived (or active) plan's
   full YAML body, prefixed with `# state:` and `# path:` comment lines.
   `PLAN_ID` is the filename stem, e.g. `2026-04-23-strategic-300` for an
-  archived plan or the original stem for an active one.
+  archived plan or the original stem for an active one. It identifies the managed
+  plan separately from the execution run ID.
 
 Both commands operate on `plans/` under the current working directory
 (or wherever `default_lifecycle()` is rooted); there is no `--workdir`
