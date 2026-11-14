@@ -3,9 +3,9 @@
 A feature contract is an immutable list of features stored at
 `.sdd/contract/features.json`. Each feature has an id, a description, an
 acceptance check, and a `passes` flag. Agents may flip `passes: true`
-only when the declared acceptance check actually exits zero. The list's
-canonical sha256 is kept in the file's `anchor` field so
-`FeatureContract.load` detects in-place edits. `features_from_plan_step()`
+only when the declared acceptance check actually exits zero. The file's
+`anchor` holds a digest of the feature definitions. Status and evidence
+updates leave it unchanged. `features_from_plan_step()`
 can build the list from a plan step's `features:` key and
 `record_anchor()` can write the anchor into the audit log, but neither is
 called automatically by the plan loader or orchestrator.
@@ -32,7 +32,7 @@ entry is a `Feature` with `id`, `category`, `description`,
 ```json
 {
   "schema_version": 1,
-  "anchor": "<sha256 of the canonical features list>",
+  "anchor": "<sha256 of the canonical contract specification>",
   "features": [
     {
       "id": "jwt-issue",
@@ -69,15 +69,56 @@ executable assertions by `spec_assertions`.
 
 ## How tamper-detection works
 
-The contract is persisted at `.sdd/contract/features.json`. Its
-canonical sha256 is stored as the `anchor` field (`compute_anchor`);
-loading via `FeatureContract.load` raises `TamperingDetectedError` when
-the stored anchor no longer matches the features list, so an in-place
-edit by an agent is detected on the next load.
+The anchor is the SHA-256 hex digest of compact, sorted-key JSON containing
+`SCHEMA_VERSION` (currently `1`) and the ordered `features` list. For each feature, the canonical inputs
+are its `id`, `category`, `description`, `acceptance_steps`
+(in their declared order), and `acceptance_check`. The order of the features
+is significant. The `passes` flag and `evidence_path` are not inputs, so
+updating either (including recording evidence after a passing check) leaves
+the anchor unchanged. `created_at`, the stored `anchor`, and other fields are
+not part of the digest either.
 
-`verify_contract` re-runs each `acceptance_check` and writes the
-`passes` flag per feature, so a check that has been weakened or deleted
-flips back to failing.
+For example, this deterministic two-entry fixture illustrates the boundary:
+
+```python
+from dataclasses import replace
+
+from bernstein.core.planning.feature_contract import Feature, compute_anchor
+
+features = [
+    Feature("F-001", "docs", "Create a guide", ["Check the draft"]),
+    Feature("F-002", "docs", "List guides", ["Check the index"]),
+]
+anchor = compute_anchor(features)
+
+# Status and evidence are mutable and do not change the digest.
+assert (
+    compute_anchor(
+        [
+            replace(features[0], passes=True, evidence_path="logs/create.txt"),
+            features[1],
+        ]
+    )
+    == anchor
+)
+# Specification changes and feature-list reordering do change the digest.
+assert (
+    compute_anchor(
+        [
+            replace(features[0], description="Create an operator guide"),
+            features[1],
+        ]
+    )
+    != anchor
+)
+assert compute_anchor(list(reversed(features))) != anchor
+```
+
+Loading via `FeatureContract.load` raises `TamperingDetectedError` when the
+stored anchor no longer matches the canonical specification, so changing a
+specification field or reordering entries is detected on the next load.
+Persisting verification results updates the `passes` flag without requiring
+a new anchor.
 
 ## Configuration
 
