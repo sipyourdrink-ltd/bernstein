@@ -48,8 +48,9 @@ The mixed approach usually delivers the best quality-to-cost ratio.
 For new MiniMax text runs through `openai_agents`, select `MiniMax-M3.1-Flash`
 with your configured MiniMax endpoint; `MiniMax-M3` remains available as an
 explicit model choice. Existing saved model IDs are preserved. Direct
-`https://api.minimax.io/v1` runs retain the model's `reasoning_content` across
-tool calls, alongside the assistant text, tool arguments, and tool results.
+`https://api.minimax.io/v1` and `https://api.minimaxi.com/v1` runs retain the
+model's `reasoning_content` across tool calls, alongside the assistant text,
+tool arguments, and tool results.
 Direct MiniMax runs require an `openai-agents` SDK that exposes the
 reasoning-content replay-policy hook. When the installed SDK lacks that hook,
 the runner reports `sdk_incompatible` and stops before dispatch rather than

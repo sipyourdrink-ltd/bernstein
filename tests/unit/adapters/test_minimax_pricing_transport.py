@@ -18,6 +18,7 @@ from bernstein.adapters import openai_agents_runner as runner
     ("model", "base_url", "expected_cost"),
     [
         ("MiniMax-M3.1-Flash", "https://api.minimax.io/v1", 0.003),
+        ("MiniMax-M3.1-Flash", "https://api.minimaxi.com/v1", 0.003),
         ("MiniMax-M3", "https://api.minimax.io/v1", 0.012),
         ("MiniMax-M2.7", "https://api.minimax.io/v1", 0.006),
         ("saved-custom-model", "https://custom.example/v1", 0.0),
@@ -118,7 +119,10 @@ def test_runner_prices_real_sdk_tool_roundtrip(
     reasoning_replayed = any(
         item.get("reasoning_content") == "Preserve this reasoning across the tool round trip." for item in history
     )
-    assert reasoning_replayed is (model.startswith("MiniMax-") and base_url == "https://api.minimax.io/v1")
+    assert reasoning_replayed is (
+        model.startswith("MiniMax-")
+        and base_url in {"https://api.minimax.io/v1", "https://api.minimaxi.com/v1"}
+    )
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     usage = next(event for event in events if event["type"] == "usage")
     assert usage["model"] == model
@@ -140,6 +144,20 @@ def test_runner_prices_real_sdk_tool_roundtrip(
 def test_minimax_reasoning_replays_only_for_same_model(origin: str | None, expected: bool) -> None:
     context = SimpleNamespace(model="MiniMax-M3.1-Flash", reasoning=SimpleNamespace(origin_model=origin))
     assert runner._should_replay_minimax_reasoning(context) is expected
+
+
+@pytest.mark.parametrize(
+    ("model", "base_url", "expected"),
+    [
+        ("MiniMax-M3.1-Flash", "https://api.minimax.io/v1", True),
+        ("MiniMax-M3.1-Flash", "https://api.minimaxi.com/v1", True),
+        ("MiniMax-M3", "https://api.minimaxi.com/v1", True),
+        ("MiniMax-M3.1-Flash", "https://custom.example/v1", False),
+        ("minimax/minimax-m3", "https://api.minimax.io/v1", False),
+    ],
+)
+def test_direct_minimax_endpoint_gate(model: str, base_url: str, expected: bool) -> None:
+    assert runner._is_direct_minimax_endpoint(model, base_url) is expected
 
 
 def test_minimax_replay_requires_sdk_hook() -> None:

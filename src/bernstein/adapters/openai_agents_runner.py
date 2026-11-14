@@ -1941,6 +1941,14 @@ def _should_replay_minimax_reasoning(context: Any) -> bool:
     return bool(context.reasoning.origin_model == context.model)
 
 
+def _is_direct_minimax_endpoint(model: str, base_url: str | None) -> bool:
+    """Return whether the model uses an official MiniMax OpenAI endpoint."""
+    return model.lower().startswith("minimax-") and urlparse(base_url or "").hostname in {
+        "api.minimax.io",
+        "api.minimaxi.com",
+    }
+
+
 def _supports_reasoning_content_replay(model_cls: Any) -> bool:
     """Return whether the installed SDK exposes its replay-policy hook."""
     try:
@@ -2098,10 +2106,7 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
                 manifest.base_url,
             )
             model_kwargs: dict[str, Any] = {}
-            if (
-                manifest.model.lower().startswith("minimax-")
-                and urlparse(manifest.base_url or "").hostname == "api.minimax.io"
-            ):
+            if _is_direct_minimax_endpoint(manifest.model, manifest.base_url):
                 # The SDK replays reasoning_content only for DeepSeek by default.
                 # MiniMax requires its complete reasoning/tool history as well.
                 if not _supports_reasoning_content_replay(sdk.OpenAIChatCompletionsModel):
