@@ -53,17 +53,19 @@ class TestPiAdapterSpawn:
         them, whatever MCP config the task carries (#5965)."""
         adapter = PiAdapter()
         proc_mock = make_popen_mock(pid=802)
+        mcp_config = {"mcpServers": {"bernstein": {"command": "bernstein-mcp"}}}
         with patch("bernstein.adapters.pi.subprocess.Popen", return_value=proc_mock) as popen:
             adapter.spawn(
                 prompt="fix the bug",
                 workdir=tmp_path,
                 model_config=ModelConfig(model="auto", effort="high"),
                 session_id="pi-s3",
-                mcp_config={"mcpServers": {"bernstein": {"command": "bernstein-mcp"}}},
+                mcp_config=mcp_config,
             )
         inner = inner_cmd(popen.call_args.args[0])
         assert "--no-extensions" in inner
         assert inner[-1] == "fix the bug"
+        assert mcp_config == {"mcpServers": {"bernstein": {"command": "bernstein-mcp"}}}
 
     def test_spawn_translates_missing_cli(self, tmp_path: Path) -> None:
         adapter = PiAdapter()
