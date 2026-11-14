@@ -66,11 +66,27 @@ verify against the same entry.
 ## Synthesis algorithm
 
 Clustering uses tag-overlap Jaccard similarity with a configurable
-threshold (default `0.34`). Embeddings are deliberately out of scope
-for v1; the stdlib implementation is cheap and fully deterministic.
-Clusters smaller than `--min-cluster-size` are dropped. Themes are
-sorted by size descending so the operator sees the strongest signals
-first.
+threshold (default `0.34`). The pass processes entries in input order. For
+each entry, it checks existing clusters in creation order and joins the
+first cluster where at least one member's Jaccard similarity is greater
+than or equal to the threshold. If an entry matches more than one cluster,
+it joins only the first; it does not merge those existing clusters.
+Embeddings are deliberately out of scope for v1; the stdlib
+implementation is cheap and fully deterministic.
+
+For example, use a threshold of `0.5` for this illustration (the documented
+default remains `0.34`): the first entry has tags `{a, b}` and starts
+cluster 1; the second has `{c, d}` and starts cluster 2, since the sets are
+disjoint. A later entry with `{a, b, c, d}` has Jaccard similarity `2/4 =
+0.5` to each cluster's original member. It joins cluster 1, the first
+match, and cluster 2 remains separate. The result is `[cluster 1: first,
+later]` followed by `[cluster 2: second]`.
+
+The `--min-cluster-size` filter runs after all entries have been grouped,
+so it drops small completed clusters without changing the placement pass.
+Surviving themes are then sorted by size descending; equal-sized themes
+retain their cluster creation order. This puts the strongest signals
+first while keeping ties deterministic.
 
 Each theme carries a `proposed_diff` body that summarises recurring
 failure patterns and recurring success patterns from the cluster. The
