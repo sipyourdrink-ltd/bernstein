@@ -59,16 +59,75 @@ is owned by the gating layer that consumes the snapshot.
 
 ## Snapshot returned per retry
 
-`RetryDecision` (frozen dataclass) is what callers consume on each
-retry decision:
+`RetryDecision` (frozen dataclass) is the snapshot returned for a retry
+position:
 
 | Field | Use |
 |-------|-----|
-| `should_retry` | `True` while the budget is not exhausted |
-| `degraded_criterion` | The criterion lowered on this retry (or `None` at the floor) |
-| `degradation_kind` | One of the documented degradation kinds |
-| `criteria_snapshot` | Current `(name -> level)` mapping after the step |
-| `reason` | Human-readable rationale for logs / decisions |
+| `should_retry` | Whether the decision says to retry. On `peek()` this is only a preview, not an eligibility check or authorisation; see below. |
+| `attempt_index` | Zero-based retry position (attempt 0 is the first retry). |
+| `degraded_criterion` | The criterion whose level was lowered, the selected criterion already at its minimum, or `None` if no criterion is assigned to this position. |
+| `degradation_kind` | `LOWERED`, `FLOORED`, or `NONE`; says what happened to the criterion. |
+| `criteria_snapshot` | Current `(name -> level)` mapping after the step (for a preview, the proposed step). |
+| `reason` | Human-readable rationale for logs / decisions. |
+
+These three criterion outcomes are distinct:
+
+| Outcome | `degraded_criterion` | `degradation_kind` | Meaning |
+|---------|----------------------|--------------------|---------|
+| Lowered | The resulting criterion, at its new lower level | `LOWERED` | A selected criterion was above its minimum and was lowered by one. |
+| Selected criterion already at minimum | The selected criterion, still at its minimum | `FLOORED` | A criterion was assigned to this retry position, but could not be lowered further. |
+| No criterion assigned to this retry position | `None` | `NONE` | The retry position has no corresponding criterion in the configured policy; the retry can still be allowed. |
+
+A small deterministic preview illustrates all three outcomes:
+
+```python
+from bernstein.core.cost.retry_budget import Criterion, DegradationKind, RetryBudget
+
+lowered = RetryBudget.from_names(retries=1, names=["coverage"], max_level=1, min_level=0).peek()
+assert lowered.degradation_kind is DegradationKind.LOWERED
+assert lowered.degraded_criterion is not None and lowered.degraded_criterion.level == 0
+
+floored = RetryBudget(
+    retries=1,
+    criterion_degradation=[Criterion("coverage", level=0, min_level=0, max_level=1)],
+).peek()
+assert floored.degradation_kind is DegradationKind.FLOORED
+assert floored.degraded_criterion is not None and floored.degraded_criterion.level == 0
+
+unassigned = RetryBudget.from_names(retries=1, names=[]).peek()
+assert unassigned.degradation_kind is DegradationKind.NONE
+assert unassigned.degraded_criterion is None
+```
+
+## Preview versus eligibility
+
+`peek()` is read-only: it previews the next position without advancing
+`attempts_used` or changing criteria. It does not check whether the retry
+budget has any attempts left, so its decision can have
+`should_retry=True` even when `attempts_left == 0`. Check `attempts_left`
+(or `is_exhausted`) as well as a preview when deciding eligibility, or
+use `consume()` as the authoritative consuming decision. `consume()`
+advances the retry and criterion state when eligible; if the budget is
+exhausted, it returns `should_retry=False` without mutating state.
+
+For example, with one retry available, the first consume uses it; a
+subsequent preview can still describe the next policy position positively,
+but another consume denies it:
+
+```python
+from bernstein.core.cost.retry_budget import RetryBudget
+
+budget = RetryBudget.from_names(retries=1, names=["coverage"])
+first = budget.consume()
+assert first.should_retry and budget.attempts_left == 0
+
+preview = budget.peek()
+assert preview.should_retry  # preview is not eligibility
+assert budget.attempts_left == 0
+rejected = budget.consume()
+assert not rejected.should_retry  # consuming decision checks eligibility
+```
 
 ## Errors
 
