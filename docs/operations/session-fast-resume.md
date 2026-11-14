@@ -34,11 +34,25 @@ Source: `src/bernstein/core/persistence/session.py`.
 ## When it is resumed
 
 On the next `bernstein run` (or equivalent start path), `bootstrap.py` calls
-`check_resume_session()`, which loads `session.json` unless:
+`check_resume_session()`. A saved session is eligible only when resuming is
+enabled and its age is not greater than the configured threshold:
 
-- `--fresh` was passed on the command line, or
-- `session.resume` is set to `false` in config, or
-- the snapshot is older than the staleness threshold.
+- The file's `saved_at` value is a Unix timestamp. At the eligibility check,
+  age is `current time - saved_at`.
+- With the default `stale_after_minutes: 30`, an age of exactly 30 minutes is
+  still eligible; only an age greater than 30 minutes is rejected. For
+  example, if the check happens at 12:30:00 and `saved_at` is 12:00:00, the
+  age is exactly 30 minutes and the snapshot is eligible. At 12:30:01 it is
+  30 minutes and one second old, so it is rejected.
+- Passing `--fresh` explicitly bypasses resume eligibility and starts fresh.
+  Setting `session.resume: false` also disables resume.
+
+An age rejection means the snapshot is not loaded for resume; it does not
+remove `session.json`. `--fresh` likewise only bypasses the resume check. A
+later graceful shutdown can still read the existing, readable snapshot to
+carry its prior goal forward, regardless of how old it is. The snapshot must
+be readable for this goal readback; a missing or unreadable file has no goal
+to carry.
 
 ```bash
 bernstein run --fresh   # ignore any saved session; start clean
@@ -49,8 +63,16 @@ Config (`bernstein.yaml`):
 ```yaml
 session:
   resume: true              # default; set false to always start fresh
-  stale_after_minutes: 30   # default; snapshots older than this are discarded
+  stale_after_minutes: 30   # default; age greater than this rejects resume
 ```
+
+The existing session-resume tests cover an age just over the default cutoff
+(`test_session_state_stale_after_threshold`) and verify stale sessions are not
+loaded (`test_load_returns_none_when_stale`). The loader returns without
+removing the file. The tests also cover the explicit fresh override
+(`test_check_resume_returns_none_when_fresh_flag`). The exact-cutoff example
+above follows the strict `age > threshold` comparison; the tests do not assert
+that exact boundary directly.
 
 A session with unfinished work (any `pending_task_ids` or `open_task_ids`)
 is never treated as a completed run on resume — the orchestrator falls
