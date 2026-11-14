@@ -368,6 +368,12 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 **Resolution:** None needed for a run bernstein governs: bernstein passes pi no extension of its own. Use an adapter that takes `mcp_config` (for example `claude`) when a task needs an MCP server.
 
+**Symptom:** A spawned `pi` agent is killed with `heartbeat stale` after about two minutes while its pi session transcript (`~/.pi/agent/sessions/`) shows it mid-turn, and its runner log under `.sdd/runtime/` is 0 bytes.
+
+**Cause:** Pi takes no heartbeat directory, so liveness falls back to the log's modification time. Before #6943, `pi` was spawned without `--mode json`; with stdout redirected it fell back to print mode, which writes only the final answer when the run ends, so the log never grew during a long first turn.
+
+**Resolution:** Upgrade to a release with #6943; spawned `pi` agents now run with `--mode json`, which writes JSONL events to the log as the agent works. pi only turns a failed final turn into a nonzero exit in text mode, so the adapter runs it under `python -m bernstein.adapters.pi_json_launcher`, which keeps that rule: a final assistant message that stopped on `error`, `aborted` or `length` exits 1, and the reason is printed to the log. A `pi` too old to accept `--mode` fails the adapter capability contract.
+
 ---
 
 ## 12. Agent Timeout (Watchdog Kill)
