@@ -42,7 +42,7 @@ Selection follows this order:
 
 An unknown name (for example, a typo) or a non-string value is ignored, so
 selection falls through to the model-family default and then to `smart` if
-needed. For example, `"reseracher"` on a GPT-5.2 task selects its family
+needed. For example, `"unregistered"` on a GPT-5.2 task selects its family
 default, `deep`, rather than failing.
 
 Inspect a model's resolved profile:
