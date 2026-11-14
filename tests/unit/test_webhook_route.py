@@ -241,3 +241,22 @@ async def test_generic_webhook_requires_authenticated_headers_for_header_filters
     assert response.status_code == 409, response.text
     assert "authenticated headers" in response.json()["detail"]
     assert response.json()["receipt"]["outcome"] == "refused"
+
+
+@pytest.mark.anyio
+async def test_generic_webhook_reports_unavailable_for_malformed_trigger_policy(
+    app, client: AsyncClient, tmp_path: Path
+) -> None:
+    sdd_dir = tmp_path / ".sdd"
+    config = sdd_dir / "config" / "triggers.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("triggers: {}\n", encoding="utf-8")
+    app.state.sdd_dir = sdd_dir
+    body = b'{"title":"Build","description":"Synthetic build event"}'
+
+    response = await client.post("/webhook", content=body, headers=_signed_headers(body))
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Generic webhook trigger policy is unavailable"
+    assert response.json()["receipt"]["outcome"] == "refused"
+    assert response.json()["receipt"]["refusal_reason"] == "trigger_policy_unavailable"

@@ -346,6 +346,10 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
             return "trigger_policy_unavailable"
         if not gate.suppressed:
             return ""
+        if gate.reason == "trigger policy unavailable":
+            policy_status = 503
+            policy_detail = "Generic webhook trigger policy is unavailable"
+            return "trigger_policy_unavailable"
         policy_detail = f"Trigger suppressed: {gate.reason}"
         if gate.reason == "deduplicated" and gate.trigger_name is not None:
             policy_status = 503
