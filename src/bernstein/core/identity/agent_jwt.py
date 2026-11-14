@@ -44,6 +44,7 @@ from bernstein.core.path_scope import (
     validate_repo_relative_pattern,
 )
 from bernstein.core.security.auth import create_jwt, verify_jwt
+from bernstein.core.security.path_containment import PathContainmentError, contained_path
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import (
     DEFAULT_TENANT_ID,
@@ -794,7 +795,11 @@ class AgentIdentityStore:
         filesystem access (CodeQL path-injection)."""
         if not _IDENTITY_ID_RE.fullmatch(identity_id):
             raise ValueError(f"invalid identity id {identity_id!r}")
-        return self._identities_dir / f"{identity_id}.json"
+        filename = f"{identity_id}.json"
+        path = contained_path(self._identities_dir, filename, label="identity record")
+        if path != self._identities_dir.resolve() / filename:
+            raise PathContainmentError("identity record must be a direct file")
+        return path
 
     def _save(self, identity: AgentIdentity) -> None:
         """Persist *identity* with a MAC over the whole record.
@@ -810,7 +815,7 @@ class AgentIdentityStore:
         tmp.write_text(json.dumps(record, indent=2), encoding="utf-8")
         os.replace(tmp, path)
 
-    def _read_identity(self, path: Path) -> AgentIdentity | None:
+    def _read_identity(self, identity_id: str) -> AgentIdentity | None:
         """Deserialise one persisted identity file, or None when unusable.
 
         Every reader in this store goes through here, so a record that cannot
@@ -836,6 +841,10 @@ class AgentIdentityStore:
         never authenticated.
         """
         try:
+            path = self._identity_path(identity_id)
+        except ValueError:
+            return None
+        try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 msg = f"identity record must be a JSON object, got {type(data).__name__}"
@@ -847,6 +856,8 @@ class AgentIdentityStore:
                 )
                 return None
             identity = AgentIdentity.from_dict(record)
+        except FileNotFoundError:
+            return None
         except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
             logger.warning("Skipping corrupt identity file: %s", for_log(path))
             return None
@@ -857,13 +868,7 @@ class AgentIdentityStore:
 
     def _load(self, identity_id: str) -> AgentIdentity | None:
         """Read one identity by id, or None when it is missing or unusable."""
-        try:
-            path = self._identity_path(identity_id)
-        except ValueError:
-            return None
-        if not path.exists():
-            return None
-        return self._read_identity(path)
+        return self._read_identity(identity_id)
 
     def _rebuild_token_index(self) -> None:
         """Scan persisted identities and populate the token→identity lookup.
@@ -878,7 +883,7 @@ class AgentIdentityStore:
         if not self._identities_dir.exists():
             return
         for path in self._identities_dir.glob("*.json"):
-            identity = self._read_identity(path)
+            identity = self._read_identity(path.stem)
             if identity is None:
                 continue
             cred = identity.credential
@@ -1508,7 +1513,7 @@ class AgentIdentityStore:
             # Shared reader: a record that does not deserialise is skipped
             # rather than listed with a value derived from a bad record, and
             # a malformed file cannot escape this route as a 500 either.
-            identity = self._read_identity(path)
+            identity = self._read_identity(path.stem)
             if identity is None:
                 continue
             if status is not None and identity.status != status:
