@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -103,7 +103,13 @@ class CompositionExport:
 
 def require_manifest_sdk() -> None:
     """Check the pinned optional dependency before any custody side effect."""
-    if version("agent-manifest") != SDK_VERSION:
+    # The task lifecycle handles ValueError after claim; ImportError would
+    # escape its spawn accounting and leave the claimed task without a session.
+    try:
+        installed = version("agent-manifest")
+    except PackageNotFoundError as exc:
+        raise ValueError(f"Agent Manifest export requires agent-manifest=={SDK_VERSION}") from exc
+    if installed != SDK_VERSION:
         raise ValueError(f"Agent Manifest export requires agent-manifest=={SDK_VERSION}")
 
 
@@ -114,7 +120,10 @@ def build_composition_export(
 ) -> CompositionExport:
     """Bind only the supplied composed-prompt bytes; import the extra on use."""
     require_manifest_sdk()
-    from agent_manifest import SIGNED_FIELDS, Manifest, signing_pre_image
+    try:
+        from agent_manifest import SIGNED_FIELDS, Manifest, signing_pre_image
+    except ImportError as exc:
+        raise ValueError(f"Agent Manifest export cannot import agent-manifest=={SDK_VERSION}") from exc
 
     # Revalidate mutable nested declarations at the actual signing boundary.
     declarations = CompositionDeclarations.model_validate(declarations.model_dump())
