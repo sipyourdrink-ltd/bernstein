@@ -2407,6 +2407,10 @@ class AgentSpawner:
         # clean after a planning agent exits. Best-effort; never fails a reap.
         with suppress(Exception):
             self._sweep_manager_write_boundary(session)
+        if isinstance(getattr(self, "_workdir", None), Path):
+            from bernstein.core.cost.model_call_ledger import finalize_session_model_call
+
+            finalize_session_model_call(self._workdir / ".sdd", session)
         return result
 
     def update_trace_outcome(self, session_id: str, outcome: str) -> None:
@@ -5510,6 +5514,32 @@ class AgentSpawner:
 
                     # Policy refusal is outside every adapter retry handler:
                     # failure to authorize or audit B cannot select C instead.
+                    from bernstein.core.cost.model_call_ledger import (
+                        begin_adapter_call,
+                        finalize_session_model_call,
+                    )
+
+                    _resolved_spawn_params: dict[str, Any] = {
+                        "effort": model_config.effort,
+                        "timeout_seconds": session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                        "task_scope": getattr(model_config, "task_scope", "") or "",
+                        "budget_multiplier": float(getattr(model_config, "budget_multiplier", 1.0)),
+                    }
+                    _spawn_call_record = (
+                        begin_adapter_call(
+                            self._workdir / ".sdd",
+                            adapter=target_adapter,
+                            capability_id=f"agent.{session.role}" if session.role else "agent.spawn",
+                            adapter_id=adapter_name,
+                            model=model_config.model,
+                            parameters=_resolved_spawn_params,
+                            input_text=prompt,
+                            journal_entry_id=tasks[0].id if tasks else "",
+                        )
+                        if isinstance(getattr(self, "_workdir", None), Path)
+                        else None
+                    )
+                    session.model_call_id = _spawn_call_record.id if _spawn_call_record is not None else ""
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
                         self._notify_cost_anomaly_spawn(tasks, model_config)
@@ -5656,6 +5686,12 @@ class AgentSpawner:
                             session.endpoint_base_url = openclaw_endpoint
                         break
                     except RateLimitError as exc:
+                        if _spawn_call_record is not None and isinstance(getattr(self, "_workdir", None), Path):
+                            finalize_session_model_call(
+                                self._workdir / ".sdd",
+                                session,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         self._adapter_health.record_failure(adapter_name)
                         logger.warning(
@@ -5678,6 +5714,12 @@ class AgentSpawner:
                         except RouterError:
                             provider_name = None
                     except Exception as exc:
+                        if _spawn_call_record is not None and isinstance(getattr(self, "_workdir", None), Path):
+                            finalize_session_model_call(
+                                self._workdir / ".sdd",
+                                session,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
                         categorized = classify_spawn_error(exc, provider=provider_name)
                         # Re-derive the failure reason from the runner's own
                         # per-session log instead of trusting str(exc), which

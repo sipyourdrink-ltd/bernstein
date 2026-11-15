@@ -1271,6 +1271,8 @@ class AgentSession:
     # whether the human-readable activation log is enabled. Empty when
     # nothing was injected (not absent).
     injected_skills: list[dict[str, str]] = field(default_factory=list)
+    # Optional ID of the ModelCallLedger record created when this session spawned.
+    model_call_id: str = ""
     # Operator attachments resolved at spawn (issue #1797). Each entry is
     # ``{"sha256", "mime", "worktree_id", "source_path", "modality"}`` in
     # declared order. Stamped by the spawner from the same dispatch that
