@@ -109,8 +109,9 @@ exporter = CompositionManifestExporter(
 
 The callback is disabled by default, imports no SDK on ordinary spawn, and
 runs before backend launch for fresh and resumed workers. A configured export
-failure aborts that spawn. Resumes use new per-hop declarations; no identity
-or metadata is borrowed from a prior hop. Already written evidence can remain
+failure aborts that spawn and releases any claimed warm-pool reservation,
+including when the export is interrupted. Resumes use new per-hop declarations;
+no identity or metadata is borrowed from a prior hop. Already written evidence can remain
 if later backend launch fails; it describes the composition attempt, not a
 claim that a process successfully ran.
 

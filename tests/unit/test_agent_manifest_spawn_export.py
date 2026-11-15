@@ -52,6 +52,80 @@ def test_export_failure_does_not_launch_adapter(tmp_path, make_task, mock_adapte
     adapter.spawn.assert_not_called()
 
 
+@pytest.mark.parametrize("failure", ["missing-sdk", "storage", "cancelled", None])
+def test_warm_pool_reservation_follows_export_outcome(tmp_path, make_task, mock_adapter_factory, monkeypatch, failure):
+    import time
+    from datetime import UTC, datetime, timedelta
+    from importlib.metadata import PackageNotFoundError
+
+    from bernstein.core.agents.warm_pool import PoolSlot, WarmPool, WarmPoolConfig
+    from bernstein.core.security import agent_manifest_export as export_module
+
+    now = datetime.now(UTC)
+    declared = export_module.CompositionDeclarations(
+        manifest_id="019c6e27-e55b-73d1-87d8-4e01f1f75043",
+        agent_id="spiffe://example.test/worker",
+        issuer="spiffe://example.test/install",
+        version="0.1",
+        issued_at=now,
+        expires_at=now + timedelta(hours=2),
+        signed_at=now,
+        prompt_bound_at=now,
+        prompt_version="fixture-1",
+        classification="internal",
+        key_type="software",
+        availability_reasons={slot: "Not available for this composition" for slot in export_module.UNBOUND_SLOTS},
+    )
+    signer = Mock()
+    if failure == "missing-sdk":
+        exporter = export_module.CompositionManifestExporter(tmp_path / "lineage", lambda hop: declared, signer)
+        monkeypatch.setattr(export_module, "version", Mock(side_effect=PackageNotFoundError("agent-manifest")))
+        error = ValueError
+    elif failure == "storage":
+        exporter = Mock(side_effect=OSError("export storage unavailable"))
+        error = OSError
+    elif failure == "cancelled":
+        exporter = Mock(side_effect=KeyboardInterrupt("export cancelled"))
+        error = KeyboardInterrupt
+    else:
+        exporter = Mock(return_value=[])
+        error = None
+
+    templates = tmp_path / "templates" / "roles"
+    templates.mkdir(parents=True)
+    worktree = tmp_path / ".sdd" / "worktrees" / "warm-slot"
+    pool = WarmPool(WarmPoolConfig(max_slots=1, slot_ttl_seconds=60, roles=["backend"]))
+    created_at = time.time()
+    adapter = mock_adapter_factory()
+    spawner = AgentSpawner(
+        adapter,
+        templates,
+        tmp_path,
+        use_worktrees=True,
+        default_model="mock-model",
+        warm_pool=pool,
+        agent_manifest_exporter=exporter,
+    )
+    worktree.mkdir(parents=True)
+    pool.add_slot(PoolSlot(slot_id="warm-slot", role="backend", worktree_path=str(worktree), created_at=created_at))
+    if error is not None:
+        with pytest.raises(error):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+        adapter.spawn.assert_not_called()
+        signer.sign.assert_not_called()
+        assert not (tmp_path / "lineage").exists()
+        assert not spawner._warm_pool_entries
+        expected = {"ready": 0, "claimed": 0, "expired": 1, "total": 1}
+    else:
+        session = spawner.spawn_for_tasks([make_task(role="backend")])
+        assert adapter.spawn.call_args.kwargs["workdir"] == worktree
+        assert spawner._warm_pool_entries[session.id].slot_id == "warm-slot"
+        expected = {"ready": 0, "claimed": 1, "expired": 0, "total": 1}
+    assert pool.stats() == expected
+    pool.expire_stale(now=created_at + 600)
+    assert pool.stats() == expected
+
+
 def test_default_spawn_has_no_export(tmp_path, make_task, mock_adapter_factory):
     adapter = mock_adapter_factory()
     spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False, default_model="mock-model")

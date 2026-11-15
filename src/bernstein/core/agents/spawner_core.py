@@ -5289,7 +5289,13 @@ class AgentSpawner:
             # optional callback supplies declarations, signing and storage;
             # no exported manifest is read as scheduling authority.
             if self._agent_manifest_exporter is not None:
-                session.agent_manifest_references = self._agent_manifest_exporter(session_id, prompt)
+                try:
+                    session.agent_manifest_references = self._agent_manifest_exporter(session_id, prompt)
+                except BaseException:
+                    # No worker will be returned to reap this reservation.
+                    # Claimed slots do not expire through the pool's TTL.
+                    self._release_warm_pool_slot(session_id)
+                    raise
 
             remote_spawned = False
             if self._runtime_bridge is not None:
