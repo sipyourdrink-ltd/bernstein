@@ -437,7 +437,38 @@ VERIFIED task=RPT-1
 A failing figure renders `UNANCHORED <number> (<category>) at line L, col C`
 and the command exits `2`.
 
+## Storage protocol (`ArtifactSink`)
+
+Storage backends for `.sdd/` persistence (WAL segments, audit logs, task
+outputs, and metrics) implement the `@runtime_checkable` `ArtifactSink`
+`Protocol` in `src/bernstein/core/storage/sink.py`:
+
+- **Logical names.** Operations take forward-slash-delimited logical keys
+  (for example `runtime/wal/run-123.wal.jsonl`) rather than host file paths;
+  each sink maps keys to its native addressing (`normalise_key` strips leading
+  slashes and rejects empty keys or `.`/`..` segments). A sink also exposes a
+  stable `name: str` attribute (such as `"local_fs"`, `"s3"`, `"gcs"`).
+- **Asynchronous read and write.** Every method on `ArtifactSink` is `async`:
+  - `async def write(self, key: str, data: bytes, *, durable: bool = True, content_type: str | None = None) -> None`
+  - `async def read(self, key: str) -> bytes` (raises `FileNotFoundError` when `key` is absent, or `SinkError` on transient/protocol failures)
+  - `async def list(self, prefix: str) -> list[str]`
+  - `async def delete(self, key: str) -> None` (idempotent on missing keys)
+  - `async def exists(self, key: str) -> bool`
+  - `async def stat(self, key: str) -> ArtifactStat` (raises `FileNotFoundError` when `key` is absent)
+  - `async def close(self) -> None` (flushes pending writes and releases client resources; idempotent)
+- **Sorted listing.** `list(prefix)` internally paginates and returns all keys
+  whose identifier starts with `prefix` (pass `""` for every key), sorted
+  lexicographically.
+- **Durable write guarantee.** When `durable=True` (the default), the write
+  must be observably durable before `write()` returns (local `fsync` on
+  `LocalFsSink`, synchronous PUT on object-store sinks); the WAL depends on this
+  guarantee for crash safety. When `durable=False`, the backend may buffer the
+  write for later flush.
+
 ## Source
+
+- `src/bernstein/core/storage/sink.py` - the `ArtifactSink` storage protocol,
+  `ArtifactStat`, `SinkError`, and key helpers (`normalise_key`, `join_keys`).
 
 - `src/bernstein/core/tasks/artifacts.py` - kinds, canonicalisers, criteria,
   and the strict declaration parser (`parse_artifact_spec`).
