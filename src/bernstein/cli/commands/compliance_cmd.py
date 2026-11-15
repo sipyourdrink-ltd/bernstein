@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
@@ -32,7 +33,6 @@ from bernstein.core.compliance_policies import (
     ALL_POLICIES,
     ComplianceFramework,
     CompliancePolicyLibrary,
-    PolicyInput,
     PolicySeverity,
     evaluate_all,
     evaluate_framework,
@@ -424,18 +424,32 @@ def check_policies(
     non-zero if any failing policy meets the severity threshold set by
     --fail-on (default: critical).
     """
-    inp = PolicyInput(
+    from click.core import ParameterSource
+
+    from bernstein.core.govern.compliance_checks import policy_input_from_project
+
+    # Defaults describe the workspace. Explicit flags remain operator
+    # declarations and retain their existing policy-result provenance.
+    declarations = {
+        "audit_logging": audit_logging,
+        "audit_hmac_chain": audit_hmac_chain,
+        "sandbox_enabled": sandbox_enabled,
+        "seccomp_enabled": seccomp_enabled,
+        "tls_enforced": tls_enforced,
+        "mfa_enabled": mfa_enabled,
+        "rbac_enabled": rbac_enabled,
+        "encrypt_at_rest": encrypt_at_rest,
+        "vulnerability_scanning": vulnerability_scanning,
+        "secrets_rotation_days": secrets_rotation_days,
+    }
+    ctx = click.get_current_context()
+    explicit = {
+        name: value for name, value in declarations.items() if ctx.get_parameter_source(name) != ParameterSource.DEFAULT
+    }
+    inp = replace(
+        policy_input_from_project(workdir),
         audit_retention_days=observe_audit_retention_days(workdir / ".sdd" / "audit"),
-        audit_logging=audit_logging,
-        audit_hmac_chain=audit_hmac_chain,
-        sandbox_enabled=sandbox_enabled,
-        seccomp_enabled=seccomp_enabled,
-        tls_enforced=tls_enforced,
-        mfa_enabled=mfa_enabled,
-        rbac_enabled=rbac_enabled,
-        encrypt_at_rest=encrypt_at_rest,
-        vulnerability_scanning=vulnerability_scanning,
-        secrets_rotation_days=secrets_rotation_days,
+        **explicit,
     )
 
     if framework:
@@ -469,6 +483,9 @@ def check_policies(
     coverage = summarise_evidence_coverage(results)
 
     if as_json:
+        from bernstein.core.checks.adapters import ComplianceLibraryAdapter
+        from bernstein.core.govern.compliance_checks import iter_compliance_checks
+
         click.echo(
             json.dumps(
                 {
@@ -479,6 +496,9 @@ def check_policies(
                         "evidence": coverage.to_dict(),
                     },
                     "results": [r.to_dict() for r in results],
+                    "checks": [
+                        ComplianceLibraryAdapter(spec).run(workdir).to_dict() for spec in iter_compliance_checks()
+                    ],
                 },
                 indent=2,
             )

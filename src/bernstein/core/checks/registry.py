@@ -59,9 +59,9 @@ class CheckRegistry:
         if not check_id or not check_id.strip():
             raise ValueError("check_id must be a non-empty string")
 
-        installation_id = re.fullmatch(r"INS-\d{3}", check_id) is not None
+        installation_id = re.fullmatch(r"(?:INS|CMP)-\d{3}", check_id) is not None
         if not installation_id and (":" not in check_id or check_id.startswith(":") or check_id.endswith(":")):
-            raise ValueError(f"check_id '{check_id}' must be namespaced with a colon delimiter or use INS-nnn")
+            raise ValueError(f"check_id '{check_id}' must be namespaced with a colon delimiter or use INS-nnn/CMP-nnn")
 
         module = type(check).__module__
         provenance = module if isinstance(module, str) and module else "<unknown>"
@@ -184,10 +184,12 @@ def populate_default_checks(registry: CheckRegistry | None = None) -> None:
         DUPLICATION_CHECK_NAMES,
         AuditSentinelCheck,
         ComplianceEncryptionAtRestAdapter,
+        ComplianceLibraryAdapter,
         DeclarationQuarantineAdapter,
         DoctorComplianceAdapter,
         DuplicationAuditAdapter,
     )
+    from bernstein.core.govern.compliance_checks import iter_compliance_checks
 
     reg = DEFAULT_REGISTRY if registry is None else registry
     adapters: list[Check] = [
@@ -197,6 +199,7 @@ def populate_default_checks(registry: CheckRegistry | None = None) -> None:
         AuditSentinelCheck(),
     ]
     adapters.extend(DuplicationAuditAdapter(name) for name in DUPLICATION_CHECK_NAMES)
+    adapters.extend(ComplianceLibraryAdapter(spec) for spec in iter_compliance_checks())
     for adapter in adapters:
         if reg.get_check(adapter.check_id) is None:
             reg.register(adapter)
