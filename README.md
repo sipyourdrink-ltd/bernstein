@@ -85,6 +85,8 @@ Five things set it apart; everything after is detail.
 
 The full list is on the [capabilities page](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); the [feature matrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
 
+Role-adapter policy supports an optional default allow-list for unlisted roles; see the [guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
+
 ### what a run looks like
 
 One YAML file declares the run: phases, roles, dependencies, and the conditions under which a node runs at all. The scheduler executes it as plain Python - nothing in the file is a prompt, and no model decides what happens next. This graph produces an audit evidence pack; the full file ships at [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).

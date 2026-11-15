@@ -32,7 +32,7 @@
 Bernstein is de open-source governancelaag voor AI-agents. Het draait op policy as code: jij schrijft het beleid - wie wat mag doen, wat goedkeuring nodig heeft, wat vastgelegd moet worden - en Bernstein handhaaft dat en levert het verifieerbare bewijs. Een deterministische scheduler - geen model in de coördinatielus - draait agents parallel, toetst wat ze opleveren aan gates en legt elke stap vast, zodat een run achteraf te verifiëren is: offline, puur uit de artefacten. CLI-code-agents werken out of the box (Claude Code, Codex, Gemini CLI en 50+ meer), en dezelfde laag governt elke agent-workload: het resultaat kan een diff zijn, een onderzoeksrapport, een dataset of een audit-evidence-pack. Air-gap-installatieprofiel inbegrepen. Apache-2.0.
 
 ### in het kort
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
 
 Vijf dingen onderscheiden het; de rest zijn details.
 
@@ -43,6 +43,8 @@ Vijf dingen onderscheiden het; de rest zijn details.
 - **Breed en lokaal.** Meer dan 53 CLI-agentadapters plus een generieke `--prompt`-wrapper, bestandsgebaseerde status, geen SaaS-tussenstap, geen externe gegevenslaag.
 
 De volledige lijst staat op de [mogelijkhedenpagina](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); de [functiematrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) is de uitputtende index.
+
+Het adapterbeleid per rol ondersteunt een optionele standaardlijst met toegestane adapters voor niet afzonderlijk vermelde rollen; zie de [handleiding](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### hoe een run eruitziet
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->

@@ -32,7 +32,7 @@
 Bernstein är governance-lagret med öppen källkod för AI-agenter. Det körs på policy as code: du skriver policyn - vem som får göra vad, vad som kräver godkännande, vad som måste loggas - och Bernstein tillämpar den och tar fram det verifierbara beviset. En deterministisk schemaläggare - ingen modell i koordinationsloopen - kör agenter parallellt, grindar det de producerar och loggar varje steg, så att en körning kan verifieras i efterhand, offline, enbart från artefakterna. CLI-kodagenter fungerar direkt (Claude Code, Codex, Gemini CLI och 50+ till), och samma lager governar vilken agentlast som helst: leveransen kan vara en diff, en forskningsrapport, ett dataset eller ett paket med revisionsbevis. Air-gap-installationsprofil ingår. Apache-2.0.
 
 ### i korthet
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
 
 Fem saker skiljer det från andra; resten är detaljer.
 
@@ -43,6 +43,8 @@ Fem saker skiljer det från andra; resten är detaljer.
 - **Bred och lokal.** Över 53 CLI-agentadaptrar plus en generisk `--prompt`-wrapper, filbaserat tillstånd, inga SaaS-mellanled, inget externt dataplan.
 
 Hela listan finns på [funktionssidan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [funktionsmatrisen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) är det fullständiga indexet.
+
+Adapterpolicyn för roller stöder en valfri standardlista över tillåtna adaptrar för roller som inte anges separat; se [guiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### hur en körning ser ut
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->

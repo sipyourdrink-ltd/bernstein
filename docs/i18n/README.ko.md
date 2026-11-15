@@ -32,7 +32,7 @@
 Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니다. policy as code로 동작합니다. 누가 무엇을 해도 되는지, 무엇에 승인이 필요한지, 무엇을 기록해야 하는지를 정책으로 작성하면 Bernstein이 이를 적용하고 검증 가능한 기록을 만듭니다. 결정론적 스케줄러 - 조정 루프에 모델이 없음 - 가 에이전트를 병렬로 돌리고, 산출물을 게이트로 검사하고, 모든 단계를 기록합니다. 그래서 실행은 사후에, 오프라인으로, 아티팩트만으로 검증할 수 있습니다. CLI 코딩 에이전트는 바로 동작하고(Claude Code, Codex, Gemini CLI 외 50+), 같은 레이어가 모든 에이전트 워크로드를 거버닝합니다: 결과물은 diff일 수도, 리서치 보고서일 수도, 데이터셋일 수도, 감사 증적 패키지일 수도 있습니다. 에어갭 설치 프로파일 포함. Apache-2.0.
 
 ### 한눈에 보기
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
 
 다섯 가지가 차별점이며, 나머지는 세부 사항입니다.
 
@@ -43,6 +43,8 @@ Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니
 - **넓고, 그리고 로컬이다.** 53여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
 
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
+
+역할별 어댑터 정책에서는 개별적으로 지정하지 않은 역할에 기본 허용 목록을 선택적으로 설정할 수 있습니다. [안내서](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)를 참고하세요.
 
 ### 실행은 이렇게 생겼다
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->

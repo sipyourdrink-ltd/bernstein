@@ -32,7 +32,7 @@
 Bernstein on avoimen lähdekoodin governance-kerros AI-agenteille. Se toimii policy as code -periaatteella: sinä kirjoitat käytännön - kuka saa tehdä mitä, mikä vaatii hyväksynnän, mikä on kirjattava - ja Bernstein toteuttaa sen ja tuottaa todennettavan tallenteen. Deterministinen skeduloija - ei mallia koordinaatiosilmukassa - ajaa agentteja rinnakkain, portittaa niiden tuotokset ja kirjaa jokaisen askeleen, joten ajon voi verifioida jälkikäteen, offline, pelkistä artefakteista. CLI-koodiagentit toimivat suoraan (Claude Code, Codex, Gemini CLI ja 50+ muuta), ja sama kerros governoi mitä tahansa agenttikuormaa: tulos voi olla diff, tutkimusraportti, datasetti tai auditointievidenssipaketti. Air-gap-asennusprofiili mukana. Apache-2.0.
 
 ### lyhyesti
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
 
 Viisi asiaa erottaa sen muista; loput ovat yksityiskohtia.
 
@@ -43,6 +43,8 @@ Viisi asiaa erottaa sen muista; loput ovat yksityiskohtia.
 - **Kattava ja paikallinen.** Yli 53 CLI-agenttisovitinta sekä yleinen `--prompt`-kääre, tiedostopohjainen tila, ei SaaS-riippuvuuksia, ei ulkopuolista datatasoa.
 
 Täydellinen luettelo löytyy [kyvykkyyssivulta](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ominaisuusmatriisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) toimii kattavana hakemistona.
+
+Roolien sovitinkäytäntö tukee valinnaista sallittujen sovittimien oletuslistaa rooleille, joita ei ole määritelty erikseen; katso [opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### miltä ajo näyttää
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
