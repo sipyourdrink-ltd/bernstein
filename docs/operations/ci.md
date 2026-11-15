@@ -704,3 +704,9 @@ required context is `missing`, or it is present and `failing`.
 
 Which paths each type job covers, and what the `|| true` runs report,
 are documented in `docs/operations/type-check-scope.md`.
+
+## crate-ci/typos version
+
+The spelling job and deterministic auto-heal installation use the same typos v1.52.0 commit. The spelling scan keeps its default read-only mode, and auto-heal retains its strategy condition and explicit `write_changes: false` input.
+
+The action is pinned to `4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85`. Its upstream `v1.52.0` tag resolves to that commit.
