@@ -519,3 +519,14 @@ def test_volunteer_docs_have_no_cli_drift() -> None:
                 assert {"--index", "--help"} & set(invocation.flags), (
                     f"{name}:{invocation.line}: volunteer browse examples need --index"
                 )
+
+
+def test_performance_cleanup_docs_explain_force_and_read_only_inspection() -> None:
+    page = REPO_ROOT / "docs" / "operations" / "performance-tuning.md"
+    section = page.read_text(encoding="utf-8").split("### Cleaning up stale worktrees", 1)[1].split("\n---", 1)[0]
+    prose = " ".join(section.split())
+    assert "unmerged agent branches" in prose
+    assert "[worktree operations](worktrees.md)" in section
+    examples = extract(section)
+    assert any(inv.tokens[:2] == ("worktrees", "list") for inv in examples.checked)
+    assert not check(examples, _surface(), "docs/operations/performance-tuning.md")
