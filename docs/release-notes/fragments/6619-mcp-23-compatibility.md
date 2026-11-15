@@ -9,3 +9,8 @@ calls. This does not implement or advertise the redesigned Tasks extension.
 The compatibility adapter uses the SDK's provisional middleware API, so the
 dependency is bounded below 2.4 until another compatibility review. Task
 cancellation now supplies the existing HTTP endpoint's required JSON body.
+
+The custom HTTP transport retains its four implemented handshake-era protocol
+revisions. SDK2 clients in automatic mode negotiate the existing 2025-11-25
+wire format; explicitly requested modern HTTP revisions are rejected until
+that transport implements their response contract.

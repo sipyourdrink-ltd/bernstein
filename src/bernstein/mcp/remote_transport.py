@@ -91,10 +91,15 @@ def _header_checks_enabled() -> bool:
 
 
 def _supported_protocol_versions() -> tuple[str, ...]:
-    """The protocol revisions this deployment serves, from the pinned SDK."""
-    from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS
+    """The handshake-era revisions this handwritten transport implements.
 
-    return tuple(SUPPORTED_PROTOCOL_VERSIONS)
+    SDK2's union also includes the modern per-request envelope. This transport
+    does not use its version-aware runner, so accepting that era would return
+    legacy shapes for a protocol requiring different response metadata.
+    """
+    from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
+
+    return tuple(HANDSHAKE_PROTOCOL_VERSIONS)
 
 
 def _origin_allowed(origin: str, allowed: list[str]) -> bool:
