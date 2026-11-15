@@ -145,6 +145,10 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -
             active_agents=body.capacity.active_agents,
             gpu_available=body.capacity.gpu_available,
             supported_models=body.capacity.supported_models,
+            disk_free_mb=body.capacity.disk_free_mb,
+            mem_used_pct=body.capacity.mem_used_pct,
+            mesh_rtt_ms=body.capacity.mesh_rtt_ms,
+            platform=body.capacity.platform,
         )
     node = node_registry.heartbeat(node_id, capacity)
     if node is None:

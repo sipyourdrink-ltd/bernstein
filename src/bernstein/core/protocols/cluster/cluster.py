@@ -18,6 +18,7 @@ import socket
 import threading
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003 - used at runtime in _load_persisted/_save
 from typing import TYPE_CHECKING, Any
 
@@ -153,20 +154,56 @@ class NodeRegistry:
         )
         return node
 
-    def heartbeat(self, node_id: str, capacity: NodeCapacity | None = None) -> NodeInfo | None:
-        """Record a heartbeat from a node. Returns None if node is unknown."""
+    def heartbeat(
+        self,
+        node_id: str,
+        capacity: NodeCapacity | None = None,
+        *,
+        disk_free_mb: int | None = None,
+        mem_used_pct: float | None = None,
+        mesh_rtt_ms: float | None = None,
+        platform: str | None = None,
+    ) -> NodeInfo | None:
+        """Record worker telemetry and evaluate scheduling health."""
         node = self._nodes.get(node_id)
         if node is None:
             _metrics.record_heartbeat("rejected_unknown_node")
             return None
         node.last_heartbeat = time.time()
+        status_flipped = False
         # Don't override CORDONED/DRAINING status
         if node.status == NodeStatus.OFFLINE:
             node.status = NodeStatus.ONLINE
-            self._save()
-            self._sync_node_count_metrics()
+            status_flipped = True
         if capacity is not None:
             node.capacity = capacity
+        cap = node.capacity
+        if disk_free_mb is not None:
+            cap.disk_free_mb = disk_free_mb
+        if mem_used_pct is not None:
+            cap.mem_used_pct = mem_used_pct
+        if mesh_rtt_ms is not None:
+            cap.mesh_rtt_ms = mesh_rtt_ms
+        if platform is not None:
+            cap.platform = platform
+        verdict = health_verdict(
+            disk_free_mb=cap.disk_free_mb,
+            mem_used_pct=cap.mem_used_pct,
+            mesh_rtt_ms=cap.mesh_rtt_ms,
+            thresholds=HealthThresholds(
+                self._config.min_disk_free_mb, self._config.max_mem_used_pct, self._config.max_mesh_rtt_ms
+            ),
+        )
+        health_changed = verdict != node.health
+        if verdict != "ok" and node.health == "ok":
+            node.unhealthy_since = node.last_heartbeat
+        elif verdict == "ok":
+            node.unhealthy_since = None
+        node.health = verdict
+        if status_flipped or health_changed:
+            self._save()
+        if status_flipped:
+            self._sync_node_count_metrics()
         _metrics.record_heartbeat("accepted")
         return node
 
@@ -295,7 +332,9 @@ class NodeRegistry:
         5. Among remaining, pick the one with most available slots
         """
         candidates = [
-            n for n in self._nodes.values() if n.status == NodeStatus.ONLINE and n.capacity.available_slots > 0
+            n
+            for n in self._nodes.values()
+            if n.status == NodeStatus.ONLINE and n.health == "ok" and n.capacity.available_slots > 0
         ]
         if not candidates:
             return None
@@ -594,6 +633,10 @@ class NodeHeartbeatClient:
                 "active_agents": capacity.active_agents,
                 "gpu_available": capacity.gpu_available,
                 "supported_models": capacity.supported_models,
+                "disk_free_mb": capacity.disk_free_mb,
+                "mem_used_pct": capacity.mem_used_pct,
+                "mesh_rtt_ms": capacity.mesh_rtt_ms,
+                "platform": capacity.platform,
             },
         }
         try:
@@ -667,3 +710,36 @@ class NodeHeartbeatClient:
     def update_capacity(self, capacity: NodeCapacity) -> None:
         """Update the locally cached capacity (sent on next heartbeat)."""
         self._capacity = capacity
+
+
+# ---------------------------------------------------------------------------
+# Health verdict — evaluates worker-reported telemetry against thresholds.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HealthThresholds:
+    """Configurable thresholds for worker health evaluation."""
+
+    min_disk_free_mb: int = 512
+    max_mem_used_pct: float = 95.0
+    max_mesh_rtt_ms: float = 5000.0
+
+
+def health_verdict(
+    *,
+    disk_free_mb: int | None = None,
+    mem_used_pct: float | None = None,
+    mesh_rtt_ms: float | None = None,
+    thresholds: HealthThresholds | None = None,
+) -> str:
+    """Return ``"ok"`` or ``"unhealthy:<reason>[,<reason>]"``."""
+    t = thresholds or HealthThresholds()
+    reasons: list[str] = []
+    if disk_free_mb is not None and disk_free_mb < t.min_disk_free_mb:
+        reasons.append("disk")
+    if mem_used_pct is not None and mem_used_pct > t.max_mem_used_pct:
+        reasons.append("memory")
+    if mesh_rtt_ms is not None and mesh_rtt_ms > t.max_mesh_rtt_ms:
+        reasons.append("mesh-rtt")
+    return "ok" if not reasons else "unhealthy:" + ",".join(reasons)
