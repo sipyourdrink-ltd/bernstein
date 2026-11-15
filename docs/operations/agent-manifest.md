@@ -97,14 +97,13 @@ Embed the same exporter as `AgentSpawner(..., agent_manifest_exporter=exporter)`
 ```python
 from bernstein.core.security.agent_card_keystore import AgentCardKeystore
 from bernstein.core.security.agent_manifest_export import (
-    CompositionDeclarations, CompositionManifestExporter,
+    CompositionDeclarations,
+    CompositionManifestExporter,
 )
 
 # declarations_for_hop(hop_id) returns a validated CompositionDeclarations.
 # The operator supplies a distinct manifest_id and actual declarations per hop.
-exporter = CompositionManifestExporter(
-    lineage_root, declarations_for_hop, AgentCardKeystore(key_dir).signer()
-)
+exporter = CompositionManifestExporter(lineage_root, declarations_for_hop, AgentCardKeystore(key_dir).signer())
 ```
 
 The callback is disabled by default, imports no SDK on ordinary spawn, and
