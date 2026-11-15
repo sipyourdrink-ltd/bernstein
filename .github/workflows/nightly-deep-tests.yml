@@ -31,6 +31,10 @@ permissions:
 
 jobs:
   unit-python-314:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     # The only lane that executes the unit suite on Python 3.14.
     #
     # `ci.yml` runs the unit matrix on 3.13 for pull requests and on
@@ -81,6 +85,10 @@ jobs:
           uv run python scripts/run_tests.py --parallel 4 --shard "${SHARD}/4"
 
   hypothesis-deep:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Hypothesis (deep, 1000 examples)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 90
@@ -104,6 +112,10 @@ jobs:
         run: uv run pytest tests/property/ -q --no-cov --timeout=300
 
   schemathesis-deep:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Schemathesis (deep, full sweep)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 60
@@ -125,6 +137,10 @@ jobs:
         run: uv run pytest tests/contract/ -q --no-cov --timeout=120 -p no:warnings
 
   crosshair-pure-fns:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     # CrossHair concolic execution on pure security/cluster helpers.
     # Targets functions with type hints; reports counterexamples that
     # break implicit invariants. 200 iterations per condition (vs. 20
@@ -155,6 +171,10 @@ jobs:
             || true
 
   mutmut-full:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Mutation (full repo, advisory)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 240
@@ -185,6 +205,10 @@ jobs:
           if-no-files-found: ignore
 
   bandit-medium-and-high:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Bandit (full -ll, advisory)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
@@ -213,6 +237,10 @@ jobs:
           if-no-files-found: ignore
 
   pip-audit-deep:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: pip-audit (full closure)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
@@ -250,6 +278,10 @@ jobs:
         run: uv run pip-audit -r /tmp/req-dev.txt --strict --disable-pip --no-deps --ignore-vuln PYSEC-2025-183
 
   stress-leak-suite:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     # TC-C: resource-leak + memory-growth + lock-contention probes.
     # Gated off the default CI run via the ``stress`` marker so PRs
     # don't pay the ~45 s wall-clock cost; runs once per day here.

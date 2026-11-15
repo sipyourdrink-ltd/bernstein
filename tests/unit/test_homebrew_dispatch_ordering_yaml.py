@@ -11,6 +11,11 @@ import pytest
 
 yaml = pytest.importorskip("yaml")
 ROOT = Path(__file__).resolve().parents[2]
+CARRY_GUARD = (
+    "!startsWith(github.head_ref, 'fleet/carry-') && "
+    "!startsWith(github.event.pull_request.head.ref, 'fleet/carry-') && "
+    "!startsWith(github.ref, 'refs/heads/fleet/carry-')"
+)
 
 
 def _workflow() -> dict[str, Any]:
@@ -34,15 +39,16 @@ def test_homebrew_dispatch_waits_for_successful_pypi_upload_and_release() -> Non
     assert set([needs] if isinstance(needs, str) else needs) == {"publish", "github-release"}
     # Normal GitHub dependency success semantics exclude failed/cancelled/skipped
     # prerequisites; an unconditional condition or tolerated error would bypass it.
-    for node in (job, step):
-        assert "if" not in node
-        assert not node.get("continue-on-error", False)
+    assert " ".join(job["if"].split()) == CARRY_GUARD
+    assert "if" not in step
+    assert not job.get("continue-on-error", False)
+    assert not step.get("continue-on-error", False)
     uploader = _workflow()["jobs"]["publish"]
     uploads = [s for s in uploader["steps"] if s.get("uses", "").startswith("pypa/gh-action-pypi-publish@")]
     assert len(uploads) == 1
     assert "if" not in uploads[0]
     assert not uploads[0].get("continue-on-error", False)
-    assert "if" not in uploader
+    assert " ".join(uploader["if"].split()) == CARRY_GUARD
     assert not uploader.get("continue-on-error", False)
     assert uploader["environment"]["name"] == "pypi"
 

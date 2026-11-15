@@ -4,6 +4,18 @@ Operator-facing notes on Bernstein's CI workflows. Focused on the
 matrix policy and the failure-class interventions; for the per-step
 documentation read the inline comments in `.github/workflows/ci.yml`.
 
+## Carry job admission
+
+Branches named `fleet/carry-*` can contain contributor code even when they
+are stored in this repository. Write-capable, secret-bearing, environment
+and privileged-runner jobs reject these refs at job admission, including
+manual dispatches. Existing job conditions still apply. Read-only build,
+bundle and quorum checks remain available; privileged scanners currently
+skip carry events together with their upload jobs.
+
+These controls do not grant permission to publish carry branches or merge
+pull requests. Protected-path approvals and charter objection windows apply.
+
 ## TL;DR
 
 | Topic | Status | Where |
