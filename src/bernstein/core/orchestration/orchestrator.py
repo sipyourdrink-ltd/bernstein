@@ -6854,7 +6854,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     from bernstein.adapters.registry import get_adapter
-    from bernstein.core.seed import SeedConfig, parse_seed
+    from bernstein.core.seed import SeedConfig, SeedError, parse_seed
     from bernstein.core.spawner import AgentSpawner
 
     parser = argparse.ArgumentParser()
@@ -6999,6 +6999,10 @@ if __name__ == "__main__":
                     getattr(seed, "model", None),
                     bool(getattr(seed, "role_model_policy", None)),
                 )
+            except SeedError as exc:
+                logger.error("Invalid seed configuration: error_type=%s", type(exc).__name__)
+                _stand_down_watchdog(workdir, "invalid-seed-configuration")
+                sys.exit(1)
             except Exception as exc:
                 logger.warning("Failed to parse seed for adapter config: error_type=%s", type(exc).__name__)
 

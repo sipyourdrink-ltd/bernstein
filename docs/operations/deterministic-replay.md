@@ -29,7 +29,8 @@ goal: Verify a report
 hash_profile: jcs-v2
 ```
 
-The validated selection reaches the journal, the shared lineage-spine append
+For single-cell and multi-cell orchestration, the validated selection reaches
+the journal, the shared lineage-spine append
 boundary, and the signed run receipt. Omit it, or set `py-json-v1`, to retain
 legacy hashing. An unknown value is a configuration error before the
 orchestrator starts. The direct receipt builder also follows the journal's
@@ -47,7 +48,9 @@ the spine header, or the receipt. An absent field means `py-json-v1`. A new-run
 configuration change does not reinterpret or migrate an existing run. Reads
 and verification leave the bytes unchanged; appending a spine under a profile
 that conflicts with its journal or recorded header is refused. No historical
-records are rewritten. Receipt signing still requires the configured signing
+records are rewritten. Re-derivation in a sandbox preserves the source
+journal's recorded profile, independently of the new-run configuration.
+Receipt signing still requires the configured signing
 key; choosing a hash profile does not enable unsigned receipts.
 
 ## What replay covers (and what it does not)

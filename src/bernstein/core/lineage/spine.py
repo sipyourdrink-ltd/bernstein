@@ -471,22 +471,37 @@ class LineageSpine:
 
     # -- record -------------------------------------------------------------
 
-    def _select_write_profile(self, count: int) -> str:
+    def _select_write_profile(self) -> str:
         """Resolve under the append lock; never change a recorded profile.
 
         All run writers share the first journal row's selection. Standalone
         stores without a journal still support the explicit low-level option.
         A reader's constructor does not inspect or modify evidence.
         """
-        from bernstein.core.replay.journal import run_journal_path
+        from bernstein.core.replay.journal import (
+            JournalPathError,
+            _validated_run_id,  # pyright: ignore[reportPrivateUsage] - reuse the journal naming contract
+            run_journal_path,
+        )
 
         journal_profile: str | None = None
-        journal_path = run_journal_path(self._root.parent, self._run_id)
         try:
-            with journal_path.open("rb") as stream:
-                first_line = stream.readline()
-        except FileNotFoundError:
-            first_line = b""
+            _validated_run_id(self._run_id)
+        except JournalPathError:
+            # Standalone spines admit safe IDs outside the journal alphabet.
+            # They cannot name a run journal, so there is no profile to inherit.
+            journal_path = None
+        else:
+            # Keep containment failures fatal: an optional lookup must never
+            # follow a symlink outside the run-journal root.
+            journal_path = run_journal_path(self._root.parent, self._run_id)
+        first_line = b""
+        if journal_path is not None:
+            try:
+                with journal_path.open("rb") as stream:
+                    first_line = next((line for line in stream if line.strip()), b"")
+            except FileNotFoundError:
+                pass
         if first_line:
             first = json.loads(first_line)
             if not isinstance(first, dict):
@@ -496,13 +511,11 @@ class LineageSpine:
                 raise ValueError(f"unknown hash_profile {journal_profile!r}")
 
         profile = self._requested_hash_profile or journal_profile or HASH_PROFILE_LEGACY
-        if count:
-            recorded = HASH_PROFILE_LEGACY
-            if self.head_path.exists():
-                head = json.loads(self.head_path.read_bytes())
-                if not isinstance(head, dict):
-                    raise ValueError("spine hash_profile header must be an object")
-                recorded = head.get("hash_profile", HASH_PROFILE_LEGACY)
+        if self.head_path.exists():
+            head = json.loads(self.head_path.read_bytes())
+            if not isinstance(head, dict):
+                raise ValueError("spine hash_profile header must be an object")
+            recorded = head.get("hash_profile", HASH_PROFILE_LEGACY)
             if recorded not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
                 raise ValueError(f"unknown hash_profile {recorded!r}")
             if self._requested_hash_profile is not None and self._requested_hash_profile != recorded:
@@ -584,7 +597,7 @@ class LineageSpine:
 
         with _exclusive_lock(self.spine_path):
             prev_hash, count = self._read_head()
-            self._hash_profile = self._select_write_profile(count)
+            self._hash_profile = self._select_write_profile()
             e_hash = compute_entry_hash(
                 prev_hash=prev_hash,
                 artifact_path=artifact_path,
