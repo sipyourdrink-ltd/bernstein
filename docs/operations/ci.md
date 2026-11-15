@@ -704,3 +704,9 @@ required context is `missing`, or it is present and `failing`.
 
 Which paths each type job covers, and what the `|| true` runs report,
 are documented in `docs/operations/type-check-scope.md`.
+
+## peter-evans/create-pull-request version
+
+The topology healer, weekly and continuous coverage ratchets, observability snapshot and major/minor release bump use create-pull-request v8.1.2. Their branch names, token selection, inputs and permissions stay as configured. This action uses Node.js 24 on the existing Ubuntu runners.
+
+The action is pinned to `15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8`. Its upstream `v8.1.2` tag resolves to that commit.
