@@ -32,7 +32,7 @@
 Bernstein 是面向 AI 代理的開源治理層。它運作在 policy as code 之上:你撰寫政策——誰可以做什麼、什麼需要核准、什麼必須被記錄——Bernstein 據此執行並產生可驗證的紀錄。確定性排程器 - 協調迴圈中沒有模型 - 平行執行代理,以閘門把關它們的產出,並記錄每一步,因此一次執行可以事後離線驗證,僅憑工件本身。CLI 編碼代理開箱即用(Claude Code、Codex、Gemini CLI 及 50+ 款),同一治理層治理任何代理工作負載:交付物可以是 diff、研究報告、資料集,或一份稽核證據包。附帶 air-gap 安裝設定。Apache-2.0。
 
 ### 一覽
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 五點使它與眾不同；其餘都是細節。
 
@@ -43,6 +43,8 @@ Bernstein 是面向 AI 代理的開源治理層。它運作在 policy as code �
 - **廣泛且本地。** 53 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
 
 完整清單見[能力頁面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩陣](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是詳盡的索引。
+
+任務伺服器支援由操作員控制、可持續保存狀態的新任務領取閘門；請參閱[指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 角色介面卡原則支援為未列出的角色設定選用的預設允許清單；請參閱[指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)。
 

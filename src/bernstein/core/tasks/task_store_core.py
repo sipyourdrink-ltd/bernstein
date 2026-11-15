@@ -29,6 +29,12 @@ from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
+from bernstein.core.tasks.claim_admission import (
+    ClaimAction,
+    ClaimAdmissionController,
+    ClaimAdmissionStatus,
+    ClaimControlError,
+)
 from bernstein.core.tasks.errors import TaskDomainError
 from bernstein.core.tasks.lifecycle import (
     UNSUCCESSFUL_TERMINAL_STATUSES,
@@ -494,7 +500,17 @@ class TaskStore:
         jsonl_path: Path,
         archive_path: Path = DEFAULT_ARCHIVE_PATH,
         metrics_jsonl_path: Path | None = None,
+        *,
+        claim_control_path: Path | None = None,
+        claim_controller_id: str | None = None,
     ) -> None:
+        if (claim_control_path is None) != (claim_controller_id is None):
+            raise ValueError("Claim control path and controller id must be configured together")
+        self._claim_controller = (
+            ClaimAdmissionController(claim_control_path, claim_controller_id, jsonl_path)
+            if claim_control_path is not None and claim_controller_id is not None
+            else None
+        )
         self._task_listeners: list[Callable[[Task], None]] = []
         self._task_created_listeners: list[Callable[[Task], None]] = []
         self._tasks: dict[str, Task] = {}
@@ -2156,6 +2172,71 @@ class TaskStore:
 
         return created_tasks, skipped_titles
 
+    async def _claim_control_io(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Keep the store lock until durable control I/O finishes, even on cancellation."""
+        operation_task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        cancelled: asyncio.CancelledError | None = None
+        while True:
+            try:
+                result = await asyncio.shield(operation_task)
+                break
+            except asyncio.CancelledError as exc:
+                if operation_task.cancelled():
+                    raise
+                cancelled = exc
+        if cancelled is not None:
+            raise cancelled
+        return result
+
+    @property
+    def claim_admission_controlled(self) -> bool:
+        """Whether this store has explicitly configured claim admission control."""
+        return self._claim_controller is not None
+
+    async def _require_claim_admission(self) -> None:
+        """Called only while holding the claim/transition lock, before effects."""
+        if self._claim_controller is None:
+            return
+        try:
+            status = await self._claim_control_io(self._claim_controller.snapshot)
+        except ClaimControlError as exc:
+            raise HTTPException(
+                status_code=503, detail="Claim admission unavailable; operator action required"
+            ) from exc
+        if status["halted"]:
+            raise HTTPException(status_code=503, detail="Task claim admission is halted")
+
+    async def claim_admission_status(self) -> ClaimAdmissionStatus:
+        if self._claim_controller is None:
+            raise HTTPException(status_code=409, detail="Claim admission controller is not configured")
+        async with self._lock:
+            try:
+                return await self._claim_control_io(self._claim_controller.snapshot)
+            except ClaimControlError as exc:
+                raise HTTPException(
+                    status_code=503, detail="Claim admission unavailable; operator action required"
+                ) from exc
+
+    async def change_claim_admission(
+        self, action: ClaimAction, *, actor: str, reason: str, expected_revision: int
+    ) -> ClaimAdmissionStatus:
+        """Operator boundary; HTTP callers must authenticate before invoking it."""
+        if self._claim_controller is None:
+            raise HTTPException(status_code=409, detail="Claim admission controller is not configured")
+        async with self._lock:
+            try:
+                return await self._claim_control_io(
+                    self._claim_controller.transition,
+                    action,
+                    actor=actor,
+                    reason=reason,
+                    expected_revision=expected_revision,
+                )
+            except ClaimControlError as exc:
+                raise HTTPException(
+                    status_code=503, detail="Claim control transition refused; preserve state for operator recovery"
+                ) from exc
+
     async def claim_next(
         self,
         role: str,
@@ -2187,6 +2268,7 @@ class TaskStore:
             The claimed Task, or None if nothing is available.
         """
         async with self._lock:
+            await self._require_claim_admission()
             pq = self._priority_queues.get((role, TaskStatus.OPEN))
             if not pq:
                 return None
@@ -2283,6 +2365,7 @@ class TaskStore:
                 not in an OPEN state (already claimed / in progress / terminal).
         """
         async with self._lock:
+            await self._require_claim_admission()
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
@@ -2349,6 +2432,7 @@ class TaskStore:
         failed: list[str] = []
         normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
         async with self._lock:
+            await self._require_claim_admission()
             for task_id in task_ids:
                 task = self._tasks.get(task_id)
                 if task is None or task.status != TaskStatus.OPEN or not self._dependencies_satisfied(task):

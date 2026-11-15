@@ -32,7 +32,7 @@
 Bernstein คือเลเยอร์ governance โอเพนซอร์สสำหรับ AI agent ทำงานแบบ policy as code คุณเขียนนโยบายเอง - ใครทำอะไรได้บ้าง อะไรต้องขออนุมัติ อะไรต้องถูกบันทึก - แล้ว Bernstein จะบังคับใช้และสร้างบันทึกที่ตรวจสอบย้อนกลับได้ ตัวจัดตารางแบบดีเทอร์มินิสติก - ไม่มีโมเดลในลูปประสานงาน - รัน agent แบบขนาน คัดกรองผลงานผ่านเกต และบันทึกทุกขั้นตอน ทำให้ตรวจสอบการรันย้อนหลังได้แบบออฟไลน์จากอาร์ติแฟกต์ล้วน ๆ CLI coding agent ใช้ได้ทันที (Claude Code, Codex, Gemini CLI และอีก 50+) และเลเยอร์เดียวกันนี้กำกับเวิร์กโหลด agent ทุกแบบ: ผลส่งมอบจะเป็น diff รายงานวิจัย ชุดข้อมูล หรือแพ็กหลักฐานการตรวจสอบก็ได้ มาพร้อมโปรไฟล์ติดตั้งแบบ air-gap Apache-2.0
 
 ### สรุปภาพรวม
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 มีห้าสิ่งที่ทำให้แตกต่าง ส่วนที่เหลือคือรายละเอียด
 
@@ -43,6 +43,8 @@ Bernstein คือเลเยอร์ governance โอเพนซอร์�
 - **ครอบคลุมและทำงานในเครื่อง** มีอะแดปเตอร์เอเจนต์ CLI มากกว่า 53 รายการ พร้อมตัวครอบ `--prompt` ทั่วไป สถานะอิงตามไฟล์ ไม่ต้องพึ่งพา SaaS และไม่มีระนาบข้อมูลภายนอก
 
 ดูรายการทั้งหมดได้ที่ [หน้ารวมความสามารถ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) และ [ตารางเปรียบเทียบฟีเจอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) ซึ่งเป็นดัชนีอย่างละเอียด
+
+เซิร์ฟเวอร์งานรองรับการควบคุมการรับงานใหม่โดยผู้ดูแล พร้อมบันทึกสถานะไว้อย่างถาวร ดู[คู่มือ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 นโยบายอะแดปเตอร์ตามบทบาทรองรับรายการอนุญาตเริ่มต้นแบบเลือกใช้สำหรับบทบาทที่ไม่ได้ระบุไว้แยกต่างหาก ดู[คู่มือ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)
 

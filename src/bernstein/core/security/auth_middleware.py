@@ -518,6 +518,7 @@ _ROUTE_PERMISSIONS: dict[str, str] = {
     "/shutdown": _PERM_ADMIN_MANAGE,
     "/broadcast": _PERM_ADMIN_MANAGE,
     "/drain": _PERM_ADMIN_MANAGE,
+    "/claim-admission": _PERM_ADMIN_MANAGE,
     # SCIM 2.0 provisioning surface.  Writes need ``scim:write``; the read
     # derivation below turns this into ``scim:read`` for GET, which keeps
     # ``/scim/v2/Users`` out of reach of a plain ``status:read`` viewer.

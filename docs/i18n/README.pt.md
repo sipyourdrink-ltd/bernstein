@@ -32,7 +32,7 @@
 Bernstein é a camada de governança open source para agentes de IA. Funciona em cima de policy as code: você escreve a política - quem pode fazer o quê, o que precisa de aprovação, o que precisa ser registrado - e o Bernstein a aplica e produz o registro verificável. Um escalonador determinístico - sem modelo no loop de coordenação - executa agentes em paralelo, filtra o que produzem com gates e registra cada passo, de modo que uma execução pode ser verificada depois, offline, apenas com os artefatos. Agentes CLI de código funcionam de fábrica (Claude Code, Codex, Gemini CLI e mais 50+), e a mesma camada governa qualquer carga agêntica: a entrega pode ser um diff, um relatório de pesquisa, um dataset ou um pacote de evidências de auditoria. Perfil de instalação air-gap incluído. Apache-2.0.
 
 ### em resumo
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 Cinco coisas o diferenciam; o resto são detalhes.
 
@@ -43,6 +43,8 @@ Cinco coisas o diferenciam; o resto são detalhes.
 - **Amplo e local.** Mais de 53 adaptadores de agentes CLI mais um wrapper genérico `--prompt`, estado baseado em arquivos, sem dependência de SaaS, sem plano de dados de terceiros.
 
 A lista completa está na [página de capacidades](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); a [matriz de recursos](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) é o índice exaustivo.
+
+O servidor de tarefas oferece um controle persistente do operador para a obtenção de novas tarefas; consulte o [guia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 A política de adaptadores por função permite definir uma lista padrão opcional de adaptadores permitidos para funções não listadas; consulte o [guia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
