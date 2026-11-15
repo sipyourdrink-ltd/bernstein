@@ -86,3 +86,38 @@ def test_transport_failure_returns_failed_result() -> None:
     )
     result = backend.scale_to(4)
     assert not result.success and result.new_count == 2
+
+
+@respx.mock
+def test_explicit_base_url_trailing_slash_is_normalized() -> None:
+    backend = HTTPScalingBackend(HTTPScalingConfig(base_url="https://fleet.example.test/"))
+    respx.get("https://fleet.example.test/api/cluster/autoscale/status").mock(
+        return_value=httpx.Response(200, json={"current": 2})
+    )
+    respx.patch("https://fleet.example.test/api/cluster/autoscale/config").mock(return_value=httpx.Response(204))
+    result = backend.scale_to(4)
+    assert result.success and result.previous_count == 2 and result.new_count == 4
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "payload", [None, [], {"current": "two"}, {"current": True}, {"current": -1}, {"current": 2.5}]
+)
+def test_invalid_status_payload_returns_integer_fallback(payload: object) -> None:
+    backend = HTTPScalingBackend(HTTPScalingConfig(base_url="https://fleet.example.test"))
+    respx.get("https://fleet.example.test/api/cluster/autoscale/status").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+    respx.patch("https://fleet.example.test/api/cluster/autoscale/config").mock(return_value=httpx.Response(204))
+    assert backend.current_node_count() == 0
+    result = backend.scale_to(4)
+    assert result.success and result.previous_count == 0 and result.new_count == 4
+
+
+@respx.mock
+def test_malformed_status_json_returns_integer_fallback() -> None:
+    backend = HTTPScalingBackend(HTTPScalingConfig(base_url="https://fleet.example.test"))
+    respx.get("https://fleet.example.test/api/cluster/autoscale/status").mock(
+        return_value=httpx.Response(200, content=b"not-json")
+    )
+    assert backend.current_node_count() == 0

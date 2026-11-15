@@ -634,3 +634,7 @@ HTTP status/transport errors produce a zero status count or unsuccessful
 `ScaleResult`; a successful PATCH reports the requested target. This
 backend is not registered or enabled automatically and does not itself
 wait for a fleet to reach that target.
+
+Invalid status JSON or a non-integer/negative `current` count uses the same
+zero-count fallback. Explicit base URLs are normalized to omit a trailing
+slash before endpoint paths are appended.

@@ -32,6 +32,9 @@ class HTTPScalingConfig:
     auth_token: str = ""
     timeout_s: float = 10.0
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "base_url", self.base_url.rstrip("/"))
+
     @classmethod
     def from_env(cls) -> HTTPScalingConfig:
         return cls(
@@ -66,8 +69,14 @@ class HTTPScalingBackend(ScalingBackend):
                 timeout=self._config.timeout_s,
             )
             resp.raise_for_status()
-            return resp.json().get("current", 0)
-        except httpx.HTTPError as exc:
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                raise ValueError("status response must be an object")
+            current = payload.get("current", 0)
+            if isinstance(current, bool) or not isinstance(current, int) or current < 0:
+                raise ValueError("status.current must be a non-negative integer")
+            return current
+        except (httpx.HTTPError, ValueError) as exc:
             logger.warning("Failed to get node count from %s: %s", self._config.base_url, exc)
             return 0
 
