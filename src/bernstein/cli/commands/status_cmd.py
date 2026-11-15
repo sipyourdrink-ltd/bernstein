@@ -743,6 +743,21 @@ def _add_check(checks: list[dict[str, Any]], name: str, ok: bool, detail: str, f
     checks.append({"name": name, "ok": ok, "detail": detail, "fix": fix, "fix_id": fix_id})
 
 
+def _append_leaked_lane_check(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Preserve evidence errors and structured leak findings in normal doctor."""
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+
+    result = check_leaked_lanes(workdir)
+    _add_check(
+        checks,
+        result["name"],
+        result["status"] != "FAIL",
+        ("WARNING: " if result["status"] == "WARN" else "") + result["detail"],
+        result["fix"],
+    )
+    checks[-1]["leaked_lanes"] = result["findings"]
+
+
 @doctor_producer("INS-018")
 def _doctor_check_eval_gate_power(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Advisory: flag statistical eval gate decisions taken below the minimum n (#2520).
@@ -1292,16 +1307,7 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     findings.append(_doctor_check_otel_export(checks))
     findings.append(_doctor_check_audit_anchoring(checks, workdir))
 
-    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
-
-    leak_check = check_leaked_lanes(workdir)
-    _add_check(
-        checks,
-        leak_check["name"],
-        True,
-        ("WARNING: " if leak_check["status"] == "WARN" else "") + leak_check["detail"],
-        leak_check["fix"],
-    )
+    _append_leaked_lane_check(checks, workdir)
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)

@@ -128,7 +128,7 @@ flowchart LR
 Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de papel e gates de aprovação valem independente do que o agente faça dentro da tarefa. Um nó de código termina atrás de merge gates no seu próprio git worktree. Os nós acima terminam diferente: um [contrato de artefato](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomeia a entrega (relatório, dataset, varredura, log de ações) e o nó fecha com um recibo de lineage assinado em vez de um commit. Mesmo escalonador, mesmo journal, mesma verificação offline - leve o grafo código, pesquisa, uma mudança de ops ou uma mistura dos três. Grafos prontos para software, pesquisa, docs, enterprise e fluxos de contribuição vivem em [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +138,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` também expõe os resultados do contrato de auditoria (`findings`), idênticos aos de `bernstein govern audit --only INS --json` para as mesmas observações de instalação. O relatório habitual do doctor mantém a apresentação atual. Consulte o [guia de operações do doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) para os identificadores estáveis das verificações.
+
+Doctor informa em JSON as linhas de execução abandonadas que excedem o limite de idade; a verificação falha se não conseguir validar as evidências e não remove nada.
 
 pipx, pip, brew, dnf, npm e Docker estão documentados no [guia de instalação](https://docs.bernstein.run/en/latest/getting-started/install/); o wheelhouse isolado tem seu próprio [guia air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 

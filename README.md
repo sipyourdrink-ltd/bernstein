@@ -44,6 +44,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 The normal doctor report keeps its existing display. See the
 [doctor operations guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) for stable check IDs.
 
+Doctor reports aged leaked lanes in JSON and fails when leak evidence cannot be verified; it removes nothing.
+
 pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://docs.bernstein.run/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` previews worktrees and sandbox sessions left behind
