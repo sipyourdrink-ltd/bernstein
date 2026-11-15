@@ -293,3 +293,25 @@ def test_reconcile_apply_rejects_duplicate_entities_before_callbacks() -> None:
             apply_entry=calls.append,
         )
     assert calls == []
+
+
+def test_a_skip_before_failure_does_not_claim_a_partially_applied_run() -> None:
+    satisfied = replace(_change(), entity_id="a", action=DiffAction.NONE)
+    failing = replace(_change(), entity_id="b")
+    diff = _diff(satisfied, failing)
+    calls = []
+
+    def observe(entry: ReconcileEntry) -> tuple[SnapshotEntity, bool]:
+        value = "1.5" if entry.entity_id == "a" else "1.0"
+        return SnapshotEntity(entry.kind, entry.entity_id, value, 2, "fixture"), False
+
+    def write(entry: ReconcileEntry) -> None:
+        calls.append(entry.entity_id)
+        raise RuntimeError("fixture failure before write")
+
+    result = apply_reconcile_diff(
+        diff, receipt=_receipt(diff), authorize=lambda _diff, _policy: True, observe=observe, apply_entry=write
+    )
+    assert calls == ["b"]
+    assert [attempt.outcome for attempt in result.changes] == ["skipped", "failure"]
+    assert result.final_status == "failed"

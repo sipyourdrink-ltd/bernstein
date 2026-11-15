@@ -519,6 +519,6 @@ def apply_reconcile_diff(
             attempt = _attempt_reconcile_entry(entry, receipt.timestamp, observe, apply_entry)
         changes.append(attempt)
         if attempt.outcome == "failure":
-            status = "partial" if any(change.outcome != "failure" for change in changes) else "failed"
+            status = "partial" if any(change.outcome == "success" for change in changes) else "failed"
             return replace(receipt, changes=tuple(changes), final_status=status)
     return replace(receipt, changes=tuple(changes), final_status="complete")
