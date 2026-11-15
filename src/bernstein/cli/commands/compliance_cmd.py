@@ -428,6 +428,7 @@ def check_policies(
 
     from bernstein.core.govern.compliance_checks import policy_input_from_project
 
+    workdir = workdir.resolve()
     # Defaults describe the workspace. Explicit flags remain operator
     # declarations and retain their existing policy-result provenance.
     declarations = {

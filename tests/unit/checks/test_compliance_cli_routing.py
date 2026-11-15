@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
@@ -85,3 +86,39 @@ def test_audit_rejects_unknown_profile_before_executing_checks() -> None:
     result = CliRunner().invoke(cli, ["govern", "audit", "--only", "CMP", "--profile", "unknown"])
     assert result.exit_code == 2
     assert "profile" in result.output.lower()
+
+
+@pytest.mark.parametrize("workdir_args", [[], ["--workdir", "."], ["--workdir", "../workspace"]])
+def test_default_and_relative_workdirs_produce_identical_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workdir_args: list[str]
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    audit = runner.invoke(cli, ["govern", "audit", "--only", "CMP", "--json", *workdir_args])
+    compliance = runner.invoke(cli, ["compliance", "check", "--fail-on", "none", "--json-output", *workdir_args])
+    assert audit.exit_code == 1, audit.output
+    assert compliance.exit_code == 0, compliance.output
+    assert json.loads(compliance.output)["checks"] == json.loads(audit.output)
+
+
+def test_nullable_config_keeps_unreadable_controls_in_the_report(tmp_path: Path) -> None:
+    (tmp_path / "bernstein.yaml").write_text("quality_gates: null\n", encoding="utf-8")
+    (tmp_path / ".sdd" / "audit").mkdir(parents=True)
+    runner = CliRunner()
+    compliance = runner.invoke(
+        cli, ["compliance", "check", "--workdir", str(tmp_path), "--fail-on", "none", "--json-output"]
+    )
+    audit = runner.invoke(cli, ["govern", "audit", "--only", "CMP", "--workdir", str(tmp_path), "--json"])
+    assert compliance.exit_code == 0, compliance.output
+    assert audit.exit_code == 1, audit.output
+    payload = json.loads(compliance.output)
+    assert payload["checks"] == json.loads(audit.output)
+    findings = {finding["check_id"]: finding for finding in payload["checks"]}
+    for cid in ("CMP-010", "CMP-011"):
+        assert findings[cid]["verdict"] == "not_measurable"
+        assert findings[cid]["passed"] is None
+        assert findings[cid]["what_would_make_it_measurable"]
+    assert findings["CMP-001"]["passed"] is True
+    assert next(r for r in payload["results"] if r["policy_id"] == "soc2-cc7-01")["passed"] is True

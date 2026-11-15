@@ -341,7 +341,15 @@ def observe_compliance_controls(project_root: Path) -> dict[str, bool]:
     The booleans are exactly what ``compliance_library``'s check functions
     concluded; this module does not re-decide them.
     """
-    return {spec.check_id: bool(_library_result(spec, project_root).passed) for spec in _SPECS}
+    observed: dict[str, bool] = {}
+    for spec in _SPECS:
+        try:
+            observed[spec.check_id] = bool(_library_result(spec, project_root).passed)
+        except Exception:
+            # Policy snapshots must not turn an unreadable control into a
+            # satisfied one. The audit findings retain the failure explicitly.
+            observed[spec.check_id] = False
+    return observed
 
 
 def policy_input_from_project(project_root: Path) -> PolicyInput:
@@ -481,8 +489,21 @@ def run_compliance_checks(
     only: Iterable[str] = (),
     skip: Iterable[str] = (),
 ) -> tuple[CheckOutcome, ...]:
-    """Run the selected compliance checks over *project_root*, ordered by id."""
-    return tuple(_outcome_for(_SPEC_BY_ID[cid], project_root) for cid in select_check_ids(only=only, skip=skip))
+    """Run selected checks, retaining an unreadable control as its own finding."""
+    outcomes: list[CheckOutcome] = []
+    for cid in select_check_ids(only=only, skip=skip):
+        try:
+            outcome = _outcome_for(_SPEC_BY_ID[cid], project_root)
+        except Exception as exc:
+            outcome = CheckOutcome(
+                check_id=cid,
+                area=CMP_AREA,
+                verdict=CheckVerdict.NOT_MEASURABLE,
+                summary=f"Check execution failed with {type(exc).__name__}",
+                what_would_make_it_measurable="Readable configuration and artifacts for this control.",
+            )
+        outcomes.append(outcome)
+    return tuple(outcomes)
 
 
 def count_by_outcome(outcomes: Iterable[CheckOutcome]) -> dict[str, int]:

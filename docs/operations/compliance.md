@@ -160,6 +160,10 @@ same IDs, verdicts and evidence. Runtime declaration flags affect the legacy
 policy results, while `checks` continues to describe the workspace. A key found
 in a config file remains `declared`, with no measured pass. Profile and severity
 selection never turn those observations into a conformance claim.
+Default and relative workdirs are resolved to the same workspace as the audit
+runner. A failing library observation remains `not_measurable` in `checks`;
+the legacy policy snapshot treats that control as unsatisfied while retaining
+other readable observations.
 
 ```
 bernstein compliance check [--framework <name>] [--workdir .]
