@@ -61,9 +61,10 @@ def test_generated_adapter_launches_without_waiting(
 ) -> None:
     from bernstein.core.models import ModelConfig
 
-    cli = tmp_path / "fake-agent"
+    # Python opens the template's first argument, "run", as a script in cwd.
+    # This launches a real child on Windows too, without POSIX shebang handling.
+    cli = tmp_path / "run"
     cli.write_text(
-        f"#!{sys.executable}\n"
         "import json, pathlib, sys, time\n"
         "for _ in range(500):\n"
         "    if pathlib.Path('release').exists():\n"
@@ -76,8 +77,7 @@ def test_generated_adapter_launches_without_waiting(
         f"sys.exit({exit_code})\n",
         encoding="utf-8",
     )
-    cli.chmod(0o700)
-    adapter = _adapter_class(rendered)(cli_path=str(cli))
+    adapter = _adapter_class(rendered)(cli_path=sys.executable)
 
     result = adapter.spawn(
         prompt="Test task",
@@ -99,7 +99,6 @@ def test_generated_adapter_launches_without_waiting(
     assert result.proc.returncode == exit_code
     lines = result.log_path.read_text(encoding="utf-8").splitlines()
     assert json.loads(lines[0]) == [
-        "run",
         "--description",
         "Test task\n\n## System Addendum\nFollow the protocol",
         "--model",
