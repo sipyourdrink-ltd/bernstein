@@ -45,7 +45,7 @@ Bernstein — опенсорсный governance-слой для AI-агенто�
 Полный список — на [странице возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [матрица возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) — исчерпывающий индекс.
 
 ### как выглядит прогон
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 Один YAML-файл объявляет весь прогон: фазы, роли, зависимости и условия, при которых узел вообще запускается. Планировщик исполняет его как обычный Python — в файле нет ни одного промпта, и ни одна модель не решает, что будет дальше. Этот граф собирает пакет аудиторских свидетельств; полный файл лежит в [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
@@ -124,6 +124,8 @@ flowchart LR
 ```
 
 Каждый узел забирает агент, чья роль разрешена фазой; ролевые ограничения и гейты одобрения держатся независимо от того, что агент делает внутри задачи. Кодовый узел завершается за merge-гейтами в собственном git worktree. Узлы выше завершаются иначе: [контракт артефакта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) называет результат (отчёт, датасет, скан, лог действий), и узел закрывается подписанной lineage-квитанцией вместо коммита. Тот же планировщик, тот же журнал, та же офлайн-верификация — несёт ли граф код, исследование, ops-изменение или всё сразу. Готовые графы для софта, исследований, документации, энтерпрайза и контрибьюторских процессов лежат в [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+
+Повторные попытки сохраняют `dispatch_tier`; при повторном открытии задачи можно явно выбрать уровень. См. [контракт dispatch tier](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### установка за 30 секунд
 <!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->

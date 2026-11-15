@@ -19,6 +19,22 @@ This backend field is separate from the model classification below
 (`light`, `standard`, `heavy`, `critical`); it does not change classification
 or provider routing.
 
+## Retry and reopen
+
+Both retry paths preserve the task's current backend `dispatch_tier` in the
+new task request, including transport and unknown failures. A reason string
+is not evidence for switching a backend. This does not change model/effort
+selection, retry limits or verification gates.
+
+`POST /tasks/{task_id}/reopen` accepts an optional `dispatch_tier` with one of
+the five values above. Omit it to retain the current tier; explicit `null`
+and invalid values return HTTP 422. An explicit selection is stored with
+`metadata.dispatch_tier_transition` (`old`, `new`, `reason`) in the same
+locked DONE-to-OPEN JSONL record before another claimant can acquire the
+store lock. Replaying the record restores the selected tier. This endpoint
+does not automatically classify verification or backend-capacity outcomes;
+callers must make an explicit selection when justified by their own policy.
+
 ## Model classification
 
 Bernstein can optionally map a task onto a small closed **tier**
