@@ -983,7 +983,9 @@ def check_leaked_lanes(
     max_age_seconds: float | None = None,
     now: float | None = None,
 ) -> dict[str, Any]:
-    """Warn about task-terminal lanes older than the configured age (#5112)."""
+    """Report confirmed aged leaks, distinguishing unavailable evidence (#6572)."""
+    import math
+
     from bernstein.cli.commands.worktrees_cmd import format_age
     from bernstein.core.sandbox.leak_sweep import sweep_leaked_lanes
 
@@ -995,21 +997,48 @@ def check_leaked_lanes(
             if max_age_seconds is None
             else max_age_seconds
         )
-        import math
-
         if not math.isfinite(threshold) or threshold < 0:
             raise ValueError("leak age must be finite and non-negative")
         lanes = sweep_leaked_lanes(workdir or Path.cwd(), now=now)
     except (OSError, RuntimeError, ValueError) as exc:
-        return {"name": name, "status": _CHECK_WARN, "detail": f"leak check unavailable: {exc}", "fix": fix}
-    aged = [lane for lane in lanes if lane.age_seconds is not None and lane.age_seconds > threshold]
-    if not aged:
-        return {"name": name, "status": _CHECK_PASS, "detail": "no aged task-terminal lanes", "fix": ""}
-    detail = "; ".join(
-        f"{lane.kind} {lane.resource_id} ({', '.join(lane.task_ids)}, {format_age(lane.age_seconds or 0)})"
-        for lane in aged
-    )
-    return {"name": name, "status": _CHECK_WARN, "detail": detail, "fix": fix}
+        return {
+            "name": name,
+            "status": _CHECK_FAIL,
+            "detail": f"leak check unavailable: {exc}",
+            "fix": fix,
+            "findings": [],
+        }
+    findings: list[dict[str, Any]] = []
+    details: list[str] = []
+    for lane in lanes:
+        age = lane.age_seconds
+        known_age = age is not None and math.isfinite(age) and age >= 0
+        if known_age and age <= threshold:
+            continue
+        source = "directory_birthtime_or_ctime" if lane.kind == "worktree" else "audit_session_create"
+        statuses = dict(lane.task_statuses)
+        findings.append(
+            {
+                "kind": lane.kind,
+                "resource_id": lane.resource_id,
+                "task_ids": list(lane.task_ids),
+                "task_statuses": statuses,
+                "age_seconds": age if known_age else None,
+                "age_source": source,
+                "max_age_seconds": threshold,
+                "reason": "age_exceeded" if known_age else "age_unavailable",
+            }
+        )
+        owners = ", ".join(f"{task_id}={statuses.get(task_id, 'unknown')}" for task_id in lane.task_ids)
+        age_text = format_age(age) if known_age else "unknown age"
+        details.append(f"{lane.kind} {lane.resource_id} ({owners}, {age_text}; {source})")
+    return {
+        "name": name,
+        "status": _CHECK_WARN if findings else _CHECK_PASS,
+        "detail": "; ".join(details) if findings else "no aged task-terminal lanes",
+        "fix": fix if findings else "",
+        "findings": findings,
+    }
 
 
 def run_all_checks() -> list[dict[str, Any]]:
