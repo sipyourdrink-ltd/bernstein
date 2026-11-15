@@ -162,6 +162,7 @@ SMALL_EXCLUDED_PREFIXES = (
     "packaging/",
     "Formula/",
     "packages/vscode/",
+    ".plugin/",
 )
 SMALL_EXCLUDED_PATHS = (
     "CHANGELOG.md",
@@ -179,6 +180,13 @@ SMALL_EXCLUDED_PATHS = (
     "mcp.json",
     "server.json",
     "plugin.json",
+    "CITATION.cff",
+    "docker/requirements-build.in",
+    "docker/requirements-build.txt",
+    "scripts/build_packages.sh",
+    "scripts/safe-push-main.sh",
+    "scripts/check_compatibility.py",
+    "scripts/render_docker_mcp_catalog.py",
 )
 
 # Section 1 as decided for automation: the paths where automation stops being

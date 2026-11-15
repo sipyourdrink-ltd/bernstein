@@ -39,6 +39,7 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "quorum-rerun.yml"
 def _rerun_step() -> str:
     """The `run:` body of the step that finds and re-runs the check, comments included."""
     doc = cast("dict[str, Any]", yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")))
+    assert "github.event.workflow_run.id" in doc["concurrency"]["group"]
     for step in doc["jobs"]["rerun"]["steps"]:
         if isinstance(step, dict) and step.get("name") == "Re-run quorum":
             run = step.get("run")
@@ -196,14 +197,18 @@ def test_automatic_label_completion_recomputes_without_requesting_reviews() -> N
     doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     on = doc.get("on", doc.get(True))
     assert on["workflow_run"] == {"workflows": ["PR labels"], "types": ["completed"]}
+    assert "github.event.workflow_run.id" in doc["concurrency"]["group"]
     for step in doc["jobs"]["rerun"]["steps"]:
         if step.get("name") in {"Check out the scripts", "Ask the roster for the reviews still missing"}:
             assert "github.event_name != 'workflow_run'" in step["if"]
 
 
 @pytest.mark.parametrize("conclusion", ["success", "failure"])
+@pytest.mark.parametrize("failure", ["none", "final-read", "rerun"])
 @pytest.mark.parametrize("candidate", ["match", "wrong-repo", "wrong-branch", "wrong-base", "ambiguous"])
-def test_label_completion_reruns_current_head_checks_including_success(tmp_path, conclusion, candidate) -> None:
+def test_label_completion_reruns_current_head_checks_including_success(
+    tmp_path, conclusion, candidate, failure
+) -> None:
     """Execute the trusted rerun shell with a fork payload and mocked GitHub."""
     import json
     import os
@@ -232,6 +237,7 @@ def test_label_completion_reruns_current_head_checks_including_success(tmp_path,
         payload["pulls"][0]["base"]["ref"] = "other-base"
     elif candidate == "ambiguous":
         payload["pulls"].append(payload["pulls"][0])
+    payload["failure"] = failure
     (tmp_path / "payload.json").write_text(json.dumps(payload))
     gh = tmp_path / "gh"
     gh.write_text("""#!/usr/bin/env python3
@@ -245,8 +251,13 @@ data=json.loads((root/'payload.json').read_text())
 if args[:2]==['pr','view']:
     print('a'*40)
 elif any('/actions/runs/' in a and a.endswith('/rerun') for a in args):
-    pass
+    raise SystemExit(1 if data['failure']=='rerun' else 0)
 elif any('/check-runs?' in a for a in args):
+    counter=root/'check-count'
+    count=int(counter.read_text())+1 if counter.exists() else 1
+    counter.write_text(str(count))
+    if count==2 and data['failure']=='final-read':
+        raise SystemExit('injected HTTP 503')
     print(json.dumps(data['checks']))
 elif 'repos/owner/repo/pulls' in args:
     print(json.dumps(data['pulls']))
@@ -270,9 +281,10 @@ else:
         DEFAULT_BRANCH="main",
     )
     result = subprocess.run(["bash", "-c", _rerun_step()], env=env, capture_output=True, text=True, timeout=15)
-    assert result.returncode == (1 if candidate == "ambiguous" else 0), result.stderr
+    expected_rc = 1 if candidate == "ambiguous" or (candidate == "match" and failure != "none") else 0
+    assert result.returncode == expected_rc, result.stderr
     commands = [json.loads(line) for line in calls.read_text().splitlines()]
-    if candidate != "match":
+    if candidate != "match" or failure == "final-read":
         assert not any("POST" in command for command in commands)
         return
     assert ["api", "-X", "POST", "repos/owner/repo/actions/runs/987/rerun"] in commands

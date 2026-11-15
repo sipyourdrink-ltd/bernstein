@@ -39,7 +39,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: quorum-rerun-${{ github.event.pull_request.number || 'sweep' }}
+  group: quorum-rerun-${{ github.event.pull_request.number || github.event.workflow_run.id || 'sweep' }}
   cancel-in-progress: false
 
 permissions:
@@ -114,7 +114,7 @@ jobs:
           # BEFORE the event that can have changed their answer. Without it
           # every red run is re-run, which is what the governance pass wants.
           rerun_for () {  # rerun_for <pr-number> [older-than-iso-8601] [after-labels]
-            local pr="$1" before="${2:-}" after_labels="${3:-0}" head run started_at found=0 current=0
+            local pr="$1" before="${2:-}" after_labels="${3:-0}" head run runs started_at found=0 current=0
             # Checked before the lookups, not only before the POST: an exhausted
             # sweep otherwise spends two API calls per remaining pull request to
             # learn something it cannot act on.
@@ -142,6 +142,12 @@ jobs:
                 return 1
               fi
             fi
+            # A failed read must fail this step, not become an empty heredoc.
+            runs=$(gh api "repos/${REPO}/commits/${head}/check-runs?check_name=quorum" \
+                | jq -r --argjson after_labels "$after_labels" '.check_runs[]
+                      | select(.app.slug == "github-actions")
+                      | select(.conclusion != null and ($after_labels == 1 or .conclusion != "success"))
+                      | "\(.started_at) \(.html_url | capture("/actions/runs/(?<id>[0-9]+)").id)"')
             # The check run names its own run in html_url; that is the id the
             # rerun endpoint wants, and it is reachable without the workflow.
             while read -r started_at run; do
@@ -165,11 +171,7 @@ jobs:
                 [ "$after_labels" != 1 ] || return 1
               fi
             done <<RUNS
-          $(gh api "repos/${REPO}/commits/${head}/check-runs?check_name=quorum" \
-              | jq -r --argjson after_labels "$after_labels" '.check_runs[]
-                    | select(.app.slug == "github-actions")
-                    | select(.conclusion != null and ($after_labels == 1 or .conclusion != "success"))
-                    | "\(.started_at) \(.html_url | capture("/actions/runs/(?<id>[0-9]+)").id)"')
+          $runs
           RUNS
             if [ "$found" -eq 0 ] && [ "$current" -eq 1 ]; then
               echo "#$pr: quorum last ran after the newest review; its verdict is current"
