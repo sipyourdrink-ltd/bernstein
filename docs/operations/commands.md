@@ -44,7 +44,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein lineage v2 show / verify / export` | Opt-in two-layer lineage store. See [docs/operations/lineage-v2.md](lineage-v2.md). |
 | `bernstein run --retry-budget SPEC` | Criterion-aware retry budget. See [docs/operations/retry-budget.md](retry-budget.md). |
 | `bernstein identity show` / `decode` / `verify` / `disable` | Operator-side helpers for the install-rev fingerprint embedded in shared yaml/trace/role-prompt artefacts. |
-| `bernstein security role-adapter-policy` | Inspects and edits the per-role adapter allow-list (deny-list enforcement at spawn time). |
+| `bernstein security role-adapter-policy` | Inspects and edits the [per-role adapter allow-list](role-adapter-policy.md), enforced for initial dispatch, resume and failover. |
 | `bernstein run-lookup NAME` | Resolve a memorable run name back to its run UUID; exits non-zero when the name is malformed or unknown. Example: `bernstein run-lookup brave-otter-1234`. |
 | `bernstein stop [--force]` | Graceful drain (soft stop) by default. `--force`/`--hard` SIGKILLs everything immediately, then reaps whole process groups so a re-parented grandchild (disowned heartbeat/curl loops) dies with its leader; the summary counts only PIDs confirmed terminated. |
 | `bernstein self check-update` / `update` / `pin` / `rollback` | Provenance-verified update lifecycle. Verifies a signed release feed against a configured trust root before naming a candidate, seals a chain-anchored advisory that `--verify` recomputes offline, refuses to update while a run is active, and re-hashes the wheel before install. Offline-first and opt-in; the air-gap profile disables the remote path. See [updates.md](updates.md). |
