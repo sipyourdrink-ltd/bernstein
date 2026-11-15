@@ -93,10 +93,17 @@ async def test_worktree_locked(
             # 3. Verify
             assert owns_lock, "the test never injected its index lock"
             assert task["status"] == "failed"
-            assert any(
-                f"Merge-back failed for task {task_id}" in message and str(lock_file) in message
-                for message in caplog.messages
-            ), "the task failed without hitting the injected index lock"
+            assert lock_file.read_text(encoding="utf-8") == "locked"
+            merge_failures = [
+                message for message in caplog.messages if f"Merge-back failed for task {task_id} " in message
+            ]
+            assert merge_failures, "the task failed without attempting merge-back"
+            # Git versions differ: some include index.lock's path, while
+            # others report only that the held lock prevented an index write.
+            first_failure = merge_failures[0]
+            assert str(lock_file) in first_failure or first_failure.endswith("error: Unable to write index."), (
+                "the task failed without hitting the injected index lock"
+            )
             assert not (integration_sdd.parent / "chaos.txt").exists()
 
     finally:

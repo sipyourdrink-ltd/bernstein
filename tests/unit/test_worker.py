@@ -503,7 +503,7 @@ class TestWorkerProcess:
         exit_code = proc.wait(timeout=10)
         assert exit_code == 42
 
-    def test_worker_handles_missing_command(self) -> None:
+    def test_worker_handles_missing_command(self, tmp_path: Path) -> None:
         """Worker should exit 127 for missing command."""
         proc = subprocess.Popen(
             [
@@ -515,7 +515,7 @@ class TestWorkerProcess:
                 "--session",
                 "missing-cmd",
                 "--pid-dir",
-                "/tmp",
+                str(tmp_path),
                 "--",
                 "nonexistent_command_xyz_12345",
             ],

@@ -211,6 +211,17 @@ def cosign_keypair(tmp_path: Path) -> tuple[Path, Path]:
     return priv, pub
 
 
+def _short_temp_directory(prefix: str) -> tempfile.TemporaryDirectory[str]:
+    # Unix sockets need a short path. Sandboxes may mount /tmp read-only.
+    socket_root = "/tmp" if os.name == "posix" and Path("/tmp").is_dir() else None
+    try:
+        return tempfile.TemporaryDirectory(prefix=prefix, dir=socket_root)
+    except OSError:
+        if socket_root is None:
+            raise
+        return tempfile.TemporaryDirectory(prefix=prefix)
+
+
 @pytest.fixture
 def gpg_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Set up an isolated GNUPGHOME for the test (skipped when gpg absent).
@@ -224,10 +235,7 @@ def gpg_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """
     if not _HAS_GPG:
         pytest.skip("gpg not installed -- skipping real-gpg integration")
-    # Unix agents use a socket under the keyring path. Prefer the short system
-    # path where it exists, and use the platform temp directory elsewhere.
-    socket_root = "/tmp" if os.name == "posix" and Path("/tmp").is_dir() else None
-    with tempfile.TemporaryDirectory(prefix="bgpg-", dir=socket_root) as short_root:
+    with _short_temp_directory("bgpg-") as short_root:
         home = Path(short_root) / "h"
         home.mkdir(mode=0o700)
         monkeypatch.setenv("GNUPGHOME", str(home))
@@ -601,24 +609,15 @@ def test_socket_guard_unix_sockets_are_exempt(airgap_env: None) -> None:
     """
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("AF_UNIX not available on this platform")
-    server_path = Path("/tmp") / f"bernstein-airgap-test-{os.getpid()}.sock"
-    if server_path.exists():
-        server_path.unlink()
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        server.bind(str(server_path))
-        server.listen(1)
-        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            client.settimeout(2.0)
-            # No exception means the guard correctly skipped AF_UNIX.
-            client.connect(str(server_path))
-        finally:
-            client.close()
-    finally:
-        server.close()
-        if server_path.exists():
-            server_path.unlink()
+    with _short_temp_directory("bsock-") as socket_dir:
+        server_path = Path(socket_dir) / "s"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(server_path))
+            server.listen(1)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(2.0)
+                # No exception means the guard correctly skipped AF_UNIX.
+                client.connect(str(server_path))
 
 
 def test_socket_guard_uninstall_restores_original() -> None:
