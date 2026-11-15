@@ -27,7 +27,8 @@ def verify_carry_head(worktree: Path, main: str, original: str, head: str) -> No
         except subprocess.CalledProcessError as exc:
             raise ValueError(f"carry head does not preserve {source}") from exc
     trusted_tree = git("rev-parse", "--verify", f"{main}:.github")
-    if git("cat-file", "-t", trusted_tree) != "tree" or git("rev-parse", "--verify", f"{head}:.github") != trusted_tree:
+    trusted_entry = f"040000 tree {trusted_tree}\t.github"
+    if git("cat-file", "-t", trusted_tree) != "tree" or git("ls-tree", head, "--", ".github") != trusted_entry:
         raise ValueError("carry head does not have the trusted GitHub workflow tree")
 
 

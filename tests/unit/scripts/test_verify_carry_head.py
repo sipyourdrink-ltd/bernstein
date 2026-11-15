@@ -50,6 +50,17 @@ def test_publication_requires_current_workflows_and_original_commit(tmp_path):
     assert verify(main, original, reviewed).returncode == 0
     assert verify(main, original, "fleet/carry-1").returncode == 1
 
+    trusted_tree = git("rev-parse", f"{main}:.github")
+    git("update-index", "--force-remove", ".github/workflows/ci.yml")
+    git("update-index", "--add", "--cacheinfo", f"160000,{trusted_tree},.github")
+    gitlink = git("commit-tree", git("write-tree"), "-p", reviewed, "-m", "substitute gitlink entry")
+    assert git("rev-parse", f"{gitlink}:.github") == trusted_tree
+    assert git("ls-tree", gitlink, "--", ".github") == f"160000 commit {trusted_tree}\t.github"
+    rejected = verify(main, original, gitlink)
+    assert rejected.returncode == 1
+    assert "trusted GitHub workflow tree" in rejected.stderr
+    git("read-tree", reviewed)
+
     workflow.write_text("name: stale\n")
     changed = commit("changed workflow tree")
     assert "trusted GitHub workflow tree" in verify(main, original, changed).stderr

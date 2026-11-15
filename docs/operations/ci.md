@@ -11,7 +11,8 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 an upstream ref. MAIN must be the publisher-verified current upstream main;
 ORIGINAL pins the original contributor head; HEAD pins the reviewed commit.
 Both source commits must be ancestors of HEAD, and HEAD's complete `.github`
-tree must exactly match MAIN. Git replacement objects are disabled.
+tree must exactly match MAIN, with `.github` stored as a directory entry
+(mode `040000`). Git replacement objects are disabled.
 
 This is a standalone preflight, not an installed publisher or a workflow
 gate. No current workflow invokes it. A future publisher must invoke this
