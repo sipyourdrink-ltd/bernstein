@@ -54,6 +54,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cryptography.exceptions import InvalidSignature
 
+from bernstein.core.verify_result import ReceiptVerification as ReceiptVerification
+
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
         Ed25519PrivateKey,
@@ -239,14 +241,6 @@ class EscalationReceipt:
     def is_signed(self) -> bool:
         """True iff the envelope carries a non-empty signature blob."""
         return bool(self.signature_b64)
-
-
-@dataclass(frozen=True, slots=True)
-class ReceiptVerification:
-    """Outcome of :func:`verify_receipt`."""
-
-    ok: bool
-    errors: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

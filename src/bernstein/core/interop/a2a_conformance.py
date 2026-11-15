@@ -41,6 +41,7 @@ from bernstein.core.security.agent_card_signer import (
     ed25519_pem_from_jwk,
     verify_detached_jws_over_canonical,
 )
+from bernstein.core.verify_result import CheckOutcome as ConformanceCheck
 
 if TYPE_CHECKING:
     from bernstein.core.interop.a2a_card import SignedCapabilityCard
@@ -60,25 +61,6 @@ __all__ = [
 
 #: The A2A v1.0 ``protocolVersion`` string a conformant agent card must carry.
 AGENT_CARD_V1_PROTOCOL_VERSION: str = "1.0"
-
-
-@dataclass(frozen=True)
-class ConformanceCheck:
-    """A single named conformance check with a pass/fail verdict.
-
-    Attributes:
-        name: Stable check id (for instance ``"jcs_canonical"``).
-        passed: Whether the check passed.
-        detail: Human-readable explanation of the verdict.
-    """
-
-    name: str
-    passed: bool
-    detail: str
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a JSON-serialisable view of the check."""
-        return {"name": self.name, "passed": self.passed, "detail": self.detail}
 
 
 @dataclass(frozen=True)

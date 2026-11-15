@@ -61,6 +61,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from bernstein.core.verify_result import ReceiptVerification as ReceiptVerification
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -138,14 +140,6 @@ class SelectionReceipt:
     @property
     def is_signed(self) -> bool:
         return bool(self.signature_b64)
-
-
-@dataclass(frozen=True, slots=True)
-class ReceiptVerification:
-    """Outcome of :func:`verify_receipt`."""
-
-    ok: bool
-    errors: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

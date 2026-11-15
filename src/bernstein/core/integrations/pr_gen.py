@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from bernstein.core.verify_result import CheckOutcome as GateResult
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
@@ -233,23 +235,6 @@ _DIFF_STAT_SUMMARY_RE = re.compile(
 #: Verdict recorded on a receipt that attests a pull-request description
 #: rather than a code review, so the two are told apart on read-back.
 DESCRIPTION_VERDICT = "description"
-
-
-@dataclass(frozen=True)
-class GateResult:
-    """A single quality-gate outcome as surfaced in the PR body.
-
-    Attributes:
-        name: Human-readable gate name (e.g. ``"lint"``, ``"types"``,
-            ``"tests"``).
-        passed: ``True`` when the gate reported success.
-        detail: Optional extra context shown in parentheses next to the
-            gate name (e.g. ``"ruff: 0 findings"``).  May be empty.
-    """
-
-    name: str
-    passed: bool
-    detail: str = ""
 
 
 @dataclass(frozen=True)

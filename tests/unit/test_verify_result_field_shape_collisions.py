@@ -160,16 +160,6 @@ _PENDING_SHAPES: Final[tuple[_AllowedShape, ...]] = (
         ),
     ),
     _AllowedShape(
-        fields=frozenset({"detail", "name", "passed"}),
-        classes=frozenset({"GateResult", "ConformanceCheck", "ValidatorVerdict"}),
-        reason=(
-            "core/planning/run_summary.py, core/integrations/pr_gen.py, "
-            "core/interop/a2a_conformance.py and core/tokens/"
-            "compaction_validate.py declare one per-item check outcome under "
-            "four names. Pending consolidation."
-        ),
-    ),
-    _AllowedShape(
         fields=frozenset({"entries", "errors", "head_hash", "ok"}),
         classes=frozenset({"AdmissionVerification", "LedgerVerification"}),
         reason=(
@@ -179,32 +169,12 @@ _PENDING_SHAPES: Final[tuple[_AllowedShape, ...]] = (
         ),
     ),
     _AllowedShape(
-        fields=frozenset({"errors", "ok"}),
-        classes=frozenset({"ReceiptVerification", "ManifestVerification", "ProjectionVerification"}),
-        reason=(
-            "core/orchestration/sla_receipt.py, core/orchestration/"
-            "supervisor_receipt.py and core/sandbox/selection_receipt.py each "
-            "declare their own `ReceiptVerification`; core/lineage/c2pa.py and "
-            "core/observability/otel_projection.py declare the same shape "
-            "under two more names. Consolidating the receipt-side ones is part "
-            "of the receipt-protocol work, which owns the receipt fields."
-        ),
-    ),
-    _AllowedShape(
         fields=frozenset({"errors", "ok", "verified_key_id"}),
         classes=frozenset({"A2AReceiptVerification", "HeadSignatureVerification"}),
         reason=(
             "core/protocols/a2a/receipt.py and core/security/"
             "audit_head_signature.py verify a signature and report which key "
             "verified it. Pending consolidation."
-        ),
-    ),
-    _AllowedShape(
-        fields=frozenset({"failures", "ok"}),
-        classes=frozenset({"PolicyVerdict", "GateResult"}),
-        reason=(
-            "core/interop/a2a_consume.py and core/lineage/gate.py report a "
-            "list of failures behind a boolean. Pending consolidation."
         ),
     ),
     _AllowedShape(
@@ -435,3 +405,35 @@ def test_verify_result_is_frozen_so_a_failed_verification_cannot_be_flipped() ->
     outcome: VerifyResult[str] = VerifyResult(ok=False, reason="signature does not verify")
     with pytest.raises(FrozenInstanceError):
         outcome.ok = True  # type: ignore[misc]
+
+
+def test_receipt_verification_and_consolidated_outcomes_share_single_definitions() -> None:
+    """Consolidated `(errors, ok)`, `(detail, name, passed)`, and `(failures, ok)` types share one class each."""
+    from bernstein.core.integrations.pr_gen import GateResult as PrGateResult
+    from bernstein.core.interop.a2a_conformance import ConformanceCheck
+    from bernstein.core.interop.a2a_consume import PolicyVerdict
+    from bernstein.core.lineage.c2pa import ManifestVerification
+    from bernstein.core.lineage.gate import GateResult as LineageGateResult
+    from bernstein.core.observability.otel_projection import ProjectionVerification
+    from bernstein.core.orchestration.sla_receipt import ReceiptVerification as SlaReceiptVerification
+    from bernstein.core.orchestration.supervisor_receipt import ReceiptVerification as SupReceiptVerification
+    from bernstein.core.planning.run_summary import GateResult as SummaryGateResult
+    from bernstein.core.sandbox.selection_receipt import ReceiptVerification as SelReceiptVerification
+    from bernstein.core.tokens.compaction_validate import ValidatorVerdict
+    from bernstein.core.verify_result import CheckOutcome, FailuresResult, ReceiptVerification
+
+    for alias in (
+        SlaReceiptVerification,
+        SupReceiptVerification,
+        SelReceiptVerification,
+        ManifestVerification,
+        ProjectionVerification,
+    ):
+        assert alias is ReceiptVerification
+
+    for alias in (SummaryGateResult, PrGateResult, ConformanceCheck, ValidatorVerdict):
+        assert alias is CheckOutcome
+    assert CheckOutcome(name="jcs", passed=True).to_dict() == {"name": "jcs", "passed": True, "detail": ""}
+
+    for alias in (PolicyVerdict, LineageGateResult):
+        assert alias is FailuresResult
