@@ -176,7 +176,11 @@ __all__ = [
 
 
 class AnalysisEngine:
-    """Combines MetricsAggregator + OpportunityDetector into a single analysis pass."""
+    """Combines MetricsAggregator + OpportunityDetector into a single analysis pass.
+
+    Args:
+        collector: Source of historical task metrics for the analysis.
+    """
 
     def __init__(self, collector: MetricsCollector) -> None:
         self.collector = collector

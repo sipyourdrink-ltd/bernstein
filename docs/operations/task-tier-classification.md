@@ -19,6 +19,27 @@ This backend field is separate from the model classification below
 (`light`, `standard`, `heavy`, `critical`); it does not change classification
 or provider routing.
 
+## Routing declarations across restart
+
+Single and batch REST creation retain `model`, `effort`, `cli` and `requires`
+in task responses and the JSONL TaskStore. Model, effort and CLI pins are
+opaque optional strings: their spelling, case and empty-string values are
+preserved without aliases or normalization. Omission defaults to `null`.
+
+`requires` defaults to `[]`. It accepts at most 100 nonblank strings, each at
+most 1,000 characters; invalid declarations return HTTP 422 before persistence.
+Capability strings retain case, whitespace around nonblank content, order and
+duplicates. Request, stored-task and response lists are detached copies.
+
+On JSONL replay, the latest explicitly recorded value wins. A later record
+without these keys keeps the previous declarations; explicit `null` clears an
+optional pin and `[]` clears capabilities. Historical tasks without these keys
+retain `null` pins and an empty capability list. Replay does not rewrite them.
+
+These fields preserve the caller's declarations for later routing. They do not
+select or dispatch an executor, grant permissions or spending authority, or
+establish cross-fleet acceptance or delivery acknowledgment. Refs #6562.
+
 ## Model classification
 
 Bernstein can optionally map a task onto a small closed **tier**
@@ -73,6 +94,31 @@ Paths are taken from `Task.owned_files` and, when present,
 `metadata.labels` / `issue_labels` / `pr_labels` and `Task.tags`. Symbol
 counts come from `metadata.symbol_graph.node_count` (or
 `symbol_node_count`). Missing artefacts never raise.
+
+When reproducing the pure `extract_features` result, preserve input order and
+entries. The first recognized `size/{xs,s,m,l,xl}` label wins after trimming
+surrounding whitespace and ignoring case. Each nonblank path string counts
+separately, including repeated paths. Backslashes are normalized to slashes. The test
+flag is set to `1` if any path contains a component named `test`, `tests`
+or `testing`, or if its filename has the form `test_<name>.py` or
+`<stem>_test.py`. Matching is case-insensitive. The name in the prefix form
+must be nonempty. The stem in the suffix form must contain one or more
+Unicode alphanumeric characters or underscores. Both filename patterns also
+match before a single final line feed. For example, `src/order_flow_test.py`
+sets the flag and `src/order-flow_test.py` leaves it unset. Documentation-only paths are identified by a
+case-insensitive final suffix of `.md`, `.mdx`, `.rst`, `.txt`, `.adoc` or
+`.markdown`. They still count in `file_count` and can set `test_touched`, but
+do not contribute to `code_file_count`; all other nonblank paths do.
+
+For a worked check against the tests, `test_size_label_and_files_raise_tier`
+uses `size/xl`, eight `src/aN.py` paths, `tests/unit/test_a.py`, and 40 symbol
+nodes. That yields `(size_rank, file_count, test_touched, code_file_count,
+symbol_nodes) = (4, 9, 1, 9, 40)` and score `4 + 9 + 2 + 9 + 4 = 28`
+(`critical`, within that test's asserted `{heavy, critical}` result). The
+local `Task` case in `test_tier_models_selects_mapped_model` has `size/xs` and
+`README.md`: its features are `(0, 1, 0, 0, 0)` and its score is `1`.
+The test asserts the resulting `light` tier. These test inputs also show why documentation paths remain
+in the file total but not the code total.
 
 ### Score and bands
 

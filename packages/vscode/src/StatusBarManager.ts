@@ -11,7 +11,7 @@ export class StatusBarManager {
     );
     this.item.command = 'bernstein.showDashboard';
     this.item.text = '🎼 Bernstein';
-    this.item.tooltip = 'Bernstein Orchestrator - click to open dashboard (connecting…)';
+    this.item.tooltip = 'Bernstein - click to open dashboard (connecting…)';
     this.item.show();
   }
 

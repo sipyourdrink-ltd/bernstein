@@ -1,14 +1,14 @@
 ---
 name: bernstein-status
 description: >
-  Show Bernstein orchestrator status - active agents, task progress, costs, and alerts.
-  Use when the user asks about orchestrator status, what agents are doing, task progress,
+  Show Bernstein status for the orchestration run being inspected - active agents, task progress, costs, and alerts.
+  Use when the user asks about Bernstein status, what agents are doing, task progress,
   how much has been spent, or what's happening with the build.
 ---
 
 # Bernstein Status
 
-Show the current state of the Bernstein orchestrator.
+Show Bernstein status for the current orchestration run.
 
 ## When to Use
 

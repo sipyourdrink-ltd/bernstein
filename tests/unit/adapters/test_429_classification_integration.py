@@ -175,6 +175,104 @@ def test_standing_cap_propagates_through_classify_failure(tmp_path: Path) -> Non
     assert result.transient is False
 
 
+def test_standing_cap_followed_by_cli_diagnostics_is_not_retried(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    body = "HTTP 429\nThe spending limit has been reached.\nThe request was not completed."
+
+    with pytest.raises(StandingCapError) as excinfo:
+        _probe_once(adapter, log_path, body)
+
+    assert classify_failure(excinfo.value).transient is False
+    assert adapter.rate_limit_meter.hits_in_window() == 0
+
+
+@pytest.mark.parametrize("separate_stderr", [False, True], ids=["same-log", "separate-stderr"])
+def test_startup_configuration_does_not_turn_transient_429_into_standing_cap(
+    tmp_path: Path, separate_stderr: bool
+) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    configuration = "Loaded project spending limit: $10\n"
+    if separate_stderr:
+        _write_log(log_path.with_suffix(".stderr.log"), RETRYABLE_BODY)
+        _write_log(log_path, configuration)
+    else:
+        _write_log(log_path, configuration + RETRYABLE_BODY)
+
+    with pytest.raises(RateLimitError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 1
+
+
+def test_stderr_diagnostics_are_not_part_of_a_stdout_429_response(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    _write_log(log_path, "HTTP/2 429 Too Many Requests; retry in 3 seconds")
+    _write_log(log_path.with_suffix(".stderr.log"), "Loaded project spending limit: $10\nRequest failed.")
+
+    with pytest.raises(RateLimitError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 1
+
+
+def test_final_stderr_limit_error_takes_priority_over_earlier_stdout_429(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    log_path = tmp_path / "agent.log"
+    _write_log(log_path, "HTTP/2 429 Too Many Requests; retrying")
+    _write_log(log_path.with_suffix(".stderr.log"), "Fatal: quota exceeded. The spending limit has been reached.")
+
+    with pytest.raises(StandingCapError):
+        adapter._probe_fast_exit(_FakeProc(1), log_path, provider_name="probe")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 0
+
+
+@pytest.mark.parametrize(
+    "footer",
+    [
+        "INFO: Project spending limit: $10",
+        "INFO: Spending limit of $100 configured; request rate limit exceeded.",
+    ],
+)
+def test_configuration_footer_does_not_override_retryable_response(tmp_path: Path, footer: str) -> None:
+    adapter = _ProbeAdapter()
+    body = f"HTTP/1.1 429 Too Many Requests\nContent-Length: 21\n\nRetry after 3 seconds\n{footer}\nRequest failed."
+
+    with pytest.raises(RateLimitError):
+        _probe_once(adapter, tmp_path / "agent.log", body)
+
+    assert adapter.rate_limit_meter.hits_in_window() == 1
+
+
+def test_positive_credit_balance_in_diagnostics_does_not_suppress_retry(tmp_path: Path) -> None:
+    adapter = _ProbeAdapter()
+    body = "HTTP/2 429 Too Many Requests\nINFO: Current credit balance is $0.25.\nRequest failed."
+
+    with pytest.raises(RateLimitError):
+        _probe_once(adapter, tmp_path / "agent.log", body)
+
+    assert adapter.rate_limit_meter.hits_in_window() == 1
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Your credit balance is $0.00.",
+        "Your monthly spending limit of $20 has been reached.",
+        "You have run out of credit balance for this billing period.",
+    ],
+)
+def test_explicit_final_cap_messages_keep_existing_classification(tmp_path: Path, message: str) -> None:
+    adapter = _ProbeAdapter()
+    with pytest.raises(StandingCapError):
+        _probe_once(adapter, tmp_path / "agent.log", f"HTTP 429: {message}")
+
+    assert adapter.rate_limit_meter.hits_in_window() == 0
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: unrecognised 429 body falls back to retryable
 # ---------------------------------------------------------------------------

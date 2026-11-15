@@ -13,7 +13,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `compat_redirect_ledger.py` | Compatibility ledger for legacy ``bernstein.core`` redirects |
 | `credential_scoping.py`     | Agent credential scope minimization for least-privilege API keys |
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
-| `defaults.py`               | Centralized default values for the Bernstein orchestrator |
+| `defaults.py`               | Centralized default values for Bernstein, including scheduler, task, approval, |
 | `diff_paths.py`             | Which repository-relative paths a unified diff touches |
 | `finding_verify.py`         | FindingVerifyReceipt - lineage-attested receipts for finding verify results |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
@@ -179,6 +179,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `openai_agents.py`              | OpenAI Agents SDK v2 adapter |
 | `openai_agents_builtins.py`     | Opt-in builtin tools for the OpenAI Agents runner |
 | `openai_agents_runner.py`       | Python entrypoint that runs an OpenAI Agents SDK session |
+| `openclaw.py`                   | Run one embedded OpenClaw CLI turn per Bernstein task |
 | `opencode.py`                   | OpenCode CLI adapter |
 | `openhands.py`                  | OpenHands CLI adapter |
 | `osv_scanner.py`                | Feed-pinned OSV-Scanner adapter and SARIF normalization |
@@ -414,6 +415,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `prompts.py`          | Built-in MCP prompts for the Bernstein server |
 | `remote_transport.py` | Streamable HTTP transport for Bernstein MCP server |
 | `routine_tools.py`    | MCP tools for the rt-003 Routine <-> Scenario bridge |
+| `sdk_compat.py`       | Retain the 2025 Tasks wire contract on the MCP 2.3 SDK |
 | `server.py`           | Bernstein MCP server |
 | `signal_paths.py`     | Containment barrier for the MCP shutdown-signal path |
 | `streaming.py`        | In-flight tool-call tracking with cancellation and partial-result preservation |
@@ -426,7 +428,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | File              | Purpose |
 |-------------------|---------|
 | `comparative.py`  | Comparative Benchmark Suite for Bernstein |
-| `golden.py`       | Golden test suite for the Bernstein orchestrator |
+| `golden.py`       | Golden test suite for Bernstein, covering routing, planning, and execution outcomes |
 | `programbench.py` | ProgramBench evaluation harness for Bernstein |
 | `reproducible.py` | Reproducible benchmark suite for Bernstein |
 | `swe_bench.py`    | SWE-Bench evaluation harness for Bernstein |

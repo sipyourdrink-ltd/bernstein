@@ -42,6 +42,12 @@ CI_WF = WORKFLOWS / "ci.yml"
 RUNBOOK = Path("docs/operations/merge-queue.md")
 
 GATE_JOB_KEY = "ci-gate"
+DRAFT_GUARD = "github.event_name != 'pull_request' || !github.event.pull_request.draft"
+READY_PR_ONLY = "github.event_name == 'pull_request' && !github.event.pull_request.draft"
+_DRAFT_AWARE_NAME = re.compile(
+    r"\$\{\{\s*github\.event_name == 'pull_request' && github\.event\.pull_request\.draft"
+    r" && '[^']+' \|\| '([^']+)'\s*\}\}"
+)
 # Job `if:` expressions that reference these are event-shape dependent:
 # their truth value changes with `github.event_name`, so they may resolve
 # differently on a queued group than on the pull request.
@@ -244,6 +250,15 @@ def _can_run_on_a_web_change(doc: dict[str, Any]) -> bool:
     return True
 
 
+def _non_draft_check_name(job: dict[str, Any]) -> str | None:
+    """Resolve the draft guard's fallback on ready PRs and merge groups."""
+    name = job.get("name")
+    if not isinstance(name, str):
+        return None
+    match = _DRAFT_AWARE_NAME.fullmatch(name)
+    return match.group(1) if match else name
+
+
 def _emits_any(path: Path, doc: dict[str, Any], contexts: tuple[str, ...]) -> bool:
     """Whether the workflow publishes one of ``contexts`` as a check run.
 
@@ -258,7 +273,7 @@ def _emits_any(path: Path, doc: dict[str, Any], contexts: tuple[str, ...]) -> bo
     for job in jobs.values():
         if not isinstance(job, dict):
             continue
-        if any(job.get("name") == c or f"--name {c}" in text for c in contexts):
+        if any(_non_draft_check_name(job) == c or f"--name {c}" in text for c in contexts):
             return True
     return False
 
@@ -344,6 +359,12 @@ def test_emits_any_discriminates(tmp_path: Path) -> None:
     assert _emits_any(wf, {"jobs": {"a": {"name": "CI gate"}}}, ("CI gate",)) is True
     assert _emits_any(wf, {"jobs": {"a": {"name": "something else"}}}, ("CI gate",)) is False
     assert _emits_any(wf, {}, ("CI gate",)) is False
+    name = (
+        "${{ github.event_name == 'pull_request' && github.event.pull_request.draft"
+        " && 'CI deferred (draft)' || 'CI gate' }}"
+    )
+    assert _emits_any(wf, {"jobs": {"a": {"name": name}}}, ("CI gate",)) is True
+    assert _emits_any(wf, {"jobs": {"a": {"name": name}}}, ("CI deferred (draft)",)) is False
 
 
 def test_the_bundle_gate_publishes_a_required_context(
@@ -817,6 +838,49 @@ def test_ci_merge_group_trigger_carries_no_filter(ci_doc: dict[str, Any]) -> Non
     )
 
 
+def test_ci_runs_when_a_draft_is_marked_ready(ci_doc: dict[str, Any]) -> None:
+    pull_request = _on(ci_doc)["pull_request"]
+    assert set(pull_request["types"]) == {"opened", "synchronize", "reopened", "ready_for_review"}, (
+        "CI must run when a PR becomes ready without a new commit."
+    )
+
+
+def test_ci_draft_skips_runner_jobs(ci_jobs: dict[str, Any]) -> None:
+    root_jobs = {name: job for name, job in ci_jobs.items() if not job.get("needs")}
+    assert {"determine-changes", "lint", "plan-affected-tests"} <= root_jobs.keys()
+    for name, job in root_jobs.items():
+        expected = READY_PR_ONLY if name == "plan-affected-tests" else DRAFT_GUARD
+        assert job.get("if") == expected, f"Draft PRs must skip the {name} runner."
+
+    # Jobs with status functions can bypass GitHub's default dependency success check.
+    status_overrides = {
+        name for name, job in ci_jobs.items() if re.search(r"\b(?:always|cancelled|failure)\(\)", job.get("if", ""))
+    }
+    assert status_overrides == {GATE_JOB_KEY, "test", "test-macos"}
+    for name in ("test", "test-macos"):
+        condition = " ".join(ci_jobs[name]["if"].split())
+        assert "needs.determine-changes.result == 'success' &&" in condition
+        assert "needs.lint.result == 'success' &&" in condition
+
+    # The roll-up bypasses skipped dependencies with always(), so it needs its own guard.
+    gate = ci_jobs[GATE_JOB_KEY]
+    assert gate.get("if") == f"always() && !cancelled() && ({DRAFT_GUARD})"
+
+
+def test_ci_keeps_draft_ready_and_merge_group_runs_in_distinct_concurrency_groups(ci_doc: dict[str, Any]) -> None:
+    concurrency = ci_doc["concurrency"]
+    ordinary_push = (
+        "(github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && "
+        "!startsWith(github.event.head_commit.message, 'release:'))"
+    )
+    assert concurrency["group"] == (
+        "ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
+        "format('pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.draft && 'draft' || 'ready') || "
+        f"{ordinary_push} && format('branch-{{0}}', github.ref) || format('branch-{{0}}-{{1}}', github.ref, github.sha) }}}}"
+    )
+    assert concurrency["cancel-in-progress"] == f"${{{{ github.event_name == 'pull_request' || {ordinary_push} }}}}"
+
+
 def test_every_queue_required_context_has_a_merge_group_emitter(
     queue_required_contexts: tuple[str, ...],
 ) -> None:
@@ -844,7 +908,7 @@ def test_every_queue_required_context_has_a_merge_group_emitter(
             for context in queue_required_contexts:
                 # Either the job's own name is the context, or the job
                 # publishes it explicitly through the Checks API.
-                if job.get("name") == context or f"--name {context}" in text:
+                if _non_draft_check_name(job) == context or f"--name {context}" in text:
                     emitters[context].append(f"{path.name}::{key}")
 
     missing = sorted(c for c, found in emitters.items() if not found)
@@ -956,7 +1020,7 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
     """
     gate = ci_jobs[GATE_JOB_KEY]
     tolerated: set[str] = set()
-    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "POST_MERGE_PUSH_SKIPPABLE"):
+    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "POST_MERGE_PUSH_SKIPPABLE", "PR_ONLY_SKIPPABLE"):
         bucket = rollup_constants.get(name)
         assert bucket, f"the roll-up no longer declares {name}"
         tolerated |= set(bucket)
@@ -966,6 +1030,9 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
         job = ci_jobs.get(key)
         assert isinstance(job, dict), f"ci-gate needs `{key}`, which is not a job in ci.yml"
         condition = " ".join(str(job.get("if", "")).split())
+        # This guard is true on every merge group, so it introduces no queue skip.
+        if condition == DRAFT_GUARD:
+            continue
         if not any(marker in condition for marker in EVENT_SHAPE_MARKERS):
             continue
         if key not in tolerated:
@@ -975,15 +1042,35 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
         "these jobs are required by `CI gate` and gate themselves on the event shape, but no tolerance bucket in "
         f"the roll-up names them: {undeclared}. On a merge_group ref they may skip; an undeclared skip is flagged "
         "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or "
-        "POST_MERGE_PUSH_SKIPPABLE with "
+        "POST_MERGE_PUSH_SKIPPABLE or PR_ONLY_SKIPPABLE with "
         "the reason its skip is safe, or drop the event condition."
     )
+
+
+def test_merge_groups_avoid_unused_planning_and_advisory_jobs(ci_jobs: dict[str, Any]) -> None:
+    assert ci_jobs["plan-affected-tests"]["if"] == READY_PR_ONLY
+    assert ci_jobs["typecheck"]["if"] == "github.event_name != 'merge_group'"
+    gate_needs = ci_jobs[GATE_JOB_KEY]["needs"]
+    assert "typecheck" not in gate_needs
+    assert "pyright-strict-zone" in gate_needs
+    assert "adapter-conformance-windows" in gate_needs
+    for name in ("test", "test-macos"):
+        job = ci_jobs[name]
+        assert "plan-affected-tests" in job["needs"]
+        condition = " ".join(job["if"].split())
+        assert "!cancelled() &&" in condition
+        assert "needs.lint.result == 'success' &&" in condition
+        assert "needs.determine-changes.result == 'success' &&" in condition
+        assert (
+            "(needs.plan-affected-tests.result == 'success' || "
+            "(github.event_name != 'pull_request' && needs.plan-affected-tests.result == 'skipped'))" in condition
+        )
 
 
 def test_every_queue_required_context_emits_on_all_pull_requests_unconditionally(
     queue_required_contexts: tuple[str, ...],
 ) -> None:
-    """Every required check must emit on all PRs without being wedged by a paths filter (#4557).
+    """Every required check must emit on ready PRs despite paths filters (#4557).
 
     If an emitting workflow has a `paths` or `paths-ignore` filter on `pull_request`, it
     must have a companion stub (like `ci.yml` + `ci-gate-stub.yml`) covering non-matching paths,

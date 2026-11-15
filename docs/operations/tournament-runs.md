@@ -33,6 +33,39 @@ spec = TournamentSpec(
 )
 ```
 
+`TournamentSpec.from_task_dict(task)` also accepts either of these task
+mappings:
+
+```python
+nested_task = {
+    "tournament": {
+        "attempts": 3,
+        "evaluators": [{"name": "tests"}],
+    },
+}
+flat_task = {
+    "attempts": 3,
+    "evaluators": [{"name": "tests", "weight": 1.0, "higher_is_better": True}],
+    "tie_break": "attempt_hash",
+}
+
+nested_spec = TournamentSpec.from_task_dict(nested_task)
+flat_spec = TournamentSpec.from_task_dict(flat_task)
+assert nested_spec.spec_hash() == flat_spec.spec_hash()
+```
+
+An omitted evaluator `weight` defaults to `1.0`, and an omitted
+`higher_is_better` defaults to `True`. An omitted `tie_break` defaults to
+`"attempt_hash"` (stable ascending attempt-hash order). The hash comparison
+above checks that the nested declaration with omitted defaults and the flat
+declaration with those defaults written explicitly produce the same canonical
+specification.
+
+If a task contains both a `tournament` block and top-level tournament fields,
+the nested block is selected; the top-level fields are ignored. For example,
+`{"tournament": {"attempts": 3, "evaluators": [{"name": "tests"}]}, "attempts": 9}`
+parses as three attempts.
+
 `TournamentSpec.spec_hash()` is a `sha256:` content hash of the canonical
 spec, so the same declared tournament always hashes to the same value and can
 be pinned into the receipt for offline replay. `attempts` must be `>= 1`,
@@ -76,16 +109,31 @@ callback in the same `EvaluatorOutput` shape.
 Selection is a pure function of the outputs and the spec - no model, clock,
 or randomness:
 
-- Each evaluator contributes `weight * signal` to an attempt's blended score,
-  where `signal` is the clamped output value (or `1 - value` when
-  `higher_is_better=False`); a missing output scores as the worst case (`0`).
-  The sum is normalized by total weight.
+- For a present output, the scorer clamps its value to `[0, 1]`; its signal is
+  that clamped value when `higher_is_better=True`, or `1 - value` when
+  `higher_is_better=False`. The scorer sums `weight * signal` across evaluators
+  and divides by total weight (weighted normalization).
+- A missing output supplies a raw input of `0` before the direction is applied.
+  Thus it contributes a signal of `0` (and weighted contribution `0`) for
+  higher-is-better, but a signal of `1` (and weighted contribution equal to its
+  full weight) for lower-is-better. After normalization, these are respectively
+  `0` and that evaluator's weight divided by total weight.
+- For example, consider two evaluators: `latency` with weight `2` and
+  `higher_is_better=False`, and `coverage` with weight `1` and
+  `higher_is_better=True`. If coverage is `0.6` and latency is absent, the
+  latency input is `0`, so its lower-is-better signal is `1`; the blended score
+  is `(2 * 1 + 1 * 0.6) / 3 = 0.8667`. If latency is instead present with the
+  nonzero value `0.25`, its signal is `1 - 0.25 = 0.75`, and the score is
+  `(2 * 0.75 + 1 * 0.6) / 3 = 0.7`. Absence therefore does not mean a zero
+  final contribution for a lower-is-better evaluator.
 - Attempts rank by descending score, ties broken by ascending attempt hash.
 - The top-ranked attempt wins.
 
 Given the same outcomes and spec, `select_winner()` always returns the same
 winner regardless of input order, and `selection_projection_bytes()` (the
-bytes hashed into the receipt) is byte-identical across replays.
+bytes hashed into the receipt) is byte-identical across replays. Verification
+replays the same scorer over the recorded outputs, so the missing-output
+behavior and its effect on recorded scores and winners apply there as well.
 
 ## Inspecting and verifying a receipt
 

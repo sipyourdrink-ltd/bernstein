@@ -41,6 +41,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Set up uv
         uses: ./.github/actions/bootstrap

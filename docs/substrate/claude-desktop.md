@@ -77,15 +77,21 @@ project. Verify with `bernstein telemetry probe` after restarting the host.
 bernstein desktop-register --list
 ```
 
-The `claude-desktop` row should show `Registered: yes`. In Claude Desktop,
-the Bernstein tools appear in the MCP tool list once the app has
-restarted.
+The `claude-desktop` row should show `Registered: yes`, meaning the listing
+found a saved Bernstein entry in the config; it does not confirm that the
+running app loaded the tools. After restarting Claude Desktop, separately
+check that the Bernstein tools appear in its MCP tool list.
 
 For machine-readable output:
 
 ```bash
 bernstein desktop-register --list --json
 ```
+
+In the JSON listing, `registered: true` likewise means a saved Bernstein
+entry was found in the config, not that the running app loaded the tools.
+After restarting Claude Desktop, separately check that the Bernstein tools
+appear in its MCP tool list.
 
 ## Uninstall
 

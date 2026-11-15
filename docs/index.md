@@ -40,7 +40,7 @@ hide:
 
 ## What it does
 
-Bernstein takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
+Bernstein is the open-source governance layer for AI agents: it applies declared controls and records verifiable results. Its deterministic orchestration takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges code changes when the gates allow. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
 
 No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 
@@ -150,6 +150,7 @@ for offline client compliance review.
 | :material-wrench: [Configuration](operations/CONFIG.md) | bernstein.yaml reference |
 | :material-puzzle: [Adapter Guide](adapters/ADAPTER_GUIDE.md) | Supported agents and how to add your own |
 | :material-api: [API Reference](reference/openapi-reference.md) | Task server REST API |
+| :material-book-open-variant: [Glossary](reference/GLOSSARY.md) | Definitions for terms used throughout the documentation |
 | :material-connection: [Integrations](integrations.md) | what Bernstein bridges to, by the name you call it |
 | :material-sitemap: [Architecture](architecture/ARCHITECTURE.md) | How Bernstein works under the hood |
 | :material-state-machine: [Lifecycle FSM](architecture/LIFECYCLE.md) | Task and agent state machines with transition tables |

@@ -1,13 +1,13 @@
 # `bernstein-bench`: runnable, reproducibility-gated evaluation harness
 
-> Every number on the leaderboard carries its own proof.
+> Every bundle score carries its own proof.
 > A score that ships without a replayable receipt is indistinguishable from a hand-typed number.
 
 ---
 
 ## Overview
 
-`bernstein-bench` is the public evaluation surface for the Bernstein orchestrator.
+`bernstein-bench` is the public evaluation surface for Bernstein, the open-source governance layer for AI agents.
 Unlike the internal harness (which runs operator-scored tasks on the operator's own
 machine), `bernstein-bench` is designed so that:
 
@@ -24,7 +24,7 @@ machine), `bernstein-bench` is designed so that:
    conclusion that is only ever green over a baseline that was signed, from
    the same suite, and re-verified (#5458).
 
-The primary artefact is not a leaderboard row — it is a **submission bundle** whose
+The primary artefact is a **submission bundle** whose
 score is recomputable from the replayable run receipts it embeds.
 
 ---
@@ -47,12 +47,8 @@ bernstein bench run <suite>
                                          ▼
                               bernstein bench verify
                                          │
-                              MATCH  ────┤
-                            DIVERGED ────┘
-                                         │
                                          ▼
-                                    Leaderboard
-                              (only verified bundles)
+                                  MATCH or divergence
 ```
 
 ### Key invariants
@@ -65,7 +61,6 @@ bernstein bench run <suite>
 | No missing receipts | An empty/absent receipt fails the entire bundle |
 | Whole suite, once | The bundle must hold exactly one result for every suite task. An empty bundle, a subset, a repeated task or a task the suite does not define is `COVERAGE_MISMATCH`, however clean each present task replays |
 | Settings and ranking weight are attested | `lambda_value` is part of `bundle_hash` (so of the signature) whenever it is not the default, and `bench verify` recomputes `harness_fingerprint` from `scheduler_config` |
-| Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
 | Attributable | The bundle carries a detached Ed25519 JWS over its hash, made with the install identity. `bench verify` checks it against a key you supply with `--trusted-key FINGERPRINT=PATH` |
 
 Every hash above can be recomputed by whoever rebuilt the bundle, so they answer
@@ -99,11 +94,11 @@ per-task run receipts, scores them, records each task's tokens, USD cost
 and duration as the adapter reports them, and writes a signed
 `SubmissionBundle` to `my-bundle.json`.
 
-**Which suites have a production adapter.** Only `gate-evasion-v1` and
-`tool-surface-v1`. `golden-v1` and any `.json` suite you supply have no
-production adapter yet: they are scored by `MockReplayAdapter`, which passes
-every task with score 1.0 without evaluating any assertion. A mock-scored run
-therefore:
+**Which suites have a production adapter.** The harness uses production
+adapters for the `gate-evasion-v1`, `tool-surface-v1`, `goal-drift-v1`, and
+`leakage-v1` suite versions. Other versions, including `golden-v1`, use
+`MockReplayAdapter`, which passes every task with score 1.0 without evaluating
+any assertion. A mock-scored run therefore:
 
 - is **refused** unless you pass `--stub-signer`. The install identity will not
   sign a bundle whose verdicts nothing produced;
@@ -117,7 +112,7 @@ follows the same rule: without `--stub-signer` it refuses.
 
 ```bash
 # A mock-scored, stub-signed bundle (plumbing and tests only)
-bernstein bench run golden-v1 --out my-bundle.json --stub-signer
+bernstein bench run golden-v1 --out mock-bundle.json --stub-signer
 ```
 
 With `--budget <usd>`, the runner checks the cumulative spend before each
@@ -140,8 +135,12 @@ per-task receipts** — this is the empirical determinism property.
 ### 2. Verify the bundle
 
 ```bash
-bernstein bench verify my-bundle.json
+bernstein bench verify my-bundle.json --suite gate-evasion-v1 \
+  --trusted-key FINGERPRINT=public-key.pem
 ```
+
+Use the suite from the run and replace `FINGERPRINT` and `public-key.pem`
+with the signer's fingerprint and a trusted copy of the signer's public key.
 
 The verifier:
 
@@ -155,7 +154,8 @@ The verifier:
 3. Checks the results cover the suite exactly once: no task missing, repeated
    or unknown to the suite, and at least one result. A bundle that fails
    this is `COVERAGE_MISMATCH` even when every task present replays clean.
-4. Reports **MATCH** or names the exact task whose replay diverged.
+4. Reports **MATCH** when verification succeeds. A mismatch in a replayed
+   verdict or score fails verification and identifies the task.
 
 A bundle file edited after it was written does not load at all; `bench verify`
 reports that (the hash mismatch) and exits 1 rather than printing a verdict
@@ -165,30 +165,7 @@ For a suite scored by the mock adapter (see above) the replay is itself
 synthetic, so MATCH covers receipt integrity, coverage and the signature, and
 `bench verify` says so. It does not show that any task passed.
 
-Example output:
-
-```
-bundle_hash : 3f9a2c1d…
-suite_hash  : a7e4b82f…
-overall     : MATCH
-
-  ✓ file_io_read_write                       MATCH
-  ✓ refactor_rename_symbol                   MATCH
-  ✓ test_generation_happy_path               MATCH
-  ✓ lint_fix_unused_import                   MATCH
-  ✓ doc_update_docstring                     MATCH
-```
-
-### 3. Submit to the leaderboard
-
-Verify the bundle offline with `bernstein bench verify` before proposing a
-leaderboard entry. A bundle whose replayed runs fail to reproduce the claimed
-per-task outcomes fails verification.
-
-The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
-each row linking its bundle hash so anyone can re-verify.
-
-### 4. Compare two bundles
+### 3. Compare two bundles
 
 ```bash
 bernstein bench compare a.json b.json
@@ -241,7 +218,7 @@ the report and the harness verdict goes to stderr. The harness check
 gates every format: a cost delta across differing harness settings is
 as meaningless as a score delta.
 
-### 5. Report into CI (`--ci`, `--sarif-out`, `--baseline`)
+### 4. Report into CI (`--ci`, `--sarif-out`, `--baseline`)
 
 ```bash
 bernstein bench run gate-evasion-v1 --out run.json \
@@ -718,6 +695,31 @@ The `goal-drift-v1` suite evaluates long-running agent trajectories for deviatio
 
 Recorded evaluators can optionally attach a finite numeric `intent_score` to an event with a non-negative integer `step`. The drift curve exposes these values separately as `intent_scores`, for example `[{"step_index": 0, "intent_score": 0.8}, {"step_index": 2, "intent_score": 0.1}]`, sorted by step (preserving event order for scores at the same step). Missing or invalid scores are omitted; runs without scores expose an empty list. These are projections of recorded output only: no evaluator is called, and the hard step measurements, hard aggregates, step coverage, score, and threshold outcome remain independent of the intent values.
 
+### Recorded intent calibration
+
+A goal-drift trajectory payload may also carry `intent_calibration_records` as
+an array of existing calibration-log records: `ts`, `decision_kind`,
+`policy_path`, `predicted_prob` and boolean `observed_outcome`. Select the recorded
+calibration population applicable to that intent evaluator before supplying it.
+A unique, nonempty recorded `policy_path` is reported as the calibration version;
+it is not inferred from timestamps or fitted during benchmarking.
+
+The curve's separate `intent_calibration` section reports `status`, `version`,
+`sample_count` and the existing `CalibrationReport` representation (Brier, ECE and
+reliability buckets). Missing, malformed, zero-sample or mixed-version input is
+`unavailable`. This reports recorded calibration **quality**, not a newly fitted
+probability transform. It never changes raw intent values, hard measurements,
+coverage, score or threshold verdict.
+
+The adapter records only the consumed calibration fields in its receipt;
+arbitrary metadata and decision IDs are omitted. The scorer recomputes the
+summary from those recorded values instead of trusting a stored curve or reading
+the current calibration log. The same recorded inputs produce identical
+serialized output. Library callers can pass existing `CalibrationRecord` values
+via `evaluate_trajectory_drift(..., intent_calibration_records=records)`.
+
+
+
 Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 
 ---
@@ -798,8 +800,12 @@ Every way an agent change previously fooled or evaded a quality gate becomes a f
 bernstein bench run gate-evasion-v1 --out gate-evasion-bundle.json
 
 # Verify the evasion evaluation offline
-bernstein bench verify gate-evasion-bundle.json --suite gate-evasion-v1
+bernstein bench verify gate-evasion-bundle.json --suite gate-evasion-v1 \
+  --trusted-key FINGERPRINT=public-key.pem
 ```
+
+Set `FINGERPRINT` to the bundle signer's fingerprint and `public-key.pem` to the
+path to a trusted copy of the signer's public key in SPKI PEM format.
 
 ### Discovery & Corpus Structure
 
@@ -911,7 +917,19 @@ The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canarie
 | `pr_title_and_body` | `build_evidence_projection()` of an evidence bundle whose producer carried the canaries | clean — the projection references the bundle without embedding evidence |
 | `journal`, `receipts`, `telemetry_export` | a governed run | not exercised |
 
-Run it with `bernstein bench run leakage-v1 --out leakage.json` and verify with `bernstein bench verify leakage.json --suite leakage-v1`. The nonce is fresh per run, so two bundles differ by design; a canary that survived one run must not match the next.
+Run the suite and verify the resulting bundle offline:
+
+```bash
+bernstein bench run leakage-v1 --out leakage.json
+bernstein bench verify leakage.json --suite leakage-v1 \
+  --trusted-key FINGERPRINT=public-key.pem
+```
+
+Set `FINGERPRINT` to the bundle signer's fingerprint and `public-key.pem` to the
+path to a trusted copy of the signer's public key in SPKI PEM format.
+
+The nonce is fresh per run, so two bundles differ by design. A canary that
+survived one run must not match the next.
 
 ### What the suite does not cover, and says so
 

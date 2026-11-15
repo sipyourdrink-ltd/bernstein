@@ -21,16 +21,12 @@ so two identical runs produce byte-equal artefacts.
 ## How to use it
 
 ```python
-from bernstein.eval.ab_runner import (
-    Variant,
-    Task,
-    run_ab,
-)
+import json
 
-variants = [
-    Variant(name="reviewer-v1", prompt="..."),
-    Variant(name="reviewer-v2", prompt="..."),
-]
+from bernstein.eval.ab_runner import RunResult, Task, Variant, run_ab
+
+baseline = Variant(name="reviewer-v1", prompt="...")
+candidate = Variant(name="reviewer-v2", prompt="...")
 
 tasks = [
     Task(task_id="t-001", input={"diff": "..."}, expected="approve"),
@@ -39,36 +35,38 @@ tasks = [
 
 
 def my_executor(variant, task):
-    # Synthetic in tests; live adapter call in production
-    return {"verdict": "approve"}
+    # Synthetic output for this example
+    return RunResult(
+        variant=variant.name,
+        task_id=task.task_id,
+        output={"verdict": "approve"},
+        score=0.0,
+    )
 
 
-def my_scorer(result, task):
-    # Returns a float in [0.0, 1.0]
-    return 1.0 if result["verdict"] == task.expected else 0.0
+def my_scorer(variant, task, output):
+    passed = output["verdict"] == task.expected
+    return float(passed), passed
 
 
 comparison = run_ab(
-    variants=variants,
+    variant_a=baseline,
+    variant_b=candidate,
     tasks=tasks,
     executor=my_executor,
     scorer=my_scorer,
 )
-
-# Comparison serialises deterministically
-import json
 
 artefact = json.dumps(comparison.to_dict(), sort_keys=True, indent=2)
 ```
 
 The output carries:
 
-- One `RunResult` per `(variant, task)` pair (output, score,
-  duration, pass flag).
-- `VariantStats` per variant (count, pass rate, mean score, p50,
-  p95).
-- A pairwise winner annotation per task so a downstream report
-  can tally "v2 beat v1 on N tasks".
+- `VariantStats` for each variant with the task count, pass count,
+  pass rate, mean score, and mean duration.
+- One score delta per task in input order. Positive values favor the
+  candidate.
+- An overall winner and the reason for that decision.
 
 ## Live model-vs-model A/B
 

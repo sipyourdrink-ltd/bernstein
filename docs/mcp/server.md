@@ -8,8 +8,9 @@ client at the server. For the per-tier tool catalogue see
 
 ## Execution readiness (#6645)
 
-The task server exposes coordinator observations. The MCP projection,
-scheduler and dispatch evidence, and opt-in synthetic probe are proposed.
+The task server exposes coordinator observations. The MCP status projection is
+shipped for valid, versioned coordinator evidence; scheduler and dispatch
+evidence, and the opt-in synthetic probe, remain proposed.
 
 ### Root cause
 
@@ -23,32 +24,37 @@ bridge package, not the remote coordinator.
 ### Coordinator status evidence
 
 The task server includes `execution_readiness` in `GET /status`, scoped to
-the same tenant as the task counts. The coordinator reports its package
-version and observation time. Drain blocks worker claims. Read-only mode is
-reported as an observation with unknown dispatch capacity because workers can
-claim through a GET route. Scheduler ownership remains unknown. This response is an observation with no expiry guarantee. The MCP
-bridge's version and status schema are independent of this server projection.
+the same tenant as the task counts. For schema version 1 evidence with a
+valid coordinator observation, `bernstein_status` adds an optional `readiness`
+object. It keeps the MCP bridge's transport observation and package version
+separate from the coordinator's observed version. The aggregate and coordinator
+states are `unknown`; scheduler and dispatch states are also `unknown` because
+this projection does not claim scheduler ownership or worker eligibility.
+Drain blocks worker claims. Read-only mode is reported as an observation with
+unknown dispatch capacity because workers can claim through a GET route. This
+response is an observation with no expiry guarantee. The bridge's version and
+status schema are independent of this server projection.
 
 ### Proposed boundary
 
 - Preserve the existing `live`, count, cost, error and hint semantics and the
-  existing `/health/ready` load-balancer contract. Add an optional nested
-  `readiness` object to both MCP status output schemas, backed by
-  `/status.execution_readiness` once scheduler and dispatch evidence are
-  available. The bridge adds its transport observation and
-  computes the aggregate; status reads never create tasks, call models,
+  existing `/health/ready` load-balancer contract. Extend the shipped optional
+  `readiness` projection with scheduler and dispatch evidence when that future
+  evidence is available. The bridge adds its transport observation and
+  computes any future aggregate; status reads never create tasks, call models,
   claim capacity or change the queue.
-- Use `readiness.schema_version = 1`, an aggregate `state` in
-  `ready | blocked | unknown`, and separate `transport`, `coordinator`,
-  `scheduler` and `dispatch` components. Each component carries `state`,
+- For the future scheduler/dispatch extension, retain
+  `readiness.schema_version = 1` and define an aggregate `state` in
+  `ready | blocked | unknown`, with separate `transport`, `coordinator`,
+  `scheduler` and `dispatch` components. Extend components to carry `state`,
   `reason_codes`, `source`, `observed_at`, `expires_at` and `provenance`.
   Timestamps are UTC RFC 3339 strings or `null` when unobserved; provenance
   binds evidence to the authorized tenant and queue. Scheduler evidence also
   names the owner and run identity. Do not expose other tenants' identities.
 - The bridge stamps only its own transport observation and package version.
-  The coordinator supplies its observed version, coordinator identity and
-  active run identity, independently of the bridge. Missing remote metadata
-  remains `null`; do not substitute the local package version.
+  Future coordinator evidence may include its observed version, coordinator
+  identity and active run identity, independently of the bridge. Missing
+  remote metadata remains `null`; do not substitute the local package version.
 - Define transport as responsiveness, coordinator as successful authenticated
   access to the requested queue, scheduler as current queue ownership with a
   fresh heartbeat, and dispatch as current eligibility for at least one task
@@ -84,9 +90,10 @@ bridge's version and status schema are independent of this server projection.
   readiness: completed, independently verified work is stronger evidence
   than HTTP 200, process liveness or a registered-node count.
 
-### Numbered implementation test matrix
+### Implementation and proposed test matrix
 
-These are proposed tests, not implemented or reported as passing:
+The shipped coordinator-version projection regression is listed at 8. All other
+tests below are proposals, not implemented or reported as passing:
 
 1. `test_unreachable_coordinator_preserves_transport_liveness`: a responding
    bridge keeps `live: true`, while remote evidence cannot become ready.
@@ -103,8 +110,10 @@ These are proposed tests, not implemented or reported as passing:
    healthy fixture is ready only when all four components match the scope.
 7. `test_legacy_coordinator_readiness_is_unknown`: an old response keeps its
    existing count/cost fields and cannot fabricate remote telemetry.
-8. `test_bridge_and_coordinator_versions_have_distinct_provenance`: different
-   bridge/remote versions and run identities survive the public projection.
+8. `test_status_projects_coordinator_version_separately_from_bridge`: valid
+   versioned coordinator evidence produces an optional readiness projection
+   with separate bridge/coordinator versions and unknown aggregate, scheduler
+   and dispatch states.
 9. `test_readiness_schema_covers_success_outage_and_tenant_scope`: validate
    both MCP output schemas and ensure cross-tenant evidence is inaccessible.
 10. `test_status_never_starts_an_execution_probe`: repeated reads cannot

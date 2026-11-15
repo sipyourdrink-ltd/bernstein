@@ -14,6 +14,7 @@ import fnmatch
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -328,12 +329,14 @@ def _matches_webhook(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     """Filter logic for webhook triggers."""
     filters = trigger.filters
     path_filter = filters.get("path")
-    if path_filter and event.metadata.get("request_path") != path_filter:
+    if path_filter and not _glob_match_any([path_filter], [event.metadata.get("request_path", "")]):
         return False
     method_filter = filters.get("method")
     if method_filter and event.metadata.get("request_method") != method_filter:
         return False
     header_filters: dict[str, str] = filters.get("headers", {})
+    if event.metadata.get("webhook_headers_unverified"):
+        return True
     request_headers: dict[str, str] = event.metadata.get("request_headers", {})
     return all(request_headers.get(key, "") == expected for key, expected in header_filters.items())
 
@@ -478,12 +481,15 @@ class TriggerGateResult:
     skip creating its task. When it is not suppressed, the caller must create
     the task and then call :meth:`TriggerManager.record_fire` with
     ``dedup_key`` so later cooldown/dedup checks see this fire.
+    ``dedup_expires_at`` identifies the particular reservation, so a reused
+    key cannot be confirmed by an outcome from an expired reservation.
     """
 
     trigger_name: str | None
     suppressed: bool
     reason: str | None
     dedup_key: str | None
+    dedup_expires_at: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -700,14 +706,19 @@ class TriggerManager:
         loaded at construction and says nothing about what another process
         claimed since.
         """
+        return self._claim_dedup_reservation(dedup_key, ttl_s)[0]
+
+    def _claim_dedup_reservation(self, dedup_key: str, ttl_s: int) -> tuple[bool, float]:
+        """Return the claim decision and its reservation expiry under one lock."""
         with self._dedup_lock():
             self._load_dedup_cache()
             expiry = self._dedup_cache.get(dedup_key)
             if expiry is not None and expiry > time.time():
-                return False
-            self._dedup_cache[dedup_key] = time.time() + ttl_s
+                return False, expiry
+            expiry = time.time() + ttl_s
+            self._dedup_cache[dedup_key] = expiry
             self._save_dedup_cache()
-            return True
+            return True, expiry
 
     # -- Cron state ---------------------------------------------------------
 
@@ -766,16 +777,18 @@ class TriggerManager:
 
     # -- Fire log -----------------------------------------------------------
 
-    def _record_fire(self, record: TriggerFireRecord) -> None:
+    def _record_fire(self, record: TriggerFireRecord, *, dedup_expires_at: float | None = None) -> None:
         """Append a fire record to the fire log."""
         path = self._runtime_dir / _FIRE_LOG_FILENAME
         entry = asdict(record)
         if record.cooldown_scope is None:
             entry.pop("cooldown_scope")
+        if dedup_expires_at is not None:
+            entry["dedup_expires_at"] = dedup_expires_at
         with path.open("a") as f:
             f.write(json.dumps(entry) + "\n")
 
-    def _last_fire_time(self, trigger_name: str, *, scope: str | None = None) -> float | None:
+    def _last_fire_time(self, trigger_name: str, *, scope: str | None = None, strict: bool = False) -> float | None:
         """Return the most recent PRODUCTIVE fire timestamp for a trigger, or None.
 
         The cooldown clock is driven from this, and a fire that produced nothing
@@ -789,21 +802,31 @@ class TriggerManager:
         existed were all real fires that created a task.
         """
         path = self._runtime_dir / _FIRE_LOG_FILENAME
-        if not path.exists():
-            return None
         last: float | None = None
         try:
             for line in path.read_text().strip().split("\n"):
                 if not line:
                     continue
                 entry = json.loads(line)
+                if not isinstance(entry, dict):
+                    if strict:
+                        raise ValueError("Invalid trigger history row")
+                    continue
                 if (
                     entry.get("trigger_name") == trigger_name
                     and entry.get("produced", True)
                     and (scope is None or entry.get("cooldown_scope") == scope)
                 ):
                     last = entry.get("fired_at")
+                    if strict and (
+                        not isinstance(last, (int, float)) or isinstance(last, bool) or not math.isfinite(last)
+                    ):
+                        raise ValueError("Invalid trigger history timestamp")
+        except FileNotFoundError:
+            return None
         except (json.JSONDecodeError, OSError):
+            if strict:
+                raise
             logger.warning("Error reading fire log")
         return last
 
@@ -839,9 +862,17 @@ class TriggerManager:
     def _check_conditions(self, trigger: TriggerConfig, event: TriggerEvent) -> str | None:
         """Check trigger conditions. Returns suppression reason or None if all pass."""
         conditions = trigger.conditions
+        if (
+            event.source == "webhook"
+            and event.metadata.get("webhook_headers_unverified")
+            and trigger.filters.get("headers")
+        ):
+            return "header filters require authenticated headers"
 
-        scope = event.metadata.get("cooldown_scope") if event.source == "gitlab_webhook" else None
-        reason = self._check_cooldown(trigger.name, conditions, scope=scope)
+        scope = event.metadata.get("cooldown_scope") if event.source in {"gitlab_webhook", "webhook"} else None
+        reason = self._check_cooldown(
+            trigger.name, conditions, scope=scope, strict=bool(event.metadata.get("webhook_headers_unverified"))
+        )
         if reason:
             return reason
 
@@ -859,12 +890,16 @@ class TriggerManager:
 
         return None
 
-    def _check_cooldown(self, trigger_name: str, conditions: dict[str, Any], *, scope: str | None = None) -> str | None:
+    def _check_cooldown(
+        self, trigger_name: str, conditions: dict[str, Any], *, scope: str | None = None, strict: bool = False
+    ) -> str | None:
         """Return suppression reason if cooldown has not elapsed."""
         cooldown_s = conditions.get("cooldown_s", 0)
+        if strict and (type(cooldown_s) not in (int, float) or not math.isfinite(cooldown_s)):
+            raise ValueError("Invalid webhook cooldown")
         if cooldown_s <= 0:
             return None
-        last = self._last_fire_time(trigger_name, scope=scope)
+        last = self._last_fire_time(trigger_name, scope=scope, strict=strict)
         if last is not None and (time.time() - last) < cooldown_s:
             return f"cooldown (last fired {int(time.time() - last)}s ago, cooldown={cooldown_s}s)"
         return None
@@ -1022,6 +1057,7 @@ class TriggerManager:
         *,
         produced: bool = True,
         cooldown_scope: str | None = None,
+        dedup_expires_at: float | None = None,
     ) -> None:
         """Record a trigger fire after task creation succeeds.
 
@@ -1043,7 +1079,7 @@ class TriggerManager:
             produced=produced,
             cooldown_scope=cooldown_scope,
         )
-        self._record_fire(record)
+        self._record_fire(record, dedup_expires_at=dedup_expires_at)
 
     # -- Direct-route governance ---------------------------------------------
 
@@ -1076,26 +1112,31 @@ class TriggerManager:
             # An enabled trigger for this source has matching filters -
             # governance now applies to this event.
             dedup_key = compute_dedup_key(trigger.name, event)
-            reason = self._check_conditions(trigger, event)
-            if event.source == "gitlab_webhook":
-                # GitLab reconciles delivery outcomes before accepting cooldown.
+            dedup_expires_at = None
+            if event.source in {"gitlab_webhook", "webhook"}:
+                # A reserved delivery is reconciled even when cooldown history is unavailable.
                 with self._dedup_lock():
                     self._load_dedup_cache()
-                    if self._check_dedup(dedup_key):
-                        reason = "deduplicated"
-            elif reason is None and self._check_dedup(dedup_key):
-                reason = "deduplicated"
+                    reserved = self._check_dedup(dedup_key)
+                    if reserved:
+                        dedup_expires_at = self._dedup_cache[dedup_key]
+                reason = "deduplicated" if reserved else self._check_conditions(trigger, event)
+            else:
+                reason = self._check_conditions(trigger, event)
+                if reason is None and self._check_dedup(dedup_key):
+                    reason = "deduplicated"
             if reason is not None:
                 logger.info("Trigger %s suppressed a direct %s task: %s", trigger.name, event.source, reason)
-                return TriggerGateResult(trigger.name, True, reason, None)
+                return TriggerGateResult(trigger.name, True, reason, None, dedup_expires_at)
 
             cooldown_s = trigger.conditions.get("cooldown_s", 300)
-            if not self.claim_dedup(dedup_key, max(cooldown_s, 300)):
+            claimed, dedup_expires_at = self._claim_dedup_reservation(dedup_key, max(cooldown_s, 300))
+            if not claimed:
                 logger.info("Trigger %s suppressed a direct %s task: deduplicated", trigger.name, event.source)
-                return TriggerGateResult(trigger.name, True, "deduplicated", None)
+                return TriggerGateResult(trigger.name, True, "deduplicated", None, dedup_expires_at)
             self._record_rate()
             logger.info("Trigger %s governance passed for a direct %s task", trigger.name, event.source)
-            return TriggerGateResult(trigger.name, False, None, dedup_key)
+            return TriggerGateResult(trigger.name, False, None, dedup_key, dedup_expires_at)
 
         if self._config_unreadable:
             return TriggerGateResult("triggers.yaml", True, "trigger policy unavailable", None)

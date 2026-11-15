@@ -3,17 +3,67 @@
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
+from typing import IO, TYPE_CHECKING
 
 import pytest
 
+from bernstein.core.persistence import file_locks
 from bernstein.core.planning.schedule_store import (
+    FIRE_CURSOR_KEY,
     CronParseError,
     ScheduleStore,
     _canonical_schedule_id,
     parse_cron,
     validate_cron,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def _overlap_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    target: Path,
+    first_write: Callable[[], None],
+    second_write: Callable[[], None],
+) -> None:
+    first_at_publish = Event()
+    release_first = Event()
+    real_replace = os.replace
+    real_try_lock = file_locks._os_try_lock
+
+    def publish(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        if Path(dst) != target:
+            real_replace(src, dst)
+        elif first_at_publish.is_set():
+            real_replace(src, dst)
+            release_first.set()
+        else:
+            first_at_publish.set()
+            # A second writer either published, or attempted to lock the
+            # record before reading the first writer's pending update.
+            assert release_first.wait(timeout=30)
+            real_replace(src, dst)
+
+    def observe_contention(handle: IO[bytes]) -> bool:
+        acquired = real_try_lock(handle)
+        if not acquired:
+            release_first.set()
+        return acquired
+
+    monkeypatch.setattr(os, "replace", publish)
+    monkeypatch.setattr(file_locks, "_os_try_lock", observe_contention)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(first_write)
+        assert first_at_publish.wait(timeout=30)
+        second = pool.submit(second_write)
+        first.result(timeout=60)
+        second.result(timeout=60)
+
 
 # ---------------------------------------------------------------------------
 # Cron parser
@@ -188,6 +238,49 @@ class TestScheduleStoreUpdateLastFire:
         reloaded = store.get(schedule.id)
         assert reloaded is not None
         assert reloaded.last_fire_at == pytest.approx(1_700_000_000.0)
+
+    def test_concurrent_fire_updates_both_commit(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="0 9 * * *", goal="Daily digest")
+        target = store.directory / f"{schedule.id}.json"
+        fire_time = 1_700_000_000.0
+        second = ScheduleStore(tmp_path)
+        _overlap_writes(
+            monkeypatch,
+            target,
+            lambda: store.update_last_fire(schedule.id, fire_time),
+            lambda: second.update_last_fire(schedule.id, fire_time),
+        )
+
+        reloaded = store.get(schedule.id)
+        assert reloaded is not None
+        assert reloaded.last_fire_at == fire_time
+        assert list(store.directory.glob("*.json*")) == [target]
+
+    @pytest.mark.parametrize("use_case_alias", [False, True], ids=["canonical-id", "case-alias"])
+    def test_concurrent_fire_and_cursor_updates_preserve_both_fields(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use_case_alias: bool
+    ) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="0 9 * * *", goal="Daily digest")
+        target = store.directory / f"{schedule.id}.json"
+        cursor_id = schedule.id.upper() if use_case_alias else schedule.id
+        second = ScheduleStore(tmp_path)
+        if second.get(cursor_id) is None:
+            pytest.skip("schedule directory is case-sensitive")
+
+        fire_time = 1_700_000_000.0
+        cursor_time = fire_time + 60
+        _overlap_writes(
+            monkeypatch,
+            target,
+            lambda: store.update_last_fire(schedule.id, fire_time),
+            lambda: second.advance_fire_cursor(cursor_id, cursor_time),
+        )
+
+        reloaded = store.get(schedule.id)
+        assert reloaded is not None
+        assert (reloaded.last_fire_at, reloaded.extra.get(FIRE_CURSOR_KEY)) == (fire_time, cursor_time)
 
 
 class TestScheduleStoreLoadCorrupt:

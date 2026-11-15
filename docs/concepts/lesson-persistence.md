@@ -82,7 +82,10 @@ assigned to an agent and calls `gather_lessons_for_context()`. That function:
 
 1. Loads lessons via `get_lessons_for_agent()`, keeping only entries whose
    tags overlap the task tags.
-2. Ranks by `tag_overlap + decayed_confidence`, descending.
+2. Ranks by `tag_overlap + decayed_confidence`, descending. `decayed_confidence`
+   is the read-time confidence after age adjustment, calculated from the saved
+   `confidence` value; the saved value remains the original input to that
+   calculation and is not changed by age-based decay.
 3. Formats up to 5 lessons as a `## Prior Agent Lessons` markdown block,
    each with type, tags, confidence, source task, and (if stale) a
    staleness note.

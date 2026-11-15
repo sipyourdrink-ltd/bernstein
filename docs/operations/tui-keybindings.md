@@ -11,40 +11,45 @@ Bindings resolve in three layers, highest priority last:
 
 1. **Defaults** — `DEFAULT_BINDINGS` (`src/bernstein/cli/keybindings.py`)
    plus `EXTENDED_BINDINGS` (`src/bernstein/tui/keybinding_config.py`).
-2. **Project YAML** — a `keybindings:` section in `bernstein.yaml`, looked
-   up in the current directory first, then `~/.bernstein/bernstein.yaml`.
+2. **Project YAML** — the first existing file found is selected: `bernstein.yaml`
+   in the current directory, then `~/.bernstein/bernstein.yaml`. The selected
+   file is used as a whole; if it has no `keybindings:` section, the YAML
+   override layer is empty and the loader does not fall back to the other file.
 3. **User JSON** — `~/.bernstein/keybindings.json`, applied last, so it
    wins over both defaults and the project YAML.
 
+For example, in `bernstein.yaml`:
+
 ```yaml
-# bernstein.yaml
 keybindings:
   quit: "Q"
   refresh: "F5"
-  toggle_split_pane: "ctrl+l"
-  copy_task_id: "ctrl+y"
-  command_palette: "ctrl+p"
 ```
 
+And in `~/.bernstein/keybindings.json`:
+
 ```json
-// ~/.bernstein/keybindings.json
 {
-  "quit": "Q",
-  "command_palette": "ctrl+p"
+  "quit": "X"
 }
 ```
+
+The resolved `quit` binding is `X` from JSON, while `refresh` remains `F5`
+from YAML. Each layer only overrides actions it names; every other known
+action keeps its binding from the preceding layer. Overrides for action names
+the resolver does not know are ignored.
 
 Each layer maps an **action name** (e.g. `quit`, `toggle_split_pane`) to a
 **key combination** (e.g. `"Q"`, `"ctrl+l"`). An override only replaces
 the key for that one action; every action without an override keeps its
-default.
+previous binding (or its default if no earlier layer overrides it).
 
 ## Reserved keys
 
-`ctrl+c` and `ctrl+d` can never be rebound. Both the YAML loader and the
-JSON loader check the requested key against this reserved set before
-applying it; a reserved-key override is skipped (the action keeps its
-previous binding) and a warning is logged.
+`ctrl+c` and `ctrl+d` can never be rebound. If an override requests either
+reserved key, it is skipped, the action keeps its binding from the preceding
+layer (or its default), and a warning is logged. This applies to YAML and JSON
+overrides.
 
 ## How it's wired into the TUI
 

@@ -288,7 +288,7 @@ class ExpertCostPanel(Static):
             for model, cost in sorted(per_model.items(), key=lambda x: -x[1])[:6]:
                 short = model.replace("claude-", "").replace("-2025", "")[:20]
                 bar_w = 8
-                ratio = cost / spent if spent > 0 else 0.0
+                ratio = min(1.0, max(0.0, cost / spent)) if spent > 0 else 0.0
                 filled = int(ratio * bar_w)
                 bar = "\u2588" * filled + "\u2591" * (bar_w - filled)
                 t.append(f"  {short:<20}", style="bold")

@@ -2,7 +2,7 @@
 // Source of truth: design_handoff_bernstein_phase1/design-source/screens/screen-approvals.jsx
 // + README §6.03 (Approvals specs) and §8 (states contract).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, Check, X } from 'lucide-react';
 import { ApiError, apiGet, apiPost } from '@/lib/api';
@@ -162,6 +162,9 @@ export default function Approvals() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const decisionInFlight = useRef(false);
+  const queueHeading = useRef<HTMLHeadingElement>(null);
+  const queueList = useRef<HTMLUListElement>(null);
+  const decisionFocus = useRef<{ row: HTMLButtonElement; restore: boolean } | null>(null);
   // Re-render once a second so wait timers tick without refetching.
   const [now, setNow] = useState<number>(() => Date.now());
 
@@ -241,51 +244,83 @@ export default function Approvals() {
     onSettled: () => { decisionInFlight.current = false; },
   });
 
-  const submitDecision = useCallback((decision: Decision) => {
+  useEffect(() => {
+    const trackFocus = ({ target }: FocusEvent) => {
+      const focus = decisionFocus.current;
+      if (focus?.row.isConnected && target instanceof Node && target !== document.body) {
+        focus.restore = focus.row.contains(target);
+      }
+    };
+    // Clicking non-focusable content can leave focus on the body before refresh.
+    const trackPointer = ({ target }: PointerEvent) => {
+      const focus = decisionFocus.current;
+      if (focus && target instanceof Node && !focus.row.contains(target)) {
+        focus.restore = false;
+      }
+    };
+    const cancelRestoration = () => {
+      const focus = decisionFocus.current;
+      if (focus) focus.restore = false;
+    };
+    document.addEventListener('focusin', trackFocus, true);
+    document.addEventListener('pointerdown', trackPointer, true);
+    window.addEventListener('blur', cancelRestoration);
+    return () => {
+      document.removeEventListener('focusin', trackFocus, true);
+      document.removeEventListener('pointerdown', trackPointer, true);
+      window.removeEventListener('blur', cancelRestoration);
+    };
+  }, []);
+
+  useEffect(() => {
+    const focus = decisionFocus.current;
+    if (!focus) return;
+    if (focus.row.isConnected) {
+      if (!isResolving) decisionFocus.current = null;
+      return;
+    }
+
+    decisionFocus.current = null;
+    if (!focus.restore || !document.hasFocus() || document.activeElement !== document.body) return;
+    const nextRow =
+      queueList.current?.querySelector<HTMLButtonElement>('button[aria-current="true"]') ??
+      queueList.current?.querySelector<HTMLButtonElement>('button[data-approval-id]');
+    (nextRow ?? queueHeading.current)?.focus();
+  }, [isResolving, pending]);
+
+  const submitDecision = useCallback((decision: Decision, row?: HTMLButtonElement) => {
     if (queueQ.isError || isResolving || decisionInFlight.current || !selected?.nonce) {
       return;
     }
     decisionInFlight.current = true;
+    decisionFocus.current = row ? { row, restore: true } : null;
     resolve({ approval: selected, decision });
   }, [queueQ.isError, isResolving, selected, resolve]);
 
-  const moveSelection = (delta: 1 | -1) => {
-    if (pending.length === 0) return;
-    const idx = pending.findIndex((a) => a.id === selectedId);
-    const next = idx === -1 ? 0 : (idx + delta + pending.length) % pending.length;
-    setSelectedId(pending[next].id);
-  };
+  function handleQueueKey(event: KeyboardEvent<HTMLUListElement>) {
+    const { target, key } = event;
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!(target instanceof HTMLButtonElement) || !target.dataset.approvalId) return;
 
-  // Keyboard shortcuts: A approve · D deny · ↑/↓ navigate.
-  useEffect(() => {
-    if (queueQ.isError) return;
-    const onKey = (e: KeyboardEvent) => {
-      // Don't fight form inputs.
-      const target = e.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) {
-          return;
-        }
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        moveSelection(1);
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        moveSelection(-1);
-      } else {
-        const key = e.key.toLowerCase();
-        if ((key !== 'a' && key !== 'd') || e.repeat) return;
-        e.preventDefault();
-        submitDecision(key === 'a' ? 'allow' : 'reject');
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, pending, queueQ.isError, submitDecision]);
+    if (key === 'ArrowDown' || key === 'ArrowUp') {
+      const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[data-approval-id]'));
+      const index = buttons.indexOf(target);
+      if (index < 0) return;
+      const offset = key === 'ArrowDown' ? 1 : -1;
+      const next = buttons[(index + offset + buttons.length) % buttons.length];
+      event.preventDefault();
+      setSelectedId(next.dataset.approvalId ?? null);
+      next.focus();
+      return;
+    }
+
+    // A focused but unselected row must never decide a different request.
+    if (target.dataset.approvalId !== selectedId || event.repeat) return;
+    const shortcut = key.toLowerCase();
+    if (shortcut !== 'a' && shortcut !== 'd') return;
+    event.preventDefault();
+    submitDecision(shortcut === 'a' ? 'allow' : 'reject', target);
+  }
 
   // -------------------------------------------------------------------------
   // Top-level state branches
@@ -332,7 +367,7 @@ export default function Approvals() {
           selected approval still gets screen real estate below. */}
       <aside className="flex max-h-[40vh] flex-col overflow-hidden border-b border-border bg-secondary md:max-h-none md:border-b-0 md:border-r">
         <header className="px-[18px] pb-3 pt-[18px]">
-          <h2 className="text-h2 text-foreground">Approvals queue</h2>
+          <h2 ref={queueHeading} tabIndex={-1} className="text-h2 text-foreground">Approvals queue</h2>
           <div className="mt-1 text-[12px] text-muted-foreground">
             <span className="font-mono tabular-nums">{pending.length}</span> pending
             {pending.length > 0 && (
@@ -354,7 +389,13 @@ export default function Approvals() {
               />
             </div>
           ) : (
-            <ul role="listbox" aria-label="Pending approvals" className="flex flex-col">
+            <ul
+              ref={queueList}
+              role="list"
+              aria-label="Pending approvals"
+              onKeyDown={handleQueueKey}
+              className="flex flex-col"
+            >
               {pending.map((approval) => (
                 <QueueRow
                   key={approval.id}
@@ -422,9 +463,7 @@ interface QueueRowProps {
 
 function QueueRow({ approval, selected, waitS, onClick }: QueueRowProps) {
   const target = approvalTarget(approval);
-  // Scroll the keyboard-focused row into view and surface a visible focus ring
-  // so arrow-key navigation is observable. We focus the inner button rather
-  // than the <li> because buttons get the platform-native focus ring.
+  // Keep the selected request visible when the queue changes.
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!selected) return;
@@ -434,12 +473,13 @@ function QueueRow({ approval, selected, waitS, onClick }: QueueRowProps) {
   }, [selected]);
 
   return (
-    // role="option" must live on the listbox child element itself, not on a
-    // descendant button - otherwise screen readers see an empty listbox.
-    <li role="option" aria-selected={selected}>
+    <li>
       <button
         ref={buttonRef}
         type="button"
+        data-approval-id={approval.id}
+        aria-current={selected ? 'true' : undefined}
+        aria-keyshortcuts={selected ? 'ArrowUp ArrowDown A D' : 'ArrowUp ArrowDown'}
         onClick={onClick}
         className={cn(
           'group flex w-full items-start justify-between gap-2.5 border-b border-border-subtle px-4 py-3 text-left transition-colors',
@@ -644,6 +684,7 @@ function SelectedApproval({
           </p>
         )}
         <div className="font-mono text-[10.5px] text-meta-foreground">
+          With the selected queue row focused:{' '}
           <kbd className="mr-1 rounded-sm border border-border-subtle px-1.5 py-px">
             A
           </kbd>

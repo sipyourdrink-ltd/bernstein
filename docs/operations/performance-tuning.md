@@ -35,12 +35,8 @@ Apply the same principle: set `max_agents` so that peak parallelism stays below 
 max_agents: 6         # start here; tune up/down based on 429 rate
 ```
 
-```bash
-# Override at runtime
-bernstein run --max-agents 10
-# Or via environment variable
-BERNSTEIN_MAX_AGENTS=10 bernstein run
-```
+Set `max_agents` in the run's `bernstein.yaml` before starting
+Bernstein. The orchestrator reads the limit from that seed.
 
 ---
 
@@ -178,9 +174,10 @@ context_files:
 ### Reading cache metrics
 
 ```bash
-bernstein cost --by model       # shows cost breakdown including cache savings
-curl http://127.0.0.1:8052/status | jq '.metrics.cache_hit_rate'
+bernstein cost --json | jq '.cache_hit_rate'
 ```
+
+The `cache_hit_rate` field is a percentage (for example, `72.2`). It is `null` when there are no cache observations.
 
 Target: cache hit rate ≥ 50% in runs with 10+ agent turns per session.
 
@@ -248,11 +245,28 @@ Use this only when:
 
 ### Cleaning up stale worktrees
 
-After a crash or `SIGKILL`, orphaned worktrees accumulate. Clean them:
+After a crash or `SIGKILL`, orphaned worktrees accumulate. Inspect them first
+with the read-only command described in [worktree operations](worktrees.md):
 
 ```bash
-bernstein cleanup            # removes worktrees for completed/failed tasks
-bernstein cleanup --force    # removes all non-active worktrees
+bernstein worktrees list --json
+```
+
+Both cleanup commands select worktrees whose sessions no longer back active
+tasks. Removing a selected worktree also attempts to delete its
+`agent/<session>` branch, after best-effort salvage and graveyard preservation.
+This applies even without `--force`.
+
+The subsequent branch hygiene preserves other unmerged agent branches by
+default. The `--force` flag also permits deleting those remaining branches,
+even when their commits are not merged into `main`. Branches belonging to
+active sessions stay protected. Inspect the inactive worktrees and branches
+for work you want to keep before either cleanup command; preservation is
+best-effort.
+
+```bash
+bernstein cleanup            # removes inactive worktrees and their branches
+bernstein cleanup --force    # also permits pruning other unmerged agent branches
 ```
 
 Set automatic cleanup in config:

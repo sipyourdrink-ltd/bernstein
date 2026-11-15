@@ -205,8 +205,11 @@ class SessionMemory:
         session_id: Identifier for the current session. Used as the
             episodic filename stem and as a column in the semantic
             index so recall can be scoped per session.
-        clock_ns: Indirection point for tests to pin ``ts_ns``. Defaults
-            to :func:`time.time_ns`.
+        clock_ns: Clock supplying ``ts_ns``. None uses :func:`time.time_ns`.
+
+    Raises:
+        ValueError: If either identifier is empty, too long, or contains
+            disallowed characters.
     """
 
     def __init__(

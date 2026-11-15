@@ -27,8 +27,10 @@ cli: claude            # or any other registry key listed below
 ```
 
 Use `bernstein adapters check <name>` to verify conformance for a
-single adapter, and `bernstein adapters list` for a richer view that
-includes source paths and conformance verdicts.
+single adapter. `bernstein adapters list` is the registry inventory: it
+shows source paths and whether each adapter's binary is available, not a
+conformance verdict. For conformance reports, see the
+[operator guide](../operations/adapters.md).
 
 ## Categories
 
@@ -48,6 +50,7 @@ These are the most exercised adapters in the test matrix.
   (see [`agy.md`](agy.md) for the lane split).
 - `copilot` - GitHub Copilot CLI.
 - `goose` - Block Goose.
+- [OpenClaw](openclaw.md) - One embedded headless turn per task.
 - `muse` - Muse Code, Meta's terminal coding agent, driven headless via
   `muse exec` (see [`muse.md`](muse.md)).
 

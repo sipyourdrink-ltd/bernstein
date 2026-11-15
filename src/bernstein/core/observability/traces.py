@@ -1451,7 +1451,11 @@ def record_token_escalation(
     trace.steps.append(step)
 
     logger.warning(
-        f"Token escalation recorded in trace {trace.trace_id}: "
-        f"{role} task {task_id} requested {requested_tokens} tokens "
-        f"(max: {max_allowed_tokens}) for {model}"
+        "Token escalation recorded in trace %s: %s task %s requested %s tokens (max: %s) for %s",
+        trace.trace_id,
+        role,
+        task_id,
+        requested_tokens,
+        max_allowed_tokens,
+        model,
     )

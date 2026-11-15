@@ -73,6 +73,38 @@ bernstein schedule list --json
 bernstein schedule show <id> --json
 ```
 
+### Show a schedule or preview its graph
+
+Without `--at`, `bernstein schedule show ID` displays the stored schedule
+record (or the record as JSON with `--json`). This reads the schedule; it
+does not preview or fire it.
+
+Add `--at TIME` to preview the graph projection for a particular instant.
+`TIME` may be an integer Unix epoch in seconds or an ISO-8601 timestamp,
+including a `Z` suffix or an explicit UTC offset. A timestamp without a
+timezone is interpreted as UTC, not as the host's local time. For example,
+these two commands name the same instant and produce the same graph hash:
+
+```bash
+bernstein schedule show <id> --at 1700000000
+bernstein schedule show <id> --at 2023-11-14T22:13:20+00:00
+bernstein schedule show <id> --at 1700000000 --json
+```
+
+In plain output, the preview prints only the projected `graph_hash`. With
+`--json`, it prints these fields:
+
+- `schedule_id`: the schedule being previewed;
+- `fire_time`: the timestamp normalized to an integer Unix epoch in seconds;
+- `graph_hash`: the deterministic hash of the projected graph;
+- `rev`: the projection revision;
+- `recurrence`: the schedule recurrence (for example, `cron:0 9 * * *`).
+
+The preview computes a projection for comparison; it does not dispatch a
+scheduled run or change stored schedule state. In particular, it creates no
+receipt, journal row, or audit-chain entry, and does not update
+`last_fire_at`.
+
 ## Restart semantics
 
 The supervisor persists `last_fire_at` to the schedule's JSON file on
@@ -84,7 +116,8 @@ every successful fire. A daemon restart resumes from disk:
   intermediate window the operator can replay.
 - **`catch_up` policy** (opt-in). The supervisor dispatches one fire per
   missed window up to the catch-up cap (default `16`). The remainder
-  fold into a counterfactual receipt.
+  fold into a counterfactual receipt and the scheduler advances past them.
+  If a collision defers a window, the next tick starts at that window.
 
 The catch-up cap exists so a long outage cannot blow the task queue when
 an operator opted into catch-up. Increase the cap inside the supervisor
@@ -195,6 +228,8 @@ Not supported (out of scope for #1798; revisit if operators ask):
 Cron evaluation runs in UTC. The host timezone is not part of the
 deterministic contract; keeping evaluation in UTC means two operators
 on different timezones still fire at the same instant.
+Schedules on February 29 continue at the next leap day, including across
+century years that are not leap years.
 
 ## Fire as a hash, not a trigger (#2302)
 
@@ -244,17 +279,28 @@ the live schedule store.
 
 ### Recurrence rules: cron and RFC-5545 RRULE
 
-The recurrence rule that produced the fire instant is folded into the
-projection, so the `graph_hash` distinguishes a daily digest from an
-hourly one. Both forms are accepted and canonicalised (part order,
-`BY*` list order, and case do not perturb the hash):
+The recurrence rule that produced the fire instant is canonicalised before
+it is folded into the schedule projection. Equivalent spellings therefore
+produce identical canonical text and the same projection identity:
 
-- cron: `0 9 * * *` or `cron:0 9 * * *`;
-- RRULE: `RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=9` (RFC-5545 subset).
+- cron: `0 9 * * *` and `cron:0 9 * * *` both become
+  `cron:0 9 * * *`;
+- RRULE field and weekday order: `RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR`
+  and `RRULE:BYDAY=FR,MO,WE;FREQ=WEEKLY` both become
+  `RRULE:FREQ=WEEKLY;BYDAY=FR,MO,WE`.
 
-Canonicalisation lives in
+RRULE parts are emitted in a fixed order, and weekday values in `BYDAY` are
+sorted. With blank recurrence input, the `recurrence` field is omitted from
+the projected identity; it is not included with an empty value. A malformed
+nonempty rule raises `RecurrenceParseError` instead of being projected. For
+example, the duplicate field in `RRULE:FREQ=DAILY;FREQ=WEEKLY` is rejected.
+
+The recurrence can distinguish otherwise identical schedules (for example,
+a daily rule from an hourly one). Canonicalisation lives in
 `src/bernstein/core/orchestration/recurrence.py` and adds no runtime
-dependency (the in-tree cron parser plus a small RRULE part parser).
+dependency (the in-tree cron parser plus a small RRULE part parser). The
+behavior is covered by `tests/unit/test_recurrence.py` and
+`tests/unit/test_schedule_projection_2302.py`.
 
 ### Webhook and file-change triggers
 

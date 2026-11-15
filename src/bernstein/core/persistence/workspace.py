@@ -227,7 +227,7 @@ class Workspace:
                 continue
 
             abs_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.info("Cloning %s -> %s", repo.url, abs_path)
+            logger.info("Cloning workspace repository %r", repo.name)
             try:
                 # Stage the clone beside the destination. An interrupted clone
                 # must not leave a directory that later runs mistake for a repo.
@@ -254,7 +254,7 @@ class Workspace:
             except subprocess.TimeoutExpired:
                 logger.warning("Timed out cloning '%s' after 120s", repo.name)
             except subprocess.CalledProcessError as exc:
-                logger.warning("Failed to clone '%s': %s", repo.name, exc.stderr.strip())
+                logger.warning("Failed to clone workspace repository %r: exit_code=%d", repo.name, exc.returncode)
 
         return cloned
 
