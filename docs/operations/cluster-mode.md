@@ -661,6 +661,8 @@ forwarding and client/relay routing are outside this feature.
 
 Heartbeats accept optional `disk_free_mb`, `mem_used_pct`, `mesh_rtt_ms` and
 `platform` fields inside `capacity`. Existing payloads remain accepted.
+Heartbeat responses, `GET /cluster/nodes` and `GET /cluster/status` return
+the recorded telemetry in each node's `capacity`, with `null` for missing values.
 The registry marks a worker `unhealthy:disk`, `unhealthy:memory` or
 `unhealthy:mesh-rtt` when its reported telemetry exceeds the configured
 thresholds and excludes unhealthy workers from task selection. Multiple

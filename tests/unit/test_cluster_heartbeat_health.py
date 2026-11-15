@@ -23,9 +23,16 @@ def cluster_app():
         yield app
 
 
-def test_single_heartbeat_with_health_fields(cluster_app):
-    """Single heartbeat stores health fields and returns 200 with status."""
+@pytest.mark.parametrize("read_path", [None, "/cluster/nodes", "/cluster/status"])
+def test_single_heartbeat_with_health_fields(cluster_app, read_path):
+    """Heartbeat telemetry is retained in each HTTP node response."""
     client = TestClient(cluster_app)
+    telemetry = {
+        "disk_free_mb": 5000,
+        "mem_used_pct": 65.5,
+        "mesh_rtt_ms": 12.5,
+        "platform": "linux-x86_64",
+    }
 
     # Register a node first
     reg_resp = client.post(
@@ -48,10 +55,7 @@ def test_single_heartbeat_with_health_fields(cluster_app):
                 "available_slots": 2,
                 "active_agents": 2,
                 "gpu_available": False,
-                "disk_free_mb": 5000,
-                "mem_used_pct": 65.5,
-                "mesh_rtt_ms": 12.5,
-                "platform": "linux-x86_64",
+                **telemetry,
             }
         },
     )
@@ -64,6 +68,15 @@ def test_single_heartbeat_with_health_fields(cluster_app):
     assert node.capacity.mem_used_pct == 65.5
     assert node.capacity.mesh_rtt_ms == 12.5
     assert node.capacity.platform == "linux-x86_64"
+
+    if read_path is not None:
+        read_resp = client.get(read_path)
+        assert read_resp.status_code == 200
+        nodes = read_resp.json()
+        if read_path == "/cluster/status":
+            nodes = nodes["nodes"]
+        body = next(node for node in nodes if node["id"] == node_id)
+    assert {field: body["capacity"][field] for field in telemetry} == telemetry
 
 
 def test_backward_compat_heartbeat_without_health_fields(cluster_app):
@@ -89,6 +102,9 @@ def test_backward_compat_heartbeat_without_health_fields(cluster_app):
         },
     )
     assert heartbeat_resp.status_code == 200
+    capacity = heartbeat_resp.json()["capacity"]
+    for field in ("disk_free_mb", "mem_used_pct", "mesh_rtt_ms", "platform"):
+        assert capacity[field] is None
 
 
 def test_heartbeat_client_serializes_telemetry_inside_capacity():
