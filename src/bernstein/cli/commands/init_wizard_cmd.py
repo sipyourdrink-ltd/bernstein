@@ -102,6 +102,9 @@ def generate_yaml(
     lines.extend(
         [
             "",
+            "quality_gates:",
+            "  fix_proof: true",
+            "",
             "# Roles to use (uncomment to customize):",
             "# team:",
             "#   - backend",

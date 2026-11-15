@@ -146,6 +146,13 @@ class QualityGatesSchema(BaseModel):
     verify_citations: bool = False
     verify_citations_offline: bool = False
     verify_citations_allowed_hosts: list[str] | None = None
+    fix_proof: bool = False
+    fix_proof_repeats: int = 2
+    fix_proof_timeout_s: int = 120
+    fix_proof_command: str = ""
+    fix_proof_regression_command: str = ""
+    fix_proof_regression_paths: list[str] = Field(default_factory=list)
+    fix_proof_roles: list[str] = Field(default_factory=list)
 
 
 class CouncilCandidateConfig(BaseModel):
@@ -364,6 +371,7 @@ class RoleModelPolicyEntry(BaseModel):
     # reserved classifier error marker is rejected here so a broken
     # classifier cannot be configured as a cheap-tier verdict.
     tier_models: dict[str, str] | None = None
+    fix_proof: bool | None = None
 
     @field_validator("tier_models")
     @classmethod

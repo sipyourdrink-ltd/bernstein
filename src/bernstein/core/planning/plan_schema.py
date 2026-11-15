@@ -235,6 +235,23 @@ _STEP_SCHEMA: dict[str, Any] = {
                 "When omitted the step runs as a single agent invocation."
             ),
         },
+        "fix_proof": {
+            "type": "boolean",
+            "description": "Enable or disable the fix_proof bug-fix gate for this step.",
+        },
+        "task_type": {
+            "type": "string",
+            "enum": ["standard", "upgrade_proposal", "fix", "research"],
+            "description": "Task category (set 'fix' for bug-fix tasks).",
+        },
+        "kind": {
+            "type": "string",
+            "description": "Optional domain task kind (e.g. 'bug').",
+        },
+        "fixes_issue": {
+            "type": ["integer", "string"],
+            "description": "Issue number or URL fixed by this step.",
+        },
     },
     "anyOf": [
         {"required": ["title"]},
@@ -322,6 +339,10 @@ PLAN_JSON_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": _REPO_SCHEMA,
             "description": "Repositories for multi-repo orchestration.",
+        },
+        "fix_proof": {
+            "type": "boolean",
+            "description": "Enable or disable the fix_proof bug-fix gate across this plan.",
         },
         "stages": {
             "type": "array",
