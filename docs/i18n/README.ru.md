@@ -126,7 +126,7 @@ flowchart LR
 Каждый узел забирает агент, чья роль разрешена фазой; ролевые ограничения и гейты одобрения держатся независимо от того, что агент делает внутри задачи. Кодовый узел завершается за merge-гейтами в собственном git worktree. Узлы выше завершаются иначе: [контракт артефакта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) называет результат (отчёт, датасет, скан, лог действий), и узел закрывается подписанной lineage-квитанцией вместо коммита. Тот же планировщик, тот же журнал, та же офлайн-верификация — несёт ли граф код, исследование, ops-изменение или всё сразу. Готовые графы для софта, исследований, документации, энтерпрайза и контрибьюторских процессов лежат в [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### установка за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![Терминальный дашборд в две колонки: слева агенты с живыми логами, справа доска задач, снизу лента активности во всю ширину и строка стоимости](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![Браузерный дашборд со списком из шестидесяти двух задач, одиннадцать выполняются, одна раскрыта до диффа рабочего дерева](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — терминальный дашборд (удалённые рабочие узлы) | `bernstein gui serve` — браузерный дашборд |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — панель в терминале, включая удалённых воркеров | `<task-server-url>/ui/` — панель в браузере уже работающего сервера задач, если установлены файлы GUI. `bernstein gui serve` запускает отдельный сервер в текущем рабочем каталоге. |
 
 ### проверить прогон
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [архитектура](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | как оно устроено внутри |
 
 ### почему такое название?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein назван в честь Леонарда Бернстайна, американского дирижёра и композитора. Проект управляет бригадой AI-агентов так же, как Бернстайн дирижировал Нью-Йоркским филармоническим: каждый вступает вовремя, партитура детерминирована, за результат отвечает дирижёр.
+Bernstein назван в честь Леонарда Бернстайна, американского дирижёра и композитора. Оркестратор проекта управляет бригадой AI-агентов так же, как Бернстайн дирижировал Нью-Йоркским филармоническим: каждый вступает вовремя, партитура детерминирована, за результат отвечает дирижёр.
 
 я написал bernstein, потому что платил $400 в месяц по счетам claude, гоняя трёх кодовых агентов параллельно, и получал недетерминированные мержи. Apache 2.0, сопровождается одним человеком. Живая статистика: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ Bernstein назван в честь Леонарда Бернстайна, ам
 </details>
 
 ### административные запуски
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-Создайте пустой контейнер с аудитом без планировщика и процессов агентов: `bernstein_run(template="administrative", goal="Weekly sprint")`. Добавляйте ручные задачи через `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` и проверяйте состояние через `bernstein_run_status(run_id="admin-...")`. Задачи можно брать через обычный API назначения, но автоматическая оркестрация их не запускает. Непустой запуск завершается, когда каждая задача имеет статус `done`, `closed` или `cancelled`; пустой остаётся открытым. [Порядок работы](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Эти инструменты вызываются через MCP-мост. В последующих вызовах передавайте возвращённое значение `runId` как `run_id`. Создайте пустой контейнер с аудитом без планировщика и процессов агентов: `bernstein_run(template="administrative", goal="Weekly sprint")`. Добавляйте ручные задачи через `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` и проверяйте состояние через `bernstein_run_status(run_id="<returned runId>")`. Задачи можно брать через обычный API назначения, но автоматическая оркестрация их не запускает. Непустой запуск завершается, когда каждая задача имеет статус `done`, `closed` или `cancelled`; пустой остаётся открытым. [Порядок работы](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### участие, поддержка, лицензия
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

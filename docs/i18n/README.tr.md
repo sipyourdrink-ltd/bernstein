@@ -126,7 +126,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — terminal kontrol paneli (uzak çalışan düğümleri) | `bernstein gui serve` — tarayıcı kontrol paneli |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — uzak çalışanlar dahil terminal kontrol paneli | `<task-server-url>/ui/` — GUI dosyaları kuruluysa çalışan görev sunucusunun tarayıcı kontrol paneli. `bernstein gui serve` geçerli çalışma alanında bağımsız bir sunucu başlatır. |
 
 ### bir çalıştırmayı kanıtlayın
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | sistemin iç mekanizması ve çalışma prensibi |
 
 ### neden bu isim?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Proje, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur.
+Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Projenin orkestratörü, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur.
 
 bernstein'ı yazdım çünkü üç kodlama ajanını paralel çalıştırıp deterministik olmayan birleştirmeler alırken ayda 400 dolar claude faturası ödüyordum. Apache 2.0, tek kişi tarafından sürdürülmektedir. Canlı istatistikler: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ Her awesome listesi girdisi, katalog kaydı, önceki çalışma atıfı ve bült
 </details>
 
 ### Yönetim çalıştırmaları
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-`bernstein_run(template="administrative", goal="Weekly sprint")` ile planlayıcı veya ajan süreçleri başlatmadan denetlenebilir boş bir kapsayıcı oluşturun. `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ile elle görev ekleyin ve `bernstein_run_status(run_id="admin-...")` ile durumu sorgulayın. Görevler normal sahiplenme API’si ile alınabilir ancak otomatik orkestrasyona dahil edilmez. Boş olmayan bir çalıştırma, her görevin durumu `done`, `closed` veya `cancelled` olduğunda biter; boş çalıştırma açık kalır. [İşletim akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bu çağrılar MCP köprüsünü kullanır. Sonraki çağrılarda dönen `runId` değerini `run_id` olarak kullanın. `bernstein_run(template="administrative", goal="Weekly sprint")` ile planlayıcı veya ajan süreçleri başlatmadan denetlenebilir boş bir kapsayıcı oluşturun. `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` ile elle görev ekleyin ve `bernstein_run_status(run_id="<returned runId>")` ile durumu sorgulayın. Görevler normal sahiplenme API’si ile alınabilir ancak otomatik orkestrasyona dahil edilmez. Boş olmayan bir çalıştırma, her görevin durumu `done`, `closed` veya `cancelled` olduğunda biter; boş çalıştırma açık kalır. [İşletim akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### katkıda bulunma, destek, lisans
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

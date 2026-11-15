@@ -126,7 +126,7 @@ flowchart LR
 Jokaisen solmun ottaa agentti, jonka roolin vaihe sallii; rooliaidat ja hyväksyntäportit pitävät riippumatta siitä, mitä agentti tekee tehtävän sisällä. Koodisolmu päättyy merge-porttien taakse omassa git worktreessään. Yllä olevat solmut päättyvät toisin: [artefaktisopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nimeää tuloksen (raportti, datasetti, skannaus, toimiloki), ja solmu sulkeutuu allekirjoitetulla lineage-kuitilla commitin sijaan. Sama skeduloija, sama journal, sama offline-verifiointi - kantoi graafi sitten koodia, tutkimusta, ops-muutosta tai näiden sekoitusta. Valmiit graafit ohjelmistoille, tutkimukselle, dokumentaatiolle, enterprise-käyttöön ja kontribuutiovirroille ovat [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### asennus 30 sekunnissa
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ Käynnissä olevaa ajoa voidaan seurata kummasta tahansa käyttöliittymästä. 
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — terminaalinäkymä (etätyöntekijäsolmut) | `bernstein gui serve` — selainnäkymä |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminaalin hallintanäkymä, myös etätyöntekijät | `<task-server-url>/ui/` — käynnissä olevan tehtäväpalvelimen selainkäyttöliittymä, kun GUI-tiedostot on asennettu. `bernstein gui serve` käynnistää erillisen palvelimen nykyisessä työtilassa. |
 
 ### ajon todistaminen
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.b
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | miten järjestelmä toimii konepellin alla |
 
 ### miksi tämä nimi?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein on nimetty yhdysvaltalaisen kapellimestarin ja säveltäjän Leonard Bernsteinin mukaan. Projekti hallitsee AI-agenttien ryhmää samaan tapaan kuin Bernstein johti New Yorkin filharmonikkoja: jokainen soittaja ajallaan, partituuri deterministinen, kapellimestari vastuussa lopputuloksesta.
+Bernstein on nimetty yhdysvaltalaisen kapellimestarin ja säveltäjän Leonard Bernsteinin mukaan. Projektin orkestroija hallitsee AI-agenttien ryhmää samaan tapaan kuin Bernstein johti New Yorkin filharmonikkoja: jokainen soittaja ajallaan, partituuri deterministinen, kapellimestari vastuussa lopputuloksesta.
 
 kirjoitin bernsteinin, koska maksoin 400 dollaria kuukaudessa claude-laskuja ajaessani kolmea koodausagenttia rinnakkain ja sain epädeterministisiä merge-tuloksia. Apache 2.0, yhden kehittäjän ylläpitämä. Reaaliaikaiset tilastot: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ Täydellinen seurantalista, mukaan lukien jokainen awesome-listan merkintä, lue
 </details>
 
 ### Hallinnolliset ajot
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-Luo tyhjä, auditoitu säilö ilman suunnittelijaa tai agenttiprosesseja kutsulla `bernstein_run(template="administrative", goal="Weekly sprint")`. Lisää käsin tehtäviä kutsulla `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ja tarkista tila kutsulla `bernstein_run_status(run_id="admin-...")`. Tehtävät ovat varattavissa tavallisen API:n kautta, mutta ne on rajattu automaattisen orkestroinnin ulkopuolelle. Ei-tyhjä ajo valmistuu, kun jokaisen tehtävän tila on `done`, `closed` tai `cancelled`; tyhjä ajo pysyy avoinna. [Käyttöohje](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Nämä kutsut käyttävät MCP-siltaa. Käytä palautettua `runId`-arvoa myöhemmissä kutsuissa `run_id`-arvona. Luo tyhjä, auditoitu säilö ilman suunnittelijaa tai agenttiprosesseja kutsulla `bernstein_run(template="administrative", goal="Weekly sprint")`. Lisää käsin tehtäviä kutsulla `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` ja tarkista tila kutsulla `bernstein_run_status(run_id="<returned runId>")`. Tehtävät ovat varattavissa tavallisen API:n kautta, mutta ne on rajattu automaattisen orkestroinnin ulkopuolelle. Ei-tyhjä ajo valmistuu, kun jokaisen tehtävän tila on `done`, `closed` tai `cancelled`; tyhjä ajo pysyy avoinna. [Käyttöohje](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### osallistuminen, tuki, lisenssi
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

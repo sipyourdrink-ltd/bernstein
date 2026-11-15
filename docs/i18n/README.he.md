@@ -126,7 +126,7 @@ flowchart LR
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — לוח הבקרה במסוף (צומתי עבודה מרוחקים) | `bernstein gui serve` — לוח הבקרה בדפדפן |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — לוח הבקרה בטרמינל, כולל תהליכי עבודה מרוחקים | `<task-server-url>/ui/` — לוח הבקרה בדפדפן של שרת המשימות הפעיל, כאשר קובצי הממשק מותקנים. `bernstein gui serve` מפעיל שרת נפרד בתיקיית העבודה הנוכחית. |
 
 ### הוכחת ריצה
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | כיצד המערכת פועלת מתחת למכסה המנוע |
 
 ### מדוע השם הזה?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח והמלחין האמריקאי. הפרויקט מנהל צוות של סוכני AI כפי שברנשטיין ניצח על הפילהרמונית של ניו יורק: כל נגן נכנס בזמן, הפרטיטורה דטרמיניסטית, והמנצח אחראי לתוצאה הסופית.
+Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח והמלחין האמריקאי. מנגנון התזמור של הפרויקט מנהל צוות של סוכני AI כפי שברנשטיין ניצח על הפילהרמונית של ניו יורק: כל נגן נכנס בזמן, הפרטיטורה דטרמיניסטית, והמנצח אחראי לתוצאה הסופית.
 
 כתבתי את bernstein כי שילמתי 400 דולר בחודש בחשבונות claude על הרצת שלושה סוכני קידוד במקביל וקיבלתי מיזוגים לא-דטרמיניסטיים. רישיון Apache 2.0, מתוחזק על ידי אדם יחיד. סטטיסטיקה חיה: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח 
 </details>
 
 ### הרצות מנהלתיות
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-השתמשו ב־`bernstein_run(template="administrative", goal="Weekly sprint")` ליצירת מכולה ריקה עם רישום ביקורת, ללא מתכנן או תהליכי סוכנים. הוסיפו משימות ידניות דרך `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ובדקו מצב דרך `bernstein_run_status(run_id="admin-...")`. אפשר לקבל משימות דרך ממשק הקצאת המשימות הרגיל, אך הן מוחרגות מתזמור אוטומטי. הרצה שאינה ריקה מסתיימת כשלכל משימה יש סטטוס `done`, `closed` או `cancelled`; הרצה ריקה נשארת פתוחה. [תהליך התפעול](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+הקריאות האלה משתמשות בכלים של גשר MCP. בקריאות הבאות יש להעביר את ערך `runId` שהוחזר בתור `run_id`. השתמשו ב־`bernstein_run(template="administrative", goal="Weekly sprint")` ליצירת מכולה ריקה עם רישום ביקורת, ללא מתכנן או תהליכי סוכנים. הוסיפו משימות ידניות דרך `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` ובדקו מצב דרך `bernstein_run_status(run_id="<returned runId>")`. אפשר לקבל משימות דרך ממשק הקצאת המשימות הרגיל, אך הן מוחרגות מתזמור אוטומטי. הרצה שאינה ריקה מסתיימת כשלכל משימה יש סטטוס `done`, `closed` או `cancelled`; הרצה ריקה נשארת פתוחה. [תהליך התפעול](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### תרומה, תמיכה, רישיון
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

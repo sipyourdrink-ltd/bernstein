@@ -126,7 +126,7 @@ flowchart LR
 Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkännandegrindar håller oavsett vad agenten gör i uppgiften. En kodnod avslutas bakom merge gates i sitt eget git worktree. Noderna ovan avslutas annorlunda: ett [artefaktkontrakt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) namnger leveransen (rapport, dataset, skanning, åtgärdslogg) och noden stängs med ett signerat lineage-kvitto i stället för en commit. Samma schemaläggare, samma journal, samma offlineverifiering - oavsett om grafen levererar kod, forskning, en ops-ändring eller en blandning av alla tre. Färdiga grafer för mjukvara, forskning, dokumentation, enterprise och bidragsflöden finns i [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installera på 30 sekunder
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ En pågående körning kan följas från båda operatörsgränssnitten. Båda l�
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — terminalpanelen (fjärranslutna arbetsnoder) | `bernstein gui serve` — webbläsarpanelet |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminalpanelen, inklusive fjärrarbetare | `<task-server-url>/ui/` — webbpanelen för den körande uppgiftsservern när GUI-filerna är installerade. `bernstein gui serve` startar en fristående server i den aktuella arbetsytan. |
 
 ### bevisa en körning
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ All fördjupad information finns på [dokumentationswebbplatsen](https://docs.be
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | hur det fungerar under huven |
 
 ### varför namnet?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein är uppkallat efter Leonard Bernstein, den amerikanske dirigenten och kompositören. Projektet styr en ensemble av AI-agenter på samma sätt som Bernstein ledde New York Philharmonic: varje musiker på rätt insats, partituret deterministiskt, dirigenten ansvarig för slutresultatet.
+Bernstein är uppkallat efter Leonard Bernstein, den amerikanske dirigenten och kompositören. Projektets orkestrerare styr en ensemble av AI-agenter på samma sätt som Bernstein ledde New York Philharmonic: varje musiker på rätt insats, partituret deterministiskt, dirigenten ansvarig för slutresultatet.
 
 jag skrev bernstein eftersom jag betalade 400 dollar i månaden i claude-räkningar för att köra tre kodningsagenter parallellt och fick icke-deterministiska sammanslagningar. Apache 2.0, underhålls av en person. Realtidsstatistik: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ Den fullständiga listan, inklusive varje awesome-list-post, kataloglistning, ti
 </details>
 
 ### Administrativa körningar
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-Skapa en tom, revisionsloggad behållare utan planerare eller agentprocesser med `bernstein_run(template="administrative", goal="Weekly sprint")`. Lägg till manuella uppgifter med `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` och kontrollera status med `bernstein_run_status(run_id="admin-...")`. Uppgifterna kan hämtas via det vanliga claim-API:et men undantas från automatisk orkestrering. En körning med uppgifter avslutas när varje uppgift har status `done`, `closed` eller `cancelled`; en tom körning förblir öppen. [Operatörsflöde](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Dessa anrop använder MCP-bryggan. Använd det returnerade värdet `runId` som `run_id` i efterföljande anrop. Skapa en tom, revisionsloggad behållare utan planerare eller agentprocesser med `bernstein_run(template="administrative", goal="Weekly sprint")`. Lägg till manuella uppgifter med `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` och kontrollera status med `bernstein_run_status(run_id="<returned runId>")`. Uppgifterna kan hämtas via det vanliga claim-API:et men undantas från automatisk orkestrering. En körning med uppgifter avslutas när varje uppgift har status `done`, `closed` eller `cancelled`; en tom körning förblir öppen. [Operatörsflöde](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### bidra, support, licens
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

@@ -126,7 +126,7 @@ flowchart LR
 각 노드는 페이즈가 허용하는 역할의 에이전트가 가져갑니다. 역할 울타리와 승인 게이트는 에이전트가 태스크 안에서 무엇을 하든 유지됩니다. 코드 노드는 자기만의 git worktree에서 머지 게이트 뒤로 완료됩니다. 위의 노드들은 다르게 끝납니다: [아티팩트 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)이 결과물(보고서, 데이터셋, 스캔, 액션 로그)을 지정하고, 노드는 커밋 대신 서명된 lineage 영수증으로 닫힙니다. 같은 스케줄러, 같은 저널, 같은 오프라인 검증 - 그래프가 코드를 나르든, 리서치든, ops 변경이든, 셋의 혼합이든. 소프트웨어, 리서치, 문서, 엔터프라이즈, 컨트리뷰터 워크플로용 기성 그래프는 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)에 있습니다.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — 터미널 대시보드 (원격 워커 노드) | `bernstein gui serve` — 브라우저 대시보드 |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — 원격 워커를 포함한 터미널 대시보드 | `<task-server-url>/ui/` — GUI 파일이 설치된 경우 실행 중인 작업 서버의 브라우저 대시보드. `bernstein gui serve` 현재 작업 공간에서 별도 서버를 시작한다. |
 
 ### 실행을 증명하기
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [아키텍처](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 내부 동작 |
 
 ### 이름의 유래
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트가 AI 에이전트 무리를 통제하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다.
+Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트의 오케스트레이터가 AI 에이전트 무리를 통제하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, 단독 메인테이너. 가동 통계: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ awesome 리스트 항목, 카탈로그 등재, 선행 연구로서의 인용, �
 </details>
 
 ### 관리용 실행
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-`bernstein_run(template="administrative", goal="Weekly sprint")`으로 계획기나 에이전트 프로세스를 시작하지 않고 감사 기록이 있는 빈 컨테이너를 만듭니다. `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`으로 수동 작업을 추가하고 `bernstein_run_status(run_id="admin-...")`으로 상태를 확인합니다. 작업은 일반 할당 API로 가져올 수 있지만 자동 오케스트레이션에서는 제외됩니다. 비어 있지 않은 실행은 모든 작업의 상태가 `done`, `closed` 또는 `cancelled` 중 하나이면 완료됩니다. 빈 실행은 열린 상태로 유지됩니다. [운영 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+이 호출들은 MCP 브리지의 도구를 사용한다. 이후 호출에서는 반환된 `runId` 값을 `run_id`로 사용한다. `bernstein_run(template="administrative", goal="Weekly sprint")`으로 계획기나 에이전트 프로세스를 시작하지 않고 감사 기록이 있는 빈 컨테이너를 만듭니다. `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")`으로 수동 작업을 추가하고 `bernstein_run_status(run_id="<returned runId>")`으로 상태를 확인합니다. 작업은 일반 할당 API로 가져올 수 있지만 자동 오케스트레이션에서는 제외됩니다. 비어 있지 않은 실행은 모든 작업의 상태가 `done`, `closed` 또는 `cancelled` 중 하나이면 완료됩니다. 빈 실행은 열린 상태로 유지됩니다. [운영 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### 기여, 지원, 라이선스
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

@@ -126,7 +126,7 @@ flowchart LR
 Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de papel e gates de aprovação valem independente do que o agente faça dentro da tarefa. Um nó de código termina atrás de merge gates no seu próprio git worktree. Os nós acima terminam diferente: um [contrato de artefato](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomeia a entrega (relatório, dataset, varredura, log de ações) e o nó fecha com um recibo de lineage assinado em vez de um commit. Mesmo escalonador, mesmo journal, mesma verificação offline - leve o grafo código, pesquisa, uma mudança de ops ou uma mistura dos três. Grafos prontos para software, pesquisa, docs, enterprise e fluxos de contribuição vivem em [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ Uma execução em andamento pode ser assistida a partir de qualquer uma das inte
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — o dashboard no terminal (nós de trabalho remotos) | `bernstein gui serve` — o dashboard no navegador |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — painel do terminal, incluindo workers remotos | `<task-server-url>/ui/` — painel web do servidor de tarefas em execução, quando os arquivos da GUI estão instalados. `bernstein gui serve` inicia um servidor independente no espaço de trabalho atual. |
 
 ### comprovar uma execução
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ Tudo aprofundado reside no [site de documentação](https://docs.bernstein.run/)
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | como funciona por baixo dos panos |
 
 ### por que o nome?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein leva o nome de Leonard Bernstein, o maestro e compositor americano. O projeto governa uma equipe de agentes de IA da mesma forma que Bernstein conduzia a Filarmônica de Nova York: cada músico no tempo certo, a partitura determinística, o maestro responsável pelo resultado.
+Bernstein leva o nome de Leonard Bernstein, o maestro e compositor americano. O orquestrador do projeto coordena uma equipe de agentes de IA da mesma forma que Bernstein conduzia a Filarmônica de Nova York: cada músico no tempo certo, a partitura determinística, o maestro responsável pelo resultado.
 
 escrevi o bernstein porque estava pagando $400/mês em contas do claude rodando três agentes de codificação em paralelo e obtendo merges não determinísticos. Apache 2.0, mantido por uma só pessoa. Estatísticas em tempo real: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ A lista completa monitorada, incluindo cada entrada em listas awesome, catálogo
 </details>
 
 ### execuções administrativas
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-Use `bernstein_run(template="administrative", goal="Weekly sprint")` para criar um contêiner vazio e auditado sem planejador nem processos de agentes. Adicione tarefas manuais com `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` e consulte `bernstein_run_status(run_id="admin-...")`. As tarefas podem ser reivindicadas pela API habitual, mas ficam fora da orquestração automática. Uma execução com tarefas termina quando cada tarefa tem o estado `done`, `closed` ou `cancelled`; uma execução vazia permanece aberta. [Fluxo operacional](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Estas chamadas usam a ponte MCP. Reutilize o valor `runId` retornado como `run_id` nas chamadas seguintes. Use `bernstein_run(template="administrative", goal="Weekly sprint")` para criar um contêiner vazio e auditado sem planejador nem processos de agentes. Adicione tarefas manuais com `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` e consulte `bernstein_run_status(run_id="<returned runId>")`. As tarefas podem ser reivindicadas pela API habitual, mas ficam fora da orquestração automática. Uma execução com tarefas termina quando cada tarefa tem o estado `done`, `closed` ou `cancelled`; uma execução vazia permanece aberta. [Fluxo operacional](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### contribuição, suporte, licença
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

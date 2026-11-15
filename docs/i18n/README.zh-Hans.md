@@ -126,7 +126,7 @@ flowchart LR
 每个节点由角色被该阶段允许的智能体认领;无论智能体在任务内做什么,角色围栏和审批门禁始终生效。代码节点在自己的 git worktree 里、合并门禁之后完成。上面这些节点的完成方式不同:[工件契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(报告、数据集、扫描、操作日志),节点以签名的 lineage 回执而非提交收尾。同一个调度器、同一份日志、同样的离线验证 - 无论图里装的是代码、研究、运维变更,还是三者混合。面向软件、研究、文档、企业和贡献者工作流的现成图都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安装
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — 终端仪表盘 (远程工作节点) | `bernstein gui serve` — 浏览器仪表盘 |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — 终端仪表盘，包括远程工作节点 | `<task-server-url>/ui/` — 已运行任务服务器的浏览器仪表盘，需安装 GUI 文件. `bernstein gui serve` 会在当前工作区启动独立服务器. |
 
 ### 证明一次运行
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 底层工作原理 |
 
 ### 为什么叫这个名字？
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目像 Bernstein 指挥纽约爱乐乐团那样治理一支 AI 智能体队伍：每个乐手准时到位，乐谱确定，指挥对结果负责。
+Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目的编排器像 Bernstein 指挥纽约爱乐乐团那样治理一支 AI 智能体队伍：每个乐手准时到位，乐谱确定，指挥对结果负责。
 
 我写 bernstein 是因为我每月为并行运行三个编码智能体支付 400 美元的 claude 账单，却得到不确定性的合并。Apache 2.0，单人维护。实时数据：[bernstein.run](https://bernstein.run)。
 
@@ -286,9 +286,9 @@ Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目�
 </details>
 
 ### 管理运行
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 创建经过审计的空容器，不启动规划器或代理进程。通过 `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` 添加手动任务，并用 `bernstein_run_status(run_id="admin-...")` 查询状态。成员任务可通过常规认领 API 领取，但不会自动编排。非空运行在所有成员的状态均为 `done`、`closed` 或 `cancelled` 时结束；空运行保持开放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+这些调用使用 MCP 桥接工具。后续调用中，请将返回的 `runId` 值用作 `run_id`。 使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 创建经过审计的空容器，不启动规划器或代理进程。通过 `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` 添加手动任务，并用 `bernstein_run_status(run_id="<returned runId>")` 查询状态。成员任务可通过常规认领 API 领取，但不会自动编排。非空运行在所有成员的状态均为 `done`、`closed` 或 `cancelled` 时结束；空运行保持开放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### 贡献、支持与许可
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

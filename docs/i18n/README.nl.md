@@ -126,7 +126,7 @@ flowchart LR
 Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en goedkeuringsgates houden stand wat de agent binnen de taak ook doet. Een code-node eindigt achter merge gates in zijn eigen git worktree. De nodes hierboven eindigen anders: een [artefactcontract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) benoemt het resultaat (rapport, dataset, scan, actielog) en de node sluit af met een ondertekend lineage-bewijs in plaats van een commit. Dezelfde scheduler, hetzelfde journal, dezelfde offline verificatie - of de graaf nu code, onderzoek, een ops-wijziging of een mix van alle drie levert. Kant-en-klare grafen voor software, onderzoek, docs, enterprise en contributor-workflows staan in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,7 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — het terminaldashboard (externe worker-nodes) | `bernstein gui serve` — het browserdashboard |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminaldashboard, inclusief externe workers | `<task-server-url>/ui/` — browserdashboard van de actieve taakserver als de GUI-bestanden zijn geïnstalleerd. `bernstein gui serve` start een zelfstandige server in de huidige werkmap. |
 
 ### een run bewijzen
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -266,9 +266,9 @@ Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernste
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | hoe het onder de motorkap werkt |
 
 ### waarom deze naam?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componist. Het project bestuurt een team van AI-agents zoals Bernstein het New York Philharmonic dirigeerde: elke muzikant op het juiste moment, de partituur deterministisch, de dirigent verantwoordelijk voor het eindresultaat.
+Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componist. De orkestrator van het project bestuurt een team van AI-agents zoals Bernstein het New York Philharmonic dirigeerde: elke muzikant op het juiste moment, de partituur deterministisch, de dirigent verantwoordelijk voor het eindresultaat.
 
 ik heb bernstein geschreven omdat ik maandelijks $400 aan claude-rekeningen betaalde door drie coding-agents parallel te draaien en niet-deterministische merges kreeg. Apache 2.0, onderhouden door één persoon. Live statistieken: [bernstein.run](https://bernstein.run).
 
@@ -286,9 +286,9 @@ De volledige overzichtslijst, inclusief elke vermelding op awesome-lijsten, in c
 </details>
 
 ### Administratieve runs
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
 
-Maak met `bernstein_run(template="administrative", goal="Weekly sprint")` een lege container met auditregistratie, zonder planner of agentprocessen. Voeg handmatige taken toe met `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` en bekijk de status met `bernstein_run_status(run_id="admin-...")`. Taken blijven via de gebruikelijke claim-API beschikbaar, maar zijn uitgesloten van automatische orkestratie. Een niet-lege run eindigt wanneer elke taak de status `done`, `closed` of `cancelled` heeft; een lege run blijft open. [Werkwijze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Deze aanroepen gebruiken de MCP-bridge. Gebruik de teruggegeven waarde `runId` als `run_id` in latere aanroepen. Maak met `bernstein_run(template="administrative", goal="Weekly sprint")` een lege container met auditregistratie, zonder planner of agentprocessen. Voeg handmatige taken toe met `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` en bekijk de status met `bernstein_run_status(run_id="<returned runId>")`. Taken blijven via de gebruikelijke claim-API beschikbaar, maar zijn uitgesloten van automatische orkestratie. Een niet-lege run eindigt wanneer elke taak de status `done`, `closed` of `cancelled` heeft; een lege run blijft open. [Werkwijze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### bijdragen, ondersteuning, licentie
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
