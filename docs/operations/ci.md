@@ -707,6 +707,24 @@ are documented in `docs/operations/type-check-scope.md`.
 
 ## reviewdog/action-actionlint version
 
-The workflow lint job uses action-actionlint v1.83.0, whose Docker action pins its image by digest. It keeps the `github-check` reporter, error failure threshold and disabled embedded shellcheck setting. The existing Ubuntu runner supplies Docker.
+The workflow lint job pins action-actionlint v1.83.0 to
+[`a7d35aaf8c309203a4ae861d32b7bd490baa7bf3`](https://github.com/reviewdog/action-actionlint/commit/a7d35aaf8c309203a4ae861d32b7bd490baa7bf3).
+The upstream [annotated tag object for `v1.83.0`](https://api.github.com/repos/reviewdog/action-actionlint/git/tags/d16e2d31493e93c8fe55ae350337d790c0cc6e4f)
+peels to that commit.
 
-The action is pinned to `a7d35aaf8c309203a4ae861d32b7bd490baa7bf3`. Its upstream `v1.83.0` tag resolves to that commit.
+The pinned [`action.yml`](https://github.com/reviewdog/action-actionlint/blob/a7d35aaf8c309203a4ae861d32b7bd490baa7bf3/action.yml#L52-L56)
+declares a Docker action with `/entrypoint.sh` and image
+`docker://ghcr.io/reviewdog/action-actionlint:v1.83.0@sha256:33013dde8e95eab4a298f696576a7fcc9bf7dcb38717e4bd5dd31c38bf04675f`.
+The existing Ubuntu runner supplies Docker. Compared with the
+[previous pin's metadata](https://github.com/reviewdog/action-actionlint/blob/48e36f54d8da326b83ab061aee2cc5e01b5ca46f/action.yml),
+the input schema, defaults and entrypoint declaration are identical; only the image reference changes.
+
+The [previous entrypoint](https://github.com/reviewdog/action-actionlint/blob/48e36f54d8da326b83ab061aee2cc5e01b5ca46f/entrypoint.sh)
+and [pinned entrypoint](https://github.com/reviewdog/action-actionlint/blob/a7d35aaf8c309203a4ae861d32b7bd490baa7bf3/entrypoint.sh)
+are byte-identical. They forward `actionlint_flags`, return actionlint operational
+failures (exit codes 2 or greater), and otherwise pass findings to reviewdog with
+the supplied reporter, level and failure threshold, returning its exit status.
+This preserves the source contract for `reporter: github-check`, `level: error`,
+`fail_level: error` and `actionlint_flags: -shellcheck=` (embedded shellcheck disabled).
+This verification covers public metadata and source compatibility; it does not
+include execution of the digest-pinned image.
