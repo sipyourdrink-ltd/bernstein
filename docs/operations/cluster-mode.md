@@ -618,3 +618,19 @@ production code is changed by this proposal.
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+
+## External HTTP scaling backend
+
+Integrations can explicitly construct `HTTPScalingBackend` to call an
+owner-configured fleet API. `HTTPScalingConfig.from_env()` reads
+`BERNSTEIN_SCALING_URL` and optional `BERNSTEIN_SCALING_TOKEN`; the token
+is sent as a bearer header. The default request timeout is 10 seconds.
+
+The fleet API implements `GET /api/cluster/autoscale/status`, returning
+`{"current": N, "target": N}`, and `PATCH /api/cluster/autoscale/config`,
+accepting `{"target": N}`. Missing configuration performs no HTTP calls.
+HTTP status/transport errors produce a zero status count or unsuccessful
+`ScaleResult`; a successful PATCH reports the requested target. This
+backend is not registered or enabled automatically and does not itself
+wait for a fleet to reach that target.
