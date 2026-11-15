@@ -58,6 +58,59 @@ Every execution step, artifact state, and trajectory transition produces tamper-
 
 7 `mapped`, 4 `partial`, 2 `todo` - 13 of 13 controls counted across the three principles.
 
+## MCP threat classes (#6217)
+
+The same `cosai` standard also includes the twelve classes in section 6.2 of
+*Model Context Protocol (MCP) Security*, dated **2026-01-08**, at source revision
+[`7ec1306f2f55563f6eeef9d36a6bb2b531491ceb`](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/7ec1306f2f55563f6eeef9d36a6bb2b531491ceb/model-context-protocol-security.md#62-threat-details).
+IDs and class names follow that pinned section, including its
+“Input/Instruction” title for MCP-T4. The paper title, revision, date, section
+and class name are retained in every MCP row's exported `requirement` string.
+They add no pack schema fields or second standard.
+
+**Covered** corresponds to `mapped`, **Partial** to `partial`, and **Not covered**
+to `todo`. No whole MCP threat class is marked Covered: the pre-load gate
+provides narrower evidence. A successful signature or scan is not proof of
+runtime authentication, confidentiality, transport isolation or comprehensive
+monitoring. The table states the demonstrated control and its remaining scope.
+
+| Control ID | Risk Map ID | Requirement (class and bounded control) | Implementation module | Exercising test | Artefact | Status | Gate chain events | Verdict |
+|---|---|---|---|---|---|---|---|---|
+| `MCP-T1` | n/a | Improper Authentication and Identity Management: The bundle scanner checks OAuth redirect callback patterns and records findings. Gap: This is not runtime user authentication, credential storage or identity verification. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.bundle_scan` | Partial |
+| `MCP-T2` | n/a | Missing or Improper Access Control: The bundle scanner checks scope-expansion patterns; the load policy records admission. Gap: Static findings and server admission do not establish per-object or per-tool authorization. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.bundle_scan,mcp.load_decision` | Partial |
+| `MCP-T3` | n/a | Input Validation/Sanitization Failures: The bundle scanner records path-traversal and shell-injection pattern findings. Gap: The finite static rules do not validate every runtime input or injection context. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.bundle_scan` | Partial |
+| `MCP-T4` | n/a | Input/Instruction Boundary Distinction Failure: Manifest verification can bind supplied bundle bytes to a trusted publisher's signed hash. Gap: Content integrity does not distinguish trusted instructions from adversarial tool or resource content. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.signature_verification` | Partial |
+| `MCP-T5` | n/a | Inadequate Data Protection and Confidentiality Controls: The bundle scanner records path-traversal findings relevant to file exposure. Gap: This does not establish data classification, encryption or runtime confidentiality controls. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.bundle_scan` | Partial |
+| `MCP-T6` | n/a | Missing Integrity/Verification Controls: Manifest signature, trusted-publisher and optional supplied bundle-hash verification are recorded. Gap: Pre-load verification is not continuous behavioral attestation or authentication of every protocol message. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.signature_verification,mcp.load_decision` | Partial |
+| `MCP-T7` | n/a | Session and Transport Security Failures: The pre-load signing gate supplies no session or transport security evidence. Gap: Session binding, transport encryption and session termination need separate evidence. | n/a | n/a | n/a | `todo` | n/a | Not covered |
+| `MCP-T8` | n/a | Network Binding/Isolation Failures: The pre-load signing gate supplies no network binding or isolation evidence. Gap: Interface binding, DNS rebinding defenses and network segmentation need separate evidence. | n/a | n/a | n/a | `todo` | n/a | Not covered |
+| `MCP-T9` | n/a | Trust Boundary and Privilege Design Failures: Trusted-publisher policy and strict or warning admission decisions are recorded. Gap: Server admission does not prove transitive trust boundaries or runtime privilege separation. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.signature_verification,mcp.load_decision` | Partial |
+| `MCP-T10` | n/a | Resource Management/Rate Limiting Absence: The pre-load signing gate supplies no runtime resource or rate-limit evidence. Gap: Token, request and payload quotas need separate runtime evidence. | n/a | n/a | n/a | `todo` | n/a | Not covered |
+| `MCP-T11` | n/a | Supply Chain and Lifecycle Security Failures: Publisher and optional supplied bundle-hash verification, static scanning and admission are recorded. Gap: Pre-load checks do not prove a complete acquisition, inventory, update or retirement lifecycle. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.signature_verification,mcp.bundle_scan,mcp.load_decision` | Partial |
+| `MCP-T12` | n/a | Insufficient Logging, Monitoring, and Auditability: The enabled gate chains verification, scan status and linked admission decisions with server identity. Gap: These load events do not establish comprehensive tool-call, data-access or anomaly monitoring coverage. | `src/bernstein/core/protocols/mcp/mcp_signing_policy.py` | `tests/unit/compliance/test_cosai_mcp_map.py` | `audit-chain/events.jsonl` | `partial` | `mcp.signature_verification,mcp.bundle_scan,mcp.load_decision` | Partial |
+
+9 MCP rows are `partial`; 3 are `todo`. Combined with the unchanged thirteen
+principle rows: 7 `mapped`, 13 `partial`, 5 `todo` - 25 of 25 controls counted.
+
+Events come from the existing enabled signing gate. `mcp.signature_verification`
+records its verification verdict; `mcp.bundle_scan` records completed or skipped
+scan status, reasons and findings; `mcp.load_decision` links both records and
+states strict/warn policy and admission. A skipped scan is not a successful
+scan, and a warn-mode admission does not mean verification passed. Selectors
+identify evidence to inspect; their presence alone is not a compliance verdict.
+
+The regression fixture runs the real gate with a signed clean server and a
+signed server refused by the static scan, verifies the chain and builds the
+same deterministic ZIP twice. It checks the exported IDs, names, pinned
+provenance and both servers' actual gate events. No server process or model
+call is required.
+
+The MCP class names are attributed to OASIS Open, *Model Context Protocol (MCP)
+Security*, Workstream 4: Secure Design Patterns for Agentic Systems. Copyright
+© OASIS Open 2025. All Rights Reserved. Descriptions above are Bernstein's
+bounded control mapping, not a copy of the paper's threat descriptions. See
+the pinned paper's [copyright notice and permissions](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/7ec1306f2f55563f6eeef9d36a6bb2b531491ceb/model-context-protocol-security.md#66-copyright-notice).
+
 ## Licensing and Attribution
 
 CoSAI Technical Steering Committee documents ([cosai-oasis/cosai-tsc](https://github.com/cosai-oasis/cosai-tsc)) are published under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/). Principle titles are quoted with attribution to the OASIS Open CoSAI Technical Steering Committee (*CoSAI Principles for Secure-by-Design Agentic Systems*); requirement summaries are paraphrased.

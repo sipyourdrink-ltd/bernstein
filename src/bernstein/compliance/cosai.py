@@ -219,6 +219,112 @@ CONTROLS: list[dict[str, Any]] = [
     },
 ]
 
+# Owner-selected CoSAI MCP paper revision, section 6.2 (#6217). These are
+# upstream threat IDs, separate from Bernstein's thirteen principle rows.
+_MCP_PAPER_TITLE = "Model Context Protocol (MCP) Security"
+_MCP_SOURCE_REVISION = "7ec1306f2f55563f6eeef9d36a6bb2b531491ceb"
+_MCP_SOURCE_DATE = "2026-01-08"
+_MCP_THREATS = (
+    (
+        "MCP-T1",
+        "Improper Authentication and Identity Management",
+        "The bundle scanner checks OAuth redirect callback patterns and records findings",
+        "This is not runtime user authentication, credential storage or identity verification",
+        "mcp.bundle_scan",
+    ),
+    (
+        "MCP-T2",
+        "Missing or Improper Access Control",
+        "The bundle scanner checks scope-expansion patterns; the load policy records admission",
+        "Static findings and server admission do not establish per-object or per-tool authorization",
+        "mcp.bundle_scan,mcp.load_decision",
+    ),
+    (
+        "MCP-T3",
+        "Input Validation/Sanitization Failures",
+        "The bundle scanner records path-traversal and shell-injection pattern findings",
+        "The finite static rules do not validate every runtime input or injection context",
+        "mcp.bundle_scan",
+    ),
+    (
+        "MCP-T4",
+        "Input/Instruction Boundary Distinction Failure",
+        "Manifest verification can bind supplied bundle bytes to a trusted publisher's signed hash",
+        "Content integrity does not distinguish trusted instructions from adversarial tool or resource content",
+        "mcp.signature_verification",
+    ),
+    (
+        "MCP-T5",
+        "Inadequate Data Protection and Confidentiality Controls",
+        "The bundle scanner records path-traversal findings relevant to file exposure",
+        "This does not establish data classification, encryption or runtime confidentiality controls",
+        "mcp.bundle_scan",
+    ),
+    (
+        "MCP-T6",
+        "Missing Integrity/Verification Controls",
+        "Manifest signature, trusted-publisher and optional supplied bundle-hash verification are recorded",
+        "Pre-load verification is not continuous behavioral attestation or authentication of every protocol message",
+        "mcp.signature_verification,mcp.load_decision",
+    ),
+    (
+        "MCP-T7",
+        "Session and Transport Security Failures",
+        "The pre-load signing gate supplies no session or transport security evidence",
+        "Session binding, transport encryption and session termination need separate evidence",
+        "",
+    ),
+    (
+        "MCP-T8",
+        "Network Binding/Isolation Failures",
+        "The pre-load signing gate supplies no network binding or isolation evidence",
+        "Interface binding, DNS rebinding defenses and network segmentation need separate evidence",
+        "",
+    ),
+    (
+        "MCP-T9",
+        "Trust Boundary and Privilege Design Failures",
+        "Trusted-publisher policy and strict or warning admission decisions are recorded",
+        "Server admission does not prove transitive trust boundaries or runtime privilege separation",
+        "mcp.signature_verification,mcp.load_decision",
+    ),
+    (
+        "MCP-T10",
+        "Resource Management/Rate Limiting Absence",
+        "The pre-load signing gate supplies no runtime resource or rate-limit evidence",
+        "Token, request and payload quotas need separate runtime evidence",
+        "",
+    ),
+    (
+        "MCP-T11",
+        "Supply Chain and Lifecycle Security Failures",
+        "Publisher and optional supplied bundle-hash verification, static scanning and admission are recorded",
+        "Pre-load checks do not prove a complete acquisition, inventory, update or retirement lifecycle",
+        "mcp.signature_verification,mcp.bundle_scan,mcp.load_decision",
+    ),
+    (
+        "MCP-T12",
+        "Insufficient Logging, Monitoring, and Auditability",
+        "The enabled gate chains verification, scan status and linked admission decisions with server identity",
+        "These load events do not establish comprehensive tool-call, data-access or anomaly monitoring coverage",
+        "mcp.signature_verification,mcp.bundle_scan,mcp.load_decision",
+    ),
+)
+
+CONTROLS.extend(
+    {
+        "control_id": control_id,
+        "requirement": (
+            f"{title} (CoSAI {_MCP_PAPER_TITLE}; revision {_MCP_SOURCE_REVISION}; "
+            f"{_MCP_SOURCE_DATE}; section 6.2). {mechanism}. Gap: {gap}."
+        ),
+        "artefact": "audit-chain/events.jsonl" if selector else "n/a",
+        "selector": selector or "n/a",
+        "status": "partial" if selector else "todo",
+    }
+    for control_id, title, mechanism, gap, selector in _MCP_THREATS
+)
+
 #: Controls whose full implementation or signal chaining is deferred.
 DEFERRED: list[str] = [
     "human-governed-accountable.dual-control: multi-party quorum signatures and verification are not chained.",
@@ -230,6 +336,7 @@ DEFERRED: list[str] = [
     ),
     "transparent-verifiable.context-integrity: cross-session semantic memory poisoning detection is not yet chained.",
 ]
+DEFERRED.extend(f"{control_id}: {gap}." for control_id, _title, _mechanism, gap, _selector in _MCP_THREATS)
 
 
 def control_map() -> dict[str, Any]:

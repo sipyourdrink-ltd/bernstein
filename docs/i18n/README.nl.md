@@ -163,7 +163,7 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 | `bernstein live` — het terminaldashboard (externe worker-nodes) | `bernstein gui serve` — het browserdashboard |
 
 ### een run bewijzen
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 Determinisme is hier iets wat u controleert, niet iets wat u op goed vertrouwen aanneemt. Voer eenmaal uit met audit ingeschakeld en controleer wat is vastgelegd:
 
@@ -187,7 +187,7 @@ Open **Governance** in de webinterface en gebruik **Verify a receipt** om een ru
 
 Dezelfde controleerbaarheid geldt voor evaluatiecijfers. `bernstein bench run <suite> --reliability k` (ook geschreven als `bernstein eval --reliability k`) voert elke taak `k` keer uit onder vaste coördinatie en rapporteert een `pass^k`-ondergrens (alle `k` pogingen moeten slagen) naast het `pass@1`-plafond. Dat resultaat wordt verzegeld in een ondertekend ontvangstbewijs dat `bernstein bench reliability-verify` offline herberekenen kan, zodat een gemanipuleerde ondergrens faalt bij verificatie. Details: [pass^k betrouwbaarheidsondergrens](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Gebruik `bernstein govern audit --format json` of `--format sarif` voor machineleesbare controleresultaten en `--strict --quiet` als goedkeuringscriterium in CI. Zie [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Gebruik `bernstein govern audit --format json` of `--format sarif` voor machineleesbare controleresultaten en `--strict --quiet` als goedkeuringscriterium in CI. Zie [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Het `cosai`-bewijspakket bevat de MCP-dreigingsklassen uit de vastgelegde versie van het document van 2026-01-08 en benoemt de resterende hiaten in de dekking.
 
 `bernstein delegation verify RUN` vergelijkt de keten van ontvangstbewijzen met de definitieve ketenkop en het aantal delegatiestappen, die in het uitvoeringsmanifest met een HMAC op basis van de auditsleutel zijn verzegeld. Zo worden het verwijderen van het keteneinde, vervanging en uitbreiding na afsluiting gedetecteerd, inclusief het herschrijven van de declaratie zonder sleutel. Als de declaratie wordt verwijderd, blijft de uitvoering onvolledig (exitcode `3`) en geldt deze nooit als geldig. Dit detecteert geen hergebruik van een oudere authentieke momentopname en biedt geen bescherming tegen een schrijver die de auditsleutel bezit. Zie de [werkwijze voor delegatieverificatie](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
