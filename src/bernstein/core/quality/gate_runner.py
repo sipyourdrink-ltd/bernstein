@@ -36,6 +36,7 @@ from bernstein.core.quality.gate_pipeline import (
     GatePipelineStep,
     GateReport,
     GateStatus,
+    VerificationScope,
     build_default_pipeline,
     normalize_gate_condition,
 )
@@ -491,6 +492,8 @@ class GateRunner:
             duration_ms=0,
             details=plugin_result.details,
             metadata=dict(plugin_result.metadata),
+            reason=plugin_result.reason,
+            scope=plugin_result.scope,
         )
 
     async def _execute_gate(
@@ -1969,6 +1972,15 @@ class GateRunner:
         status = raw.get("status")
         if status not in {"pass", "fail", "warn", "skipped"}:
             return None
+        raw_scope = raw.get("scope")
+        scope = None
+        if raw_scope is not None:
+            if not isinstance(raw_scope, dict):
+                return None
+            try:
+                scope = VerificationScope.from_dict(raw_scope)
+            except (KeyError, TypeError, ValueError):
+                return None
         return GateResult(
             name=str(raw["name"]),
             status=status,
@@ -1978,6 +1990,7 @@ class GateRunner:
             duration_ms=int(raw["duration_ms"]),
             details=str(raw["details"]),
             metadata=dict(raw.get("metadata", {})),
+            scope=scope,
         )
 
     def _store_cached_result_sync(self, cache_key: str, result: GateResult) -> None:
@@ -1991,6 +2004,7 @@ class GateRunner:
                 "duration_ms": result.duration_ms,
                 "details": result.details,
                 "metadata": result.metadata,
+                "scope": result.scope.to_dict() if result.scope is not None else None,
             }
             cache_path = self._workdir / ".sdd" / "caching" / "gate_cache.json"
             cache_path.parent.mkdir(parents=True, exist_ok=True)
