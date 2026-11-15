@@ -190,3 +190,92 @@ def test_the_quiet_line_distinguishes_current_from_absent() -> None:
 
     assert "quorum last ran after the newest review; its verdict is current" in step
     assert "already green, still running, or never ran" in step
+
+
+def test_automatic_label_completion_recomputes_without_requesting_reviews() -> None:
+    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    on = doc.get("on", doc.get(True))
+    assert on["workflow_run"] == {"workflows": ["PR labels"], "types": ["completed"]}
+    for step in doc["jobs"]["rerun"]["steps"]:
+        if step.get("name") in {"Check out the scripts", "Ask the roster for the reviews still missing"}:
+            assert "github.event_name != 'workflow_run'" in step["if"]
+
+
+@pytest.mark.parametrize("conclusion", ["success", "failure"])
+@pytest.mark.parametrize("candidate", ["match", "wrong-repo", "wrong-branch", "wrong-base", "ambiguous"])
+def test_label_completion_reruns_current_head_checks_including_success(tmp_path, conclusion, candidate) -> None:
+    """Execute the trusted rerun shell with a fork payload and mocked GitHub."""
+    import json
+    import os
+    import subprocess
+
+    head = "a" * 40
+    calls = tmp_path / "calls.jsonl"
+    payload = {
+        "pulls": [{"number": 42, "head": {"repo": {"id": 123}, "ref": "small-docs"}, "base": {"ref": "main"}}],
+        "checks": {
+            "check_runs": [
+                {
+                    "app": {"slug": "github-actions"},
+                    "conclusion": conclusion,
+                    "started_at": "2026-11-15T07:00:00Z",
+                    "html_url": "https://github.com/owner/repo/actions/runs/987/job/1",
+                }
+            ]
+        },
+    }
+    if candidate == "wrong-repo":
+        payload["pulls"][0]["head"]["repo"]["id"] = 456
+    elif candidate == "wrong-branch":
+        payload["pulls"][0]["head"]["ref"] = "other-branch"
+    elif candidate == "wrong-base":
+        payload["pulls"][0]["base"]["ref"] = "other-base"
+    elif candidate == "ambiguous":
+        payload["pulls"].append(payload["pulls"][0])
+    (tmp_path / "payload.json").write_text(json.dumps(payload))
+    gh = tmp_path / "gh"
+    gh.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args=sys.argv[1:]
+root=Path(os.environ['FAKE_ROOT'])
+with (root/'calls.jsonl').open('a') as f:
+    f.write(json.dumps(args)+'\\n')
+data=json.loads((root/'payload.json').read_text())
+if args[:2]==['pr','view']:
+    print('a'*40)
+elif any('/actions/runs/' in a and a.endswith('/rerun') for a in args):
+    pass
+elif any('/check-runs?' in a for a in args):
+    print(json.dumps(data['checks']))
+elif 'repos/owner/repo/pulls' in args:
+    print(json.dumps(data['pulls']))
+else:
+    raise SystemExit('Unexpected GitHub call: '+repr(args))
+""")
+    gh.chmod(0o755)
+    env = dict(
+        os.environ,
+        PATH=f"{tmp_path}:{os.environ['PATH']}",
+        FAKE_ROOT=str(tmp_path),
+        REPO="owner/repo",
+        EVENT_NAME="workflow_run",
+        REVIEWED_PR="",
+        LABEL_EVENT="pull_request_target",
+        LABEL_PATH=".github/workflows/pr-labels.yml",
+        LABEL_CONCLUSION="success",
+        LABEL_HEAD_REPO_ID="123",
+        LABEL_HEAD_OWNER="fork-owner",
+        LABEL_HEAD_BRANCH="small-docs",
+        DEFAULT_BRANCH="main",
+    )
+    result = subprocess.run(["bash", "-c", _rerun_step()], env=env, capture_output=True, text=True, timeout=15)
+    assert result.returncode == (1 if candidate == "ambiguous" else 0), result.stderr
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    if candidate != "match":
+        assert not any("POST" in command for command in commands)
+        return
+    assert ["api", "-X", "POST", "repos/owner/repo/actions/runs/987/rerun"] in commands
+    assert any(f"repos/owner/repo/commits/{head}/check-runs?check_name=quorum" in a for a in commands)
+    assert any("head=fork-owner:small-docs" in a for a in commands)
+    assert not any("request" in a for command in commands for a in command)

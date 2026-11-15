@@ -27,6 +27,11 @@ name: quorum rerun
 # executed - the job only asks the API to re-run an existing workflow run.
 
 on:
+  # GITHUB_TOKEN label changes do not emit new label-triggered runs. Wait
+  # for the trusted automatic labeler instead, then recompute the PR check.
+  workflow_run:
+    workflows: [PR labels]
+    types: [completed]
   pull_request_review:
     types: [submitted, edited, dismissed]
   schedule:
@@ -56,7 +61,7 @@ jobs:
       # The sweep also asks for what the check says is missing. Only the base
       # branch is checked out, so this stays safe under the privileged trigger.
       - name: Check out the scripts
-        if: github.event_name != 'pull_request_review'
+        if: github.event_name != 'pull_request_review' && github.event_name != 'workflow_run'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -65,6 +70,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           REVIEWED_PR: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          LABEL_EVENT: ${{ github.event.workflow_run.event }}
+          LABEL_PATH: ${{ github.event.workflow_run.path }}
+          LABEL_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          LABEL_HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          LABEL_HEAD_REPO_ID: ${{ github.event.workflow_run.head_repository.id }}
+          LABEL_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
 
@@ -100,8 +113,8 @@ jobs:
           # The optional second argument keeps a call to the runs that finished
           # BEFORE the event that can have changed their answer. Without it
           # every red run is re-run, which is what the governance pass wants.
-          rerun_for () {  # rerun_for <pr-number> [older-than-iso-8601]
-            local pr="$1" before="${2:-}" head run started_at found=0 current=0
+          rerun_for () {  # rerun_for <pr-number> [older-than-iso-8601] [after-labels]
+            local pr="$1" before="${2:-}" after_labels="${3:-0}" head run started_at found=0 current=0
             # Checked before the lookups, not only before the POST: an exhausted
             # sweep otherwise spends two API calls per remaining pull request to
             # learn something it cannot act on.
@@ -110,6 +123,25 @@ jobs:
               return 0
             fi
             head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)
+            if [ "$after_labels" = 1 ]; then
+              # An older evaluation may have read the previous labels. Let it
+              # finish before rerunning it, so it cannot overwrite the answer.
+              local settled=0 checks attempt
+              for attempt in {1..60}; do
+                checks=$(gh api "repos/${REPO}/commits/${head}/check-runs?check_name=quorum&per_page=100")
+                if jq -e '[.check_runs[] | select(.app.slug == "github-actions")] |
+                    length > 0 and all(.[]; .conclusion != null)' <<< "$checks" >/dev/null; then
+                  settled=1
+                  break
+                fi
+                echo "#$pr: waiting for the earlier quorum evaluation ($attempt/60)"
+                sleep 5
+              done
+              if [ "$settled" != 1 ]; then
+                echo "::error::#$pr: quorum did not settle after the labeler; no stale verdict accepted"
+                return 1
+              fi
+            fi
             # The check run names its own run in html_url; that is the id the
             # rerun endpoint wants, and it is reachable without the workflow.
             while read -r started_at run; do
@@ -130,11 +162,13 @@ jobs:
                 started=$((started + 1))
               else
                 echo "  rerun refused; the next push will re-evaluate"
+                [ "$after_labels" != 1 ] || return 1
               fi
             done <<RUNS
           $(gh api "repos/${REPO}/commits/${head}/check-runs?check_name=quorum" \
-              --jq '.check_runs[]
-                    | select(.conclusion != null and .conclusion != "success")
+              | jq -r --argjson after_labels "$after_labels" '.check_runs[]
+                    | select(.app.slug == "github-actions")
+                    | select(.conclusion != null and ($after_labels == 1 or .conclusion != "success"))
                     | "\(.started_at) \(.html_url | capture("/actions/runs/(?<id>[0-9]+)").id)"')
           RUNS
             if [ "$found" -eq 0 ] && [ "$current" -eq 1 ]; then
@@ -143,6 +177,29 @@ jobs:
               echo "#$pr: quorum already green, still running, or never ran; nothing to do"
             fi
           }
+
+          if [ "${EVENT_NAME:-}" = workflow_run ]; then
+            [ "${LABEL_EVENT:-}" = pull_request_target ] || exit 0
+            [ "${LABEL_PATH:-}" = .github/workflows/pr-labels.yml ] || exit 0
+            [ "${LABEL_CONCLUSION:-}" = success ] || exit 0
+            [[ "${LABEL_HEAD_REPO_ID:-}" =~ ^[0-9]+$ ]] || exit 1
+            [ -n "${LABEL_HEAD_OWNER:-}" ] && [ -n "${LABEL_HEAD_BRANCH:-}" ] || exit 1
+            # Fork workflow_run payloads can omit pull_requests. Identify the
+            # head repository and branch, never the run's base-branch SHA.
+            labelled=$(gh api --method GET "repos/${REPO}/pulls" \
+              -f state=open -f "head=${LABEL_HEAD_OWNER}:${LABEL_HEAD_BRANCH}" \
+              -f "base=${DEFAULT_BRANCH}" -f per_page=100)
+            matches=$(jq --argjson repo_id "$LABEL_HEAD_REPO_ID" --arg branch "$LABEL_HEAD_BRANCH" \
+              --arg base "$DEFAULT_BRANCH" \
+              '[.[] | select(.head.repo.id == $repo_id and .head.ref == $branch and .base.ref == $base)]' <<< "$labelled")
+            count=$(jq length <<< "$matches")
+            [ "$count" != 0 ] || exit 0  # Closed or deleted while the labeler ran.
+            [ "$count" = 1 ] || { echo "::error::Ambiguous labelled pull request"; exit 1; }
+            labelled_pr=$(jq -r '.[0].number' <<< "$matches")
+            [[ "$labelled_pr" =~ ^[0-9]+$ ]] || exit 1
+            rerun_for "$labelled_pr" "" 1
+            exit 0
+          fi
 
           if [ -n "${REVIEWED_PR:-}" ]; then
             rerun_for "$REVIEWED_PR"
@@ -193,7 +250,7 @@ jobs:
               done
 
       - name: Ask the roster for the reviews still missing
-        if: github.event_name != 'pull_request_review'
+        if: github.event_name != 'pull_request_review' && github.event_name != 'workflow_run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

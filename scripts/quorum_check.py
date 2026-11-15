@@ -159,6 +159,9 @@ SMALL_EXCLUDED_PREFIXES = (
     "release/",
     "releases/",
     "docs/release-notes/",
+    "packaging/",
+    "Formula/",
+    "packages/vscode/",
 )
 SMALL_EXCLUDED_PATHS = (
     "CHANGELOG.md",
@@ -166,6 +169,16 @@ SMALL_EXCLUDED_PATHS = (
     "scripts/format_release_notes.py",
     "scripts/rotate_release_notes.py",
     "scripts/publish_required_check.py",
+    "scripts/build_copr_srpm.py",
+    "scripts/gen_distribution_manifests.py",
+    "scripts/wait_for_pypi_visibility.py",
+    "scripts/build_airgap_wheelhouse.py",
+    "scripts/sign_airgap_wheelhouse.sh",
+    "scripts/copr_build_watch.py",
+    "scripts/rpm_install_smoke.sh",
+    "mcp.json",
+    "server.json",
+    "plugin.json",
 )
 
 # Section 1 as decided for automation: the paths where automation stops being
