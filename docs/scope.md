@@ -72,11 +72,13 @@ Record: [ADR-007](decisions/007-pluggy-plugin-system.md).
 
 ## Adapters wrap tools, they do not reimplement them
 
-An adapter translates between this orchestrator and a coding CLI's
-actual interface. It does not reimplement the tool's behaviour, work
-around its bugs, or vendor its prompts. When a tool changes its flags,
-the adapter changes. When a tool is wrong, that belongs in the tool's
-own tracker.
+Bernstein is the open-source governance layer for AI agents. An adapter
+integrates an agent's actual interface with that layer: shell-based coding
+CLIs are one integration type, and SDK-backed interfaces are another.
+The workload may produce code or a declared artifact. An adapter does not
+reimplement the tool's behaviour, work around its bugs, or vendor its
+prompts. When an interface changes, the adapter changes. When a tool is
+wrong, that belongs in the tool's own tracker.
 
 A new adapter is welcome. An adapter for a tool that cannot be
 exercised in CI is not, because an adapter nothing runs is a claim
