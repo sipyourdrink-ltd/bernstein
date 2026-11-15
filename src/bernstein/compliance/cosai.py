@@ -228,43 +228,46 @@ _MCP_THREATS = (
     (
         "MCP-T1",
         "Improper Authentication and Identity Management",
-        "The bundle scanner checks OAuth redirect callback patterns and records findings",
-        "This is not runtime user authentication, credential storage or identity verification",
-        "mcp.bundle_scan",
+        "The stock managed path does not supply bundle source for the optional scanner",
+        "Runtime authentication and credential protection are not established by manifest signing",
+        "",
     ),
     (
         "MCP-T2",
         "Missing or Improper Access Control",
-        "The bundle scanner checks scope-expansion patterns; the load policy records admission",
-        "Static findings and server admission do not establish per-object or per-tool authorization",
-        "mcp.bundle_scan,mcp.load_decision",
+        "The load gate records server admission, not per-tool or per-object access control",
+        "The stock managed path does not supply bundle source for optional scope-pattern checks",
+        "",
     ),
     (
         "MCP-T3",
         "Input Validation/Sanitization Failures",
-        "The bundle scanner records path-traversal and shell-injection pattern findings",
-        "The finite static rules do not validate every runtime input or injection context",
-        "mcp.bundle_scan",
+        "The stock managed path does not supply bundle source for the optional scanner",
+        "Runtime input validation and injection-context controls need separate evidence",
+        "",
     ),
     (
         "MCP-T4",
         "Input/Instruction Boundary Distinction Failure",
-        "Manifest verification can bind supplied bundle bytes to a trusted publisher's signed hash",
-        "Content integrity does not distinguish trusted instructions from adversarial tool or resource content",
-        "mcp.signature_verification",
+        "Manifest signatures do not separate instructions from tool or resource data",
+        "No instruction/data boundary control is established by the pre-load signing gate",
+        "",
     ),
     (
         "MCP-T5",
         "Inadequate Data Protection and Confidentiality Controls",
-        "The bundle scanner records path-traversal findings relevant to file exposure",
-        "This does not establish data classification, encryption or runtime confidentiality controls",
-        "mcp.bundle_scan",
+        "The stock managed path does not supply bundle source for the optional scanner",
+        "Data classification, encryption and runtime confidentiality need separate evidence",
+        "",
     ),
     (
         "MCP-T6",
         "Missing Integrity/Verification Controls",
-        "Manifest signature, trusted-publisher and optional supplied bundle-hash verification are recorded",
-        "Pre-load verification is not continuous behavioral attestation or authentication of every protocol message",
+        "Manifest signature, trusted-publisher policy and load admission verdicts are recorded",
+        (
+            "The stock path supplies no bundle bytes; bundle-hash verification is not evidenced, "
+            "nor is continuous behavioral attestation"
+        ),
         "mcp.signature_verification,mcp.load_decision",
     ),
     (
@@ -298,9 +301,12 @@ _MCP_THREATS = (
     (
         "MCP-T11",
         "Supply Chain and Lifecycle Security Failures",
-        "Publisher and optional supplied bundle-hash verification, static scanning and admission are recorded",
-        "Pre-load checks do not prove a complete acquisition, inventory, update or retirement lifecycle",
-        "mcp.signature_verification,mcp.bundle_scan,mcp.load_decision",
+        "Manifest signature, trusted-publisher policy and load admission verdicts are recorded",
+        (
+            "The stock path does not establish bundle-hash verification, completed scanning "
+            "or the complete acquisition-to-retirement lifecycle"
+        ),
+        "mcp.signature_verification,mcp.load_decision",
     ),
     (
         "MCP-T12",

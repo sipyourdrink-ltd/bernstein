@@ -100,7 +100,7 @@ def test_catalogue_guard_rejects_identifier_and_source_drift(defect: str) -> Non
         _assert_catalogue(rows)
 
 
-def _record_signed_server(chain: AuditChainStore, *, critical: bool) -> None:
+def _record_signed_server(chain: AuditChainStore, *, critical: bool, supply_bundle: bool = True) -> None:
     name = "scan-refused" if critical else "signed-clean"
     private = Ed25519PrivateKey.generate()
     public = private.public_key().public_bytes(
@@ -122,8 +122,8 @@ def _record_signed_server(chain: AuditChainStore, *, critical: bool) -> None:
         server_name=name,
         manifest_yaml=manifest,
         signature_b64=signature,
-        bundle_files={"tool.py": source},
-        bundle_bytes=bundle,
+        bundle_files={"tool.py": source} if supply_bundle else None,
+        bundle_bytes=bundle if supply_bundle else None,
         policy=MCPSigningPolicy(trusted_publishers=frozenset({fingerprint}), publisher_keys={fingerprint: public}),
         audit_chain=chain,
     )
@@ -162,3 +162,74 @@ def test_exported_mcp_rows_cite_real_signed_and_scan_refused_gate_events(tmp_pat
                 assert set(row["selector"].split(",")) <= {event["event_type"] for event in events}
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["schema_version"] == "1.0.0"
+
+
+_EXPECTED_SELECTORS = {
+    "MCP-T1": "n/a",
+    "MCP-T2": "n/a",
+    "MCP-T3": "n/a",
+    "MCP-T4": "n/a",
+    "MCP-T5": "n/a",
+    "MCP-T6": "mcp.signature_verification,mcp.load_decision",
+    "MCP-T7": "n/a",
+    "MCP-T8": "n/a",
+    "MCP-T9": "mcp.signature_verification,mcp.load_decision",
+    "MCP-T10": "n/a",
+    "MCP-T11": "mcp.signature_verification,mcp.load_decision",
+    "MCP-T12": "mcp.signature_verification,mcp.bundle_scan,mcp.load_decision",
+}
+
+
+def test_mcp_mapping_does_not_claim_unobserved_scanning_or_instruction_isolation() -> None:
+    rows = _assert_catalogue(get_standard_map("cosai")["controls"])
+    for row in rows:
+        expected = _EXPECTED_SELECTORS[row["control_id"]]
+        assert row["selector"] == expected
+        assert row["status"] == ("todo" if expected == "n/a" else "partial")
+    assert (
+        "bundle-hash verification is not evidenced"
+        in next(r for r in rows if r["control_id"] == "MCP-T6")["requirement"]
+    )
+
+
+def test_mcp_documentation_selectors_and_verdicts_match_every_row() -> None:
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[3] / "docs/compliance/cosai-mapping.md").read_text()
+    docs = {
+        cells[0].strip("`"): cells
+        for line in text.splitlines()
+        if line.startswith("| `MCP-")
+        for cells in [[c.strip() for c in line.strip("|").split("|")]]
+    }
+    for row in _assert_catalogue(get_standard_map("cosai")["controls"]):
+        cells = docs[row["control_id"]]
+        assert cells[7].strip("`") == row["selector"]
+        assert cells[8] == ("Partial" if row["status"] == "partial" else "Not covered")
+
+
+def test_stock_manager_arguments_do_not_turn_skipped_scan_into_mapped_coverage(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    chain = AuditChainStore(sdd / "audit", key=b"synthetic-stock-path-key" * 2)
+    _record_signed_server(chain, critical=False, supply_bundle=False)
+    assert chain.verify() == (True, [])
+    events = chain.query(resource_id="signed-clean")
+    scan = next(e for e in events if e.event_type == "mcp.bundle_scan")
+    assert scan.details["status"] == "skipped"
+    assert scan.details["skip_reason"] == "bundle_unavailable"
+    assert scan.details["findings"] == []
+    verification = next(e for e in events if e.event_type == "mcp.signature_verification")
+    decision = next(e for e in events if e.event_type == "mcp.load_decision")
+    assert decision.details["verification_hmac"] == verification.hmac
+    assert decision.details["scan_hmac"] == scan.hmac
+    output = tmp_path / "stock.zip"
+    build_evidence_pack(sdd_dir=sdd, standard="cosai", output_path=output)
+    with zipfile.ZipFile(output) as archive:
+        rows = _assert_catalogue(json.loads(archive.read("controls.json"))["controls"])
+    for row in rows:
+        assert row["selector"] == _EXPECTED_SELECTORS[row["control_id"]]
+    assert all(
+        row["status"] == "todo"
+        for row in rows
+        if row["control_id"] in {"MCP-T1", "MCP-T2", "MCP-T3", "MCP-T4", "MCP-T5"}
+    )
