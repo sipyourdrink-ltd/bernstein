@@ -132,7 +132,7 @@ class AgentRegistry:
                 registered it first and the module attempting the second
                 registration.
         """
-        self._duplicate_guard.register(definition.name, caller_module_name())
+        self._duplicate_guard.register(definition.name, caller_module_name(), implementation=definition)
         self._definitions[definition.name] = definition
         logger.info("Registered agent definition: %s (v%s)", definition.name, definition.version)
 

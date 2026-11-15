@@ -8,6 +8,7 @@ import threading
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, cast
 
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
 from bernstein.core.trigger_sources.artifact import ArtifactSource
 from bernstein.core.trigger_sources.file_watch import FileWatchSource
 from bernstein.core.trigger_sources.odata_poll import OdataPollSource
@@ -35,6 +36,7 @@ class Registry:
 
     def __init__(self) -> None:
         self._sources: dict[str, type[TriggerSource]] = {}
+        self._guard = DuplicateGuard("trigger source")
         self._lock = threading.RLock()
         self._builtins_loaded = False
         self._entrypoints_loaded = False
@@ -46,9 +48,9 @@ class Registry:
             raise ValueError("Trigger source name must be non-empty")
         if not inspect.isclass(source) or not callable(getattr(source, "normalize", None)):
             raise TypeError("Trigger source must be a class with a normalize method")
+        module_path = caller_module_name()
         with self._lock:
-            if normalised in self._sources:
-                raise ValueError(f"Duplicate trigger source: {normalised!r}")
+            self._guard.register(normalised, module_path, implementation=source)
             self._sources[normalised] = source
 
     def get(self, name: str) -> type[TriggerSource]:
@@ -71,7 +73,9 @@ class Registry:
         with self._lock:
             if not self._builtins_loaded:
                 for name, source in _BUILTIN_SOURCES.items():
-                    self._sources.setdefault(name, source)
+                    if name not in self._sources:
+                        self._guard.register(name, source.__module__, implementation=source)
+                        self._sources[name] = source
                 self._builtins_loaded = True
             if not self._entrypoints_loaded:
                 self._load_entrypoints()

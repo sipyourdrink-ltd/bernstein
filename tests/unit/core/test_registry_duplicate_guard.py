@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -327,3 +328,119 @@ def test_tracker_duplicate_error_keeps_overwrite_hint() -> None:
     registry.register("hint-tracker", _dummy_tracker_factory)
     with pytest.raises(DuplicateTrackerError, match=r"overwrite=True"):
         registry.register("hint-tracker", _dummy_tracker_factory)
+
+
+# --- Content hashes, supersession tombstones, decision journal, and new migrations ---
+
+
+def _impl_alpha() -> str:
+    return "alpha"
+
+
+def _impl_beta() -> str:
+    return "beta"
+
+
+def test_duplicate_guard_records_content_hash_and_distinguishes_implementations() -> None:
+    guard = DuplicateGuard("widgets")
+    entry_a = guard.register("alpha", "pkg.alpha", implementation=_impl_alpha)
+    entry_b = guard.register("beta", "pkg.beta", implementation=_impl_beta)
+
+    assert entry_a.module_path == "pkg.alpha"
+    assert entry_a.content_hash.startswith("sha256:")
+    assert entry_b.content_hash.startswith("sha256:")
+    assert entry_a.content_hash != entry_b.content_hash
+    assert guard.content_hash_for("alpha") == entry_a.content_hash
+    assert guard.entry_for("beta") == entry_b
+
+    with pytest.raises(DuplicateRegistrationError) as excinfo:
+        guard.register("alpha", "pkg.other", implementation=_impl_beta)
+    assert entry_a.content_hash in str(excinfo.value)
+
+
+def test_superseded_registration_raises_on_import_naming_canonical_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bernstein.core.registry_guard import SupersededRegistrationError
+
+    pkg = tmp_path / "retired_fixture_pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "legacy_impl.py").write_text(
+        "from bernstein.core.registry_guard import mark_superseded_module\n"
+        'mark_superseded_module(__name__, "bernstein.canonical.widget_v2")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(SupersededRegistrationError) as excinfo:
+        importlib.import_module("retired_fixture_pkg.legacy_impl")
+
+    assert isinstance(excinfo.value, ImportError)
+    assert "retired_fixture_pkg.legacy_impl" in str(excinfo.value)
+    assert "bernstein.canonical.widget_v2" in str(excinfo.value)
+
+    guard = DuplicateGuard("widgets")
+    guard.register("old-widget", "pkg.old", implementation=_impl_alpha)
+    guard.supersede("old-widget", "canonical-widget", retired_module="pkg.old_mod")
+    with pytest.raises(SupersededRegistrationError, match="canonical-widget"):
+        guard.register("old-widget", "pkg.old_mod", implementation=_impl_alpha)
+
+
+def test_registry_mutations_are_journaled(tmp_path: Path) -> None:
+    from bernstein.core.registry_guard import load_decision_journal, reconstruct_registry_state
+
+    journal_path = tmp_path / ".sdd" / "runtime" / "registry_decisions.jsonl"
+    guard = DuplicateGuard("widgets", journal_path=journal_path)
+
+    e1 = guard.register("w1", "pkg.w1", implementation=_impl_alpha)
+    guard.register("w2", "pkg.w2", implementation=_impl_beta)
+    guard.forget("w2")
+    guard.supersede("w1", "w3")
+    e3 = guard.register("w3", "pkg.w3", implementation=_impl_beta)
+
+    decisions = guard.decision_records()
+    assert [d.action for d in decisions] == ["register", "register", "unregister", "supersede", "register"]
+
+    loaded = load_decision_journal(journal_path)
+    assert loaded == decisions
+
+    reconstructed = reconstruct_registry_state(loaded)
+    assert list(reconstructed.keys()) == ["w3"]
+    assert reconstructed["w3"].module_path == "pkg.w3"
+    assert reconstructed["w3"].content_hash == e3.content_hash
+    assert e1.key not in reconstructed
+
+
+class TestTriggerSourceAndSchemaRegistryMigrations:
+    def test_trigger_source_registry_duplicate_names_modules(self) -> None:
+        from bernstein.core.trigger_sources.registry import Registry
+
+        class _DummySourceA:
+            def normalize(self, event: Any) -> Any:
+                return event
+
+        class _DummySourceB:
+            def normalize(self, event: Any) -> Any:
+                return event
+
+        registry = Registry()
+        registry.register("custom-src", _DummySourceA)  # type: ignore[arg-type]
+        with pytest.raises(DuplicateRegistrationError) as excinfo:
+            registry.register("custom-src", _DummySourceB)  # type: ignore[arg-type]
+        assert "Duplicate trigger source" in str(excinfo.value)
+        assert __name__ in str(excinfo.value)
+
+    def test_schema_registry_duplicate_raises_and_records_hash(self) -> None:
+        from bernstein.core.protocols.schema_registry import SchemaRegistry, SchemaVersion
+
+        registry = SchemaRegistry()
+        v1 = SchemaVersion(version=99, fields={"a": "str"}, required_fields=frozenset({"a"}))
+        registry.register(v1)
+
+        with pytest.raises(DuplicateRegistrationError) as excinfo:
+            registry.register(v1)
+        assert "Duplicate schema version" in str(excinfo.value)
+        assert __name__ in str(excinfo.value)
+        assert registry._guard.content_hash_for("99") is not None
