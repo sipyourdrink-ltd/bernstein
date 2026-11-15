@@ -242,8 +242,26 @@ class MCPGateway:
     @staticmethod
     def _definition_fingerprints(tools: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
         """Fingerprint each whole parsed entry and each of its top-level members."""
+
+        def validate(value: Any) -> None:
+            # The shared canonicalizer preserves arbitrary Python integers for
+            # legacy signatures. This portable profile admits only safe ints.
+            if isinstance(value, int) and not isinstance(value, bool) and abs(value) > 2**53 - 1:
+                raise ValueError("tool definition integer is outside the portable JCS domain")
+            if isinstance(value, dict):
+                if any(not isinstance(key, str) for key in value):
+                    raise ValueError("tool definition object keys must be strings")
+                for item in value.values():
+                    validate(item)
+            elif isinstance(value, list):
+                for item in value:
+                    validate(item)
+            elif value is not None and not isinstance(value, (str, int, float, bool)):
+                raise ValueError("tool definition contains a non-JSON value")
+
         fingerprints = {}
         for tool in tools:
+            validate(tool)
             name = tool.get("name")
             if not isinstance(name, str) or not name or name in fingerprints:
                 raise ValueError("invalid or repeated tool name")
@@ -330,13 +348,18 @@ class MCPGateway:
             )
 
     async def _persist_capability_observation(
-        self, tool_names: tuple[str, ...], fingerprints: dict[str, dict[str, str]] | None = None
+        self, tool_names: tuple[str, ...], definitions: list[dict[str, Any]] | None = None
     ) -> None:
-        try:
-            if fingerprints is None:
-                await asyncio.to_thread(self._process_capability_drift, tool_names)
+        def persist() -> None:
+            if definitions is None:
+                self._process_capability_drift(tool_names)
             else:
-                await asyncio.to_thread(self._process_capability_drift, tool_names, fingerprints)
+                self._process_capability_drift(tool_names, self._definition_fingerprints(definitions))
+
+        try:
+            # Canonicalization, hashing and persistence are all optional probe
+            # work; none may monopolize the proxy's event loop.
+            await asyncio.to_thread(persist)
         except Exception as exc:
             logger.warning("Capability drift check failed for %s: %s", self._server_name, exc)
 
@@ -379,9 +402,7 @@ class MCPGateway:
                         seen.add(cursor)
             # Snapshot and audit file locks may contend with other processes.
             self._capability_commit_task = asyncio.create_task(
-                self._persist_capability_observation(
-                    tuple(sorted(tool_names)), self._definition_fingerprints(definitions)
-                )
+                self._persist_capability_observation(tuple(sorted(tool_names)), definitions)
             )
             await asyncio.shield(self._capability_commit_task)
         except Exception as exc:

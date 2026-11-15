@@ -873,3 +873,55 @@ def test_definition_fingerprint_committed_vectors() -> None:
         fingerprints = MCPGateway._definition_fingerprints(vector["tools"])
         assert {name: item["digest"] for name, item in fingerprints.items()} == vector["tool_digests"]
         assert MCPGateway._definition_digest(fingerprints) == vector["server_digest"]
+
+
+@pytest.mark.parametrize("value", [9007199254740992, 9007199254740993, -9007199254740992, 10**21])
+def test_definition_profile_rejects_nonportable_integers(value: int) -> None:
+    with pytest.raises(ValueError, match="integer"):
+        MCPGateway._definition_fingerprints([{"name": "search", "inputSchema": {"default": [value]}}])
+
+
+def test_definition_profile_equivalent_portable_numbers() -> None:
+    assert MCPGateway._definition_fingerprints(
+        [{"name": "search", "future": 1}]
+    ) == MCPGateway._definition_fingerprints([{"name": "search", "future": 1.0}])
+
+
+@pytest.mark.asyncio
+async def test_definition_fingerprinting_does_not_block_proxy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from threading import Event
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    gateway = MCPGateway(
+        [],
+        _make_wal_writer(tmp_path),
+        ServerCapabilitiesStore(tmp_path),
+        audit_chain=AuditChainStore(tmp_path / "audit", key=b"fixture-only-thread-key"),
+    )
+    gateway._upstream_tools_available = True
+    entered, release = asyncio.Event(), Event()
+    loop = asyncio.get_running_loop()
+    original = gateway._definition_fingerprints
+
+    def fingerprint(tools: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(timeout=2)
+        return original(tools)
+
+    async def respond(message: dict[str, Any], request_id: str) -> tuple[dict[str, Any], float]:
+        result = {"tools": [{"name": "demo"}]} if message["method"] == "tools/list" else {"ok": True}
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}, 0
+
+    monkeypatch.setattr(gateway, "_definition_fingerprints", fingerprint)
+    monkeypatch.setattr(gateway, "_send_request", respond)
+    observation = asyncio.create_task(gateway._check_capability_drift())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert not observation.done()
+        reply = await asyncio.wait_for(gateway.handle_jsonrpc({"id": "ping", "method": "ping"}), timeout=1)
+        assert reply is not None and reply["result"] == {"ok": True}
+    finally:
+        release.set()
+        await observation

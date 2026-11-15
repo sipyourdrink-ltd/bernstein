@@ -17,5 +17,28 @@
       "search": "sha256:770d24b0e3e87c3331ae0d554c28aead21621ccadde0baaa90fb7bf560e0a547"
     },
     "server_digest": "sha256:72f94a9e1646abf40d60d62b7743f005f8364560ec3d0447ecfa41e2fd3681b9"
+  },
+  {
+    "tools": [
+      {
+        "name": "поиск 🚀",
+        "description": "задача",
+        "inputSchema": {
+          "enum": [
+            1e+21,
+            0.1,
+            9007199254740991
+          ]
+        },
+        "future": {
+          "": false,
+          "😀": true
+        }
+      }
+    ],
+    "tool_digests": {
+      "поиск 🚀": "sha256:4291916396769a02a99d592bcb672ef064c4dfde1a6e8a7566978ab3bac76eca"
+    },
+    "server_digest": "sha256:a148daf2181bbc227248b09e42f403b8ba43d5838a20f1950ea7645bf462593b"
   }
 ]
