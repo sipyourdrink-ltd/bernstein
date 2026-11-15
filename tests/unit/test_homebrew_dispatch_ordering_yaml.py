@@ -68,7 +68,7 @@ def test_checkout_free_homebrew_dispatch_has_explicit_repository_context() -> No
 
 def test_pypi_approval_does_not_delay_independent_release_consumers() -> None:
     release = _workflow()["jobs"]["github-release"]
-    assert release["needs"] == "build"
+    assert set(release["needs"]) == {"trusted-source", "build"}
     runs = "\n".join(s.get("run", "") for s in release["steps"])
     assert "gh workflow run publish-docker.yml" in runs
     assert "gh workflow run sbom.yml" in runs
