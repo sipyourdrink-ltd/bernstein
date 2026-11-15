@@ -1,0 +1,1 @@
+- Use the registered adapter key for admission checks when dispatch falls back to the run pin. Pinned Pi now looks up the existing `pi` contract. Admission still requires passing evidence and a matching receipt.
