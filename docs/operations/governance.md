@@ -417,6 +417,36 @@ unchanged environment reports nothing. By default only drifted entities print;
 
 Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.
 
+### Repeating and resuming a reviewed reconcile diff
+
+The library helper `bernstein.core.govern.reconcile.apply_reconcile_diff`
+consumes a `ReconcileDiff`, a `ChangeReceipt` context template, and trusted
+callbacks for whole-diff authorization, fresh observation and applying one
+entry. It has no built-in environment mutator and does not change the
+read-only `govern reconcile --propose` CLI. The authorizer must approve the
+entire diff under the template's effective policy digest before any callback
+can mutate state, including any separate approval required for removals.
+
+Each attempt uses the existing kind-qualified entity/desired-value key.
+Policy changes do not rewrite that intent identity: authorization is a
+separate input and previous receipts must match the exact plan, policy,
+environment and approver. The template's plan digest is the canonical digest
+of `diff.to_dict()`; its timestamp is supplied by the caller.
+
+A matching fresh value produces a `skipped` attempt without calling the
+mutator. An unread entity is unavailable; only explicitly confirmed absence
+can satisfy a removal. Fresh unsatisfied drift that differs from the reviewed
+observation fails rather than overwriting a changed target. The first failure
+stops the loop, so never-attempted entries have no attempt in that receipt.
+
+For partial resume, supply the trusted in-process prior `ChangeReceipt`.
+Prior successful or satisfied entries are recorded as skips; failed and
+never-attempted entries are reconsidered. Loading an external receipt requires
+shared-protocol envelope verification and independent signer trust before
+passing its data to this helper. A new diff is required for later drift or a
+changed policy context. Existing `govern apply` admission and receipt
+verification remain separate; an idempotency key is never approval.
+
 ## Skip vs. suppress
 
 `bernstein govern audit-compliance` is the compliance check set above. The check
