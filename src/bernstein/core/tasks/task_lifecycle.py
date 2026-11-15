@@ -784,13 +784,17 @@ def maybe_retry_task(
     current_effort = task.effort or "high"
 
     pinned_model = _operator_pinned_model(task.role, role_model_policy, run_pinned_model)
-    new_model, new_effort = _choose_retry_escalation(
+    new_model, escalated_effort = _choose_retry_escalation(
         task,
         next_retry,
         current_model,
         current_effort,
         pinned_model=pinned_model,
     )
+    # An effort-only override skips role-template resolution at spawn. When
+    # the model was never resolved here, replay both original inputs instead
+    # of manufacturing an override the first attempt did not carry.
+    new_effort = task.effort if new_model is None else escalated_effort
     if pinned_model:
         logger.info(
             "maybe_retry_task: task %s retries on the operator-pinned model %r "
@@ -1495,6 +1499,7 @@ def retry_or_fail_task(
 
         # Effort escalates on its own schedule; only the model is subject to
         # the pin. ``tier_model`` is what the Claude tier ladder would pick.
+        retry_effort: str | None
         if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
             tier_model, retry_effort = "opus", "max"
         elif retry_count >= 1:
@@ -1508,6 +1513,7 @@ def retry_or_fail_task(
             # A configured endpoint alone cannot identify a model. Preserve
             # the unset override so the adapter resolves its own default.
             retry_model = None
+            retry_effort = task.effort
         elif task.model and "/" in task.model:
             # This independent retry creator must preserve the same supplied
             # provider/model identity as _choose_retry_escalation (#6605).

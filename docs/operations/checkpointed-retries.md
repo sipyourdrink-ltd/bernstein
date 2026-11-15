@@ -20,10 +20,15 @@ existing policy; retry limits, backoff and checkpoint decisions are unchanged.
 
 This retention does not query a provider catalog or prove model availability.
 If the task has no model and no explicit run/role pin reaches the retry path,
-both retry creators keep the model override unset. The adapter resolves its
-configured default just as on the first attempt; the retry does not invent a
-bare `sonnet` or `opus` override. An endpoint URL alone does not identify a
-model, and no provider catalog is queried. Unprefixed task models
+both retry creators preserve the original model and effort overrides together.
+When both were unset, they remain unset: adding an effort alone would bypass
+role-template resolution and fail before reaching the adapter. The existing
+resolver therefore uses the same inputs and configuration sources as the first
+attempt, without an invented `sonnet` or `opus` override. A supplied effort is
+preserved; it is never erased to bypass a missing-model refusal. Effort escalation
+continues when a model or operator pin is known. Reusing inputs does not prove an
+identical effective model if configuration or router state changes. An endpoint
+URL alone does not identify a model, and no provider catalog is queried. Unprefixed task models
 without an operator pin remain governed by the existing adapter/tier policy.
 
 ## Per-adapter capability
