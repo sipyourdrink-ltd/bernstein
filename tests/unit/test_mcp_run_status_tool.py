@@ -2,7 +2,7 @@
 
 The tool lets a stateless MCP client fetch a verifiable run handle for a
 run it started, reprojected from the on-disk journal and the audit chain
-without holding a session. These tests drive the FastMCP tool callable
+without holding a session. These tests drive the MCPServer tool callable
 directly and isolate all state with ``tmp_path``.
 """
 

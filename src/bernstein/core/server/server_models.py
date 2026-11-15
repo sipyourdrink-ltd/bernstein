@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -248,6 +248,9 @@ class TaskCreate(BaseModel):
     model: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "opus", "sonnet", "haiku"
     effort: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "max", "high", "medium", "low"
     cli: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # adapter override: "claude", "opencode", …
+    requires: list[Annotated[str, Field(strict=True, min_length=1, max_length=_MAX_SHORT_STR_LEN)]] = Field(
+        default_factory=list, max_length=_MAX_LIST_LEN
+    )
     batch_eligible: bool = False  # Non-urgent: eligible for provider batch APIs at ~50% cost
     completion_signals: list[CompletionSignalSchema] = Field(
         default_factory=lambda: list[CompletionSignalSchema](),
@@ -290,6 +293,13 @@ class TaskCreate(BaseModel):
     @classmethod
     def _validate_owned_files(cls, value: list[str]) -> list[str]:
         return _ensure_relative_owned_files(value)
+
+    @field_validator("requires")
+    @classmethod
+    def _validate_requires(cls, value: list[str]) -> list[str]:
+        if any(not capability.strip() for capability in value):
+            raise ValueError("requires entries must be nonblank capability strings")
+        return value
 
     @field_validator("artifact_spec")
     @classmethod
@@ -388,6 +398,7 @@ class TaskResponse(BaseModel):
     model: str | None
     effort: str | None
     cli: str | None = None
+    requires: list[str] = Field(default_factory=list)
     batch_eligible: bool = False
     completion_signals: list[dict[str, str]] = Field(default_factory=lambda: list[dict[str, str]]())
     slack_context: dict[str, Any] | None = None

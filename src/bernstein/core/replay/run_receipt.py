@@ -605,7 +605,7 @@ def build_run_receipt(
     audit_until: str | None = None,
     write: bool = True,
     output_path: Path | None = None,
-    hash_profile: str = HASH_PROFILE_LEGACY,
+    hash_profile: str | None = None,
 ) -> RunReceipt:
     """Build (and by default write) the signed receipt for one run.
 
@@ -629,8 +629,10 @@ def build_run_receipt(
         write: When ``False``, build in-memory only.
         output_path: Override the on-disk destination (defaults to
             ``.sdd/runs/<run_id>/run-receipt.json``).
-        hash_profile: Canonicalization for the signed binding bytes.
-            :data:`HASH_PROFILE_LEGACY` (default) reproduces every byte this
+        hash_profile: Optional explicit canonicalization for the signed binding
+            bytes. When omitted, use the journal's recorded profile (absent
+            means ``py-json-v1``).
+            :data:`HASH_PROFILE_LEGACY` reproduces every byte this
             function has always produced. :data:`HASH_PROFILE_JCS_V2` signs
             RFC 8785 bytes instead, so a non-ASCII payload hashes the same
             here as it already does in the TRACE projection and audit-chain
@@ -649,7 +651,7 @@ def build_run_receipt(
             neither known profile.
         JournalPathError: ``run_id`` is not a safe path segment.
     """
-    if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+    if hash_profile is not None and hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
         raise RunReceiptError(f"unknown hash_profile {hash_profile!r}")
     journal_path = run_journal_path(sdd_dir, run_id)
     events = _load_journal_rows_strict(journal_path, run_id)
@@ -663,6 +665,8 @@ def build_run_receipt(
             f"refusing to sign run {run_id!r}: journal chain fails at step "
             f"{journal_check.divergent_index}: {'; '.join(journal_check.errors)}",
         )
+    if hash_profile is None:
+        hash_profile = str(events[0].get("hash_profile", HASH_PROFILE_LEGACY))
     journal_rows = [_project_journal_row(row) for row in events]
     journal_head = str(events[-1].get("event_hash", ""))
 
@@ -1207,7 +1211,7 @@ def resolve_kms_adapter_from_env() -> Any | None:
     return None
 
 
-def write_run_receipt_if_configured(run_id: str, sdd_dir: Path) -> Path | None:
+def write_run_receipt_if_configured(run_id: str, sdd_dir: Path, *, hash_profile: str | None = None) -> Path | None:
     """Write the run receipt at finalization when a signing key is configured.
 
     The no-key case is a documented no-op (debug log, ``None`` return),
@@ -1219,6 +1223,8 @@ def write_run_receipt_if_configured(run_id: str, sdd_dir: Path) -> Path | None:
         The written receipt path, or ``None`` when signing is not
         configured.
     """
+    if hash_profile is not None and hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+        raise RunReceiptError(f"unknown hash_profile {hash_profile!r}")
     kms_adapter = resolve_kms_adapter_from_env()
     if kms_adapter is None:
         logger.debug(
@@ -1228,7 +1234,7 @@ def write_run_receipt_if_configured(run_id: str, sdd_dir: Path) -> Path | None:
             SIGNING_ENV_VAR_ENV,
         )
         return None
-    return build_run_receipt(run_id, sdd_dir, kms_adapter).receipt_path
+    return build_run_receipt(run_id, sdd_dir, kms_adapter, hash_profile=hash_profile).receipt_path
 
 
 __all__ = [

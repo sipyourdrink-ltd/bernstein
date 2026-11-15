@@ -121,6 +121,14 @@ jobs:
           # expression, and license-compliance.yml accepts it. Only the security
           # bump to 13.0.0 made the reviewer look. Exempted per package rather
           # than adding MIT-CMU to the allow-list for every dependency.
+          # typing-extensions 4.16.0 declares PSF-2.0 in its wheel metadata.
+          # Its bundled Python license includes historical GPL-compatibility
+          # discussion, which the dependency graph misclassifies as a GPL
+          # grant. The text explicitly says Python is not distributed under
+          # the GPL. Keep this metadata exception package-scoped; PSF-2.0 is
+          # already accepted above, and no general GPL license is allowed.
+          # Upstream: python/typing_extensions, tag 4.16.0, LICENSE and
+          # pyproject.toml (License-Expression in the published wheel).
           allow-dependencies-licenses: >-
             pkg:githubactions/trufflesecurity/trufflehog,
             pkg:pypi/cairosvg,
@@ -129,4 +137,5 @@ jobs:
             pkg:pypi/numpy,
             pkg:pypi/pillow,
             pkg:pypi/python-telegram-bot,
-            pkg:pypi/grimp
+            pkg:pypi/grimp,
+            pkg:pypi/typing-extensions
