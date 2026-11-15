@@ -46,6 +46,12 @@ class AdmissionSubject:
                 raise ValueError(f"model_ref.{name} must be non-empty, trimmed text")
         if "/" in ref.provider:
             raise ValueError("model_ref.provider must not contain '/'")
+        for name in ("provider", "model_requested", "model_reported", "version"):
+            value = getattr(ref, name)
+            if value is not None and "@" in value:
+                raise ValueError(f"model_ref.{name} must not contain the registry delimiter '@'")
+        if ref.version == "*":
+            raise ValueError("model_ref.version must not be the registry wildcard '*'")
 
     def to_dict(self) -> dict[str, Any]:
         return {

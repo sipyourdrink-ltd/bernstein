@@ -131,6 +131,8 @@ class StochasticMockReplayAdapter:
     receipt alone — exactly what the offline verifier needs.
     """
 
+    synthetic = True
+
     def __init__(self, seed: int = 0) -> None:
         self._seed = seed
         self._call_counts: dict[str, int] = {}

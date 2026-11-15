@@ -15,7 +15,7 @@ from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.eval.bench.admission_subject import AdmissionSubject
 from bernstein.eval.bench.bundle import SubmissionBundle
 from bernstein.eval.bench.model_admission import ModelAdmissionEvidence
-from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
+from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter, StochasticMockReplayAdapter
 from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
 from bernstein.eval.bench.verifier import BenchVerifier, verify_signature
@@ -78,6 +78,36 @@ def test_subject_is_signed_and_roundtrips(evidence: ModelAdmissionEvidence) -> N
     loaded = SubmissionBundle.from_dict(evidence.bundle.to_dict())
     assert loaded.admission_subject == evidence.bundle.admission_subject
     assert loaded.bundle_hash() == evidence.bundle.bundle_hash()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"provider": "local@other"},
+        {"model_requested": "model-a@revision-1"},
+        {"model_reported": "model-a@revision-1"},
+        {"version": "revision-1@revision-2"},
+        {"version": "*"},
+    ],
+)
+def test_signed_subject_rejects_ambiguous_registry_components(changes: dict[str, Any]) -> None:
+    fields = {"provider": "local", "model_requested": "model-a", "version": "revision-1", **changes}
+    with pytest.raises(ValueError, match="registry"):
+        AdmissionSubject(ModelRef(**fields), ("code",))
+
+
+def test_stochastic_mock_cannot_qualify_real_signed_admission(
+    evidence: ModelAdmissionEvidence,
+    signer: AgentCardSigner,
+) -> None:
+    adapter = StochasticMockReplayAdapter(seed=0)
+    bundle = replace(
+        BenchRunner(evidence.suite, adapter, {}).run(), admission_subject=evidence.bundle.admission_subject
+    )
+    signed = signer.sign(bundle)
+    mock_evidence = replace(evidence, bundle=signed, adapter=adapter)
+    with pytest.raises(ValueError, match="synthetic"):
+        qualify(mock_evidence)
 
 
 @pytest.mark.parametrize("schema_version", [1, 2])

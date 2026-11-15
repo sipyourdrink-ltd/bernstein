@@ -78,3 +78,7 @@ bundles remain readable/verifiable but cannot qualify the new admission workflow
 
 Exit status is 0 after recording admission, 1 on invalid/unqualified evidence
 (and Click's usual 2 for invalid command options).
+
+Verified subjects reject registry delimiters in model identity components and
+literal wildcard revisions. Built-in mock replay adapters, including stochastic
+fixtures, cannot qualify admission evidence.

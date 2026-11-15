@@ -11,10 +11,10 @@
       "additionalProperties": false,
       "required": ["provider", "model_requested"],
       "properties": {
-        "provider": {"type": "string", "minLength": 1, "pattern": "^[^/\\s](?:[^/]*[^/\\s])?$"},
-        "model_requested": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
-        "model_reported": {"type": ["string", "null"], "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
-        "version": {"type": ["string", "null"], "minLength": 1, "pattern": "^\\S(?:.*\\S)?$"},
+        "provider": {"type": "string", "minLength": 1, "pattern": "^[^/\\s](?:[^/]*[^/\\s])?$", "allOf": [{"not": {"type": "string", "pattern": "@"}}]},
+        "model_requested": {"type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$", "allOf": [{"not": {"type": "string", "pattern": "@"}}]},
+        "model_reported": {"type": ["string", "null"], "minLength": 1, "pattern": "^\\S(?:.*\\S)?$", "allOf": [{"not": {"type": "string", "pattern": "@"}}]},
+        "version": {"type": ["string", "null"], "minLength": 1, "pattern": "^\\S(?:.*\\S)?$", "allOf": [{"not": {"type": "string", "pattern": "@"}}, {"not": {"const": "*"}}]},
         "routing_decision_hash": {"type": "string", "pattern": "^(sha256:.*)?$"}
       }
     },
