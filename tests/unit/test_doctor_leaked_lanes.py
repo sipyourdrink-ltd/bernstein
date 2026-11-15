@@ -131,3 +131,25 @@ def test_doctor_rejects_invalid_audit_evidence_read_only(
     assert result["status"] == "FAIL", result
     assert result["findings"] == []
     assert {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("shape", ["file", "dangling-symlink", "directory-symlink"])
+def test_doctor_rejects_invalid_audit_root_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    audit_dir = tmp_path / ".sdd/audit"
+    audit_dir.parent.mkdir()
+    if shape == "file":
+        audit_dir.write_text("not an audit directory")
+    else:
+        target = tmp_path / "audit-target"
+        if shape == "directory-symlink":
+            target.mkdir()
+        audit_dir.symlink_to(target)
+    from bernstein.core.security import audit
+
+    monkeypatch.setattr(audit, "load_audit_key", lambda: pytest.fail("invalid root must not load a key"))
+    result = doctor_cmd.check_leaked_lanes(tmp_path)
+    assert result["status"] == "FAIL", result
+    assert result["findings"] == []
+    assert audit_dir.is_symlink() if shape != "file" else audit_dir.read_text() == "not an audit directory"

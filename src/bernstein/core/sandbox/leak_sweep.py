@@ -419,7 +419,16 @@ def _sweep_leaked_sandboxes(
     """Allow the combined inventory to share its canonical task snapshot."""
     sdd_dir = workdir / ".sdd"
     audit_dir = sdd_dir / "audit"
-    if not audit_dir.is_dir():
+    if require_verified_audit:
+        if audit_dir.is_symlink():
+            raise SandboxSweepUnavailableError("audit directory must not be a symbolic link")
+        try:
+            audit_dir.stat()
+        except FileNotFoundError:
+            return []
+        if not audit_dir.is_dir():
+            raise SandboxSweepUnavailableError("audit path is not a directory")
+    elif not audit_dir.is_dir():
         return []
     if require_verified_audit and not _audit_tree_has_evidence(audit_dir):
         return []
