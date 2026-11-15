@@ -4,6 +4,16 @@ Operator-facing notes on Bernstein's CI workflows. Focused on the
 matrix policy and the failure-class interventions; for the per-step
 documentation read the inline comments in `.github/workflows/ci.yml`.
 
+## Landed merge-group release dispatch
+
+The privileged post-CI release route accepts a successful queue-group run
+only after its exact tested SHA is an ancestor of current main. It resolves
+the queue tail PR and rejects missing or carry branch names. Main routing
+requires a same-repository push or manual dispatch; failure handlers apply
+the same repository/event boundary. Speculative queue commits cannot enter
+the privileged release route. Existing release environments and approvals
+remain required.
+
 ## TL;DR
 
 | Topic | Status | Where |
