@@ -316,6 +316,7 @@ def task_to_response(task: Task) -> TaskResponse:
         model=task.model,
         effort=task.effort,
         cli=task.cli,
+        requires=list(task.requires),
         batch_eligible=task.batch_eligible,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         # Issue #3110: the declared artifact contract must survive the

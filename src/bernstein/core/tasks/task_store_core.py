@@ -137,6 +137,10 @@ class TaskRecord(TypedDict):
     role: str
     priority: int
     dispatch_tier: NotRequired[str]
+    model: NotRequired[str | None]
+    effort: NotRequired[str | None]
+    cli: NotRequired[str | None]
+    requires: NotRequired[list[str]]
     scope: str
     complexity: str
     estimated_minutes: int | None
@@ -254,6 +258,10 @@ class TaskCreateRequest(Protocol):
     model: str | None
     effort: str | None
     cli: str | None
+
+    @property
+    def requires(self) -> Sequence[str]: ...
+
     batch_eligible: bool
     approval_required: bool
     eu_ai_act_risk: str
@@ -839,6 +847,14 @@ class TaskStore:
                     task.status = TaskStatus(record.get("status", task.status.value))
                     if "dispatch_tier" in record:
                         task.dispatch_tier = DispatchTier(record["dispatch_tier"])
+                    if "model" in record:
+                        task.model = record["model"]
+                    if "effort" in record:
+                        task.effort = record["effort"]
+                    if "cli" in record:
+                        task.cli = record["cli"]
+                    if "requires" in record:
+                        task.requires = list(record["requires"])
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
                     if isinstance(version := record.get("version"), int):
@@ -1259,6 +1275,10 @@ class TaskStore:
             "role": task.role,
             "priority": task.priority,
             "dispatch_tier": task.dispatch_tier.value,
+            "model": task.model,
+            "effort": task.effort,
+            "cli": task.cli,
+            "requires": list(task.requires),
             "scope": task.scope.value,
             "complexity": task.complexity.value,
             "estimated_minutes": task.estimated_minutes,
@@ -1622,6 +1642,7 @@ class TaskStore:
             model=req.model,
             effort=req.effort,
             cli=getattr(req, "cli", None),
+            requires=list(getattr(req, "requires", ())),
             batch_eligible=batch_eligible,
             eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
             approval_required=bool(getattr(req, "approval_required", False)),
@@ -2065,6 +2086,7 @@ class TaskStore:
                     model=req.model,
                     effort=req.effort,
                     cli=getattr(req, "cli", None),
+                    requires=list(getattr(req, "requires", ())),
                     batch_eligible=batch_eligible,
                     eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
                     approval_required=bool(getattr(req, "approval_required", False)),

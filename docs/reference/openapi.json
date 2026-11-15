@@ -22636,6 +22636,16 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -23585,6 +23595,13 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -24517,6 +24534,16 @@
               }
             ],
             "title": "Cli"
+          },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
           },
           "batch_eligible": {
             "type": "boolean",
