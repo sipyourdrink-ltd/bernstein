@@ -159,6 +159,7 @@ class TestAdapterCapability:
             "SUPPORTS_TOP_P",
             "SUPPORTS_TOP_K",
             "SUPPORTS_MAX_TOKENS",
+            "SUPPORTS_REMOTE_MCP",
         }
         assert set(AdapterCapability.__members__.keys()) == expected
 

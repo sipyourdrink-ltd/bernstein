@@ -245,74 +245,47 @@ spawn-time write all line up.
 - `architecture/state-persistence.md` - where the merged MCP config
   lands on disk.
 
-## Proposed HTTP catalog contract (#6456)
+## Saved HTTP and SSE catalog contract (#6456)
 
-**Design proposal only: unimplemented.** This section records the boundary
-for [issue #6456](https://github.com/sipyourdrink-ltd/bernstein/issues/6456);
-it does not enable HTTP catalog entries or claim passing runtime tests.
-The issue remains assigned to `georgeatparallel`, who accepted the scoped
-contributor handoff. This proposal does not replace that assignment.
+The saved `.sdd/config/mcp_servers.yaml` catalog supports optional remote
+`url`, `transport`, and `headers` fields on `MCPServerEntry` alongside legacy
+stdio (`package`/`command`/`args`/`env_required`) entries.
 
-The accepted goal is optional `url` and `headers` support in the saved
-`.sdd/config/mcp_servers.yaml` catalog, preserving stdio entries and the
-existing per-task selection path. Compatible adapters must receive the
-selected HTTP configuration; incompatible adapters must refuse it clearly.
-Credential header values must come from the environment rather than be
-stored in the catalog. No vendor entry is added to the bundled marketplace,
-and offline verification and air-gapped operation keep their current behavior.
-The separate fetched/signed catalog described in
-[MCP Catalog](../reference/mcp-catalog.md) is outside this proposal.
+### Transport and schema rules
 
-Today `MCPServerEntry` requires a package and serializes command/args;
-URL-only entries are rejected and HTTP fields cannot round-trip.
-`MCPServerConfig` separately infers SSE from a URL and cannot retain headers.
-Lower-level HTTP transports exist, but that does not establish saved-catalog
-handoff or adapter compatibility.
+- **Stdio entries** specify `name` and `package` (plus optional `command`,
+  `args`, `env_required`), with `transport` omitted or `"stdio"`.
+- **Remote entries** specify `name` and an `http://` or `https://` `url`, with
+  `transport` set to `"http"` (aliases `"streamable-http"` /
+  `"streamable_http"`) or `"sse"`. When `url` is given and `transport` is
+  omitted, catalog entries default to `"http"`; `MCPManager` (`parse_server_configs`)
+  preserves explicit `"sse"`/`"http"` and infers `"sse"` only when the URL path
+  ends in `/sse` (otherwise `"http"`).
+- Mixing a remote `url` with `package`, `command`, or `args`, or supplying
+  `headers` or `"http"`/`"sse"` transport without a `url`, is rejected before
+  writing `.sdd/config/mcp_servers.yaml`.
 
-### Unresolved boundaries
+### Credential references
 
-1. **Transport and invalid combinations.** Decide the meaning of URL-only
-   entries, preserve explicit SSE separately from streamable HTTP, and define
-   saved/emitted transport spelling and command/URL mutual exclusion. No
-   transport default or schema extension is selected by this proposal.
-2. **Credential reference and lifecycle.** Decide the header-reference shape,
-   permitted literal headers, sensitive-header classification, missing-env
-   refusal, resolution timing and handling of runtime config files. Expanded
-   credentials must not enter saved catalogs, previews, errors or audit output.
-   This proposal does not select a resolver or credential-storage API.
-3. **Capability and refusal ownership.** Decide where evidence-backed remote
-   transport support is enforced, which adapters are supported, and how retry
-   and resume preserve the refusal. A generic MCP-client capability is not
-   evidence of HTTP support. No new capability API is selected here.
+- Header values in `headers` (for example `Authorization: Bearer ${API_TOKEN}`
+  or `X-API-Key: ${MY_KEY}`) must reference environment variables via
+  `${ENV_VAR}` syntax rather than literal secrets for sensitive header names or
+  secret-shaped values. Non-sensitive literal headers (e.g.
+  `X-Workspace-Id: team-alpha`) are permitted.
+- `${ENV_VAR}` placeholders are expanded at runtime when building `mcpServers`
+  configs (`MCPServerEntry.to_mcp_config()` and `MCPServerConfig.to_mcp_config_entry()`),
+  and missing/empty referenced variables raise `ValueError` before spawn or
+  connection without exposing header values.
 
-### Future acceptance matrix
+### Adapter capability gating
 
-These are proposed property names and required observations, not implemented
-or executed tests. They become actionable after the boundaries above are agreed.
-
-1. `test_saved_http_endpoint_survives_catalog_round_trip`: preserve URL/header
-   references through load/save/reload without a dummy package; retain legacy
-   stdio command/args/env and explicit selection behavior.
-2. `test_invalid_transport_combinations_refuse_before_catalog_write`: reject
-   malformed or ambiguous definitions under the agreed contract and preserve
-   the distinction between SSE and streamable HTTP.
-3. `test_selected_remote_config_survives_registry_manager_and_spawn_handoff`:
-   exercise real task selection, base precedence, manager layering and an inert
-   compatible-adapter invocation without dropping URL, transport or headers.
-4. `test_unsupported_adapter_refuses_selected_remote_server_before_spawn`:
-   unsupported or unknown support refuses clearly before child creation,
-   including retry/resume; stdio and no-MCP controls retain their behavior.
-5. `test_credential_header_reference_is_resolved_without_persisting_secret`:
-   synthetic credentials reach only the approved runtime consumer, remain
-   absent from persisted/preview/error/audit surfaces, and missing environment
-   values refuse before connection or child creation; safe headers survive.
-6. `test_plugin_namespacing_preserves_remote_endpoint_and_headers`: retain
-   remote fields and collision behavior when the shared entry type is copied
-   for plugin registration, without an unrelated plugin-schema expansion.
-7. `test_remote_selection_respects_existing_network_and_offline_boundaries`:
-   use inert fixtures to prove denied policies never connect and unused
-   entries, stdio tasks and offline verification add no network requirement.
-8. `test_saved_http_support_does_not_add_bundled_vendor_or_mutate_signed_catalog`:
-   preserve bundled reference entries and the separate signed-catalog path;
-   document only implemented transports, adapters and credential-reference
-   behavior in the eventual implementation and release note.
+- Only adapters advertising `AdapterCapability.SUPPORTS_REMOTE_MCP` (currently
+  `ClaudeCodeAdapter` and `CursorAdapter`) accept resolved configs containing
+  remote HTTP/SSE servers.
+- Spawning, failing over, retrying, or resuming a task whose resolved MCP config
+  contains a remote server on an adapter without `SUPPORTS_REMOTE_MCP` raises
+  `RemoteMCPRefusal` before any child process is created or worktree is
+  adopted. Stdio-only and no-MCP tasks continue unchanged.
+- Network policy checks (`enforce_network_policy`), offline verification, airgap
+  diagnostics, bundled `mcp_marketplace` entries, and the separate signed
+  `mcp_catalog` pipeline remain unchanged.
