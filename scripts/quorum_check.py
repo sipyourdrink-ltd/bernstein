@@ -40,8 +40,8 @@ The rules, in the order they are applied
 3. A pull request opened by `github-actions[bot]` needs the maintainer's
    approval whatever it touches: anyone who can push a branch can open one.
 4. The maintainer's own pull requests merge without approvals unless they
-   carry a commit authored outside the roster. Co-author credit alone does
-   not change the rule. Any standing `changes requested` from a committer
+   carry a commit authored outside the roster and built-in workflow account.
+   Co-author credit alone does not change the rule. Any standing `changes requested` from a committer
    blocks them (section 6).
    Until 2026-10-05 a pull request the maintainer has pushed to and then
    declared adopted in the thread is treated the same way (section 3), if it
