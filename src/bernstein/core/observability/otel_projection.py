@@ -49,6 +49,8 @@ from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import InvalidSignature
 
+from bernstein.core.verify_result import ReceiptVerification as ProjectionVerification
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -253,14 +255,6 @@ class SpanProjection:
     @property
     def is_signed(self) -> bool:
         return bool(self.signature_b64)
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectionVerification:
-    """Outcome of :func:`verify_projection`."""
-
-    ok: bool
-    errors: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
