@@ -92,6 +92,11 @@ jobs:
             const repo = context.repo;
             const eventPR = context.payload.pull_request;
             const head = eventPR.head.sha;
+            let waitsLeft = 60;
+            const pause = async () => {
+              if (waitsLeft-- <= 0) throw new Error('Quorum reconciliation timed out');
+              await new Promise(resolve => setTimeout(resolve, 4000));
+            };
             // Wait for earlier evaluations so an old-label result cannot
             // finish after the recomputed result and overwrite it.
             for (let attempt = 0; attempt < 60; attempt++) {
@@ -120,11 +125,29 @@ jobs:
                 // sweep budget; never claim a partial repair as success.
                 if (runs.length > 12) throw new Error('Too many quorum runs; explicit recovery required');
                 for (const run_id of runs) {
+                  const {data: previous} = await github.rest.actions.getWorkflowRun({...repo, run_id});
+                  if (previous.path !== '.github/workflows/quorum.yml' || previous.head_sha !== head ||
+                      previous.status !== 'completed' || !Number.isInteger(previous.run_attempt)) {
+                    throw new Error('Quorum run changed before reconciliation');
+                  }
                   core.info(`Re-running quorum run ${run_id} for #${eventPR.number} at ${head}`);
                   await github.rest.actions.reRunWorkflow({...repo, run_id});
+                  // Same-PR quorum runs share cancel-in-progress concurrency.
+                  // Wait for this new attempt before starting another run.
+                  // The API can briefly return the completed old attempt.
+                  while (true) {
+                    const {data: current} = await github.rest.actions.getWorkflowRun({...repo, run_id});
+                    if (current.run_attempt > previous.run_attempt && current.status === 'completed') {
+                      if (!['success', 'failure'].includes(current.conclusion)) {
+                        throw new Error('Quorum rerun did not produce an evaluation');
+                      }
+                      break;
+                    }
+                    await pause();
+                  }
                 }
                 return;
               }
-              await new Promise(resolve => setTimeout(resolve, 4000));
+              await pause();
             }
             throw new Error('Quorum checks did not settle after labeling; no stale verdict accepted');

@@ -45,6 +45,13 @@ def test_reconciliation_uses_existing_trusted_label_event_and_actions_token() ->
         "duplicate",
         "foreign-app",
         "bad-url",
+        "multi",
+        "stale-attempt",
+        "rerun-timeout",
+        "rerun-cancelled",
+        "rerun-wait",
+        "run-read-error",
+        "wrong-workflow",
     ],
 )
 def test_label_reconciliation_fails_closed_and_reruns_successes(case: str) -> None:
@@ -57,6 +64,8 @@ const scenario = JSON.parse(process.argv[1]);
 const script = JSON.parse(process.argv[2]);
 const calls = [];
 let queries = 0;
+let active = null;
+const polls = {};
 const context = {repo: {owner: 'owner', repo: 'repo'}, payload: {pull_request: {number: 42, head: {sha: 'a'.repeat(40)}}}};
 const core = {info() {}};
 process.env.GITHUB_SERVER_URL = 'https://github.com';
@@ -70,17 +79,40 @@ const github = {
         head: {sha: (scenario === 'new-head' ? 'b' : 'a').repeat(40)}}};
     }},
     checks: {listForRef: 'listForRef'},
-    actions: {reRunWorkflow: async args => {
-      calls.push(['rerun', args]);
-      if (scenario === 'post-error') throw Error('HTTP 403');
-    }},
+    actions: {
+      getWorkflowRun: async args => {
+        calls.push(['run', args]);
+        if (scenario === 'run-read-error') throw Error('HTTP 503');
+        const data = {path: scenario === 'wrong-workflow' ? '.github/workflows/other.yml' : '.github/workflows/quorum.yml',
+          head_sha: 'a'.repeat(40), status: 'completed', run_attempt: 1, conclusion: 'success'};
+        if (active === args.run_id) {
+          polls[args.run_id] = (polls[args.run_id] || 0) + 1;
+          if (scenario === 'stale-attempt' || (scenario === 'rerun-wait' && polls[args.run_id] === 1)) return {data};
+          data.run_attempt = 2;
+          if (scenario === 'rerun-timeout' || (scenario === 'rerun-wait' && polls[args.run_id] === 2)) {
+            data.status = 'in_progress';
+            data.conclusion = null;
+          } else {
+            data.conclusion = scenario === 'rerun-cancelled' ? 'cancelled' : scenario === 'failure' ? 'failure' : 'success';
+            active = null;
+          }
+        }
+        return {data};
+      },
+      reRunWorkflow: async args => {
+        calls.push(['rerun', args]);
+        if (scenario === 'post-error') throw Error('HTTP 403');
+        if (active !== null) throw Error('Same-PR reruns overlap and cancel each other');
+        active = args.run_id;
+      },
+    },
   },
   paginate: async (method, args) => {
     calls.push(['checks', args]);
     queries++;
     if (method !== 'listForRef' || args.filter !== 'all' || args.ref !== 'a'.repeat(40)) throw Error('wrong lookup');
     if (scenario === 'absent') return [];
-    return Array.from({length: scenario === 'many-runs' ? 13 : scenario === 'duplicate' ? 2 : 1}, (_, i) => ({
+    return Array.from({length: scenario === 'many-runs' ? 13 : ['duplicate', 'multi'].includes(scenario) ? 2 : 1}, (_, i) => ({
       app: {slug: scenario === 'foreign-app' ? 'untrusted' : 'github-actions'},
       status: scenario === 'timeout' || (scenario === 'wait' && queries === 1) ? 'in_progress' : 'completed',
       conclusion: scenario === 'failure' ? 'failure' : 'success',
@@ -103,10 +135,38 @@ const github = {
         timeout=10,
     )
     result = json.loads(proc.stdout)
-    failures = {"absent", "timeout", "read-error", "post-error", "many-runs", "foreign-app", "bad-url"}
+    failures = {
+        "absent",
+        "timeout",
+        "read-error",
+        "post-error",
+        "many-runs",
+        "foreign-app",
+        "bad-url",
+        "stale-attempt",
+        "rerun-timeout",
+        "rerun-cancelled",
+        "run-read-error",
+        "wrong-workflow",
+    }
     assert bool(result["error"]) == (case in failures), result
     posts = [args for name, args in result["calls"] if name == "rerun"]
-    if case in {"success", "failure", "wait", "duplicate", "post-error"}:
+    if case == "multi":
+        assert posts == [
+            {"owner": "owner", "repo": "repo", "run_id": 987},
+            {"owner": "owner", "repo": "repo", "run_id": 988},
+        ]
+    elif case in {
+        "success",
+        "failure",
+        "wait",
+        "duplicate",
+        "post-error",
+        "stale-attempt",
+        "rerun-timeout",
+        "rerun-cancelled",
+        "rerun-wait",
+    }:
         assert posts == [{"owner": "owner", "repo": "repo", "run_id": 987}]
     else:
         assert not posts
