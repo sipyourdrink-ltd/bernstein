@@ -6,8 +6,8 @@ For an explicitly configured single-process TaskStore controller:
 | --- | --- | --- | --- |
 | GET | `/claim-admission` | none | Current scoped operator state |
 | POST | `/claim-admission/enroll` | `{"reason":"...", "expected_revision":0}` | Explicit initial enrollment, halted |
-| POST | `/claim-admission/halt` | `{"reason":"...", "expected_revision":0}` | Persistent halt of new claims |
-| POST | `/claim-admission/resume` | `{"reason":"...", "expected_revision":0}` | Resume from valid existing history |
+| POST | `/claim-admission/halt` | `{"reason":"Incident", "expected_revision":2}` | Persistent halt of new claims |
+| POST | `/claim-admission/resume` | `{"reason":"Release", "expected_revision":1}` | Resume from valid existing history |
 
 All are mirrored under `/api/v1`. An authenticated operator is required;
 request bodies cannot select actor, store, controller or trust roots. Reasons
@@ -23,3 +23,7 @@ limitations](../operations/claim-admission.md).
 Every transition requires `expected_revision`: use zero for initial enrollment and
 the current GET revision for halt/resume. A stale request refuses instead of
 reopening a newer halt. Fetch state again before another deliberate action.
+
+The POST examples form a sequence: enroll at revision 0 produces revision 1,
+resume at revision 1 produces revision 2, then halt at revision 2 produces
+revision 3. Fetch the actual current revision before each later operation.

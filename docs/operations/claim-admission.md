@@ -39,7 +39,7 @@ select a controller automatically.
 Missing state refuses all new claims. An authenticated operator explicitly
 posts `{"reason": "Initial installation enrollment", "expected_revision": 0}` to
 `/claim-admission/enroll`. Enrollment starts **halted**. Then post a nonempty
-reason to `/claim-admission/resume` to permit claims. Use
+reason and the current revision from GET to `/claim-admission/resume` to permit claims. Use
 `/claim-admission/halt` to stop further claims. `GET /claim-admission` reports
 scope `task-claim-admission`, controller id, halted state, revision, actor and
 reason. The same endpoints are available under `/api/v1`.
@@ -48,7 +48,7 @@ Mutations require the existing `admin:manage` operator context: an authenticated
 SSO administrator or the configured installation operator bearer. Agent and
 cluster credentials cannot act as operators; disabling authentication does not
 create operator authority for these endpoints. The server derives the actor
-from authenticated context; request bodies accept only the reason.
+from authenticated context; request bodies accept only `reason` and `expected_revision`.
 
 ## Persistence and coverage
 

@@ -92,6 +92,7 @@ async def test_operator_context_controls_only_configured_scope(tmp_path: Path, i
 @pytest.mark.parametrize("action", ["enroll", "halt", "resume"])
 def test_middleware_requires_operator_permission(prefix: str, action: str):
     assert _get_required_permission(f"{prefix}/claim-admission/{action}", "POST") == "admin:manage"
+    assert _get_required_permission(f"{prefix}/claim-admission", "GET") == "admin:manage"
 
 
 @pytest.mark.asyncio
@@ -170,3 +171,58 @@ async def test_production_factory_halt_controls_real_http_claim_routes(tmp_path:
             await client.post("/claim-admission/resume", json={"reason": "Release", "expected_revision": 3})
         ).status_code == 200
         assert (await client.get("/tasks/next/backend")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+@pytest.mark.parametrize("role", [AuthRole.ADMIN, AuthRole.OPERATOR, AuthRole.VIEWER])
+async def test_real_sso_middleware_preserves_operator_revision_workflow(
+    tmp_path: Path, prefix: str, role: AuthRole, monkeypatch
+):
+    from bernstein.core.security.auth_middleware import SSOAuthMiddleware
+
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    app = _app(tmp_path, "none")
+    user = AuthUser(id="validated-user", email="fixture@example.invalid", display_name="Fixture", role=role)
+    service = SimpleNamespace(validate_token=lambda token, **kwargs: (user, {"sub": user.id, "tenant_id": "default"}))
+    app.add_middleware(SSOAuthMiddleware, auth_service=service)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://fixture",
+        headers={"Authorization": "Bearer fixture-validated-sso"},
+    ) as client:
+        enrolled = await client.post(
+            f"{prefix}/claim-admission/enroll", json={"reason": "Enroll", "expected_revision": 0}
+        )
+        status = await client.get(f"{prefix}/claim-admission")
+        if role != AuthRole.ADMIN:
+            assert enrolled.status_code == status.status_code == 403
+            assert not (tmp_path / "control" / "state.sqlite").exists()
+            return
+        assert enrolled.status_code == 200, enrolled.text
+        assert status.status_code == 200, status.text
+        assert status.json()["revision"] == 1
+        resumed = await client.post(
+            f"{prefix}/claim-admission/resume",
+            json={"reason": "Release", "expected_revision": status.json()["revision"]},
+        )
+        assert resumed.status_code == 200
+        assert resumed.json()["actor"] == "operator:validated-user"
+        assert (await client.get(f"{prefix}/claim-admission")).json()["revision"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+async def test_real_auth_disabled_middleware_cannot_create_operator_authority(tmp_path: Path, prefix: str):
+    from bernstein.core.security.auth_middleware import SSOAuthMiddleware
+
+    app = _app(tmp_path, "none")
+    app.add_middleware(SSOAuthMiddleware, auth_disabled=True, legacy_token="fixture-operator")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://fixture",
+        headers={"Authorization": "Bearer fixture-operator"},
+    ) as client:
+        response = await client.post(f"{prefix}/claim-admission/enroll", json={"reason": "Try", "expected_revision": 0})
+        assert response.status_code == 403
+    assert not (tmp_path / "control" / "state.sqlite").exists()

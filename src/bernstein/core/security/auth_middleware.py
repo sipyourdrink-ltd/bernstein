@@ -700,6 +700,12 @@ def _get_required_permission(path: str, method: str) -> str | None:
     """
     path = _API_VERSION_PREFIX_RE.sub("", path, count=1) or "/"
 
+    # This control endpoint is operator-only for reads as well as writes.
+    # ADMIN holds admin:manage, not a derived admin:read permission; status
+    # supplies the current revision required for deliberate halt/resume.
+    if path == "/claim-admission" or path.startswith("/claim-admission/"):
+        return _PERM_ADMIN_MANAGE
+
     # Check specific path patterns first (before prefix matching)
     if "/kill" in path:
         return "agents:read" if method in _READ_METHODS else "agents:kill"
