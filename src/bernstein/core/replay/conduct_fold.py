@@ -39,12 +39,15 @@ from bernstein.core.quality.absence_coverage import CompletionCoverageStatus
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bernstein.core.identity.delegation_scope import DelegationScope
+
 __all__ = [
     "CONDUCT_FOLD_SCHEMA_VERSION",
     "CONDUCT_FOLD_TYPE",
     "CompletionCoverageStatus",
     "ConductAggregate",
     "ConductProjection",
+    "ConductScopeActivity",
     "aggregate_conduct",
     "derive_conduct",
     "derive_conduct_from_path",
@@ -285,6 +288,98 @@ def _build_count(positions: Sequence[int]) -> _Count:
 
 
 @dataclass(frozen=True, slots=True)
+class ConductScopeActivity:
+    """A caller-supplied recorded activity scope with its original journal citation.
+
+    ``scope`` is the scope exercised by this activity, not the principal's
+    entitlement ceiling. Callers supply already verified evidence; this pure
+    report neither reconstructs scope nor verifies grant/delegation chains.
+    """
+
+    run_id: str
+    principal_id: str
+    activity: str
+    first_index: int
+    last_index: int
+    scope: DelegationScope | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not self.run_id
+            or not self.principal_id
+            or not self.activity
+            or type(self.first_index) is not int
+            or type(self.last_index) is not int
+            or self.first_index < 0
+            or self.last_index < self.first_index
+        ):
+            raise ValueError("activity requires identity and a nonnegative ordered journal range")
+
+    def citation(self) -> dict[str, Any]:
+        """Return the recorded source coordinates, never aggregate indices."""
+        return {
+            "run_id": self.run_id,
+            "recorded_activity": self.activity,
+            "event_index_range": {"first": self.first_index, "last": self.last_index},
+        }
+
+
+def _compare_conduct_scope(
+    runs: Sequence[ConductProjection],
+    activities: Sequence[ConductScopeActivity],
+    scope: DelegationScope | None,
+) -> dict[str, Any]:
+    if scope is None:
+        return {"status": "unavailable", "reason": "scope_projection_unavailable", "divergences": []}
+    selected = {run.run_id: run for run in runs}
+    if len(selected) != len(runs):
+        raise ValueError("scope comparison requires one supplied projection per run")
+    divergences: list[dict[str, Any]] = []
+    unavailable: list[dict[str, Any]] = []
+    compared = 0
+    seen: set[str] = set()
+    ordered = sorted(
+        activities,
+        key=lambda a: (
+            a.run_id,
+            a.first_index,
+            a.last_index,
+            a.activity,
+            a.scope.scope_ref() if a.scope is not None else "",
+        ),
+    )
+    for activity in ordered:
+        run = selected.get(activity.run_id)
+        if run is None or activity.principal_id != run.principal_id:
+            continue
+        seen.add(run.run_id)
+        citation = activity.citation()
+        if run.coverage != CompletionCoverageStatus.VERIFIED:
+            unavailable.append({**citation, "reason": "source_run_unverified"})
+        elif activity.scope is None:
+            unavailable.append({**citation, "reason": "recorded_scope_unavailable"})
+        else:
+            compared += 1
+            axes = activity.scope.narrowing_violations(scope)
+            if axes:
+                divergences.append(
+                    {**citation, "divergent_axes": list(axes), "recorded_scope": activity.scope.to_body()}
+                )
+    for run_id in sorted(selected):
+        if run_id not in seen and selected[run_id].event_count:
+            unavailable.append({"run_id": run_id, "reason": "recorded_activity_unavailable"})
+    return {
+        "status": "partial" if compared and unavailable else ("available" if compared else "unavailable"),
+        "reason": "" if compared else "recorded_activity_unavailable",
+        "scope_projection": scope.to_body(),
+        "scope_ref": scope.scope_ref(),
+        "compared_activity_count": compared,
+        "divergences": divergences,
+        "unavailable": unavailable,
+    }
+
+
+@dataclass(frozen=True, slots=True)
 class ConductAggregate:
     """Totals and original per-run evidence for one principal and period.
 
@@ -299,6 +394,7 @@ class ConductAggregate:
     period_start: float
     period_end: float
     runs: tuple[ConductProjection, ...]
+    scope_comparison: dict[str, Any] | None = None
 
     @property
     def event_count(self) -> int:
@@ -340,6 +436,7 @@ class ConductAggregate:
             "counts": self.counts,
             "ignored_event_types": sorted({event for run in self.runs for event in run.ignored_event_types}),
             "runs": [run.to_dict() for run in self.runs],
+            "scope_comparison": self.scope_comparison or _compare_conduct_scope(self.runs, (), None),
         }
 
     def canonical_bytes(self) -> bytes:
@@ -353,6 +450,8 @@ def aggregate_conduct(
     principal_id: str,
     period_start: float,
     period_end: float,
+    scope_projection: DelegationScope | None = None,
+    recorded_activities: Sequence[ConductScopeActivity] = (),
 ) -> ConductAggregate:
     """Combine supplied per-run projections overlapping ``[start, end)``.
 
@@ -365,6 +464,10 @@ def aggregate_conduct(
     or re-derived without journal rows. Callers needing exact in-period counts
     must supply projections already restricted to the desired event window.
     Supply one projection per run to avoid double-counting the same evidence.
+    ``recorded_activities`` supplies verified activity scopes with run-local
+    citations; ``scope_projection`` is the caller-supplied scope in force for
+    this principal throughout the period. Neither is derived from counts or
+    grant chains here. Missing evidence is an explicit comparison gap.
     The function performs no journal discovery or I/O.
 
     Raises:
@@ -391,6 +494,7 @@ def aggregate_conduct(
         period_start=period_start,
         period_end=period_end,
         runs=runs,
+        scope_comparison=_compare_conduct_scope(runs, recorded_activities, scope_projection),
     )
 
 
