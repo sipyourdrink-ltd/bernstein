@@ -36,6 +36,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.security.agent_card_signer import DetachedSigner
+
 
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
@@ -58,10 +60,10 @@ class AgentCard:
 
 @dataclass(frozen=True, slots=True)
 class DetachedJwsSigner:
-    """Parsed Ed25519 signer with one immutable RFC 7797 protected header."""
+    """Ed25519 signer with one immutable RFC 7797 protected header."""
 
     kid: str
-    _private_key: Ed25519PrivateKey = field(repr=False)
+    _private_key: DetachedSigner = field(repr=False)
     _protected: str = field(repr=False)
 
     @classmethod
@@ -70,9 +72,20 @@ class DetachedJwsSigner:
         private_key = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
         if not isinstance(private_key, Ed25519PrivateKey):
             raise TypeError("detached JWS signing requires an Ed25519 private key")
+        return cls.from_signer(private_key, kid=kid)
+
+    @classmethod
+    def from_signer(cls, signer: DetachedSigner, *, kid: str) -> DetachedJwsSigner:
+        """Use a custody adapter without obtaining its private key material.
+
+        ``signer`` supplies raw Ed25519 signatures through the existing
+        signing protocol, as implemented by ``KMSAdapter``. The caller
+        retains responsibility for pinning the matching public key and kid.
+        Signer failures propagate; no local key or fallback is created.
+        """
         header = {"alg": "EdDSA", "kid": kid, "b64": False, "crit": ["b64"]}
         protected = _b64url(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-        return cls(kid=kid, _private_key=private_key, _protected=protected)
+        return cls(kid=kid, _private_key=signer, _protected=protected)
 
     def sign(self, payload: bytes) -> str:
         """Sign one payload without reparsing the same private key or header."""

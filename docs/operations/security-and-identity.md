@@ -3,6 +3,21 @@
 Audience: security engineers evaluating Bernstein for an enterprise
 deployment.
 
+## Lineage signer custody
+
+Python integrations can construct a reusable lineage signer with
+`DetachedJwsSigner.from_signer(adapter, kid=key_id)` from
+`bernstein.core.lineage.identity`. The adapter implements the existing
+`DetachedSigner.sign(bytes) -> bytes` protocol; `KMSAdapter` implementations
+provide this signing surface without exporting private key material to the
+lineage module. Supply the matching trusted public key and key id in the
+verifying `AgentCard`.
+
+This constructor preserves the existing RFC 7797 protected header and detached
+JWS wire format. `from_pem` remains available for existing callers. A failed
+adapter call propagates to the caller without a local-key fallback. Selecting
+an adapter does not create a hardware driver, change routing, or rotate keys.
+
 ## Overview
 
 Bernstein's security model has two axes. The **human axis** authenticates
