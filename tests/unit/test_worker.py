@@ -503,8 +503,11 @@ class TestWorkerProcess:
         exit_code = proc.wait(timeout=10)
         assert exit_code == 42
 
-    def test_worker_handles_missing_command(self, tmp_path: Path) -> None:
+    def test_worker_handles_missing_command(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Worker should exit 127 for missing command."""
+        # An empty search path cannot contain an inaccessible executable or
+        # directory that would turn a missing command into permission denied.
+        monkeypatch.setenv("PATH", str(tmp_path))
         proc = subprocess.Popen(
             [
                 sys.executable,
