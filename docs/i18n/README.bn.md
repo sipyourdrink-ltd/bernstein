@@ -167,7 +167,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — টার্মিনাল ড্যাশবোর্ড (দূরবর্তী ওয়ার্কার নোড) | `bernstein gui serve` — ব্রাউজার ড্যাশবোর্ড |
 
 ### একটি রান প্রমাণ করুন
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 এখানে ডিটারমিনিজম বিশ্বাস করার জিনিস নয়, যাচাই করার জিনিস। অডিট চালু রেখে একবার চালান, তারপর যা লেখা হলো তা যাচাই করুন:
 
@@ -194,6 +194,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 মেশিনে পাঠযোগ্য পরীক্ষার ফলের জন্য `bernstein govern audit --format json` বা `--format sarif` এবং CI-তে উত্তীর্ণ হওয়ার শর্ত হিসেবে `--strict --quiet` ব্যবহার করুন। দেখুন: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` প্রমাণ প্যাকে 2026-01-08 তারিখের গবেষণাপত্রের নির্দিষ্ট সংস্করণের MCP হুমকির শ্রেণিগুলো এবং কভারেজের অবশিষ্ট ঘাটতি উল্লেখ করা হয়।
 
 `bernstein delegation verify RUN` রসিদের চেইনকে রান ম্যানিফেস্টে অডিট কী দিয়ে HMAC-সিল করা চূড়ান্ত হেড ও ধাপের সংখ্যার সঙ্গে তুলনা করে। ফলে চেইনের শেষাংশ মুছে ফেলা, প্রতিস্থাপন ও রান বন্ধ হওয়ার পরে চেইন বাড়ানো ধরা পড়ে, সেই সঙ্গে কী ছাড়া ঘোষণাটি পুনর্লিখনও ধরা পড়ে। ঘোষণাটি সরিয়ে দিলে রান অসম্পূর্ণ থাকে (এক্সিট কোড `3`), কখনোই বৈধ বলে গণ্য হয় না। এটি পুরোনো কোনো প্রামাণিক স্ন্যাপশট পুনরায় ব্যবহার করা শনাক্ত করে না এবং অডিট কী হাতে থাকা লেখকের বিরুদ্ধেও সুরক্ষা দেয় না। দেখুন [ডেলিগেশন যাচাইয়ের কার্যপ্রবাহ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)।
+
+`self-conformance-bench-v1` স্বাক্ষরিত নিয়ন্ত্রণ নমুনা ও অফলাইন রিপ্লে দিয়ে বেঞ্চমার্ক বান্ডলে পরিবর্তন শনাক্ত করার পাঁচটি পরীক্ষা পরিমাপ করে; [নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md) দেখুন।
 
 ### এটি কীভাবে কাজ করে
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

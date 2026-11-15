@@ -167,7 +167,7 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 | `bernstein live` — bảng điều khiển terminal (nút xử lý từ xa) | `bernstein gui serve` — bảng điều khiển trình duyệt |
 
 ### chứng minh một phiên chạy
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 Tính tất định ở đây là điều bạn có thể tự kiểm chứng, không phải điều bạn chấp nhận dựa trên niềm tin. Chạy một lần với tính năng kiểm toán được bật, sau đó xác minh những gì đã ghi lại:
 
@@ -194,6 +194,8 @@ Khả năng kiểm chứng tương tự cũng áp dụng cho các chỉ số đ�
 Dùng `bernstein govern audit --format json` hoặc `--format sarif` để xuất kết quả kiểm tra cho máy đọc, và `--strict --quiet` làm điều kiện vượt qua CI. Xem [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Gói bằng chứng `cosai` bao gồm các lớp mối đe dọa MCP từ phiên bản được cố định của tài liệu ngày 2026-01-08 và nêu rõ những khoảng trống còn lại trong phạm vi bao phủ.
 
 `bernstein delegation verify RUN` so sánh chuỗi biên nhận với đầu chuỗi cuối cùng và số bước chuyển đã được niêm phong trong bản kê khai lần chạy bằng HMAC với khóa kiểm toán, qua đó phát hiện việc xóa phần đuôi, thay thế và nối dài chuỗi sau khi đóng, kể cả việc viết lại khai báo mà không có khóa. Xóa khai báo sẽ khiến lần chạy ở trạng thái chưa hoàn tất (mã thoát `3`), không bao giờ được coi là hợp lệ. Cơ chế này không phát hiện việc sử dụng lại một bản chụp xác thực cũ hơn và không bảo vệ trước người ghi nắm giữ khóa kiểm toán. Xem [quy trình xác minh ủy quyền](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`self-conformance-bench-v1` đo năm phép thử can thiệp vào gói kết quả benchmark, dùng mẫu đối chứng có chữ ký và phát lại ngoại tuyến; xem [hướng dẫn](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md).
 
 ### cơ chế hoạt động
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

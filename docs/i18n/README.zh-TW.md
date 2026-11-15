@@ -167,7 +167,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 終端機儀表板 (遠端工作節點) | `bernstein gui serve` — 瀏覽器儀表板 |
 
 ### 證明一次執行
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 這裡的確定性是你要去核查的東西，而不是憑空相信。啟用稽核執行一次，然後驗證記錄的內容：
 
@@ -194,6 +194,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 使用 `bernstein govern audit --format json` 或 `--format sarif` 輸出機器可讀的檢查結果，使用 `--strict --quiet` 作為 CI 檢查門檻。請參閱 [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` 證據包包含固定版本的 2026-01-08 文件中的 MCP 威脅類別，並說明尚未涵蓋的範圍。
 
 `bernstein delegation verify RUN` 將收據鏈與執行資訊清單中使用稽核金鑰的 HMAC 封存的最終鏈頭及跳數進行比較，從而偵測尾端刪除、替換及關閉後的鏈增長，包括在沒有金鑰的情況下改寫宣告。刪除宣告會使執行處於未完成狀態（結束碼 `3`），絕不會被判定為有效。這無法偵測重放較早的真實快照，也無法防範持有稽核金鑰的寫入者。請參閱[委派驗證流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
+
+`self-conformance-bench-v1` 透過已簽署的對照樣本與離線重播，測量五種基準測試封裝竄改情境；請見[指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md)。
 
 ### 運作原理
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

@@ -203,6 +203,8 @@ never valid. This does not detect replay of an older authentic snapshot or prote
 against a writer holding the audit key. See the
 [delegation verification workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
+`self-conformance-bench-v1` measures five benchmark-envelope tamper probes with signed controls and offline replay; see the [guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md).
+
 ### how it works
 
 Each goal moves through four stages:

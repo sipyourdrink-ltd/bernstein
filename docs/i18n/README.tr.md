@@ -167,7 +167,7 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 | `bernstein live` — terminal kontrol paneli (uzak çalışan düğümleri) | `bernstein gui serve` — tarayıcı kontrol paneli |
 
 ### bir çalıştırmayı kanıtlayın
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 Buradaki determinizm, inanca dayalı kabul ettiğiniz bir şey değil, bizzat kontrol ettiğiniz bir şeydir. Denetim etkinleştirilmiş olarak bir kez çalıştırın, ardından kaydedilenleri doğrulayın:
 
@@ -194,6 +194,8 @@ Aynı doğrulanabilirlik değerlendirme sayıları için de geçerlidir. `bernst
 Makine tarafından okunabilir denetim sonuçları için `bernstein govern audit --format json` veya `--format sarif`, CI geçiş koşulu için `--strict --quiet` kullanın. Bkz. [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` kanıt paketi, 2026-01-08 tarihli belgenin sabitlenmiş sürümündeki MCP tehdit sınıflarını içerir ve kalan kapsam boşluklarını belirtir.
 
 `bernstein delegation verify RUN`, makbuz zincirini çalıştırma manifestinde denetim anahtarıyla HMAC kullanılarak mühürlenmiş son başlık ve atlama sayısıyla karşılaştırır. Böylece kuyruğun silinmesini, değiştirmeyi ve kapanış sonrası zincirin uzatılmasını, bildirimin anahtar olmadan yeniden yazılması dahil, tespit eder. Bildirimin kaldırılması çalıştırmayı eksik bırakır (çıkış kodu `3`); çalıştırma hiçbir zaman geçerli sayılmaz. Bu denetim, eski ve özgün bir anlık görüntünün yeniden kullanılmasını tespit etmez ve denetim anahtarını elinde tutan bir yazara karşı koruma sağlamaz. Bkz. [yetki devri doğrulama iş akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`self-conformance-bench-v1`, imzalı kontrol örnekleri ve çevrimdışı yeniden oynatma ile kıyaslama paketine müdahaleye yönelik beş testi ölçer; [kılavuza](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md) bakın.
 
 ### nasıl çalışır
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
