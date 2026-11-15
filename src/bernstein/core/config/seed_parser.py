@@ -2399,6 +2399,7 @@ _PARSED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "gate_repair_enabled",
         "github",
         "goal",
+        "hash_profile",
         "internal_llm_model",
         "internal_llm_provider",
         "judge_model",
@@ -2689,6 +2690,9 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
     metrics = _parse_metrics(data.get("metrics"))
     mcp_signing_mode = _parse_mcp_signing_mode(data)
     data_class = _parse_data_class(data.get("data_class"))
+    hash_profile = data.get("hash_profile", "py-json-v1")
+    if hash_profile not in ("py-json-v1", "jcs-v2"):
+        raise SeedError(f"unknown hash_profile {hash_profile!r}; expected 'py-json-v1' or 'jcs-v2'")
     if apply_tuning:
         _parse_tuning(data)
 
@@ -2700,6 +2704,7 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
         team_manifest_digest=team_manifest_digest,
         cli=cli,
         max_agents=max_agents_raw,
+        hash_profile=hash_profile,
         model=model_raw,
         max_cost_per_agent=max_cost_per_agent,
         constraints=constraints,

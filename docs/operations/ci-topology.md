@@ -14,6 +14,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/a2a-federation-e2e.yml | a2a-federation-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "a2a-federation-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/adapter-conformance-canary.yml | Adapter conformance canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "adapter-conformance-canary"} | 1 |
 | .github/workflows/adapter-contract-drift.yml | Adapter contract drift | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "adapter-contract-drift-${{ github.ref }}"} | 2 |
+| .github/workflows/agent-manifest-conformance.yml | agent-manifest-conformance | pull_request, push | {"cancel-in-progress": "true", "group": "agent-manifest-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/airgap-e2e.yml | Airgap E2E | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "airgap-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/area-steward-review.yml | Area steward review | pull_request_target | {"cancel-in-progress": "true", "group": "area-steward-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/auditor-conformance.yml | auditor-conformance | pull_request, push | {"cancel-in-progress": "true", "group": "auditor-conformance-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
@@ -98,6 +99,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/a2a-federation-e2e.yml | a2a-federation-e2e: a2a-federation-e2e (${{ matrix.os }}) |
 | .github/workflows/adapter-conformance-canary.yml | canary: Canary matrix |
 | .github/workflows/adapter-contract-drift.yml | aggregate: Aggregate drift report<br>check: ${{ matrix.adapter }} |
+| .github/workflows/agent-manifest-conformance.yml | pinned-contract |
 | .github/workflows/airgap-e2e.yml | airgap-e2e: Airgap E2E (Linux, real cosign + gpg + unshare) |
 | .github/workflows/area-steward-review.yml | request-steward: Request docs steward review |
 | .github/workflows/auditor-conformance.yml | auditor-conformance: auditor conformance |
@@ -182,6 +184,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/a2a-federation-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/adapter-conformance-canary.yml | workflow: {"contents": "read"}<br>canary: {"contents": "write", "issues": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/adapter-contract-drift.yml | workflow: {"contents": "read"}<br>aggregate: {"contents": "read", "issues": "write"}<br>check: {"contents": "read"} | ADAPTER_CONTRACT_ANTHROPIC_API_KEY, ADAPTER_CONTRACT_GEMINI_API_KEY, ADAPTER_CONTRACT_OPENAI_API_KEY, GITHUB_TOKEN |
+| .github/workflows/agent-manifest-conformance.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/airgap-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/area-steward-review.yml | request-steward: {"pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/auditor-conformance.yml | workflow: {"contents": "read"} | - |
@@ -225,7 +228,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-deep-tests.yml | workflow: {"contents": "read"}<br>bandit-medium-and-high: {"contents": "read"}<br>crosshair-pure-fns: {"contents": "read"}<br>hypothesis-deep: {"contents": "read"}<br>mutmut-full: {"contents": "read"}<br>pip-audit-deep: {"contents": "read"}<br>schemathesis-deep: {"contents": "read"}<br>stress-leak-suite: {"contents": "read"}<br>unit-python-314: {"contents": "read"} | - |
 | .github/workflows/nightly-drift-sweep.yml | workflow: {"contents": "read"}<br>sweep: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/pentest.yml | workflow: {"contents": "read"} | - |
-| .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
+| .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |

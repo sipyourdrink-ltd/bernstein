@@ -956,6 +956,10 @@ class BernsteinConfig(BaseModel):
         description="CLI agent backend: a selectable adapter registry name or 'auto'.",
     )
     max_agents: int = Field(default=6, ge=1, description="Maximum concurrent agents.")
+    hash_profile: Literal["py-json-v1", "jcs-v2"] = Field(
+        default="py-json-v1",
+        description="New-run evidence hash profile. Legacy default during the compatibility release.",
+    )
     effort: EffortLevel | None = Field(
         default=None,
         description="Default effort level for reasoning models.",

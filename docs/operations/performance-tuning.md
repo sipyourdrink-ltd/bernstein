@@ -245,11 +245,28 @@ Use this only when:
 
 ### Cleaning up stale worktrees
 
-After a crash or `SIGKILL`, orphaned worktrees accumulate. Clean them:
+After a crash or `SIGKILL`, orphaned worktrees accumulate. Inspect them first
+with the read-only command described in [worktree operations](worktrees.md):
 
 ```bash
-bernstein cleanup            # removes worktrees for completed/failed tasks
-bernstein cleanup --force    # removes all non-active worktrees
+bernstein worktrees list --json
+```
+
+Both cleanup commands select worktrees whose sessions no longer back active
+tasks. Removing a selected worktree also attempts to delete its
+`agent/<session>` branch, after best-effort salvage and graveyard preservation.
+This applies even without `--force`.
+
+The subsequent branch hygiene preserves other unmerged agent branches by
+default. The `--force` flag also permits deleting those remaining branches,
+even when their commits are not merged into `main`. Branches belonging to
+active sessions stay protected. Inspect the inactive worktrees and branches
+for work you want to keep before either cleanup command; preservation is
+best-effort.
+
+```bash
+bernstein cleanup            # removes inactive worktrees and their branches
+bernstein cleanup --force    # also permits pruning other unmerged agent branches
 ```
 
 Set automatic cleanup in config:

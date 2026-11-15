@@ -1,0 +1,50 @@
+name: agent-manifest-conformance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/bernstein/core/security/agent_manifest_export.py'
+      - 'src/bernstein/core/agents/spawner_core.py'
+      - 'src/bernstein/core/tasks/models.py'
+      - 'src/bernstein/core/orchestration/orchestrator.py'
+      - 'src/bernstein/cli/commands/*manifest_cmd.py'
+      - 'tests/unit/security/test_agent_manifest_export.py'
+      - 'tests/unit/test_agent_manifest_spawn_export.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/agent-manifest-conformance.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/bernstein/core/security/agent_manifest_export.py'
+      - 'tests/unit/security/test_agent_manifest_export.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/agent-manifest-conformance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-manifest-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.8'
+          python-version: '3.13'
+      - name: Install locked manifest extra
+        run: uv sync --locked --group dev --extra manifest
+      - name: Check pinned runtime and CLI semantics
+        run: |
+          uv run --locked --extra manifest python -c "from importlib.metadata import version; assert version('agent-manifest') == '0.12.0'"
+          uv run --locked --extra manifest python scripts/run_tests.py tests/unit/security/test_agent_manifest_export.py tests/unit/test_agent_manifest_spawn_export.py --parallel 1
