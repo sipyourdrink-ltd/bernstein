@@ -167,7 +167,7 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 | `bernstein live` — het terminaldashboard (externe worker-nodes) | `bernstein gui serve` — het browserdashboard |
 
 ### een run bewijzen
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:7557ce58ac26" -->
 
 Determinisme is hier iets wat u controleert, niet iets wat u op goed vertrouwen aanneemt. Voer eenmaal uit met audit ingeschakeld en controleer wat is vastgelegd:
 
@@ -194,6 +194,8 @@ Dezelfde controleerbaarheid geldt voor evaluatiecijfers. `bernstein bench run <s
 Gebruik `bernstein govern audit --format json` of `--format sarif` voor machineleesbare controleresultaten en `--strict --quiet` als goedkeuringscriterium in CI. Zie [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Het `cosai`-bewijspakket bevat de MCP-dreigingsklassen uit de vastgelegde versie van het document van 2026-01-08 en benoemt de resterende hiaten in de dekking.
 
 `bernstein delegation verify RUN` vergelijkt de keten van ontvangstbewijzen met de definitieve ketenkop en het aantal delegatiestappen, die in het uitvoeringsmanifest met een HMAC op basis van de auditsleutel zijn verzegeld. Zo worden het verwijderen van het keteneinde, vervanging en uitbreiding na afsluiting gedetecteerd, inclusief het herschrijven van de declaratie zonder sleutel. Als de declaratie wordt verwijderd, blijft de uitvoering onvolledig (exitcode `3`) en geldt deze nooit als geldig. Dit detecteert geen hergebruik van een oudere authentieke momentopname en biedt geen bescherming tegen een schrijver die de auditsleutel bezit. Zie de [werkwijze voor delegatieverificatie](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`AuditLog.verify_incremental()` schrijft standaard geen gegevens; het opslaan van de diagnostische teller wordt [expliciet ingeschakeld](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/audit-library-verification.md).
 
 ### hoe het werkt
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

@@ -473,12 +473,12 @@ def test_incremental_verify_refuses_to_be_weaker_than_full(tmp_path: Path) -> No
 
 
 def test_cache_deletion_costs_time_never_correctness(tmp_path: Path) -> None:
-    """Deleting the per-run counter costs time, never correctness.
+    """Deleting the opt-in diagnostic counter never changes correctness.
 
     The marker is inside the audit directory
     (``<audit_dir>/.tiles-read.json``). Removing it and re-running yields
-    a full verify, which is slower but still correct. The marker is
-    written fresh at the end of a clean run.
+    the same verdict; it is not a verification cache. The marker is
+    written fresh at the end of a clean run only when explicitly requested.
     """
     key = b"test-key-deletion-safe"
     audit_dir = tmp_path / "audit"
@@ -488,14 +488,14 @@ def test_cache_deletion_costs_time_never_correctness(tmp_path: Path) -> None:
     _seal_segments(audit_dir, chain["contents"], key)
 
     log = AuditLog(audit_dir, key=key)
-    log.verify_incremental()
+    log.verify_incremental(record_tile_reads=True)
     counter_path = audit_dir / ".tiles-read.json"
     assert counter_path.exists(), "verify must persist the tile-read counter"
 
     # Delete the marker and re-verify. The verify must still succeed and
     # must reach the same verdict.
     counter_path.unlink()
-    second = log.verify_incremental()
+    second = log.verify_incremental(record_tile_reads=True)
     assert second.ok, f"verify after marker deletion must succeed: {second.errors}"
     # The marker is written again by the clean run.
     assert counter_path.exists(), "verify must rewrite the marker on success"

@@ -167,7 +167,7 @@ Trwający przebieg można obserwować w dowolnym interfejsie operatora. Oba korz
 | `bernstein live` — panel w terminalu (zdalne węzły robocze) | `bernstein gui serve` — panel w przeglądarce |
 
 ### udowodnij poprawność przebiegu
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:7557ce58ac26" -->
 
 Determinizm w tym projekcie można sprawdzić, zamiast przyjmować go na wiarę. Uruchom zadanie z włączonym audytem, a następnie zweryfikuj zarejestrowane dane:
 
@@ -194,6 +194,8 @@ Taka sama weryfikowalność dotyczy wyników benchmarków. Polecenie `bernstein 
 Użyj `bernstein govern audit --format json` lub `--format sarif`, aby uzyskać wyniki czytelne maszynowo, oraz `--strict --quiet` jako warunku zaliczenia kontroli CI. Zobacz [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Pakiet dowodowy `cosai` zawiera klasy zagrożeń MCP z przypiętej wersji dokumentu z 2026-01-08 i wskazuje pozostałe luki w pokryciu.
 
 `bernstein delegation verify RUN` porównuje łańcuch potwierdzeń z końcową głową i liczbą kroków delegacji zapieczętowanymi w manifeście uruchomienia za pomocą HMAC z kluczem audytu. Wykrywa usunięcie końca łańcucha, podmianę i wydłużenie po zamknięciu, w tym przepisanie deklaracji bez klucza. Usunięcie deklaracji pozostawia uruchomienie niekompletne (kod wyjścia `3`), nigdy poprawne. Nie wykrywa to ponownego użycia starszej autentycznej migawki ani nie chroni przed osobą zapisującą dane, która ma klucz audytu. Zobacz [procedurę weryfikacji delegacji](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`AuditLog.verify_incremental()` domyślnie nie zapisuje danych; utrwalanie licznika diagnostycznego wymaga [jawnego włączenia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/audit-library-verification.md).
 
 ### jak to działa
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

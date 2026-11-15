@@ -1390,7 +1390,7 @@ def _classify_torn_bytes(torn: bytes) -> str:
     return "invalid_hmac" if "hmac" in parsed else "non_canonical"
 
 
-def _run_incremental_verify(log: AuditLog, *, record_tile_reads: bool = True) -> IncrementalVerifyReport:
+def _run_incremental_verify(log: AuditLog, *, record_tile_reads: bool = False) -> IncrementalVerifyReport:
     """Body of :meth:`AuditLog.verify_incremental`.
 
     Walks archived then live segments in the order :meth:`verify_detailed`
@@ -2822,7 +2822,7 @@ class AuditLog:
                 errors.append(f"{tear.describe()} - run 'bernstein audit ack-tear' after investigating")
         return len(errors) == 0, errors
 
-    def verify_incremental(self, *, record_tile_reads: bool = True) -> IncrementalVerifyReport:
+    def verify_incremental(self, *, record_tile_reads: bool = False) -> IncrementalVerifyReport:
         """Verify the chain, trusting the prefixes the signed checkpoint pins.
 
         The newest signed checkpoint pins each sealed segment prefix by leaf
@@ -2845,10 +2845,11 @@ class AuditLog:
 
         Nothing is locked and nothing in the directory is read as a verdict
         except signed or HMAC-chained material, so the method runs against a
-        read-only copy while a writer appends to the live one. The only write
-        is the best-effort counter behind :meth:`last_tile_read_count`, made
-        after a clean run; failing to write it changes nothing, and
-        ``record_tile_reads=False`` skips it (``bernstein audit verify`` does).
+        read-only copy while a writer appends to the live one. By default it
+        attempts no writes; counters are returned in the report. Passing
+        ``record_tile_reads=True`` opts into persisting the best-effort counter
+        behind :meth:`last_tile_read_count` after a clean run. Failing to write
+        that diagnostic counter changes nothing about the verdict.
 
         Returns:
             An :class:`IncrementalVerifyReport` with the verdict and the work
@@ -2857,9 +2858,10 @@ class AuditLog:
         return _run_incremental_verify(self, record_tile_reads=record_tile_reads)
 
     def last_tile_read_count(self) -> int:
-        """Return the tile-read count from the most recent ``verify_incremental`` run.
+        """Return the counter from the last run with ``record_tile_reads=True``.
 
-        Returns 0 when no run has happened or the marker was deleted.
+        Read-only runs leave this stored value unchanged. Returns 0 when no
+        opt-in run has written it or the marker was deleted.
         """
         return _load_tile_read_count(self._audit_dir)
 

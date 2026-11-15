@@ -436,9 +436,13 @@ panel says `Hash Tiles Not Judged` instead of passing.
 the run takes no lock and needs no write access: it works against a
 read-only copy while a writer appends to the live directory. it reads the
 signed pins, then every tile, then the segments; segments only grow, so a
-seal that lands mid-run cannot make an intact tile look damaged. its one
-write, the tile-read counter behind `last_tile_read_count()`, is
-best-effort and never part of the verdict, and `audit verify` skips it.
+seal that lands mid-run cannot make an intact tile look damaged.
+`AuditLog.verify_incremental()` and `audit verify` attempt no writes by default;
+the current work counts are returned in `IncrementalVerifyReport`.
+Library callers that explicitly need a persisted diagnostic counter can pass
+`record_tile_reads=True`. That opt-in writes `.tiles-read.json` after a clean
+run, best-effort and never as part of the verdict. `last_tile_read_count()`
+reads the last persisted value; ordinary read-only runs do not refresh it.
 
 not yet covered: the HMAC Chain pillar of `bernstein audit verify` still
 walks every segment, and the Hash Tiles pillar reads the segments again for

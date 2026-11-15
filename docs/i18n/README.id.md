@@ -167,7 +167,7 @@ Eksekusi yang sedang berjalan dapat dipantau dari salah satu antarmuka operator.
 | `bernstein live` — dasbor terminal (simpul pekerja jarak jauh) | `bernstein gui serve` — dasbor peramban |
 
 ### buktikan eksekusi
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:7557ce58ac26" -->
 
 Determinisme di sini adalah sesuatu yang Anda buktikan sendiri, bukan diterima atas dasar keyakinan semata. Jalankan sekali dengan audit aktif, lalu verifikasi apa yang tercatat:
 
@@ -194,6 +194,8 @@ Verifikasi yang sama berlaku untuk angka evaluasi. `bernstein bench run <suite> 
 Gunakan `bernstein govern audit --format json` atau `--format sarif` untuk hasil pemeriksaan yang dapat dibaca mesin, dan `--strict --quiet` sebagai syarat kelulusan CI. Lihat [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Paket bukti `cosai` mencakup kelas ancaman MCP dari versi tetap makalah bertanggal 2026-01-08 dan menjelaskan celah cakupan yang masih ada.
 
 `bernstein delegation verify RUN` membandingkan rantai tanda terima dengan kepala akhir dan jumlah hop yang disegel dalam manifes proses menggunakan HMAC dengan kunci audit, sehingga mendeteksi penghapusan ujung rantai, penggantian, dan penambahan setelah penutupan, termasuk penulisan ulang deklarasi tanpa kunci. Menghapus deklarasi membuat proses tetap tidak lengkap (kode keluar `3`), tidak pernah dinyatakan valid. Pemeriksaan ini tidak mendeteksi penggunaan ulang snapshot autentik yang lebih lama dan tidak melindungi dari penulis yang memegang kunci audit. Lihat [alur verifikasi delegasi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`AuditLog.verify_incremental()` tidak menulis data secara bawaan; penyimpanan penghitung diagnostik [diaktifkan secara eksplisit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/audit-library-verification.md).
 
 ### cara kerja
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

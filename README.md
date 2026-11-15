@@ -203,6 +203,8 @@ never valid. This does not detect replay of an older authentic snapshot or prote
 against a writer holding the audit key. See the
 [delegation verification workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
+`AuditLog.verify_incremental()` does not write by default; diagnostic counter persistence is [explicitly enabled](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/audit-library-verification.md).
+
 ### how it works
 
 Each goal moves through four stages:

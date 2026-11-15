@@ -167,7 +167,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — टर्मिनल डैशबोर्ड (दूरस्थ वर्कर नोड) | `bernstein gui serve` — ब्राउज़र डैशबोर्ड |
 
 ### रन को साबित कीजिए
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:7557ce58ac26" -->
 
 यहाँ डिटर्मिनिज़्म भरोसे की चीज़ नहीं, जाँचने की चीज़ है। ऑडिट चालू करके एक बार चलाइए, फिर जो दर्ज हुआ उसे सत्यापित कीजिए:
 
@@ -194,6 +194,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 मशीन द्वारा पढ़े जा सकने वाले जाँच परिणामों के लिए `bernstein govern audit --format json` या `--format sarif` और CI में पास या फ़ेल तय करने के लिए `--strict --quiet` इस्तेमाल करें। देखें: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` साक्ष्य पैक में 2026-01-08 के दस्तावेज़ के निश्चित संस्करण से MCP खतरों की श्रेणियाँ शामिल हैं और कवरेज में बची कमियाँ बताई गई हैं।
 
 `bernstein delegation verify RUN` रसीदों की शृंखला की तुलना अंतिम हेड और हॉप की संख्या से करता है, जिन्हें रन मैनिफेस्ट में ऑडिट कुंजी वाले HMAC से सील किया गया है। इससे शृंखला का अंतिम हिस्सा हटाना, प्रतिस्थापन और रन बंद होने के बाद शृंखला बढ़ाना पकड़ा जाता है, जिसमें कुंजी के बिना घोषणा को दोबारा लिखना भी शामिल है। घोषणा हटाने पर रन अधूरा रहता है (एग्ज़िट कोड `3`), उसे कभी वैध नहीं माना जाता। यह किसी पुराने प्रामाणिक स्नैपशॉट के दोबारा इस्तेमाल का पता नहीं लगाता और ऑडिट कुंजी रखने वाले लेखक से सुरक्षा नहीं देता। देखें [डेलिगेशन सत्यापन कार्यप्रवाह](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)।
+
+`AuditLog.verify_incremental()` डिफ़ॉल्ट रूप से कोई डेटा नहीं लिखता; निदान काउंटर को स्थायी रूप से सहेजना [स्पष्ट रूप से सक्षम](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/audit-library-verification.md) करना होता है।
 
 ### यह काम कैसे करता है
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

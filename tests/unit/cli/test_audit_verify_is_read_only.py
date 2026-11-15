@@ -200,6 +200,49 @@ def test_verify_needs_no_write_access_and_no_writer_lock(project: Path) -> None:
     assert damaged.exit_code == 1
 
 
+@pytest.mark.parametrize("state", ["empty", "sealed", "tampered"])
+def test_library_verification_does_not_attempt_writes_or_writer_lock(tmp_path: Path, state: str) -> None:
+    """The default library call preserves evidence even on a writable store (#3160)."""
+    key = b"synthetic-read-only-library-key"
+    audit_dir = tmp_path / "audit"
+    log = AuditLog(audit_dir, key=key)
+    if state != "empty":
+        _append(audit_dir, key, day="2026-08-10", count=3)
+        _seal(audit_dir, key)
+    if state == "tampered":
+        segment = next(audit_dir.glob("*.jsonl"))
+        raw = bytearray(segment.read_bytes())
+        raw[40] ^= 1
+        segment.write_bytes(raw)
+    before = _digest(audit_dir)
+
+    with pytest.MonkeyPatch.context() as patch:
+        attempts = _forbid_writes_and_the_writer_lock(patch, audit_dir)
+        first = log.verify_incremental()
+        second = log.verify_incremental()
+
+    assert attempts == []
+    assert first.ok is (state != "tampered"), first.errors
+    assert second == first
+    assert _digest(audit_dir) == before
+    assert not (audit_dir / ".tiles-read.json").exists()
+
+
+def test_library_tile_counter_requires_explicit_opt_in(tmp_path: Path) -> None:
+    """Diagnostic persistence remains available when the caller requests it."""
+    key = b"synthetic-opt-in-library-key"
+    audit_dir = tmp_path / "audit"
+    log = AuditLog(audit_dir, key=key)
+    _append(audit_dir, key, day="2026-08-10", count=3)
+    _seal(audit_dir, key)
+
+    report = log.verify_incremental(record_tile_reads=True)
+
+    assert report.ok, report.errors
+    assert (audit_dir / ".tiles-read.json").is_file()
+    assert log.last_tile_read_count() == report.tiles_read
+
+
 # ---------------------------------------------------------------------------
 # The published hash tiles are part of what `audit verify` attests (#3160).
 # ---------------------------------------------------------------------------

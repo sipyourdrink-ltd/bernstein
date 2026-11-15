@@ -167,7 +167,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 터미널 대시보드 (원격 워커 노드) | `bernstein gui serve` — 브라우저 대시보드 |
 
 ### 실행을 증명하기
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:7557ce58ac26" -->
 
 여기서 결정성은 믿는 것이 아니라 확인하는 것이다. 감사를 켜고 한 번 실행한 뒤, 기록된 내용을 검증하라:
 
@@ -194,6 +194,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 기계가 읽을 수 있는 검사 결과에는 `bernstein govern audit --format json` 또는 `--format sarif`를, CI 통과 여부 판단에는 `--strict --quiet`를 사용하세요. 자세한 내용: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` 증거 팩은 2026-01-08 문서의 고정된 버전에 따른 MCP 위협 분류를 포함하고, 아직 다루지 못하는 범위를 명시합니다.
 
 `bernstein delegation verify RUN`은 감사 키를 사용한 HMAC으로 실행 매니페스트에 봉인된 최종 헤드 및 홉 수와 영수증 체인을 비교하여 꼬리 삭제, 대체, 종료 후 체인 확장을 탐지합니다. 키 없이 선언을 다시 쓰는 행위도 탐지합니다. 선언을 제거하면 실행은 미완료 상태(종료 코드 `3`)로 남으며, 유효한 것으로 판정되지 않습니다. 이전의 진본 스냅샷을 재사용하는 것은 탐지하지 못하며, 감사 키를 가진 작성자로부터 보호하지도 못합니다. [위임 검증 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)를 참조하세요.
+
+`AuditLog.verify_incremental()`은 기본적으로 데이터를 쓰지 않습니다. 진단 카운터 저장은 [명시적으로 활성화](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/audit-library-verification.md)해야 합니다.
 
 ### 동작 방식
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

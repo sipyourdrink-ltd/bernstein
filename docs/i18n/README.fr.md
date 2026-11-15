@@ -167,7 +167,7 @@ Une exécution en cours est observable depuis l'une ou l'autre des interfaces op
 | `bernstein live` — le tableau de bord terminal (nœuds de calcul distants) | `bernstein gui serve` — le tableau de bord navigateur |
 
 ### prouver une exécution
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:7557ce58ac26" -->
 
 Le déterminisme est ici un élément vérifiable, non un acte de foi. Lancez une exécution avec audit activé, puis vérifiez les enregistrements :
 
@@ -194,6 +194,8 @@ La même vérifiabilité s'applique aux métriques d'évaluation. `bernstein ben
 Utilisez `bernstein govern audit --format json` ou `--format sarif` pour des résultats lisibles par machine, et `--strict --quiet` pour conditionner la validation en CI. Voir [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Le dossier de preuves `cosai` inclut les classes de menaces MCP de la version figée du document du 2026-01-08 et précise les lacunes de couverture restantes.
 
 `bernstein delegation verify RUN` compare la chaîne de reçus à la tête finale et au nombre de sauts scellés dans le manifeste d’exécution par un HMAC utilisant la clé d’audit. La vérification détecte la suppression de la fin de la chaîne, la substitution et l’allongement après clôture, y compris la réécriture de la déclaration sans la clé. Supprimer la déclaration laisse l’exécution incomplète (code de sortie `3`), jamais valide. Cela ne détecte pas la réutilisation d’un ancien instantané authentique et ne protège pas contre un auteur qui détient la clé d’audit. Voir le [processus de vérification des délégations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`AuditLog.verify_incremental()` n’écrit aucune donnée par défaut ; la persistance du compteur de diagnostic doit être [activée explicitement](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/audit-library-verification.md).
 
 ### comment ça marche
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
