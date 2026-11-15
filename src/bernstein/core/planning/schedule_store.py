@@ -28,6 +28,7 @@ from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.persistence.file_locks import cross_process_lock
 
 if TYPE_CHECKING:
+    import builtins
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -502,7 +503,7 @@ class ScheduleStore:
                 return
             self._write(replace(schedule, extra={**schedule.extra, FIRE_CURSOR_KEY: cursor_epoch}))
 
-    def record_catch_up_skip(self, schedule_id: str, skipped_windows: list[int]) -> None:
+    def record_catch_up_skip(self, schedule_id: str, skipped_windows: builtins.list[int]) -> None:
         """Advance the cursor and retain the pending receipt in the same write."""
         with cross_process_lock(self._lock_for(schedule_id), timeout=10):
             schedule = self.get(schedule_id)
