@@ -585,3 +585,37 @@ def test_first_property_difference_reports_missing_properties(missing_from_base:
     base, head = (missing, present) if missing_from_base else (present, missing)
 
     assert first_property_difference(base, head) == ("root.a", "style.color")
+
+
+@pytest.mark.parametrize("head_environment", [_env(), _env(locale="fr-FR"), None])
+def test_render_delta_keeps_both_unstable_property_lists(head_environment: EnvironmentDescriptor | None) -> None:
+    base = _receipt(unstable_properties={"experimentalFont": "true", "cssSubgrid": "enabled"})
+    head = _receipt(environment=head_environment, unstable_properties={"cssSubgrid": "enabled"})
+
+    result = render_delta(base, head)
+    payload = result.to_dict()
+
+    assert payload["base_unstable_properties"] == base.unstable_properties
+    assert payload["head_unstable_properties"] == head.unstable_properties
+    assert RenderDelta.from_dict(payload) == result
+    assert result.is_incomparable == (head_environment != base.environment)
+
+
+def test_render_delta_unstable_metadata_is_hashable_and_order_independent() -> None:
+    first = _receipt(unstable_properties={"z": "on", "a": "off"})
+    reordered = _receipt(unstable_properties={"a": "off", "z": "on"})
+    result = render_delta(first, first)
+    other = render_delta(reordered, reordered)
+
+    assert result == other
+    assert hash(result) == hash(other)
+    assert list(result.to_dict()["base_unstable_properties"]) == ["a", "z"]
+    assert result.is_clean
+    first.unstable_properties["z"] = "changed"
+    assert result.to_dict()["base_unstable_properties"]["z"] == "on"
+
+
+def test_render_delta_legacy_payload_keeps_its_serialized_shape() -> None:
+    payload = {"base_descriptor_hash": "base", "head_descriptor_hash": "head", "incomparable_reason": "", "deltas": []}
+    assert RenderDelta.from_dict(payload).to_dict() == payload
+    assert hash(RenderDelta()) == hash(RenderDelta())
