@@ -46,7 +46,9 @@ The rules, in the order they are applied
    needs only the ordinary two approvals, touches no path a CODEOWNERS line
    of its own covers, and touches nothing under `.github/`, `schemas/` or
    `proto/`. Anywhere else the notice is ignored and rule 5 applies.
-5. Everyone else needs the quorum: two approvals, at least one from a core
+5. Unprotected docs-only or `size/s` changes need one eligible approval,
+   without a core reviewer. Reserved and sensitive paths keep the normal rules.
+   Everyone else needs the quorum: two approvals, at least one from a core
    reviewer, none of them from anyone who wrote or pushed the change. Over
    400 changed lines, or on a path containing `sandbox`, `security` or
    `audit`, a third approval is required and two of the three must be core.
@@ -146,6 +148,25 @@ SENSITIVE_WORDS = ("sandbox", "security", "audit")
 # allowlist would also stop escalating `.github/`, `schemas/` and `proto/`,
 # which is a change nobody asked for.
 SENSITIVE_EXEMPT_PREFIXES = ("tests/", "docs/")
+
+# Small-change relief never reaches reserved implementation, security or
+# release surfaces, even if the base CODEOWNERS has no entry for a path.
+SMALL_EXCLUDED_PREFIXES = (
+    ".github/",
+    "security/",
+    "core/",
+    "src/bernstein/core/",
+    "release/",
+    "releases/",
+    "docs/release-notes/",
+)
+SMALL_EXCLUDED_PATHS = (
+    "CHANGELOG.md",
+    "scripts/bump_version.py",
+    "scripts/format_release_notes.py",
+    "scripts/rotate_release_notes.py",
+    "scripts/publish_required_check.py",
+)
 
 # Section 1 as decided for automation: the paths where automation stops being
 # allowed to merge its own work. Wider than SENSITIVE_WORDS because a change
@@ -430,6 +451,8 @@ class PullRequest:
     # rules above fell back to the commit itself wherever one of these was
     # consulted, and the verdict says so.
     uncompared: tuple[str, ...] = ()
+    labels: frozenset[str] = frozenset()
+    paths_complete: bool = True
 
     def is_current(self, sha: str) -> bool:
         """Whether a review given on `sha` was given on what is about to merge."""
@@ -845,6 +868,8 @@ def fetch_pull_request(
         update_only=update_only,
         diff_changed_at=diff_changed_at,
         uncompared=tuple(diffs.uncompared),
+        labels=frozenset(label["name"] for label in raw.get("labels", [])),
+        paths_complete=len(files) == int(raw.get("changed_files", len(files))),
     )
 
 
@@ -909,6 +934,22 @@ def _sensitive_paths(paths: list[str]) -> list[str]:
     return sorted(
         p for p in paths if not p.startswith(SENSITIVE_EXEMPT_PREFIXES) and any(word in p for word in SENSITIVE_WORDS)
     )
+
+
+def small_change(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
+    """Whether the one-approval exception applies, using base ownership rules."""
+    if not pr.paths or not pr.paths_complete or _sensitive_paths(pr.paths):
+        return False
+    if any(
+        owners_for(path, owners)[1]
+        or path in GOVERNANCE_PATHS
+        or path in SMALL_EXCLUDED_PATHS
+        or path.startswith(SMALL_EXCLUDED_PREFIXES)
+        for path in pr.paths
+    ):
+        return False
+    docs_only = all(path.endswith(".md") or path.startswith("docs/") for path in pr.paths)
+    return docs_only or "size/s" in pr.labels
 
 
 def adoptable(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
@@ -1022,7 +1063,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
 
         sensitive = _sensitive_paths(pr.paths)
         large = pr.changed_lines > THIRD_APPROVAL_LINES
-        need_total, need_core = (3, 2) if (large or sensitive) else (2, 1)
+        small = small_change(pr, owners)
+        need_total, need_core = (1, 0) if small else ((3, 2) if (large or sensitive) else (2, 1))
         reason = (
             f"{pr.changed_lines} changed lines"
             if large
@@ -1030,6 +1072,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         )
 
         text = f"{need_total} approvals, {need_core} from a core reviewer ({reason})"
+        if small:
+            text = "1 approval, no core reviewer required (unprotected docs-only or size/s change)"
         met = len(approving) >= need_total and len(approving_core) >= need_core
         who = _names(eligible - approving)
         if need_total == 2 and now < BACKLOG_WINDOW_ENDS:
