@@ -9,6 +9,7 @@ import pytest
 from bernstein.core.tasks.models import TaskStatus
 from bernstein.core.workflows import NodeStatus
 from tests.support.workflow_completion import (
+    _CHILD,
     AGENT_TIMEOUT_S,
     BOUND_S,
     OBSERVE_S,
@@ -18,6 +19,7 @@ from tests.support.workflow_completion import (
     _observe_dispatched_attempt,
     _Plan,
     _proposed_gap,
+    _ProposedContractGap,
     _SimulatedCrash,
     _spec,
     _wait_for,
@@ -86,7 +88,11 @@ def test_resume_after_crash_around_dispatch_does_not_respawn(env: _Env, window: 
 
     sp = env.spawner(_Plan(mode="block"))
     run = env.start(lambda: env.runner(sp).resume(spec, run_id=rid))
-    _wait_for(lambda: sp.spawn_count() >= 2 or run.done(), "respawn or resume end", timeout=BOUND_S)
+    _wait_for(
+        lambda: sp.first_dispatch_returning.is_set() or run.done(),
+        "resumed dispatch return or resume end",
+        timeout=BOUND_S,
+    )
     run.wait(OBSERVE_S)
     run.raise_unexpected()
     # The counter logs a spawn invocation before Popen. A fixture launch
@@ -101,3 +107,16 @@ def test_resume_after_crash_around_dispatch_does_not_respawn(env: _Env, window: 
     produce = run.node("produce")
     assert produce is None or produce.status is not NodeStatus.SUCCESS
     assert env.sentinel_writes() == 0
+
+
+@pytest.mark.parametrize("window", ["lost_dispatch_ack", "before_terminal_checkpoint"])
+def test_resume_observes_slow_child_before_contract_gap(
+    env: _Env, monkeypatch: pytest.MonkeyPatch, window: str
+) -> None:
+    """[EXISTING] Slow successful launches reach the proposed gap after dispatch returns."""
+    monkeypatch.setattr(
+        "tests.support.workflow_completion._CHILD",
+        f"import time\ntime.sleep({2 * OBSERVE_S})\n{_CHILD}",
+    )
+    with pytest.raises(_ProposedContractGap, match="resume respawned the in-flight attempt"):
+        test_resume_after_crash_around_dispatch_does_not_respawn(env, window)

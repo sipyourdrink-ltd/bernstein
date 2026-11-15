@@ -14,6 +14,11 @@ locally without waiting for the cloud runner.
 workflow runner and task store with controlled POSIX local subprocesses and
 a command sentinel. Exercises resume before dispatch and after a launched attempt loses its acknowledgement or crashes before the terminal checkpoint. Invocation counters are backed by successful real-child launch preconditions outside expected failures, so fixture launch errors block the suite. The latter audit hook characterizes the current early node-finish behavior; it does not claim to cover an in-flight confirmed-dispatch checkpoint after a future completion implementation.
 
+Resume observation waits for dispatch return or run termination within the
+existing harness bound before checking launch preconditions. Positive controls
+delay real child startup beyond the observation window in both crash cases and
+require the precise proposed-contract gap after successful dispatch.
+
 Run `uv run pytest tests/integration/test_workflow_dispatch_restart.py -q`.
 The shared `tests/support/workflow_completion.py` fixture checks that a live
 child is observable, the command sentinel fires, and children are reaped.
