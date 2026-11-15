@@ -32,7 +32,7 @@
 Bernstein es la capa de gobernanza open source para agentes de IA. Funciona con policy as code: tú escribes la política - quién puede hacer qué, qué necesita aprobación, qué debe quedar registrado - y Bernstein la aplica y produce el registro verificable. Un planificador determinista - sin modelo en el bucle de coordinación - ejecuta agentes en paralelo, filtra lo que producen con gates y registra cada paso, de modo que una ejecución puede verificarse a posteriori, offline, solo con los artefactos. Los agentes CLI de código funcionan de serie (Claude Code, Codex, Gemini CLI y 50+ más), y la misma capa gobierna cualquier carga agéntica: el entregable puede ser un diff, un informe de investigación, un dataset o un paquete de evidencias de auditoría. Perfil de instalación air-gap incluido. Apache-2.0.
 
 ### de un vistazo
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
 
 Cinco cosas lo distinguen; el resto son detalles.
 
@@ -43,6 +43,8 @@ Cinco cosas lo distinguen; el resto son detalles.
 - **Amplio y local.** Más de 53 adaptadores de agentes CLI más un contenedor genérico `--prompt`, estado basado en archivos, sin saltos SaaS, sin plano de datos de terceros.
 
 La lista completa está en la [página de capacidades](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); la [matriz de características](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) es el índice exhaustivo.
+
+La política de adaptadores por rol admite una lista predeterminada opcional de adaptadores permitidos para los roles no enumerados; consulta la [guía](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### cómo es una ejecución
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->

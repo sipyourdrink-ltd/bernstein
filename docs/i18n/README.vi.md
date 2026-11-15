@@ -32,7 +32,7 @@
 Bernstein là tầng governance mã nguồn mở cho AI agent. Nó chạy trên policy as code: bạn viết chính sách - ai được làm gì, cái gì cần phê duyệt, cái gì phải được ghi lại - và Bernstein thực thi chính sách đó và tạo ra bản ghi có thể xác minh. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI và hơn 50 agent khác), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
 
 ### tổng quan nhanh
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
 
 Năm điểm tạo nên sự khác biệt; phần còn lại là chi tiết.
 
@@ -43,6 +43,8 @@ Năm điểm tạo nên sự khác biệt; phần còn lại là chi tiết.
 - **Rộng rãi và cục bộ.** Hơn 53 bộ điều hợp tác tử CLI cùng lớp bọc `--prompt` tổng quát, lưu trữ trạng thái dựa trên tệp, không qua trung gian SaaS, không có mặt phẳng dữ liệu của bên thứ ba.
 
 Danh sách đầy đủ có tại [trang năng lực](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ma trận tính năng](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) là bảng mục lục toàn diện.
+
+Chính sách bộ điều hợp theo vai trò hỗ trợ danh sách cho phép mặc định tùy chọn cho các vai trò không được liệt kê riêng; xem [hướng dẫn](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### một lần chạy trông như thế nào
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->

@@ -32,7 +32,7 @@
 Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 50+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
 
 ### bir bakışta
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
 
 Beş şey onu farklı kılar; gerisi ayrıntıdır.
 
@@ -43,6 +43,8 @@ Beş şey onu farklı kılar; gerisi ayrıntıdır.
 - **Geniş ve yerel.** 53'ten fazla CLI ajan adaptörü artı genel bir `--prompt` sarmalayıcısı, dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.
 
 Tam liste [yetenekler sayfasında](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) yer alır; [özellik matrisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) kapsamlı dizindir.
+
+Rol bağdaştırıcısı ilkesi, ayrı ayrı belirtilmeyen roller için isteğe bağlı bir varsayılan izin listesi destekler; [kılavuza](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) bakın.
 
 ### bir çalıştırma nasıl görünür
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
