@@ -4,6 +4,15 @@ Operator-facing notes on Bernstein's CI workflows. Focused on the
 matrix policy and the failure-class interventions; for the per-step
 documentation read the inline comments in `.github/workflows/ci.yml`.
 
+## Trusted-main release checkout
+
+Release, SBOM and tunnel workflows resolve their effective checkout ref in
+a read-only job before privileged jobs start. The reusable resolver rejects
+carry ref names, resolves the requested commit through GitHub, and requires
+that exact SHA to be in current main history. Callers pin checkout to the
+returned SHA; tags or manual ref inputs outside main fail closed. Existing
+release environments, approval gates and publish dependencies still apply.
+
 ## TL;DR
 
 | Topic | Status | Where |
