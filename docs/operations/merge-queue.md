@@ -650,3 +650,10 @@ release chain survives the queue) and
 `tests/unit/test_merge_queue_runbook_docs.py` (this document stays
 internally consistent). If a future change would wedge the queue or break
 the release path, those tests fail in CI before it can merge.
+
+## Immutable maintainer declaration format
+
+The offline [declaration reader](../governance/maintainer-adoption.md) records
+accepted immutable evidence with durable revocation. It is not consumed by the
+active quorum evaluator. Any activation remains a separate ordinary review and
+queue decision.
