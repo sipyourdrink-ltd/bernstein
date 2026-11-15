@@ -618,3 +618,13 @@ production code is changed by this proposal.
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+
+### Consistent hash ring primitive
+
+The internal `HashRing` maps UTF-8 node keys to shard IDs using the first
+eight SHA-256 bytes as a big-endian integer. Virtual-node keys are
+`<shard-id>#<index>`; lookup selects the first clockwise token and wraps
+around at the end. An empty ring rejects lookups. `ShardMap` keeps the
+configured shard-to-central URLs. These primitives do not enable HTTP
+sharding or change the running registry by themselves.
