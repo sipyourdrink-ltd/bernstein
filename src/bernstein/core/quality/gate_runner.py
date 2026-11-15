@@ -1977,6 +1977,18 @@ class GateRunner:
         if raw_scope is not None:
             if not isinstance(raw_scope, dict):
                 return None
+            # Validate the wire shape before from_dict converts sequences:
+            # tuple("path.py") would otherwise invent character coverage.
+            for field_name in ("checked", "cannot_check"):
+                values = raw_scope.get(field_name)
+                if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+                    return None
+            for field_name in ("oracle_id", "kind"):
+                value = raw_scope.get(field_name)
+                if value is not None and not isinstance(value, str):
+                    return None
+            if not isinstance(raw_scope.get("evidence_ref", ""), str):
+                return None
             try:
                 scope = VerificationScope.from_dict(raw_scope)
             except (KeyError, TypeError, ValueError):

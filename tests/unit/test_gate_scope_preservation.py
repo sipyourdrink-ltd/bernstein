@@ -154,3 +154,37 @@ def test_invalid_cached_scope_requires_a_fresh_execution(tmp_path: Path, bad_sco
     }
 
     assert runner._get_cached_result_sync("invalid") is None
+
+
+@pytest.mark.parametrize(
+    "invalid_fields",
+    [
+        {"checked": "src/module.py"},
+        {"checked": {"src/module.py": True}},
+        {"checked": [42]},
+        {"cannot_check": "unknown"},
+        {"cannot_check": [False]},
+        {"oracle_id": ["oracle"]},
+        {"kind": 42},
+        {"evidence_ref": {"hash": "evidence"}},
+    ],
+)
+def test_malformed_scope_in_disk_cache_executes_gate_again(tmp_path: Path, invalid_fields: dict[str, object]) -> None:
+    (tmp_path / "module.py").write_text("value = 1\n", encoding="utf-8")
+    config = QualityGatesConfig(cache_enabled=True)
+    step = GatePipelineStep("lint", required=True)
+    result = GateResult("lint", "pass", True, False, False, 0, "fresh", scope=_scope())
+    execute = AsyncMock(return_value=result)
+    with patch.object(GateRunner, "_execute_gate", execute):
+        asyncio.run(GateRunner(config, tmp_path).run_gate(step, _task(), tmp_path, ["module.py"]))
+        cache_path = tmp_path / ".sdd/caching/gate_cache.json"
+        entries = json.loads(cache_path.read_text())
+        for entry in entries.values():
+            entry["scope"].update(invalid_fields)
+        cache_path.write_text(json.dumps(entries), encoding="utf-8")
+
+        restored = asyncio.run(GateRunner(config, tmp_path).run_gate(step, _task(), tmp_path, ["module.py"]))
+
+    assert execute.await_count == 2
+    assert not restored.cached
+    assert restored.scope == _scope()
