@@ -142,3 +142,47 @@ def test_bad_payload_never_yields_partial_properties(tmp_path: Path) -> None:
     result = driver.render_probe(environment=_environment(), elements={"sample": "#sample"})
     assert not result.available
     assert result.computed_styles == ()
+
+
+@pytest.mark.parametrize("value", [None, {}, "", "   "])
+def test_invalid_css_values_are_unavailable(tmp_path: Path, value: object) -> None:
+    driver, page = _driver(tmp_path)
+    page.result["computed_styles"][0]["properties"]["width"] = value
+    result = driver.render_probe(environment=_environment(), elements={"sample": "#sample"})
+    assert not result.available
+    assert result.computed_styles == ()
+
+
+@pytest.mark.parametrize("value", ["", None, "1970-01-01T00:00:00"])
+def test_invalid_observed_clock_cannot_match_epoch_default(tmp_path: Path, value: object) -> None:
+    driver, page = _driver(tmp_path)
+    page.result["environment"]["clock_value"] = value
+    result = driver.render_probe(
+        environment=replace(_environment(), clock_value=datetime(1970, 1, 1, tzinfo=UTC)),
+        elements={"sample": "#sample"},
+    )
+    assert not result.available
+
+
+@pytest.mark.parametrize("flag", ["animation_disabled", "caret_disabled", "reduced_motion"])
+@pytest.mark.parametrize("value", [None, "false", 1])
+def test_control_flags_require_boolean_declarations(tmp_path: Path, flag: str, value: object) -> None:
+    driver, page = _driver(tmp_path)
+    result = driver.render_probe(environment=replace(_environment(), **{flag: value}), elements={"sample": "#sample"})
+    assert not result.available
+    assert page.calls == []
+
+
+def test_false_control_declarations_are_valid(tmp_path: Path) -> None:
+    driver, _ = _driver(tmp_path)
+    result = driver.render_probe(
+        environment=replace(_environment(), animation_disabled=False, caret_disabled=False),
+        elements={"sample": "#sample"},
+    )
+    assert result.available
+
+
+def test_observed_boolean_is_not_an_integer(tmp_path: Path) -> None:
+    driver, page = _driver(tmp_path)
+    page.result["environment"]["reduced_motion"] = 1
+    assert not driver.render_probe(environment=_environment(), elements={"sample": "#sample"}).available

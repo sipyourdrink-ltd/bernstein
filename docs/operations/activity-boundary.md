@@ -171,3 +171,5 @@ completion but does not infer font bytes from CSS family names or install
 determinism controls. Only a capture owner with that evidence can declare the
 complete environment. Raw probes are not full render receipts or base/head
 comparisons; those use the existing receipt schema and comparison layer.
+
+Render probe payloads require nonempty CSS strings, a measured timezone-aware clock, and boolean control declarations. Failed browser font faces return unavailable even when the overall font set has finished loading.

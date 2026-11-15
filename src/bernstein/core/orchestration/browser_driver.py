@@ -41,6 +41,7 @@ import re
 import shutil
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 from uuid import uuid4
 
@@ -242,7 +243,10 @@ _RENDER_PROBE_SCRIPT = """({elements}) => {
             properties.map(property => [property, style.getPropertyValue(property)])
         )});
     }
-    if (document.fonts.status !== 'loaded') return {unavailable: 'font set is not resolved'};
+    if (document.fonts.status !== 'loaded' ||
+        [...document.fonts].some(font => font.status === 'error')) {
+        return {unavailable: 'font set is not resolved'};
+    }
     return {computed_styles: styles, environment: {
         viewport: {width: innerWidth, height: innerHeight},
         device_pixel_ratio: devicePixelRatio,
@@ -257,16 +261,27 @@ _RENDER_PROBE_SCRIPT = """({elements}) => {
 
 def _render_environment_complete(environment: EnvironmentDescriptor) -> bool:
     return (
-        bool(environment.engine_build_identity.strip())
+        isinstance(environment.engine_build_identity, str)
+        and bool(environment.engine_build_identity.strip())
+        and type(environment.viewport.width) is int
         and environment.viewport.width > 0
+        and type(environment.viewport.height) is int
         and environment.viewport.height > 0
+        and type(environment.device_pixel_ratio) in (int, float)
         and math.isfinite(environment.device_pixel_ratio)
         and environment.device_pixel_ratio > 0
+        and isinstance(environment.locale, str)
         and bool(environment.locale.strip())
+        and isinstance(environment.timezone, str)
         and bool(environment.timezone.strip())
+        and isinstance(environment.clock_value, datetime)
         and environment.clock_value.utcoffset() is not None
+        and isinstance(environment.font_set_hash, str)
         and re.fullmatch(r"sha256:[0-9a-f]{64}", environment.font_set_hash) is not None
         and environment.colour_scheme in ("light", "dark")
+        and type(environment.animation_disabled) is bool
+        and type(environment.caret_disabled) is bool
+        and type(environment.reduced_motion) is bool
     )
 
 
@@ -282,23 +297,42 @@ def _render_probe_result(
     rows = raw.get("computed_styles")
     if not isinstance(observed, dict) or not isinstance(rows, list):
         return RenderProbeResult(False, "incomplete render probe payload")
+    viewport = observed.get("viewport")
+    ratio = observed.get("device_pixel_ratio")
+    if (
+        not isinstance(viewport, dict)
+        or any(type(viewport.get(axis)) is not int for axis in ("width", "height"))
+        or type(ratio) not in (int, float)
+        or not math.isfinite(ratio)
+        or type(observed.get("reduced_motion")) is not bool
+        or any(not isinstance(observed.get(key), str) for key in ("locale", "timezone", "colour_scheme"))
+    ):
+        return RenderProbeResult(False, "invalid observed environment values")
     expected = environment.to_dict()
     for name in ("viewport", "device_pixel_ratio", "locale", "timezone", "reduced_motion", "colour_scheme"):
         if observed.get(name) != expected[name]:
             return RenderProbeResult(False, f"observed environment differs: {name}")
+    vocabulary = {"display", "color", "width", "height", "font-family", "font-size", "visibility", "opacity"}
     try:
-        measured_clock = str(observed["clock_value"]).replace("Z", "+00:00")
-        # Descriptor parsing normalizes browser UTC 'Z' and explicit offsets.
-        if EnvironmentDescriptor.from_dict({"clock_value": measured_clock}).clock_value != environment.clock_value:
+        measured_clock = observed["clock_value"]
+        if not isinstance(measured_clock, str) or not measured_clock.strip():
+            raise ValueError("missing measured clock")
+        timestamp = datetime.fromisoformat(measured_clock.replace("Z", "+00:00"))
+        if timestamp.utcoffset() is None or timestamp != environment.clock_value:
             return RenderProbeResult(False, "observed environment differs: clock_value")
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("element_path"), str):
+                raise ValueError("invalid element path")
+            properties = row.get("properties")
+            if not isinstance(properties, dict) or set(properties) != vocabulary:
+                raise ValueError("incomplete computed property vocabulary")
+            if any(not isinstance(value, str) or not value.strip() for value in properties.values()):
+                raise ValueError("invalid computed property value")
         styles = tuple(ComputedStyle.from_dict(row) for row in rows)
     except (KeyError, TypeError, ValueError, AttributeError):
         return RenderProbeResult(False, "invalid render probe values")
     if len(styles) != len(elements) or {style.element_path for style in styles} != set(elements):
         return RenderProbeResult(False, "incomplete render probe element set")
-    vocabulary = {"display", "color", "width", "height", "font-family", "font-size", "visibility", "opacity"}
-    if any(set(style.properties) != vocabulary for style in styles):
-        return RenderProbeResult(False, "incomplete computed property vocabulary")
     return RenderProbeResult(
         True, environment=environment, computed_styles=tuple(sorted(styles, key=lambda s: s.element_path))
     )
