@@ -132,3 +132,18 @@ def test_claude_retry_payload_keeps_the_existing_tier_policy(path: str, scenario
 def test_existing_run_pin_resolves_an_absent_task_model(path: str) -> None:
     body = _post_retry(path, model=None, run_pin="openai/operator-pin")
     assert body["model"] == "openai/operator-pin"
+
+
+@pytest.mark.parametrize("path,adapter", _PATHS)
+@pytest.mark.parametrize("scenario", ["large", "second", "blocking", "deadline", "security"])
+def test_retry_without_model_context_leaves_model_resolution_to_the_adapter(
+    path: str, adapter: str | None, scenario: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unset model never becomes a bare tier the configured endpoint may lack."""
+    monkeypatch.setenv("OPENAI_API_BASE", "https://synthetic.invalid/v1")
+    monkeypatch.setattr(lifecycle.time, "time", lambda: 1000.0)
+    body = _post_retry(path, model=None, adapter=adapter, scenario=scenario)
+    assert body["model"] is None
+    assert body["effort"] == (
+        "high" if scenario == "second" else "max" if path == "tick" or scenario in {"large", "security"} else "low"
+    )

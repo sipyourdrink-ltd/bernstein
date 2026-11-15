@@ -20,8 +20,10 @@ existing policy; retry limits, backoff and checkpoint decisions are unchanged.
 
 This retention does not query a provider catalog or prove model availability.
 If the task has no model and no explicit run/role pin reaches the retry path,
-propagating the first attempt's effective model remains unresolved (#6605).
-An endpoint URL alone does not identify that model. Unprefixed task models
+both retry creators keep the model override unset. The adapter resolves its
+configured default just as on the first attempt; the retry does not invent a
+bare `sonnet` or `opus` override. An endpoint URL alone does not identify a
+model, and no provider catalog is queried. Unprefixed task models
 without an operator pin remain governed by the existing adapter/tier policy.
 
 ## Per-adapter capability
