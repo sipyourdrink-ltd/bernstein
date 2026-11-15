@@ -525,8 +525,14 @@ def test_performance_cleanup_docs_explain_force_and_read_only_inspection() -> No
     page = REPO_ROOT / "docs" / "operations" / "performance-tuning.md"
     section = page.read_text(encoding="utf-8").split("### Cleaning up stale worktrees", 1)[1].split("\n---", 1)[0]
     prose = " ".join(section.split())
-    assert "unmerged agent branches" in prose
+    assert "Removing a selected worktree also attempts to delete its `agent/<session>` branch" in prose
+    assert "This applies even without `--force`." in prose
+    assert "branch hygiene preserves other unmerged agent branches by default." in prose
+    assert "`--force` flag also permits deleting those remaining branches" in prose
+    assert "Branches belonging to active sessions stay protected." in prose
     assert "[worktree operations](worktrees.md)" in section
     examples = extract(section)
     assert any(inv.tokens[:2] == ("worktrees", "list") for inv in examples.checked)
+    assert any(inv.tokens == ("cleanup",) for inv in examples.checked)
+    assert any(inv.tokens == ("cleanup", "--force") for inv in examples.checked)
     assert not check(examples, _surface(), "docs/operations/performance-tuning.md")

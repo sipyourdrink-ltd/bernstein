@@ -253,15 +253,20 @@ bernstein worktrees list --json
 ```
 
 Both cleanup commands select worktrees whose sessions no longer back active
-tasks. By default, branch cleanup preserves unmerged agent branches. The
-`--force` flag also permits deleting those branches, even when their commits
-are not merged into `main`; branches belonging to active sessions stay
-protected. Check the inactive branches for work you want to keep before using
-`--force`.
+tasks. Removing a selected worktree also attempts to delete its
+`agent/<session>` branch, after best-effort salvage and graveyard preservation.
+This applies even without `--force`.
+
+The subsequent branch hygiene preserves other unmerged agent branches by
+default. The `--force` flag also permits deleting those remaining branches,
+even when their commits are not merged into `main`. Branches belonging to
+active sessions stay protected. Inspect the inactive worktrees and branches
+for work you want to keep before either cleanup command; preservation is
+best-effort.
 
 ```bash
-bernstein cleanup            # removes inactive worktrees; preserves unmerged agent branches
-bernstein cleanup --force    # also permits deleting unmerged agent branches
+bernstein cleanup            # removes inactive worktrees and their branches
+bernstein cleanup --force    # also permits pruning other unmerged agent branches
 ```
 
 Set automatic cleanup in config:

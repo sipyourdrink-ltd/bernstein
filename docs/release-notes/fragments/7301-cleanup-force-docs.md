@@ -1,1 +1,5 @@
-Clarify that `bernstein cleanup --force` also permits deleting unmerged agent branches, and show read-only worktree inspection before cleanup.
+## Cleanup force and inspection are documented separately
+
+Explain selected worktree and branch removal, the additional branch pruning
+permitted by `bernstein cleanup --force`, and best-effort preservation. Show
+read-only worktree inspection before cleanup (#7301).
