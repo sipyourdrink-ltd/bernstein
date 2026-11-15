@@ -999,7 +999,7 @@ def check_leaked_lanes(
         )
         if not math.isfinite(threshold) or threshold < 0:
             raise ValueError("leak age must be finite and non-negative")
-        lanes = sweep_leaked_lanes(workdir or Path.cwd(), now=now)
+        lanes = sweep_leaked_lanes(workdir or Path.cwd(), now=now, require_verified_audit=True)
     except (OSError, RuntimeError, ValueError) as exc:
         return {
             "name": name,

@@ -397,18 +397,33 @@ def sweep_leaked_sandboxes(workdir: Path, *, now: float | None = None) -> list[S
     return _sweep_leaked_sandboxes(workdir, now=now)
 
 
+def _audit_tree_has_evidence(directory: Path) -> bool:
+    """An initialized empty directory tree has no audit records to verify.
+
+    Do not follow symlinks or suppress traversal errors: either is evidence
+    requiring the normal verification path, rather than proof of emptiness.
+    """
+    for entry in directory.iterdir():
+        if entry.is_symlink() or not entry.is_dir() or _audit_tree_has_evidence(entry):
+            return True
+    return False
+
+
 def _sweep_leaked_sandboxes(
     workdir: Path,
     *,
     now: float | None = None,
     task_status: Callable[[str], str | None] | None = None,
+    require_verified_audit: bool = False,
 ) -> list[SandboxLeakCandidate]:
     """Allow the combined inventory to share its canonical task snapshot."""
     sdd_dir = workdir / ".sdd"
     audit_dir = sdd_dir / "audit"
     if not audit_dir.is_dir():
         return []
-    sessions = open_sandbox_sessions(_read_sandbox_events(audit_dir))
+    if require_verified_audit and not _audit_tree_has_evidence(audit_dir):
+        return []
+    sessions = open_sandbox_sessions(_read_sandbox_events(audit_dir, require_verified=require_verified_audit))
     if not sessions:
         return []
     if task_status is None:
@@ -454,6 +469,7 @@ def sweep_leaked_lanes(
     *,
     now: float | None = None,
     measure_disk: bool = False,
+    require_verified_audit: bool = False,
 ) -> list[LeakedLane]:
     """Read-only inventory keyed on the latest task-store status, never a PID.
 
@@ -499,7 +515,9 @@ def sweep_leaked_lanes(
                 task_statuses=((task_id, status),),
             )
         )
-    for candidate in _sweep_leaked_sandboxes(workdir, now=now, task_status=task_status):
+    for candidate in _sweep_leaked_sandboxes(
+        workdir, now=now, task_status=task_status, require_verified_audit=require_verified_audit
+    ):
         if not candidate.is_leaked:
             continue
         session = candidate.session
