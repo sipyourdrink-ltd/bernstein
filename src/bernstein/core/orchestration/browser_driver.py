@@ -36,6 +36,8 @@ them onto the closed
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 import shutil
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass
@@ -43,9 +45,10 @@ from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 from uuid import uuid4
 
 from bernstein.core.agents.computer_use import Action, ActionKind
+from bernstein.core.evidence.render_receipt import ComputedStyle, EnvironmentDescriptor
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     # Define the sandbox manager protocol for type checking
@@ -71,6 +74,8 @@ __all__ = [
     "PageState",
     "PlaywrightBrowserDriver",
     "RecordedBrowserDriver",
+    "RenderProbeDriver",
+    "RenderProbeResult",
     "browser_use_driver",
     "desktop_sandbox_driver",
     "get_driver_factory",
@@ -202,6 +207,101 @@ class BrowserDriver(Protocol):
 
     def close(self) -> None:
         """Release the driver. Must be idempotent."""
+
+
+@dataclass(frozen=True)
+class RenderProbeResult:
+    """Raw bounded computed-style capture, or an explicit unavailable result."""
+
+    available: bool
+    reason: str = ""
+    environment: EnvironmentDescriptor | None = None
+    computed_styles: tuple[ComputedStyle, ...] = ()
+    property_vocabulary_version: str = "computed-css-v1"
+
+
+@runtime_checkable
+class RenderProbeDriver(Protocol):
+    """Optional capability: existing basic browser drivers remain compatible."""
+
+    def render_probe(self, *, environment: EnvironmentDescriptor, elements: Mapping[str, str]) -> RenderProbeResult:
+        """Read explicit element-path/selector pairs under a declared environment."""
+
+
+_RENDER_PROBE_SCRIPT = """({elements}) => {
+    const properties = ['display', 'color', 'width', 'height', 'font-family',
+                        'font-size', 'visibility', 'opacity'];
+    const styles = [];
+    for (const [path, selector] of Object.entries(elements)) {
+        const matches = document.querySelectorAll(selector);
+        if (matches.length !== 1) {
+            return {unavailable: 'selector must match exactly one element: ' + path};
+        }
+        const style = getComputedStyle(matches[0]);
+        styles.push({element_path: path, properties: Object.fromEntries(
+            properties.map(property => [property, style.getPropertyValue(property)])
+        )});
+    }
+    if (document.fonts.status !== 'loaded') return {unavailable: 'font set is not resolved'};
+    return {computed_styles: styles, environment: {
+        viewport: {width: innerWidth, height: innerHeight},
+        device_pixel_ratio: devicePixelRatio,
+        locale: navigator.language,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        clock_value: new Date().toISOString(),
+        reduced_motion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+        colour_scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    }};
+}"""
+
+
+def _render_environment_complete(environment: EnvironmentDescriptor) -> bool:
+    return (
+        bool(environment.engine_build_identity.strip())
+        and environment.viewport.width > 0
+        and environment.viewport.height > 0
+        and math.isfinite(environment.device_pixel_ratio)
+        and environment.device_pixel_ratio > 0
+        and bool(environment.locale.strip())
+        and bool(environment.timezone.strip())
+        and environment.clock_value.utcoffset() is not None
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", environment.font_set_hash) is not None
+        and environment.colour_scheme in ("light", "dark")
+    )
+
+
+def _render_probe_result(
+    raw: object, environment: EnvironmentDescriptor, elements: Mapping[str, str]
+) -> RenderProbeResult:
+    """Reject partial browser payloads instead of accepting an empty capture."""
+    if not isinstance(raw, dict):
+        return RenderProbeResult(False, "invalid render probe payload")
+    if raw.get("unavailable"):
+        return RenderProbeResult(False, str(raw["unavailable"]))
+    observed = raw.get("environment")
+    rows = raw.get("computed_styles")
+    if not isinstance(observed, dict) or not isinstance(rows, list):
+        return RenderProbeResult(False, "incomplete render probe payload")
+    expected = environment.to_dict()
+    for name in ("viewport", "device_pixel_ratio", "locale", "timezone", "reduced_motion", "colour_scheme"):
+        if observed.get(name) != expected[name]:
+            return RenderProbeResult(False, f"observed environment differs: {name}")
+    try:
+        measured_clock = str(observed["clock_value"]).replace("Z", "+00:00")
+        # Descriptor parsing normalizes browser UTC 'Z' and explicit offsets.
+        if EnvironmentDescriptor.from_dict({"clock_value": measured_clock}).clock_value != environment.clock_value:
+            return RenderProbeResult(False, "observed environment differs: clock_value")
+        styles = tuple(ComputedStyle.from_dict(row) for row in rows)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return RenderProbeResult(False, "invalid render probe values")
+    if len(styles) != len(elements) or {style.element_path for style in styles} != set(elements):
+        return RenderProbeResult(False, "incomplete render probe element set")
+    vocabulary = {"display", "color", "width", "height", "font-family", "font-size", "visibility", "opacity"}
+    if any(set(style.properties) != vocabulary for style in styles):
+        return RenderProbeResult(False, "incomplete computed property vocabulary")
+    return RenderProbeResult(
+        True, environment=environment, computed_styles=tuple(sorted(styles, key=lambda s: s.element_path))
+    )
 
 
 def observe(driver: BrowserDriver) -> PageState:
@@ -650,6 +750,36 @@ class PlaywrightBrowserDriver:
         if isinstance(raw, bytes):
             return raw
         return raw.encode("utf-8") if isinstance(raw, str) else str(raw).encode("utf-8")
+
+    def render_probe(self, *, environment: EnvironmentDescriptor, elements: Mapping[str, str]) -> RenderProbeResult:
+        """Capture engine-computed properties for explicit elements.
+
+        The capture owner supplies the complete frozen environment, including
+        the approved resolved font-bundle content hash and animation/caret
+        control declarations. This method checks actual engine identity and
+        page-observable environment fields; it does not infer font bytes or
+        install determinism controls. Missing evidence is unavailable.
+        """
+        if self.closed:
+            return RenderProbeResult(False, "browser driver is closed")
+        if not _render_environment_complete(environment):
+            return RenderProbeResult(False, "incomplete environment descriptor")
+        if not elements or any(not path.strip() or not selector.strip() for path, selector in elements.items()):
+            return RenderProbeResult(False, "explicit nonempty element paths and selectors are required")
+        if self.build_id != environment.engine_build_identity or UNKNOWN_BUILD_VERSION in self.build_id:
+            return RenderProbeResult(False, "pinned engine is unavailable")
+        browser_type, _, _version = self.build_id.partition("-")
+        actual_browser = getattr(self.context, "browser", None)
+        actual_type = getattr(getattr(actual_browser, "browser_type", None), "name", "")
+        if actual_type != browser_type:
+            return RenderProbeResult(False, "actual engine type is unavailable or differs from the pinned build")
+        if _playwright_build_id(self.context, browser_type=browser_type) != self.build_id:
+            return RenderProbeResult(False, "actual engine differs from the pinned build")
+        try:
+            raw = self._call_page("evaluate", _RENDER_PROBE_SCRIPT, {"elements": dict(elements)})
+        except BrowserDriverError as exc:
+            return RenderProbeResult(False, f"render probe unavailable: {type(exc).__name__}")
+        return _render_probe_result(raw, environment, elements)
 
     def current_url(self) -> str:
         """Return the current page URL."""
