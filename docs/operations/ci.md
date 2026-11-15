@@ -4,6 +4,20 @@ Operator-facing notes on Bernstein's CI workflows. Focused on the
 matrix policy and the failure-class interventions; for the per-step
 documentation read the inline comments in `.github/workflows/ci.yml`.
 
+## Carry publication preflight
+
+`scripts/verify_carry_head.py WORKTREE MAIN ORIGINAL HEAD` checks exact
+40-character commit SHAs before a future carry publisher creates or updates
+an upstream ref. MAIN must be the publisher-verified current upstream main;
+ORIGINAL pins the original contributor head; HEAD pins the reviewed commit.
+Both source commits must be ancestors of HEAD, and HEAD's complete `.github`
+tree must exactly match MAIN. Git replacement objects are disabled.
+
+This is a standalone preflight, not an installed publisher or a workflow
+gate. No current workflow invokes it. A future publisher must invoke this
+trusted-main script and bind the successful check and review to the exact
+SHA it pushes; this utility alone grants no publishing or merge authority.
+
 ## TL;DR
 
 | Topic | Status | Where |
