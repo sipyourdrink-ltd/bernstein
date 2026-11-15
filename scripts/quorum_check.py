@@ -420,6 +420,7 @@ class PullRequest:
     # Actual commit authors, separate from committers and co-author credit.
     # An empty login is an unlinked author, not evidence of roster membership.
     commit_authors: frozenset[str] = frozenset()
+    commit_authors_complete: bool = False
     # Earlier commits whose net diff is the head's: an approval given on one
     # of them was given on what is about to merge.
     same_diff: frozenset[str] = frozenset()
@@ -801,6 +802,14 @@ def fetch_pull_request(
 
     author = (raw.get("user") or {}).get("login", "")
     head_sha = (raw.get("head") or {}).get("sha", "")
+    reported_commits = raw.get("commits")
+    authors_complete = (
+        isinstance(reported_commits, int)
+        and not isinstance(reported_commits, bool)
+        and reported_commits == len(commits)
+        and 0 < len(commits) < PR_COMMIT_LIMIT
+        and commits[-1].get("sha") == head_sha
+    )
     paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
     reviews = [
         Review(
@@ -847,6 +856,7 @@ def fetch_pull_request(
         contributors=contributors,
         last_push=pushed_at or datetime.now(UTC),
         commit_authors=frozenset(((commit.get("author") or {}).get("login")) or "" for commit in commits),
+        commit_authors_complete=authors_complete,
         same_diff=same_diff,
         update_only=update_only,
         diff_changed_at=diff_changed_at,
@@ -930,6 +940,16 @@ def adoptable(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
     return not any(owners_for(p, owners)[1] or p.startswith(ADOPTION_EXCLUDED_PREFIXES) for p in pr.paths)
 
 
+def outside_commit_authors(pr: PullRequest, roster: Roster) -> frozenset[str]:
+    """Actual authors outside the roster and the built-in workflow account.
+
+    The workflow account writes the project's own generated mirrors. Its
+    commits alone do not turn a maintainer's change into outside work.
+    """
+    members = roster.quorum_holders | roster.triagers | roster.automation | {GITHUB_ACTIONS_BOT}
+    return pr.commit_authors - members
+
+
 def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]], now: datetime) -> Verdict:
     if pr.is_draft:
         return Verdict(True, "draft, nothing to decide yet")
@@ -974,8 +994,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             )
         )
 
-    roster_members = roster.quorum_holders | roster.triagers | roster.automation
-    carried_outside = pr.author == roster.maintainer and bool(pr.commit_authors - roster_members)
+    carried_outside = pr.author == roster.maintainer and bool(outside_commit_authors(pr, roster))
     adoption_open = now < ADOPTION_ENDS and adoptable(pr, owners)
     adopted = (
         adoption_open
@@ -1010,6 +1029,14 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
                 "maintainer approval: a pull request opened by the workflow account",
                 roster.maintainer in approvals,
                 f"@{roster.maintainer}",
+            )
+        )
+    elif pr.author == roster.maintainer and not pr.commit_authors_complete:
+        verdict.requirements.append(
+            Requirement(
+                "complete commit-author evidence before selecting the maintainer review rule",
+                False,
+                "complete API history covering the head and reported count, or split the change",
             )
         )
     elif pr.author == roster.maintainer and not carried_outside:

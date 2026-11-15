@@ -53,6 +53,8 @@ def _pr(
         reviews=reviews or [],
         contributors=contributors if contributors is not None else {author},
         last_push=datetime(2026, 9, 10, 11, 0, tzinfo=UTC) - timedelta(hours=1),
+        commit_authors=frozenset({author}),
+        commit_authors_complete=True,
     )
 
 
@@ -86,6 +88,20 @@ def test_maintainer_and_automation_changes_ask_nobody(rr, roster) -> None:
     assert rr.plan_requests(_pr(rr, author="the-conductor[bot]"), roster, set(), {}) == []
 
 
+def test_maintainer_carried_commit_requests_sensitive_quorum(rr, roster) -> None:
+    pr = _pr(rr, author="owner", contributors={"owner", "outsider"}, paths=["src/bernstein/core/security/policy.py"])
+    pr.commit_authors = frozenset({"owner", "outsider"})
+    pr.commit_authors_complete = True
+    assert rr.plan_requests(pr, roster, set(), {}) == ["core1", "core2", "comm1"]
+
+
+def test_maintainer_incomplete_history_requests_nobody(rr, roster) -> None:
+    pr = _pr(rr, author="owner", contributors={"owner", "outsider"})
+    pr.commit_authors = frozenset({"owner", "outsider"})
+    pr.commit_authors_complete = False
+    assert rr.plan_requests(pr, roster, set(), {}) == []
+
+
 def test_a_standing_changes_requested_pauses_the_asking(rr, roster) -> None:
     pr = _pr(rr, reviews=[_review(rr, "comm2", "CHANGES_REQUESTED")])
     assert rr.plan_requests(pr, roster, set(), {}) == []
@@ -111,9 +127,9 @@ def test_request_load_counts_standing_requests(rr) -> None:
     assert rr.request_load(prs) == {"a": 2, "b": 1}
 
 
-def test_only_contributor_changes_get_the_full_evaluation(rr, roster) -> None:
+def test_human_changes_get_the_full_evaluation_before_author_classification(rr, roster) -> None:
     assert rr.needs_a_look({"user": {"login": "outsider"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "outsider"}, "draft": True}, roster)
-    assert not rr.needs_a_look({"user": {"login": "owner"}, "draft": False}, roster)
+    assert rr.needs_a_look({"user": {"login": "owner"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "the-conductor[bot]"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "github-actions[bot]"}, "draft": False}, roster)
