@@ -1262,6 +1262,8 @@ class AgentSession:
     # the attachment set next to the ``agent_spawned`` event. Empty when the
     # session's tasks declare nothing.
     context_attachments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    # Optional export references only; composition manifests grant no authority.
+    agent_manifest_references: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     # Skill templates injected into the worktree at spawn time (issue #3382).
     # Each entry is ``{"template_name", "version", "pre_render_digest",
     # "rendered_digest", "trigger_source", "status"}`` in injection order -

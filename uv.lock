@@ -23,6 +23,25 @@ conflicts = [[
 overrides = [{ name = "pyjwt", specifier = ">=2.14" }]
 
 [[package]]
+name = "agent-manifest"
+version = "0.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cbor2" },
+    { name = "cryptography" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a4/71/f63b4e8752df5e7d72b3b7b6735d56349c798bd97e0cf5c6786f18acfe92/agent_manifest-0.12.0.tar.gz", hash = "sha256:beb4ead3f8f7782563f2a715371a45322c5a927962743eeb1b33ccb07b768177", size = 324850, upload-time = "2026-09-06T04:34:48.917Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/68/4a49b8c7c96d8eea8d523983c41944e5012bd5b0b185c482d982359d81ef/agent_manifest-0.12.0-py3-none-any.whl", hash = "sha256:ad8380f39d906054ff07852386bb5caeb3525c82126ccc6b5d463656ba41a8e1", size = 158690, upload-time = "2026-09-06T04:34:46.927Z" },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "click" },
+]
+
+[[package]]
 name = "agentrust-trace"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -604,6 +623,9 @@ gui = [
 k8s = [
     { name = "kubernetes" },
 ]
+manifest = [
+    { name = "agent-manifest", extra = ["cli"] },
+]
 ml = [
     { name = "scikit-learn" },
 ]
@@ -705,6 +727,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-manifest", extras = ["cli"], marker = "extra == 'manifest'", specifier = "==0.12.0" },
     { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.11,<0.12" },
     { name = "agentrust-trace-tests", marker = "extra == 'dev'", specifier = ">=0.6,<0.7" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9" },
@@ -815,7 +838,7 @@ requires-dist = [
     { name = "watchdog", specifier = ">=4.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["dev", "grpc", "voice", "k8s", "spiffe", "ml", "browser", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "teams", "eval", "gui", "otel", "observability", "research-render", "trace"]
+provides-extras = ["dev", "grpc", "voice", "k8s", "spiffe", "ml", "browser", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "teams", "eval", "gui", "otel", "observability", "research-render", "trace", "manifest"]
 
 [package.metadata.requires-dev]
 dev = [

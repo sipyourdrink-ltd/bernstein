@@ -6243,6 +6243,10 @@ class Orchestrator:
                 endpoint_base_url=session.endpoint_base_url,
                 endpoint_profile_name=session.endpoint_profile_name,
             )
+            # Existing artifact events become signed, hop-scoped Trust Record
+            # references. These are evidence pointers, never admission inputs.
+            for reference in session.agent_manifest_references:
+                self._recorder.record("artifact_produced", agent_id=session.id, **reference)
             # Issue #3375: pin the declared context files the spawner resolved
             # for this session at their content addresses. Recorded only when
             # the tasks declared something, so undeclared runs journal exactly
