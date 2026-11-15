@@ -152,3 +152,166 @@ def test_wait_rejects_a_value_that_is_not_a_number() -> None:
 
     with pytest.raises(click.BadParameter):
         run.make_context("run", ["--wait", "soon"])
+
+
+def test_wait_does_not_return_while_an_agent_is_alive(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--wait`` never declares completion while an agent is still active."""
+    import time
+    from types import SimpleNamespace
+
+    import bernstein.cli.run_bootstrap as rb
+
+    monkeypatch.chdir(tmp_path)
+    status = {"total": 1, "open": 0, "claimed": 0, "done": 1, "failed": 0}
+    full = {"total": 1, "open": 0, "claimed": 0, "in_progress": 0, "orphaned": 0, "done": 1, "failed": 0}
+    polls = {"n": 0}
+
+    def _get(path: str) -> Any:
+        if path == "/status":
+            polls["n"] += 1
+            return status
+        if path == "/tasks/counts":
+            return full
+        if path == "/health":
+            agent_count = 1 if polls["n"] < 3 else 0
+            return {"agent_count": agent_count, "components": {"spawner": {"status": "ok"}}}
+        return None
+
+    elapsed = {"s": 0.0}
+    base_wall, base_mono = time.time(), time.monotonic()
+    clock = SimpleNamespace(
+        time=lambda: base_wall + elapsed["s"],
+        monotonic=lambda: base_mono + elapsed["s"],
+        sleep=lambda s: elapsed.__setitem__("s", elapsed["s"] + s),
+    )
+
+    with (
+        patch.object(rb, "server_get", side_effect=_get),
+        patch.object(rb, "time", clock),
+        patch.object(rb, "_signal_orchestrator_shutdown") as shutdown_sig,
+    ):
+        result = rb._wait_for_run_completion(poll_interval_s=1.0, timeout_s=10.0)
+
+    assert result is not None
+    assert polls["n"] == 3
+    shutdown_sig.assert_called_once()
+
+
+def test_wait_does_not_return_before_run_completed_is_journaled(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Quiescent ``/status`` must wait for ``run_completed`` in the active journal."""
+    import os
+    import time
+    from types import SimpleNamespace
+
+    import bernstein.cli.run_bootstrap as rb
+    from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+    from bernstein.core.replay.journal import EventJournal
+
+    monkeypatch.chdir(tmp_path)
+    sdd_dir = tmp_path / ".sdd"
+    journal = EventJournal("run-wait-journal", sdd_dir)
+    journal.record("run_started", run_id="run-wait-journal")
+    write_spawner_run_owner(
+        sdd_dir=sdd_dir,
+        run_id="run-wait-journal",
+        journal_head=journal.fingerprint(),
+        journal_event_count=journal.event_count(),
+        pid=os.getpid(),
+    )
+
+    status = {"total": 1, "open": 0, "claimed": 0, "done": 1, "failed": 0}
+    full = {"total": 1, "open": 0, "claimed": 0, "in_progress": 0, "orphaned": 0, "done": 1, "failed": 0}
+    polls = {"n": 0}
+
+    def _get(path: str) -> Any:
+        if path == "/status":
+            polls["n"] += 1
+            if polls["n"] == 3:
+                journal.record("run_completed", run_id="run-wait-journal", outcome="completed")
+                return None  # Server may already have stopped once finalization completes.
+            return status
+        if path == "/tasks/counts":
+            return full
+        if path == "/health":
+            return {"agent_count": 0, "components": {"spawner": {"status": "down"}}}
+        return None
+
+    elapsed = {"s": 0.0}
+    base_wall, base_mono = time.time(), time.monotonic()
+    clock = SimpleNamespace(
+        time=lambda: base_wall + elapsed["s"],
+        monotonic=lambda: base_mono + elapsed["s"],
+        sleep=lambda s: elapsed.__setitem__("s", elapsed["s"] + s),
+    )
+
+    with (
+        patch.object(rb, "server_get", side_effect=_get),
+        patch.object(rb, "time", clock),
+        patch.object(rb, "_signal_orchestrator_shutdown") as shutdown_sig,
+    ):
+        result = rb._wait_for_run_completion(poll_interval_s=1.0, timeout_s=10.0)
+
+    assert result is not None
+    assert polls["n"] == 3
+    shutdown_sig.assert_called_once()
+
+
+def test_wait_waits_for_finalizing_sentinel_before_returning(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When ``.finalizing`` exists, wait waits for ``.finalized`` even after ``run_completed``."""
+    import os
+    import time
+    from types import SimpleNamespace
+
+    import bernstein.cli.run_bootstrap as rb
+    from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+    from bernstein.core.replay.journal import EventJournal
+
+    monkeypatch.chdir(tmp_path)
+    sdd_dir = tmp_path / ".sdd"
+    runtime_dir = sdd_dir / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    journal = EventJournal("run-wait-finalizing", sdd_dir)
+    journal.record("run_started", run_id="run-wait-finalizing")
+    write_spawner_run_owner(
+        sdd_dir=sdd_dir,
+        run_id="run-wait-finalizing",
+        journal_head=journal.fingerprint(),
+        journal_event_count=journal.event_count(),
+        pid=os.getpid(),
+    )
+    journal.record("run_completed", run_id="run-wait-finalizing", outcome="completed")
+    (runtime_dir / ".finalizing").touch()
+
+    status = {"total": 1, "open": 0, "claimed": 0, "done": 1, "failed": 0}
+    full = {"total": 1, "open": 0, "claimed": 0, "in_progress": 0, "orphaned": 0, "done": 1, "failed": 0}
+    polls = {"n": 0}
+
+    def _get(path: str) -> Any:
+        if path == "/status":
+            polls["n"] += 1
+            if polls["n"] == 2:
+                (runtime_dir / ".finalized").write_text('{"ts": 1}', encoding="utf-8")
+            return status
+        if path == "/tasks/counts":
+            return full
+        if path == "/health":
+            return {"agent_count": 0, "components": {"spawner": {"status": "down"}}}
+        return None
+
+    elapsed = {"s": 0.0}
+    base_wall, base_mono = time.time(), time.monotonic()
+    clock = SimpleNamespace(
+        time=lambda: base_wall + elapsed["s"],
+        monotonic=lambda: base_mono + elapsed["s"],
+        sleep=lambda s: elapsed.__setitem__("s", elapsed["s"] + s),
+    )
+
+    with (
+        patch.object(rb, "server_get", side_effect=_get),
+        patch.object(rb, "time", clock),
+        patch.object(rb, "_signal_orchestrator_shutdown"),
+    ):
+        result = rb._wait_for_run_completion(poll_interval_s=1.0, timeout_s=10.0)
+
+    assert result is not None
+    assert polls["n"] == 2
