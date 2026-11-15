@@ -205,7 +205,7 @@ def test_automatic_label_completion_recomputes_without_requesting_reviews() -> N
 
 @pytest.mark.parametrize("conclusion", ["success", "failure"])
 @pytest.mark.parametrize("failure", ["none", "final-read", "rerun"])
-@pytest.mark.parametrize("candidate", ["match", "wrong-repo", "wrong-branch", "wrong-base", "ambiguous"])
+@pytest.mark.parametrize("candidate", ["match", "wrong-repo", "wrong-branch", "wrong-base", "ambiguous", "many-runs"])
 def test_label_completion_reruns_current_head_checks_including_success(
     tmp_path, conclusion, candidate, failure
 ) -> None:
@@ -237,6 +237,14 @@ def test_label_completion_reruns_current_head_checks_including_success(
         payload["pulls"][0]["base"]["ref"] = "other-base"
     elif candidate == "ambiguous":
         payload["pulls"].append(payload["pulls"][0])
+    if candidate == "many-runs":
+        payload["checks"]["check_runs"] = [
+            dict(
+                payload["checks"]["check_runs"][0],
+                html_url=f"https://github.com/owner/repo/actions/runs/{987 + i}/job/1",
+            )
+            for i in range(13)
+        ]
     payload["failure"] = failure
     (tmp_path / "payload.json").write_text(json.dumps(payload))
     gh = tmp_path / "gh"
@@ -281,13 +289,17 @@ else:
         DEFAULT_BRANCH="main",
     )
     result = subprocess.run(["bash", "-c", _rerun_step()], env=env, capture_output=True, text=True, timeout=15)
-    expected_rc = 1 if candidate == "ambiguous" or (candidate == "match" and failure != "none") else 0
+    expected_rc = 1 if candidate in {"ambiguous", "many-runs"} or (candidate == "match" and failure != "none") else 0
     assert result.returncode == expected_rc, result.stderr
     commands = [json.loads(line) for line in calls.read_text().splitlines()]
-    if candidate != "match" or failure == "final-read":
+    if candidate not in {"match", "many-runs"} or failure == "final-read":
         assert not any("POST" in command for command in commands)
         return
     assert ["api", "-X", "POST", "repos/owner/repo/actions/runs/987/rerun"] in commands
     assert any(f"repos/owner/repo/commits/{head}/check-runs?check_name=quorum" in a for a in commands)
     assert any("head=fork-owner:small-docs" in a for a in commands)
     assert not any("request" in a for command in commands for a in command)
+    if candidate == "many-runs" and failure == "none":
+        assert sum("POST" in command for command in commands) == 12
+        assert "label reconciliation incomplete" in result.stdout
+        assert "remaining runs require explicit recovery" in result.stdout

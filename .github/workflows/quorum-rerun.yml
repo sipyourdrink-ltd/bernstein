@@ -160,6 +160,10 @@ jobs:
               fi
               found=1
               if [ "$started" -ge "$MAX_RERUNS" ]; then
+                if [ "$after_labels" = 1 ]; then
+                  echo "::error::#$pr: label reconciliation incomplete after $MAX_RERUNS re-runs; remaining runs require explicit recovery"
+                  return 1
+                fi
                 echo "#$pr: re-run budget spent mid-pull-request; the next sweep finishes it"
                 return 0
               fi
