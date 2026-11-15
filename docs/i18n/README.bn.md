@@ -32,7 +32,7 @@
 Bernstein হলো AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার। এটি policy as code হিসেবে কাজ করে: আপনি নীতি লেখেন - কে কী করতে পারবে, কীসের জন্য অনুমোদন লাগবে, কী রেকর্ড করতে হবে - আর Bernstein তা প্রয়োগ করে যাচাইযোগ্য রেকর্ড তৈরি করে। একটি ডিটারমিনিস্টিক শিডিউলার - কো-অর্ডিনেশন লুপে কোনো মডেল নেই - এজেন্টদের সমান্তরালে চালায়, তাদের আউটপুট গেট দিয়ে যাচাই করে এবং প্রতিটি ধাপ রেকর্ড করে, তাই একটি রান পরে, অফলাইনে, শুধু আর্টিফ্যাক্ট থেকেই যাচাই করা যায়। CLI কোডিং এজেন্ট সরাসরি কাজ করে (Claude Code, Codex, Gemini CLI ও আরও 50+), আর একই লেয়ার যেকোনো এজেন্ট ওয়ার্কলোড গভর্ন করে: ডেলিভারেবল হতে পারে একটি diff, রিসার্চ রিপোর্ট, ডেটাসেট বা অডিট এভিডেন্স প্যাক। Air-gap ইনস্টল প্রোফাইল অন্তর্ভুক্ত। Apache-2.0.
 
 ### এক নজরে
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 পাঁচটি বিষয় একে আলাদা করে; বাকিটা বিশদ।
 
@@ -43,6 +43,10 @@ Bernstein হলো AI এজেন্টদের জন্য ওপেন-স
 - **বিস্তৃত এবং লোকাল।** 53টির বেশি CLI এজেন্ট অ্যাডাপ্টার, সঙ্গে একটি জেনেরিক `--prompt` র‍্যাপার, ফাইল-ভিত্তিক স্টেট, কোনো SaaS হপ নেই, কোনো থার্ড-পার্টি ডেটা প্লেন নেই।
 
 পুরো তালিকা আছে [ক্যাপাবিলিটি পাতায়](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ফিচার ম্যাট্রিক্স](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) হলো সম্পূর্ণ সূচি।
+
+টাস্ক সার্ভারে নতুন টাস্ক নেওয়ার জন্য অপারেটর-নিয়ন্ত্রিত গেট রয়েছে, যার অবস্থা সংরক্ষিত থাকে; [নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
+
+ভূমিকা-অ্যাডাপ্টার নীতিতে আলাদাভাবে উল্লেখ না করা ভূমিকাগুলির জন্য একটি ঐচ্ছিক ডিফল্ট অনুমোদন তালিকা নির্ধারণ করা যায়; [নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) দেখুন।
 
 ### একটি রান দেখতে কেমন
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
@@ -126,7 +130,7 @@ flowchart LR
 প্রতিটি নোড সেই এজেন্ট নেয় যার রোল ফেজটি অনুমোদন করে; এজেন্ট টাস্কের ভেতরে যা-ই করুক, রোলের বেড়া আর অনুমোদনের গেট বহাল থাকে। কোড নোড নিজের git worktree-তে merge গেটের পেছনে সম্পূর্ণ হয়। উপরের নোডগুলো অন্যভাবে শেষ হয়: [আর্টিফ্যাক্ট চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ডেলিভারেবলের নাম দেয় (রিপোর্ট, ডেটাসেট, স্ক্যান, অ্যাকশন লগ), আর নোডটি কমিটের বদলে স্বাক্ষরিত lineage রসিদে বন্ধ হয়। একই শিডিউলার, একই জার্নাল, একই অফলাইন যাচাই - গ্রাফ কোড বহন করুক, রিসার্চ, ops পরিবর্তন বা তিনটির মিশ্রণ। সফটওয়্যার, রিসার্চ, ডকস, এন্টারপ্রাইজ ও কন্ট্রিবিউটর ওয়ার্কফ্লোর তৈরি গ্রাফ আছে [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)-এ।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,6 +140,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` অডিট চুক্তির `findings`-ও প্রকাশ করে, যা একই ইনস্টলেশন পর্যবেক্ষণের ক্ষেত্রে `bernstein govern audit --only INS --json`-এর ফলাফলের সঙ্গে অভিন্ন। সাধারণ doctor প্রতিবেদনের প্রদর্শন অপরিবর্তিত থাকে। স্থায়ী চেক আইডির জন্য [doctor পরিচালনা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) দেখুন।
+
+Doctor দীর্ঘদিন পড়ে থাকা এক্সিকিউশন লেনের তথ্য JSON-এ জানায়। লিকের প্রমাণ যাচাই করা না গেলে পরীক্ষা ব্যর্থ হয়; কিছুই মুছে ফেলা হয় না।
 
 pipx, pip, brew, dnf, npm এবং Docker আছে [ইনস্টল গাইডে](https://docs.bernstein.run/en/latest/getting-started/install/); এয়ার-গ্যাপড wheelhouse-এর জন্য আলাদা [এয়ার-গ্যাপ গাইড](https://docs.bernstein.run/en/latest/installation/air-gap/) আছে।
 
@@ -163,7 +169,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — টার্মিনাল ড্যাশবোর্ড (দূরবর্তী ওয়ার্কার নোড) | `bernstein gui serve` — ব্রাউজার ড্যাশবোর্ড |
 
 ### একটি রান প্রমাণ করুন
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 এখানে ডিটারমিনিজম বিশ্বাস করার জিনিস নয়, যাচাই করার জিনিস। অডিট চালু রেখে একবার চালান, তারপর যা লেখা হলো তা যাচাই করুন:
 
@@ -187,7 +193,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 একই যাচাইযোগ্যতা মূল্যায়নের সংখ্যাগুলোর ক্ষেত্রেও খাটে। `bernstein bench run <suite> --reliability k` (একে `bernstein eval --reliability k` ও লেখা যায়) প্রতিটি টাস্ক নির্দিষ্ট কোঅর্ডিনেশনের অধীনে `k` বার চালায়, তারপর `pass@1` সিলিং-এর পাশাপাশি একটি `pass^k` মেঝে (সবগুলো `k` চেষ্টাই পাস করতে হবে) জানায়। ওই ফলাফল একটি স্বাক্ষরিত রসিদে সিল করা হয় যা `bernstein bench reliability-verify` অফলাইনে আবার হিসাব করে, তাই বানানো মেঝে যাচাইয়ে ধরা পড়ে। বিস্তারিত: [pass^k নির্ভরযোগ্যতার মেঝে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)।
 
-মেশিনে পাঠযোগ্য পরীক্ষার ফলের জন্য `bernstein govern audit --format json` বা `--format sarif` এবং CI-তে উত্তীর্ণ হওয়ার শর্ত হিসেবে `--strict --quiet` ব্যবহার করুন। দেখুন: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+মেশিনে পাঠযোগ্য পরীক্ষার ফলের জন্য `bernstein govern audit --format json` বা `--format sarif` এবং CI-তে উত্তীর্ণ হওয়ার শর্ত হিসেবে `--strict --quiet` ব্যবহার করুন। দেখুন: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` প্রমাণ প্যাকে 2026-01-08 তারিখের গবেষণাপত্রের নির্দিষ্ট সংস্করণের MCP হুমকির শ্রেণিগুলো এবং কভারেজের অবশিষ্ট ঘাটতি উল্লেখ করা হয়।
 
 `bernstein delegation verify RUN` রসিদের চেইনকে রান ম্যানিফেস্টে অডিট কী দিয়ে HMAC-সিল করা চূড়ান্ত হেড ও ধাপের সংখ্যার সঙ্গে তুলনা করে। ফলে চেইনের শেষাংশ মুছে ফেলা, প্রতিস্থাপন ও রান বন্ধ হওয়ার পরে চেইন বাড়ানো ধরা পড়ে, সেই সঙ্গে কী ছাড়া ঘোষণাটি পুনর্লিখনও ধরা পড়ে। ঘোষণাটি সরিয়ে দিলে রান অসম্পূর্ণ থাকে (এক্সিট কোড `3`), কখনোই বৈধ বলে গণ্য হয় না। এটি পুরোনো কোনো প্রামাণিক স্ন্যাপশট পুনরায় ব্যবহার করা শনাক্ত করে না এবং অডিট কী হাতে থাকা লেখকের বিরুদ্ধেও সুরক্ষা দেয় না। দেখুন [ডেলিগেশন যাচাইয়ের কার্যপ্রবাহ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)।
 
@@ -248,13 +254,14 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড। `autopilot` নিবন্ধিত আছে, কিন্তু `TaskSource` বাস্তবায়িত না হওয়া পর্যন্ত চলতে অস্বীকার করে।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 
 | পাতা | কী আছে |
 |---|---|
 | [ক্যাপাবিলিটি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | পূর্ণ ক্যাপাবিলিটি তালিকা: MCP সার্ভার মোড, স্বাক্ষরিত এজেন্ট কার্ড, স্যান্ডবক্স ব্যাকএন্ড, আর্টিফ্যাক্ট সিংক, নিয়ন্ত্রক ম্যাপিং |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [এটি কাদের জন্য](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | কোথায় এর মূল্য দাঁড়ায়, আর কোথায় Bernstein ভুল হাতিয়ার |
 | [ওয়ার্কফ্লো](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | এজেন্ট / কমান্ড / লুপ নোডের ডিক্লারেটিভ YAML DAG |

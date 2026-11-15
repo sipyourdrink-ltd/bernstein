@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
+from math import isfinite
 from typing import Any
 
 
@@ -24,6 +25,111 @@ class AgentState(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class RemoteRunState(StrEnum):
+    """Observed service lifecycle, independent of local task acceptance."""
+
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    INPUT_REQUIRED = "input-required"
+    AUTH_REQUIRED = "auth-required"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+    UNKNOWN = "unknown"
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether the observed lifecycle ended; never delivery or authority."""
+        return self in (RemoteRunState.COMPLETED, RemoteRunState.FAILED, RemoteRunState.CANCELED)
+
+
+class RemoteCancelOutcome(StrEnum):
+    """What an adapter observed about a remote cancellation request."""
+
+    CONFIRMED = "confirmed"
+    UNCONFIRMED = "unconfirmed"
+    UNKNOWN = "unknown"
+
+
+def _validate_remote_identity(value: str, name: str) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{name} must not be blank")
+
+
+def _validate_remote_timestamp(value: float, name: str) -> None:
+    if type(value) not in (int, float):
+        raise TypeError(f"{name} must be epoch seconds as an int or float, not bool")
+    try:
+        valid = isfinite(value) and value >= 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError(f"{name} must be finite nonnegative epoch seconds")
+
+
+@dataclass(frozen=True)
+class RemoteRunHandle:
+    """Immutable service/run binding; validation does not authenticate it.
+
+    Supplied strings and timestamps are preserved without normalization.
+    ``console_url`` is an optional nonblank label, never followed here.
+    """
+
+    service: str
+    remote_run_id: str
+    adapter_version: str
+    submitted_at: float
+    console_url: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_remote_identity(self.service, "service")
+        _validate_remote_identity(self.remote_run_id, "remote_run_id")
+        _validate_remote_identity(self.adapter_version, "adapter_version")
+        _validate_remote_timestamp(self.submitted_at, "submitted_at")
+        if self.console_url is not None:
+            _validate_remote_identity(self.console_url, "console_url")
+
+
+def _validate_remote_observation(handle: RemoteRunHandle, observed_at: float, detail: str) -> None:
+    if not isinstance(handle, RemoteRunHandle):
+        raise TypeError("handle must be a RemoteRunHandle")
+    _validate_remote_timestamp(observed_at, "observed_at")
+    if not isinstance(detail, str):
+        raise TypeError("detail must be a string")
+
+
+@dataclass(frozen=True)
+class RemoteRunStatus:
+    """A typed service observation, not local acceptance or authorization."""
+
+    handle: RemoteRunHandle
+    state: RemoteRunState
+    observed_at: float
+    detail: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, RemoteRunState):
+            raise TypeError("state must be a RemoteRunState")
+        _validate_remote_observation(self.handle, self.observed_at, self.detail)
+
+
+@dataclass(frozen=True)
+class RemoteCancel:
+    """Observed cancellation outcome, without granting fallback or closure."""
+
+    handle: RemoteRunHandle
+    outcome: RemoteCancelOutcome
+    observed_at: float
+    detail: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.outcome, RemoteCancelOutcome):
+            raise TypeError("outcome must be a RemoteCancelOutcome")
+        _validate_remote_observation(self.handle, self.observed_at, self.detail)
 
 
 @dataclass(frozen=True)
@@ -133,6 +239,21 @@ class RuntimeBridge(ABC):
         """The configuration this bridge was initialised with."""
         return self._config
 
+    async def remote_status(self, handle: RemoteRunHandle) -> RemoteRunStatus:
+        """Optionally observe a remote run; unsupported bridges refuse.
+
+        This never falls back to legacy ``status`` or infers remote identity
+        from an agent id. No runtime caller is introduced by this contract.
+        """
+        raise BridgeCapabilityError("remote_status")
+
+    async def cancel_remote(self, handle: RemoteRunHandle) -> RemoteCancel:
+        """Optionally observe cancellation; legacy ``cancel`` is not called.
+
+        A legacy ``None`` return cannot establish confirmed termination.
+        """
+        raise BridgeCapabilityError("cancel_remote")
+
     @abstractmethod
     async def spawn(self, request: SpawnRequest) -> AgentStatus:
         """Launch an agent in the external runtime.
@@ -229,3 +350,12 @@ class BridgeError(Exception):
         super().__init__(message)
         self.agent_id = agent_id
         self.status_code = status_code
+
+
+class BridgeCapabilityError(BridgeError):
+    """An optional bridge capability is unsupported, without legacy fallback."""
+
+    def __init__(self, capability: str) -> None:
+        _validate_remote_identity(capability, "capability")
+        super().__init__(f"Runtime bridge does not support capability {capability!r}")
+        self.capability = capability
