@@ -704,3 +704,9 @@ required context is `missing`, or it is present and `failing`.
 
 Which paths each type job covers, and what the `|| true` runs report,
 are documented in `docs/operations/type-check-scope.md`.
+
+## reviewdog/action-actionlint version
+
+The workflow lint job uses action-actionlint v1.83.0, whose Docker action pins its image by digest. It keeps the `github-check` reporter, error failure threshold and disabled embedded shellcheck setting. The existing Ubuntu runner supplies Docker.
+
+The action is pinned to `a7d35aaf8c309203a4ae861d32b7bd490baa7bf3`. Its upstream `v1.83.0` tag resolves to that commit.
