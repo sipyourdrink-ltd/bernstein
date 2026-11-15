@@ -44,3 +44,16 @@ def test_configured_threshold_and_recovery() -> None:
     reg.heartbeat("n1", disk_free_mb=4096)
     assert not node.is_schedulable
     assert reg.best_node_for_task() is None
+
+
+def test_task_stealing_excludes_unhealthy_receivers() -> None:
+    from bernstein.core.protocols.cluster.cluster import TaskStealPolicy
+
+    reg = NodeRegistry(ClusterConfig())
+    reg.register(NodeInfo(id="donor", capacity=NodeCapacity(available_slots=0)))
+    reg.register(NodeInfo(id="sick", capacity=NodeCapacity(available_slots=6)))
+    reg.heartbeat("sick", disk_free_mb=1)
+    policy = TaskStealPolicy()
+    assert policy.find_steal_pairs(reg, {"donor": 10, "sick": 0}) == []
+    reg.heartbeat("sick", disk_free_mb=4096)
+    assert policy.find_steal_pairs(reg, {"donor": 10, "sick": 0}) == [("donor", "sick", 3)]

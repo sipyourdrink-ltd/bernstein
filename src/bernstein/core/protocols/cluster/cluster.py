@@ -527,7 +527,7 @@ class TaskStealPolicy:
             depth = queue_depths.get(node.id, 0)
             if depth > self.overload_threshold:
                 donors.append((node.id, depth))
-            elif node.capacity.available_slots >= self.idle_threshold:
+            elif node.is_schedulable and node.capacity.available_slots >= self.idle_threshold:
                 receivers.append((node.id, node.capacity.available_slots))
 
         # Sort donors by most overloaded first, receivers by most idle first
