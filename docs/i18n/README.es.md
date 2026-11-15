@@ -250,13 +250,14 @@ bernstein volunteer browse --budget 60
 La [guía del donante](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cubre la ejecución de un worker y el presupuesto que fijas, la [guía del proyecto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cubre la declaración de un manifiesto, y el [modelo de amenazas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica qué protege y qué no cada frontera. El ejecutor de un solo comando aún no se ha publicado: hoy `verify`, `browse`, `budget`, `verify-bundle` y `hub` son los subcomandos que funcionan. `autopilot` está registrado, pero se niega a ejecutarse hasta que se implemente un `TaskSource`.
 
 ### más allá de la portada
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run/):
 
 | página | lo que cubre |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | la lista completa de capacidades: modo servidor MCP, tarjetas de agente firmadas, backends de sandbox, sumideros de artefactos, mapeos regulatorios |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | dónde reside el valor y dónde Bernstein es la herramienta equivocada |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs declarativos en YAML de nodos de agente / comando / bucle |

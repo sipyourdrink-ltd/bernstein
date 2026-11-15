@@ -250,13 +250,14 @@ bernstein volunteer browse --budget 60
 يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`budget` و`verify-bundle` و`hub`. الأمر `autopilot` مسجّل، لكنه يرفض التشغيل إلى أن يُنفّذ `TaskSource`.
 
 ### ما وراء الصفحة الرئيسية
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 كل التفاصيل المعمقة متوفرة على [موقع التوثيق](https://docs.bernstein.run/):
 
 | الصفحة | ما تغطيه |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | قائمة الإمكانيات الكاملة: وضع خادم MCP، بطاقات الوكلاء الموقعة، خلفيات الحماية، مصارف النواتج، التوافق التنظيمي |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | أين تكمن القيمة ومتى يكون Bernstein أداة غير مناسبة |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | مخططات DAG تعريفية بصيغة YAML من عقد الوكيل / الأمر / الحلقة |

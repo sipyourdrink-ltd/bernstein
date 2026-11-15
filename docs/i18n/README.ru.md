@@ -250,13 +250,14 @@ bernstein volunteer browse --budget 60
 [Руководство донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описывает запуск воркера и бюджет, который вы задаёте, [руководство проекта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — объявление манифеста, а [модель угроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — что каждая граница защищает, а что нет. Запуск одной командой ещё не выпущен: сегодня работают подкоманды `verify`, `browse`, `budget`, `verify-bundle` и `hub`. `autopilot` зарегистрирован, но отказывается запускаться, пока не реализован `TaskSource`.
 
 ### за пределами первой страницы
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 Всё глубокое живёт на [сайте документации](https://docs.bernstein.run/):
 
 | страница | о чём |
 |---|---|
 | [возможности](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | полный список возможностей: режим MCP-сервера, подписанные карточки агентов, sandbox-бэкенды, приёмники артефактов, отображение на регуляторные требования |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [кому это нужно](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | где польза реальна и где Bernstein — неподходящий инструмент |
 | [workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативные YAML-DAG из узлов agent / command / loop |

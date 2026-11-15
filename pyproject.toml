@@ -334,6 +334,8 @@ research-render = [
 # Optional so minimal installs stay dependency-free. Enable with:
 #   pip install 'bernstein[trace]'
 trace = ["agentrust-trace>=0.11,<0.12"]
+# Composition-only Agent Manifest export; upstream python-v0.12.0 @9478b56.
+manifest = ["agent-manifest[cli]==0.12.0"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"

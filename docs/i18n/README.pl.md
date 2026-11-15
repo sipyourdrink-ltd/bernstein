@@ -250,13 +250,14 @@ bernstein volunteer browse --budget 60
 [Przewodnik darczyńcy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) opisuje uruchamianie workera i budżet, który ustawiasz, [przewodnik projektu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) - deklarowanie manifestu, a [model zagrożeń](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) mówi, przed czym każda granica chroni, a przed czym nie. Uruchamianie jedną komendą nie zostało jeszcze wydane: dziś działają podkomendy `verify`, `browse`, `budget`, `verify-bundle` i `hub`. `autopilot` jest zarejestrowany, ale odmawia uruchomienia, dopóki nie zostanie zaimplementowane `TaskSource`.
 
 ### poza stroną główną
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.bernstein.run/):
 
 | strona | zakres tematyczny |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | pełna lista możliwości: tryb serwera MCP, podpisane karty agentów, backendy sandbox, miejsca zapisu artefaktów, zgodność regulacyjna |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | gdzie tkwi wartość i w jakich sytuacjach Bernstein nie jest odpowiednim narzędziem |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratywne grafy DAG w formacie YAML złożone z węzłów agent / command / loop |
