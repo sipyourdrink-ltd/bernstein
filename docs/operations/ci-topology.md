@@ -58,7 +58,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-drift-sweep.yml | Nightly drift sweep | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-drift-sweep"} | 1 |
 | .github/workflows/pentest.yml | Adversarial Pen-Test Suite | workflow_dispatch | {"cancel-in-progress": "false", "group": "pentest-${{ github.ref }}"} | 1 |
 | .github/workflows/post-ci-dispatcher.yml | Post-CI dispatcher | workflow_run | {"cancel-in-progress": "false", "group": "post-ci-dispatcher-${{ github.event.workflow_run.head_sha }}"} | 4 |
-| .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 2 |
 | .github/workflows/pr-observability-summary.yml | PR observability summary | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "pr-observability-${{ github.event.pull_request.number \|\| github.event.inputs.pr_number }}"} | 1 |
 | .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-queue-hygiene.yml | PR queue hygiene | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "pr-queue-hygiene"} | 1 |
@@ -142,7 +142,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-drift-sweep.yml | sweep: Open drift-sweep PR if mirrors drifted |
 | .github/workflows/pentest.yml | pentest: Pen-test: ${{ github.event.inputs.suite \|\| 'all' }} |
 | .github/workflows/post-ci-dispatcher.yml | auto-heal: Auto-heal v2<br>auto-release: Auto-release<br>bisect-on-red: Bisect on red<br>meta: Resolve upstream metadata |
-| .github/workflows/pr-labels.yml | label |
+| .github/workflows/pr-labels.yml | label<br>quorum-after-labels |
 | .github/workflows/pr-observability-summary.yml | summary: Sticky observability comment |
 | .github/workflows/pr-policy.yml | pr-policy: PR policy |
 | .github/workflows/pr-queue-hygiene.yml | hygiene |
@@ -226,7 +226,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-drift-sweep.yml | workflow: {"contents": "read"}<br>sweep: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/pentest.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
-| .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
+| .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>quorum-after-labels: {"actions": "write", "checks": "read", "pull-requests": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
 | .github/workflows/pr-queue-hygiene.yml | workflow: {"contents": "read"}<br>hygiene: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |

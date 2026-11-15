@@ -16,6 +16,9 @@ name: PR labels
 #   - Has narrowly scoped write permissions and no secrets beyond
 #     `GITHUB_TOKEN`.
 # Attacker-controlled PR content never reaches a `run:` block here.
+# After labeling, a separate API-only job reruns the existing current-head
+# quorum checks: GITHUB_TOKEN label events do not trigger new workflows.
+# It has no checkout, shell, PAT, or ability to publish a quorum verdict.
 on:  # zizmor: ignore[dangerous-triggers]
   pull_request_target:
 
@@ -68,3 +71,60 @@ jobs:
             yarn.lock
             pnpm-lock.yaml
             *.lock
+
+  quorum-after-labels:
+    needs: label
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      checks: read
+      pull-requests: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - name: Re-run quorum after labels
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const repo = context.repo;
+            const eventPR = context.payload.pull_request;
+            const head = eventPR.head.sha;
+            // Wait for earlier evaluations so an old-label result cannot
+            // finish after the recomputed result and overwrite it.
+            for (let attempt = 0; attempt < 60; attempt++) {
+              const {data: pr} = await github.rest.pulls.get({
+                ...repo, pull_number: eventPR.number,
+              });
+              if (pr.state !== 'open' || pr.head.sha !== head) {
+                core.info('PR closed or head changed; the newer event owns reconciliation.');
+                return;
+              }
+              const checks = (await github.paginate(github.rest.checks.listForRef, {
+                ...repo, ref: head, check_name: 'quorum', filter: 'all', per_page: 100,
+              })).filter(check => check.app?.slug === 'github-actions');
+              if (checks.length && checks.every(check => check.status === 'completed')) {
+                const runs = [...new Set(checks.map(check => {
+                  const url = new URL(check.html_url);
+                  const prefix = `/${repo.owner}/${repo.repo}/actions/runs/`;
+                  const suffix = url.pathname.slice(prefix.length);
+                  if (url.origin !== process.env.GITHUB_SERVER_URL ||
+                      !url.pathname.startsWith(prefix) || !/^\d+\/job\/\d+$/.test(suffix)) {
+                    throw new Error('Unexpected quorum check run URL');
+                  }
+                  return Number(suffix.split('/')[0]);
+                }))];
+                // Fail before any POST if reconciliation exceeds the shared
+                // sweep budget; never claim a partial repair as success.
+                if (runs.length > 12) throw new Error('Too many quorum runs; explicit recovery required');
+                for (const run_id of runs) {
+                  core.info(`Re-running quorum run ${run_id} for #${eventPR.number} at ${head}`);
+                  await github.rest.actions.reRunWorkflow({...repo, run_id});
+                }
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 4000));
+            }
+            throw new Error('Quorum checks did not settle after labeling; no stale verdict accepted');
