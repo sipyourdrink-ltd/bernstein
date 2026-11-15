@@ -186,3 +186,32 @@ def test_observed_boolean_is_not_an_integer(tmp_path: Path) -> None:
     driver, page = _driver(tmp_path)
     page.result["environment"]["reduced_motion"] = 1
     assert not driver.render_probe(environment=_environment(), elements={"sample": "#sample"}).available
+
+
+@pytest.mark.parametrize("value", [None, {}, "800x600"])
+def test_incomplete_nested_viewport_is_unavailable(tmp_path: Path, value: object) -> None:
+    driver, page = _driver(tmp_path)
+    result = driver.render_probe(environment=replace(_environment(), viewport=value), elements={"sample": "#sample"})
+    assert not result.available
+    assert result.environment is None
+    assert page.calls == []
+
+
+@pytest.mark.parametrize("value", [10**500, -(10**500)])
+def test_oversized_declared_ratio_is_unavailable(tmp_path: Path, value: int) -> None:
+    driver, page = _driver(tmp_path)
+    result = driver.render_probe(
+        environment=replace(_environment(), device_pixel_ratio=value), elements={"sample": "#sample"}
+    )
+    assert not result.available
+    assert page.calls == []
+
+
+@pytest.mark.parametrize("value", [10**500, -(10**500)])
+def test_oversized_observed_ratio_is_unavailable(tmp_path: Path, value: int) -> None:
+    driver, page = _driver(tmp_path)
+    page.result["environment"]["device_pixel_ratio"] = value
+    result = driver.render_probe(environment=_environment(), elements={"sample": "#sample"})
+    assert not result.available
+    assert result.environment is None
+    assert result.computed_styles == ()

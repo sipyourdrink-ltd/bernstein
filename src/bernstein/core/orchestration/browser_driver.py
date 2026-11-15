@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 from uuid import uuid4
 
 from bernstein.core.agents.computer_use import Action, ActionKind
-from bernstein.core.evidence.render_receipt import ComputedStyle, EnvironmentDescriptor
+from bernstein.core.evidence.render_receipt import ComputedStyle, EnvironmentDescriptor, Viewport
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -259,17 +259,25 @@ _RENDER_PROBE_SCRIPT = """({elements}) => {
 }"""
 
 
+def _positive_finite_ratio(value: object) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value) and value > 0
+    except OverflowError:
+        return False
+
+
 def _render_environment_complete(environment: EnvironmentDescriptor) -> bool:
     return (
         isinstance(environment.engine_build_identity, str)
         and bool(environment.engine_build_identity.strip())
+        and isinstance(environment.viewport, Viewport)
         and type(environment.viewport.width) is int
         and environment.viewport.width > 0
         and type(environment.viewport.height) is int
         and environment.viewport.height > 0
-        and type(environment.device_pixel_ratio) in (int, float)
-        and math.isfinite(environment.device_pixel_ratio)
-        and environment.device_pixel_ratio > 0
+        and _positive_finite_ratio(environment.device_pixel_ratio)
         and isinstance(environment.locale, str)
         and bool(environment.locale.strip())
         and isinstance(environment.timezone, str)
@@ -302,8 +310,7 @@ def _render_probe_result(
     if (
         not isinstance(viewport, dict)
         or any(type(viewport.get(axis)) is not int for axis in ("width", "height"))
-        or type(ratio) not in (int, float)
-        or not math.isfinite(ratio)
+        or not _positive_finite_ratio(ratio)
         or type(observed.get("reduced_motion")) is not bool
         or any(not isinstance(observed.get(key), str) for key in ("locale", "timezone", "colour_scheme"))
     ):
