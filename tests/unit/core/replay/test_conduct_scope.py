@@ -133,3 +133,13 @@ def test_serialization_cannot_mutate_saved_comparison_or_canonical_bytes() -> No
     exported["scope_comparison"]["scope_projection"]["permissions"].append("write")
     assert aggregate.canonical_bytes() == before
     assert len(aggregate.to_dict()["scope_comparison"]["divergences"]) == 1
+
+
+def test_equivalent_scope_references_have_stable_emitted_body_order() -> None:
+    scopes = [DelegationScope.from_body({"permissions": ["write"], "not_after": expiry}) for expiry in (-0.0, 0.0)]
+    assert scopes[0].scope_ref() == scopes[1].scope_ref()
+    activities = [_activity(scope=scope) for scope in scopes]
+    forward = _aggregate([_run()], activities, DelegationScope())
+    reversed_input = _aggregate([_run()], list(reversed(activities)), DelegationScope())
+    assert len(forward.to_dict()["scope_comparison"]["divergences"]) == 2
+    assert forward.canonical_bytes() == reversed_input.canonical_bytes()

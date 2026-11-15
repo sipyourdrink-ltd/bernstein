@@ -347,6 +347,9 @@ def _compare_conduct_scope(
             a.last_index,
             a.activity,
             a.scope.scope_ref() if a.scope is not None else "",
+            # JCS references can coincide for distinct JSON spellings (for example -0.0 and 0.0).
+            # Tie-break using the exact emitted body to keep report bytes input-order independent.
+            json.dumps(a.scope.to_body(), sort_keys=True, separators=(",", ":")) if a.scope is not None else "",
         ),
     )
     for activity in ordered:
