@@ -167,7 +167,7 @@ Una ejecución en curso se puede observar desde cualquiera de las dos interfaces
 | `bernstein live` — el panel de terminal (nodos de trabajo remotos) | `bernstein gui serve` — el panel de navegador |
 
 ### probar una ejecución
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 El determinismo aquí es algo que verificas, no algo que aceptas por fe. Ejecuta una vez con auditoría habilitada y luego verifica lo que se registró:
 
@@ -191,7 +191,7 @@ En la interfaz web, abre **Governance** y usa **Verify a receipt** para comproba
 
 La misma verificabilidad se aplica a los números de evaluación. `bernstein bench run <suite> --reliability k` (también escrito como `bernstein eval --reliability k`) ejecuta cada tarea `k` veces bajo coordinación fija, luego reporta un límite inferior `pass^k` (todos los `k` intentos deben pasar) junto con el límite superior `pass@1`. Ese resultado queda sellado en un recibo firmado que `bernstein bench reliability-verify` recalcula offline, de modo que un límite inferior fabricado falla la verificación. Detalles: [límite de fiabilidad pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Usa `bernstein govern audit --format json` o `--format sarif` para obtener resultados legibles por máquina y `--strict --quiet` para decidir si pasa la comprobación de CI. Consulta [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Usa `bernstein govern audit --format json` o `--format sarif` para obtener resultados legibles por máquina y `--strict --quiet` para decidir si pasa la comprobación de CI. Consulta [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). El paquete de evidencias `cosai` incluye las clases de amenazas MCP de la versión fijada del documento del 2026-01-08 e indica las lagunas de cobertura pendientes.
 
 `bernstein delegation verify RUN` compara la cadena de recibos con la cabecera final y el número de saltos sellados en el manifiesto de ejecución mediante un HMAC con la clave de auditoría, y detecta la eliminación del tramo final, la sustitución y la ampliación después del cierre, incluida la reescritura de la declaración sin la clave. Eliminar la declaración deja la ejecución incompleta (código de salida `3`), nunca válida. Esto no detecta la reutilización de una instantánea auténtica anterior ni protege frente a quien escribe teniendo la clave de auditoría. Consulta el [flujo de verificación de delegaciones](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
