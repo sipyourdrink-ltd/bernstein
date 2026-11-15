@@ -113,3 +113,23 @@ def test_activity_for_another_principal_or_run_does_not_enter_comparison() -> No
 def test_invalid_source_ranges_are_rejected(first, last) -> None:
     with pytest.raises(ValueError):
         ConductScopeActivity("run-a", "agent", "read", first, last, DelegationScope())
+
+
+def test_empty_unverified_source_remains_an_explicit_comparison_gap() -> None:
+    empty = derive_conduct([], run_id="missing", principal_id="agent", period_start=0, period_end=2)
+    result = _aggregate([_run(), empty], [_activity(scope=DelegationScope())], DelegationScope()).to_dict()
+    assert result["coverage"] == "unverified"
+    assert result["scope_comparison"]["status"] == "partial"
+    assert result["scope_comparison"]["unavailable"] == [{"run_id": "missing", "reason": "source_run_unverified"}]
+
+
+def test_serialization_cannot_mutate_saved_comparison_or_canonical_bytes() -> None:
+    aggregate = _aggregate(
+        [_run()], [_activity(scope=DelegationScope(permissions=frozenset({"write"})))], DelegationScope()
+    )
+    before = aggregate.canonical_bytes()
+    exported = aggregate.to_dict()
+    exported["scope_comparison"]["divergences"].clear()
+    exported["scope_comparison"]["scope_projection"]["permissions"].append("write")
+    assert aggregate.canonical_bytes() == before
+    assert len(aggregate.to_dict()["scope_comparison"]["divergences"]) == 1

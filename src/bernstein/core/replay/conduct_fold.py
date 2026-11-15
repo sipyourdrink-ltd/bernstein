@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -366,8 +367,11 @@ def _compare_conduct_scope(
                     {**citation, "divergent_axes": list(axes), "recorded_scope": activity.scope.to_body()}
                 )
     for run_id in sorted(selected):
-        if run_id not in seen and selected[run_id].event_count:
-            unavailable.append({"run_id": run_id, "reason": "recorded_activity_unavailable"})
+        if run_id not in seen:
+            if selected[run_id].coverage != CompletionCoverageStatus.VERIFIED:
+                unavailable.append({"run_id": run_id, "reason": "source_run_unverified"})
+            elif selected[run_id].event_count:
+                unavailable.append({"run_id": run_id, "reason": "recorded_activity_unavailable"})
     return {
         "status": "partial" if compared and unavailable else ("available" if compared else "unavailable"),
         "reason": "" if compared else "recorded_activity_unavailable",
@@ -436,7 +440,9 @@ class ConductAggregate:
             "counts": self.counts,
             "ignored_event_types": sorted({event for run in self.runs for event in run.ignored_event_types}),
             "runs": [run.to_dict() for run in self.runs],
-            "scope_comparison": self.scope_comparison or _compare_conduct_scope(self.runs, (), None),
+            "scope_comparison": deepcopy(self.scope_comparison)
+            if self.scope_comparison is not None
+            else _compare_conduct_scope(self.runs, (), None),
         }
 
     def canonical_bytes(self) -> bytes:
