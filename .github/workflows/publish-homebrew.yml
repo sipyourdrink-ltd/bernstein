@@ -21,6 +21,10 @@ permissions:
 
 jobs:
   update-formula:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Update Homebrew formula
     runs-on: ubuntu-latest
     # Approval lives on publish.yml's `publish` job (PyPI trusted

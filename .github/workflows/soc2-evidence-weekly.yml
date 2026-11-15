@@ -36,6 +36,10 @@ concurrency:
 
 jobs:
   preflight:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: preflight (gate)
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 1
@@ -72,7 +76,11 @@ jobs:
   pack:
     name: generate evidence pack
     needs: preflight
-    if: needs.preflight.outputs.enabled == 'true'
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-') &&
+      (needs.preflight.outputs.enabled == 'true')
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     steps:

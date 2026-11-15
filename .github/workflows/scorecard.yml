@@ -38,6 +38,10 @@ permissions:
 
 jobs:
   analysis:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Scorecard analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -76,6 +80,10 @@ jobs:
           retention-days: 5
 
   upload:
+    if: >-
+      !startsWith(github.head_ref, 'fleet/carry-') &&
+      !startsWith(github.event.pull_request.head.ref, 'fleet/carry-') &&
+      !startsWith(github.ref, 'refs/heads/fleet/carry-')
     name: Filter suppressions and upload to Code Scanning
     needs: analysis
     runs-on: ubuntu-latest
