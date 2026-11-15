@@ -126,7 +126,7 @@ flowchart LR
 Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en goedkeuringsgates houden stand wat de agent binnen de taak ook doet. Een code-node eindigt achter merge gates in zijn eigen git worktree. De nodes hierboven eindigen anders: een [artefactcontract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) benoemt het resultaat (rapport, dataset, scan, actielog) en de node sluit af met een ondertekend lineage-bewijs in plaats van een commit. Dezelfde scheduler, hetzelfde journal, dezelfde offline verificatie - of de graaf nu code, onderzoek, een ops-wijziging of een mix van alle drie levert. Kant-en-klare grafen voor software, onderzoek, docs, enterprise en contributor-workflows staan in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminaldashboard, inclusief externe workers | `<task-server-url>/ui/` — browserdashboard van de actieve taakserver als de GUI-bestanden zijn geïnstalleerd. `bernstein gui serve` start een zelfstandige server in de huidige werkmap. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — het terminaldashboard (externe worker-nodes) | `<task-server-url>/ui/` — browserdashboard van de actieve taakserver als de GUI-bestanden zijn geïnstalleerd. `bernstein gui serve` start een zelfstandige server in de huidige werkmap. |
+
+Als de server authenticatie vereist, stel dan `BERNSTEIN_AUTH_TOKEN` in voor de terminal en voer een geautoriseerd token in op het aanmeldscherm in de browser. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### een run bewijzen
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ De volledige overzichtslijst, inclusief elke vermelding op awesome-lijsten, in c
 </details>
 
 ### Administratieve runs
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 Deze aanroepen gebruiken de MCP-bridge. Gebruik de teruggegeven waarde `runId` als `run_id` in latere aanroepen. Maak met `bernstein_run(template="administrative", goal="Weekly sprint")` een lege container met auditregistratie, zonder planner of agentprocessen. Voeg handmatige taken toe met `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` en bekijk de status met `bernstein_run_status(run_id="<returned runId>")`. Taken blijven via de gebruikelijke claim-API beschikbaar, maar zijn uitgesloten van automatische orkestratie. Een niet-lege run eindigt wanneer elke taak de status `done`, `closed` of `cancelled` heeft; een lege run blijft open. [Werkwijze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

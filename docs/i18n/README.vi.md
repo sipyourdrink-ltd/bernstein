@@ -126,7 +126,7 @@ flowchart LR
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — bảng điều khiển terminal, bao gồm worker từ xa | `<task-server-url>/ui/` — bảng điều khiển trình duyệt của máy chủ tác vụ đang chạy khi đã cài các tệp GUI. `bernstein gui serve` khởi động máy chủ riêng trong không gian làm việc hiện tại. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — bảng điều khiển terminal (nút xử lý từ xa) | `<task-server-url>/ui/` — bảng điều khiển trình duyệt của máy chủ tác vụ đang chạy khi đã cài các tệp GUI. `bernstein gui serve` khởi động máy chủ riêng trong không gian làm việc hiện tại. |
+
+Nếu máy chủ yêu cầu xác thực, hãy đặt `BERNSTEIN_AUTH_TOKEN` cho terminal và nhập token được cấp quyền trên màn hình đăng nhập của trình duyệt. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### chứng minh một phiên chạy
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ Danh sách theo dõi đầy đủ, bao gồm mọi mục trong danh sách awesom
 </details>
 
 ### Lượt chạy quản trị
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 Các lệnh gọi này dùng công cụ qua cầu nối MCP. Trong các lệnh gọi tiếp theo, dùng giá trị `runId` được trả về làm `run_id`. Dùng `bernstein_run(template="administrative", goal="Weekly sprint")` để tạo vùng chứa rỗng có nhật ký kiểm toán mà không khởi động bộ lập kế hoạch hay tiến trình tác tử. Thêm tác vụ thủ công bằng `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` và xem trạng thái bằng `bernstein_run_status(run_id="<returned runId>")`. Tác vụ vẫn có thể được nhận qua API thông thường nhưng không được điều phối tự động. Lượt chạy có tác vụ hoàn tất khi mỗi tác vụ có trạng thái `done`, `closed` hoặc `cancelled`; lượt chạy rỗng vẫn mở. [Quy trình vận hành](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

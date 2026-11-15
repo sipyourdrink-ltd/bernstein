@@ -126,7 +126,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — uzak çalışanlar dahil terminal kontrol paneli | `<task-server-url>/ui/` — GUI dosyaları kuruluysa çalışan görev sunucusunun tarayıcı kontrol paneli. `bernstein gui serve` geçerli çalışma alanında bağımsız bir sunucu başlatır. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminal kontrol paneli (uzak çalışan düğümleri) | `<task-server-url>/ui/` — GUI dosyaları kuruluysa çalışan görev sunucusunun tarayıcı kontrol paneli. `bernstein gui serve` geçerli çalışma alanında bağımsız bir sunucu başlatır. |
+
+Sunucu kimlik doğrulaması gerektiriyorsa terminal için `BERNSTEIN_AUTH_TOKEN` ayarlayın ve tarayıcının giriş ekranına yetkili bir token girin. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### bir çalıştırmayı kanıtlayın
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ Her awesome listesi girdisi, katalog kaydı, önceki çalışma atıfı ve bült
 </details>
 
 ### Yönetim çalıştırmaları
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 Bu çağrılar MCP köprüsünü kullanır. Sonraki çağrılarda dönen `runId` değerini `run_id` olarak kullanın. `bernstein_run(template="administrative", goal="Weekly sprint")` ile planlayıcı veya ajan süreçleri başlatmadan denetlenebilir boş bir kapsayıcı oluşturun. `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` ile elle görev ekleyin ve `bernstein_run_status(run_id="<returned runId>")` ile durumu sorgulayın. Görevler normal sahiplenme API’si ile alınabilir ancak otomatik orkestrasyona dahil edilmez. Boş olmayan bir çalıştırma, her görevin durumu `done`, `closed` veya `cancelled` olduğunda biter; boş çalıştırma açık kalır. [İşletim akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

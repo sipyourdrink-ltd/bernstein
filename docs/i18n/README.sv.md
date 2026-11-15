@@ -126,7 +126,7 @@ flowchart LR
 Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkännandegrindar håller oavsett vad agenten gör i uppgiften. En kodnod avslutas bakom merge gates i sitt eget git worktree. Noderna ovan avslutas annorlunda: ett [artefaktkontrakt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) namnger leveransen (rapport, dataset, skanning, åtgärdslogg) och noden stängs med ett signerat lineage-kvitto i stället för en commit. Samma schemaläggare, samma journal, samma offlineverifiering - oavsett om grafen levererar kod, forskning, en ops-ändring eller en blandning av alla tre. Färdiga grafer för mjukvara, forskning, dokumentation, enterprise och bidragsflöden finns i [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installera på 30 sekunder
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ En pågående körning kan följas från båda operatörsgränssnitten. Båda l�
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminalpanelen, inklusive fjärrarbetare | `<task-server-url>/ui/` — webbpanelen för den körande uppgiftsservern när GUI-filerna är installerade. `bernstein gui serve` startar en fristående server i den aktuella arbetsytan. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminalpanelen (fjärranslutna arbetsnoder) | `<task-server-url>/ui/` — webbpanelen för den körande uppgiftsservern när GUI-filerna är installerade. `bernstein gui serve` startar en fristående server i den aktuella arbetsytan. |
+
+Om servern kräver autentisering, ange `BERNSTEIN_AUTH_TOKEN` för terminalen och mata in en auktoriserad token på webbläsarens inloggningssida. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### bevisa en körning
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ Den fullständiga listan, inklusive varje awesome-list-post, kataloglistning, ti
 </details>
 
 ### Administrativa körningar
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 Dessa anrop använder MCP-bryggan. Använd det returnerade värdet `runId` som `run_id` i efterföljande anrop. Skapa en tom, revisionsloggad behållare utan planerare eller agentprocesser med `bernstein_run(template="administrative", goal="Weekly sprint")`. Lägg till manuella uppgifter med `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` och kontrollera status med `bernstein_run_status(run_id="<returned runId>")`. Uppgifterna kan hämtas via det vanliga claim-API:et men undantas från automatisk orkestrering. En körning med uppgifter avslutas när varje uppgift har status `done`, `closed` eller `cancelled`; en tom körning förblir öppen. [Operatörsflöde](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

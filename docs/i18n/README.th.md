@@ -126,7 +126,7 @@ flowchart LR
 แต่ละโหนดถูกรับโดย agent ที่บทบาทได้รับอนุญาตจากเฟสนั้น รั้วบทบาทและเกตอนุมัติยังคงอยู่ไม่ว่า agent จะทำอะไรในงาน โหนดโค้ดจบหลัง merge gate ใน git worktree ของตัวเอง โหนดข้างบนจบต่างออกไป: [สัญญาอาร์ติแฟกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ระบุผลส่งมอบ (รายงาน ชุดข้อมูล การสแกน บันทึกการกระทำ) และโหนดปิดด้วยใบรับ lineage ที่ลงนามแทนคอมมิต ตัวจัดตารางเดียวกัน เจอร์นัลเดียวกัน การตรวจสอบออฟไลน์แบบเดียวกัน - ไม่ว่ากราฟจะส่งมอบโค้ด งานวิจัย การเปลี่ยนแปลง ops หรือทั้งสามผสมกัน กราฟสำเร็จรูปสำหรับซอฟต์แวร์ วิจัย เอกสาร องค์กร และเวิร์กโฟลว์ผู้ร่วมพัฒนาอยู่ที่ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — แดชบอร์ดเทอร์มินัล รวมถึงเวิร์กเกอร์ระยะไกล | `<task-server-url>/ui/` — แดชบอร์ดเบราว์เซอร์ของเซิร์ฟเวอร์งานที่กำลังทำงาน เมื่อติดตั้งไฟล์ GUI แล้ว. `bernstein gui serve` เริ่มเซิร์ฟเวอร์แยกในพื้นที่ทำงานปัจจุบัน. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — แดชบอร์ดในเทอร์มินัล (โหนดปฏิบัติงานระยะไกล) | `<task-server-url>/ui/` — แดชบอร์ดเบราว์เซอร์ของเซิร์ฟเวอร์งานที่กำลังทำงาน เมื่อติดตั้งไฟล์ GUI แล้ว. `bernstein gui serve` เริ่มเซิร์ฟเวอร์แยกในพื้นที่ทำงานปัจจุบัน. |
+
+หากเซิร์ฟเวอร์ต้องการการยืนยันตัวตน ให้ตั้งค่า `BERNSTEIN_AUTH_TOKEN` สำหรับเทอร์มินัล และป้อนโทเค็นที่ได้รับอนุญาตในหน้าลงชื่อเข้าใช้ของเบราว์เซอร์ [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### พิสูจน์รอบการทำงาน
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกร
 </details>
 
 ### การรันงานบริหาร
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 การเรียกเหล่านี้ใช้เครื่องมือผ่านบริดจ์ MCP ในการเรียกครั้งต่อไป ให้ใช้ค่า `runId` ที่ได้รับกลับมาเป็น `run_id` ใช้ `bernstein_run(template="administrative", goal="Weekly sprint")` เพื่อสร้างคอนเทนเนอร์ว่างที่มีบันทึกตรวจสอบ โดยไม่เริ่มตัววางแผนหรือโพรเซสเอเจนต์ เพิ่มงานด้วยตนเองผ่าน `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` และตรวจสอบสถานะด้วย `bernstein_run_status(run_id="<returned runId>")` งานยังรับผ่าน API ตามปกติได้ แต่จะไม่ถูกจัดการอัตโนมัติ การรันที่มีงานจะเสร็จเมื่อทุกงานมีสถานะ `done`, `closed` หรือ `cancelled` ส่วนการรันที่ว่างจะยังเปิดอยู่ [ขั้นตอนการปฏิบัติงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

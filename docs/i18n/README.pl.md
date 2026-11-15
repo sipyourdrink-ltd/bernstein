@@ -126,7 +126,7 @@ flowchart LR
 Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i bramki zatwierdzeń trzymają niezależnie od tego, co agent robi w zadaniu. Węzeł kodowy kończy się za merge gates we własnym git worktree. Węzły powyżej kończą się inaczej: [kontrakt artefaktu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nazywa rezultat (raport, dataset, skan, log działań), a węzeł zamyka podpisany kwit lineage zamiast commita. Ten sam scheduler, ten sam journal, ta sama weryfikacja offline - niezależnie czy graf niesie kod, badania, zmianę ops czy miks wszystkich trzech. Gotowe grafy dla softu, badań, dokumentacji, enterprise i procesów kontrybutorskich leżą w [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ Trwający przebieg można obserwować w dowolnym interfejsie operatora. Oba korz
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — panel terminalowy, także dla zdalnych workerów | `<task-server-url>/ui/` — panel przeglądarkowy działającego serwera zadań, jeśli zainstalowano pliki GUI. `bernstein gui serve` uruchamia osobny serwer w bieżącym obszarze roboczym. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — panel w terminalu (zdalne węzły robocze) | `<task-server-url>/ui/` — panel przeglądarkowy działającego serwera zadań, jeśli zainstalowano pliki GUI. `bernstein gui serve` uruchamia osobny serwer w bieżącym obszarze roboczym. |
+
+Jeśli serwer wymaga uwierzytelniania, ustaw `BERNSTEIN_AUTH_TOKEN` dla terminala i wpisz autoryzowany token na ekranie logowania w przeglądarce. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### udowodnij poprawność przebiegu
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ Pełna lista publikacji, w tym wpisy w spisach awesome, katalogach oraz wzmianki
 </details>
 
 ### Uruchomienia administracyjne
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 Te wywołania korzystają z mostu MCP. W kolejnych wywołaniach użyj zwróconej wartości `runId` jako `run_id`. Użyj `bernstein_run(template="administrative", goal="Weekly sprint")`, aby utworzyć pusty kontener z audytem, bez planera i procesów agentów. Dodawaj zadania ręczne przez `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` i sprawdzaj stan przez `bernstein_run_status(run_id="<returned runId>")`. Zadania można przejmować przez zwykłe API, ale nie podlegają automatycznej orkiestracji. Niepuste uruchomienie kończy się, gdy każde zadanie ma status `done`, `closed` lub `cancelled`; puste pozostaje otwarte. [Instrukcja obsługi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

@@ -126,7 +126,7 @@ flowchart LR
 Каждый узел забирает агент, чья роль разрешена фазой; ролевые ограничения и гейты одобрения держатся независимо от того, что агент делает внутри задачи. Кодовый узел завершается за merge-гейтами в собственном git worktree. Узлы выше завершаются иначе: [контракт артефакта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) называет результат (отчёт, датасет, скан, лог действий), и узел закрывается подписанной lineage-квитанцией вместо коммита. Тот же планировщик, тот же журнал, та же офлайн-верификация — несёт ли граф код, исследование, ops-изменение или всё сразу. Готовые графы для софта, исследований, документации, энтерпрайза и контрибьюторских процессов лежат в [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### установка за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![Терминальный дашборд в две колонки: слева агенты с живыми логами, справа доска задач, снизу лента активности во всю ширину и строка стоимости](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![Браузерный дашборд со списком из шестидесяти двух задач, одиннадцать выполняются, одна раскрыта до диффа рабочего дерева](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — панель в терминале, включая удалённых воркеров | `<task-server-url>/ui/` — панель в браузере уже работающего сервера задач, если установлены файлы GUI. `bernstein gui serve` запускает отдельный сервер в текущем рабочем каталоге. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — терминальный дашборд (удалённые рабочие узлы) | `<task-server-url>/ui/` — панель в браузере уже работающего сервера задач, если установлены файлы GUI. `bernstein gui serve` запускает отдельный сервер в текущем рабочем каталоге. |
+
+Если сервер требует аутентификацию, задайте `BERNSTEIN_AUTH_TOKEN` для терминала и введите разрешённый токен на экране входа в браузере. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### проверить прогон
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ Bernstein назван в честь Леонарда Бернстайна, ам
 </details>
 
 ### административные запуски
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 Эти инструменты вызываются через MCP-мост. В последующих вызовах передавайте возвращённое значение `runId` как `run_id`. Создайте пустой контейнер с аудитом без планировщика и процессов агентов: `bernstein_run(template="administrative", goal="Weekly sprint")`. Добавляйте ручные задачи через `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` и проверяйте состояние через `bernstein_run_status(run_id="<returned runId>")`. Задачи можно брать через обычный API назначения, но автоматическая оркестрация их не запускает. Непустой запуск завершается, когда каждая задача имеет статус `done`, `closed` или `cancelled`; пустой остаётся открытым. [Порядок работы](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

@@ -126,7 +126,7 @@ flowchart LR
 كل عقدة يأخذها وكيل تسمح المرحلة بدوره؛ وتبقى أسوار الأدوار وبوابات الموافقة قائمة مهما فعل الوكيل داخل المهمة. عقدة الكود تكتمل خلف بوابات الدمج في git worktree خاص بها. العقد أعلاه تكتمل بشكل مختلف: [عقد المخرجات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) يسمّي الناتج (تقرير، مجموعة بيانات، فحص، سجل إجراءات)، وتُغلق العقدة بإيصال lineage موقّع بدل commit. المجدوِل نفسه، السجل نفسه، التحقق دون اتصال نفسه - سواء حمل المخطط كودًا أو بحثًا أو تغيير عمليات أو مزيجًا من الثلاثة. مخططات جاهزة للبرمجيات والبحث والوثائق والمؤسسات ومسارات المساهمين في [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### التثبيت في 30 ثانية
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — لوحة الطرفية، بما في ذلك العمال البعيدون | `<task-server-url>/ui/` — لوحة متصفح خادم المهام الجاري عند تثبيت ملفات الواجهة. `bernstein gui serve` يبدأ خادماً مستقلاً في مساحة العمل الحالية. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — لوحة معلومات الطرفية (عُقد العمال البعيدة) | `<task-server-url>/ui/` — لوحة متصفح خادم المهام الجاري عند تثبيت ملفات الواجهة. `bernstein gui serve` يبدأ خادماً مستقلاً في مساحة العمل الحالية. |
+
+إذا كان الخادم يتطلب المصادقة، فاضبط `BERNSTEIN_AUTH_TOKEN` للطرفية وأدخل رمزاً مخولاً في شاشة تسجيل الدخول بالمتصفح. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### إثبات عملية تشغيل
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ bernstein volunteer browse --budget 60
 </details>
 
 ### عمليات التشغيل الإدارية
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 تُستدعى هذه الأدوات عبر جسر MCP. استخدم قيمة `runId` المُعادة بوصفها `run_id` في الاستدعاءات اللاحقة. استخدم `bernstein_run(template="administrative", goal="Weekly sprint")` لإنشاء حاوية فارغة مسجلة للتدقيق دون تشغيل مخطط أو عمليات وكلاء. أضف مهام يدوية باستخدام `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` واستعلم عن الحالة باستخدام `bernstein_run_status(run_id="<returned runId>")`. يمكن استلام المهام عبر واجهة الاستلام المعتادة، لكنها مستبعدة من التنسيق التلقائي. تنتهي العملية غير الفارغة عندما تكون حالة كل مهمة `done` أو `closed` أو `cancelled`؛ وتبقى العملية الفارغة مفتوحة. [دليل التشغيل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 

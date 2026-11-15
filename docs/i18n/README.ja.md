@@ -126,7 +126,7 @@ flowchart LR
 各ノードは、フェーズが許可するロールを持つエージェントが取ります。ロールの柵と承認ゲートは、エージェントがタスク内で何をしようと保持されます。コードのノードは自分専用の git worktree でマージゲートの先に完了します。上のノードは違う終わり方をします: [アーティファクト契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)が成果物(レポート、データセット、スキャン、アクションログ)を名指しし、ノードはコミットではなく署名付き lineage レシートで閉じます。同じスケジューラ、同じジャーナル、同じオフライン検証 - グラフが運ぶのがコードでも、調査でも、ops 変更でも、その混在でも。ソフトウェア、リサーチ、ドキュメント、エンタープライズ、コントリビューターワークフロー向けの既製グラフは [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) にあります。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:f94e6840166d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -160,7 +160,9 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — リモートワーカーも含むターミナルダッシュボード | `<task-server-url>/ui/` — GUI ファイルがインストールされている場合に、稼働中のタスクサーバーを表示するブラウザダッシュボード. `bernstein gui serve` 現在のワークスペースで独立したサーバーを起動する. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — ターミナルダッシュボード (リモートワーカーノード) | `<task-server-url>/ui/` — GUI ファイルがインストールされている場合に、稼働中のタスクサーバーを表示するブラウザダッシュボード。 `bernstein gui serve` は現在のワークスペースで独立したサーバーを起動する。 |
+
+認証が必要なサーバーでは、ターミナル用に `BERNSTEIN_AUTH_TOKEN` を設定し、ブラウザのログイン画面に許可されたトークンを入力してください。 [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### 実行を証明する
 <!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
@@ -286,7 +288,7 @@ awesome リストの項目、カタログ掲載、先行研究としての引用
 </details>
 
 ### 管理用の実行
-<!-- l10n: en="Administrative runs" hash="sha256:91f923047879" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
 これらは MCP ブリッジのツール呼び出しです。以降の呼び出しでは、返された `runId` の値を `run_id` として使います。 `bernstein_run(template="administrative", goal="Weekly sprint")` で、プランナーやエージェントのプロセスを起動せずに監査付きの空のコンテナを作成します。`bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` で手動タスクを追加し、`bernstein_run_status(run_id="<returned runId>")` で状態を確認します。タスクは通常の取得 API から取得できますが、自動オーケストレーションの対象外です。空でない実行は全タスクの状態が `done`、`closed`、または `cancelled` のいずれかになると完了します。空の実行は開いたままです。 [運用手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
