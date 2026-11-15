@@ -75,24 +75,42 @@ def _cosign_sign_blob_compat_flags() -> tuple[str, ...]:
     ``--tlog-upload=false`` + ``--output-signature`` invocation:
     ``--use-signing-config`` (rejects ``--tlog-upload=false``) and
     ``--new-bundle-format`` (requires ``--bundle``). Opt back out of
-    both when the installed cosign supports them. ``--use-signing-config``
-    in the help text is the version signal: releases that list it
-    (v2.6+, v3) accept both opt-outs, while older releases (<= v2.4.x)
-    already default both behaviours off. ``--new-bundle-format`` itself
-    cannot be probed the same way -- v3 hides it from ``--help`` as
-    deprecated while still accepting it. Mirrors
-    scripts/sign_airgap_wheelhouse.sh.
+    both when the installed cosign accepts the flags. Deprecated flags can
+    be hidden from help output while still supported, as in v3.1.4. Parsing
+    them with ``--help`` checks support without signing or contacting any
+    service. Older versions that reject them already default both behaviours
+    off. Mirrors scripts/sign_airgap_wheelhouse.sh.
     """
     result = subprocess.run(
-        ["cosign", "sign-blob", "--help"],
+        ["cosign", "sign-blob", "--use-signing-config=false", "--new-bundle-format=false", "--help"],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    help_text = result.stdout + result.stderr
-    if "--use-signing-config" in help_text:
+    if result.returncode == 0:
         return ("--use-signing-config=false", "--new-bundle-format=false")
     return ()
+
+
+@pytest.mark.parametrize("probe_rc", [0, 1])
+def test_cosign_compat_probe_handles_hidden_and_unsupported_flags(
+    monkeypatch: pytest.MonkeyPatch, probe_rc: int
+) -> None:
+    """Hidden supported flags and unsupported flags need different argv."""
+    calls: list[list[str]] = []
+
+    def probe(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, probe_rc, stdout="Sign a blob", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    _cosign_sign_blob_compat_flags.cache_clear()
+    try:
+        flags = _cosign_sign_blob_compat_flags()
+        assert flags == (("--use-signing-config=false", "--new-bundle-format=false") if probe_rc == 0 else ())
+        assert calls == [["cosign", "sign-blob", "--use-signing-config=false", "--new-bundle-format=false", "--help"]]
+    finally:
+        _cosign_sign_blob_compat_flags.cache_clear()
 
 
 def _probe_unshare_capable() -> bool:
@@ -270,6 +288,28 @@ def test_manifest_with_bom_via_cli(fresh_wheelhouse: WheelhouseFixture) -> None:
 # ---------------------------------------------------------------------------
 # Real cosign sign + verify (skipped when cosign absent)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _HAS_COSIGN, reason="cosign CLI not available")
+def test_real_cosign_signing_script_round_trip(
+    fresh_wheelhouse: WheelhouseFixture, cosign_keypair: tuple[Path, Path]
+) -> None:
+    """The shipped shell script must sign with hidden compatibility flags too."""
+    priv, pub = cosign_keypair
+    env = os.environ.copy()
+    env.update(COSIGN_KEY=str(priv), COSIGN_PASSWORD="", COSIGN_TLOG_UPLOAD="false")
+    script = Path(__file__).resolve().parents[2] / "scripts" / "sign_airgap_wheelhouse.sh"
+    subprocess.run(
+        ["bash", str(script), str(fresh_wheelhouse.root)],
+        check=True,
+        env=env,
+        capture_output=True,
+        timeout=60,
+    )
+    report = verify_wheelhouse(fresh_wheelhouse.root, verifier=CosignVerifier(pubkey_path=pub, ignore_tlog=True))
+    assert report.ok is True, report.failures
+    assert report.signatures_verified == len(fresh_wheelhouse.wheel_names)
+    assert report.manifest_signature_ok is True
 
 
 @pytest.mark.skipif(not _HAS_COSIGN, reason="cosign CLI not available")
