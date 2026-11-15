@@ -66,7 +66,7 @@ Node fields (`core/workflows/workflow_spec.py`, `WorkflowNode`):
 | Field | Meaning |
 |---|---|
 | `id` | Slug-shaped, unique within the manifest. |
-| `depends_on` | Upstream node ids that must succeed before this node starts: command execution must finish successfully; an agent node succeeds when dispatch returns a session, before verified agent completion. |
+| `depends_on` | Upstream node ids that must succeed or be intentionally skipped by a false `when` condition before this node starts. A command succeeds on exit 0; an agent node succeeds on dispatch returning a session, before verified completion. Failure-driven skips still block dependants. |
 | `command` | Bash command (mutually exclusive with `agent`). |
 | `agent` | Role/spec name that dispatches through `AgentSpawner` (requires `prompt`). |
 | `prompt` | Prompt body; `{goal}` is substituted from `run(goal=...)`. |
@@ -92,8 +92,9 @@ executes the manifest as a topological DAG: every layer of nodes whose
 dependencies are satisfied runs concurrently via a thread pool.
 Agent-typed nodes dispatch through the existing `AgentSpawner`;
 command-typed nodes shell out with `subprocess.run`. Each node's
-terminal status is one of `success`, `failed`, or `skipped` (skipped
-means an upstream dependency failed). A node with `loop:` re-fires until
+terminal status is one of `success`, `failed`, or `skipped`. An intentional
+skip because a `when` predicate was false satisfies dependants; a skip caused
+by an upstream failure or blocked dependency does not. A node with `loop:` re-fires until
 its `until` bash predicate exits `0` or `max_iterations` is reached, at
 which point the run raises rather than silently truncating.
 

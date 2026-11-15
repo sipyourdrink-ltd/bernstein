@@ -96,7 +96,8 @@ Record: [web UI principles](design/web-ui-principles.md), P7.
 
 ## Not a model provider
 
-This drives coding CLIs you have already installed and authenticated.
+This integrates agent interfaces you have already configured and authenticated,
+including coding CLIs and SDK-backed agents.
 It does not proxy inference and does not resell tokens.
 
 ## Not an editor
