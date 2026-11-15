@@ -868,7 +868,7 @@ async def _maybe_emit_progress(ctx: Context | None, sdd_dir: Path, run_id: str) 
         return
     try:
         rc = ctx.request_context
-        token = rc.meta.progressToken if rc is not None and rc.meta is not None else None
+        token = rc.meta.get("progress_token") if rc is not None and rc.meta is not None else None
         if token is None:
             return
         from bernstein.core.replay.progress import project_task_progress

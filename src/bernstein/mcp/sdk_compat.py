@@ -37,6 +37,7 @@ def legacy_tasks_middleware(
             ctx.method == "tools/call"
             and ctx.protocol_version == LEGACY_TASK_PROTOCOL
             and isinstance(params, dict)
+            and isinstance(params.get("name"), str)
             and params.get("name") in optional_tools
             and isinstance(params.get("task"), dict)
         )

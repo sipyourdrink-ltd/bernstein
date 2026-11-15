@@ -92,7 +92,7 @@ def _header_checks_enabled() -> bool:
 
 def _supported_protocol_versions() -> tuple[str, ...]:
     """The protocol revisions this deployment serves, from the pinned SDK."""
-    from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
+    from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS
 
     return tuple(SUPPORTED_PROTOCOL_VERSIONS)
 

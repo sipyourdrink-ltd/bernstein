@@ -128,3 +128,16 @@ async def test_only_negotiated_legacy_revision_advertises_legacy_tasks(protocol)
     result = await legacy_tasks_middleware(frozenset({"bernstein_run"}))(_context(method="initialize"), normal_pipeline)
     assert ("tasks" in result["capabilities"]) is (protocol == "2025-11-25")
     assert result["capabilities"]["tools"] == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", [[], {}, 12, None])
+async def test_malformed_tool_names_reach_native_parameter_validation(name):
+    from bernstein.mcp.server import create_mcp_server
+    from tests.support.mcp_wire import legacy_mcp_session
+
+    async with legacy_mcp_session(create_mcp_server()) as client:
+        response = await client.envelope("tools/call", {"name": name, "arguments": {}, "task": {}})
+        assert response["error"]["code"] == -32602
+        assert "result" not in response
+        assert not task_augmentation_requested()
