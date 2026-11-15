@@ -152,7 +152,12 @@ def test_pack_job_stays_gated_on_the_preflight_output() -> None:
     """The dormancy fix must not accidentally make the pack job unconditional."""
     pack = _job("pack")
     condition = pack.get("if", "")
-    assert condition == "needs.preflight.outputs.enabled == 'true'"
+    assert " ".join(condition.split()) == (
+        "!startsWith(github.head_ref, 'fleet/carry-') && "
+        "!startsWith(github.event.pull_request.head.ref, 'fleet/carry-') && "
+        "!startsWith(github.ref, 'refs/heads/fleet/carry-') && "
+        "(needs.preflight.outputs.enabled == 'true')"
+    )
 
 
 def test_retention_is_githubs_ceiling_and_the_workflow_says_so() -> None:
