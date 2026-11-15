@@ -15,6 +15,7 @@ cloud scheduler.
 
 from __future__ import annotations
 
+import builtins  # noqa: TC003 - keep runtime annotation resolution working despite ScheduleStore.list.
 import hashlib
 import json
 import logging
@@ -28,7 +29,6 @@ from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.persistence.file_locks import cross_process_lock
 
 if TYPE_CHECKING:
-    import builtins
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
