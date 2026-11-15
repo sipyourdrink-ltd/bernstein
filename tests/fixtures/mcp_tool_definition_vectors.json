@@ -1,0 +1,21 @@
+[
+  {
+    "tools": [
+      {
+        "name": "search",
+        "description": "Find records",
+        "title": "Search",
+        "_meta": {
+          "version": 1
+        },
+        "inputSchema": {
+          "type": "object"
+        }
+      }
+    ],
+    "tool_digests": {
+      "search": "sha256:770d24b0e3e87c3331ae0d554c28aead21621ccadde0baaa90fb7bf560e0a547"
+    },
+    "server_digest": "sha256:72f94a9e1646abf40d60d62b7743f005f8364560ec3d0447ecfa41e2fd3681b9"
+  }
+]

@@ -52,6 +52,7 @@ from bernstein.core.protocols.mcp.stateless_core import (
 )
 from bernstein.core.security.audit_chain import record_mcp_capability_drift
 from bernstein.core.security.claude_tool_result_injection import ToolResultInjector
+from bernstein.core.security.evidence_envelope import canonical_envelope_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,36 @@ class MCPGateway:
         canonical = json.dumps(sorted(tool_names), separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
-    def _process_capability_drift(self, tool_names: tuple[str, ...]) -> None:
+    @staticmethod
+    def _definition_fingerprints(tools: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+        """Fingerprint each whole parsed entry and each of its top-level members."""
+        fingerprints = {}
+        for tool in tools:
+            name = tool.get("name")
+            if not isinstance(name, str) or not name or name in fingerprints:
+                raise ValueError("invalid or repeated tool name")
+            fields = {
+                key: "sha256:" + hashlib.sha256(canonical_envelope_bytes({key: value})).hexdigest()
+                for key, value in tool.items()
+            }
+            fingerprints[name] = {
+                "digest": "sha256:" + hashlib.sha256(canonical_envelope_bytes(tool)).hexdigest(),
+                **{f"field:{key}": value for key, value in fields.items()},
+            }
+        return fingerprints
+
+    @staticmethod
+    def _definition_digest(fingerprints: dict[str, dict[str, str]]) -> str:
+        # JCS encodes names without delimiter ambiguity, including newlines.
+        value = {
+            "profile": "mcp-tool-definitions-jcs-v1",
+            "tools": {name: item["digest"] for name, item in fingerprints.items()},
+        }
+        return "sha256:" + hashlib.sha256(canonical_envelope_bytes(value)).hexdigest()
+
+    def _process_capability_drift(
+        self, tool_names: tuple[str, ...], fingerprints: dict[str, dict[str, str]] | None = None
+    ) -> None:
         """Process capability drift for given tool names.
 
         Updates store and emits audit event if drift detected. No-op if
@@ -247,20 +277,51 @@ class MCPGateway:
         store, chain = self._capabilities_store, self._audit_chain
         if store is None or chain is None:
             return
-        digest = self._compute_tool_digest(tool_names)
+        digest = (
+            self._compute_tool_digest(tool_names) if fingerprints is None else self._definition_digest(fingerprints)
+        )
         run_id = self._wal_writer._run_id
 
         def record(prior: MCPServerCapabilities | None) -> None:
+            definition_drift = None
+            if fingerprints is not None:
+                previous = prior.tool_definition_fingerprints if prior is not None else None
+                changes = {}
+                for name in sorted(set(previous or {}) | set(fingerprints)):
+                    old, new = (previous or {}).get(name, {}), fingerprints.get(name, {})
+                    if old.get("digest") != new.get("digest"):
+                        changes[name] = {
+                            "previous_digest": old.get("digest"),
+                            "current_digest": new.get("digest"),
+                            "changed_fields": sorted(
+                                key.removeprefix("field:")
+                                for key in set(old) | set(new)
+                                if key.startswith("field:") and old.get(key) != new.get(key)
+                            ),
+                        }
+                definition_drift = {
+                    "profile": "mcp-tool-definitions-jcs-v1",
+                    "previous_digest": prior.capability_digest if previous is not None else None,
+                    "current_digest": digest,
+                    "changed_tools": changes,
+                }
             record_mcp_capability_drift(
                 chain=chain,
                 run_id=run_id,
                 server_name=self._server_name,
                 current_tools=tool_names,
                 previous_tools=tuple(sorted(prior.tool_names)) if prior is not None else None,
+                definition_drift=definition_drift,
             )
 
         try:
-            store.set_capabilities(self._server_name, frozenset(tool_names), digest, before_change=record)
+            store.set_capabilities(
+                self._server_name,
+                frozenset(tool_names),
+                digest,
+                before_change=record,
+                tool_definition_fingerprints=fingerprints,
+            )
         except Exception:
             logger.warning(
                 "Failed to record MCP capability drift for %s",
@@ -268,19 +329,25 @@ class MCPGateway:
                 exc_info=True,
             )
 
-    async def _persist_capability_observation(self, tool_names: tuple[str, ...]) -> None:
+    async def _persist_capability_observation(
+        self, tool_names: tuple[str, ...], fingerprints: dict[str, dict[str, str]] | None = None
+    ) -> None:
         try:
-            await asyncio.to_thread(self._process_capability_drift, tool_names)
+            if fingerprints is None:
+                await asyncio.to_thread(self._process_capability_drift, tool_names)
+            else:
+                await asyncio.to_thread(self._process_capability_drift, tool_names, fingerprints)
         except Exception as exc:
             logger.warning("Capability drift check failed for %s: %s", self._server_name, exc)
 
     async def _check_capability_drift(self) -> None:
-        """Record tool names after the upstream MCP initialization handshake."""
+        """Record complete parsed tool definitions after the initialization handshake."""
         if self._capabilities_store is None or self._audit_chain is None:
             return
         if self._upstream_tools_available is None:
             return
         tool_names: set[str] = set()
+        definitions: list[dict[str, Any]] = []
         try:
             if self._upstream_tools_available:
                 cursor: str | None = None
@@ -302,6 +369,7 @@ class MCPGateway:
                             for tool in tools
                         ):
                             raise ValueError("upstream returned no valid tool list")
+                        definitions.extend(tools)
                         tool_names.update(tool["name"] for tool in tools)
                         cursor = result.get("nextCursor")
                         if cursor is None:
@@ -311,7 +379,9 @@ class MCPGateway:
                         seen.add(cursor)
             # Snapshot and audit file locks may contend with other processes.
             self._capability_commit_task = asyncio.create_task(
-                self._persist_capability_observation(tuple(sorted(tool_names)))
+                self._persist_capability_observation(
+                    tuple(sorted(tool_names)), self._definition_fingerprints(definitions)
+                )
             )
             await asyncio.shield(self._capability_commit_task)
         except Exception as exc:
