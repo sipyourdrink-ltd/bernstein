@@ -40,7 +40,7 @@ hide:
 
 ## What it does
 
-Bernstein takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
+Bernstein is the open-source governance layer for AI agents: it applies declared controls and records verifiable results. Its deterministic orchestration takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges code changes when the gates allow. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
 
 No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 

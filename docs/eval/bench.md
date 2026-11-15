@@ -7,7 +7,7 @@
 
 ## Overview
 
-`bernstein-bench` is the public evaluation surface for the Bernstein orchestrator.
+`bernstein-bench` is the public evaluation surface for Bernstein, the open-source governance layer for AI agents.
 Unlike the internal harness (which runs operator-scored tasks on the operator's own
 machine), `bernstein-bench` is designed so that:
 
