@@ -25,10 +25,16 @@ Existing bytes are immutable: every accepted first-parent revision must retain
 the complete previous prefix. Edited, removed, truncated, noncanonical and
 unavailable history fails closed for the entire ledger. A full repository
 history is required; shallow copies cannot establish durable revocation.
+Inspection disables alternate ancestry and Git transport, including lazy object
+retrieval. Missing objects or Git versions without `--no-lazy-fetch` support
+fail closed. History is inspected sequentially with a 16 MiB per-snapshot,
+128 MiB cumulative-read and 10,000-revision limit; exceeding a limit fails
+rather than using a partial history.
 
 An `adopt` payload has `subject`, `producer_execution_ids`, `reviews` and
 `security_tests`. The subject binds repository, PR number, base/head SHA and
-the trusted policy digest. At least two distinct review executions must cover
+the trusted policy digest. Repository identity is case-folded consistently,
+including direct subject lookup. At least two distinct review executions must cover
 the exact head and differ from all producers. Each review envelope contains a
 terminal report and its recomputable digest. Reports require `PASS`, no
 findings and a substantive summary. A separate security-test report must name

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -197,3 +198,147 @@ def test_policy_digest_covers_reader_and_privileged_publisher(adoption, tmp_path
     original = adoption.policy_digest(tmp_path)
     (tmp_path / "scripts/publish_required_check.py").write_text("changed publisher")
     assert adoption.policy_digest(tmp_path) != original
+
+
+@pytest.mark.parametrize("repository", ["TEAM/Project", "team/PROJECT"])
+def test_repository_identity_is_canonical_for_revocation_and_direct_lookup(adoption, repository):
+    row = record(adoption)
+    original = line(adoption, row)
+    subject = adoption.Subject(repository, 42, "a" * 40, "b" * 40, "c" * 64)
+    assert subject.repository == "team/project"
+    assert adoption.replay([("1" * 40, original)], trusted_commit="1" * 40).find(subject)
+    revoked = original + line(
+        adoption, record(adoption, {"declaration_id": row["record_id"], "reason": "Withdrawn"}, operation="revoke")
+    )
+    ledger = adoption.replay([("2" * 40, revoked)], trusted_commit="2" * 40)
+    assert ledger.find(subject) is None
+    changed = payload(adoption)
+    changed["subject"].update(repository=repository, base_sha="d" * 40, policy_sha256="e" * 64)
+    with pytest.raises(ValueError, match="revoked head"):
+        adoption.replay([("3" * 40, revoked + line(adoption, record(adoption, changed)))], trusted_commit="3" * 40)
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_accepted_history_uses_original_ancestry(adoption, tmp_path, monkeypatch, override):
+    git(tmp_path, "init", "--initial-branch=main")
+    git(tmp_path, "config", "user.name", "Fixture")
+    git(tmp_path, "config", "user.email", "fixture@example.invalid")
+    row = record(adoption)
+    original = line(adoption, row)
+    commit(tmp_path, original, adoption)
+    revoked = original + line(
+        adoption, record(adoption, {"declaration_id": row["record_id"], "reason": "Withdrawn"}, operation="revoke")
+    )
+    commit(tmp_path, revoked, adoption)
+    head = commit(tmp_path, original, adoption)
+    graft = tmp_path / ("alternate-grafts" if override else ".git/info/grafts")
+    graft.parent.mkdir(parents=True, exist_ok=True)
+    graft.write_text(head + "\n")
+    if override:
+        monkeypatch.setenv("GIT_GRAFT_FILE", str(graft))
+    with pytest.raises(ValueError, match="prefix"):
+        adoption.load_ledger(tmp_path, head)
+
+
+def test_missing_promisor_blob_stays_unavailable_without_transport(adoption, tmp_path, monkeypatch):
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    source, clone = tmp_path / "source", tmp_path / "clone"
+    source.mkdir()
+    git(source, "init", "--initial-branch=main")
+    git(source, "config", "user.name", "Fixture")
+    git(source, "config", "user.email", "fixture@example.invalid")
+    head = commit(source, line(adoption, record(adoption)), adoption)
+    git(source, "config", "uploadpack.allowFilter", "true")
+    git(tmp_path, "clone", "--filter=blob:none", "--no-checkout", source.as_uri(), str(clone))
+    blob = git(source, "rev-parse", f"{head}:{adoption.LEDGER_PATH}")
+
+    def absent():
+        return (
+            subprocess.run(
+                ["git", "--no-lazy-fetch", "cat-file", "-e", blob],
+                cwd=clone,
+                capture_output=True,
+                timeout=30,
+            ).returncode
+            != 0
+        )
+
+    assert absent()
+    trace = tmp_path / "git.trace"
+    monkeypatch.setenv("GIT_TRACE", str(trace))
+    with pytest.raises(ValueError, match="history unavailable"):
+        adoption.load_ledger(clone, head)
+    events = trace.read_text()
+    assert "fetch origin" not in events and "upload-pack" not in events
+    assert absent()
+
+
+def test_streaming_rejects_invalid_prefix_before_loading_later_snapshots(adoption, monkeypatch, tmp_path):
+    original = line(adoption, record(adoption))
+    commits = ["1" * 40, "2" * 40, "3" * 40]
+    blobs = {commits[0]: original, commits[1]: b"", commits[2]: original}
+    reads = []
+
+    def fake_git(repo, *args):
+        if args[0] == "rev-parse":
+            return b"false" if args[1] == "--is-shallow-repository" else commits[-1].encode()
+        if args[:2] == ("cat-file", "-e"):
+            return b""
+        if args[0] == "log":
+            assert f"--max-count={adoption._MAX_REVISIONS + 1}" in args
+            return "\n".join(commits).encode()
+        sha = args[-1].split(":", 1)[0]
+        if args[:2] == ("cat-file", "-s"):
+            return str(len(blobs[sha])).encode()
+        assert args[0] == "show"
+        reads.append(sha)
+        return blobs[sha]
+
+    replay = adoption.replay
+
+    def consume(snapshots, *, trusted_commit):
+        assert not isinstance(snapshots, (list, tuple)) and not reads
+        return replay(snapshots, trusted_commit=trusted_commit)
+
+    monkeypatch.setattr(adoption, "_git", fake_git)
+    monkeypatch.setattr(adoption, "replay", consume)
+    with pytest.raises(ValueError, match="prefix"):
+        adoption.load_ledger(tmp_path, commits[-1])
+    assert reads == commits[:2]
+
+
+def test_history_limits_reject_excess_instead_of_truncating(adoption, tmp_path, monkeypatch):
+    original = line(adoption, record(adoption))
+    monkeypatch.setattr(adoption, "_MAX_HISTORY_BYTES", len(original) * 2 - 1)
+    with pytest.raises(ValueError, match="inspection bound"):
+        adoption.replay(iter([("1" * 40, original), ("2" * 40, original)]), trusted_commit="2" * 40)
+    monkeypatch.setattr(adoption, "_MAX_HISTORY_BYTES", len(original) * 10)
+    monkeypatch.setattr(adoption, "_MAX_REVISIONS", 2)
+    with pytest.raises(ValueError, match="inspection bound"):
+        adoption.replay(iter([(str(i) * 40, original) for i in (1, 2, 3)]), trusted_commit="3" * 40)
+
+    def fake_git(repo, *args):
+        if args[0] == "rev-parse":
+            return b"false" if args[1] == "--is-shallow-repository" else b"3" * 40
+        if args[:2] == ("cat-file", "-e"):
+            return b""
+        assert args[0] == "log" and "--max-count=3" in args
+        return "\n".join(str(i) * 40 for i in (1, 2, 3)).encode()
+
+    monkeypatch.setattr(adoption, "_git", fake_git)
+    with pytest.raises(ValueError, match="inspection bound"):
+        adoption.load_ledger(tmp_path, "3" * 40)
+
+
+def test_unsupported_offline_git_capability_fails_closed(adoption, tmp_path, monkeypatch):
+    def unsupported(command, **kwargs):
+        assert "--no-lazy-fetch" in command
+        assert kwargs["env"]["GIT_ALLOW_PROTOCOL"] == ""
+        assert kwargs["env"]["GIT_GRAFT_FILE"] == os.devnull
+        return subprocess.CompletedProcess(command, 129, stdout=b"", stderr=b"unsupported Git capability")
+
+    monkeypatch.setattr(adoption.subprocess, "run", unsupported)
+    with pytest.raises(ValueError, match="history unavailable"):
+        adoption.load_ledger(tmp_path, "1" * 40)

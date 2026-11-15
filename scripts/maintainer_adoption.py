@@ -11,11 +11,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 LEDGER_PATH = ".github/maintainer-adoption-ledger.jsonl"
 TRUSTED_DEFAULT_REF = "refs/remotes/origin/main"
@@ -37,6 +41,8 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}\Z")
 _MAX_BYTES = 16 * 1024 * 1024
+_MAX_REVISIONS = 10_000
+_MAX_HISTORY_BYTES = 128 * 1024 * 1024
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -86,21 +92,23 @@ class Subject:
     head_sha: str
     policy_sha256: str
 
-    @classmethod
-    def parse(cls, value: Any) -> Subject:
-        row = _object(value, {"repository", "pull_request", "base_sha", "head_sha", "policy_sha256"})
-        if not isinstance(row["repository"], str) or not re.fullmatch(
-            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", row["repository"]
+    def __post_init__(self) -> None:
+        if not isinstance(self.repository, str) or not re.fullmatch(
+            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repository
         ):
             raise ValueError("invalid declaration repository")
-        if type(row["pull_request"]) is not int or row["pull_request"] <= 0:
+        if type(self.pull_request) is not int or self.pull_request <= 0:
             raise ValueError("invalid declaration pull request")
-        for key in ("base_sha", "head_sha"):
-            if not isinstance(row[key], str) or not _SHA.fullmatch(row[key]):
-                raise ValueError("invalid declaration commit")
-        if not isinstance(row["policy_sha256"], str) or not _DIGEST.fullmatch(row["policy_sha256"]):
+        if any(not isinstance(value, str) or not _SHA.fullmatch(value) for value in (self.base_sha, self.head_sha)):
+            raise ValueError("invalid declaration commit")
+        if not isinstance(self.policy_sha256, str) or not _DIGEST.fullmatch(self.policy_sha256):
             raise ValueError("invalid declaration policy digest")
-        return cls(**row)
+        # GitHub repository identity is case-insensitive, including direct API use.
+        object.__setattr__(self, "repository", self.repository.casefold())
+
+    @classmethod
+    def parse(cls, value: Any) -> Subject:
+        return cls(**_object(value, {"repository", "pull_request", "base_sha", "head_sha", "policy_sha256"}))
 
     @property
     def revocation_key(self) -> tuple[str, int, str]:
@@ -153,7 +161,7 @@ class Ledger:
         return next((row for row in reversed(self.declarations) if row.subject == subject), None)
 
 
-def replay(snapshots: list[tuple[str, bytes]], *, trusted_commit: str) -> Ledger:
+def replay(snapshots: Iterable[tuple[str, bytes]], *, trusted_commit: str) -> Ledger:
     """Require append-only accepted snapshots and replay permanent revocations.
 
     Snapshot order is the protected default branch's first-parent history.
@@ -165,7 +173,11 @@ def replay(snapshots: list[tuple[str, bytes]], *, trusted_commit: str) -> Ledger
     by_id: dict[str, Declaration] = {}
     seen_records: set[str] = set()
     revoked: set[tuple[str, int, str]] = set()
-    for commit, content in snapshots:
+    total_bytes = 0
+    for revision, (commit, content) in enumerate(snapshots, start=1):
+        total_bytes += len(content)
+        if revision > _MAX_REVISIONS or total_bytes > _MAX_HISTORY_BYTES:
+            raise ValueError("declaration history exceeds inspection bound")
         if not _SHA.fullmatch(commit) or len(content) > _MAX_BYTES:
             raise ValueError("invalid accepted ledger snapshot")
         if not content.startswith(previous) or (content and not content.endswith(b"\n")):
@@ -220,7 +232,30 @@ def replay(snapshots: list[tuple[str, bytes]], *, trusted_commit: str) -> Ledger
 
 
 def _git(repo: Path, *args: str) -> bytes:
-    result = subprocess.run(["git", "--no-replace-objects", *args], cwd=repo, capture_output=True, timeout=60)
+    environment = os.environ.copy()
+    environment.update(
+        GIT_NO_LAZY_FETCH="1",
+        GIT_ALLOW_PROTOCOL="",
+        GIT_TERMINAL_PROMPT="0",
+        GIT_GRAFT_FILE=os.devnull,
+    )
+    # Unsupported --no-lazy-fetch also fails closed; no legacy transport fallback.
+    result = subprocess.run(
+        [
+            "git",
+            "--no-lazy-fetch",
+            "--no-replace-objects",
+            "-c",
+            "core.commitGraph=false",
+            "-c",
+            "log.showSignature=false",
+            *args,
+        ],
+        cwd=repo,
+        env=environment,
+        capture_output=True,
+        timeout=60,
+    )
     if result.returncode:
         raise ValueError("trusted declaration history unavailable")
     return result.stdout
@@ -237,18 +272,31 @@ def load_ledger(repo: Path, trusted_commit: str) -> Ledger:
         raise ValueError("complete accepted declaration history is required")
     _git(repo, "cat-file", "-e", f"{trusted_commit}^{{commit}}")
     commits = _git(
-        repo, "log", "--first-parent", "--full-history", "--reverse", "--format=%H", trusted_commit, "--", LEDGER_PATH
+        repo,
+        "log",
+        "--first-parent",
+        "--full-history",
+        "--reverse",
+        f"--max-count={_MAX_REVISIONS + 1}",
+        "--format=%H",
+        trusted_commit,
+        "--",
+        LEDGER_PATH,
     )
     history = commits.decode("ascii").splitlines()
-    if len(history) > 10_000:
+    if len(history) > _MAX_REVISIONS:
         raise ValueError("declaration history exceeds inspection bound")
-    snapshots = []
-    for commit in history:
-        size = int(_git(repo, "cat-file", "-s", f"{commit}:{LEDGER_PATH}"))
-        if size > _MAX_BYTES:
-            raise ValueError("declaration ledger exceeds size bound")
-        snapshots.append((commit, _git(repo, "show", f"{commit}:{LEDGER_PATH}")))
-    return replay(snapshots, trusted_commit=trusted_commit)
+
+    def snapshots() -> Iterable[tuple[str, bytes]]:
+        total_bytes = 0
+        for commit in history:
+            size = int(_git(repo, "cat-file", "-s", f"{commit}:{LEDGER_PATH}"))
+            total_bytes += size
+            if size < 0 or size > _MAX_BYTES or total_bytes > _MAX_HISTORY_BYTES:
+                raise ValueError("declaration ledger exceeds inspection size bound")
+            yield commit, _git(repo, "show", f"{commit}:{LEDGER_PATH}")
+
+    return replay(snapshots(), trusted_commit=trusted_commit)
 
 
 def main() -> None:
