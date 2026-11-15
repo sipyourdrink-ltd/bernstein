@@ -1652,6 +1652,7 @@ class OrchestratorConfig:
     """
 
     max_agents: int = 6
+    hash_profile: str = "py-json-v1"
     # Derived from ORCHESTRATOR.tick_interval_s (float, canonical) so overrides
     # via ``tuning.orchestrator.tick_interval_s`` actually change the tick rate.
     poll_interval_s: int = field(default_factory=_default_poll_interval_s)

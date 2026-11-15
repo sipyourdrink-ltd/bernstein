@@ -450,6 +450,8 @@ class Orchestrator:
         formal_verification_config: Any | None = None,
         data_class: str | None = None,
     ) -> None:
+        if config.hash_profile not in ("py-json-v1", "jcs-v2"):
+            raise ValueError(f"unknown hash_profile {config.hash_profile!r}")
         self._config = config
         self._spawner = spawner
         self._warm_pool = getattr(spawner, "_warm_pool", None)
@@ -799,7 +801,7 @@ class Orchestrator:
         # identity. Records by default (issue #2293); size is bounded by
         # BERNSTEIN_REPLAY_RETENTION over past runs rather than an on/off
         # gate.
-        self._recorder = EventJournal(run_id=run_id, sdd_dir=workdir / ".sdd")
+        self._recorder = EventJournal.resume(run_id=run_id, sdd_dir=workdir / ".sdd", hash_profile=config.hash_profile)
 
         # Last ``plan.graph`` digest appended this run (issue #3613). Empty
         # until the first normal tick records one. Held on the instance so a
@@ -3675,7 +3677,9 @@ class Orchestrator:
         try:
             from bernstein.core.replay.run_receipt import write_run_receipt_if_configured
 
-            receipt_path = write_run_receipt_if_configured(self._run_id, self._workdir / ".sdd")
+            receipt_path = write_run_receipt_if_configured(
+                self._run_id, self._workdir / ".sdd", hash_profile=self._recorder.hash_profile
+            )
         except Exception as exc:
             logger.warning("Failed to write run receipt: %s", sanitize_log(str(exc)))
         else:
@@ -7499,6 +7503,7 @@ if __name__ == "__main__":
 
         config = OrchestratorConfig(
             server_url=server_url,
+            hash_profile=seed.hash_profile if seed else "py-json-v1",
             max_agents=seed.max_agents if seed else 6,
             budget_usd=budget_usd,
             dry_run=dry_run,
