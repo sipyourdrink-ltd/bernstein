@@ -20,7 +20,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
 from bernstein.core.lineage.signed_write import SignedLineageLog
@@ -68,11 +68,11 @@ def _run(coro):  # pragma: no cover - tiny helper
 
 def test_artefact_resource_returns_jsonl_chain(seeded_store: tuple[Path, LineageStore]) -> None:
     root, _store = seeded_store
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
 
     contents = _run(mcp.read_resource("lineage://artefact/src/foo.py"))
-    # FastMCP returns an iterable of ReadResourceContents; collapse to text.
+    # MCPServer returns an iterable of ReadResourceContents; collapse to text.
     text = "\n".join(c.content for c in contents) if hasattr(next(iter(contents), None), "content") else str(contents)
     lines = [line for line in text.splitlines() if line.strip()]
     assert len(lines) == 2
@@ -85,7 +85,7 @@ def test_artefact_resource_returns_jsonl_chain(seeded_store: tuple[Path, Lineage
 
 def test_artefact_resource_unknown_path_returns_empty(seeded_store: tuple[Path, LineageStore]) -> None:
     root, _store = seeded_store
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
     contents = _run(mcp.read_resource("lineage://artefact/src/never-touched.py"))
     text = "\n".join(c.content for c in contents) if hasattr(next(iter(contents), None), "content") else str(contents)
@@ -99,7 +99,7 @@ def test_artefact_resource_unknown_path_returns_empty(seeded_store: tuple[Path, 
 
 def test_stats_resource_counts_entries(seeded_store: tuple[Path, LineageStore]) -> None:
     root, _store = seeded_store
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
 
     contents = _run(mcp.read_resource("lineage://stats"))
@@ -119,7 +119,7 @@ def test_stats_resource_counts_entries(seeded_store: tuple[Path, LineageStore]) 
 def test_stats_resource_on_empty_lineage(tmp_path: Path) -> None:
     root = tmp_path / "lineage"
     LineageStore(root)  # init only - no entries
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
     contents = _run(mcp.read_resource("lineage://stats"))
     text = "\n".join(c.content for c in contents) if hasattr(next(iter(contents), None), "content") else str(contents)
@@ -135,11 +135,11 @@ def test_stats_resource_on_empty_lineage(tmp_path: Path) -> None:
 
 def test_verify_chain_ok(seeded_store: tuple[Path, LineageStore]) -> None:
     root, _store = seeded_store
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
 
     result = _run(mcp.call_tool("bernstein_verify_lineage", {"artefact_path": "src/foo.py"}))
-    # FastMCP.call_tool returns (contents, structuredOutput) on newer versions.
+    # MCPServer.call_tool returns (contents, structuredOutput) on newer versions.
     payload = _payload_from_tool_result(result)
     assert payload["ok"] is True
     assert payload.get("reason") in (None, "")
@@ -152,7 +152,7 @@ def test_verify_chain_unknown_path_returns_ok_empty(seeded_store: tuple[Path, Li
     is not the same as broken.
     """
     root, _store = seeded_store
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
     result = _run(mcp.call_tool("bernstein_verify_lineage", {"artefact_path": "src/never.py"}))
     payload = _payload_from_tool_result(result)
@@ -170,7 +170,7 @@ def test_verify_chain_detects_tampered_log(seeded_store: tuple[Path, LineageStor
     assert tampered != raw
     log.write_bytes(tampered)
 
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
     result = _run(mcp.call_tool("bernstein_verify_lineage", {"artefact_path": "src/foo.py"}))
     payload = _payload_from_tool_result(result)
@@ -186,7 +186,7 @@ def test_verify_chain_detects_tampered_log(seeded_store: tuple[Path, LineageStor
 def test_register_returns_falsey_when_disabled(seeded_store: tuple[Path, LineageStore]) -> None:
     """The registrar is gated by an ``enabled`` flag (default True for local stdio)."""
     root, _store = seeded_store
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     registered = register_lineage_resources(mcp, lineage_root=root, enabled=False)
     assert registered is False
 
@@ -197,7 +197,7 @@ def test_register_returns_falsey_when_disabled(seeded_store: tuple[Path, Lineage
 
 
 def _payload_from_tool_result(result: object) -> dict[str, object]:
-    """FastMCP.call_tool returns one of:
+    """MCPServer.call_tool returns one of:
 
     * an iterable of TextContent
     * a tuple ``(contents, structuredOutput_dict)``
@@ -206,10 +206,13 @@ def _payload_from_tool_result(result: object) -> dict[str, object]:
     payload regardless of which one we got.
     """
     # New API: (contents, structured)
+    if hasattr(result, "content"):
+        return _payload_from_contents(result.content)
+
     if isinstance(result, tuple) and len(result) == 2:
         contents, structured = result
         if isinstance(structured, dict):
-            # FastMCP may wrap the dict under a "result" key.
+            # MCPServer may wrap the dict under a "result" key.
             if "ok" in structured:
                 return structured
             if "result" in structured and isinstance(structured["result"], dict):
@@ -232,7 +235,7 @@ def _payload_from_contents(contents: object) -> dict[str, object]:
 def test_verify_chain_alias_names_its_replacement(seeded_store: tuple[Path, LineageStore]) -> None:
     """The old name stays callable and answers with the deprecation wrapper."""
     root, _store = seeded_store
-    mcp: FastMCP[None] = FastMCP("test")
+    mcp: MCPServer[None] = MCPServer("test")
     register_lineage_resources(mcp, lineage_root=root)
     result = _run(mcp.call_tool("verify_chain", {"artefact_path": "src/foo.py"}))
     payload = _payload_from_tool_result(result)
