@@ -98,9 +98,13 @@ jq '.[] | select(.title == "Add SBOM endpoint" and .role == "backend")' task-bac
 Compare the candidate's description, dependencies, and other submitted
 fields as well as its title and role. If it is the task you created, reuse
 its ID. Titles are not unique, so a title match alone does not establish
-identity. If readback fails or leaves the result ambiguous, resolve that
-uncertainty before issuing another create. Retry safety depends on the
-individual command; a successful read does not make task creation idempotent.
+identity. This export makes one unpaginated `GET /tasks` request, which
+returns at most 500 tasks. No match in that export is not proof that creation
+failed: the new task may be outside the returned page. A larger backlog
+requires complete, paginated task readback before deciding it is absent.
+If readback fails or leaves the result ambiguous, resolve that uncertainty
+before issuing another create. Retry safety depends on the individual
+command; a successful read does not make task creation idempotent.
 
 ---
 
