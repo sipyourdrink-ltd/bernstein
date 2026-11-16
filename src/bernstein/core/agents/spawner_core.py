@@ -1712,7 +1712,9 @@ class AgentSpawner:
         adapter_pinned: bool = False,
         context_policy_config: dict[str, Any] | None = None,
         policy_hook_registry: PolicyHookRegistry | None = None,
+        agent_manifest_exporter: Callable[[str, str], list[dict[str, str]]] | None = None,
     ) -> None:
+        self._agent_manifest_exporter = agent_manifest_exporter
         self._policy_hook_registry = policy_hook_registry
         self._enable_caching = enable_caching
         # True when the run-level adapter was explicitly selected by the
@@ -5283,6 +5285,18 @@ class AgentSpawner:
                 health_interval_minutes=_health_check_interval(tasks),
             )
 
+            # Export a composition snapshot before any backend launch. The
+            # optional callback supplies declarations, signing and storage;
+            # no exported manifest is read as scheduling authority.
+            if self._agent_manifest_exporter is not None:
+                try:
+                    session.agent_manifest_references = self._agent_manifest_exporter(session_id, prompt)
+                except BaseException:
+                    # No worker will be returned to reap this reservation.
+                    # Claimed slots do not expire through the pool's TTL.
+                    self._release_warm_pool_slot(session_id)
+                    raise
+
             remote_spawned = False
             if self._runtime_bridge is not None:
                 # Same capability gate as the local adapter loop below: the
@@ -6237,6 +6251,9 @@ class AgentSpawner:
         # name (the attachment pin is that path), so the hand-over happens
         # only now, and is undone if the agent does not start so the next
         # resume still finds the worktree where it was preserved.
+        if self._agent_manifest_exporter is not None:
+            session.agent_manifest_references = self._agent_manifest_exporter(session_id, prompt)
+
         preserved_path = worktree_path
         owner = next((m for m in self._worktree_managers.values() if m.owns(preserved_path)), None)
         if owner is not None:

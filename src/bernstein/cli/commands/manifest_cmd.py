@@ -8,6 +8,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
+from bernstein.cli.commands.agent_manifest_cmd import export_agent_command
 from bernstein.cli.helpers import console
 
 
@@ -197,3 +198,6 @@ def _format_value(v: object) -> str:
     if isinstance(v, dict):
         return json.dumps(v, indent=2, sort_keys=True)
     return str(v)
+
+
+manifest_group.add_command(export_agent_command)
