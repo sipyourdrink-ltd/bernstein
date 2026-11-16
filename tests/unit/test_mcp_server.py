@@ -19,7 +19,7 @@ def _result_text(result: object) -> str:
 
     Structured tools (#3086) answer with a ``CallToolResult`` whose text
     block is unchanged; the rest answer with the legacy (content, meta)
-    tuple FastMCP returns.
+    tuple MCPServer returns.
     """
     if hasattr(result, "content"):
         return result.content[0].text  # type: ignore[union-attr]
@@ -90,7 +90,7 @@ def _make_task_payload(
 
 
 def test_mcp_server_registers_all_tools() -> None:
-    """All 7 Bernstein tools must be registered on the FastMCP instance."""
+    """All 7 Bernstein tools must be registered on the MCPServer instance."""
     from bernstein.mcp.server import create_mcp_server
 
     mcp = create_mcp_server(server_url="http://localhost:8052")

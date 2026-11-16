@@ -58,14 +58,12 @@ fi
 #   * --new-bundle-format now defaults to true and requires --bundle,
 #     so --output-signature alone errors out.
 # Opt back out of both when the installed cosign supports them.
-# --use-signing-config in the help text is the version signal: releases
-# that list it (v2.6+, v3) accept both opt-outs, while older releases
-# (<= v2.4.x) already default both behaviours off. --new-bundle-format
-# itself cannot be probed the same way -- v3 hides it from --help as
-# deprecated while still accepting it.
+# Probe flag parsing with --help, which neither signs nor contacts a service.
+# Deprecated flags may be hidden from help output while still supported
+# (v3.1.4 hides both). Older releases reject the flags and already default
+# both behaviours off.
 COMPAT_FLAGS=()
-SIGN_BLOB_HELP="$(cosign sign-blob --help 2>&1 || true)"
-if [[ "$SIGN_BLOB_HELP" == *"--use-signing-config"* ]]; then
+if cosign sign-blob --use-signing-config=false --new-bundle-format=false --help >/dev/null 2>&1; then
   COMPAT_FLAGS+=("--use-signing-config=false" "--new-bundle-format=false")
 fi
 

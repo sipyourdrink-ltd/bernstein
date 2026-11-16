@@ -293,7 +293,8 @@ class TestAdapterContract:
 
 # 680 after restoring five adapters plus the guard test on current upstream main;
 # 707 with the two deep-research adapters (gpt_researcher, tongyi_deepresearch).
-_EXPECTED_COLLECTED = 720
+# 721 with the Pi golden transcript replay (#6943).
+_EXPECTED_COLLECTED = 721
 
 
 def test_module_collected_case_count() -> None:

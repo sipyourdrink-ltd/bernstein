@@ -55,6 +55,44 @@ The controller is purely additive - if you don't read its outputs,
 nothing changes about the orchestrator loop except that `max_agents`
 now drifts.
 
+## State across a restart
+
+The controller snapshot is saved in `.sdd/runtime/controllers.json` on
+slow ticks and shutdown. A usable saved snapshot carries these adaptive
+parallelism values:
+
+| Saved field | Startup behavior |
+|---|---|
+| `configured_max` | Recorded in the snapshot, but the orchestrator passes the current run configuration's `max_agents` as the restored ceiling. |
+| `current_max` | Restored as the controller's initial effective value. |
+| `slo_constrained_max` | Restores the saved SLO cap, including `None` when no cap was set. |
+| `last_adjustment_reason` | Restores the last recorded reason. |
+| `low_error_since_epoch` | Restores the low-error sustain timer, or leaves it unset if it was `None`. |
+
+The task-outcome window is not persisted: it starts empty after restoration,
+so the previous process's task successes and failures do not populate the
+new window. The saved effective value is retained until the controller
+evaluates its rules; loading a snapshot does not reset it to the configured
+ceiling or immediately rescale it for a changed configuration.
+
+For example, a run configured for 8 agents that saved `current_max=4`
+starts its restored controller at 4 with a configured ceiling of 8. It
+does not jump to 8 just because the process restarted. Subsequent ticks
+can change that value under the normal rules below.
+
+With no sidecar file, startup constructs a fresh controller whose current
+value equals the current configured maximum. A raised load exception also
+uses that fresh-controller path. An existing but invalid sidecar is a
+different case: the loader can return a naive snapshot with `current_max=0`
+rather than raise, so that value is restored and the normal tick rules
+(including the minimum floor) then apply. A “starting fresh” loader message
+therefore does not itself guarantee an initial effective value equal to
+the configured maximum.
+
+Source: `core/orchestration/controller_state.py`,
+`AdaptiveParallelism.from_adaptive_parallelism_state()`, and the
+orchestrator's controller initialization.
+
 ---
 
 ## Inputs (signals the controller reads)

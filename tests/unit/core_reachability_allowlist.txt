@@ -74,7 +74,6 @@ bernstein.core.events.receipts: #4526 audit in flight
 bernstein.core.events.state: #4526 audit in flight
 bernstein.core.events.triggers: #4526 audit in flight
 bernstein.core.events.webhook_template: #4526 audit in flight
-bernstein.core.evidence.render_receipt: #4526 audit in flight
 bernstein.core.finding_verify: #4526 audit in flight
 bernstein.core.git.commit_provenance: #4526 audit in flight
 bernstein.core.git.git_hooks: #4526 audit in flight
