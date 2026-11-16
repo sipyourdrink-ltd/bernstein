@@ -44,7 +44,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - Use "Create task" or "New from prompt" to enter a title, prompt and optional role. The form submits to `POST /api/v1/tasks` and opens the drawer for the created task.
 - If the server's response cannot confirm creation, use **Check task** before submitting again.
 - **Actions:** Cancel run · Re-run · Prioritize · Kill session. **Change model** is rendered but disabled with “Not wired in this build”; **Change role** is not rendered. The **Kill session** label currently requests cancellation of the selected task; it does not call the separate agent-session kill operation.
-- **Endpoints:** `GET /api/v1/tasks?status=&agent=&page=`, `POST /api/v1/tasks/{id}/{cancel,retry,prioritize,kill}`, `POST /api/v1/tasks/batch-ops`. SSE: `task_update`, `task_progress` over `/api/v1/events`.
+- **Endpoints:** `GET /api/v1/tasks?status=&agent=&page=`, `POST /api/v1/tasks/{id}/{cancel,force-claim,prioritize}`, `POST /api/v1/tasks/batch-ops`. Re-run uses `force-claim`. Cancel run and the Kill session control both use the task's `cancel` endpoint with a JSON `reason` (`cancelled from gui` or `killed from gui`, respectively). The Tasks drawer does not call the separate `POST /api/v1/agents/{session_id}/kill` operation. SSE: `task_update`, `task_progress` over `/api/v1/events`.
 - **Replaces TUI widget:** `task_list.py` + `task_detail_overlay.py` + `dependency_graph.py`.
 
 ## Agents (`/ui/agents`)
