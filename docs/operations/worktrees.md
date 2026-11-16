@@ -40,6 +40,15 @@ without changing its worktrees:
 bernstein worktrees list --workdir /path/to/project --json
 ```
 
+## Inspecting a parallel run graph
+
+`bernstein worktrees graph FANOUT_ID` displays a sealed parallel run
+receipt. Each branch is paired with its own run record using the supplied
+session-to-run mapping. A branch without a matching run ID remains
+`unresolved`; it is not reported as a failing branch.
+See the [command reference](../reference/cli-reference.md#bernstein-worktrees-graph)
+for receipt selection, `--run-id SESSION=RUN`, and output options.
+
 ## State machine
 
 | State | Rule |
