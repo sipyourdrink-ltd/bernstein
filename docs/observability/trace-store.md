@@ -153,6 +153,26 @@ results = store.search(task_id="T-12", model="sonnet")
 store.reindex()
 ```
 
+### What an index rebuild recovers
+
+`reindex()` walks compressed `*.jsonl.*` files under the blob tree. It
+decompresses each candidate and checks that the uncompressed bytes match
+the digest in its filename. Unreadable blobs and digest mismatches produce
+warnings and are skipped. Its return value is the number of index entries
+written from accepted blobs, rather than the former index's entry count.
+
+Rebuilt metadata is derived from the stored trace bytes. A JSON trace can
+provide its trace ID, task ID, timestamps, model, and cost; JSONL extraction
+uses the first and last non-empty rows. Missing fields use defaults. Hints
+supplied only to the original `put(..., hints=...)` call are index metadata
+and cannot be reconstructed unless the same information is in the trace.
+For example, an index-only display ID is replaced by the trace's own ID,
+or by the first 16 digest characters if the trace has no ID.
+
+The blob remains addressable by its full digest even when its former display
+ID is lost: use `store.get(entry.sha256)`, or search with
+`store.search(text=entry.sha256)` and read the resulting entry.
+
 ## Out of scope (v1)
 
 - Shipping traces to an external store. A separate ticket covers

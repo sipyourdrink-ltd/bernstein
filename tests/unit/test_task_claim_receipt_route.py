@@ -281,7 +281,7 @@ async def test_real_mcp_create_claim_complete(app, monkeypatch: pytest.MonkeyPat
 
     async def invoke(name, args):
         result = await mcp.call_tool(name, args)
-        payload = json.loads(result[0][0].text)
+        payload = json.loads(result.content[0].text)
         return payload.get("result", payload)
 
     task = await invoke(
@@ -334,7 +334,7 @@ async def test_mcp_invalid_create_does_not_send_http(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("bernstein.mcp.server.httpx.AsyncClient", network)
     mcp = create_mcp_server(server_url="http://test")
     result = await mcp.call_tool("bernstein_create_task", {"title": "", "description": "brief"})
-    assert "error" in result[0][0].text.lower()
+    assert "error" in result.content[0].text.lower()
     network.assert_not_called()
 
 
