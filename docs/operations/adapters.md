@@ -1,5 +1,23 @@
 # Adapter conformance + capability report
 
+## Building an adapter from the template
+
+The cookiecutter template in `templates/adapter_plugin` produces an adapter
+that can be constructed without arguments; `cli_path=` optionally selects
+the executable. Pass `prompt`, `workdir`, `model_config`, and `session_id` as
+keywords to `spawn`. It launches with `Popen` and returns
+`SpawnResult(pid, log_path, proc)` immediately. Read output from the log and
+inspect the process handle for completion; launch and log-file errors raise.
+Positive `timeout_seconds` values arm the base timeout watchdog.
+
+Adapt the sample `run --description`, `--model`, and `--effort` flags to your
+CLI. The template appends `system_addendum` to the prompt and refuses
+unsupported multimodal attachments. MCP and scope-based budget flags need
+CLI-specific implementation. Its generated tests use mocked processes; the
+repository regression test also launches a local fake CLI with no network.
+
+## Checking adapter conformance
+
 `bernstein adapters check` answers one question:
 
 > Of the adapters this install declares, which ones are reachable on

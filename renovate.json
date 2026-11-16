@@ -20,6 +20,7 @@
     {
       "description": "trufflehog releases the action wrapper and the scanner image from one repository, and tests/unit/test_trufflehog_workflow_yaml.py requires the workflow to name the same release for both. Group them so a bump lands as one pull request rather than two that each fail that check.",
       "groupName": "trufflehog",
+      "minimumGroupSize": 2,
       "matchPackageNames": [
         "trufflesecurity/trufflehog",
         "ghcr.io/trufflesecurity/trufflehog"

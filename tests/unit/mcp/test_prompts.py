@@ -2,7 +2,7 @@
 
 Covers:
 
-  * the FastMCP server registers the prompts and exposes ``prompts/list`` /
+  * the MCPServer server registers the prompts and exposes ``prompts/list`` /
     ``prompts/get``;
   * each prompt renders deterministically from its arguments;
   * the streamable HTTP transport answers ``prompts/list`` and ``prompts/get``
@@ -50,7 +50,7 @@ def test_cost_recap_template_uses_window() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FastMCP server
+# MCPServer server
 # ---------------------------------------------------------------------------
 
 

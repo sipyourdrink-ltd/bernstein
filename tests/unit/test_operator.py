@@ -142,6 +142,29 @@ class TestRunReconciler:
         cfg = OperatorConfig(namespace="default")
         return RunReconciler(crd_api, batch_api, core_api, cfg), crd_api, batch_api
 
+    def test_agent_job_serializes_with_installed_kubernetes_sdk(self) -> None:
+        """Exercise real SDK models while keeping cluster submission mocked."""
+        sdk = pytest.importorskip("kubernetes.client")
+        from bernstein.core.operator import OperatorConfig, RunReconciler
+
+        batch_api = MagicMock()
+        reconciler = RunReconciler(MagicMock(), batch_api, MagicMock(), OperatorConfig(namespace="default"))
+        reconciler._create_agent_job("default", "run-1", "run-1-s0-t0", {"goal": "verify compatibility"}, {}, {})
+
+        namespace, job = batch_api.create_namespaced_job.call_args.args
+        with sdk.ApiClient() as api_client:
+            payload = api_client.sanitize_for_serialization(job)
+        assert namespace == "default"
+        assert payload["apiVersion"] == "batch/v1"
+        pod_spec = payload["spec"]["template"]["spec"]
+        assert pod_spec["securityContext"]["runAsNonRoot"] is True
+        assert pod_spec["securityContext"]["runAsUser"] == 1000
+        container = pod_spec["containers"][0]
+        token = next(item for item in container["env"] if item["name"] == "BERNSTEIN_AUTH_TOKEN")
+        assert token["valueFrom"]["secretKeyRef"] == {"key": "auth-token", "name": "bernstein-auth"}
+        assert "value" not in token
+        assert container["resources"]["limits"] == {"cpu": "2000m", "memory": "2Gi"}
+
     def test_skips_completed_run(self) -> None:
         reconciler, crd_api, _ = self._make_reconciler()
         run = {

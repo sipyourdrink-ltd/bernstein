@@ -73,7 +73,7 @@ dependencies = [
     "setproctitle>=1.3",
     "prometheus-client>=0.21",
     "pluggy>=1.5",
-    "mcp>=1.30.0,<2",
+    "mcp>=2.3.0,<2.4",
     "watchdog>=4.0",
     "opentelemetry-api>=1.45.1",
     "opentelemetry-sdk>=1.41.1",
@@ -334,6 +334,8 @@ research-render = [
 # Optional so minimal installs stay dependency-free. Enable with:
 #   pip install 'bernstein[trace]'
 trace = ["agentrust-trace>=0.11,<0.12"]
+# Composition-only Agent Manifest export; upstream python-v0.12.0 @9478b56.
+manifest = ["agent-manifest[cli]==0.12.0"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"

@@ -17,6 +17,10 @@ bernstein ledger gc     <run-id>
 
 ## What the ledger is
 
+The work ledger records resumable task state. The per-step replay journal
+records the step data used for replay. They serve these separate roles
+while sharing the canonical encoding described below.
+
 A hash-chained, append-only JSONL record of the task graph and every state
 transition, stored per run under `.sdd/runtime/ledger/<run-id>/`. Each
 entry links the previous entry's hash:
