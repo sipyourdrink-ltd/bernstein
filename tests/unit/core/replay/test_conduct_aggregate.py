@@ -226,9 +226,7 @@ def test_unreadable_runs_serialized_order_is_stable_when_inputs_reordered(
         UnreadableRun("run-a", UnreadableRunReason.TORN),
     )
     scope = DelegationScope(permissions=frozenset({"read"}))
-    activities = tuple(
-        ConductScopeActivity(run.run_id, _PRINCIPAL, "recorded work", 1, 1, scope) for run in two_runs
-    )
+    activities = tuple(ConductScopeActivity(run.run_id, _PRINCIPAL, "recorded work", 1, 1, scope) for run in two_runs)
     forward = aggregate_conduct(
         two_runs,
         principal_id=_PRINCIPAL,
