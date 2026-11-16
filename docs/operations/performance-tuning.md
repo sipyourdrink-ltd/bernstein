@@ -64,14 +64,18 @@ Tasks/hour        ▲
 
 ### The idle-agent tax
 
-An idle agent still holds a worktree on disk and occupies a slot. Watch `agent_idle_pct` in the dashboard:
+An idle agent still holds a worktree on disk and occupies a slot. Inspect
+the per-agent states and task assignments in the status response:
 
 ```bash
-bernstein status          # shows idle %
-curl http://127.0.0.1:8052/status | jq '.metrics.agent_idle_pct'
+bernstein status
+curl http://127.0.0.1:8052/status | jq '.agents.items[] | {id, status, task_ids}'
 ```
 
-If idle % stays above 40% for more than a few minutes, you have too many agents for the current backlog depth.
+The response exposes an `agents` object with `count` and `items`; each item
+includes its `status` and assigned `task_ids`. If agents remain `idle`
+across repeated snapshots while the backlog is shallow, consider reducing
+`max_agents`. The response does not expose an idle percentage.
 
 ### Model selection per task complexity
 
