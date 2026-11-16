@@ -253,58 +253,60 @@ Internally, both strategies converge on the same task FSM transition `DONE → C
 
 ## End-to-end script example
 
-A single bash flow that creates a task, watches it complete, and checks the automatic merge result. Assumes the Bernstein server is already running (`bernstein start` or a previous `bernstein run`) and that the normal verification-and-merge path is enabled.
+A single bash flow that creates a task and waits for verified closure, with a
+bounded polling period. Run it from the same project directory as the server
+so `pending` reads that project's approval files. Set `SERVER_URL` to the
+same task server used by the CLI (the example uses the local default).
+The normal verification-and-merge path must be enabled.
+
+The script exits with `2` when an operator decision is needed; inspect
+`bernstein pending` and review the task before choosing `approve` or
+`reject`, then resume monitoring that task ID. `done` means agent work has
+finished, not that verification and merge succeeded. Only `closed` is success.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 1. Create a task and capture the ID.
+SERVER_URL=http://127.0.0.1:8052
+POLL_TIMEOUT_S=${POLL_TIMEOUT_S:-600}
+
+# 1. Create once and capture the ID; do not blindly retry a lost response.
 TASK_JSON=$(bernstein --json add-task "Add SBOM endpoint" \
   --role backend \
   --description "Expose POST /sbom that returns CycloneDX." \
   --priority 1 \
   --scope small)
-TASK_ID=$(echo "$TASK_JSON" | jq -r .id)
+TASK_ID=$(echo "$TASK_JSON" | jq -er .id)
 echo "Created $TASK_ID"
 
-# 2. Wait for the task to finish agent work.
-while :; do
-  STATUS=$(bernstein --json list-tasks \
-    | jq -r --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
+# 2. Check approvals before waiting, including pre-spawn approval requests.
+DEADLINE=$((SECONDS + POLL_TIMEOUT_S))
+while (( SECONDS < DEADLINE )); do
+  PENDING=$(bernstein --json pending)
+  if jq -e --arg id "$TASK_ID" \
+    '[.approval_pending[], .spawn_pending[]] | any(.task_id == $id)' \
+    <<<"$PENDING" >/dev/null; then
+    echo "task $TASK_ID needs operator review; inspect bernstein pending"
+    exit 2
+  fi
+
+  # Read one task directly, rather than depending on the task-list envelope.
+  STATUS=$(curl --fail --silent --show-error --max-time 10 \
+    "$SERVER_URL/tasks/$TASK_ID" | jq -er .status)
   case "$STATUS" in
-    done|failed|cancelled|closed) break ;;
-    "")  echo "task $TASK_ID disappeared from server"; exit 1 ;;
-    *)   sleep 5 ;;
+    closed) echo "Task $TASK_ID is closed"; exit 0 ;;
+    planned|pending_approval)
+      echo "task $TASK_ID needs operator review"; exit 2 ;;
+    failed|cancelled|abandoned|refused|blocked_by_abandon|blocked_by_failed_dep)
+      echo "task $TASK_ID stopped in state $STATUS, not closed"; exit 1 ;;
+    done) : ;; # Continue waiting for verification and merge.
+    *) : ;;    # Other transient states remain bounded by the deadline.
   esac
+  sleep 5
 done
-
-# 3. If the run paused for review, resolve it.
-if bernstein --json pending | jq -e --arg id "$TASK_ID" '.[] | select(.task_id == $id)' >/dev/null; then
-  bernstein approve "$TASK_ID"
-fi
-
-# 4. Normally verification and merge happen automatically after approval.
-# Wait for that path to close the task; report unsuccessful terminal states.
-while :; do
-  STATUS=$(bernstein --json list-tasks \
-    | jq -r --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
-  case "$STATUS" in
-    closed) break ;;
-    failed|cancelled)
-      echo "task $TASK_ID finished in state $STATUS, not closed"; exit 1 ;;
-    "")  echo "task $TASK_ID disappeared from server"; exit 1 ;;
-    *)   sleep 5 ;;
-  esac
-done
-
-# 5. Confirm the resulting state rather than assuming a merge happened.
-FINAL_STATUS=$(bernstein --json list-tasks \
-  | jq -er --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
-if [[ "$FINAL_STATUS" != closed ]]; then
-  echo "expected task $TASK_ID to be closed, got $FINAL_STATUS"; exit 1
-fi
-echo "Task $TASK_ID is $FINAL_STATUS"
+echo "timed out waiting for task $TASK_ID to close"
+exit 1
 ```
 
 If automatic merging is not enabled and a completed task needs a manual merge, select it explicitly (the task must still be `done` and its agent branch must exist):
