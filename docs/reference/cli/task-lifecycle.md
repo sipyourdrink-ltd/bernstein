@@ -110,23 +110,34 @@ command; a successful read does not make task creation idempotent.
 
 ## `bernstein list-tasks`
 
-List tasks visible to the running task server, with optional filters.
+Intended to list tasks visible to the running task server, with optional
+status and role filters. See the current readback limitation below.
 
 **Synopsis:** `bernstein list-tasks [flags]`
 
-**Flags:** *(source: `cli/commands/task_cmd.py:637-647`)*
+**Flags:** *(source: `cli/commands/task_cmd.py`, `list_tasks`)*
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--status-filter` | none | One of `open / claimed / in_progress / done / failed / blocked`. |
 | `--role ROLE` | none | Filter by role (e.g. `backend`, `qa`, `security`). |
-| `--json` | off | Emit raw JSON list instead of the Rich table. |
+| `--json` | off | Emit the raw `tasks` value from `/status`; see the current envelope limitation below. |
 
-The data source is `GET /status`; only tasks the server currently knows about are returned (archived tasks are not in this view - use `bernstein recap` or `bernstein replay` for archive views).
+The data source is `GET /status`. The CLI currently expects its `tasks`
+member to be a flat list, but the server returns an object containing counts
+and an `items` list. With no filters, `list-tasks --json` therefore emits
+that object rather than a flat task list. The table renderer and status or
+role filters can fail because they iterate it as though it were a list of
+task objects. The flags above describe the intended filters; they do not
+resolve this server/CLI mismatch.
+
+For automation that already knows a task ID, read the task directly with
+`GET /tasks/{id}`, as the polling example below does. Set `SERVER_URL` to
+the same server as the CLI (the local default is shown):
 
 ```bash
-# Only the in-flight backend tasks, JSON
-bernstein list-tasks --status-filter in_progress --role backend --json
+SERVER_URL=http://127.0.0.1:8052
+curl --fail --silent --show-error --max-time 10 "$SERVER_URL/tasks/$TASK_ID" | jq '{id, status, role}'
 ```
 
 For a holistic view including dependency edges and the critical path, use `bernstein plan --graph`. (`cli/commands/task_cmd.py:454-486`.)
@@ -339,8 +350,7 @@ If automatic merging is not enabled and a completed task needs a manual merge, s
 
 ```bash
 bernstein merge pick --pick "$TASK_ID"
-bernstein --json list-tasks \
-  | jq --arg id "$TASK_ID" '.[] | select(.id == $id)'
+curl --fail --silent --show-error --max-time 10 "$SERVER_URL/tasks/$TASK_ID" | jq '{id, status, role}'
 ```
 
 The second command checks the task's actual state; do not assume the merge invocation itself moved it to `closed`. The bare `bernstein merge` group prints help when no selection is supplied.
