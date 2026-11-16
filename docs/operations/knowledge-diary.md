@@ -41,6 +41,24 @@ a rolling hour, minute, or second window. For example, `12h` and `36h`
 each select one day, while `49h` selects two days. An integer without a
 suffix is interpreted as days.
 
+## Selecting and inspecting a project's diaries
+
+Both `diary list` and `diary show` select the SDD directory in this order:
+an explicit `--sdd-dir`, then `BERNSTEIN_SDD_DIR`, then `.sdd` under the
+current directory. The explicit path points to the SDD directory itself,
+not its parent project directory. Put `--sdd-dir` and `--json` after the
+`list` or `show` subcommand:
+
+```bash
+bernstein knowledge diary list --sdd-dir ./saved-project/.sdd --json
+bernstein knowledge diary show task-42 --sdd-dir ./saved-project/.sdd --json
+```
+
+`list` returns readable entries ordered by `created_at` (oldest first).
+It logs a warning and skips malformed or unreadable entries, so a successful
+listing may be partial. `show` looks up the exact task ID; a missing or
+unreadable entry prints a diagnostic to stderr and exits 1.
+
 ## Diary shape
 
 Each diary entry carries:
