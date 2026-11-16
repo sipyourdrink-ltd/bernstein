@@ -38,7 +38,7 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **Layout:** 2-column grid `1fr 380px`. Left = filter chips + table. Right = selected-task drawer.
 - **Data shown:** task ID, title + branch, agent, role pill, duration (color-coded if stalled), progress bar, cost.
 - **Filter chips:** All · Running · Queued · Stalled · Done · Failed (with counts). Selecting **Done** sends `status=done` without a time-window parameter; it is not limited to the last 24 hours.
-- **Operator search syntax:** mono input parses `agent:` / `status:` / `role:` token prefixes.
+- **Operator search syntax:** `agent:` and `role:` set the agent and role query filters; remaining words form the free-text `q` search. Status comes from the selected filter chip. The input highlights `agent:`, `role:`, and `status:`, but `status:` tokens are ignored by the query parser: typing `status:failed` does not change the selected chip or filter the list by failed status. For example, `agent:Alpha role:backend status:failed compile` with the Done chip selects `status=done`, `agent=Alpha`, `role=backend`, and `q=compile`.
 - **Drawer tabs:** Summary · Diff · Gates · Artifacts · Logs · Deps · Trace · Steer (Steer disabled with a reason on terminal tasks).
 - **Artifacts:** task-scoped evidence posted by workers, including reports, tables, and preview links, with version history and a progress strip.
 - Use "Create task" or "New from prompt" to enter a title, prompt and optional role. The form submits to `POST /api/v1/tasks` and opens the drawer for the created task.
