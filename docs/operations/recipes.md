@@ -35,7 +35,7 @@ Source:
 ```text
 bernstein recipes list                                       [--bundled-only]
 bernstein recipes show NAME
-bernstein recipes run NAME --param key=value [--param ...]   [--dry-run] [-g GOAL]
+bernstein recipes run NAME_OR_FILE --param key=value [--param ...]   [--dry-run] [-g GOAL]
 ```
 
 - `list` enumerates bundled + user-installed recipes with their
@@ -44,6 +44,29 @@ bernstein recipes run NAME --param key=value [--param ...]   [--dry-run] [-g GOA
   required flags, choices), nodes, dependency order.
 - `run` executes end-to-end. `--dry-run` prints the resolved workflow
   plan without spawning agents.
+
+## Previewing a manifest file
+
+A bare recipe name uses discovery (project-local, user, then bundled
+recipes; the first matching name wins). An explicit `.yaml` or `.yml`
+path loads that manifest directly. For example, from a source checkout:
+
+```bash
+bernstein recipes run ./templates/recipes/bump-dependency.yaml \
+  --param package=httpx --param version=0.27.0 --dry-run
+```
+
+Repeat `--param KEY=VALUE` for distinct inputs. Values are validated against
+the manifest's declared types and choices; omitted inputs use their
+defaults, and required inputs without defaults must be supplied. Malformed
+assignments, duplicate keys, unknown keys, and invalid parameter values
+exit 1. Failure to load or render the manifest exits 2.
+
+A successful preview prints the recipe identity and resolved parameter
+values, the resolved workflow YAML, and its topological execution layers.
+It returns before handing the workflow to the runner, so neither agent
+nodes nor command nodes execute. Registered recipe commands are separate
+from this ad hoc preview.
 
 ## Registered runs (content-addressed, receipt-backed)
 

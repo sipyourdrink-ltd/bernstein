@@ -441,7 +441,7 @@ class TestMCPMethods:
 
         expected_version = version("bernstein")
         stdio_server = create_mcp_server(server_url="http://localhost:8052")
-        stdio_options = stdio_server._mcp_server.create_initialization_options()
+        stdio_options = stdio_server._lowlevel_server.create_initialization_options()
 
         body = _jsonrpc_request("initialize", {"clientInfo": {"name": "test-client"}})
         status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)

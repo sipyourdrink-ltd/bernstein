@@ -144,6 +144,22 @@ inherited `PYTHONPATH`. Only the limit-readback cases load the POSIX
 
 ## Run any of the above locally
 
+Choose the selector for the scope you need. The repository runner's `-k`
+is a literal substring filter on test file stems; it selects whole files.
+Pytest's `-k` instead evaluates a keyword expression against collected test
+cases. A node ID selects one specific case:
+
+```bash
+# Whole files whose stems contain quickstart_poll
+uv run python scripts/run_tests.py -k quickstart_poll
+
+# Cases matching a keyword expression within one file
+uv run pytest tests/unit/test_quickstart_poll.py -k 'exits_early and dict_shaped' -q
+
+# One exact case
+uv run pytest tests/unit/test_quickstart_poll.py::test_quickstart_poll_exits_early_on_the_dict_shaped_status_payload -q
+```
+
 ```bash
 # Identity anchoring, including a real two-process race against one audit dir
 uv run pytest tests/unit/security/test_identity_spawn_anchor.py -q --no-cov

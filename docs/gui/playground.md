@@ -42,7 +42,7 @@ Effect:
 
 - Forces every agent spawn through the mock adapter.
 - Sets `BERNSTEIN_MOCK_IDLE=1`. Each mock agent sleeps `BERNSTEIN_MOCK_IDLE_MIN_S..MAX_S` seconds (default 15–120) and exits, then the orchestrator spawns a fresh one.
-- Mutually exclusive with `--dry-run`. Defined in `src/bernstein/cli/run_bootstrap.py` (`--idle` option, lines ~842–1030).
+- Mutually exclusive with `--dry-run`. See `bernstein run --help` for the `--idle` option, defined in `src/bernstein/cli/run_bootstrap.py`.
 - Cost: zero. No LLM calls.
 
 ### Terminal 2 - Vite dev server with HMR
@@ -55,7 +55,17 @@ npm run dev
 
 Vite serves the SPA on `http://127.0.0.1:5173` and proxies `/api/*` to FastAPI on `:8052`.
 
-If you'd rather hit the built bundle (no HMR), run `bernstein gui serve --dev` in this terminal instead and open `http://127.0.0.1:8052/ui/`.
+For the built bundle (no HMR), keep the mock orchestration in Terminal 1
+running and open `http://127.0.0.1:8052/ui/` directly. That server serves the
+playground's state; no second server is needed in the source checkout.
+
+The installed package must have built GUI assets, including
+`src/bernstein/gui/static/index.html` in a source checkout. If they are
+missing, use the Vite option above, or build them from the checkout's `web/`
+directory with `npm install` and `npm run build` before starting the mock
+server. Packaged builds that already include the assets need no local UI
+build. The fixture directory and `bernstein run --idle` command stay the
+same for both options.
 
 ## Tuning the idle interval
 
