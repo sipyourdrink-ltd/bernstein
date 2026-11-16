@@ -119,7 +119,8 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
     Each coding agent works in its own git worktree
     (artifact-mode tasks get an isolated plain directory).
-    No merge conflicts. Clean history. Parallel by default.
+    Changes pass through the merge gate when integrated; overlapping edits
+    can still conflict. Parallel by default.
 
 - :material-shield-check:{ .lg .middle } **Built-in verification**
 
