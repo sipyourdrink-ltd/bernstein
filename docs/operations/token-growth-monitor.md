@@ -70,12 +70,14 @@ Since 300 is at least twice 100, this triggers growth detection with the
 default ratio. Totals of 100, 100, and 500 do not, because the earlier delta
 is zero.
 
-An active warning suppresses further warnings. A run of 10 consecutive
-non-growth observations clears it so later growth can warn again. Each
-observation is an orchestrator tick reaching this check and finding no
-quadratic growth; it does not require a new history sample. Ticks can
-recheck the same history, so the reset does not promise ten sampling
-intervals or a fixed elapsed time.
+An active warning suppresses further warnings. Its reset counter advances
+on each non-growth observation and clears the warning at 10, allowing later
+growth to warn again. Ten consecutive non-growth observations therefore
+suffice, but growth ticks during an active warning leave the counter
+unchanged, so the observations need not be uninterrupted. Each observation
+is an orchestrator tick reaching this check and finding no quadratic growth;
+it does not require a new history sample. Ticks can recheck the same history,
+so the reset does not promise ten sampling intervals or a fixed elapsed time.
 
 ### Budget nudge
 
