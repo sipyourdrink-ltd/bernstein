@@ -33,7 +33,7 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `bernstein.apiUrl` | string | `http://127.0.0.1:8052` | Bernstein orchestrator API URL |
+| `bernstein.apiUrl` | string | `http://127.0.0.1:8052` | Bernstein API URL |
 | `bernstein.apiToken` | string | `""` | Bearer token for API authentication (optional) |
 | `bernstein.refreshInterval` | number | `5` | Tree view polling interval in seconds |
 
@@ -45,7 +45,7 @@ active and can appear again after the flag clears and becomes active again.
 ## Requirements
 
 - VS Code 1.100+ (or compatible forks: Cursor, VSCodium)
-- Bernstein orchestrator running locally - install from [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein)
+- Bernstein running locally - install from [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein)
 
 ## Quick Start
 
