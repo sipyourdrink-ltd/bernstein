@@ -1,0 +1,31 @@
+name: pi_adapter_spawn
+adapter_class: bernstein.adapters.pi.PiAdapter
+steps:
+  - prompt: "fix the bug"
+    model: "provider/model-name"
+    expected_pid: 800
+    expected_log_suffix: ".log"
+    inner_argv:
+      - "pi"
+      - "--no-extensions"
+      - "--print"
+      - "--mode"
+      - "json"
+      - "--model"
+      - "provider/model-name"
+      - "fix the bug"
+    env_extra_keys:
+      - "PI_API_KEY"
+      - "ANTHROPIC_API_KEY"
+      - "OPENAI_API_KEY"
+      - "OPENROUTER_API_KEY"
+  - prompt: "fix the bug"
+    model: "auto"
+    expected_pid: 801
+    inner_argv:
+      - "pi"
+      - "--no-extensions"
+      - "--print"
+      - "--mode"
+      - "json"
+      - "fix the bug"

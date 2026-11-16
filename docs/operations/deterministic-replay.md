@@ -20,6 +20,39 @@ path (selected with `BERNSTEIN_REPLAY_RUN_ID`).
 | Over-consumption | Requesting a key more times than recorded is a miss (strict: raises; non-strict: returns `None`). |
 | Coverage line | `hits` / `misses` / `strict_violations`; a fully covered replay reports `misses=0`. |
 
+## Run evidence hash profile
+
+Select one profile for a new run in `bernstein.yaml`:
+
+```yaml
+goal: Verify a report
+hash_profile: jcs-v2
+```
+
+For single-cell and multi-cell orchestration, the validated selection reaches
+the journal, the shared lineage-spine append
+boundary, and the signed run receipt. Omit it, or set `py-json-v1`, to retain
+legacy hashing. An unknown value is a configuration error before the
+orchestrator starts. The direct receipt builder also follows the journal's
+recorded profile when its low-level profile argument is omitted.
+
+The first release containing this configuration option is the **compatibility
+release**. Its default remains `py-json-v1` for the whole release. Opt-in
+`jcs-v2` runs provide soak evidence; a separate later PR may change the new-run
+default only after recording measured consumer verification results for that
+release. Support being present or unit tests passing does not establish soak.
+This change makes no default flip.
+
+Reopening evidence uses the profile recorded in the journal's first event,
+the spine header, or the receipt. An absent field means `py-json-v1`. A new-run
+configuration change does not reinterpret or migrate an existing run. Reads
+and verification leave the bytes unchanged; appending a spine under a profile
+that conflicts with its journal or recorded header is refused. No historical
+records are rewritten. Re-derivation in a sandbox preserves the source
+journal's recorded profile, independently of the new-run configuration.
+Receipt signing still requires the configured signing
+key; choosing a hash profile does not enable unsigned receipts.
+
 ## What replay covers (and what it does not)
 
 Recording and replay wrap the internal native LLM client `call_llm`, which

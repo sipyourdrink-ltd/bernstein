@@ -394,14 +394,49 @@ def sweep_leaked_sandboxes(workdir: Path, *, now: float | None = None) -> list[S
         SandboxSweepUnavailableError: The audit key, the audit log, or the
             task log cannot be read.
     """
+    return _sweep_leaked_sandboxes(workdir, now=now)
+
+
+def _audit_tree_has_evidence(directory: Path) -> bool:
+    """An initialized empty directory tree has no audit records to verify.
+
+    Do not follow symlinks or suppress traversal errors: either is evidence
+    requiring the normal verification path, rather than proof of emptiness.
+    """
+    for entry in directory.iterdir():
+        if entry.is_symlink() or not entry.is_dir() or _audit_tree_has_evidence(entry):
+            return True
+    return False
+
+
+def _sweep_leaked_sandboxes(
+    workdir: Path,
+    *,
+    now: float | None = None,
+    task_status: Callable[[str], str | None] | None = None,
+    require_verified_audit: bool = False,
+) -> list[SandboxLeakCandidate]:
+    """Allow the combined inventory to share its canonical task snapshot."""
     sdd_dir = workdir / ".sdd"
     audit_dir = sdd_dir / "audit"
-    if not audit_dir.is_dir():
+    if require_verified_audit:
+        if audit_dir.is_symlink():
+            raise SandboxSweepUnavailableError("audit directory must not be a symbolic link")
+        try:
+            audit_dir.stat()
+        except FileNotFoundError:
+            return []
+        if not audit_dir.is_dir():
+            raise SandboxSweepUnavailableError("audit path is not a directory")
+    elif not audit_dir.is_dir():
         return []
-    sessions = open_sandbox_sessions(_read_sandbox_events(audit_dir))
+    if require_verified_audit and not _audit_tree_has_evidence(audit_dir):
+        return []
+    sessions = open_sandbox_sessions(_read_sandbox_events(audit_dir, require_verified=require_verified_audit))
     if not sessions:
         return []
-    task_status = _load_task_statuses(sdd_dir)
+    if task_status is None:
+        task_status = _load_task_statuses(sdd_dir)
     clock = time.time() if now is None else now
     candidates = [classify_open_session(s, task_status, now=clock) for s in sessions]
     candidates.sort(key=lambda c: (not c.is_leaked, -(c.age_seconds or 0.0), c.session.sandbox_session_id))
@@ -422,6 +457,7 @@ class LeakedLane:
     created_at: str = ""
     has_unsaved_work: bool | None = None
     create_hmac: str = ""
+    task_statuses: tuple[tuple[str, str], ...] = ()
 
     @property
     def removal_eligible(self) -> bool:
@@ -442,6 +478,7 @@ def sweep_leaked_lanes(
     *,
     now: float | None = None,
     measure_disk: bool = False,
+    require_verified_audit: bool = False,
 ) -> list[LeakedLane]:
     """Read-only inventory keyed on the latest task-store status, never a PID.
 
@@ -466,7 +503,8 @@ def sweep_leaked_lanes(
         # Recover their PID-record owner without changing list's display rules.
         record = _read_pid_record(workdir, row.session_id)
         task_id = row.task_id or (record or {}).get("task_id")
-        if not isinstance(task_id, str) or task_status(task_id) not in _FINISHED:
+        status = task_status(task_id) if isinstance(task_id, str) else None
+        if not isinstance(task_id, str) or status not in _FINISHED:
             continue
         stat = row.path.stat()
         lanes.append(
@@ -483,9 +521,12 @@ def sweep_leaked_lanes(
                     if row.state is WorktreeState.CORRUPT
                     else _probe_unsaved_work(row.path, workdir)
                 ),
+                task_statuses=((task_id, status),),
             )
         )
-    for candidate in sweep_leaked_sandboxes(workdir, now=now):
+    for candidate in _sweep_leaked_sandboxes(
+        workdir, now=now, task_status=task_status, require_verified_audit=require_verified_audit
+    ):
         if not candidate.is_leaked:
             continue
         session = candidate.session
@@ -506,6 +547,7 @@ def sweep_leaked_lanes(
                 backend=session.backend,
                 created_at=session.created_at,
                 create_hmac=session.create_hmac,
+                task_statuses=tuple((task_id, task_status(task_id) or "unknown") for task_id in session.task_ids),
             )
         )
     return sorted(lanes, key=lambda lane: (-(lane.age_seconds or 0), lane.kind, lane.resource_id))
