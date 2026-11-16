@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -220,13 +221,18 @@ async def test_shutdown_neither_starts_nor_applies_late_polling_work(central: Ce
 @pytest.mark.asyncio
 async def test_poll_slots_belong_to_each_app_instead_of_the_process(central: Central) -> None:
     first, second = ObservedApp(), ObservedApp()
+    stdout, stderr = sys.stdout, sys.stderr
 
-    async def observe(app: ObservedApp) -> None:
-        async with app.run_test():
+    try:
+        # Textual redirects process-wide streams. Shut down the inner app first.
+        async with first.run_test(), second.run_test():
             await eventually(lambda: central.calls >= 2)
             central.release.set()
-            await eventually(lambda: bool(app.frames))
+            await eventually(lambda: bool(first.frames and second.frames))
 
-    await asyncio.gather(observe(first), observe(second))
-    assert first.frames and second.frames
+        assert sys.stdout is stdout
+        assert sys.stderr is stderr
+    finally:
+        # If an app fails early, its redirect can unwind out of order.
+        sys.stdout, sys.stderr = stdout, stderr
     assert central.maximum_active == 2
