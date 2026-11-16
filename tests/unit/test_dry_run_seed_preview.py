@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click.testing import CliRunner
 from rich.console import Console
 
 from bernstein.cli import run_bootstrap
@@ -67,3 +68,16 @@ def test_dry_run_rejects_unselectable_cli_seed(monkeypatch: Any, tmp_path: Path)
             model_override=None,
             cli=None,
         )
+
+
+def test_dry_run_reports_non_utf8_seed_as_config_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    seed = tmp_path / "план.yaml"
+    seed.write_bytes(b"goal: \xff\n")
+
+    result = CliRunner().invoke(run_bootstrap.run, ["--dry-run", "--seed", seed.name])
+
+    assert result.exit_code == 1
+    assert "Cannot parse seed file" in result.stderr
+    assert seed.name in result.stderr
+    assert "UTF-8" in result.stderr

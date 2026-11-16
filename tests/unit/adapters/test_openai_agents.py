@@ -1831,14 +1831,14 @@ class TestRunnerRun:
             prompt="hello",
             workdir="/workspace",
             model="deepseek/deepseek-chat",
-            base_url="https://openrouter.ai/api/v1",
+            base_url="https://openrouter.ai/api/v1?key=synthetic-endpoint-secret",
             api_key_env="OPENROUTER_API_KEY",
         )
         client_sentinel = object()
         explicit_model_sentinel = object()
         fake_agent_cls = MagicMock()
         fake_runner = MagicMock()
-        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_runner.run_sync.return_value = _FakeResult(summary="synthetic-provider-output")
         fake_chat_model_cls = MagicMock(return_value=explicit_model_sentinel)
         fake_sdk = MagicMock(
             Agent=fake_agent_cls,
@@ -1849,7 +1849,7 @@ class TestRunnerRun:
         with (
             patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
             patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
-            caplog.at_level("INFO"),
+            caplog.at_level("DEBUG", logger="bernstein.adapters.openai_agents_runner"),
         ):
             rc = run(manifest)
         assert rc == EXIT_OK
@@ -1861,10 +1861,10 @@ class TestRunnerRun:
             openai_client=client_sentinel,
         )
         assert fake_agent_cls.call_args.kwargs["model"] is explicit_model_sentinel
-        assert any(
-            "deepseek/deepseek-chat" in rec.message and "https://openrouter.ai/api/v1" in rec.message
-            for rec in caplog.records
-        )
+        assert fake_openai.AsyncOpenAI.call_args.kwargs["base_url"] == manifest.base_url
+        assert "routing model='deepseek/deepseek-chat'" in caplog.text
+        assert "synthetic-endpoint-secret" not in caplog.text
+        assert "synthetic-provider-output" not in caplog.text
 
     def test_run_uses_bare_model_string_without_base_url(self) -> None:
         """No ``base_url`` override: existing behavior (bare model string,
@@ -2038,13 +2038,38 @@ class TestRunnerHeartbeat:
 
     def test_heartbeat_stops_after_event_set(self, tmp_path: Path) -> None:
         hb_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
-        stop_event = _start_heartbeat("hb-stop", hb_dir, interval_s=0.05)
+        threads: list[threading.Thread] = []
+        events: list[threading.Event] = []
+
+        def capture_thread(**kwargs: Any) -> threading.Thread:
+            thread = threading.Thread(**kwargs)
+            threads.append(thread)
+            return thread
+
+        def capture_event() -> threading.Event:
+            event = threading.Event()
+            events.append(event)
+            return event
+
         hb_file = hb_dir / "hb-stop.json"
-        _await_heartbeat_payload(hb_file)
-        stop_event.set()
-        time.sleep(0.15)
+        try:
+            with patch.object(runner_module, "threading", wraps=threading) as runner_threads:
+                runner_threads.Event.side_effect = capture_event
+                runner_threads.Thread.side_effect = capture_thread
+                stop_event = _start_heartbeat("hb-stop", hb_dir, interval_s=60.0)
+            (thread,) = threads
+            _await_heartbeat_payload(hb_file)
+            assert thread.is_alive()
+            stop_event.set()
+            thread.join(timeout=5.0)
+            assert not thread.is_alive(), "setting the stop event must wake and stop the heartbeat writer"
+        finally:
+            for event in events:
+                event.set()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(timeout=5.0)
         hb_file.unlink()
-        time.sleep(0.15)
         assert not hb_file.exists()
 
     def test_resolve_heartbeat_dir_prefers_manifest_field(self) -> None:

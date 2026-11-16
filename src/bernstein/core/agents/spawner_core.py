@@ -27,6 +27,8 @@ from bernstein.adapters.base import (
     SpawnError,
     SpawnResult,
 )
+from bernstein.adapters.openclaw import API_KEY_ENV as OPENCLAW_API_KEY_ENV
+from bernstein.adapters.openclaw import resolve_openclaw_route
 from bernstein.adapters.plugin_sdk import (
     SAMPLING_PARAM_KEYS,
     SamplingParamsRefusal,
@@ -1710,7 +1712,9 @@ class AgentSpawner:
         adapter_pinned: bool = False,
         context_policy_config: dict[str, Any] | None = None,
         policy_hook_registry: PolicyHookRegistry | None = None,
+        agent_manifest_exporter: Callable[[str, str], list[dict[str, str]]] | None = None,
     ) -> None:
+        self._agent_manifest_exporter = agent_manifest_exporter
         self._policy_hook_registry = policy_hook_registry
         self._enable_caching = enable_caching
         # True when the run-level adapter was explicitly selected by the
@@ -3399,14 +3403,13 @@ class AgentSpawner:
 
             probe_adapter = get_adapter(adapter_name)
         except Exception as exc:
-            logger.info(
+            logger.warning(
                 "_primary_adapter_supports_sampling: provider_name=%r model=%r -> "
-                "adapter=%r could not be probed (%s: %s); treating as supports_sampling=False",
+                "adapter=%r could not be probed (%s); treating as supports_sampling=False",
                 provider_name,
                 model_config.model,
                 adapter_name,
                 type(exc).__name__,
-                exc,
             )
             return False
 
@@ -3861,6 +3864,17 @@ class AgentSpawner:
                 verdict.floor,
                 verdict.advisory_id,
             )
+
+    def _adapter_admission_key(self, adapter_name: str, provider_name: str | None) -> str:
+        """Use the registered identity for admission when dispatch fell back to the run pin."""
+        if (
+            self._adapter_pinned
+            and self._adapter_registry_name is not None
+            and adapter_name == self._adapter.name()
+            and (not provider_name or adapter_name_for_provider(provider_name, "") is None)
+        ):
+            return self._adapter_registry_name
+        return adapter_name
 
     def _preflight_adapter_admission(self, adapter_name: str) -> None:
         """Refuse an adapter that cannot prove conformance admission (#2610).
@@ -4905,6 +4919,12 @@ class AgentSpawner:
         resolved_endpoint_profile_name = endpoint_profile_name
         resolved_endpoint_adapter_name = self._adapter.name()
         resolved_endpoint_model = model_config.model
+        if (
+            self._runtime_bridge is None
+            and self._infer_adapter_name_for_provider(provider_name, model_config.model).lower() == "openclaw"
+        ):
+            resolved_endpoint_adapter_name = "openclaw"
+            resolved_endpoint_base_url = self._openclaw_host_endpoint(model_config, endpoint_base_url)
 
         # Model-registry gate: the final model choice (router, role policy,
         # operator pin, override) is fully resolved here and no process has
@@ -5265,6 +5285,18 @@ class AgentSpawner:
                 health_interval_minutes=_health_check_interval(tasks),
             )
 
+            # Export a composition snapshot before any backend launch. The
+            # optional callback supplies declarations, signing and storage;
+            # no exported manifest is read as scheduling authority.
+            if self._agent_manifest_exporter is not None:
+                try:
+                    session.agent_manifest_references = self._agent_manifest_exporter(session_id, prompt)
+                except BaseException:
+                    # No worker will be returned to reap this reservation.
+                    # Claimed slots do not expire through the pool's TTL.
+                    self._release_warm_pool_slot(session_id)
+                    raise
+
             remote_spawned = False
             if self._runtime_bridge is not None:
                 # Same capability gate as the local adapter loop below: the
@@ -5366,7 +5398,16 @@ class AgentSpawner:
                     # dropping them would run the task with parameters the
                     # operator did not ask for, so this raises instead of
                     # falling through to provider failover.
-                    ensure_sampling_params_supported(target_adapter, effective_mcp)
+                    openclaw_endpoint = None
+                    sampling_config = effective_mcp
+                    if target_adapter.name().lower() == "openclaw":
+                        sampling_config = dict(effective_mcp or {})
+                        configured_endpoint = sampling_config.pop("base_url", "")
+                        credential = sampling_config.pop("api_key_env", None)
+                        if not isinstance(configured_endpoint, str) or credential not in (None, OPENCLAW_API_KEY_ENV):
+                            raise SpawnError("OpenClaw requires its dedicated gateway credential and endpoint")
+                        openclaw_endpoint = self._openclaw_host_endpoint(model_config, configured_endpoint)
+                    ensure_sampling_params_supported(target_adapter, sampling_config)
 
                     # Security-floor spawn preflight (#2515): refuse a
                     # below-floor adapter binary before it receives task
@@ -5381,7 +5422,7 @@ class AgentSpawner:
                     # a fresh, matching admission receipt, sealing a chain-
                     # anchored receipt for the decision either way. Same
                     # placement rationale as the floor preflight above.
-                    self._preflight_adapter_admission(adapter_name)
+                    self._preflight_adapter_admission(self._adapter_admission_key(adapter_name, provider_name))
 
                     # Capability-aware routing (#2663): anchor the profile hash
                     # the resolved adapter presents at dispatch so replay detects
@@ -5394,6 +5435,8 @@ class AgentSpawner:
                     # Per-attempt config so a failover to a different
                     # adapter never inherits another adapter's extras.
                     attempt_mcp = self._mcp_config_for_adapter(target_adapter, effective_mcp)
+                    if openclaw_endpoint is not None:
+                        attempt_mcp = {**(attempt_mcp or {}), "base_url": openclaw_endpoint}
 
                     # Wave 3 (per-agent instrumentation): tell the
                     # openai_agents runner subprocess which task it is
@@ -5455,8 +5498,12 @@ class AgentSpawner:
                                 len(role_council.get("candidates") or ()),
                             )
 
-                    if self._policy_hook_registry is not None:
-                        endpoint = (attempt_mcp or {}).get("base_url", "")
+                    if self._policy_hook_registry is not None or openclaw_endpoint is not None:
+                        endpoint = (
+                            openclaw_endpoint
+                            if openclaw_endpoint is not None
+                            else (attempt_mcp or {}).get("base_url", "")
+                        )
                         if not isinstance(endpoint, str):
                             raise SpawnError("external admission cannot bind a non-string endpoint")
                         try:
@@ -5464,7 +5511,7 @@ class AgentSpawner:
                                 session_id=session_id,
                                 subject=AdmissionSubject(
                                     role=session.role,
-                                    adapter=target_adapter.name(),
+                                    adapter="openclaw" if openclaw_endpoint is not None else target_adapter.name(),
                                     model=model_config.model,
                                     endpoint=endpoint,
                                     sandbox=self._admission_sandbox_tier(isolation_mode),
@@ -5617,6 +5664,10 @@ class AgentSpawner:
                             session.provider = None
                         session.model_vendor = getattr(target_adapter, "model_vendor", "") or ""
                         session.model_config = model_config
+                        if openclaw_endpoint is not None:
+                            session.endpoint_adapter_name = "openclaw"
+                            session.endpoint_model = model_config.model
+                            session.endpoint_base_url = openclaw_endpoint
                         break
                     except RateLimitError as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
@@ -6200,6 +6251,9 @@ class AgentSpawner:
         # name (the attachment pin is that path), so the hand-over happens
         # only now, and is undone if the agent does not start so the next
         # resume still finds the worktree where it was preserved.
+        if self._agent_manifest_exporter is not None:
+            session.agent_manifest_references = self._agent_manifest_exporter(session_id, prompt)
+
         preserved_path = worktree_path
         owner = next((m for m in self._worktree_managers.values() if m.owns(preserved_path)), None)
         if owner is not None:
@@ -7090,6 +7144,23 @@ class AgentSpawner:
         except Exception as exc:  # audit must never block execution
             logger.warning("Could not emit %s audit event for %s: %s", event_type, resource_id, exc)
 
+    def _openclaw_host_endpoint(self, model_config: ModelConfig, configured_endpoint: str) -> str:
+        """Bind the CLI route before it can enter a different execution backend."""
+        if (
+            self._sandbox_session_routing_active()
+            or self._sandbox is not None
+            or self._container_mgr is not None
+            or self._backend == AgentBackend.IN_PROCESS
+        ):
+            raise SpawnError("OpenClaw CLI requires the direct subprocess backend")
+        try:
+            endpoint, _key = resolve_openclaw_route(model_config)
+        except ValueError as exc:
+            raise SpawnError(str(exc)) from exc
+        if configured_endpoint and configured_endpoint != endpoint:
+            raise SpawnError("OpenClaw gateway endpoint conflicts with role configuration")
+        return endpoint
+
     def _adapter_cmd_for_container(
         self,
         *,
@@ -7101,15 +7172,15 @@ class AgentSpawner:
     ) -> list[str]:
         """Build the CLI command to run inside the container.
 
-        Reads the prompt from the prompt file instead of passing it as
-        a command-line argument (which can hit ARG_MAX limits).
+        The generated command reads the prompt from the mounted session file
+        at execution time.
 
         Args:
-            _prompt_file: Path to the prompt file (part of interface;
+            prompt_file: Path to the prompt file (part of interface;
                 the container path is reconstructed from session_id).
             model_config: Model and effort config.
             session_id: Session ID for the worker wrapper.
-            _mcp_config: MCP configuration dict (part of interface).
+            mcp_config: MCP configuration dict (part of interface).
 
         Returns:
             Command argument list.
@@ -7124,6 +7195,8 @@ class AgentSpawner:
         # Build a generic shell command that reads the prompt and pipes it
         # to the adapter CLI. This works across all adapters.
         adapter_name = adapter.name().lower()
+        if adapter_name == "openclaw":
+            raise SandboxSelectionError("OpenClaw CLI requires the direct subprocess backend")
 
         # Resolve the actual CLI binary name. adapter.name() may return a
         # display name like "Qwen CLI" which is not a valid command. Map

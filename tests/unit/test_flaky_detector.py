@@ -14,10 +14,12 @@ import pytest
 from bernstein.core.flaky_detector import FlakyDetector, parse_pytest_output
 from bernstein.core.flaky_detector import TestRun as FlakyRunRecord
 
+from bernstein.core.quality import flaky_detector
 from bernstein.core.quality.flaky_detector import (
     FixProofObservations,
     PytestInvocationObservation,
     PytestPhaseObservation,
+    capture_pytest_observation,
     evaluate_fix_proof,
 )
 
@@ -115,6 +117,32 @@ def test_structured_pytest_capture_records_collection_failure(tmp_path: Path) ->
     assert result["phases"] == [{"node_id": "test_import_error.py", "phase": "collect", "outcome": "error"}]
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "elapsed_ns", "duration_ms"),
+    [(0, 0, 0), (0, 125_999_999, 125), (1, 2_000_000_000, 2000), (2, 999_999, 0)],
+)
+def test_structured_pytest_capture_records_duration(
+    monkeypatch: pytest.MonkeyPatch, exit_code: int, elapsed_ns: int, duration_ms: int
+) -> None:
+    ticks = iter((100_000_000, 100_000_000 + elapsed_ns))
+    monkeypatch.setattr(flaky_detector, "perf_counter_ns", lambda: next(ticks), raising=False)
+
+    def fake_main(args: list[str], *, plugins: list[object]) -> int:
+        assert args == ["-q", "test_sample.py"]
+        assert len(plugins) == 1
+        return exit_code
+
+    monkeypatch.setattr(pytest, "main", fake_main)
+    observation = capture_pytest_observation(("-q", "test_sample.py"))
+
+    assert observation.exit_code == exit_code
+    observed_duration = getattr(observation, "duration_ms", None)
+    assert observed_duration is not None, "missing duration telemetry"
+    assert observed_duration == duration_ms
+    assert observation.selected_node_ids == ()
+    assert observation.phases == ()
+
+
 def _proof_run(nodes: tuple[str, ...], *, failed: tuple[str, ...] = ()) -> PytestInvocationObservation:
     phases: list[PytestPhaseObservation] = []
     for node in nodes:
@@ -138,6 +166,19 @@ def fix_proof() -> FixProofObservations:
     return FixProofObservations(
         proof, regression, 2, (red, red), (green, green), (red, red), (control, control), (control, control)
     )
+
+
+@pytest.mark.parametrize(
+    "arm", ["tests_on_base", "full_change", "source_reverted", "regression_base", "regression_full"]
+)
+def test_fix_proof_verdict_ignores_execution_durations(fix_proof: FixProofObservations, arm: str) -> None:
+    timed = tuple(
+        replace(observation, duration_ms=duration)
+        for observation, duration in zip(getattr(fix_proof, arm), (1, 1000), strict=True)
+    )
+    evidence = replace(fix_proof, **{arm: timed})
+
+    assert evaluate_fix_proof(evidence) == evaluate_fix_proof(fix_proof)
 
 
 def test_fix_proof_requires_a_stable_common_witness(fix_proof: FixProofObservations) -> None:

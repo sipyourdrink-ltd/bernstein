@@ -22,6 +22,7 @@ from bernstein.core.spawn_prompt import (
     _render_prompt,
 )
 
+from bernstein.core.agents import project_context as _project_context
 from bernstein.templates.renderer import TemplateError
 
 
@@ -42,6 +43,29 @@ def test_read_cached_reuses_cached_content_until_file_mtime_changes(tmp_path: Pa
     assert first == "v1"
     assert second == "v1"
     assert third == "v2"
+
+
+def test_project_context_file_cache_evicts_least_recently_used(tmp_path: Path) -> None:
+    """The bounded project-context cache keeps recently reused paths."""
+    _project_context._FILE_CACHE.clear()
+    paths = [tmp_path / f"project-{index}.md" for index in range(4)]
+    for index, path in enumerate(paths):
+        path.write_text(f"context-{index}", encoding="utf-8")
+
+    with patch.object(_project_context, "_FILE_CACHE_MAX_ENTRIES", 3):
+        assert [_project_context.read_cached(path) for path in paths[:3]] == [
+            "context-0",
+            "context-1",
+            "context-2",
+        ]
+        # Reuse the oldest path so that the second path becomes least recently used.
+        assert _project_context.read_cached(paths[0]) == "context-0"
+        assert _project_context.read_cached(paths[3]) == "context-3"
+
+    assert len(_project_context._FILE_CACHE) == 3
+    assert str(paths[0]) in _project_context._FILE_CACHE
+    assert str(paths[1]) not in _project_context._FILE_CACHE
+    _project_context._FILE_CACHE.clear()
 
 
 def test_list_subdirs_cached_returns_sorted_names(tmp_path: Path) -> None:

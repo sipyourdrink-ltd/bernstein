@@ -385,9 +385,6 @@ class TestWorkerProcess:
         # Kill and verify cleanup
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait(timeout=5)
-
-        # Give a moment for cleanup
-        time.sleep(0.2)
         assert not pid_file.exists(), "PID file was not cleaned up"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signals")
@@ -443,7 +440,6 @@ class TestWorkerProcess:
             except subprocess.TimeoutExpired:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 raise
-            time.sleep(0.2)
             assert not pid_file.exists(), (
                 f"iter {i}: PID file leaked after SIGTERM at startup (worker exit={proc.returncode})"
             )
@@ -507,8 +503,11 @@ class TestWorkerProcess:
         exit_code = proc.wait(timeout=10)
         assert exit_code == 42
 
-    def test_worker_handles_missing_command(self) -> None:
+    def test_worker_handles_missing_command(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Worker should exit 127 for missing command."""
+        # An empty search path cannot contain an inaccessible executable or
+        # directory that would turn a missing command into permission denied.
+        monkeypatch.setenv("PATH", str(tmp_path))
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -519,7 +518,7 @@ class TestWorkerProcess:
                 "--session",
                 "missing-cmd",
                 "--pid-dir",
-                "/tmp",
+                str(tmp_path),
                 "--",
                 "nonexistent_command_xyz_12345",
             ],

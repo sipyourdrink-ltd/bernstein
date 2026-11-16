@@ -74,13 +74,16 @@ editor.
 
 ## Verify
 
+**Saved-registration check:**
+
 ```bash
 bernstein desktop-register --list
 ```
 
-The `continue` row should show `Registered: yes`. In a Continue session,
-the Bernstein tools appear in the MCP tool list once the editor has
-reloaded the config.
+The `continue` row should show `Registered: yes`.
+
+**After-reload check:** In a Continue session, the Bernstein tools appear in
+the MCP tool list once the editor has reloaded the config.
 
 For machine-readable output:
 

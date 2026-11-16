@@ -17,6 +17,10 @@ bernstein ledger gc     <run-id>
 
 ## What the ledger is
 
+The work ledger records resumable task state. The per-step replay journal
+records the step data used for replay. They serve these separate roles
+while sharing the canonical encoding described below.
+
 A hash-chained, append-only JSONL record of the task graph and every state
 transition, stored per run under `.sdd/runtime/ledger/<run-id>/`. Each
 entry links the previous entry's hash:
@@ -166,4 +170,6 @@ a normal `git gc` reclaims them.
 | Two divergent resumes | refusal naming the fork entry and both heads |
 
 Exit codes across the group: `0` ok, `1` no ledger, `2` verification
-failed, `3` divergence.
+failed, `3` divergence. Human-readable diagnostics for missing ledgers,
+verification failures, and divergence go to stderr. When `verify --json` can read a ledger,
+it prints the structured result to stdout even if verification fails.

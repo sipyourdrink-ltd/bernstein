@@ -219,13 +219,25 @@ def list_ledger_runs(repo_dir: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _run_git_bytes(
+    repo_dir: Path, args: list[str], *, input_data: bytes | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    """Run ledger plumbing that reads or writes raw bytes."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo_dir,
+            input=input_data,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LedgerGitError(f"git {args[0]} timed out after {exc.timeout}s") from exc
+
+
 def _read_blob(repo_dir: Path, sha: str) -> bytes:
-    result = subprocess.run(
-        ["git", "cat-file", "blob", sha],
-        cwd=repo_dir,
-        capture_output=True,
-        check=False,
-    )
+    result = _run_git_bytes(repo_dir, ["cat-file", "blob", sha])
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         msg = f"git cat-file blob {sha[:12]} failed: {stderr}"
@@ -322,13 +334,7 @@ def _verify_anchored(rows: list[dict[str, Any]], meta: dict[str, Any], run_id: s
 
 
 def _hash_blob(repo_dir: Path, payload: bytes) -> str:
-    result = subprocess.run(
-        ["git", "hash-object", "-w", "--stdin"],
-        cwd=repo_dir,
-        input=payload,
-        capture_output=True,
-        check=False,
-    )
+    result = _run_git_bytes(repo_dir, ["hash-object", "-w", "--stdin"], input_data=payload)
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         msg = f"git hash-object failed: {stderr}"
@@ -339,13 +345,7 @@ def _hash_blob(repo_dir: Path, payload: bytes) -> str:
 def _mktree(repo_dir: Path, entries: list[tuple[str, str]]) -> str:
     """Build a flat tree from ``(name, blob_sha)`` pairs; return the sha."""
     lines = "".join(f"100644 blob {sha}\t{name}\0" for name, sha in sorted(entries))
-    result = subprocess.run(
-        ["git", "mktree", "-z"],
-        cwd=repo_dir,
-        input=lines.encode("utf-8"),
-        capture_output=True,
-        check=False,
-    )
+    result = _run_git_bytes(repo_dir, ["mktree", "-z"], input_data=lines.encode("utf-8"))
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         msg = f"git mktree failed: {stderr}"
@@ -355,25 +355,19 @@ def _mktree(repo_dir: Path, entries: list[tuple[str, str]]) -> str:
 
 def _commit_tree(repo_dir: Path, tree_sha: str, *, parent: str | None, message: str) -> str:
     """Create an anchor commit for *tree_sha* with a fixed machine identity."""
-    args = ["git", "commit-tree", tree_sha, "-m", message]
+    args = ["commit-tree", tree_sha, "-m", message]
     if parent is not None:
-        args[3:3] = ["-p", parent]
+        args[2:2] = ["-p", parent]
     env = os.environ | {
         "GIT_AUTHOR_NAME": _ANCHOR_IDENT_NAME,
         "GIT_AUTHOR_EMAIL": _ANCHOR_IDENT_EMAIL,
         "GIT_COMMITTER_NAME": _ANCHOR_IDENT_NAME,
         "GIT_COMMITTER_EMAIL": _ANCHOR_IDENT_EMAIL,
     }
-    result = subprocess.run(
-        args,
-        cwd=repo_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    try:
+        result = run_git(args, repo_dir, env=env)
+    except subprocess.TimeoutExpired as exc:
+        raise LedgerGitError(f"git commit-tree timed out after {exc.timeout}s") from exc
     if result.returncode != 0:
         msg = f"git commit-tree failed: {result.stderr.strip()}"
         raise LedgerGitError(msg)
@@ -549,19 +543,10 @@ def fetch_ledger_ref(repo_dir: Path, run_id: str, *, remote: str = "origin") -> 
     return sha
 
 
-def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> MaterializeResult:
-    """Materialize the anchored chain for *run_id* into *ledger_dir*.
-
-    The anchored chain is verified end to end before a byte is written.
-    An existing local ledger is compared against it: identical chains are
-    a no-op, an anchored extension fast-forwards the local file, a local
-    extension refuses (anchor instead), and a diverged pair refuses with
-    the exact fork position (two divergent resumes are never merged).
-
-    Raises:
-        LedgerGitError: Missing ref, broken anchored chain, or local-ahead.
-        LedgerDivergenceError: When local and anchored chains diverge.
-    """
+def plan_ledger_materialization(
+    repo_dir: Path, run_id: str, ledger_dir: Path
+) -> tuple[MaterializeResult, list[LedgerEntry]]:
+    """Verify the anchored chain and compare it with local history without writing."""
     rows, meta = read_anchored_rows(repo_dir, run_id)
     head_hash = _verify_anchored(rows, meta, run_id)
     anchored = _anchored_entries(rows)
@@ -584,10 +569,23 @@ def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> Materia
                 f"run 'bernstein ledger anchor {run_id}' instead."
             )
             raise LedgerGitError(msg)
-        if relation.relation == "identical":
-            return MaterializeResult(action="unchanged", head_hash=head_hash, entry_count=len(anchored))
-        action = "fast-forwarded"
+        action = "unchanged" if relation.relation == "identical" else "fast-forwarded"
 
+    return MaterializeResult(action=action, head_hash=head_hash, entry_count=len(anchored)), anchored
+
+
+def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> MaterializeResult:
+    """Write the verified anchored chain if it is an extension or no local ledger exists.
+
+    Raises:
+        LedgerGitError: Missing ref, broken anchored chain, or local-ahead.
+        LedgerDivergenceError: When local and anchored chains diverge.
+    """
+    result, anchored = plan_ledger_materialization(repo_dir, run_id, ledger_dir)
+    if result.action == "unchanged":
+        return result
+
+    reader = LedgerReader(ledger_dir)
     ledger_dir.mkdir(parents=True, exist_ok=True)
     payload = "\n".join(entry.canonical_line() for entry in anchored) + "\n"
     tmp_path = ledger_dir / ".bucket.materialize.tmp"
@@ -600,12 +598,12 @@ def materialize_ledger(repo_dir: Path, run_id: str, ledger_dir: Path) -> Materia
         except OSError:  # pragma: no cover -- permissions are best-effort
             logger.debug("ledger permission tightening failed for %s", ledger_dir, exc_info=True)
 
-    verification = LedgerReader(ledger_dir).verify(expected_head=head_hash)
+    verification = reader.verify(expected_head=result.head_hash)
     if not verification.ok:  # pragma: no cover -- defensive round-trip check
         msg = f"materialized ledger failed re-verification: {'; '.join(verification.errors[:3])}"
         raise LedgerGitError(msg)
 
-    return MaterializeResult(action=action, head_hash=head_hash, entry_count=len(anchored))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -663,5 +661,6 @@ __all__ = [
     "ledger_ref",
     "list_ledger_runs",
     "materialize_ledger",
+    "plan_ledger_materialization",
     "read_anchored_rows",
 ]

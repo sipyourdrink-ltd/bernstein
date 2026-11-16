@@ -228,7 +228,7 @@ def _parse_flow(
 
     flow_id = str(document.get("flow_id", "")).strip()
     if not flow_id:
-        raise click.BadParameter("flow document must carry a non-empty flow_id")
+        raise click.BadParameter("The flow document must carry a non-empty flow_id.")
     start_url = str(document.get("start_url", ""))
 
     raw_steps = document.get("steps", [])
@@ -277,7 +277,7 @@ def _parse_recording(document: dict[str, Any]) -> tuple[PageState, ...]:
 
     raw_frames = document.get("frames", [])
     if not isinstance(raw_frames, list) or not raw_frames:
-        raise click.BadParameter("recording must carry a non-empty frames list")
+        raise click.BadParameter("The recording must carry a non-empty frames list.")
     frames: list[State] = []
     for position, row in enumerate(raw_frames):
         if not isinstance(row, dict):
@@ -652,7 +652,7 @@ def research_run_cmd(
     document = _load_json(Path(input_path), label="research input")
     raw_queries = document.get("queries")
     if not isinstance(raw_queries, list) or not raw_queries:
-        raise click.BadParameter("research input must carry a non-empty queries list")
+        raise click.BadParameter("Research input must carry a non-empty queries list.")
 
     fetch_fn: Any = None
     if fetch_fn_ref is not None:
@@ -852,7 +852,7 @@ def ops_run_cmd(
 
     inputs = document.get("inputs", [])
     if not isinstance(inputs, list):
-        raise click.BadParameter("ops input must carry a non-empty inputs list")
+        raise click.BadParameter("The ops input must use a list for inputs.")
 
     # Load keys from document
     private_key_pem = document.get("private_key_pem", "")
@@ -1091,7 +1091,7 @@ def data_run_cmd(
 
     inputs = document.get("inputs", [])
     if not isinstance(inputs, list):
-        raise click.BadParameter("data input must carry a non-empty inputs list")
+        raise click.BadParameter("The data input must use a list for inputs.")
 
     private_key_pem = document.get("private_key_pem", "")
     public_key_pem = document.get("public_key_pem", "")

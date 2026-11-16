@@ -426,11 +426,6 @@ def _read_quality_scores(metrics_dir: Path, days: int = 90) -> list[dict[str, An
     return records
 
 
-def _iso_date(ts: float) -> str:
-    """Return ISO date string (YYYY-MM-DD) for a Unix timestamp."""
-    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
-
-
 def _bucket_completions(
     completion_records: list[dict[str, Any]],
     bucket_key_fn: Any,

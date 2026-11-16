@@ -4,7 +4,7 @@ Covers:
 
   * the card shape (transports, auth, tiers, meter, spec rev);
   * the card reflecting live process state (active tier, meter toggle, token);
-  * the FastMCP resource exposing the card;
+  * the MCPServer resource exposing the card;
   * the streamable HTTP transport emitting the card on ``initialize``.
 """
 
@@ -115,7 +115,7 @@ def test_card_reflects_meter_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# FastMCP resource
+# MCPServer resource
 # ---------------------------------------------------------------------------
 
 

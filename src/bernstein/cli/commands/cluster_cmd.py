@@ -179,7 +179,7 @@ def _issue_leaf(
     "out_dir",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="Directory to write cert artifacts. Default: ~/.bernstein/cluster/",
+    help="Directory for certificate artifacts (default: ~/.bernstein/cluster/).",
 )
 @click.option(
     "--server-cn",

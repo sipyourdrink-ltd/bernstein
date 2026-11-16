@@ -128,6 +128,7 @@ def _run_aider(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch Aider with TLS material resolved from the environment."""
     args = list(sys.argv[1:] if argv is None else argv)
     tls = _resolve_tls_from_env()
     if tls is not None:

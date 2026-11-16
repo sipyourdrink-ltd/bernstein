@@ -14,8 +14,10 @@ layout or styling: Mermaid is a `flowchart TD` with positional node ids
 (`n0`, `n1`, …) so punctuation in store ids cannot collide; DOT is a
 `digraph inventory` that quotes the raw ids.
 
-`--store` is a JSON file with `nodes` and `edges` (a hand-written fixture until
-the entity-per-file store in #5129 lands):
+`--store` points to a supplied JSON graph file containing `nodes` and `edges`.
+The render command reads that file; it does not discover the host or read
+entity-per-file observations directly. For example, the committed fixture is
+used here:
 
 ```json
 {

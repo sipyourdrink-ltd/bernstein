@@ -16,10 +16,9 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NotRequired, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NotRequired, Protocol, TypedDict, cast
 
 from fastapi import HTTPException
-from typing_extensions import TypedDict
 
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
@@ -30,8 +29,15 @@ from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
+from bernstein.core.tasks.claim_admission import (
+    ClaimAction,
+    ClaimAdmissionController,
+    ClaimAdmissionStatus,
+    ClaimControlError,
+)
 from bernstein.core.tasks.errors import TaskDomainError
 from bernstein.core.tasks.lifecycle import (
+    UNSUCCESSFUL_TERMINAL_STATUSES,
     IllegalTransitionError,
     _validate_task_transition,
     transition_agent,
@@ -137,6 +143,10 @@ class TaskRecord(TypedDict):
     role: str
     priority: int
     dispatch_tier: NotRequired[str]
+    model: NotRequired[str | None]
+    effort: NotRequired[str | None]
+    cli: NotRequired[str | None]
+    requires: NotRequired[list[str]]
     scope: str
     complexity: str
     estimated_minutes: int | None
@@ -254,6 +264,10 @@ class TaskCreateRequest(Protocol):
     model: str | None
     effort: str | None
     cli: str | None
+
+    @property
+    def requires(self) -> Sequence[str]: ...
+
     batch_eligible: bool
     approval_required: bool
     eu_ai_act_risk: str
@@ -454,6 +468,8 @@ class EmptyCompletionError(TaskDomainError):
 
 
 class AttachmentPreview(NamedTuple):
+    """Derived tasks and manifest digest returned by read-only attachment preview."""
+
     tasks: tuple[Task, ...]
     manifest_sha256: str
 
@@ -484,7 +500,17 @@ class TaskStore:
         jsonl_path: Path,
         archive_path: Path = DEFAULT_ARCHIVE_PATH,
         metrics_jsonl_path: Path | None = None,
+        *,
+        claim_control_path: Path | None = None,
+        claim_controller_id: str | None = None,
     ) -> None:
+        if (claim_control_path is None) != (claim_controller_id is None):
+            raise ValueError("Claim control path and controller id must be configured together")
+        self._claim_controller = (
+            ClaimAdmissionController(claim_control_path, claim_controller_id, jsonl_path)
+            if claim_control_path is not None and claim_controller_id is not None
+            else None
+        )
         self._task_listeners: list[Callable[[Task], None]] = []
         self._task_created_listeners: list[Callable[[Task], None]] = []
         self._tasks: dict[str, Task] = {}
@@ -837,8 +863,21 @@ class TaskStore:
                     task.status = TaskStatus(record.get("status", task.status.value))
                     if "dispatch_tier" in record:
                         task.dispatch_tier = DispatchTier(record["dispatch_tier"])
+                    if "model" in record:
+                        task.model = record["model"]
+                    if "effort" in record:
+                        task.effort = record["effort"]
+                    if "cli" in record:
+                        task.cli = record["cli"]
+                    if "requires" in record:
+                        task.requires = list(record["requires"])
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
+                    if isinstance(version := record.get("version"), int):
+                        task.version = version
+                    task.terminal_reason = record.get("terminal_reason", task.terminal_reason)
+                    if isinstance(metadata := record.get("metadata"), dict):
+                        task.metadata = metadata
                     task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
                     self._index_add(task)
                 else:
@@ -1252,6 +1291,10 @@ class TaskStore:
             "role": task.role,
             "priority": task.priority,
             "dispatch_tier": task.dispatch_tier.value,
+            "model": task.model,
+            "effort": task.effort,
+            "cli": task.cli,
+            "requires": list(task.requires),
             "scope": task.scope.value,
             "complexity": task.complexity.value,
             "estimated_minutes": task.estimated_minutes,
@@ -1443,49 +1486,6 @@ class TaskStore:
         self._notify_task_updated(task)
         return True
 
-    async def _revive_blocked_dependents(self, *task_ids: str) -> None:
-        """Revive tasks stranded on *task_ids* now that a retry of them succeeded.
-
-        A failed dependency that is retried and then completes does not
-        automatically clear its stranded dependents: the cascade that ran
-        when it first failed moved them to ``BLOCKED_BY_FAILED_DEP`` naming
-        the original id, and the original id is still terminal. This walks
-        the same frontier as :meth:`_cascade_unblock_dependency` but seeds it
-        from ``retry_of`` links, so a dependent whose
-        ``blocking_task_id`` matches a retried-and-succeeded task is moved
-        back to ``OPEN``.
-
-        Only the direct dependent is rewired -- a task stranded on a task
-        that was itself stranded is not reachable through this path, and the
-        retry's own completion re-runs the transitive unblock. Mirrors
-        :meth:`_cascade_failed_dependency`, which strands the same ring in
-        the failure direction (issue #4376).
-
-        Must be called with ``self._lock`` held.
-        """
-        solved_blocker_ids: set[str] = set()
-        for tid in task_ids:
-            completed_task = self._tasks.get(tid)
-            if completed_task is None or not isinstance(completed_task.metadata, dict):
-                continue
-            retry_of = completed_task.metadata.get("retry_of")
-            if isinstance(retry_of, str) and retry_of:
-                solved_blocker_ids.add(retry_of)
-
-        frontier = set(solved_blocker_ids)
-        while frontier:
-            next_frontier: set[str] = set()
-            for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
-                if candidate.status is not TaskStatus.BLOCKED_BY_FAILED_DEP:
-                    continue
-                blocker_id = (
-                    candidate.metadata.get("blocking_task_id") if isinstance(candidate.metadata, dict) else None
-                )
-                if blocker_id in solved_blocker_ids and await self._unblock_task(candidate, blocker_id):
-                    solved_blocker_ids.add(candidate.id)
-                    next_frontier.add(candidate.id)
-            frontier = next_frontier
-
     async def _cascade_unblock_dependency(self, *completed_task_ids: str) -> None:
         """Unblock tasks that were stranded by failed dependencies now succeeded by *completed_task_ids*.
 
@@ -1508,6 +1508,8 @@ class TaskStore:
                     solved_blocker_ids.add(retry_of)
 
         frontier = set(completed_task_ids)
+        completed = [*self._by_status[TaskStatus.DONE].values(), *self._by_status[TaskStatus.CLOSED].values()]
+        succeeded_ids = satisfied_dependency_ids(completed)
         while frontier:
             next_frontier: set[str] = set()
             for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
@@ -1517,16 +1519,33 @@ class TaskStore:
                     candidate.metadata.get("blocking_task_id") if isinstance(candidate.metadata, dict) else None
                 )
                 blocker = self._tasks.get(blocker_id) if blocker_id else None
-                blocker_unblocked = blocker is not None and blocker.status not in (
-                    TaskStatus.BLOCKED_BY_FAILED_DEP,
-                    TaskStatus.FAILED,
-                    TaskStatus.CANCELLED,
-                    TaskStatus.REFUSED,
-                )
+                blocker_unblocked = blocker is not None and blocker.status not in UNSUCCESSFUL_TERMINAL_STATUSES
                 blocker_cleared = bool(blocker_id and (blocker_id in solved_blocker_ids or blocker_unblocked))
-                if (blocker_cleared or self._dependencies_satisfied(candidate)) and await self._unblock_task(
-                    candidate, blocker_id or candidate.id
-                ):
+                if not blocker_cleared and not self._dependencies_satisfied(candidate):
+                    continue
+
+                remaining_blocker = min(
+                    (
+                        dep_id
+                        for dep_id in candidate.depends_on
+                        if dep_id not in succeeded_ids
+                        and (dependency := self._tasks.get(dep_id)) is not None
+                        and dependency.status in UNSUCCESSFUL_TERMINAL_STATUSES
+                    ),
+                    default=None,
+                )
+                if remaining_blocker is not None:
+                    if remaining_blocker != blocker_id:
+                        candidate.metadata["blocking_task_id"] = remaining_blocker
+                        candidate.result_summary = (
+                            f"dependency {remaining_blocker} is {self._tasks[remaining_blocker].status.value}"
+                        )
+                        candidate.version += 1
+                        await self._append_jsonl(self._task_to_record(candidate))
+                        self._notify_task_updated(candidate)
+                    continue
+
+                if await self._unblock_task(candidate, blocker_id or candidate.id):
                     solved_blocker_ids.add(candidate.id)
                     next_frontier.add(candidate.id)
             frontier = next_frontier
@@ -1639,6 +1658,7 @@ class TaskStore:
             model=req.model,
             effort=req.effort,
             cli=getattr(req, "cli", None),
+            requires=list(getattr(req, "requires", ())),
             batch_eligible=batch_eligible,
             eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
             approval_required=bool(getattr(req, "approval_required", False)),
@@ -2082,6 +2102,7 @@ class TaskStore:
                     model=req.model,
                     effort=req.effort,
                     cli=getattr(req, "cli", None),
+                    requires=list(getattr(req, "requires", ())),
                     batch_eligible=batch_eligible,
                     eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
                     approval_required=bool(getattr(req, "approval_required", False)),
@@ -2151,6 +2172,71 @@ class TaskStore:
 
         return created_tasks, skipped_titles
 
+    async def _claim_control_io(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Keep the store lock until durable control I/O finishes, even on cancellation."""
+        operation_task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        cancelled: asyncio.CancelledError | None = None
+        while True:
+            try:
+                result = await asyncio.shield(operation_task)
+                break
+            except asyncio.CancelledError as exc:
+                if operation_task.cancelled():
+                    raise
+                cancelled = exc
+        if cancelled is not None:
+            raise cancelled
+        return result
+
+    @property
+    def claim_admission_controlled(self) -> bool:
+        """Whether this store has explicitly configured claim admission control."""
+        return self._claim_controller is not None
+
+    async def _require_claim_admission(self) -> None:
+        """Called only while holding the claim/transition lock, before effects."""
+        if self._claim_controller is None:
+            return
+        try:
+            status = await self._claim_control_io(self._claim_controller.snapshot)
+        except ClaimControlError as exc:
+            raise HTTPException(
+                status_code=503, detail="Claim admission unavailable; operator action required"
+            ) from exc
+        if status["halted"]:
+            raise HTTPException(status_code=503, detail="Task claim admission is halted")
+
+    async def claim_admission_status(self) -> ClaimAdmissionStatus:
+        if self._claim_controller is None:
+            raise HTTPException(status_code=409, detail="Claim admission controller is not configured")
+        async with self._lock:
+            try:
+                return await self._claim_control_io(self._claim_controller.snapshot)
+            except ClaimControlError as exc:
+                raise HTTPException(
+                    status_code=503, detail="Claim admission unavailable; operator action required"
+                ) from exc
+
+    async def change_claim_admission(
+        self, action: ClaimAction, *, actor: str, reason: str, expected_revision: int
+    ) -> ClaimAdmissionStatus:
+        """Operator boundary; HTTP callers must authenticate before invoking it."""
+        if self._claim_controller is None:
+            raise HTTPException(status_code=409, detail="Claim admission controller is not configured")
+        async with self._lock:
+            try:
+                return await self._claim_control_io(
+                    self._claim_controller.transition,
+                    action,
+                    actor=actor,
+                    reason=reason,
+                    expected_revision=expected_revision,
+                )
+            except ClaimControlError as exc:
+                raise HTTPException(
+                    status_code=503, detail="Claim control transition refused; preserve state for operator recovery"
+                ) from exc
+
     async def claim_next(
         self,
         role: str,
@@ -2182,6 +2268,7 @@ class TaskStore:
             The claimed Task, or None if nothing is available.
         """
         async with self._lock:
+            await self._require_claim_admission()
             pq = self._priority_queues.get((role, TaskStatus.OPEN))
             if not pq:
                 return None
@@ -2278,6 +2365,7 @@ class TaskStore:
                 not in an OPEN state (already claimed / in progress / terminal).
         """
         async with self._lock:
+            await self._require_claim_admission()
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
@@ -2344,6 +2432,7 @@ class TaskStore:
         failed: list[str] = []
         normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
         async with self._lock:
+            await self._require_claim_admission()
             for task_id in task_ids:
                 task = self._tasks.get(task_id)
                 if task is None or task.status != TaskStatus.OPEN or not self._dependencies_satisfied(task):
@@ -2506,7 +2595,6 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
-            await self._revive_blocked_dependents(task_id)
             await self._cascade_unblock_dependency(task_id)
         if completion is not None:
             self._audit_contract_outcome(task_id, outcome="valid")

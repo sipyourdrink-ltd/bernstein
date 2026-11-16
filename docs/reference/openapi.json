@@ -4331,7 +4331,7 @@
     "/webhook": {
       "post": {
         "summary": "Generic Webhook",
-        "description": "Create a task directly from a generic inbound webhook payload.\n\nThe endpoint is intentionally small and separate from the trigger-manager\nflow: callers POST a task-shaped payload and Bernstein creates one task.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
+        "description": "Create a task from a generic inbound webhook payload.\n\nAfter authentication, matching trigger rules can suppress task creation.\nPolicy suppressions are recorded in trigger history and return HTTP 409.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
         "operationId": "generic_webhook_webhook_post",
         "requestBody": {
           "content": {
@@ -5932,6 +5932,78 @@
         }
       }
     },
+    "/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/identities": {
       "get": {
         "tags": [
@@ -6562,7 +6634,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce for an expired, already-resolved or evicted approval returns\n``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -13798,7 +13870,7 @@
     "/api/v1/webhook": {
       "post": {
         "summary": "Generic Webhook",
-        "description": "Create a task directly from a generic inbound webhook payload.\n\nThe endpoint is intentionally small and separate from the trigger-manager\nflow: callers POST a task-shaped payload and Bernstein creates one task.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
+        "description": "Create a task from a generic inbound webhook payload.\n\nAfter authentication, matching trigger rules can suppress task creation.\nPolicy suppressions are recorded in trigger history and return HTTP 409.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
         "operationId": "generic_webhook_api_v1_webhook_post",
         "requestBody": {
           "content": {
@@ -15399,6 +15471,78 @@
         }
       }
     },
+    "/api/v1/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_api_v1_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_api_v1_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/identities": {
       "get": {
         "tags": [
@@ -16029,7 +16173,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce for an expired, already-resolved or evicted approval returns\n``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_api_v1_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -20261,6 +20405,67 @@
         "title": "ChannelResponseResponse",
         "description": "Single channel response in API responses."
       },
+      "ClaimAdmissionStatus": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "controller_id": {
+            "type": "string",
+            "title": "Controller Id"
+          },
+          "halted": {
+            "type": "boolean",
+            "title": "Halted"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "controller_id",
+          "halted",
+          "revision",
+          "actor",
+          "reason"
+        ],
+        "title": "ClaimAdmissionStatus"
+      },
+      "ClaimControlRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason",
+          "expected_revision"
+        ],
+        "title": "ClaimControlRequest",
+        "description": "A reason, never an authority, controller path or installation selector."
+      },
       "ClaimGossipRequest": {
         "properties": {
           "receipts": {
@@ -22636,6 +22841,16 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -23585,6 +23800,13 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -23687,6 +23909,17 @@
               }
             ],
             "title": "Parent Session Id"
+          },
+          "claimed_by_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By Session"
           },
           "retry_count": {
             "type": "integer",
@@ -24506,6 +24739,16 @@
               }
             ],
             "title": "Cli"
+          },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
           },
           "batch_eligible": {
             "type": "boolean",

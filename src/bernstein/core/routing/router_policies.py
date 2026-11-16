@@ -243,7 +243,7 @@ def select_with_free_tier_priority(
     Checks for free tier availability first, then falls back to normal routing.
 
     Args:
-        task: Task to route.
+        _task: Reserved parameter.
         candidates: Candidate providers.
 
     Returns:
@@ -271,7 +271,7 @@ def select_round_robin_agent(
 
     Args:
         agents: List of available agents.
-        task: Task to route.
+        _task: Reserved parameter.
 
     Returns:
         Selected agent or None if no agents available.

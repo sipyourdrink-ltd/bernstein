@@ -316,6 +316,7 @@ def task_to_response(task: Task) -> TaskResponse:
         model=task.model,
         effort=task.effort,
         cli=task.cli,
+        requires=list(task.requires),
         batch_eligible=task.batch_eligible,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         # Issue #3110: the declared artifact contract must survive the
@@ -331,6 +332,7 @@ def task_to_response(task: Task) -> TaskResponse:
         progress_log=cast("list[ProgressEntry]", task.progress_log).copy(),  # type: ignore[reportUnknownMemberType]
         version=task.version,
         parent_session_id=task.parent_session_id,
+        claimed_by_session=task.claimed_by_session,
         # expose typed retry bookkeeping so clients read the
         # single source of truth rather than regex-ing the title.
         retry_count=task.retry_count,
@@ -1034,6 +1036,8 @@ def create_app(
     plan_mode: bool = False,
     readonly: bool = False,
     slack_signing_secret: str | None = None,
+    claim_control_path: Path | None = None,
+    claim_controller_id: str | None = None,
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -1049,6 +1053,9 @@ def create_app(
             rejected with 405.  The dashboard, events stream, and read
             endpoints remain fully accessible.  Useful for public demo
             deployments.
+        claim_control_path: Explicit operator-owned persistent claim controller database.
+            Paired with claim_controller_id; omitted keeps existing claim behavior.
+        claim_controller_id: Operator-chosen installation controller identity.
         slack_signing_secret: Slack app signing secret for verifying webhook
             request signatures.  Defaults to ``SLACK_SIGNING_SECRET`` env var.
 
@@ -1067,6 +1074,7 @@ def create_app(
     from bernstein.core.auth_middleware import SSOAuthMiddleware
     from bernstein.core.routes.agents import router as agents_router
     from bernstein.core.routes.auth import router as auth_router
+    from bernstein.core.routes.claim_admission import router as claim_admission_router
     from bernstein.core.routes.costs import router as costs_router
     from bernstein.core.routes.dashboard import router as dashboard_router
     from bernstein.core.routes.discord import router as discord_router
@@ -1118,7 +1126,12 @@ def create_app(
     _cluster_auth_secret = effective_cluster.auth_token or ""
     cluster_authenticator: ClusterAuthenticator | None = None
 
-    store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
+    store = TaskStore(
+        jsonl_path,
+        metrics_jsonl_path=metrics_jsonl_path,
+        claim_control_path=claim_control_path,
+        claim_controller_id=claim_controller_id,
+    )
     sse_bus = SSEBus()
 
     def _publish_task_update(task_obj: Any) -> None:
@@ -1626,6 +1639,7 @@ def create_app(
         file_health_router,
         fleet_router,
         drain_router,
+        claim_admission_router,
         identities_router,
         acp_router,
         approvals_router,
@@ -1804,7 +1818,7 @@ class TaskNotificationManager:
                 try:
                     await queue.put(notification)
                 except Exception as e:
-                    logger.warning(f"Failed to notify subscriber: {e}")
+                    logger.warning("Failed to notify subscriber: %s", e)
 
     # 2. Add generic type to return value
     async def subscribe(self) -> asyncio.Queue[AgentStatusNotification]:
@@ -1856,5 +1870,10 @@ async def notify_agent_status(
     await _task_notification_manager.notify_agent_status(notification)
 
     logger.info(
-        f"Agent status notification: {agent_id} ({role}) - {status} (task: {task_id}, progress: {progress:.0%})"
+        "Agent status notification: %s (%s) - %s (task: %s, progress: %.0f%%)",
+        agent_id,
+        role,
+        status,
+        task_id,
+        progress * 100,
     )

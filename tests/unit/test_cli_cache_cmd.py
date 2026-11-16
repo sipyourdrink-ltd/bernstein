@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
 from bernstein.core.semantic_cache import ResponseCacheManager
 from click.testing import CliRunner
 
@@ -75,3 +76,23 @@ def test_cache_clear_unverified_only(tmp_path: Path) -> None:
     mgr = ResponseCacheManager(tmp_path)
     assert mgr.inspect_task("T-verified") is not None
     assert mgr.inspect_task("T-ghost") is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "detail"),
+    [
+        (b"{", "Expecting property name"),
+        (b"[]", "Expected a JSON object"),
+        (b'{"ingredients":"repo"}', "ingredients must be a list"),
+    ],
+    ids=["malformed-json", "not-an-object", "invalid-policy"],
+)
+def test_cache_policy_rejects_invalid_input(tmp_path: Path, payload: bytes, detail: str) -> None:
+    path = tmp_path / "policy.json"
+    path.write_bytes(payload)
+    result = CliRunner().invoke(cli, ["cache", "policy", "--file", str(path), "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "Invalid cache policy" in result.stderr
+    assert detail in result.stderr
+    assert result.stdout == ""

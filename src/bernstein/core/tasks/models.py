@@ -173,18 +173,24 @@ class ApiTierInfo:
 
 
 class Scope(Enum):
+    """Relative size of a task's expected work."""
+
     SMALL = "small"  # <30 min, single file
     MEDIUM = "medium"  # 30-120 min, few files
     LARGE = "large"  # 2-8 hours, subsystem
 
 
 class Complexity(Enum):
+    """Relative difficulty of implementing a task."""
+
     LOW = "low"  # Docs, formatting, simple fixes
     MEDIUM = "medium"  # Feature implementation, tests
     HIGH = "high"  # Architecture, complex reasoning, security
 
 
 class TaskStatus(Enum):
+    """Lifecycle states persisted by the task store."""
+
     PLANNED = "planned"  # Awaiting human approval before execution (plan mode)
     OPEN = "open"
     CLAIMED = "claimed"
@@ -1256,6 +1262,8 @@ class AgentSession:
     # the attachment set next to the ``agent_spawned`` event. Empty when the
     # session's tasks declare nothing.
     context_attachments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    # Optional export references only; composition manifests grant no authority.
+    agent_manifest_references: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     # Skill templates injected into the worktree at spawn time (issue #3382).
     # Each entry is ``{"template_name", "version", "pre_render_digest",
     # "rendered_digest", "trigger_source", "status"}`` in injection order -
@@ -1646,6 +1654,7 @@ class OrchestratorConfig:
     """
 
     max_agents: int = 6
+    hash_profile: str = "py-json-v1"
     # Derived from ORCHESTRATOR.tick_interval_s (float, canonical) so overrides
     # via ``tuning.orchestrator.tick_interval_s`` actually change the tick rate.
     poll_interval_s: int = field(default_factory=_default_poll_interval_s)

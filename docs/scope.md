@@ -32,8 +32,16 @@ superseding [ADR-006](decisions/006-no-embedded-llm.md).
 
 ## No database for run state
 
-All persistent orchestrator state is plain text under `.sdd/` — YAML,
-Markdown, JSONL, JSON. No embedded database, no hidden in-memory state.
+In the default local workspace, persistent orchestrator state and run
+artifacts are plain text under `.sdd/` — YAML, Markdown, JSONL, JSON.
+The default task store is the memory backend with JSONL persistence at
+`.sdd/runtime/tasks.jsonl`. These local run artifacts remain inspectable
+in an editor.
+
+The task-store factory also supports optional PostgreSQL and Redis-backed
+coordination modes. Those alternatives are configured separately and may
+store task records in PostgreSQL rather than in local files; they are not
+the local default.
 
 A feature that requires run state to move behind a schema is out of
 scope. State you cannot open in an editor is state you cannot read
@@ -64,11 +72,13 @@ Record: [ADR-007](decisions/007-pluggy-plugin-system.md).
 
 ## Adapters wrap tools, they do not reimplement them
 
-An adapter translates between this orchestrator and a coding CLI's
-actual interface. It does not reimplement the tool's behaviour, work
-around its bugs, or vendor its prompts. When a tool changes its flags,
-the adapter changes. When a tool is wrong, that belongs in the tool's
-own tracker.
+Bernstein is the open-source governance layer for AI agents. An adapter
+integrates an agent's actual interface with that layer: shell-based coding
+CLIs are one integration type, and SDK-backed interfaces are another.
+The workload may produce code or a declared artifact. An adapter does not
+reimplement the tool's behaviour, work around its bugs, or vendor its
+prompts. When an interface changes, the adapter changes. When a tool is
+wrong, that belongs in the tool's own tracker.
 
 A new adapter is welcome. An adapter for a tool that cannot be
 exercised in CI is not, because an adapter nothing runs is a claim
@@ -86,7 +96,8 @@ Record: [web UI principles](design/web-ui-principles.md), P7.
 
 ## Not a model provider
 
-This drives coding CLIs you have already installed and authenticated.
+This integrates agent interfaces you have already configured and authenticated,
+including coding CLIs and SDK-backed agents.
 It does not proxy inference and does not resell tokens.
 
 ## Not an editor

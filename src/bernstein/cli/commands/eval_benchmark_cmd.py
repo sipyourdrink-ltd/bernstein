@@ -134,7 +134,7 @@ def _run_swe_bench_command(
 @click.option("--lite", "force_lite", is_flag=True, default=False, help="Deprecated alias for --subset lite.")
 @click.option("--sample", "sample", type=int, default=None, help="Evaluate a random sample of N instances.")
 @click.option("--instance", "instance_id", default=None, help="Evaluate a single instance by ID.")
-@click.option("--dataset", "dataset_path", default=None, help="Path to local JSONL dataset file.")
+@click.option("--dataset", "dataset_path", default=None, help="Path to the local JSONL dataset file.")
 @click.option(
     "--save/--no-save",
     default=True,
@@ -310,7 +310,7 @@ def _run_programbench_command(
     help="Evaluate a random sample of N tasks.",
 )
 @click.option("--task", "task_id", default=None, help="Evaluate a single task by ID.")
-@click.option("--dataset", "dataset_path", default=None, help="Path to local JSONL dataset file.")
+@click.option("--dataset", "dataset_path", default=None, help="Path to the local JSONL dataset file.")
 @click.option(
     "--out",
     "out_json",
@@ -939,7 +939,7 @@ def eval_golden(workdir: str) -> None:
 )
 @click.option("--sample", "sample", type=int, default=None, help="Evaluate a random sample of N instances.")
 @click.option("--instance", "instance_id", default=None, help="Evaluate a single instance by ID.")
-@click.option("--dataset", "dataset_path", default=None, help="Path to local JSONL dataset file.")
+@click.option("--dataset", "dataset_path", default=None, help="Path to the local JSONL dataset file.")
 @click.option(
     "--save/--no-save",
     default=True,
@@ -1608,7 +1608,7 @@ def eval_ab(
     suite_mode = suite_path is not None or arm_a is not None or arm_b is not None
     if suite_mode:
         if not (suite_path and arm_a and arm_b):
-            raise click.UsageError("suite mode requires --suite, --arm-a, and --arm-b together")
+            raise click.UsageError("Suite mode requires --suite, --arm-a, and --arm-b together.")
         _run_profile_ab_command(
             suite_path=suite_path,
             arm_a=arm_a,
@@ -1629,7 +1629,7 @@ def eval_ab(
 
     if not (variant_a_path and variant_b_path and tasks_path):
         raise click.UsageError(
-            "provide --variant-a/--variant-b/--tasks (variant mode) or --suite/--arm-a/--arm-b (suite mode)"
+            "Provide --variant-a/--variant-b/--tasks (variant mode) or --suite/--arm-a/--arm-b (suite mode)."
         )
 
     from bernstein.eval.ab_runner import (

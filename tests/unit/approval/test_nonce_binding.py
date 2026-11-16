@@ -57,6 +57,17 @@ def test_minted_nonce_is_sixteen_random_bytes(tmp_path: Path) -> None:
     assert bytes.fromhex(a.nonce_hex) == a.nonce
 
 
+def test_expired_nonce_cannot_resolve_before_eviction(tmp_path: Path) -> None:
+    queue = ApprovalQueue(base_dir=tmp_path)
+    approval = _push(queue, ttl=0)
+
+    with pytest.raises(ApprovalNonceExpired):
+        queue.resolve(approval.id, ApprovalDecision.ALLOW, nonce=approval.nonce, principal=_PRINCIPAL)
+
+    assert queue.get_resolution(approval.id) is None
+    assert queue.get(approval.id) == approval
+
+
 def test_valid_nonce_resolves_the_gate(tmp_path: Path) -> None:
     """Reply that echoes the exact nonce resolves the approval."""
     queue = ApprovalQueue(base_dir=tmp_path)

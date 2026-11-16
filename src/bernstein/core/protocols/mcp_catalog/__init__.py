@@ -142,19 +142,17 @@ class MCPServerCapabilities:
     Attributes:
         server_name: Name of the MCP server.
         tool_names: Immutable set of tool names advertised by the server.
-        capability_digest: SHA256 digest of sorted canonical JSON.
+        capability_digest: SHA256 digest under the observation profile.
         first_contact_at: ISO timestamp of first observed capabilities.
+        tool_definition_fingerprints: Optional full-entry and member digests;
+            absent in legacy name-only snapshots.
     """
 
     server_name: str
     tool_names: frozenset[str]
     capability_digest: str
     first_contact_at: str
-
-
-def _canonicalize_tool_names(tool_names: frozenset[str]) -> str:
-    """Return JSON-canonicalized sorted tool name list for digest."""
-    return json.dumps(sorted(tool_names), separators=(",", ":"))
+    tool_definition_fingerprints: dict[str, dict[str, str]] | None = None
 
 
 class ServerCapabilitiesStore:
@@ -164,7 +162,7 @@ class ServerCapabilitiesStore:
     Capabilities are persisted to a JSON file at ``<sdd_dir>/.sdd/mcp_server_capabilities.json``.
     """
 
-    def __init__(self, sdd_dir: str):
+    def __init__(self, sdd_dir: str | Path) -> None:
         self._file_path = Path(sdd_dir) / ".sdd" / "mcp_server_capabilities.json"
         self._lock_path = self._file_path.with_suffix(".lock")
         self._capabilities: dict[str, MCPServerCapabilities] = {}
@@ -179,6 +177,7 @@ class ServerCapabilitiesStore:
                     tool_names=frozenset(caps_data["tool_names"]),
                     capability_digest=caps_data["capability_digest"],
                     first_contact_at=caps_data["first_contact_at"],
+                    tool_definition_fingerprints=caps_data.get("tool_definition_fingerprints"),
                 )
                 for server_name, caps_data in data.items()
             }
@@ -195,6 +194,11 @@ class ServerCapabilitiesStore:
                 "tool_names": sorted(caps.tool_names),
                 "capability_digest": caps.capability_digest,
                 "first_contact_at": caps.first_contact_at,
+                **(
+                    {"tool_definition_fingerprints": caps.tool_definition_fingerprints}
+                    if caps.tool_definition_fingerprints is not None
+                    else {}
+                ),
             }
             for server_name, caps in entries.items()
         }
@@ -219,13 +223,15 @@ class ServerCapabilitiesStore:
         capability_digest: str,
         *,
         before_change: Callable[[MCPServerCapabilities | None], None] | None = None,
+        tool_definition_fingerprints: dict[str, dict[str, str]] | None = None,
     ) -> MCPServerCapabilities | None:
         """Update server capabilities and detect drift.
 
         Args:
             server_name: Name of the MCP server.
             tool_names: Current set of tool names.
-            capability_digest: Digest of current tool names.
+            capability_digest: Digest of current names or full definition observation.
+            tool_definition_fingerprints: Optional full-entry and member digests.
             before_change: Optional observer for first contact and changed digests.
                 Called under the snapshot lock before saving; an exception leaves
                 the previous baseline in place. Must not re-enter the store.
@@ -249,6 +255,7 @@ class ServerCapabilitiesStore:
                 tool_names=tool_names,
                 capability_digest=capability_digest,
                 first_contact_at=datetime.now().isoformat() if old is None else old.first_contact_at,
+                tool_definition_fingerprints=tool_definition_fingerprints,
             )
             self._write_capabilities(entries)
             self._capabilities = entries
