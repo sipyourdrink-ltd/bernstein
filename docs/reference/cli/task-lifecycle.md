@@ -80,6 +80,28 @@ bernstein add-task "Add JWT middleware" \
 
 The server responds with the created task as JSON; in `--json` mode the CLI re-emits it on stdout. Pipe to `jq -r .id` to capture the ID.
 
+### If creation returns no result
+
+Do not automatically retry `add-task` after a timeout or lost response. Its
+create payload has no caller-chosen task ID; the task store generates a new
+ID for each creation. The first request may already have created a task even
+when the caller did not receive its ID, and a second request can create a
+duplicate.
+
+Read the current backlog before deciding whether to submit again:
+
+```bash
+bernstein plan --export task-backlog.json
+jq '.[] | select(.title == "Add SBOM endpoint" and .role == "backend")' task-backlog.json
+```
+
+Compare the candidate's description, dependencies, and other submitted
+fields as well as its title and role. If it is the task you created, reuse
+its ID. Titles are not unique, so a title match alone does not establish
+identity. If readback fails or leaves the result ambiguous, resolve that
+uncertainty before issuing another create. Retry safety depends on the
+individual command; a successful read does not make task creation idempotent.
+
 ---
 
 ## `bernstein list-tasks`
