@@ -70,6 +70,50 @@ class TestEmptyPolicyBackCompat:
 # ---------------------------------------------------------------------------
 
 
+class TestDefaultAllowList:
+    """An explicit default applies only when a role has no named entry."""
+
+    def test_unlisted_role_uses_default_allowlist(self) -> None:
+        policy = RolePolicy.from_dict({"*": ["claude"]})
+        assert policy.is_allowed("new-role", "claude")
+        assert not policy.is_allowed("new-role", "aider")
+        assert policy.allowed_for("new-role") == ("claude",)
+
+    def test_empty_default_denies_every_adapter(self) -> None:
+        policy = RolePolicy.from_dict({"*": []})
+        assert not policy.is_allowed("new-role", "claude")
+        with pytest.raises(RoleAdapterDenied) as denied:
+            enforce("new-role", "claude", policy=policy)
+        assert denied.value.allowed == ()
+
+    def test_named_role_overrides_default(self) -> None:
+        policy = RolePolicy.from_dict({"*": ["claude"], "docs": ["aider"], "backend": []})
+        assert policy.is_allowed("docs", "aider")
+        assert not policy.is_allowed("docs", "claude")
+        assert policy.is_allowed("backend", "anything")
+
+    def test_default_survives_disk_round_trip(self, tmp_path: Path) -> None:
+        path = tmp_path / "policy.json"
+        save_policy_file(RolePolicy.from_dict({"*": [], "docs": ["aider"]}), path)
+        policy = load_policy_file(path)
+        assert not policy.is_allowed("new-role", "aider")
+        assert policy.is_allowed("docs", "aider")
+
+    def test_cli_default_set_show_and_test(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        path = str(tmp_path / "policy.json")
+        result = runner.invoke(security_group, ["role-adapter-policy", "set", "--role", "*", "--policy-file", path])
+        assert result.exit_code == 0, result.output
+        assert "no adapters allowed" in result.output
+        shown = runner.invoke(security_group, ["role-adapter-policy", "show", "--policy-file", path])
+        assert "no adapters allowed" in shown.output
+        denied = runner.invoke(
+            security_group,
+            ["role-adapter-policy", "test", "--role", "new-role", "--adapter", "claude", "--policy-file", path],
+        )
+        assert denied.exit_code == 1, denied.output
+
+
 class TestAllowList:
     """Configured allow-list strictly limits adapter spawn."""
 

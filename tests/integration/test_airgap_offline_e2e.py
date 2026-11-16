@@ -30,8 +30,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import zipfile
 from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path
 from typing import Final
 
@@ -209,6 +211,17 @@ def cosign_keypair(tmp_path: Path) -> tuple[Path, Path]:
     return priv, pub
 
 
+def _short_temp_directory(prefix: str) -> tempfile.TemporaryDirectory[str]:
+    # Unix sockets need a short path. Sandboxes may mount /tmp read-only.
+    socket_root = "/tmp" if os.name == "posix" and Path("/tmp").is_dir() else None
+    try:
+        return tempfile.TemporaryDirectory(prefix=prefix, dir=socket_root)
+    except OSError:
+        if socket_root is None:
+            raise
+        return tempfile.TemporaryDirectory(prefix=prefix)
+
+
 @pytest.fixture
 def gpg_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Set up an isolated GNUPGHOME for the test (skipped when gpg absent).
@@ -222,38 +235,38 @@ def gpg_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """
     if not _HAS_GPG:
         pytest.skip("gpg not installed -- skipping real-gpg integration")
-    import shutil as _sh
-    import tempfile
-
-    short_root = Path(tempfile.mkdtemp(prefix="bgpg-", dir="/tmp"))
-    home = short_root / "h"
-    home.mkdir(mode=0o700)
-    monkeypatch.setenv("GNUPGHOME", str(home))
-    batch = home / "key.batch"
-    batch.write_text(
-        "%no-protection\n"
-        "Key-Type: RSA\n"
-        "Key-Length: 2048\n"
-        "Subkey-Type: RSA\n"
-        "Subkey-Length: 2048\n"
-        "Name-Real: Bernstein Test\n"
-        "Name-Email: test@example.com\n"
-        "Expire-Date: 0\n"
-        "%commit\n"
-    )
-    result = subprocess.run(
-        ["gpg", "--batch", "--pinentry-mode=loopback", "--gen-key", str(batch)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        _sh.rmtree(short_root, ignore_errors=True)
-        pytest.skip(f"gpg key generation failed in test env: {result.stderr}")
-    try:
-        yield home
-    finally:
-        _sh.rmtree(short_root, ignore_errors=True)
+    with _short_temp_directory("bgpg-") as short_root:
+        home = Path(short_root) / "h"
+        home.mkdir(mode=0o700)
+        monkeypatch.setenv("GNUPGHOME", str(home))
+        batch = home / "key.batch"
+        batch.write_text(
+            "%no-protection\n"
+            "Key-Type: RSA\n"
+            "Key-Length: 2048\n"
+            "Subkey-Type: RSA\n"
+            "Subkey-Length: 2048\n"
+            "Name-Real: Bernstein Test\n"
+            "Name-Email: test@example.com\n"
+            "Expire-Date: 0\n"
+            "%commit\n",
+            encoding="utf-8",
+        )
+        try:
+            result = subprocess.run(
+                ["gpg", "--batch", "--pinentry-mode=loopback", "--gen-key", str(batch)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                pytest.skip(f"gpg key generation failed in test env: {result.stderr}")
+            yield home
+        finally:
+            # Target only the agent started for this fixture's GNUPGHOME.
+            if gpgconf := shutil.which("gpgconf"):
+                with suppress(OSError, subprocess.TimeoutExpired):
+                    subprocess.run([gpgconf, "--kill", "gpg-agent"], capture_output=True, timeout=5, check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -596,24 +609,15 @@ def test_socket_guard_unix_sockets_are_exempt(airgap_env: None) -> None:
     """
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("AF_UNIX not available on this platform")
-    server_path = Path("/tmp") / f"bernstein-airgap-test-{os.getpid()}.sock"
-    if server_path.exists():
-        server_path.unlink()
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        server.bind(str(server_path))
-        server.listen(1)
-        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            client.settimeout(2.0)
-            # No exception means the guard correctly skipped AF_UNIX.
-            client.connect(str(server_path))
-        finally:
-            client.close()
-    finally:
-        server.close()
-        if server_path.exists():
-            server_path.unlink()
+    with _short_temp_directory("bsock-") as socket_dir:
+        server_path = Path(socket_dir) / "s"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(server_path))
+            server.listen(1)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(2.0)
+                # No exception means the guard correctly skipped AF_UNIX.
+                client.connect(str(server_path))
 
 
 def test_socket_guard_uninstall_restores_original() -> None:

@@ -27,6 +27,10 @@ for fact in facade.subscribe(tag="api-schema", scope="run"):
     use(fact.value)
 ```
 
+`publish` returns the persisted `Fact`, including its attribution triple.
+`subscribe` is an iterator that yields `Fact` objects, newest first, with one
+fact per key.
+
 ### Fact attribution
 
 Every fact carries the same triple a lineage entry would:

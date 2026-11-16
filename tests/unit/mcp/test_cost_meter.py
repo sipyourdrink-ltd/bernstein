@@ -5,7 +5,7 @@ Covers:
   * the meter toggle (``BERNSTEIN_MCP_COST_METER``);
   * the :func:`measure_call` context manager (latency, cost, status);
   * :func:`wrap_envelope` shape on success, failure, and non-JSON payloads;
-  * the FastMCP server wrapping every tool response in the envelope;
+  * the MCPServer server wrapping every tool response in the envelope;
   * the streamable HTTP transport emitting the same envelope shape.
 """
 
@@ -128,7 +128,7 @@ def test_wrap_envelope_passthrough_when_disabled(_meter_off: None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# FastMCP server integration
+# MCPServer server integration
 # ---------------------------------------------------------------------------
 
 
@@ -140,7 +140,7 @@ def _call(tool: str, args: dict | None = None) -> str:
     if hasattr(result, "content"):
         # Structured tools (#3086) answer with a CallToolResult.
         return result.content[0].text
-    # FastMCP returns a (content, structured) tuple in recent versions, or a
+    # MCPServer returns a (content, structured) tuple in recent versions, or a
     # content list in older ones; normalise to the text payload.
     content = result[0] if isinstance(result, tuple) else result
     return content[0].text

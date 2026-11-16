@@ -51,7 +51,8 @@ def show_policy(policy_file: Path, as_json: bool) -> None:
     """Print the current role → allow-list mapping.
 
     An empty allow-list for a role means **all adapters allowed** (the
-    back-compat default). A role missing from the map is also unrestricted.
+    back-compat default). The optional ``*`` entry is the default for unlisted
+    roles; an empty default means no adapters allowed.
     """
     payload = load_policy_file(policy_file).to_dict()
     if as_json:
@@ -66,6 +67,8 @@ def show_policy(policy_file: Path, as_json: bool) -> None:
     for role, allowed in payload.items():
         if allowed:
             click.echo(f"  {role}: {', '.join(allowed)}")
+        elif role == "*":
+            click.echo("  *: (empty default allow-list - no adapters allowed)")
         else:
             click.echo(f"  {role}: (empty allow-list - all adapters allowed)")
 
@@ -74,7 +77,7 @@ def show_policy(policy_file: Path, as_json: bool) -> None:
 @click.option(
     "--role",
     required=True,
-    help="Role name (e.g. backend, security, docs).",
+    help="Role name (e.g. backend, security, docs), or '*' for unlisted roles.",
 )
 @click.option(
     "--allow",
@@ -83,7 +86,7 @@ def show_policy(policy_file: Path, as_json: bool) -> None:
     help=(
         "Adapter id allowed for this role. Pass --allow multiple times for a "
         "list. Pass with no values to clear the allow-list (back-compat: "
-        "everything allowed)."
+        "everything allowed for a named role; no adapters allowed for '*')."
     ),
 )
 @click.option(
@@ -103,6 +106,8 @@ def set_policy(role: str, allow: tuple[str, ...], policy_file: Path) -> None:
             --allow claude --allow aider
         bernstein security role-adapter-policy set --role security
         # ^ clears the allow-list for the role (back to unrestricted)
+        bernstein security role-adapter-policy set --role '*'
+        # ^ denies every adapter for roles with no named entry
     """
     policy = load_policy_file(policy_file)
     new_map = dict(policy.per_role_allowlists)
@@ -111,6 +116,8 @@ def set_policy(role: str, allow: tuple[str, ...], policy_file: Path) -> None:
     written = save_policy_file(new_policy, policy_file)
     if new_map[role]:
         click.echo(f"role={role!r} allow-list set to {sorted(new_map[role])}; saved to {written}")
+    elif role == "*":
+        click.echo(f"default allow-list set: no adapters allowed for unlisted roles; saved to {written}")
     else:
         click.echo(f"role={role!r} allow-list cleared (back-compat: all adapters allowed); saved to {written}")
 
