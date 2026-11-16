@@ -414,17 +414,23 @@ memory:
 
 ```bash
 bernstein status
-curl http://127.0.0.1:8052/status | jq '.metrics'
+curl http://127.0.0.1:8052/status | jq '{summary, agents}'
 ```
 
-| Metric | Healthy range | Action if outside |
+`GET /status` builds these panels in
+`src/bernstein/core/routes/status_dashboard.py`. It does not expose a
+`metrics` object. The targets below are operator heuristics, not enforced
+thresholds or guarantees.
+
+| Report field | Source and meaning | Operator target / action |
 |---|---|---|
-| `tasks_completed_per_hour` | > 10 | Increase `max_agents` or reduce task size |
-| `avg_task_duration_s` | < 300 | Check for stuck agents |
-| `agent_idle_pct` | 10–30% | > 40%: fewer agents; < 5%: more agents |
-| `merge_conflict_rate` | < 5% | Reduce `max_agents` or improve scope isolation |
-| `cache_hit_rate` | > 50% | Fix dynamic system prompt content |
-| `wal_write_latency_ms` | < 50 ms | Move WAL to faster disk |
+| `summary.open`, `summary.claimed`, `summary.done`, `summary.failed` | Task-store status counts in `/status`. | Investigate a growing backlog or failed count across snapshots. |
+| `summary.agents`, `summary.max_agents` | Live agent count and the configured slot limit in `/status`. | Compare available capacity with ready work before changing the limit. |
+| `agents.items[].status`, `agents.items[].task_ids`, `agents.items[].runtime_s` | Normalized agent rows in `/status`; runtime is time since spawn. | Inspect long-lived workers alongside their assigned tasks; runtime is not task duration. |
+| `summary.cost_usd` | Accumulated spend reported by `/status`. | Compare spend against the run's budget. |
+
+Prometheus exposition is a separate `/metrics` endpoint, described below;
+these status fields are JSON report paths, not Prometheus metric names.
 
 ### Prometheus
 
