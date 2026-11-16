@@ -6,9 +6,12 @@ from dataclasses import replace
 
 import pytest
 
+from bernstein.core.identity.delegation_scope import DelegationScope
 from bernstein.core.replay.conduct_fold import (
     CompletionCoverageStatus,
+    ConductAggregate,
     ConductProjection,
+    ConductScopeActivity,
     UnreadableRun,
     UnreadableRunReason,
     aggregate_conduct,
@@ -222,11 +225,17 @@ def test_unreadable_runs_serialized_order_is_stable_when_inputs_reordered(
         UnreadableRun("run-b", UnreadableRunReason.UNVERIFIABLE),
         UnreadableRun("run-a", UnreadableRunReason.TORN),
     )
+    scope = DelegationScope(permissions=frozenset({"read"}))
+    activities = tuple(
+        ConductScopeActivity(run.run_id, _PRINCIPAL, "recorded work", 1, 1, scope) for run in two_runs
+    )
     forward = aggregate_conduct(
         two_runs,
         principal_id=_PRINCIPAL,
         period_start=100.0,
         period_end=200.0,
+        scope_projection=scope,
+        recorded_activities=activities,
         unreadable_runs=gaps,
     )
     backward = aggregate_conduct(
@@ -234,10 +243,13 @@ def test_unreadable_runs_serialized_order_is_stable_when_inputs_reordered(
         principal_id=_PRINCIPAL,
         period_start=100.0,
         period_end=200.0,
+        scope_projection=scope,
+        recorded_activities=tuple(reversed(activities)),
         unreadable_runs=tuple(reversed(gaps)),
     )
 
     assert forward.canonical_bytes() == backward.canonical_bytes()
+    assert forward.to_dict()["scope_comparison"]["compared_activity_count"] == 2
     assert [entry["run_id"] for entry in forward.to_dict()["unreadable_runs"]] == [
         "run-a",
         "run-a",
@@ -249,3 +261,58 @@ def test_unreadable_runs_serialized_order_is_stable_when_inputs_reordered(
 def test_unreadable_run_rejects_verified_coverage() -> None:
     with pytest.raises(ValueError, match="unverified coverage"):
         UnreadableRun("run-bad", UnreadableRunReason.ABSENT, coverage=CompletionCoverageStatus.VERIFIED)
+
+
+def test_unreadable_runs_preserve_scope_comparison_and_original_citations(
+    two_runs: tuple[ConductProjection, ConductProjection],
+) -> None:
+    scope = DelegationScope(permissions=frozenset({"read"}))
+    activity_scope = DelegationScope(permissions=frozenset({"write"}))
+    activity = ConductScopeActivity("run-a", _PRINCIPAL, "recorded work", 1, 1, activity_scope)
+    gap = UnreadableRun("run-missing", UnreadableRunReason.ABSENT)
+    readable = aggregate_conduct(
+        two_runs[:1],
+        principal_id=_PRINCIPAL,
+        period_start=100.0,
+        period_end=200.0,
+        scope_projection=scope,
+        recorded_activities=(activity,),
+    )
+    aggregate = aggregate_conduct(
+        two_runs[:1],
+        principal_id=_PRINCIPAL,
+        period_start=100.0,
+        period_end=200.0,
+        scope_projection=scope,
+        recorded_activities=(activity,),
+        unreadable_runs=(gap,),
+    )
+    document = aggregate.to_dict()
+
+    assert readable.coverage == CompletionCoverageStatus.VERIFIED
+    assert document["coverage"] == CompletionCoverageStatus.UNVERIFIED.value
+    assert document["runs"] == readable.to_dict()["runs"]
+    assert document["counts"] == readable.counts
+    assert document["unreadable_runs"] == [gap.to_dict()]
+    assert document["scope_comparison"] == readable.to_dict()["scope_comparison"]
+    assert document["scope_comparison"]["divergences"] == [
+        {
+            "run_id": "run-a",
+            "recorded_activity": "recorded work",
+            "event_index_range": {"first": 1, "last": 1},
+            "divergent_axes": ["permissions"],
+            "recorded_scope": activity_scope.to_body(),
+        }
+    ]
+
+
+def test_conduct_aggregate_preserves_positional_scope_comparison(
+    two_runs: tuple[ConductProjection, ConductProjection],
+) -> None:
+    comparison = {"status": "unavailable", "reason": "scope_projection_unavailable", "divergences": []}
+    aggregate = ConductAggregate(_PRINCIPAL, 100.0, 200.0, two_runs, comparison)
+
+    assert aggregate.scope_comparison is comparison
+    assert aggregate.unreadable_runs == ()
+    assert aggregate.to_dict()["scope_comparison"] == comparison
+    assert aggregate.coverage == CompletionCoverageStatus.VERIFIED

@@ -69,6 +69,66 @@ async def cleaned(app):
 
 
 @pytest.mark.asyncio
+async def test_legacy_task_wire_reconnects_to_persistent_authenticated_store(live_server, monkeypatch):
+    from bernstein.mcp.server import create_mcp_server
+    from tests.support.mcp_wire import legacy_mcp_session
+
+    _app, url = live_server
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "operator-secret")
+    monkeypatch.setenv("BERNSTEIN_MCP_COST_METER", "0")
+    async with legacy_mcp_session(create_mcp_server(server_url=url)) as session:
+        created = await session.call_tool_as_task("bernstein_run", {"goal": "Durable legacy task"})
+        task_id = created.task.task_id.split(":", 1)[0]
+        pending = await session.request("tasks/result", {"taskId": task_id})
+        assert pending["isError"] and "still" in pending["content"][0]["text"]
+
+    headers = {"Authorization": "Bearer operator-secret"}
+    async with httpx.AsyncClient(base_url=url, headers=headers) as client:
+        stored = await client.get(f"/tasks/{task_id}")
+        assert stored.status_code == 200 and stored.json()["title"] == "Durable legacy task"
+        claimed = await client.post(f"/tasks/{task_id}/claim")
+        assert claimed.status_code == 200, claimed.text
+        completed = await client.post(f"/tasks/{task_id}/complete", json={"result_summary": "Verified stored result"})
+        assert completed.status_code == 200, completed.text
+
+    # A new MCP server and connection retrieve the authoritative persisted result.
+    async with legacy_mcp_session(create_mcp_server(server_url=url)) as session:
+        polled = await session.get_task(task_id)
+        assert polled.status == "completed"
+        result = await session.request("tasks/result", {"taskId": task_id})
+        assert not result["isError"] and result["content"][0]["text"] == "Verified stored result"
+        listed = await session.request("tasks/list")
+        assert any(row["taskId"].split(":", 1)[0] == task_id for row in listed["tasks"])
+        second = await session.call_tool_as_task("bernstein_run", {"goal": "Cancel legacy task"})
+        cancelled = await session.request("tasks/cancel", {"taskId": second.task.task_id})
+        assert cancelled["status"] == "cancelled"
+        invalid = await session.envelope("tools/call", {"name": "bernstein_run", "arguments": "invalid", "task": {}})
+        assert "error" in invalid
+        forbidden = await session.request("tools/call", {"name": "bernstein_status", "arguments": {}, "task": {}})
+        assert "content" in forbidden and "task" not in forbidden
+
+    # The SDK2 ordinary client remains usable for normal tool calls.
+    from tests.support.mcp_wire import sdk_mcp_session
+
+    server = create_mcp_server(server_url=url)
+    async with sdk_mcp_session(server) as client:
+        plain = await client.call_tool("bernstein_status", {})
+        assert not plain.is_error
+
+    # A legacy task request still traverses the existing HTTP authorization gate.
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN")
+    async with legacy_mcp_session(create_mcp_server(server_url=url)) as session:
+        denied = await session.request(
+            "tools/call", {"name": "bernstein_run", "arguments": {"goal": "Denied"}, "task": {}}
+        )
+        assert "task" not in denied
+        assert "401" in json.loads(denied["content"][0]["text"])["error"]
+    async with httpx.AsyncClient(base_url=url, headers=headers) as client:
+        rows = await client.get("/tasks", params={"limit": 100, "offset": 0})
+        assert rows.status_code == 200 and rows.json()["total"] == 2
+
+
+@pytest.mark.asyncio
 async def test_live_creation_fanout_is_scoped_fast_and_disconnects(live_server):
     app, url = live_server
     headers = {"Authorization": "Bearer operator-secret"}
@@ -216,11 +276,11 @@ async def test_mcp_wait_auth_delivery_timeout_and_cancellation(live_server, monk
         created = await client.post("/tasks", json={"title": "MCP incoming", "description": "x", "role": "backend"})
         assert created.status_code == 201
     result = await wait
-    assert result.structuredContent["notifications"][0]["title"] == "MCP incoming"
+    assert result.structured_content["notifications"][0]["title"] == "MCP incoming"
     await cleaned(app)
     start = time.monotonic()
     timeout_result = await mcp.call_tool("bernstein_subscribe", {"role": "backend", "timeout_seconds": 1})
-    assert timeout_result.structuredContent == {"notifications": [], "timed_out": True}
+    assert timeout_result.structured_content == {"notifications": [], "timed_out": True}
     assert time.monotonic() - start < 2
     await cleaned(app)
     waiting = asyncio.create_task(mcp.call_tool("bernstein_subscribe", {"role": "backend", "timeout_seconds": 5}))

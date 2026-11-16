@@ -35,7 +35,7 @@ frozenset of capability strings supported at that version.
 | `local_version` | The local side's highest version, regardless of outcome. |
 | `remote_version` | The remote side's highest version, regardless of outcome. |
 | `negotiated_version` | The agreed version, or `None` if negotiation failed. |
-| `degraded_capabilities` | Capabilities present on `local_version` but absent from `negotiated_version`. |
+| `degraded_capabilities` | On success, capabilities present on `local_version` but absent from `negotiated_version`; empty on failure. |
 | `success` | `True` if a common major version exists. |
 
 ## The algorithm
@@ -46,12 +46,17 @@ Either list being empty raises `ValueError`.
 
 1. Both version lists are sorted ascending by `(major, minor, patch)`.
 2. Negotiation fails (`success=False`, `negotiated_version=None`) if
-   local and remote share no major version at all.
+   local and remote share no major version at all. Both best-version fields
+   remain populated, but `degraded_capabilities` is an empty frozenset:
+   there is no selected version against which to compute a capability loss.
 3. Otherwise the **highest common major** version is selected.
-4. Within that major, the **highest common minor** is preferred. If no
-   minor is shared, the algorithm falls back to the lower side's
-   highest minor (so negotiation degrades gracefully instead of
-   failing outright).
+4. Within that major, the **highest common minor** is preferred. The
+   selected object is the local version with that minor and its highest
+   local patch number. Its patch and entire capability set are retained;
+   the algorithm does not choose the lower peer patch or intersect the
+   capability sets. If no minor is shared, it selects the lower of the two
+   maximum minors and uses the object from the side supplying that minor,
+   with that side's highest patch and capabilities.
 5. `degraded_capabilities` is computed as `local_best.capabilities -
    negotiated.capabilities` - i.e. what the local side loses by
    settling on the negotiated version, not what the remote side loses.
@@ -91,6 +96,25 @@ window is open, and disappear from the returned `ProtocolVersion` once
 `months_since_deprecation` passes the shim's removal date. Pass
 `months_since_deprecation` explicitly to test the post-removal shape
 without waiting on the wall clock.
+
+### Shared minor, different patches
+
+This pure Python example selects the local object even though the remote
+object has a different patch number and capability set:
+
+```python
+from bernstein.core.protocols.protocol_negotiation import ProtocolVersion, negotiate_version
+
+local = [ProtocolVersion("mcp", 1, 2, 7, frozenset({"tools", "local-extra"}))]
+remote = [ProtocolVersion("mcp", 1, 2, 3, frozenset({"tools"}))]
+result = negotiate_version(local, remote)
+
+assert result.success
+assert result.negotiated_version is local[0]
+print(result.negotiated_version.version_string)  # 1.2.7
+print(sorted(result.negotiated_version.capabilities))  # ['local-extra', 'tools']
+assert result.degraded_capabilities == frozenset()
+```
 
 ## Limitations
 
