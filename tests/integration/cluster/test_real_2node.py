@@ -17,6 +17,7 @@ import time
 import httpx
 import pytest
 
+from bernstein.core.security.jwt_tokens import JWTManager, JWTPayload
 from tests.integration.cluster.conftest import (
     NODE_TIMEOUT_S,
     ClusterHandle,
@@ -213,12 +214,12 @@ def test_network_partition_then_heal(two_node_cluster: ClusterHandle) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 5. Token expiry mid-flight
+# 5. Expired and refreshed tokens
 # --------------------------------------------------------------------------- #
 
 
 def test_token_expiry_then_refresh(two_node_cluster: ClusterHandle) -> None:
-    """5-second JWT, sleep 6, heartbeat fails 401, refresh succeeds."""
+    """Accept a current token, reject an expired token, and accept a refresh."""
     handle = two_node_cluster
 
     # Register a node manually with a long-lived register token so we get a
@@ -246,18 +247,24 @@ def test_token_expiry_then_refresh(two_node_cluster: ClusterHandle) -> None:
     assert resp.status_code == 201, resp.text
     node_id = resp.json()["id"]
 
-    # Mint a deliberately short-lived heartbeat token (5 seconds).
-    short_token = _mint_token(handle.cluster_secret, node_id, ttl_s=5.0, scopes=["node:heartbeat"])
+    valid_token = _mint_token(handle.cluster_secret, node_id, scopes=["node:heartbeat"])
     hb_payload = {"capacity": register_payload["capacity"]}
     hb_url = f"{handle.central_url}/cluster/nodes/{node_id}/heartbeat"
 
-    # Immediately after issue the token is good.
-    resp = httpx.post(hb_url, headers={"Authorization": f"Bearer {short_token}"}, json=hb_payload, timeout=5.0)
+    resp = httpx.post(hb_url, headers={"Authorization": f"Bearer {valid_token}"}, json=hb_payload, timeout=5.0)
     assert resp.status_code == 200, resp.text
 
-    # Sleep past the TTL then retry - must be rejected with 401.
-    time.sleep(6.0)
-    resp = httpx.post(hb_url, headers={"Authorization": f"Bearer {short_token}"}, json=hb_payload, timeout=5.0)
+    expired_at = time.time() - 60.0
+    expired_token = JWTManager(secret=handle.cluster_secret, expiry_hours=1)._encode(
+        JWTPayload(
+            session_id=f"node-{node_id}",
+            user_id=node_id,
+            issued_at=expired_at - 60.0,
+            expires_at=expired_at,
+            scopes=["node:heartbeat"],
+        )
+    )
+    resp = httpx.post(hb_url, headers={"Authorization": f"Bearer {expired_token}"}, json=hb_payload, timeout=5.0)
     assert resp.status_code == 401, f"Expected 401 after expiry; got {resp.status_code} {resp.text}"
 
     # Refresh: mint a new token, verify it works.

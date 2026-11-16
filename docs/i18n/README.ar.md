@@ -32,7 +32,7 @@
 Bernstein هو طبقة الحوكمة مفتوحة المصدر لوكلاء الذكاء الاصطناعي. يعمل بمبدأ policy as code: أنت تكتب السياسة - من يمكنه فعل ماذا، وما الذي يحتاج موافقة، وما الذي يجب تسجيله - ويفرضها Bernstein وينتج السجل القابل للتحقق. مجدوِل حتمي - لا نموذج في حلقة التنسيق - يشغّل الوكلاء بالتوازي، ويفحص ما ينتجونه عبر بوابات، ويسجّل كل خطوة، بحيث يمكن التحقق من التشغيل لاحقًا، دون اتصال، من المخرجات وحدها. وكلاء البرمجة عبر سطر الأوامر يعملون فورًا (Claude Code وCodex وGemini CLI وأكثر من 50 غيرها)، والطبقة نفسها تحكم أي حمل وكيلي: يمكن أن يكون الناتج diff أو تقرير بحث أو مجموعة بيانات أو حزمة أدلة تدقيق. ملف تعريف تثبيت air-gap مضمّن. Apache-2.0.
 
 ### لمحة سريعة
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 خمس خصائص تميّزه؛ وما بعدها تفاصيل.
 
@@ -43,6 +43,8 @@ Bernstein هو طبقة الحوكمة مفتوحة المصدر لوكلاء ا
 - **شامل ومحلي.** أكثر من 53 محولاً لوكلاء CLI بالإضافة إلى غلاف `--prompt` عام، وحالة قائمة على الملفات، بدون وسيط SaaS، وبدون مستوى بيانات من طرف ثالث.
 
 القائمة الكاملة متوفرة في [صفحة الإمكانيات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)؛ و[مصفوفة الميزات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) هي الفهرس الشامل.
+
+يدعم خادم المهام بوابة يتحكم فيها المشغّل وتحتفظ بحالتها لتولي المهام الجديدة؛ راجع [الدليل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 تدعم سياسة المهايئات حسب الدور قائمة سماح افتراضية اختيارية للأدوار غير المدرجة؛ راجع [الدليل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
@@ -128,7 +130,7 @@ flowchart LR
 كل عقدة يأخذها وكيل تسمح المرحلة بدوره؛ وتبقى أسوار الأدوار وبوابات الموافقة قائمة مهما فعل الوكيل داخل المهمة. عقدة الكود تكتمل خلف بوابات الدمج في git worktree خاص بها. العقد أعلاه تكتمل بشكل مختلف: [عقد المخرجات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) يسمّي الناتج (تقرير، مجموعة بيانات، فحص، سجل إجراءات)، وتُغلق العقدة بإيصال lineage موقّع بدل commit. المجدوِل نفسه، السجل نفسه، التحقق دون اتصال نفسه - سواء حمل المخطط كودًا أو بحثًا أو تغيير عمليات أو مزيجًا من الثلاثة. مخططات جاهزة للبرمجيات والبحث والوثائق والمؤسسات ومسارات المساهمين في [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### التثبيت في 30 ثانية
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +140,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 يعرض `bernstein doctor --json` أيضًا مخرجات عقد التدقيق `findings`، وهي مطابقة لمخرجات `bernstein govern audit --only INS --json` عند استخدام ملاحظات التثبيت نفسها. يظل عرض تقرير doctor المعتاد كما هو. راجع [دليل تشغيل doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) للاطلاع على معرّفات الفحوصات الثابتة.
+
+يعرض Doctor مسارات التنفيذ المتروكة التي تجاوزت الحد الزمني بصيغة JSON. يفشل الفحص إذا تعذر التحقق من الأدلة، ولا يحذف أي شيء.
 
 تمت تغطية pipx وpip وbrew وdnf وnpm وDocker في [دليل التثبيت](https://docs.bernstein.run/en/latest/getting-started/install/)؛ وحزمة التثبيت المعزولة لها [دليل air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) الخاص بها.
 
@@ -165,7 +169,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — لوحة معلومات الطرفية (عُقد العمال البعيدة) | `bernstein gui serve` — لوحة معلومات المتصفح |
 
 ### إثبات عملية تشغيل
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 الحتمية هنا شيء يمكنك التحقق منه بنفسك، وليست أمراً تسلم به دون دليل. قم بالتشغيل مرة واحدة مع تمكين التدقيق، ثم تحقق مما تم تسجيله:
 
@@ -189,7 +193,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 تنطبق نفس إمكانية التحقق على أرقام التقييم. يقوم `bernstein bench run <suite> --reliability k` (يكتب أيضاً `bernstein eval --reliability k`) بتشغيل كل مهمة `k` من المرات بتنسيق ثابت، ثم يبلغ عن حد أدنى `pass^k` (يجب أن تنجح جميع محاولات `k`) إلى جانب الحد الأقصى `pass@1`. يتم ختم هذه النتيجة في إيصال موقّع يعيد `bernstein bench reliability-verify` حسابه دون اتصال، وبالتالي فإن أي حد أدنى مفتعل يفشل في التحقق. التفاصيل: [الحد الأدنى للموثوقية pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-استخدم `bernstein govern audit --format json` أو `--format sarif` للحصول على نتائج فحص قابلة للقراءة آليًا، و`--strict --quiet` لتحديد اجتياز الفحص في CI. راجع [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+استخدم `bernstein govern audit --format json` أو `--format sarif` للحصول على نتائج فحص قابلة للقراءة آليًا، و`--strict --quiet` لتحديد اجتياز الفحص في CI. راجع [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). تتضمن حزمة أدلة `cosai` فئات تهديدات MCP من النسخة المثبتة من الورقة المؤرخة في 2026-01-08، وتوضح الفجوات المتبقية في التغطية.
 
 `bernstein delegation verify RUN` يقارن سلسلة الإيصالات بالقيمة النهائية لرأس السلسلة وعدد خطوات التفويض المختومين في بيان التشغيل باستخدام HMAC بمفتاح التدقيق، فيكشف حذف ذيل السلسلة والاستبدال والإضافة بعد الإغلاق، بما في ذلك إعادة كتابة الإعلان دون امتلاك المفتاح. إزالة الإعلان تترك التشغيل غير مكتمل (رمز الخروج `3`)، ولا يُعدّ صالحًا أبدًا. لا يكشف هذا إعادة تشغيل لقطة أصلية أقدم، ولا يحمي من كاتب يمتلك مفتاح التدقيق. راجع [سير عمل التحقق من التفويض](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
@@ -250,13 +254,14 @@ bernstein volunteer browse --budget 60
 يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`budget` و`verify-bundle` و`hub`. الأمر `autopilot` مسجّل، لكنه يرفض التشغيل إلى أن يُنفّذ `TaskSource`.
 
 ### ما وراء الصفحة الرئيسية
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 كل التفاصيل المعمقة متوفرة على [موقع التوثيق](https://docs.bernstein.run/):
 
 | الصفحة | ما تغطيه |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | قائمة الإمكانيات الكاملة: وضع خادم MCP، بطاقات الوكلاء الموقعة، خلفيات الحماية، مصارف النواتج، التوافق التنظيمي |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | أين تكمن القيمة ومتى يكون Bernstein أداة غير مناسبة |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | مخططات DAG تعريفية بصيغة YAML من عقد الوكيل / الأمر / الحلقة |

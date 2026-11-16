@@ -32,7 +32,7 @@
 Bernstein è il layer di governance open source per agenti IA. Funziona a policy as code: tu scrivi la policy - chi può fare cosa, cosa richiede approvazione, cosa va registrato - e Bernstein la applica e produce il registro verificabile. Uno scheduler deterministico - nessun modello nel loop di coordinamento - esegue gli agenti in parallelo, filtra ciò che producono con dei gate e registra ogni passo, così un run si può verificare a posteriori, offline, dai soli artefatti. Gli agenti CLI di codice funzionano subito (Claude Code, Codex, Gemini CLI e altri 50+), e lo stesso layer governa qualsiasi carico agentico: il deliverable può essere un diff, un report di ricerca, un dataset o un pacchetto di evidenze di audit. Profilo di installazione air-gap incluso. Apache-2.0.
 
 ### in sintesi
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 Cinque aspetti lo distinguono; il resto sono dettagli.
 
@@ -43,6 +43,8 @@ Cinque aspetti lo distinguono; il resto sono dettagli.
 - **Ampio e locale.** Oltre 53 adapter per agenti CLI più un wrapper generico `--prompt`, stato basato su file, nessun passaggio SaaS, nessun piano dati di terze parti.
 
 L'elenco completo è disponibile nella [pagina delle funzionalità](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); la [matrice delle caratteristiche](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) costituisce l'indice esaustivo.
+
+Il server delle attività supporta un controllo persistente dell’operatore sull’assegnazione di nuove attività; consulta la [guida](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 La policy degli adattatori per ruolo supporta un elenco predefinito facoltativo di adattatori consentiti per i ruoli non elencati; consulta la [guida](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
@@ -128,7 +130,7 @@ flowchart LR
 Ogni nodo viene preso da un agente il cui ruolo è ammesso dalla fase; i recinti di ruolo e i gate di approvazione reggono qualunque cosa l'agente faccia dentro il task. Un nodo di codice termina dietro merge gate nel proprio git worktree. I nodi qui sopra terminano diversamente: un [contratto di artefatto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomina il deliverable (report, dataset, scansione, log di azioni) e il nodo si chiude con una ricevuta di lineage firmata invece di un commit. Stesso scheduler, stesso journal, stessa verifica offline - che il grafo consegni codice, ricerca, un cambio ops o un mix dei tre. Grafi pronti per software, ricerca, documentazione, enterprise e workflow dei contributor vivono in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installazione in 30 secondi
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +140,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` espone anche i risultati del contratto di audit `findings`, identici a quelli di `bernstein govern audit --only INS --json` per le stesse osservazioni sull’installazione. Il normale rapporto doctor mantiene la visualizzazione attuale. Consulta la [guida operativa di doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) per gli identificatori stabili dei controlli.
+
+Doctor segnala in JSON le corsie di esecuzione abbandonate che superano il limite di età; il controllo fallisce se non può verificare le prove e non rimuove nulla.
 
 pipx, pip, brew, dnf, npm e Docker sono trattati nella [guida all'installazione](https://docs.bernstein.run/en/latest/getting-started/install/); la wheelhouse per ambienti isolati dispone della propria [guida air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
@@ -165,7 +169,7 @@ Un'esecuzione in corso può essere monitorata da entrambe le interfacce operator
 | `bernstein live` — la dashboard da terminale (nodi worker remoti) | `bernstein gui serve` — la dashboard da browser |
 
 ### provare un'esecuzione
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 Il determinismo qui è una proprietà che puoi verificare, non un dogma da accettare per fede. Esegui una volta con l'audit abilitato, quindi verifica quanto registrato:
 
@@ -189,7 +193,7 @@ Nell'interfaccia web, apri **Governance** e usa **Verify a receipt** per verific
 
 La stessa verificabilità si applica ai parametri di valutazione. `bernstein bench run <suite> --reliability k` (anche scritto `bernstein eval --reliability k`) esegue ciascun task `k` volte con coordinamento fisso, riportando la soglia minima `pass^k` (tutti i `k` tentativi devono riuscire) insieme alla soglia massima `pass@1`. Tale risultato è sigillato in una ricevuta firmata che `bernstein bench reliability-verify` ricalcola offline, invalidando qualsiasi valore falsificato. Dettagli: [soglia di affidabilità pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Usa `bernstein govern audit --format json` o `--format sarif` per risultati leggibili da una macchina e `--strict --quiet` come criterio di approvazione nella CI. Vedi [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Usa `bernstein govern audit --format json` o `--format sarif` per risultati leggibili da una macchina e `--strict --quiet` come criterio di approvazione nella CI. Vedi [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Il pacchetto di evidenze `cosai` include le classi di minacce MCP della versione fissata del documento del 2026-01-08 e indica le lacune di copertura residue.
 
 `bernstein delegation verify RUN` confronta la catena di ricevute con la testa finale e il numero di passaggi sigillati nel manifesto dell’esecuzione tramite HMAC con la chiave di audit, rilevando la cancellazione della coda, la sostituzione e l’estensione dopo la chiusura, inclusa la riscrittura della dichiarazione senza la chiave. Rimuovere la dichiarazione lascia l’esecuzione incompleta (codice di uscita `3`), mai valida. Questo non rileva il riutilizzo di un’istantanea autentica precedente e non protegge da chi scrive possedendo la chiave di audit. Vedi il [flusso di verifica delle deleghe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
@@ -250,13 +254,14 @@ bernstein volunteer browse --budget 60
 La [guida del donatore](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) copre l'esecuzione di un worker e il budget che imposti, la [guida del progetto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) copre la dichiarazione di un manifesto, e il [modello delle minacce](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica cosa ciascun confine protegge e cosa no. L'esecutore a comando singolo non è ancora rilasciato: oggi `verify`, `browse`, `budget`, `verify-bundle` e `hub` sono i sottocomandi funzionanti. `autopilot` è registrato, ma rifiuta l’esecuzione finché non viene implementato un `TaskSource`.
 
 ### oltre la pagina principale
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 Tutte le informazioni approfondite sono disponibili sul [sito della documentazione](https://docs.bernstein.run/):
 
 | pagina | argomenti trattati |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | elenco completo delle funzionalità: modalità server MCP, schede agenti firmate, backend sandbox, sink di artefatti, conformità normativa |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | in quali contesti porta valore e quando Bernstein non è lo strumento appropriato |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAG dichiarativi in YAML composti da nodi agent / command / loop |

@@ -32,7 +32,7 @@
 Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code 之上:你编写策略——谁可以做什么、什么需要审批、什么必须被记录——Bernstein 据此执行并生成可验证的记录。确定性调度器 - 协调环路中没有模型 - 并行运行智能体,用门禁把关它们的产出,并记录每一步,因此一次运行可以在事后离线验证,仅凭工件本身。CLI 编码智能体开箱即用(Claude Code、Codex、Gemini CLI 及 50+ 款),同一治理层管辖任何智能体工作负载:交付物可以是 diff、研究报告、数据集,或一份审计证据包。附带 air-gap 安装配置。Apache-2.0。
 
 ### 一览
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 五点使它与众不同；其余都是细节。
 
@@ -43,6 +43,8 @@ Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code
 - **广泛且本地。** 53 多个 CLI 智能体适配器，外加通用的 `--prompt` 包装器、基于文件的状态、无 SaaS 跳转、无第三方数据平面。
 
 完整列表见[能力页面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩阵](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是详尽的索引。
+
+任务服务器支持由操作员控制的持久化新任务领取门禁；请参阅[指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 角色适配器策略支持为未列出的角色设置可选的默认允许列表；请参阅[指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)。
 
@@ -128,7 +130,7 @@ flowchart LR
 每个节点由角色被该阶段允许的智能体认领;无论智能体在任务内做什么,角色围栏和审批门禁始终生效。代码节点在自己的 git worktree 里、合并门禁之后完成。上面这些节点的完成方式不同:[工件契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(报告、数据集、扫描、操作日志),节点以签名的 lineage 回执而非提交收尾。同一个调度器、同一份日志、同样的离线验证 - 无论图里装的是代码、研究、运维变更,还是三者混合。面向软件、研究、文档、企业和贡献者工作流的现成图都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安装
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +140,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` 还会输出审计契约的 `findings`；对于相同的安装观测结果，它们与 `bernstein govern audit --only INS --json` 的结果完全相同。常规 doctor 报告的显示保持不变。有关稳定的检查 ID，请参阅 [doctor 运维指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)。
+
+Doctor 会以 JSON 报告超龄的泄漏执行通道；无法验证泄漏证据时检查失败，不会删除任何内容。
 
 pipx、pip、brew、dnf、npm 和 Docker 都涵盖在[安装指南](https://docs.bernstein.run/en/latest/getting-started/install/)中；离线 wheelhouse 有单独的 [air-gap 指南](https://docs.bernstein.run/en/latest/installation/air-gap/)。
 
@@ -165,7 +169,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 终端仪表盘 (远程工作节点) | `bernstein gui serve` — 浏览器仪表盘 |
 
 ### 证明一次运行
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 这里的确定性是需要你去核查的东西，而不是凭空相信。启用审计运行一次，然后验证记录的内容：
 
@@ -189,7 +193,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 同样的可核查性也适用于评估数字。`bernstein bench run <suite> --reliability k`（也写作 `bernstein eval --reliability k`）在固定协调下把每个任务运行 `k` 次，然后报告 `pass^k` 下限（所有 `k` 次尝试都必须通过）以及 `pass@1` 上限。该结果封装在一份签署的收据中，`bernstein bench reliability-verify` 可离线重算，因此伪造的下限会验证失败。详情：[pass^k 可靠性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 
-使用 `bernstein govern audit --format json` 或 `--format sarif` 输出机器可读的检查结果，使用 `--strict --quiet` 作为 CI 检查门槛。参见 [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+使用 `bernstein govern audit --format json` 或 `--format sarif` 输出机器可读的检查结果，使用 `--strict --quiet` 作为 CI 检查门槛。参见 [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` 证据包包含固定版本的 2026-01-08 文档中的 MCP 威胁类别，并说明尚未覆盖的范围。
 
 `bernstein delegation verify RUN` 将回执链与运行清单中使用审计密钥的 HMAC 封存的最终链头和跳数进行比较，从而检测尾部删除、替换和关闭后的链增长，包括在没有密钥的情况下改写声明。删除声明会使运行处于未完成状态（退出码 `3`），绝不会被判定为有效。这无法检测重放较早的真实快照，也无法防范持有审计密钥的写入者。参见[委托验证流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
 
@@ -250,13 +254,14 @@ bernstein volunteer browse --budget 60
 [捐献者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 讲运行 worker 以及你设定的预算，[项目指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 讲声明清单，[威胁模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 说明每一层边界防护什么、不防护什么。单条命令的运行器尚未发布：目前可用的子命令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。 `autopilot` 已注册，但在实现 `TaskSource` 之前会拒绝运行。
 
 ### 首页之外
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 所有深入内容都在[文档站点](https://docs.bernstein.run/)上：
 
 | 页面 | 内容 |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | 完整能力列表：MCP 服务器模式、签署的智能体卡片、沙箱后端、产物存储、监管映射 |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 价值落在哪里，以及 Bernstein 何时是错误工具 |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 智能体/命令/循环节点的声明式 YAML DAG |

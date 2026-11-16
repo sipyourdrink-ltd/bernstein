@@ -32,7 +32,7 @@
 Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니다. policy as code로 동작합니다. 누가 무엇을 해도 되는지, 무엇에 승인이 필요한지, 무엇을 기록해야 하는지를 정책으로 작성하면 Bernstein이 이를 적용하고 검증 가능한 기록을 만듭니다. 결정론적 스케줄러 - 조정 루프에 모델이 없음 - 가 에이전트를 병렬로 돌리고, 산출물을 게이트로 검사하고, 모든 단계를 기록합니다. 그래서 실행은 사후에, 오프라인으로, 아티팩트만으로 검증할 수 있습니다. CLI 코딩 에이전트는 바로 동작하고(Claude Code, Codex, Gemini CLI 외 50+), 같은 레이어가 모든 에이전트 워크로드를 거버닝합니다: 결과물은 diff일 수도, 리서치 보고서일 수도, 데이터셋일 수도, 감사 증적 패키지일 수도 있습니다. 에어갭 설치 프로파일 포함. Apache-2.0.
 
 ### 한눈에 보기
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 다섯 가지가 차별점이며, 나머지는 세부 사항입니다.
 
@@ -43,6 +43,8 @@ Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니
 - **넓고, 그리고 로컬이다.** 53여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
 
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
+
+작업 서버는 새 작업 할당에 대해 운영자가 제어하고 상태가 유지되는 게이트를 지원합니다. [안내서](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 역할별 어댑터 정책에서는 개별적으로 지정하지 않은 역할에 기본 허용 목록을 선택적으로 설정할 수 있습니다. [안내서](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)를 참고하세요.
 
@@ -128,7 +130,7 @@ flowchart LR
 각 노드는 페이즈가 허용하는 역할의 에이전트가 가져갑니다. 역할 울타리와 승인 게이트는 에이전트가 태스크 안에서 무엇을 하든 유지됩니다. 코드 노드는 자기만의 git worktree에서 머지 게이트 뒤로 완료됩니다. 위의 노드들은 다르게 끝납니다: [아티팩트 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)이 결과물(보고서, 데이터셋, 스캔, 액션 로그)을 지정하고, 노드는 커밋 대신 서명된 lineage 영수증으로 닫힙니다. 같은 스케줄러, 같은 저널, 같은 오프라인 검증 - 그래프가 코드를 나르든, 리서치든, ops 변경이든, 셋의 혼합이든. 소프트웨어, 리서치, 문서, 엔터프라이즈, 컨트리뷰터 워크플로용 기성 그래프는 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)에 있습니다.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +140,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json`은 감사 계약의 `findings`도 출력하며, 동일한 설치 관측 결과에 대해 `bernstein govern audit --only INS --json`의 결과와 일치합니다. 일반 doctor 보고서의 표시는 그대로 유지됩니다. 안정적인 검사 ID는 [doctor 운영 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)를 참조하세요.
+
+Doctor는 오래 남아 있는 실행 레인을 JSON으로 보고합니다. 누수 증거를 검증할 수 없으면 검사가 실패하며 아무것도 삭제하지 않습니다.
 
 pipx, pip, brew, dnf, npm, Docker는 [설치 가이드](https://docs.bernstein.run/en/latest/getting-started/install/)를 보라. 에어갭 환경용 wheelhouse는 별도의 [에어갭 가이드](https://docs.bernstein.run/en/latest/installation/air-gap/)가 있다.
 
@@ -165,7 +169,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 터미널 대시보드 (원격 워커 노드) | `bernstein gui serve` — 브라우저 대시보드 |
 
 ### 실행을 증명하기
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 여기서 결정성은 믿는 것이 아니라 확인하는 것이다. 감사를 켜고 한 번 실행한 뒤, 기록된 내용을 검증하라:
 
@@ -189,7 +193,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 같은 검증 가능성이 평가 수치에도 적용된다. `bernstein bench run <suite> --reliability k`(`bernstein eval --reliability k`로도 쓴다)는 각 태스크를 고정된 협조 아래 `k`번 실행하고, `pass^k` 하한(`k`번 모두 통과)을 `pass@1` 상한과 나란히 보고한다. 그 결과는 서명된 영수증에 봉인되며 `bernstein bench reliability-verify`가 오프라인에서 다시 계산하므로, 조작된 하한은 검증에서 떨어진다. 자세한 내용: [pass^k 신뢰도 하한](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-기계가 읽을 수 있는 검사 결과에는 `bernstein govern audit --format json` 또는 `--format sarif`를, CI 통과 여부 판단에는 `--strict --quiet`를 사용하세요. 자세한 내용: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+기계가 읽을 수 있는 검사 결과에는 `bernstein govern audit --format json` 또는 `--format sarif`를, CI 통과 여부 판단에는 `--strict --quiet`를 사용하세요. 자세한 내용: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` 증거 팩은 2026-01-08 문서의 고정된 버전에 따른 MCP 위협 분류를 포함하고, 아직 다루지 못하는 범위를 명시합니다.
 
 `bernstein delegation verify RUN`은 감사 키를 사용한 HMAC으로 실행 매니페스트에 봉인된 최종 헤드 및 홉 수와 영수증 체인을 비교하여 꼬리 삭제, 대체, 종료 후 체인 확장을 탐지합니다. 키 없이 선언을 다시 쓰는 행위도 탐지합니다. 선언을 제거하면 실행은 미완료 상태(종료 코드 `3`)로 남으며, 유효한 것으로 판정되지 않습니다. 이전의 진본 스냅샷을 재사용하는 것은 탐지하지 못하며, 감사 키를 가진 작성자로부터 보호하지도 못합니다. [위임 검증 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)를 참조하세요.
 
@@ -250,13 +254,14 @@ bernstein volunteer browse --budget 60
 [기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `budget`, `verify-bundle`, `hub` 입니다. `autopilot`은 등록되어 있지만 `TaskSource`가 구현될 때까지 실행을 거부합니다.
 
 ### 표지 너머
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 깊이 들어가는 내용은 모두 [문서 사이트](https://docs.bernstein.run/)에 있다:
 
 | 페이지 | 다루는 내용 |
 |---|---|
 | [기능](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | 전체 기능 목록: MCP 서버 모드, 서명된 에이전트 카드, 샌드박스 백엔드, 아티팩트 싱크, 규제 대응 매핑 |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [누구를 위한 것인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 가치가 나오는 지점과 Bernstein이 맞지 않는 경우 |
 | [워크플로](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 에이전트 / 커맨드 / 루프 노드로 이루어진 선언적 YAML DAG |

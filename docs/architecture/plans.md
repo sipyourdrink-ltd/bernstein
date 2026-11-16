@@ -39,6 +39,20 @@ The runtime model is simple:
 This is the same data model the manager agent emits when planning from a
 free-text goal, just expressed by hand.
 
+### Plan steps, workflow nodes, and scenario task templates
+
+A **plan step** is one entry in a stage's `steps` list; the plan loader
+materialises it as a task row. A **workflow node** belongs to a workflow
+graph and declares an agent action or shell command with dependencies on
+other nodes; it is not another name for a plan step. A **scenario task
+template** is a reusable task recipe in a scenario: invoking that scenario
+instantiates its templates as tasks with the supplied context.
+
+See [Workflow manifests](../operations/workflows.md) for the node graph and
+[Routine / Scenario Bridge](../routine-scenarios.md) for scenario invocation.
+These related concepts have separate schemas and entry points; the plan
+schema below continues to describe stages and steps.
+
 Source-of-truth files:
 `src/bernstein/core/planning/plan_schema.py` (schema),
 `src/bernstein/core/planning/plan_loader.py` (YAML → Task list),

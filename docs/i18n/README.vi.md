@@ -32,7 +32,7 @@
 Bernstein là tầng governance mã nguồn mở cho AI agent. Nó chạy trên policy as code: bạn viết chính sách - ai được làm gì, cái gì cần phê duyệt, cái gì phải được ghi lại - và Bernstein thực thi chính sách đó và tạo ra bản ghi có thể xác minh. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI và hơn 50 agent khác), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
 
 ### tổng quan nhanh
-<!-- l10n: en="at a glance" hash="sha256:324a2c3b499e" -->
+<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
 
 Năm điểm tạo nên sự khác biệt; phần còn lại là chi tiết.
 
@@ -43,6 +43,8 @@ Năm điểm tạo nên sự khác biệt; phần còn lại là chi tiết.
 - **Rộng rãi và cục bộ.** Hơn 53 bộ điều hợp tác tử CLI cùng lớp bọc `--prompt` tổng quát, lưu trữ trạng thái dựa trên tệp, không qua trung gian SaaS, không có mặt phẳng dữ liệu của bên thứ ba.
 
 Danh sách đầy đủ có tại [trang năng lực](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ma trận tính năng](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) là bảng mục lục toàn diện.
+
+Máy chủ tác vụ hỗ trợ cổng nhận tác vụ mới do người vận hành kiểm soát và lưu giữ trạng thái; xem [hướng dẫn](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
 
 Chính sách bộ điều hợp theo vai trò hỗ trợ danh sách cho phép mặc định tùy chọn cho các vai trò không được liệt kê riêng; xem [hướng dẫn](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
@@ -128,7 +130,7 @@ flowchart LR
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +140,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` cũng hiển thị các kết quả `findings` của hợp đồng kiểm toán, giống hệt kết quả của `bernstein govern audit --only INS --json` khi dùng cùng các quan sát về cài đặt. Báo cáo doctor thông thường giữ nguyên cách hiển thị. Xem [hướng dẫn vận hành doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) để biết các mã kiểm tra ổn định.
+
+Doctor báo cáo các luồng thực thi bị bỏ lại quá giới hạn thời gian ở dạng JSON. Kiểm tra thất bại nếu không thể xác minh bằng chứng; không có gì bị xóa.
 
 pipx, pip, brew, dnf, npm và Docker được trình bày trong [hướng dẫn cài đặt](https://docs.bernstein.run/en/latest/getting-started/install/); gói cài đặt cách ly mạng có [hướng dẫn air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) riêng.
 
@@ -165,7 +169,7 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 | `bernstein live` — bảng điều khiển terminal (nút xử lý từ xa) | `bernstein gui serve` — bảng điều khiển trình duyệt |
 
 ### chứng minh một phiên chạy
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 Tính tất định ở đây là điều bạn có thể tự kiểm chứng, không phải điều bạn chấp nhận dựa trên niềm tin. Chạy một lần với tính năng kiểm toán được bật, sau đó xác minh những gì đã ghi lại:
 
@@ -189,7 +193,7 @@ Trong giao diện web, mở **Governance** và dùng **Verify a receipt** để 
 
 Khả năng kiểm chứng tương tự cũng áp dụng cho các chỉ số đánh giá. `bernstein bench run <suite> --reliability k` (còn viết là `bernstein eval --reliability k`) chạy mỗi nhiệm vụ `k` lần dưới sự điều phối cố định, sau đó báo cáo mức sàn `pass^k` (tất cả `k` lần thử phải thành công) bên cạnh mức trần `pass@1`. Kết quả đó được niêm phong trong biên lai có chữ ký mà `bernstein bench reliability-verify` tính toán lại ngoại tuyến, khiến mọi mức sàn giả mạo đều không vượt qua kiểm định. Chi tiết: [mức sàn độ tin cậy pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Dùng `bernstein govern audit --format json` hoặc `--format sarif` để xuất kết quả kiểm tra cho máy đọc, và `--strict --quiet` làm điều kiện vượt qua CI. Xem [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Dùng `bernstein govern audit --format json` hoặc `--format sarif` để xuất kết quả kiểm tra cho máy đọc, và `--strict --quiet` làm điều kiện vượt qua CI. Xem [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Gói bằng chứng `cosai` bao gồm các lớp mối đe dọa MCP từ phiên bản được cố định của tài liệu ngày 2026-01-08 và nêu rõ những khoảng trống còn lại trong phạm vi bao phủ.
 
 `bernstein delegation verify RUN` so sánh chuỗi biên nhận với đầu chuỗi cuối cùng và số bước chuyển đã được niêm phong trong bản kê khai lần chạy bằng HMAC với khóa kiểm toán, qua đó phát hiện việc xóa phần đuôi, thay thế và nối dài chuỗi sau khi đóng, kể cả việc viết lại khai báo mà không có khóa. Xóa khai báo sẽ khiến lần chạy ở trạng thái chưa hoàn tất (mã thoát `3`), không bao giờ được coi là hợp lệ. Cơ chế này không phát hiện việc sử dụng lại một bản chụp xác thực cũ hơn và không bảo vệ trước người ghi nắm giữ khóa kiểm toán. Xem [quy trình xác minh ủy quyền](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
@@ -250,13 +254,14 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse`, `budget`, `verify-bundle` và `hub` là các lệnh con hoạt động. `autopilot` đã được đăng ký nhưng từ chối chạy cho đến khi có triển khai `TaskSource`.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
 | trang | nội dung bao quát |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | toàn bộ danh mục năng lực: chế độ MCP server, thẻ tác tử có chữ ký, sandbox backends, nơi lưu tạo tác, ánh xạ tuân thủ quy định |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | nơi giá trị được phát huy và trường hợp Bernstein không phải là công cụ phù hợp |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | các DAG YAML khai báo gồm các nút tác tử / lệnh / vòng lặp |
