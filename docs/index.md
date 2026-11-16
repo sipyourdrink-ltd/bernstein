@@ -40,9 +40,9 @@ hide:
 
 ## What it does
 
-Bernstein takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
+Bernstein is the open-source governance layer for AI agents: it applies declared controls and records verifiable results. Its deterministic orchestration takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges code changes when the gates allow. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
 
-No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
+No framework to learn. No vendor lock-in. Supported agent integrations are replaceable through registered adapters, subject to task capabilities and role requirements; see the [adapter catalog](adapters/ADAPTER_GUIDE.md). The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 
 Results stay checkable after the run ends: an always-on lineage spine and replay journal record what happened, and an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) adds receipts you can verify offline.
 
@@ -81,11 +81,16 @@ Then run:
 bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 ```
 
-A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other.
+To watch an existing run in a browser, open that task server's `/ui/`
+address when bundled UI assets are available (for example,
+`http://127.0.0.1:8052/ui/` on the default task-server port).
+`bernstein gui serve` starts a separate GUI server using its current
+workspace; launching it in another directory selects that other workspace.
+Use the running task server's UI address to watch its live run.
 
 | ![A three-column terminal dashboard: agents with their live logs on the left, the task board on the right, an activity feed and a cost line underneath](assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the same run in a browser |
+| `bernstein live` — the terminal dashboard | `bernstein gui serve` — browser dashboard for its selected workspace |
 
 ## Why Bernstein?
 
@@ -119,7 +124,8 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
     Each coding agent works in its own git worktree
     (artifact-mode tasks get an isolated plain directory).
-    No merge conflicts. Clean history. Parallel by default.
+    Changes pass through the merge gate when integrated; overlapping edits
+    can still conflict. Parallel by default.
 
 - :material-shield-check:{ .lg .middle } **Built-in verification**
 

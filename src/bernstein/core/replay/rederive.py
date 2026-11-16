@@ -44,8 +44,8 @@ from bernstein.core.replay.diff import (
 )
 from bernstein.core.replay.journal import (
     _NON_DETERMINISTIC_FIELDS,  # pyright: ignore[reportPrivateUsage] - shared journal projection
+    HASH_PROFILE_LEGACY,
     EventJournal,
-    JournalPathError,
     load_events,
 )
 
@@ -285,8 +285,12 @@ def rederive_run(journal_path: Path, *, sandbox: Path) -> RederiveResult:
     recorded_head = str(events[-1].get("event_hash", "")) if events else ""
 
     try:
-        derived = EventJournal(run_id=run_id, sdd_dir=sandbox)
-    except JournalPathError as exc:
+        derived = EventJournal(
+            run_id=run_id,
+            sdd_dir=sandbox,
+            hash_profile=str(events[0].get("hash_profile", HASH_PROFILE_LEGACY)),
+        )
+    except ValueError as exc:
         return RederiveResult(
             ok=False,
             run_id=run_id,

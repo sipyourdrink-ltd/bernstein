@@ -657,12 +657,17 @@ class RenderDelta:
         incomparable_reason: Why the two receipts were not compared; empty when
             they were.
         deltas: Sorted named property changes; always empty when incomparable.
+        base_unstable_properties: Sorted snapshot of unstable properties on the
+            base receipt, including unchanged properties and rejected pairs.
+        head_unstable_properties: The corresponding snapshot on the head receipt.
     """
 
     base_descriptor_hash: str = ""
     head_descriptor_hash: str = ""
     incomparable_reason: str = ""
     deltas: tuple[RenderObservationDelta, ...] = ()
+    base_unstable_properties: tuple[tuple[str, str], ...] = ()
+    head_unstable_properties: tuple[tuple[str, str], ...] = ()
 
     @property
     def is_incomparable(self) -> bool:
@@ -676,12 +681,17 @@ class RenderDelta:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the comparison outcome to a dict."""
-        return {
+        result: dict[str, Any] = {
             "base_descriptor_hash": self.base_descriptor_hash,
             "head_descriptor_hash": self.head_descriptor_hash,
             "incomparable_reason": self.incomparable_reason,
             "deltas": [delta.to_dict() for delta in self.deltas],
         }
+        if self.base_unstable_properties:
+            result["base_unstable_properties"] = dict(self.base_unstable_properties)
+        if self.head_unstable_properties:
+            result["head_unstable_properties"] = dict(self.head_unstable_properties)
+        return result
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> RenderDelta:
@@ -693,6 +703,12 @@ class RenderDelta:
             deltas=tuple(
                 d if isinstance(d, RenderObservationDelta) else RenderObservationDelta.from_dict(d)
                 for d in cast("Iterable[Any]", row.get("deltas", ()))
+            ),
+            base_unstable_properties=tuple(
+                sorted((str(k), str(v)) for k, v in row.get("base_unstable_properties", {}).items())
+            ),
+            head_unstable_properties=tuple(
+                sorted((str(k), str(v)) for k, v in row.get("head_unstable_properties", {}).items())
             ),
         )
 
@@ -740,12 +756,16 @@ def render_delta(base: RenderReceipt, head: RenderReceipt) -> RenderDelta:
     """
     base_hash = base.environment.descriptor_hash() if base.environment is not None else ""
     head_hash = head.environment.descriptor_hash() if head.environment is not None else ""
+    base_unstable = tuple(sorted(base.unstable_properties.items()))
+    head_unstable = tuple(sorted(head.unstable_properties.items()))
 
     def rejected(reason: str) -> RenderDelta:
         return RenderDelta(
             base_descriptor_hash=base_hash,
             head_descriptor_hash=head_hash,
             incomparable_reason=reason,
+            base_unstable_properties=base_unstable,
+            head_unstable_properties=head_unstable,
         )
 
     mismatch = _incomparability_reason(base, head)
@@ -780,4 +800,6 @@ def render_delta(base: RenderReceipt, head: RenderReceipt) -> RenderDelta:
         base_descriptor_hash=base_hash,
         head_descriptor_hash=head_hash,
         deltas=tuple(deltas),
+        base_unstable_properties=base_unstable,
+        head_unstable_properties=head_unstable,
     )
