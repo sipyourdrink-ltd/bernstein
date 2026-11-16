@@ -36,8 +36,11 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 | `bernstein.apiUrl` | string | `http://127.0.0.1:8052` | Bernstein orchestrator API URL |
 | `bernstein.apiToken` | string | `""` | Bearer token for API authentication (optional) |
 | `bernstein.refreshInterval` | number | `5` | Tree view polling interval in seconds |
-| `bernstein.showNotifications` | boolean | `true` | Show notification toasts for task completions and failures |
-| `bernstein.costWarningThreshold` | number | `80` | Show a cost warning when budget usage exceeds this percentage |
+
+Budget notices follow the server's `live_costs.should_warn` and
+`live_costs.should_stop` flags: the extension shows a warning or an error
+message respectively. Each notice appears once while its condition remains
+active and can appear again after the flag clears and becomes active again.
 
 ## Requirements
 
