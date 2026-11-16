@@ -112,7 +112,7 @@ Not all ten features matter equally. If you skim the changelog, the ones I'd act
 - **`bernstein autofix`** - daemon that watches your Bernstein-opened PRs, pulls failing CI logs via `gh run view --log-failed`, and dispatches a fresh repair run scoped to the failure. Three-attempt cap, label-gated, every attempt HMAC-audited. (PR #946)
 - **`bernstein preview`** - boots the agent's dev server inside the originating sandbox, captures the bound port, exposes it through the existing tunnel wrapper with a configurable expiry and auth mode. One command from "agent finished" to shareable HTTPS link. (PR #941)
 - **`bernstein connect <provider>`** - OS-keychain credential vault. Stops the slide where every Bernstein integration ends up with a token in `.env` that leaks into screen shares and shell history. (PR #947)
-- **`bernstein acp serve --stdio`** - native ACP bridge so Zed and other ACP-aware editors can use Bernstein as their backend. The first IDE-native multi-agent orchestrator. (PR #943)
+- **`bernstein acp serve --stdio`** - native ACP bridge so Zed and other ACP-aware editors can use Bernstein as their backend. The release added IDE-native access to Bernstein through ACP. (PR #943)
 
 The other six are infrastructure that makes the first four work cleanly under load. None of them are "look at me" features individually; together they're the difference between "you can run multi-agent on a real repo" and "you can supervise a fleet of multi-agent runs across many repos."
 
@@ -122,4 +122,4 @@ The other six are infrastructure that makes the first four work cleanly under lo
 
 ---
 
-*Bernstein orchestrates short-lived AI coding agents - Claude Code, Codex, Gemini CLI, and 40 more - through a deterministic Python dispatcher. State lives in files, not in agent memory. The orchestrator is code, not a model. Apache-2.0. [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein).*
+*Bernstein is the open-source governance layer for AI agents. It applies declared controls to code and other deliverables and records verifiable results. Deterministic orchestration is one capability: its Python dispatcher runs agents such as Claude Code, Codex and Gemini CLI. State lives in files, not in agent memory. Apache-2.0. [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein).*

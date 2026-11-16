@@ -443,7 +443,7 @@ class EventJournal:
         self._prune_old_runs()
 
     @classmethod
-    def resume(cls, run_id: str, sdd_dir: Path) -> EventJournal:
+    def resume(cls, run_id: str, sdd_dir: Path, *, hash_profile: str = HASH_PROFILE_LEGACY) -> EventJournal:
         """Open a journal whose file may already exist, recovering the tail.
 
         The plain constructor targets a fresh run: it starts the chain at
@@ -460,6 +460,8 @@ class EventJournal:
         Args:
             run_id: Unique identifier for the run.
             sdd_dir: Path to the ``.sdd`` directory.
+            hash_profile: Profile for a new journal only. An existing journal
+                retains its recorded profile, or legacy when absent.
 
         Returns:
             A journal positioned at the verified chain tail (or at genesis
@@ -468,13 +470,13 @@ class EventJournal:
         Raises:
             ValueError: The existing chain fails verification.
         """
-        # Detect hash_profile from the first event, if present
+        if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+            raise ValueError(f"unknown hash_profile {hash_profile!r}")
+        # Recorded evidence takes precedence over a new-run selection.
         loaded = load_events(run_journal_path(sdd_dir, run_id))
-        hash_profile = HASH_PROFILE_LEGACY
         if loaded.events:
             first_event = loaded.events[0]
-            if "hash_profile" in first_event:
-                hash_profile = str(first_event["hash_profile"])
+            hash_profile = str(first_event.get("hash_profile", HASH_PROFILE_LEGACY))
         journal = cls(run_id, sdd_dir, hash_profile=hash_profile)
         loaded = load_events(journal.path)
         events = loaded.events
@@ -501,6 +503,11 @@ class EventJournal:
     def run_id(self) -> str:
         """The run identifier this journal is writing to."""
         return self._run_id
+
+    @property
+    def hash_profile(self) -> str:
+        """The immutable profile selected for this journal's writes."""
+        return self._hash_profile
 
     @property
     def path(self) -> Path:

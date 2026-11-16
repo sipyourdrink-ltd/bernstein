@@ -204,11 +204,12 @@ class TestProgressiveTimeout:
 
 
 class TestLargeScopeOpusMaxOnRetry:
-    """Large-scope tasks always get opus/max on retry regardless of retry count."""
+    """Large-scope tasks with a known Claude model get opus/max on retry."""
 
     def test_large_scope_first_retry_uses_opus_max(self, tmp_path: Path) -> None:
         task = _make_task(
             id="T-large-1",
+            model="sonnet",
             scope="large",
             description="Do the thing.",
         )
@@ -223,6 +224,7 @@ class TestLargeScopeOpusMaxOnRetry:
     def test_architect_role_first_retry_uses_opus_max(self, tmp_path: Path) -> None:
         task = _make_task(
             id="T-arch-1",
+            model="sonnet",
             role="architect",
             description="Design the system.",
         )
@@ -237,6 +239,7 @@ class TestLargeScopeOpusMaxOnRetry:
     def test_security_role_first_retry_uses_opus_max(self, tmp_path: Path) -> None:
         task = _make_task(
             id="T-sec-1",
+            model="sonnet",
             role="security",
             description="Audit the auth.",
         )
@@ -278,6 +281,7 @@ class TestRetryEscalationAdapterAwareness:
         for high-stakes roles on retry."""
         task = _make_task(
             id="T-arch-claude",
+            model="sonnet",
             role="architect",
             description="Design the system.",
         )
@@ -294,6 +298,7 @@ class TestRetryEscalationAdapterAwareness:
         high-stakes retry must escalate effort only, never stamp "opus"."""
         task = _make_task(
             id="T-arch-qwen",
+            model="qwen-configured-model",
             role="architect",
             description="Design the system.",
         )
@@ -375,7 +380,7 @@ class TestRunLevelPinnedModelSurvivesRetry:
         assert posted[0]["model"] == "gw-coder-fast"
 
     def test_no_run_level_pin_keeps_the_historical_tier_escalation(self, tmp_path: Path) -> None:
-        task = _make_task(id="T-arch-nopin", role="architect", description="Design.")
+        task = _make_task(id="T-arch-nopin", role="architect", model="sonnet", description="Design.")
         orch, posted = _build_orchestrator(tmp_path, task, adapter_name="claude")
 
         orch._retry_or_fail_task("T-arch-nopin", "agent died")
@@ -704,6 +709,7 @@ class TestMaybeRetryProgressiveTimeout:
         """Architect role gets opus/max on any retry via _maybe_retry_task."""
         task = _make_task(
             id="T-mr-3",
+            model="sonnet",
             role="architect",
             status="failed",
         )
@@ -719,6 +725,7 @@ class TestMaybeRetryProgressiveTimeout:
         """High-complexity large-scope tasks get opus/max on retry."""
         task = _make_task(
             id="T-mr-4",
+            model="sonnet",
             complexity="high",
             scope="large",
             role="backend",

@@ -159,8 +159,8 @@ def test_every_cosai_control_is_counted_exactly_once() -> None:
     todo = statuses.count("todo")
     assert mapped + partial + todo == len(controls)
     assert mapped == 7
-    assert partial == 4
-    assert todo == 2
+    assert partial == 8
+    assert todo == 10
 
 
 def test_map_honesty_declares_partial_and_todo() -> None:
@@ -255,8 +255,8 @@ def test_build_evidence_pack_wellformed(tmp_path: Path) -> None:
         pack.controls_mapped + pack.controls_partial + pack.controls_organisational + pack.controls_todo == n_controls
     )
     assert pack.controls_mapped == 7
-    assert pack.controls_partial == 4
-    assert pack.controls_todo == 2
+    assert pack.controls_partial == 8
+    assert pack.controls_todo == 10
     assert out.is_file()
 
     with zipfile.ZipFile(out) as zf:
@@ -306,7 +306,7 @@ def test_cosai_mapping_page_and_map_stay_in_sync() -> None:
 
     text = doc_path.read_text(encoding="utf-8")
 
-    control_prefixes = ("human-governed-accountable.", "bounded-resilient.", "transparent-verifiable.")
+    control_prefixes = ("human-governed-accountable.", "bounded-resilient.", "transparent-verifiable.", "MCP-")
     page_rows: dict[str, dict[str, Any]] = {}
     for line in text.splitlines():
         line = line.strip()
@@ -322,6 +322,8 @@ def test_cosai_mapping_page_and_map_stay_in_sync() -> None:
                 "test_path": cells[4],
                 "artefact": cells[5],
                 "status": cells[6],
+                "selector": cells[7].strip("`") if cells[0].startswith("MCP-") else None,
+                "verdict": cells[8] if cells[0].startswith("MCP-") else None,
             }
 
     mapping = get_standard_map("cosai")
@@ -336,6 +338,7 @@ def test_cosai_mapping_page_and_map_stay_in_sync() -> None:
     assert "7 `mapped`, 4 `partial`, 2 `todo` - 13 of 13 controls counted" in text, (
         "Status count summary line in cosai-mapping.md does not match expected 7/4/2"
     )
+    assert "7 `mapped`, 8 `partial`, 10 `todo` - 25 of 25 controls counted" in text
 
     missing_paths: list[str] = []
     unrelated_tests: list[tuple[str, str, str]] = []
@@ -364,6 +367,10 @@ def test_cosai_mapping_page_and_map_stay_in_sync() -> None:
             assert expected_risk_id in _PINNED_RISK_MAP_IDS, (
                 f"Page cites unpinned Risk Map ID {expected_risk_id} for {ctrl_id}"
             )
+
+        if ctrl_id.startswith("MCP-"):
+            assert page_data["selector"] == map_c["selector"]
+            assert page_data["verdict"] == ("Not covered" if map_c["status"] == "todo" else "Partial")
 
         # Path integrity for non-todo rows
         if page_data["status"] == "todo":

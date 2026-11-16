@@ -1,14 +1,14 @@
 """Read the registered MCP prompts through an in-process server."""
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from bernstein.mcp.prompts import register_prompt_resources
 
 
 @pytest.mark.asyncio
 async def test_registered_prompt_names_and_rendering() -> None:
-    server = FastMCP("test")
+    server = MCPServer("test")
     register_prompt_resources(server)
 
     prompts = await server.list_prompts()
