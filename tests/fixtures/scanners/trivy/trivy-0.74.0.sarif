@@ -300,7 +300,7 @@
       "columnKind": "utf16CodeUnits",
       "originalUriBaseIds": {
         "ROOTPATH": {
-          "uri": "file:///Users/sakethbandi/Projects/bernstein/tests/fixtures/scanners/trivy/target/"
+          "uri": "file:///workspace/bernstein/tests/fixtures/scanners/trivy/target/"
         }
       }
     }
