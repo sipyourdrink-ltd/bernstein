@@ -41,7 +41,7 @@ See [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md) for th
 
 ## bernstein-addons
 
-- [role-pack](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/role-pack) records roles and reporting lines, requires independent acceptance of file SHA-256 hashes, and blocks replay of unknown tasks under a new ID.
+- [role-pack](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/role-pack) records roles and reporting lines, requires independent acceptance of file SHA-256 hashes, and blocks a new task with the same role and title while an earlier one is unknown.
 - [sandcastle](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/sandcastle) calls Sandcastle for a task attempt and records run evidence; Bernstein's gates control merges.
 - [brand-gate](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/brand-gate) checks a domain or URL with `brand-impersonation-detector` before an action and records the verdict in a journal.
 
