@@ -38,13 +38,13 @@ Ten screen routes under `/ui`: nine dashboard screens plus the standalone Vocabu
 - **Layout:** 2-column grid `1fr 380px`. Left = filter chips + table. Right = selected-task drawer.
 - **Data shown:** task ID, title + branch, agent, role pill, duration (color-coded if stalled), progress bar, cost.
 - **Filter chips:** All · Running · Queued · Stalled · Done · Failed (with counts). Selecting **Done** sends `status=done` without a time-window parameter; it is not limited to the last 24 hours.
-- **Operator search syntax:** mono input parses `agent:` / `status:` / `role:` token prefixes.
+- **Operator search syntax:** `agent:` and `role:` set the agent and role query filters; remaining words form the free-text `q` search. Status comes from the selected filter chip. The input highlights `agent:`, `role:`, and `status:`, but `status:` tokens are ignored by the query parser: typing `status:failed` does not change the selected chip or filter the list by failed status. For example, `agent:Alpha role:backend status:failed compile` with the Done chip selects `status=done`, `agent=Alpha`, `role=backend`, and `q=compile`.
 - **Drawer tabs:** Summary · Diff · Gates · Artifacts · Logs · Deps · Trace · Steer (Steer disabled with a reason on terminal tasks).
 - **Artifacts:** task-scoped evidence posted by workers, including reports, tables, and preview links, with version history and a progress strip.
 - Use "Create task" or "New from prompt" to enter a title, prompt and optional role. The form submits to `POST /api/v1/tasks` and opens the drawer for the created task.
 - If the server's response cannot confirm creation, use **Check task** before submitting again.
-- **Actions:** Cancel run · Re-run · Change model · Change role · Kill session.
-- **Endpoints:** `GET /api/v1/tasks?status=&agent=&page=`, `POST /api/v1/tasks/{id}/{cancel,retry,prioritize,kill}`, `POST /api/v1/tasks/batch-ops`. SSE: `task_update`, `task_progress` over `/api/v1/events`.
+- **Actions:** Cancel run · Re-run · Prioritize · Kill session. **Change model** is rendered but disabled with “Not wired in this build”; **Change role** is not rendered. The **Kill session** label currently requests cancellation of the selected task; it does not call the separate agent-session kill operation.
+- **Endpoints:** `GET /api/v1/tasks?status=&agent=&page=`, `POST /api/v1/tasks/{id}/{cancel,force-claim,prioritize}`, `POST /api/v1/tasks/batch-ops`. Re-run uses `force-claim`. Cancel run and the Kill session control both use the task's `cancel` endpoint with a JSON `reason` (`cancelled from gui` or `killed from gui`, respectively). The Tasks drawer does not call the separate `POST /api/v1/agents/{session_id}/kill` operation. SSE: `task_update`, `task_progress` over `/api/v1/events`.
 - **Replaces TUI widget:** `task_list.py` + `task_detail_overlay.py` + `dependency_graph.py`.
 
 ## Agents (`/ui/agents`)
