@@ -118,6 +118,102 @@ published `quorum` that disagrees with the rules is overwritten rather than
 merged on. What the check decides, and why a branch rule cannot decide it
 instead, is written at the top of `scripts/quorum_check.py`.
 
+### Maintainer integration evidence
+
+The [review charter](../governance/review-charter.md) permits an explicit
+maintainer-attested integration exception while preserving contributor
+attribution, standing reviewer objections, required CI/bundle checks and the
+merge queue. The summary distinguishes this exception from the actual number
+of human approvals. Native execution IDs never become GitHub human votes.
+
+The trusted controller reads the actual completed review reports, checks their
+digests and establishes the producer/reviewer execution identities before
+publishing. Ordinary integrations require one independent technical review.
+Merge-control, governance, workflow, access and secret/security changes require
+two and a passing security-test report. The concrete classifier is
+`technical_reviews_needed` in `scripts/quorum_check.py`. The author and every
+producer are excluded; review execution IDs must also differ from each other.
+The same requirements cover maintainer-authored changes and automation entering
+this path. Existing unrelated dependency-bot policy is separate.
+
+Transport is an inert PR comment whose first line is exactly:
+
+```text
+<!-- bernstein-maintainer-adoption:v1 -->
+```
+
+The remaining text is one JSON object with exactly these fields:
+
+| Field | Contract |
+|---|---|
+| `schema` | `bernstein.maintainer-adoption.v1` |
+| `repository`, `pull_request` | Exact repository slug and integer PR number |
+| `base_sha`, `head_sha` | Exact 40-character lowercase commit hashes from the current PR API response |
+| `policy_sha256` | 64-character digest of the trusted default-branch policy bundle |
+| `producer_execution_ids` | Nonempty, unique list of actual producer execution identities |
+| `reviews` | One or more review envelopes; at least two on sensitive changes |
+| `security_tests` | Passing security-test envelope for sensitive changes; otherwise `null` or a valid envelope |
+
+Every envelope has exactly `report` and `report_sha256`. A terminal `report`
+has exactly `execution_id`, `head_sha`, `outcome`, `findings`, `checks` and
+`summary`. Its head must match, its outcome must be `PASS` and findings must
+be empty. Checks are strings describing the commands actually executed and
+their results; the security-test report requires at least one. Summary is a
+substantive report of the actual review, not a generated approval declaration.
+Do not relabel producer output as independent review or invent execution IDs.
+
+`report_sha256` is SHA-256 of sorted compact UTF-8 JSON with non-ASCII
+characters preserved and non-finite numbers prohibited:
+`json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")`.
+`scripts/quorum_evidence.py::report_digest` exposes this encoding. The complete
+comment is capped at 60,000 UTF-8 bytes and has a strict schema; duplicate JSON
+keys, extra fields, repeated identities and malformed digests are rejected.
+
+`python3 scripts/quorum_check.py --policy-digest` prints the bundle digest.
+Run it on the trusted default-branch checkout; computing a candidate branch's
+digest does not make that candidate policy authoritative. The digest binds
+the evaluator, evidence verifier, request planner, hygiene script, roster,
+CODEOWNERS, charter and both quorum workflows. Unrelated commits leave it
+unchanged. A policy, base or head change invalidates the attestation.
+
+Authentication comes only from fresh GitHub API comment authorship, matched
+to the configured maintainer's freshly resolved account ID. PR body text and
+copied comments confer no authority. The verifier recomputes embedded report
+digests but **trusts the maintainer's attestation of actual execution and
+independence**; it does not claim cryptographic provider attestation.
+
+The latest authenticated declaration is authoritative. Update that comment
+with the marker retained and an empty `reviews` list to revoke it; deleting a
+comment can reveal an earlier declaration. Stale, malformed, tampered,
+non-PASS or unresolved-finding evidence blocks the exception, including when
+other human approvals exist.
+
+Before an independently authorized Ready transition, a controller can run
+`python3 scripts/quorum_check.py --evaluate-content --repo OWNER/REPO --pr N`
+from the trusted default-branch checkout. Exit zero means only that content
+and evidence qualify: the same path, exact-head, independence, sensitive-review,
+security-test, standing-objection and governance-window rules apply, with only
+draft classification excluded. It grants no quorum success, Ready transition,
+merge or public-action authority. The PR remains a draft, and full quorum must
+pass after Ready along with the independent CI, bundle and queue gates.
+Privileged required-check publishers always use full evaluation. A draft fails
+full quorum regardless of its evidence.
+
+The comment event runs `quorum-rerun.yml`'s isolated attestation job, checks
+out only trusted default-branch code, recomputes the verdict and republishes
+`quorum` through `publish_required_check.py`. It verifies that head and base
+did not move during evaluation. The configured maintainer's account ID is
+resolved afresh before publication; all of that maintainer's PR-comment edits
+and deletions trigger recomputation, including removal of the marker.
+No report command, URL or PR source is
+executed with this job's write token. Normal PR and merge-group checks also
+evaluate the current policy, so a candidate evaluator cannot certify itself.
+
+Bootstrap of a policy amendment uses the separately authorized exact-hash
+maintainer procedure with its real independent reviews and security tests.
+This implementation introduces no ruleset or global quorum bypass. Required
+CI, bundle and queue checks remain in force.
+
 `typecheck-ts` occupies four rows because it publishes four contexts: its
 job is `typecheck (${{ matrix.package }})` and branch protection matches a
 context by its exact rendered string, so requiring "the typecheck lane"

@@ -29,12 +29,22 @@ name: quorum rerun
 on:
   pull_request_review:
     types: [submitted, edited, dismissed]
+  # Safety exception (zizmor dangerous-triggers): edit/delete invalidation,
+  # including marker removal, needs this event; a label cannot represent it.
+  # Only the attestation job handles comments. It runs pinned actions and
+  # trusted default-branch scripts, with no PR checkout, cache or artifact.
+  # Comment JSON is inert: no interpolation into commands, env or paths.
+  # Fresh API maintainer login + numeric ID authorize the narrow check write;
+  # no contents/reviews write or extra secret is granted. Existing security
+  # tests pin these boundaries; the exception covers only this trigger/rule.
+  issue_comment:  # zizmor: ignore[dangerous-triggers]
+    types: [created, edited, deleted]
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch: {}
 
 concurrency:
-  group: quorum-rerun-${{ github.event.pull_request.number || 'sweep' }}
+  group: quorum-rerun-${{ github.event.pull_request.number || github.event.issue.number || 'sweep' }}
   cancel-in-progress: false
 
 permissions:
@@ -42,6 +52,7 @@ permissions:
 
 jobs:
   rerun:
+    if: github.event_name != 'issue_comment'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -199,3 +210,77 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           QUORUM_REQUEST_REVIEWS: ${{ vars.QUORUM_REQUEST_REVIEWS }}
         run: python3 scripts/quorum_request_reviews.py
+
+  attestation:
+    name: Evaluate maintainer attestation
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      (github.event.action == 'edited' || github.event.action == 'deleted' ||
+       startsWith(github.event.comment.body, '<!-- bernstein-maintainer-adoption:v1 -->'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      # issue_comment runs trusted default-branch code. Receipt text is data;
+      # nothing from the contributor's checkout is imported or executed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Authenticate the maintainer comment event
+        id: author
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from scripts import quorum_check as qc
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          maintainer = qc.load_roster().maintainer
+          profile = qc.gh_json("api", f"users/{maintainer}")
+          if profile.get("login", "").casefold() != maintainer.casefold():
+              raise ValueError("fresh maintainer identity mismatch")
+          authorized = qc.evidence.authorized_comment_event(
+              event, maintainer=maintainer, maintainer_id=profile.get("id")
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"authorized={str(authorized).lower()}\n")
+          PY
+      - name: Recompute and publish the real policy verdict
+        if: ${{ !cancelled() && steps.author.outputs.authorized == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          before=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '[.head.sha,.base.sha] | join(" ")')
+          head=${before%% *}
+          set +e
+          python3 scripts/quorum_check.py --repo "$REPO" --pr "$PR_NUMBER" > quorum-verdict.md
+          result=$?
+          set -e
+          after=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '[.head.sha,.base.sha] | join(" ")')
+          if [ "$before" != "$after" ]; then
+            echo "::error::PR head/base changed during evaluation; no stale verdict published."
+            exit 1
+          fi
+          conclusion=failure
+          if [ "$result" -eq 0 ]; then conclusion=success; fi
+          python3 scripts/publish_required_check.py \
+            --repo "$REPO" --sha "$head" --name quorum \
+            --conclusion "$conclusion" \
+            --title "Trusted default-branch quorum evaluation" \
+            --summary "$(cat quorum-verdict.md)"
