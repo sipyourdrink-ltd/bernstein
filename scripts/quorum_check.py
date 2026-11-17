@@ -57,10 +57,9 @@ The rules, in the order they are applied
    author or by anyone who pushed to the branch.
 
    A protected path (any CODEOWNERS entry that is not `*`) needs its owner.
-   Until 2026-11-23 00:00 UTC the maintainer's approval alone satisfies the
-   ordinary two-approval quorum (the sprint window, charter section 3,
-   following the backlog window); the third approval on large or sensitive
-   changes is unchanged.
+   Until 2026-10-05 the maintainer's approval alone satisfies the ordinary
+   two-approval quorum (the backlog window, charter section 3); the third
+   approval on large or sensitive changes is unchanged.
 
 
 Approvals count only when they were given on the current head commit: a push
@@ -218,7 +217,6 @@ GITHUB_ACTIONS_BOT = "github-actions[bot]"
 # sensitive changes, which keep the third approval. After the date this
 # constant is dead code and the branch below goes with it.
 BACKLOG_WINDOW_ENDS = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
-SPRINT_WINDOW_ENDS = datetime(2026, 11, 23, 0, 0, tzinfo=UTC)
 
 
 def gh_json(*args: str) -> Any:
@@ -1034,9 +1032,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         text = f"{need_total} approvals, {need_core} from a core reviewer ({reason})"
         met = len(approving) >= need_total and len(approving_core) >= need_core
         who = _names(eligible - approving)
-        approval_window_ends = BACKLOG_WINDOW_ENDS if now < BACKLOG_WINDOW_ENDS else SPRINT_WINDOW_ENDS
-        if need_total == 2 and now < approval_window_ends:
-            text += f", or the maintainer's alone until {approval_window_ends:%Y-%m-%d %H:%M UTC}"
+        if need_total == 2 and now < BACKLOG_WINDOW_ENDS:
+            text += f", or the maintainer's alone until {BACKLOG_WINDOW_ENDS:%Y-%m-%d}"
             met = met or roster.maintainer in approving
             if roster.maintainer not in approving:
                 who += f", or @{roster.maintainer} alone"

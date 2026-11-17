@@ -541,98 +541,10 @@ def test_the_window_does_not_lift_the_third_approval_on_a_sensitive_path(qc: Mod
 
 def test_the_window_closes_on_its_date(qc: ModuleType, roster) -> None:
     pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
-    after = qc.SPRINT_WINDOW_ENDS + timedelta(minutes=1)
+    after = qc.BACKLOG_WINDOW_ENDS + timedelta(minutes=1)
     verdict = qc.evaluate(pr, roster, OWNERS, after)
     assert not verdict.passed
     assert "2026-10-05" not in verdict.requirements[0].text
-
-
-# --- the sprint window (charter section 3, until 2026-11-23 00:00 UTC) -------
-
-SPRINT_NOW = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
-SPRINT_END = datetime(2026, 11, 23, 0, 0, tzinfo=UTC)
-
-
-@pytest.mark.parametrize("at", [SPRINT_NOW, SPRINT_END - timedelta(microseconds=1)])
-def test_sprint_window_accepts_the_maintainer_alone(qc: ModuleType, roster, at: datetime) -> None:
-    pr = _pr(qc, changed_lines=400, reviews=[_review(qc, "owner", "APPROVED")])
-    verdict = qc.evaluate(pr, roster, OWNERS, at)
-    assert verdict.passed
-    assert "2026-11-23 00:00 UTC" in verdict.requirements[0].text
-
-
-@pytest.mark.parametrize("at", [SPRINT_END, SPRINT_END + timedelta(microseconds=1)])
-def test_sprint_window_ends_at_midnight_utc(qc: ModuleType, roster, at: datetime) -> None:
-    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
-    verdict = qc.evaluate(pr, roster, OWNERS, at)
-    assert not verdict.passed
-    assert "alone until" not in verdict.requirements[0].text
-    pr.reviews.append(_review(qc, "comm1", "APPROVED"))
-    assert qc.evaluate(pr, roster, OWNERS, at).passed
-
-
-@pytest.mark.parametrize(
-    ("changed_lines", "paths"),
-    [(401, ["README.md"]), (12, ["src/bernstein/core/security/auth.py"])],
-    ids=["large", "sensitive"],
-)
-def test_sprint_window_keeps_three_approvals_and_two_core(
-    qc: ModuleType, roster, changed_lines: int, paths: list[str]
-) -> None:
-    pr = _pr(qc, changed_lines=changed_lines, paths=paths, reviews=[_review(qc, "owner", "APPROVED")])
-    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
-    pr.reviews.append(_review(qc, "comm1", "APPROVED"))
-    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
-    pr.reviews.append(_review(qc, "comm2", "APPROVED"))
-    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
-    pr.reviews.append(_review(qc, "core1", "APPROVED"))
-    assert qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
-
-
-def test_sprint_window_keeps_the_protected_path_owner_requirement(qc: ModuleType, roster) -> None:
-    pr = _pr(
-        qc,
-        paths=["src/bernstein/core/tasks/claim.py"],
-        reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "core2", "APPROVED")],
-    )
-    verdict = qc.evaluate(pr, roster, OWNERS, SPRINT_NOW)
-    assert not verdict.passed
-    assert verdict.requirements[0].met
-    assert any("owner of" in req.text and not req.met and "@owner" in req.who for req in verdict.requirements)
-    pr.reviews.append(_review(qc, "owner", "APPROVED"))
-    assert qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
-
-
-def test_sprint_window_does_not_replace_a_different_path_owner(qc: ModuleType, roster) -> None:
-    owners = [*OWNERS, ("/docs/special/", ["core1"])]
-    pr = _pr(qc, paths=["docs/special/guide.md"], reviews=[_review(qc, "owner", "APPROVED")])
-    verdict = qc.evaluate(pr, roster, owners, SPRINT_NOW)
-    assert not verdict.passed
-    assert verdict.requirements[0].met
-    assert any("owner of" in req.text and not req.met for req in verdict.requirements)
-
-
-def test_sprint_window_keeps_standing_changes_requested(qc: ModuleType, roster) -> None:
-    pr = _pr(
-        qc,
-        reviews=[
-            _review(qc, "owner", "APPROVED"),
-            _review(qc, "comm1", "CHANGES_REQUESTED", sha="0" * 40),
-            _review(qc, "comm1", "COMMENTED", at="2026-09-10T11:00:00Z"),
-        ],
-    )
-    verdict = qc.evaluate(pr, roster, OWNERS, SPRINT_NOW)
-    assert not verdict.passed
-    assert "changes requested" in verdict.requirements[0].text
-    assert verdict.requirements[1].met
-
-
-@pytest.mark.parametrize("case", ["missing", "stale", "writer"])
-def test_sprint_window_still_needs_an_eligible_maintainer_approval(qc: ModuleType, roster, case: str) -> None:
-    reviews = [] if case == "missing" else [_review(qc, "owner", "APPROVED", sha="0" * 40 if case == "stale" else HEAD)]
-    contributors = {"outsider", "owner"} if case == "writer" else {"outsider"}
-    pr = _pr(qc, reviews=reviews, contributors=contributors)
-    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
 
 
 def test_the_window_applies_to_the_workflows_that_invoke_the_check(qc: ModuleType, roster) -> None:
