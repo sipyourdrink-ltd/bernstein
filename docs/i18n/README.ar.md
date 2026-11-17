@@ -254,7 +254,7 @@ bernstein volunteer browse --budget 60
 يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`budget` و`verify-bundle` و`hub`. الأمر `autopilot` مسجّل، لكنه يرفض التشغيل إلى أن يُنفّذ `TaskSource`.
 
 ### ما وراء الصفحة الرئيسية
-<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
 
 كل التفاصيل المعمقة متوفرة على [موقع التوثيق](https://docs.bernstein.run/):
 

@@ -254,7 +254,7 @@ bernstein volunteer browse --budget 60
 [Lahjoittajan opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) käsittelee workerin ajamisen ja asettamasi budjetin, [projektin opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) manifestin ilmoittamisen, ja [uhkamalli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) kertoo, miltä kukin raja suojaa ja miltä ei. Yhden komennon ajuria ei ole vielä julkaistu: tänään toimivat alikomennot ovat `verify`, `browse`, `budget`, `verify-bundle` ja `hub`. `autopilot` on rekisteröity, mutta se kieltäytyy käynnistymästä, kunnes `TaskSource` on toteutettu.
 
 ### etusivun lisäksi
-<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
 
 Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.bernstein.run/):
 
