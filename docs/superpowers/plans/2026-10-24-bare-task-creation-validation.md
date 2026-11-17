@@ -8,8 +8,8 @@ Commands below use the existing interpreter without installing dependencies:
 
 ```sh
 export PYTHONPATH="$PWD/src"
-PY=/Users/sasha/code/products/bernstein/bernstein/.venv/bin/python
-BIN=/Users/sasha/code/products/bernstein/bernstein/.venv/bin
+PY=.venv/bin/python
+BIN=.venv/bin
 ```
 
 ## RED evidence
