@@ -34,14 +34,3 @@ A change to the roster is a pull request against the TOML file, following
 [GOVERNANCE.md](GOVERNANCE.md); this table is updated in the same pull request. Entries may carry a term; see [Roles and terms](docs/governance/review-charter.md#11-roles-and-terms).
 
 Security reports do not go here. Use the channels in [SECURITY.md](SECURITY.md).
-
-## Temporary merge rule until 23 November 2026
-
-From the merge of this change until 23 November 2026, the maintainer may
-merge a contributor pull request once the required checks are green and
-an independent automated review has passed on the exact head commit,
-without a second human approval. This temporary rule supports release
-stabilisation before v4.0.0.
-
-After 23 November 2026, the normal approval rule applies again. A revert
-pull request is prepared alongside this change for 23 November 2026.
