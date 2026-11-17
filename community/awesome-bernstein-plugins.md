@@ -23,6 +23,7 @@ See [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md) for th
 
 ## Contents
 
+- [bernstein-addons](#bernstein-addons)
 - [Notifiers](#notifiers)
 - [Observability & Metrics](#observability--metrics)
 - [Issue Tracker Sync](#issue-tracker-sync)
@@ -35,6 +36,26 @@ See [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md) for th
 - [Writing a Plugin](#writing-a-plugin)
 - [Publishing a Plugin](#publishing-a-plugin)
 - [Contributing to This List](#contributing-to-this-list)
+
+---
+
+## bernstein-addons
+
+- [role-pack](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/role-pack) records roles and reporting lines, requires independent acceptance of file SHA-256 hashes, and blocks replay of unknown tasks under a new ID.
+- [sandcastle](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/sandcastle) calls Sandcastle for a task attempt and records run evidence; Bernstein's gates control merges.
+- [brand-gate](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/brand-gate) checks a domain or URL with `brand-impersonation-detector` before an action and records the verdict in a journal.
+
+Install from a clone of [bernstein-addons](https://github.com/sipyourdrink-ltd/bernstein-addons), following its [README](https://github.com/sipyourdrink-ltd/bernstein-addons/blob/main/README.md#quickstart) and the plugin's README. These packages are not published to a package index. For role-pack:
+
+```bash
+git clone https://github.com/sipyourdrink-ltd/bernstein-addons.git
+cd bernstein-addons
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install "bernstein==3.24.1"
+pip install ./plugins/role-pack
+bernstein-role-pack demo
+```
 
 ---
 
