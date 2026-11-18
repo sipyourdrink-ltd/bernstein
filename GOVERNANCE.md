@@ -4,13 +4,26 @@ Bernstein is a single-maintainer project. [@chernistry](https://github.com/chern
 holds the final call. This page states how that call gets made, so
 contributors do not have to infer it from the other files.
 
-**How decisions are made.** In the open, in issues and pull requests.
-There is no private channel where a proposal is really decided. The
+**How decisions are made.** A contributor's proposal or pull request is
+decided in its public issue or pull request; there is no private channel
+where it is really decided. The
 maintainer decides and the reasoning goes in the thread next to the
 decision — a "no" that does not say what would change it is an
 incomplete answer. Boundaries already settled live in
 [docs/scope.md](docs/scope.md), each pointing at the
 [decision record](docs/decisions/index.md) behind it.
+
+**Where the maintainer plans.** The maintainer keeps work orders and
+research notes in a private planning tracker and decides there what to
+build next, so most planned work does not appear as a public issue
+before its pull request. What reaches the
+code stays public: every change lands through a public pull request
+reviewed in its thread, and a change that needs an issue first (below)
+gets a public issue that states the problem, the option chosen and what
+it costs before code is written. Bug reports, proposals from
+contributors, the labelled queues in [CONTRIBUTING.md](CONTRIBUTING.md)
+and every issue that someone has claimed or has a pull request for stay
+in the public tracker.
 
 **Changes that need an issue first.** Agree on the design before writing
 code when the change touches the public API (CLI commands and flags, HTTP
