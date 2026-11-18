@@ -316,5 +316,3 @@ Citation metadata lives in [CITATION.cff](https://github.com/sipyourdrink-ltd/be
 [Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->
-
-Opt-in [cluster registry partitions](docs/operations/cluster-mode.md#consistent-hash-ring-primitive) use a consistent hash ring for local node storage. Default installations retain the existing single registry.
