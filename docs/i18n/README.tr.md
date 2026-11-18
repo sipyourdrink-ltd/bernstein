@@ -280,9 +280,9 @@ Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan al
 bernstein'ı yazdım çünkü üç kodlama ajanını paralel çalıştırıp deterministik olmayan birleştirmeler alırken ayda 400 dolar claude faturası ödüyordum. Apache 2.0, tek kişi tarafından sürdürülmektedir. Canlı istatistikler: [bernstein.run](https://bernstein.run).
 
 ### bahsedilen yerler
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
 
-[vinta/awesome-python](https://github.com/vinta/awesome-python) listesinde yer aldı, Augment Code'un [açık kaynaklı ajan orkestratörleri](https://www.augmentcode.com/tools/open-source-agent-orchestrators) incelemesinde ele alındı ve [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) bülteninde listelendi. Yaklaşımı ayrıca awesome-agentic-patterns içinde [deterministik sıfır-LLM orkestrasyonu](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) deseni olarak belgeledik.
+Augment Code'un [açık kaynaklı ajan orkestratörleri](https://www.augmentcode.com/tools/open-source-agent-orchestrators) incelemesinde ele alındı ve [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) bülteninde listelendi. Yaklaşımı ayrıca awesome-agentic-patterns içinde [deterministik sıfır-LLM orkestrasyonu](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) deseni olarak belgeledik.
 
 <details>
 <summary>Tüm kapsam: 20'den fazla awesome listesi, dizin, bülten ve atıf</summary>

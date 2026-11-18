@@ -280,9 +280,9 @@ Bernstein leva o nome de Leonard Bernstein, o maestro e compositor americano. O 
 escrevi o bernstein porque estava pagando $400/mês em contas do claude rodando três agentes de codificação em paralelo e obtendo merges não determinísticos. Apache 2.0, mantido por uma só pessoa. Estatísticas em tempo real: [bernstein.run](https://bernstein.run).
 
 ### mencionado em
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
 
-Listado em [vinta/awesome-python](https://github.com/vinta/awesome-python), coberto no resumo de [orquestradores de agentes open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) da Augment Code e citado no [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Também descrevemos a abordagem como o padrão [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) no awesome-agentic-patterns.
+Coberto no resumo de [orquestradores de agentes open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) da Augment Code e citado no [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Também descrevemos a abordagem como o padrão [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) no awesome-agentic-patterns.
 
 <details>
 <summary>Toda a cobertura: mais de 20 listas awesome, diretórios, newsletters e citações</summary>

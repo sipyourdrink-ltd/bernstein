@@ -280,9 +280,9 @@ Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח 
 כתבתי את bernstein כי שילמתי 400 דולר בחודש בחשבונות claude על הרצת שלושה סוכני קידוד במקביל וקיבלתי מיזוגים לא-דטרמיניסטיים. רישיון Apache 2.0, מתוחזק על ידי אדם יחיד. סטטיסטיקה חיה: [bernstein.run](https://bernstein.run).
 
 ### מוזכר ב-
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
 
-מופיע ב-[vinta/awesome-python](https://github.com/vinta/awesome-python), נסקר בסקירת [מתזמרי סוכנים בקוד פתוח](https://www.augmentcode.com/tools/open-source-agent-orchestrators) של Augment Code וצוין ב-[Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). תיעדנו את הגישה גם כתבנית [תזמור דטרמיניסטי ללא LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) ב-awesome-agentic-patterns.
+נסקר בסקירת [מתזמרי סוכנים בקוד פתוח](https://www.augmentcode.com/tools/open-source-agent-orchestrators) של Augment Code וצוין ב-[Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). תיעדנו את הגישה גם כתבנית [תזמור דטרמיניסטי ללא LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) ב-awesome-agentic-patterns.
 
 <details>
 <summary>כל הסיקורים: מעל 20 רשימות awesome, ספריות, ניוזלטרים וציטוטים</summary>

@@ -280,9 +280,9 @@ Bernstein dinamai berdasarkan Leonard Bernstein, konduktor dan komposer asal Ame
 saya menulis bernstein karena menghabiskan $400/bulan untuk tagihan claude saat menjalankan tiga agen pengodean secara paralel dan mendapatkan hasil merge yang non-deterministik. Berlisensi Apache 2.0, dikelola secara mandiri. Statistik langsung: [bernstein.run](https://bernstein.run).
 
 ### disebutkan dalam
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
 
-Terdaftar di [vinta/awesome-python](https://github.com/vinta/awesome-python), diulas dalam rangkuman Augment Code tentang [orkestrator agen open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators), dan dicantumkan di [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Kami juga mendokumentasikan pendekatan ini sebagai pola [orkestrasi deterministik tanpa LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) di awesome-agentic-patterns.
+Diulas dalam rangkuman Augment Code tentang [orkestrator agen open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators), dan dicantumkan di [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Kami juga mendokumentasikan pendekatan ini sebagai pola [orkestrasi deterministik tanpa LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) di awesome-agentic-patterns.
 
 <details>
 <summary>Semua liputan: lebih dari 20 daftar awesome, direktori, buletin, dan kutipan rekan</summary>

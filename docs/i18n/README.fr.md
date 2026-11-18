@@ -280,9 +280,9 @@ Bernstein rend hommage à Leonard Bernstein, chef d'orchestre et compositeur am�
 j'ai écrit bernstein après avoir constaté 400 $/mois de factures claude en exécutant trois agents de code en parallèle avec des fusions non déterministes. Apache 2.0, maintenu individuellement. Statistiques en direct : [bernstein.run](https://bernstein.run).
 
 ### ils en parlent
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
 
-Référencé dans [vinta/awesome-python](https://github.com/vinta/awesome-python), présenté dans le comparatif d'Augment Code sur les [orchestrateurs d'agents open source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) et sélectionné dans [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). La démarche est également documentée comme pattern d'[orchestration déterministe sans LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) dans awesome-agentic-patterns.
+Présenté dans le comparatif d'Augment Code sur les [orchestrateurs d'agents open source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) et sélectionné dans [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). La démarche est également documentée comme pattern d'[orchestration déterministe sans LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) dans awesome-agentic-patterns.
 
 <details>
 <summary>Toutes les mentions : plus de 20 listes awesome, annuaires, newsletters et citations</summary>
