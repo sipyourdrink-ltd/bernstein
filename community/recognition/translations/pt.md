@@ -89,8 +89,6 @@ E mais uma coisa humana. Se uma oportunidade paga real algum dia aparecer em tor
 
 Não podemos, claro, publicar todo o nosso pipeline de analytics, mas por todas as aparências não somos os únicos lendo. Gente de grandes empresas de TI e laboratórios de IA aparece no site com bastante regularidade e faz perguntas bem específicas sobre a documentação. Os concorrentes, vamos assumir, também não estão dormindo.
 
-E, aliás: pelo nosso analytics passivo, tirando o ruído óbvio de bots, o Bernstein hoje roda regularmente em pelo menos umas 3.000 máquinas pelo mundo. Acho isso bem respeitável. O Bernstein não envia telemetria de produto por padrão e esse número não vem de nenhuma; é um sinal passivo, e é tudo que vou dizer sobre o método.
-
 Então a situação já é interessante por si só. Estamos construindo um produto livre que as pessoas realmente usam, que atrai a atenção de engenheiros, laboratórios de IA e grandes empresas, e qualquer usuário pode pegar o código-fonte e ser dono dele. Minha opinião, claramente uma opinião: quando você consegue uma ferramenta séria de graça e ainda é dono do código, fica difícil explicar por que alguém pagaria dezenas de milhares de dólares por mês por algo parecido.
 
 Quero que esse projeto pareça grande. Não para podermos dizer que somos ótimos, mas para que todo mundo trabalhando aqui entenda que está fazendo algo que pode importar bem além de um pull request. A régua que tenho na cabeça é mais ou menos Ansible, Kubernetes, Terraform. Não "Bernstein é o próximo Kubernetes". Mais assim: se o Bernstein algum dia se tornar a implementação de referência na sua categoria, não quero que a gente olhe para trás pensando que fizemos isso com pressa. Devíamos fazer isso bem.

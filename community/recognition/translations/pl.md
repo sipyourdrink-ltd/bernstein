@@ -89,8 +89,6 @@ I jeszcze jedna ludzka sprawa. Jeśli kiedykolwiek pojawi się prawdziwa płatna
 
 Oczywiście nie możemy opublikować całego naszego pipeline'u analitycznego, ale wszystko wskazuje na to, że nie tylko my czytamy. Ludzie z dużych firm IT i laboratoriów AI pojawiają się na stronie dość regularnie i zadają dość konkretne pytania o dokumentację. Konkurencja, załóżmy, też nie śpi.
 
-I przy okazji: według naszej pasywnej analityki, po usunięciu oczywistego szumu botów, Bernstein działa teraz regularnie na co najmniej około 3000 maszynach na całym świecie. Myślę, że to całkiem szanowany wynik. Bernstein domyślnie nie wysyła żadnej telemetrii produktowej i ta liczba nie pochodzi z żadnej; to sygnał pasywny, i to wszystko, co powiem o metodzie.
-
 Więc sytuacja sama w sobie jest już ciekawa. Budujemy darmowy produkt, którego ludzie naprawdę używają, przyciągający uwagę inżynierów, laboratoriów AI i dużych firm, a każdy użytkownik może wziąć kod źródłowy i być jego właścicielem. Moja opinia, wyraźnie opinia: kiedy można dostać poważne narzędzie za darmo i być właścicielem kodu, trudno wytłumaczyć, dlaczego ktokolwiek miałby płacić dziesiątki tysięcy dolarów miesięcznie za coś podobnego.
 
 Chcę, żeby ten projekt był odczuwany jako duży. Nie po to, żebyśmy mogli mówić ludziom, że jesteśmy wspaniali, ale żeby każdy, kto tu pracuje, rozumiał, że robi coś, co może mieć znaczenie znacznie wykraczające poza jeden pull request. Poprzeczka, którą mam w głowie, to mniej więcej Ansible, Kubernetes, Terraform. Nie "Bernstein to następne Kubernetes". Raczej: jeśli Bernstein kiedykolwiek stanie się referencyjną implementacją w swojej kategorii, nie chcę, żebyśmy patrzyli wstecz i myśleli, że zrobiliśmy to w pośpiechu. Powinniśmy zrobić to dobrze.

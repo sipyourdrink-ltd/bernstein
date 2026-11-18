@@ -89,8 +89,6 @@ Licences के बारे में, सटीक रूप से, क्य
 
 हम, ज़ाहिर है, अपनी पूरी analytics pipeline publish नहीं कर सकते, लेकिन सब दिखने में हम अकेले पढ़ने वाले नहीं हैं। बड़ी IT companies और AI labs के लोग site पर काफी नियमित रूप से आते हैं और documentation से काफी specific सवाल पूछते हैं। Competitors भी, मान लो, सोए नहीं हैं।
 
-और, वैसे: हमारे passive analytics के मुताबिक, obvious bot noise हटाकर, Bernstein अब दुनिया भर में कम से कम लगभग 3,000 machines पर नियमित रूप से चलता है। मुझे लगता है यह काफी respectable है। Bernstein default रूप से कोई product telemetry नहीं भेजता और यह संख्या किसी telemetry से नहीं आती; यह एक passive signal है, और method के बारे में मैं इतना ही कहूँगा।
-
 तो situation पहले से ही एक interesting है। हम एक free product बना रहे हैं जिसे लोग असल में use करते हैं, यह engineers, AI labs और large companies का ध्यान खींचता है, और कोई भी user source ले सकता है और उसका मालिक बन सकता है। मेरी opinion, साफ़ तौर पर एक opinion: जब तुम एक serious tool free में पा सको और code के मालिक बन सको, तो यह समझाना मुश्किल हो जाता है कि कोई ऐसी ही किसी चीज़ के लिए महीने के tens of thousands dollars क्यों देगा।
 
 मैं चाहता हूँ कि यह project बड़ा महसूस हो। इसलिए नहीं कि हम लोगों को बता सकें कि हम great हैं, बल्कि इसलिए कि यहाँ काम करने वाला हर व्यक्ति समझे कि वे कुछ ऐसा कर रहे हैं जो एक pull request से कहीं आगे matter कर सकता है। मेरे दिमाग में bar लगभग Ansible, Kubernetes, Terraform जैसा है। यह नहीं कि "Bernstein अगला Kubernetes है"। बल्कि: अगर Bernstein कभी अपनी category में reference implementation बन जाए, तो मैं नहीं चाहता कि हम पीछे मुड़कर देखें और सोचें कि हमने इसे जल्दबाज़ी में किया। हमें यह अच्छे से करना चाहिए।

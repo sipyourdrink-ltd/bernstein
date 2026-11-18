@@ -93,8 +93,6 @@ And one more human thing. If a real paid opportunity ever shows up around Bernst
 
 We cannot, of course, publish our whole analytics pipeline, but by all appearances we are not the only ones reading. People from large IT companies and AI labs turn up on the site fairly regularly and ask quite specific questions of the documentation. The competitors, let us assume, are not asleep either.
 
-And, by the way: by our passive analytics, with the obvious bot noise removed, Bernstein now runs regularly on at least around 3,000 machines around the world. I think that is fairly respectable. Bernstein sends no product telemetry by default and this number does not come from any; it is a passive signal, and that is all I will say about the method.
-
 So the situation is already an interesting one. We are building a free product that people actually use, it draws the attention of engineers, AI labs and large companies, and any user can take the source and own it. My opinion, clearly an opinion: when you can get a serious tool for free and own the code, it becomes hard to explain why anyone would pay tens of thousands of dollars a month for something similar.
 
 I want this project to feel big. Not so we can tell people we are great, but so that everyone working here understands they are doing something that may matter well beyond one pull request. The bar in my head is roughly Ansible, Kubernetes, Terraform. Not "Bernstein is the next Kubernetes". Rather: if Bernstein ever becomes the reference implementation in its category, I do not want us looking back and thinking we did it in a hurry. We should do it well.
