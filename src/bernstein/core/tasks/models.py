@@ -2123,7 +2123,7 @@ class ClusterConfig:
         claim_journal_path: MESH only. Explicit path to the signed claim
             journal. ``None`` uses the conventional
             ``.sdd/cluster/claim_journal.jsonl``.
-        shards: Optional local registry partitions as (shard ID, base URL) pairs.
+        shards: Optional partitions inside one registry process as (ID, URL) pairs.
             Empty retains single-dictionary storage. URLs are metadata only.
         shard_vnodes: Virtual nodes per shard, an integer from 1 to 1024.
         gossip_peer_keys: MESH only. The peers whose gossiped receipts this
@@ -2147,7 +2147,7 @@ class ClusterConfig:
     claim_lease_ttl_s: int = 300
     claim_journal_path: str | None = None
     gossip_peer_keys: tuple[MeshPeerKey, ...] = ()
-    # Opt-in local registry partitions. URLs are owner metadata, not forwarding targets.
+    # Opt-in partitions inside one registry process. URLs are metadata, not forwarding targets.
     shards: tuple[tuple[str, str], ...] = ()
     shard_vnodes: int = 128
 

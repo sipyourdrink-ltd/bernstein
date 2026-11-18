@@ -1,9 +1,8 @@
-"""Consistent hash ring for sharding cluster nodes across multiple registries.
+"""Deterministic selection of local partitions inside one NodeRegistry process.
 
-Supports deterministic node-to-shard mapping using consistent hashing with
-virtual nodes. The implementation is language-portable: an edge relay in
-JavaScript can reimplement the same hash function and achieve byte-identical
-mappings.
+The registry opts in through nonempty shard configuration; the default single
+dictionary is unchanged. Consistent hashing with virtual nodes maps node IDs
+to local partitions. Configured URLs are metadata only.
 """
 
 from __future__ import annotations
@@ -24,11 +23,11 @@ _POP_MISSING = object()
 
 @dataclass(frozen=True)
 class HashRing:
-    """Consistent hash ring with virtual nodes for shard selection.
+    """Consistent hash ring with virtual nodes for local partition selection.
 
-    Virtual nodes improve distribution uniformity and reduce key movement
-    when shards are added/removed. Hash = first 8 bytes of sha256(key) as
-    big-endian unsigned int.
+    Virtual nodes define the token positions used to assign keys to partitions.
+    Registry membership is fixed until restart. Hash = first 8 bytes of
+    sha256(key) as a big-endian unsigned int.
     """
 
     shard_ids: tuple[str, ...]
@@ -62,7 +61,7 @@ class HashRing:
 
 @dataclass(frozen=True)
 class ShardMap:
-    """Mapping from shard ID to central base URL."""
+    """Mapping from local partition ID to configured URL metadata."""
 
     shard_map: dict[str, str]
 
@@ -80,7 +79,7 @@ class NodeShardStorage(MutableMapping[str, "NodeInfo"]):
 
     All point operations use the ring; iteration spans the partitions for
     identity lookup, persistence, scheduling and cluster-wide summaries.
-    URLs describe owners but do not initiate network traffic.
+    URLs are partition metadata and do not initiate network traffic.
     """
 
     def __init__(self, shards: tuple[tuple[str, str], ...], vnodes: int) -> None:

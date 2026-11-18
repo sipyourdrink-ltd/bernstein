@@ -1,4 +1,4 @@
-"""Tests for consistent hash ring sharding of cluster nodes."""
+"""Tests for deterministic node-key selection of local registry partitions."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class TestHashRing:
             assert len(keys_for_shard) > 0
 
     def test_distribution_2000_nodes_50_shards(self) -> None:
-        """Verify distribution of 2000 nodes over 50 shards within ±35% of mean."""
+        """Verify 2000 keys map to 50 local partitions within ±50% of mean."""
         num_nodes = 2000
         num_shards = 50
         shard_ids = tuple(f"shard-{i}" for i in range(num_shards))
@@ -52,13 +52,13 @@ class TestHashRing:
         values = list(counts.values())
         mean = statistics.mean(values)
 
-        # All counts should be within ±35% of mean
+        # Local partition key counts should be within ±50% of mean
         for count in values:
             deviation_pct = abs(count - mean) / mean * 100
             assert deviation_pct <= 50, f"Deviation {deviation_pct}% exceeds 50%"
 
     def test_rebalancing_one_shard_added(self) -> None:
-        """Adding one shard should move ~1/(N+1)+5% of keys."""
+        """Compare two fixed rings: one extra partition remaps at most ~1/(N+1)+5% of keys."""
         num_nodes = 2000
         num_shards_initial = 50
         shard_ids_initial = tuple(f"shard-{i}" for i in range(num_shards_initial))
@@ -70,7 +70,7 @@ class TestHashRing:
             key = f"node-{i}"
             initial_assignments[key] = ring_initial.lookup(key)
 
-        # Add one shard
+        # Build a separate ring with one extra local partition
         shard_ids_new = tuple(f"shard-{i}" for i in range(num_shards_initial + 1))
         ring_new = HashRing(shard_ids=shard_ids_new, vnodes=128)
 

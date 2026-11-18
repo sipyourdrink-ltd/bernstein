@@ -626,8 +626,9 @@ The internal `HashRing` maps UTF-8 node keys to shard IDs using the first
 eight SHA-256 bytes as a big-endian integer. Virtual-node keys are
 `<shard-id>#<index>`; lookup selects the first clockwise token and wraps
 around at the end. An empty ring rejects lookups. `ShardMap` keeps the
-configured shard-to-central URLs. When `cluster.shards` is configured, the running `NodeRegistry` uses the ring
-to own records in separate local storage partitions. All existing node routes
+configured URL metadata for each local partition. When `cluster.shards` is
+configured, the running `NodeRegistry` uses the ring to select separate local
+storage partitions inside that one registry process. All existing node routes
 operate on that storage; the URLs do not trigger remote requests.
 
 The default is `shards: {}` and `shard_vnodes: 128`. Empty shards keep the
@@ -637,8 +638,8 @@ existing single dictionary, routes and persistence format unchanged. To opt in:
 cluster:
   enabled: true
   shards:
-    registry-a: https://central-a.example
-    registry-b: https://central-b.example/cluster
+    partition-a: https://metadata.example/partition-a
+    partition-b: https://metadata.example/partition-b
   shard_vnodes: 128
 ```
 

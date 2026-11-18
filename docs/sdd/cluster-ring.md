@@ -2,7 +2,7 @@
 
 `core/protocols/cluster/shard_ring.py` provides `HashRing`, `ShardMap` and
 `NodeShardStorage`. With nonempty `ClusterConfig.shards`, the existing
-`NodeRegistry` uses separate local dictionaries as authoritative partitions.
+`NodeRegistry` uses separate local dictionaries as partitions inside one process.
 Registration, heartbeat, lookup and deletion select the owner by stable node ID;
 identity lookup, scheduling, stale marking and persistence scan all partitions.
 There is no duplicate aggregate node store. The ring and URL map use the same

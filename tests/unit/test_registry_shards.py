@@ -1,4 +1,4 @@
-"""Opt-in registry ownership exercised through the real application routes."""
+"""Opt-in local partitions in one registry exercised through real application routes."""
 
 from __future__ import annotations
 
