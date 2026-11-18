@@ -280,9 +280,9 @@ Bernstein নামটি এসেছে মার্কিন কন্ডা�
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, একজনই মেনটেইন করেন। লাইভ পরিসংখ্যান: [bernstein.run](https://bernstein.run)।
 
 ### যেখানে উল্লেখ হয়েছে
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-[vinta/awesome-python](https://github.com/vinta/awesome-python) এ তালিকাভুক্ত, Augment Code-এর [ওপেন-সোর্স এজেন্ট অর্কেস্ট্রেটর](https://www.augmentcode.com/tools/open-source-agent-orchestrators) সংকলনে আলোচিত, এবং [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) এ তালিকাভুক্ত। এই পদ্ধতিটি আমরা awesome-agentic-patterns-এ [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) প্যাটার্ন হিসেবেও লিখেছি।
+Augment Code-এর [ওপেন-সোর্স এজেন্ট অর্কেস্ট্রেটর](https://www.augmentcode.com/tools/open-source-agent-orchestrators) সংকলনে আলোচিত এবং [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) এ তালিকাভুক্ত। এই পদ্ধতিটি আমরা awesome-agentic-patterns-এ [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) প্যাটার্ন হিসেবেও লিখেছি।
 
 <details>
 <summary>সব উল্লেখ: 20টির বেশি awesome তালিকা, ডিরেক্টরি, নিউজলেটার ও অন্য প্রকল্পের উদ্ধৃতি</summary>

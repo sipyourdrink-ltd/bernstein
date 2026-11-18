@@ -280,9 +280,9 @@ Bernstein назван в честь Леонарда Бернстайна, ам
 я написал bernstein, потому что платил $400 в месяц по счетам claude, гоняя трёх кодовых агентов параллельно, и получал недетерминированные мержи. Apache 2.0, сопровождается одним человеком. Живая статистика: [bernstein.run](https://bernstein.run).
 
 ### где упоминают
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-Есть в [vinta/awesome-python](https://github.com/vinta/awesome-python), попал в обзор Augment Code [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) и в [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Сам подход мы описали как паттерн [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) в awesome-agentic-patterns.
+Попал в обзор Augment Code [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) и в [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Сам подход мы описали как паттерн [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) в awesome-agentic-patterns.
 
 <details>
 <summary>Все упоминания: 20+ awesome-списков, каталогов, рассылок и цитирований</summary>

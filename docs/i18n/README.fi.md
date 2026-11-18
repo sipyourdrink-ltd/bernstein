@@ -280,9 +280,9 @@ Bernstein on nimetty yhdysvaltalaisen kapellimestarin ja säveltäjän Leonard B
 kirjoitin bernsteinin, koska maksoin 400 dollaria kuukaudessa claude-laskuja ajaessani kolmea koodausagenttia rinnakkain ja sain epädeterministisiä merge-tuloksia. Apache 2.0, yhden kehittäjän ylläpitämä. Reaaliaikaiset tilastot: [bernstein.run](https://bernstein.run).
 
 ### mainittu julkaisuissa
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-Listattu kohteessa [vinta/awesome-python](https://github.com/vinta/awesome-python), käsitelty Augment Coden katsauksessa [avoimen lähdekoodin agenttiorkestroijat](https://www.augmentcode.com/tools/open-source-agent-orchestrators) ja mainittu uutiskirjeessä [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Dokumentoimme lähestymistavan myös nimellä [deterministinen nolla-LLM-orkestrointi](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) awesome-agentic-patterns -kokoelmassa.
+Käsitelty Augment Coden katsauksessa [avoimen lähdekoodin agenttiorkestroijat](https://www.augmentcode.com/tools/open-source-agent-orchestrators) ja mainittu uutiskirjeessä [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Dokumentoimme lähestymistavan myös nimellä [deterministinen nolla-LLM-orkestrointi](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) awesome-agentic-patterns -kokoelmassa.
 
 <details>
 <summary>Kaikki maininnat: yli 20 awesome-listaa, hakemistoa, uutiskirjettä ja vertaisviittausta</summary>

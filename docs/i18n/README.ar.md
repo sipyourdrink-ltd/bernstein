@@ -280,9 +280,9 @@ bernstein volunteer browse --budget 60
 كتبت bernstein لأنني كنت أدفع 400 دولار شهرياً في فواتير claude لتشغيل ثلاثة وكلاء برمجة بالتوازي والحصول على عمليات دمج غير حتمية. مرخص تحت Apache 2.0، وتتم صيانته فردياً. إحصائيات مباشرة: [bernstein.run](https://bernstein.run).
 
 ### ذكر في
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-مدرج في [vinta/awesome-python](https://github.com/vinta/awesome-python)، وتم تناوله في تقرير Augment Code حول [منسقي الوكلاء مفتوحي المصدر](https://www.augmentcode.com/tools/open-source-agent-orchestrators)، ومدرج في [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). كما وثقنا هذا النهج كنمط [التنسيق الحتمي بدون LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) في awesome-agentic-patterns.
+تم تناوله في تقرير Augment Code حول [منسقي الوكلاء مفتوحي المصدر](https://www.augmentcode.com/tools/open-source-agent-orchestrators)، ومدرج في [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). كما وثقنا هذا النهج كنمط [التنسيق الحتمي بدون LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) في awesome-agentic-patterns.
 
 <details>
 <summary>كل التغطيات: أكثر من 20 قائمة awesome وأدلة ونشرات إخبارية واقتباسات</summary>

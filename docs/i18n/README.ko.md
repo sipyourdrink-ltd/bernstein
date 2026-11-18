@@ -280,9 +280,9 @@ Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 �
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, 단독 메인테이너. 가동 통계: [bernstein.run](https://bernstein.run).
 
 ### 언급된 곳
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-[vinta/awesome-python](https://github.com/vinta/awesome-python)에 등재되었고, Augment Code의 [오픈소스 에이전트 오케스트레이터](https://www.augmentcode.com/tools/open-source-agent-orchestrators) 정리에 소개되었으며, [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026)에도 실렸다. 이 접근은 awesome-agentic-patterns에 [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) 패턴으로 정리되어 있다.
+Augment Code의 [오픈소스 에이전트 오케스트레이터](https://www.augmentcode.com/tools/open-source-agent-orchestrators) 정리에 소개되었으며, [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026)에도 실렸다. 이 접근은 awesome-agentic-patterns에 [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) 패턴으로 정리되어 있다.
 
 <details>
 <summary>전체 목록: 20개가 넘는 awesome 리스트, 디렉터리, 뉴스레터, 인용</summary>
