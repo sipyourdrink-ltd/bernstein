@@ -1,7 +1,11 @@
-"""Structural assertions for CI coverage artifact production."""
+"""CI coverage artifact production and gate policy."""
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -82,7 +86,8 @@ def test_coverage_report_job_merges_shard_data(ci_doc: dict[str, object]) -> Non
     assert isinstance(coverage_job, dict), "CI workflow must define a coverage-report job"
     assert coverage_job.get("name") == "Coverage report"
     assert coverage_job.get("needs") == ["test"]
-    condition = str(coverage_job.get("if", ""))
+    condition = " ".join(str(coverage_job.get("if", "")).split())
+    assert condition.startswith("!cancelled() && needs.test.result == 'success' &&")
     assert "github.event_name == 'workflow_dispatch'" in condition
     assert "github.event_name == 'push'" in condition
     assert "chore(release)" in condition
@@ -111,8 +116,29 @@ def test_coverage_report_job_merges_shard_data(ci_doc: dict[str, object]) -> Non
     assert upload_with.get("if-no-files-found") == "error"
 
 
-def test_ci_gate_requires_coverage_report_on_full_main_runs(ci_doc: dict[str, object]) -> None:
-    """Only ordinary cheap pushes may intentionally skip full-suite coverage."""
+@pytest.mark.parametrize(
+    ("event", "ref", "head_commit_message", "coverage_required"),
+    [
+        ("workflow_dispatch", "refs/heads/main", "", True),
+        ("push", "refs/heads/main", "chore(release): bump version", True),
+        ("push", "refs/heads/main", "release: bump version", True),
+        ("push", "refs/heads/main", "fix: repair a regression", False),
+        ("pull_request", "refs/pull/123/merge", "", False),
+        ("merge_group", "refs/heads/gh-readonly-queue/main/pr-123", "", False),
+        ("workflow_dispatch", "refs/heads/topic", "", False),
+    ],
+)
+@pytest.mark.parametrize("coverage_result", ["success", "skipped", "failure", "cancelled"])
+def test_ci_gate_requires_coverage_report_on_full_main_runs(
+    ci_doc: dict[str, object],
+    tmp_path: Path,
+    event: str,
+    ref: str,
+    head_commit_message: str,
+    coverage_required: bool,
+    coverage_result: str,
+) -> None:
+    """Coverage skips are accepted only on events outside the full main lane."""
     gate = _jobs(ci_doc).get("ci-gate")
     assert isinstance(gate, dict)
     needs = gate.get("needs")
@@ -121,7 +147,36 @@ def test_ci_gate_requires_coverage_report_on_full_main_runs(ci_doc: dict[str, ob
 
     rollup = next(step for step in _steps(gate) if step.get("id") == "roll-up")
     run_body = str(rollup.get("run", ""))
-    assert "POST_MERGE_PUSH_SKIPPABLE" in run_body
-    assert '"coverage-report"' in run_body
-    assert "ordinary_main_push" in run_body
-    assert "coverage_required" in run_body
+    script = run_body.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    results = {
+        "determine-changes": {"result": "success"},
+        "test": {"result": "success"},
+        "coverage-report": {"result": coverage_result},
+    }
+    (tmp_path / "results.json").write_text(json.dumps(results), encoding="utf-8")
+    # The failed cadence run classified its tip as docs-only even though the
+    # full suite ran. That classification must never exempt coverage on main.
+    plan = {"docs_only": "true", "python_changed": "false"}
+    (tmp_path / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    event_file = tmp_path / "event.json"
+    event_file.write_text("{}", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "EVENT_NAME": event,
+            "REF_NAME": ref,
+            "HEAD_COMMIT_MESSAGE": head_commit_message,
+            "GITHUB_EVENT_PATH": str(event_file),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    expect_success = coverage_result == "success" or (coverage_result == "skipped" and not coverage_required)
+    assert result.returncode == (0 if expect_success else 1), result.stdout + result.stderr
+    if not expect_success:
+        assert f"coverage-report: result={coverage_result}" in result.stdout
