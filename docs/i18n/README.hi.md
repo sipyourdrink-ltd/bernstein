@@ -280,9 +280,9 @@ Bernstein का नाम अमेरिकी कंडक्टर और �
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, अकेले मेंटेन किया जाता है। लाइव आँकड़े: [bernstein.run](https://bernstein.run)।
 
 ### जहाँ ज़िक्र हुआ
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-Augment Code के [ओपन-सोर्स एजेंट ऑर्केस्ट्रेटर](https://www.augmentcode.com/tools/open-source-agent-orchestrators) राउंडअप में शामिल, और [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) में सूचीबद्ध। इस तरीक़े को हमने awesome-agentic-patterns में [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) पैटर्न के रूप में भी लिखा है।
+Augment Code के [ओपन-सोर्स एजेंट ऑर्केस्ट्रेटर](https://www.augmentcode.com/tools/open-source-agent-orchestrators) राउंडअप में शामिल और [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) में सूचीबद्ध। इस तरीक़े को हमने awesome-agentic-patterns में [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) पैटर्न के रूप में भी लिखा है।
 
 <details>
 <summary>पूरी सूची: 20 से ज़्यादा awesome लिस्ट, डायरेक्ट्री, न्यूज़लेटर और अन्य परियोजनाओं के उद्धरण</summary>

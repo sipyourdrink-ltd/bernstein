@@ -280,7 +280,7 @@ Bernstein lleva el nombre de Leonard Bernstein, el director de orquesta y compos
 escribí bernstein porque pagaba $400 al mes en facturas de claude ejecutando tres agentes de codificación en paralelo y obteniendo merges no deterministas. Apache 2.0, mantenido por una sola persona. Estadísticas en vivo: [bernstein.run](https://bernstein.run).
 
 ### mencionado en
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 Cubierto en el resumen de Augment Code de [orquestadores de agentes de código abierto](https://www.augmentcode.com/tools/open-source-agent-orchestrators) y listado en [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). También documentamos el enfoque como el patrón de [orquestación determinista sin LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) en awesome-agentic-patterns.
 

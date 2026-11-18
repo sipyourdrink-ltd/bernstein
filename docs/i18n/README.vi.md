@@ -280,7 +280,7 @@ Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng v�
 tôi viết bernstein vì phải trả hóa đơn claude 400 đô la mỗi tháng khi chạy song song ba tác tử lập trình và nhận về các kết quả hợp nhất phi tất định. Giấy phép Apache 2.0, duy trì bởi một cá nhân. Thống kê trực tiếp: [bernstein.run](https://bernstein.run).
 
 ### được nhắc đến tại
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 Xuất hiện trong bài tổng hợp [bộ điều phối tác tử mã nguồn mở](https://www.augmentcode.com/tools/open-source-agent-orchestrators) của Augment Code và có mặt trong [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Chúng tôi cũng đã ghi lại phương pháp này dưới dạng mẫu [điều phối tất định không LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) trong awesome-agentic-patterns.
 

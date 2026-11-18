@@ -280,7 +280,7 @@ Bernstein の名は、アメリカの指揮者・作曲家レナード・バー�
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0、単独メンテナンス。稼働統計: [bernstein.run](https://bernstein.run)。
 
 ### 掲載
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 Augment Code の[オープンソースのエージェントオーケストレーター](https://www.augmentcode.com/tools/open-source-agent-orchestrators)まとめで紹介、[Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) にも掲載。このアプローチは awesome-agentic-patterns に [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) パターンとして書き起こしている。
 

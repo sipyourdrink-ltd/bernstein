@@ -280,7 +280,7 @@ Projekt nazwano na cześć Leonarda Bernsteina, amerykańskiego dyrygenta i komp
 stworzyłem bernsteina, ponieważ płaciłem 400 dolarów miesięcznie za rachunki w claude, uruchamiając trzy agenty równolegle i uzyskując niedeterministyczne scalenia. Licencja Apache 2.0, projekt rozwijany jednoosobowo. Statystyki na żywo: [bernstein.run](https://bernstein.run).
 
 ### wzmianki
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 Omówiony w zestawieniu [orkiestratorów agentów open source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) przygotowanym przez Augment Code oraz wskazany w [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Opisaliśmy to podejście również jako wzorzec [deterministycznej orkiestracji bez LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) w repozytorium awesome-agentic-patterns.
 

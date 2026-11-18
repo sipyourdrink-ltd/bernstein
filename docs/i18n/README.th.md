@@ -280,7 +280,7 @@ Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกร
 ผมเขียน bernstein ขึ้นมาเพราะต้องจ่ายค่าบริการ claude เดือนละ $400 จากการรันเอเจนต์เขียนโค้ดสามตัวพร้อมกันแล้วได้ผลลัพธ์การรวมโค้ดที่ไม่แน่นอน ลิขสิทธิ์ Apache 2.0 ดูแลโดยผู้พัฒนาคนเดียว ดูสถิติสดได้ที่: [bernstein.run](https://bernstein.run)
 
 ### ได้รับการกล่าวถึงใน
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 ได้รับการนำเสนอในบทความรวม [ตัวประสานงานเอเจนต์โอเพนซอร์ส](https://www.augmentcode.com/tools/open-source-agent-orchestrators) ของ Augment Code และมีรายชื่อใน [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) นอกจากนี้เรายังได้บันทึกแนวทางนี้เป็นรูปแบบ [การประสานงานแบบกำหนดผลลัพธ์แน่นอนโดยไม่ใช้ LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) ใน awesome-agentic-patterns
 

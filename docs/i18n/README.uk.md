@@ -280,7 +280,7 @@ Bernstein названо на честь Леонарда Бернстайна, 
 я написав bernstein, тому що платив по $400 на місяць за рахунками claude, запускаючи три агенти кодування паралельно й отримуючи недетерміновані злиття. Ліцензія Apache 2.0, підтримується однією людиною. Статистика наживо: [bernstein.run](https://bernstein.run).
 
 ### згадки
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 Розглянуто в огляді [open source оркестраторів агентів](https://www.augmentcode.com/tools/open-source-agent-orchestrators) від Augment Code та згадано в [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Ми також описали цей підхід як патерн [детермінованої оркестрації без LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) у збірці awesome-agentic-patterns.
 

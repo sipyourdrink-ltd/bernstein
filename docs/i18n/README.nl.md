@@ -280,7 +280,7 @@ Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componi
 ik heb bernstein geschreven omdat ik maandelijks $400 aan claude-rekeningen betaalde door drie coding-agents parallel te draaien en niet-deterministische merges kreeg. Apache 2.0, onderhouden door één persoon. Live statistieken: [bernstein.run](https://bernstein.run).
 
 ### vermeld in
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 Besproken in het overzicht van [open-source agent-orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) van Augment Code en vermeld in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). We hebben de aanpak ook beschreven als het patroon [deterministische zero-LLM orkestratie](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) in awesome-agentic-patterns.
 

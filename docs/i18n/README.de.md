@@ -280,7 +280,7 @@ Bernstein ist nach Leonard Bernstein benannt, dem US-amerikanischen Dirigenten u
 Ich habe Bernstein entwickelt, weil ich monatlich 400 $ für Claude-Rechnungen zahlte, während drei parallele Coding-Agenten nichtdeterministische Merge-Konflikte erzeugten. Apache 2.0, von einer Einzelperson gepflegt. Live-Statistiken: [bernstein.run](https://bernstein.run).
 
 ### erwähnungen
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 Besprochen in Augment Codes Übersicht [Open-Source Agent Orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) und erwähnt in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Zudem haben wir das Konzept als [Deterministic Zero-LLM Orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md)-Pattern in awesome-agentic-patterns veröffentlicht.
 

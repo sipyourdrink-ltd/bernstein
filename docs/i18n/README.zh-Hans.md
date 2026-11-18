@@ -280,7 +280,7 @@ Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目�
 我写 bernstein 是因为我每月为并行运行三个编码智能体支付 400 美元的 claude 账单，却得到不确定性的合并。Apache 2.0，单人维护。实时数据：[bernstein.run](https://bernstein.run)。
 
 ### 被提及的地方
-<!-- l10n: en="mentioned in" hash="sha256:38d931aac764" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
 被 Augment Code 的[开源智能体编排器](https://www.augmentcode.com/tools/open-source-agent-orchestrators)综述提及，并收录于 [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026)。我们也把这一方法写成了 awesome-agentic-patterns 中的[确定性零 LLM 编排](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md)模式条目。
 
