@@ -11,12 +11,20 @@ Verified against **Antigravity CLI 1.0.0**.
 
 ## Which lane am I in? (`agy` vs `gemini`)
 
-Two adapters, two lanes -- pick by how you authenticate:
+The authentication paths have different provider terms:
 
 | Lane | Adapter | Binary | Who |
 |---|---|---|---|
-| Consumer / default | `agy` (alias: `antigravity`) | `agy` | Free, AI Pro, Ultra subscribers (keyring / OAuth sign-in) |
+| Consumer / default (not recommended) | `agy` (alias: `antigravity`) | `agy` | Free, AI Pro, Ultra subscribers (keyring / OAuth sign-in); see provider restrictions below |
 | Enterprise / API key | `gemini` | `gemini` | Enterprise licenses and paid API-key operators |
+
+The consumer lane is not recommended for use with Bernstein. Google's
+[Antigravity additional terms](https://antigravity.google/terms) say that
+access through third-party software breaches the terms and may lead to
+suspension or closure of Antigravity and/or Gemini CLI accounts. The
+[Antigravity FAQ](https://antigravity.google/docs/faq/) says that wrapping
+headless mode in third-party coding agents or applications is not
+supported under consumer plans.
 
 The `gemini` adapter (see `docs/adapters/gemini.md`) remains fully
 supported for the enterprise and API-key paths. The `agy` adapter is a
@@ -26,9 +34,6 @@ coverage, so the two lanes never share discovery state. The
 `docs/adapters/antigravity.md`).
 
 ```bash
-# consumer lane
-bernstein run --cli agy "fix the flaky test"
-
 # enterprise / API-key lane
 bernstein run --cli gemini "fix the flaky test"
 ```
