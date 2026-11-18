@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI ajanları için açık kaynak governance katmanı
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **Durum: beta.** Tek bir kişi tarafından sürdürülmekte olup aktif geliştirme aşamasındadır. Sürüm numarası olgunluğu değil yayınları sayar — ara sürümler (minor) arayüzleri değiştirebilir. Bağımlı olduğunuz her şey için sürümü sabitleyin; gerilemeler (regressions) hızla düzeltilir, [bildirin](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 50+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
+Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
 
 ### bir bakışta
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 Beş şey onu farklı kılar; gerisi ayrıntıdır.
 
@@ -40,7 +40,7 @@ Beş şey onu farklı kılar; gerisi ayrıntıdır.
 - **Donanım anahtarı kanıtları.** Çevrimdışı PIV muhafaza ve FIDO2 onay doğrulayıcıları, sabitlenmiş güven ve açık zaman ile aynı makbuz protokolünü kullanır. Token muhafazası TRACE güven seviyelerini yükseltmez. [Donanım anahtarı kanıtları](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Sonradan doğrulanabilir.** Yeniden oynatma günlüğü (replay journal) her çalıştırmayı kaydeder ve her zaman açık olan soy kütüğü omurgası (lineage spine) soy kütüğü oluşturan her adımı kaydeder; isteğe bağlı HMAC zincirli denetim günlüğü (`BERNSTEIN_AUDIT=1`) çevrimdışı doğrulayabileceğiniz makbuzlar (receipts) ekler. Deterministik olmama durumu, kararsız bir yeniden çalıştırma yerine tam adımda bir karma (hash) uyuşmazlığı olarak ortaya çıkar. Kod dışı çıktılar da aynı muameleyi görür: bir görev bir yapıt sözleşmesi (rapor, veri seti, eylem günlüğü, operasyon sonucu) bildirebilir ve bir git işlemesi (commit) yerine imzalı bir soy kütüğü makbuzu ile tamamlanır.
 - **Tasarım gereği yalıtılmış.** Her kodlama görevi, birleştirme kapılarının arkasında kendi git worktree'sini alır; yapıt modundaki görevler `.sdd/workspaces/` altında bir çalışma dizini alır. Ajanlar varsayılan olarak değiştirilebilir çalışma alanını paylaşmaz; tek paylaşılan durum, atomik olarak talep edilen görev birikimidir. Daha katı dosya sistemi denetimi [sandbox arka uçlarından](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) isteğe bağlıdır. Worktree'leri devre dışı bırakırsanız her görev paylaşılan çalışma kopyasında çalışır.
-- **Geniş ve yerel.** 53'ten fazla CLI ajan adaptörü artı genel bir `--prompt` sarmalayıcısı, dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.
+- **Geniş ve yerel.** Genel `--prompt` sarmalayıcısı dahil, seçilebilir 55 CLI ajan adaptörü adı. dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.
 
 Tam liste [yetenekler sayfasında](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) yer alır; [özellik matrisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) kapsamlı dizindir.
 
@@ -235,9 +235,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 Depo hijyen kapıları: `bernstein readme-l10n verify`, çevrilmiş README'leri İngilizce kaynaktan sapan bir PR'ı başarısız kılar (güncelliğini yitirmiş bölümü adlandırarak); `bernstein readme-l10n sync`, İngilizce düzenlemelerden sonra bunları yeniden bağlar. Bkz. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### desteklenen ajanlar
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ve daha fazlası. [Adaptör dizini](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bunlardan 30'u için kurulum komutlarını içerir. `bernstein integrations list`, neyin çözümlendiğine dair tek doğruluk kaynağı olan `src/bernstein/adapters/registry.py` dosyasındaki 57 bağlı entegrasyonun tamamını listeler. Bunların 55'u seçilebilir ajan adaptörleridir; diğer iki satır ise test taslağı `mock` ve uç nokta profili `self-hosted-endpoints`tir. `--prompt` bayrağına sahip diğer her şey genel sarmalayıcı aracılığıyla çalışır.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ve daha fazlası. [Adaptör dizini](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bunlardan 30'u için kurulum komutlarını içerir. `bernstein integrations list`, neyin çözümlendiğine dair tek doğruluk kaynağı olan `src/bernstein/adapters/registry.py` dosyasındaki 57 bağlı entegrasyonun tamamını listeler. Bunların 55'u seçilebilir ajan adaptörleridir; diğer iki satır ise test taslağı `mock` ve uç nokta profili `self-hosted-endpoints`tir. `--prompt` bayrağına sahip diğer her şey genel sarmalayıcı aracılığıyla çalışır. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 Aynı çalıştırmada ajanları birleştirin: standart şablon kodlar için ucuz yerel modeller, mimari için daha güçlü bulut modelleri. `bernstein integrations list --installed` makinenizde nelerin mevcut olduğunu gösterir.
 
