@@ -618,3 +618,41 @@ production code is changed by this proposal.
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+
+### Consistent hash ring primitive
+
+The internal `HashRing` maps UTF-8 node keys to shard IDs using the first
+eight SHA-256 bytes as a big-endian integer. Virtual-node keys are
+`<shard-id>#<index>`; lookup selects the first clockwise token and wraps
+around at the end. An empty ring rejects lookups. `ShardMap` keeps the
+configured URL metadata for each local partition. When `cluster.shards` is
+configured, the running `NodeRegistry` uses the ring to select separate local
+storage partitions inside that one registry process. All existing node routes
+operate on that storage; the URLs do not trigger remote requests.
+
+The default is `shards: {}` and `shard_vnodes: 128`. Empty shards keep the
+existing single dictionary, routes and persistence format unchanged. To opt in:
+
+```yaml
+cluster:
+  enabled: true
+  shards:
+    partition-a: https://metadata.example/partition-a
+    partition-b: https://metadata.example/partition-b
+  shard_vnodes: 128
+```
+
+Shard IDs must be unique ASCII identifiers matching
+`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`; at most 256 are accepted. URLs must be
+absolute HTTP(S) URLs with a hostname and valid port, without credentials,
+whitespace, ASCII control characters, query or fragment. A path prefix is allowed. `shard_vnodes` must be
+an integer from 1 to 1024; booleans, floats and numeric strings are rejected.
+Invalid values fail config loading, including direct `ClusterConfig` construction
+(the runtime `shards` value is a tuple of ID/URL pairs).
+
+This partitions storage inside one process and makes no distributed-scaling
+guarantee. Ring membership is fixed for that registry's lifetime; restart reloads
+the existing flat node file through the configured ring. Changing configuration
+is not an online migration protocol. HTTP shard-map discovery, 421 responses,
+forwarding and client/relay routing are outside this feature.

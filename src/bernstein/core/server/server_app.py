@@ -1750,9 +1750,41 @@ _default_cluster_config = (
 
 def get_app() -> FastAPI:
     """Get or create the default FastAPI app (lazy singleton)."""
+    from dataclasses import replace
+
+    from bernstein.core.config.seed_parser import SeedError, _load_seed_mapping, _parse_cluster
+    from bernstein.core.seed import resolve_seed_path
+
+    cluster_config = _default_cluster_config
+    seed_path = resolve_seed_path(Path.cwd())
+    if seed_path.exists():
+        # The server child receives the selected seed path, not a serialized
+        # ClusterConfig. Load startup-only partition settings before serving
+        # requests; reloading metadata later must not replace a live ring.
+        try:
+            # Full metadata loads retain layer validation. Here only effective
+            # shard settings are validated, below, outside this read-error path.
+            seed_data = _load_seed_mapping(seed_path, validate_layers=False)
+        except SeedError:
+            # Metadata loading already handles unreadable or malformed seeds.
+            # Shard opt-in must not turn those errors into a new boot failure.
+            seed_data = {}
+        raw_cluster = seed_data.get("cluster")
+        shard_settings = (
+            {key: raw_cluster[key] for key in ("shards", "shard_vnodes") if key in raw_cluster}
+            if isinstance(raw_cluster, dict)
+            else {}
+        )
+        seed_cluster = _parse_cluster(shard_settings) if shard_settings else None
+        if seed_cluster is not None:
+            cluster_config = replace(
+                cluster_config or ClusterConfig(),
+                shards=seed_cluster.shards,
+                shard_vnodes=seed_cluster.shard_vnodes,
+            )
     return create_app(
         auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
-        cluster_config=_default_cluster_config,
+        cluster_config=cluster_config,
         readonly=os.environ.get("BERNSTEIN_READONLY", "").lower() in ("1", "true", "yes"),
         slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
     )

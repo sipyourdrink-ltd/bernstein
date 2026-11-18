@@ -23,6 +23,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictStr,
     ValidationError,
     create_model,
     field_validator,
@@ -540,6 +541,16 @@ class ClusterSchema(BaseModel):
     # given as SPKI PEM text, an OKP JWK mapping, or the bare base64url 'x'.
     # A MESH node folds only receipts signed by a pinned key.
     gossip_peer_keys: dict[str, Any] = Field(default_factory=dict)
+    shards: dict[StrictStr, StrictStr] = Field(default_factory=dict, max_length=256, strict=True)
+    shard_vnodes: int = Field(default=128, ge=1, le=1024, strict=True)
+
+    @model_validator(mode="after")
+    def validate_registry_shards(self) -> ClusterSchema:
+        """Keep schema loading and direct config construction on one contract."""
+        from bernstein.core.tasks.models import ClusterConfig
+
+        ClusterConfig(shards=tuple(self.shards.items()), shard_vnodes=self.shard_vnodes)
+        return self
 
 
 class RemoteSchema(BaseModel):
