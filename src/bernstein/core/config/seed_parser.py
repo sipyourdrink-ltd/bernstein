@@ -2542,7 +2542,7 @@ def parse_seed(path: Path) -> SeedConfig:
     return _parse_seed(path, apply_tuning=True)
 
 
-def _load_seed_mapping(path: Path) -> dict[str, object]:
+def _load_seed_mapping(path: Path, *, validate_layers: bool = True) -> dict[str, object]:
     """Read the effective seed mapping without validating unrelated sections."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
@@ -2570,7 +2570,9 @@ def _load_seed_mapping(path: Path) -> dict[str, object]:
     # overlay and no ``$BERNSTEIN_CONFIG_OVERRIDE`` this is the identity, and
     # a setup that edits the committed file directly behaves as it always did.
     try:
-        data: dict[str, object] = cast("_StrObjDict", resolve_effective_mapping(committed, config_path=path))
+        data: dict[str, object] = cast(
+            "_StrObjDict", resolve_effective_mapping(committed, config_path=path, validate_layers=validate_layers)
+        )
     except (RunOverlayError, LayerValidationError) as exc:
         raise SeedError(str(exc)) from exc
 

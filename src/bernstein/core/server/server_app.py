@@ -1762,7 +1762,9 @@ def get_app() -> FastAPI:
         # ClusterConfig. Load startup-only partition settings before serving
         # requests; reloading metadata later must not replace a live ring.
         try:
-            seed_data = _load_seed_mapping(seed_path)
+            # Full metadata loads retain layer validation. Here only effective
+            # shard settings are validated, below, outside this read-error path.
+            seed_data = _load_seed_mapping(seed_path, validate_layers=False)
         except SeedError:
             # Metadata loading already handles unreadable or malformed seeds.
             # Shard opt-in must not turn those errors into a new boot failure.

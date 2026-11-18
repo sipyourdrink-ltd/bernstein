@@ -289,6 +289,93 @@ def test_default_server_reads_only_shards_before_handled_metadata_load(
     assert config.enabled and config.auth_token == TOKEN
 
 
+@pytest.mark.parametrize("source", ["overlay", "inline"])
+@pytest.mark.parametrize("cluster", [{"shard_vnodes": False}, {"shard_vnodes": 0}, {"shards": {"alpha": "not-a-url"}}])
+def test_default_server_rejects_invalid_layered_shards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, cluster: dict[str, object]
+) -> None:
+    from bernstein.core.server import server_app
+
+    seed_path = tmp_path / "selected.yaml"
+    seed_path.write_text("goal: test\ncluster:\n  shards:\n    alpha: https://central\n  shard_vnodes: 16\n")
+    overlay_path = tmp_path / "overlay.yaml"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_SEED_PATH", str(seed_path))
+    monkeypatch.setenv("BERNSTEIN_CONFIG_OVERLAY", str(overlay_path))
+    monkeypatch.delenv("BERNSTEIN_CONFIG_OVERRIDE", raising=False)
+    layer = json.dumps({"cluster": cluster})
+    if source == "overlay":
+        overlay_path.write_text(layer)
+    else:
+        monkeypatch.setenv("BERNSTEIN_CONFIG_OVERRIDE", layer)
+    monkeypatch.setattr(server_app, "create_app", lambda **kwargs: FastAPI())
+    with pytest.raises(SeedError, match="shard"):
+        server_app.get_app()
+
+
+@pytest.mark.parametrize("source", ["overlay", "inline"])
+def test_default_server_preserves_shards_with_unrelated_layer_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    from bernstein.core.config.seed_parser import _parse_seed
+    from bernstein.core.server import server_app
+
+    seed_path = tmp_path / "selected.yaml"
+    seed_path.write_text("goal: test\ncluster:\n  shards:\n    alpha: https://central\n  shard_vnodes: 16\n")
+    overlay_path = tmp_path / "overlay.yaml"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_SEED_PATH", str(seed_path))
+    monkeypatch.setenv("BERNSTEIN_CONFIG_OVERLAY", str(overlay_path))
+    monkeypatch.delenv("BERNSTEIN_CONFIG_OVERRIDE", raising=False)
+    layer = json.dumps({"max_agents": "invalid"})
+    if source == "overlay":
+        overlay_path.write_text(layer)
+    else:
+        monkeypatch.setenv("BERNSTEIN_CONFIG_OVERRIDE", layer)
+    captured: dict[str, object] = {}
+
+    def capture_app(**kwargs: object) -> FastAPI:
+        captured.update(kwargs)
+        return FastAPI()
+
+    monkeypatch.setattr(server_app, "create_app", capture_app)
+    server_app.get_app()
+    config = captured["cluster_config"]
+    assert isinstance(config, ClusterConfig)
+    assert config.shards == (("alpha", "https://central"),)
+    assert config.shard_vnodes == 16
+    # Ordinary seed loads retain full layer validation by default.
+    with pytest.raises(SeedError, match="max_agents"):
+        _parse_seed(seed_path, apply_tuning=False)
+
+
+def test_default_server_merges_base_overlay_and_inline_shards(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.core.server import server_app
+
+    seed_path = tmp_path / "selected.yaml"
+    seed_path.write_text("goal: test\ncluster:\n  shards:\n    alpha: https://central-a\n  shard_vnodes: 16\n")
+    overlay_path = tmp_path / "overlay.yaml"
+    overlay_path.write_text("cluster:\n  shards:\n    beta: https://central-b\n  shard_vnodes: 8\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_SEED_PATH", str(seed_path))
+    monkeypatch.setenv("BERNSTEIN_CONFIG_OVERLAY", str(overlay_path))
+    monkeypatch.setenv("BERNSTEIN_CONFIG_OVERRIDE", '{"cluster":{"shard_vnodes":4}}')
+    monkeypatch.setattr(server_app, "_default_cluster_config", ClusterConfig(enabled=True, auth_token=TOKEN))
+    captured: dict[str, object] = {}
+
+    def capture_app(**kwargs: object) -> FastAPI:
+        captured.update(kwargs)
+        return FastAPI()
+
+    monkeypatch.setattr(server_app, "create_app", capture_app)
+    server_app.get_app()
+    config = captured["cluster_config"]
+    assert isinstance(config, ClusterConfig)
+    assert config.shards == (("alpha", "https://central-a"), ("beta", "https://central-b"))
+    assert config.shard_vnodes == 4
+    assert config.enabled and config.auth_token == TOKEN
+
+
 @pytest.mark.parametrize("scan", ["list_nodes", "cluster_summary"])
 def test_aggregate_scans_do_not_relookup_removed_keys(monkeypatch: pytest.MonkeyPatch, scan: str) -> None:
     registry = NodeRegistry(ClusterConfig(shards=SHARDS))
