@@ -12,3 +12,5 @@ RUN set -eux; \
     echo "$uv_sha  /tmp/uv.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/uv.tar.gz -C /usr/local/bin --strip-components=1 "$uv_archive/uv" "$uv_archive/uvx"; \
     rm /tmp/uv.tar.gz
+
+USER vscode
