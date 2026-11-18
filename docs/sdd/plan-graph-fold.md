@@ -1,7 +1,10 @@
 # Structural plan graph replay
 
-`bernstein.core.replay.plan_graph.fold_plan_graph(events)` derives the latest
+`bernstein.core.replay.fold_plan_graph(events)` derives the latest
 recorded structural graph from an append-ordered, in-memory journal prefix.
+The replay package exports both `fold_plan_graph` and `PlanGraphResult` alongside
+its existing journal and replay helpers. The implementation remains available
+at `bernstein.core.replay.plan_graph`.
 This is the first fold-only slice of #3614. The scheduler still reads its
 existing stored plan; amendments and a command-line interface are deferred.
 

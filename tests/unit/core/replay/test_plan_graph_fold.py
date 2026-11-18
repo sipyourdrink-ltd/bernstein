@@ -85,6 +85,19 @@ def _produce(ticks: list[tuple[list[Task], bool, bool]], root: Path) -> list[dic
     return load_events(journal.path).events
 
 
+def test_replay_package_exposes_structural_fold(tmp_path: Path) -> None:
+    from bernstein.core import replay
+
+    tasks = [_task(id="a", title="A"), _task(id="b", title="B", depends_on=["a"])]
+    rows = _produce([(tasks, False, False)], tmp_path)
+    assert "fold_plan_graph" in replay.__all__
+    assert "PlanGraphResult" in replay.__all__
+    result = replay.fold_plan_graph(rows)
+    assert isinstance(result, replay.PlanGraphResult)
+    assert result.status == "available"
+    assert result.canonical_bytes == _bytes(tasks)
+
+
 @settings(max_examples=40, deadline=None)
 @given(_graphs())
 def test_generated_producer_graph_reproduces_exact_structural_bytes(tasks: list[Task]) -> None:
