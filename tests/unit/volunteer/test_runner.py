@@ -532,8 +532,13 @@ def test_private_github_repository_is_refused_in_volunteer_mode(
     class _FakeResponse:
         status = 200
 
-        def read(self):
-            return b'{"private": true, "full_name": "owner/repo"}'
+        def __init__(self):
+            import io
+
+            self.body = io.BytesIO(b'{"private": true, "full_name": "owner/repo"}')
+
+        def read(self, size=-1):
+            return self.body.read(size)
 
         def __enter__(self):
             return self
