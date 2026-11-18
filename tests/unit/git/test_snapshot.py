@@ -122,7 +122,10 @@ def test_linked_worktree_snapshot_preserves_indexes_and_shares_metadata(repo: Pa
     (linked / filename).write_text("linked unstaged\n", encoding="utf-8")
 
     snap = SnapshotStore(linked).take(task_id="T-linked", label="linked worktree")
+    sidecar = repo / ".git" / "bernstein" / "snapshots" / f"{snap.snapshot_id}.json"
 
+    assert sidecar.is_file()
+    assert json.loads(sidecar.read_text(encoding="utf-8")) == snap.to_dict()
     assert _git("show", f"{snap.tree_sha}:{filename}", cwd=linked) == "linked unstaged\n"
     assert _git("show", f":{filename}", cwd=linked) == "linked staged\n"
     assert _git("show", f":{filename}", cwd=repo) == "main staged\n"
@@ -227,14 +230,24 @@ def test_list_respects_limit(repo: Path) -> None:
 
 
 def test_list_synthesises_record_when_metadata_missing(repo: Path) -> None:
-    """A ref without its sidecar still appears in the list."""
+    """A ref without a sidecar sorts last and loses its task association."""
     store = SnapshotStore(repo)
-    snap = store.take(task_id="T-orphan")
+    tracked = store.take(task_id="T-orphan")
+    snap = store.take(task_id="T-orphan", tool_call_id="tc-orphan", agent_id="agent:test", label="before removal")
     sidecar = repo / ".git" / "bernstein" / "snapshots" / f"{snap.snapshot_id}.json"
     sidecar.unlink()
 
-    snaps = store.list()
-    assert any(s.snapshot_id == snap.snapshot_id for s in snaps)
+    fallback = Snapshot(
+        snapshot_id=snap.snapshot_id,
+        tree_sha=snap.tree_sha,
+        ref=snap.ref,
+        ts_ns=0,
+        label=snap.snapshot_id,
+    )
+    assert store.get(snap.snapshot_id) == fallback
+    assert store.list() == [tracked, fallback]
+    assert store.list(limit=1) == [tracked]
+    assert store.list(task_id="T-orphan") == [tracked]
 
 
 # ---------------------------------------------------------------------------
