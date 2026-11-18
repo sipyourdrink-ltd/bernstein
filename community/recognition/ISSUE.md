@@ -55,7 +55,7 @@ Names in the periodic list go in alphabetical order. Not by number of PRs, not b
 
 ## GitHub Discussions and the LinkedIn page are not competing
 
-They do different jobs. For fast news (a release, a change, a community update) the LinkedIn page is the quicker channel. GitHub Discussions is where you take part in the project properly: you see the context, you argue, you propose, you find the answer, and it stays on record where the next person can find it. If you want both the news and the depth, follow both. Decisions still happen in issues and pull requests; that has not changed.
+They do different jobs. For fast news (a release, a change, a community update) the LinkedIn page is the quicker channel. GitHub Discussions is where you take part in the project properly: you see the context, you argue, you propose, you find the answer, and it stays on record where the next person can find it. If you want both the news and the depth, follow both. Contributor proposals and pull requests are decided in their public issue or pull request; the maintainer plans future work privately.
 
 ## Why I am doing this at all
 

@@ -51,7 +51,7 @@ Periodic list में नाम alphabetical order में जाते ह�
 
 ## GitHub Discussions और LinkedIn पेज एक-दूसरे के प्रतिस्पर्धी नहीं हैं
 
-वे अलग-अलग काम करते हैं। तेज़ news के लिए (एक release, एक change, एक community update) LinkedIn पेज ज़्यादा तेज़ channel है। GitHub Discussions वह जगह है जहाँ तुम project में सही मायने में हिस्सा लेते हो: तुम context देखते हो, बहस करते हो, प्रस्ताव रखते हो, जवाब ढूंढते हो, और यह record पर रहता है जहाँ अगला व्यक्ति उसे ढूंढ सके। अगर तुम्हें news और depth दोनों चाहिए, तो दोनों को follow करो। Decisions अभी भी issues और pull requests में होते हैं; यह नहीं बदला है।
+वे अलग-अलग काम करते हैं। तेज़ news के लिए (एक release, एक change, एक community update) LinkedIn पेज ज़्यादा तेज़ channel है। GitHub Discussions वह जगह है जहाँ तुम project में सही मायने में हिस्सा लेते हो: तुम context देखते हो, बहस करते हो, प्रस्ताव रखते हो, जवाब ढूंढते हो, और यह record पर रहता है जहाँ अगला व्यक्ति उसे ढूंढ सके। अगर तुम्हें news और depth दोनों चाहिए, तो दोनों को follow करो। Contributors के प्रस्तावों और pull requests पर फ़ैसले उनके संबंधित public issue या pull request में लिए जाते हैं; maintainer भविष्य के काम की योजना निजी तौर पर बनाता है।
 
 ## मैं यह सब क्यों कर रहा हूँ
 

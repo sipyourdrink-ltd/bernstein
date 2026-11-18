@@ -51,7 +51,7 @@ Los nombres en la lista periódica van en orden alfabético. No por número de P
 
 ## GitHub Discussions y la página de LinkedIn no compiten entre sí
 
-Hacen trabajos distintos. Para noticias rápidas (un release, un cambio, una actualización de la comunidad), la página de LinkedIn es el canal más rápido. GitHub Discussions es donde participas de verdad en el proyecto: ves el contexto, discutes, propones, encuentras la respuesta, y queda registrado donde la siguiente persona pueda encontrarlo. Si quieres las dos cosas, la noticia y la profundidad, sigue ambos. Las decisiones siguen ocurriendo en issues y pull requests; eso no ha cambiado.
+Hacen trabajos distintos. Para noticias rápidas (un release, un cambio, una actualización de la comunidad), la página de LinkedIn es el canal más rápido. GitHub Discussions es donde participas de verdad en el proyecto: ves el contexto, discutes, propones, encuentras la respuesta, y queda registrado donde la siguiente persona pueda encontrarlo. Si quieres las dos cosas, la noticia y la profundidad, sigue ambos. Las decisiones sobre las propuestas y los pull requests de los colaboradores se toman en el issue o pull request público correspondiente; el mantenedor planifica el trabajo futuro en privado.
 
 ## Por qué hago esto en absoluto
 

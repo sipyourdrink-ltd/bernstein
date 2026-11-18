@@ -51,7 +51,7 @@ Tên trong danh sách định kỳ được xếp theo thứ tự chữ cái (al
 
 ## GitHub Discussions và trang LinkedIn không cạnh tranh với nhau
 
-Chúng làm những việc khác nhau. Với tin tức nhanh (một bản release, một thay đổi, một cập nhật cộng đồng), trang LinkedIn là kênh nhanh hơn. GitHub Discussions là nơi bạn tham gia vào dự án một cách thực sự: bạn thấy được bối cảnh (context), bạn tranh luận, bạn đề xuất, bạn tìm ra câu trả lời, và nó được lưu lại để người tiếp theo có thể tìm thấy. Nếu bạn muốn cả tin tức và chiều sâu, hãy theo dõi cả hai. Các quyết định vẫn diễn ra trong issue và pull request; điều đó không thay đổi.
+Chúng làm những việc khác nhau. Với tin tức nhanh (một bản release, một thay đổi, một cập nhật cộng đồng), trang LinkedIn là kênh nhanh hơn. GitHub Discussions là nơi bạn tham gia vào dự án một cách thực sự: bạn thấy được bối cảnh (context), bạn tranh luận, bạn đề xuất, bạn tìm ra câu trả lời, và nó được lưu lại để người tiếp theo có thể tìm thấy. Nếu bạn muốn cả tin tức và chiều sâu, hãy theo dõi cả hai. Các quyết định về đề xuất và pull request của người đóng góp được đưa ra trong issue hoặc pull request công khai tương ứng; người bảo trì lên kế hoạch cho công việc tương lai một cách riêng tư.
 
 ## Vì sao tôi làm tất cả những điều này
 
