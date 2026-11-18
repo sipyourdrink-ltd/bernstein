@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from bernstein.core.volunteer.review_task import create_volunteer_review_task
-from bernstein.core.volunteer.runner import _validate_open_source_preflight
+from bernstein.core.volunteer.runner import _validate_open_source_preflight  # pyright: ignore[reportPrivateUsage]
 
 LIMIT = 1024 * 1024
 

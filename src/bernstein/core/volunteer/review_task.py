@@ -134,6 +134,7 @@ def create_volunteer_review_task(
         the server returned a non-2xx response.
     """
     import json
+    import urllib.error
     import urllib.request
 
     review_role = role or DEFAULT_REVIEW_ROLE
