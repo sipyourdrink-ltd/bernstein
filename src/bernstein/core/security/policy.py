@@ -151,8 +151,9 @@ def _apply_action(action_type: ActionType, value: Any, routing_decision: dict[st
             if fallback not in existing:
                 existing.append(fallback)
         routing_decision["fallback"] = existing
-    elif action_type == ActionType.SWITCH_PROVIDER and value == "next_best_available":
-        routing_decision["switch_provider"] = True
+    elif action_type == ActionType.SWITCH_PROVIDER:
+        if value == "next_best_available":
+            routing_decision["switch_provider"] = True
 
 
 @dataclass

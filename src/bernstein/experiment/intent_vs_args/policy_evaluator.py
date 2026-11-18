@@ -145,10 +145,11 @@ def _eval_role_only(event: dict[str, Any]) -> PolicyEvaluationResult:
             allowed = True
             reason = "role_only: matched admin rule"
             break
-        elif rule_name == "allow_benign_operations" and ("read" in intent_text.lower() or "read" in resource.lower()):
-            allowed = True
-            reason = "role_only: matched benign operations"
-            break
+        elif rule_name == "allow_benign_operations":
+            if "read" in intent_text.lower() or "read" in resource.lower():
+                allowed = True
+                reason = "role_only: matched benign operations"
+                break
 
     latency_us = (time.perf_counter() - start) * 1_000_000
     return PolicyEvaluationResult(
