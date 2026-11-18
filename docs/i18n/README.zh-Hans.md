@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 智能体的开源治理层
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **状态：beta。** 由单人维护，正在积极开发中。版本号计的是发布次数，而非成熟度——次版本（minor）可能改变接口。凡有依赖请锁定版本；回归问题会被尽快修复，[欢迎提交](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code 之上:你编写策略——谁可以做什么、什么需要审批、什么必须被记录——Bernstein 据此执行并生成可验证的记录。确定性调度器 - 协调环路中没有模型 - 并行运行智能体,用门禁把关它们的产出,并记录每一步,因此一次运行可以在事后离线验证,仅凭工件本身。CLI 编码智能体开箱即用(Claude Code、Codex、Gemini CLI 及 50+ 款),同一治理层管辖任何智能体工作负载:交付物可以是 diff、研究报告、数据集,或一份审计证据包。附带 air-gap 安装配置。Apache-2.0。
+Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code 之上:你编写策略——谁可以做什么、什么需要审批、什么必须被记录——Bernstein 据此执行并生成可验证的记录。确定性调度器 - 协调环路中没有模型 - 并行运行智能体,用门禁把关它们的产出,并记录每一步,因此一次运行可以在事后离线验证,仅凭工件本身。CLI 编码智能体开箱即用(Claude Code, Codex, Gemini CLI),同一治理层管辖任何智能体工作负载:交付物可以是 diff、研究报告、数据集,或一份审计证据包。附带 air-gap 安装配置。Apache-2.0。
 
 ### 一览
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 五点使它与众不同；其余都是细节。
 
@@ -40,7 +40,7 @@ Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code
 - **硬件密钥证据.** 离线 PIV 保管证明和 FIDO2 批准验证器共用收据协议，使用固定信任和明确时间。令牌保管不会提升 TRACE 信任级别。 [硬件密钥证据](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **事后可核查。** 回放日志记录每一次运行，常驻的血统脊柱记录每个产生血统的步骤；可选的 HMAC 链式审计日志（`BERNSTEIN_AUDIT=1`）增加了可离线验证的收据。不确定性会在精确步骤处以哈希失配的形式浮出水面，而不是一次偶发的重跑。非代码交付物也享受同样待遇：任务可以声明产物契约（报告、数据集、动作日志、运维结果），并以签署的血统收据而非 git 提交来宣告完成。
 - **构造上即隔离。** 每个编码任务在合并门禁之后获得自己的 git worktree；产物模式任务在 `.sdd/workspaces/` 下获得工作目录。智能体之间默认不共享可变的工作区；唯一共享的状态是任务积压，并以原子方式认领。更严格的文件系统强制是可选的，来自[沙箱后端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（禁用 worktree 会在共享检出中运行每个任务）。
-- **广泛且本地。** 53 多个 CLI 智能体适配器，外加通用的 `--prompt` 包装器、基于文件的状态、无 SaaS 跳转、无第三方数据平面。
+- **广泛且本地。** 55 个可选择的 CLI 智能体适配器名称，包括通用 `--prompt` 包装器。 基于文件的状态、无 SaaS 跳转、无第三方数据平面。
 
 完整列表见[能力页面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩阵](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是详尽的索引。
 
@@ -235,9 +235,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 仓库卫生门禁：`bernstein readme-l10n verify` 会让翻译版 README 偏离英文源的 PR 失败（并指出过期的章节），`bernstein readme-l10n sync` 在英文修改后重新绑定它们。见 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
 ### 支持的智能体
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[适配器索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)为其中 30 个提供安装命令。`bernstein integrations list` 从 `src/bernstein/adapters/registry.py` 中的注册表枚举全部 57 个已接线集成，该文件是"什么能解析"的唯一事实来源。其中 55 个是可选择的智能体适配器，另外两行是 `mock` 测试桩和 `self-hosted-endpoints` 端点配置。任何带 `--prompt` 旗标的其他工具都可以通过通用包装器工作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[适配器索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)为其中 30 个提供安装命令。`bernstein integrations list` 从 `src/bernstein/adapters/registry.py` 中的注册表枚举全部 57 个已接线集成，该文件是"什么能解析"的唯一事实来源。其中 55 个是可选择的智能体适配器，另外两行是 `mock` 测试桩和 `self-hosted-endpoints` 端点配置。任何带 `--prompt` 旗标的其他工具都可以通过通用包装器工作。 `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 在同一运行中混用智能体：用便宜的本地模型处理样板，用更重的云模型处理架构。`bernstein integrations list --installed` 显示你的机器上可用的内容。
 

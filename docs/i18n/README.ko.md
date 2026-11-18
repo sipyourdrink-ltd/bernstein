@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI 에이전트를 위한 오픈소스 거버넌스 레이어
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **상태: 베타.** 단독 메인테이너가 활발히 개발 중이다. 버전 번호는 릴리스 횟수를 셀 뿐 성숙도를 세지 않는다. 마이너 버전에서도 인터페이스가 바뀔 수 있다. 의존한다면 버전을 고정하라. 회귀는 빠르게 고치니 [알려 달라](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니다. policy as code로 동작합니다. 누가 무엇을 해도 되는지, 무엇에 승인이 필요한지, 무엇을 기록해야 하는지를 정책으로 작성하면 Bernstein이 이를 적용하고 검증 가능한 기록을 만듭니다. 결정론적 스케줄러 - 조정 루프에 모델이 없음 - 가 에이전트를 병렬로 돌리고, 산출물을 게이트로 검사하고, 모든 단계를 기록합니다. 그래서 실행은 사후에, 오프라인으로, 아티팩트만으로 검증할 수 있습니다. CLI 코딩 에이전트는 바로 동작하고(Claude Code, Codex, Gemini CLI 외 50+), 같은 레이어가 모든 에이전트 워크로드를 거버닝합니다: 결과물은 diff일 수도, 리서치 보고서일 수도, 데이터셋일 수도, 감사 증적 패키지일 수도 있습니다. 에어갭 설치 프로파일 포함. Apache-2.0.
+Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니다. policy as code로 동작합니다. 누가 무엇을 해도 되는지, 무엇에 승인이 필요한지, 무엇을 기록해야 하는지를 정책으로 작성하면 Bernstein이 이를 적용하고 검증 가능한 기록을 만듭니다. 결정론적 스케줄러 - 조정 루프에 모델이 없음 - 가 에이전트를 병렬로 돌리고, 산출물을 게이트로 검사하고, 모든 단계를 기록합니다. 그래서 실행은 사후에, 오프라인으로, 아티팩트만으로 검증할 수 있습니다. CLI 코딩 에이전트는 바로 동작하고(Claude Code, Codex, Gemini CLI), 같은 레이어가 모든 에이전트 워크로드를 거버닝합니다: 결과물은 diff일 수도, 리서치 보고서일 수도, 데이터셋일 수도, 감사 증적 패키지일 수도 있습니다. 에어갭 설치 프로파일 포함. Apache-2.0.
 
 ### 한눈에 보기
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 다섯 가지가 차별점이며, 나머지는 세부 사항입니다.
 
@@ -40,7 +40,7 @@ Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니
 - **하드웨어 키 증거.** 오프라인 PIV 보관 및 FIDO2 승인 검증기는 신뢰 대상을 고정하고 시간을 명시하며 같은 영수증 프로토콜을 사용합니다. 토큰 보관은 TRACE 신뢰 수준을 높이지 않습니다. [하드웨어 키 증거](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **사후에 검증할 수 있다.** 리플레이 저널이 모든 실행을 기록하고, 항상 켜져 있는 리니지 스파인이 리니지를 가진 각 단계를 기록한다. 선택적으로 켜는 HMAC 체인 감사 로그(`BERNSTEIN_AUDIT=1`)는 오프라인에서 검증되는 영수증을 더한다. 비결정성은 재실행 편차가 아니라 해당 단계에서의 해시 불일치로 드러난다. 코드가 아닌 산출물도 같은 대우를 받는다. 태스크는 아티팩트 계약(리포트, 데이터셋, 액션 로그, 운영 결과)을 선언할 수 있고, git 커밋이 아니라 서명된 리니지 영수증으로 완료된다.
 - **구조적으로 격리된다.** 코딩 태스크는 각각 머지 게이트 뒤에 자신의 git worktree를 갖는다. 아티팩트 모드 태스크는 `.sdd/workspaces/` 아래에 작업 디렉터리를 갖는다. 에이전트는 기본적으로 가변 워크스페이스를 공유하지 않는다. 공유되는 상태는 태스크 백로그뿐이며 원자적으로 점유된다. 더 엄격한 파일시스템 강제는 [샌드박스 백엔드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) 중에서 선택하는 옵션이다. worktree를 끄면 모든 태스크가 공유 체크아웃에서 실행된다.
-- **넓고, 그리고 로컬이다.** 53여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
+- **넓고, 그리고 로컬이다.** 선택 가능한 CLI 에이전트 어댑터 이름 55개이며, 범용 `--prompt` 래퍼를 포함합니다. 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
 
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
 
@@ -235,9 +235,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 리포지터리 위생 게이트: `bernstein readme-l10n verify`는 번역된 README가 영어 원문에서 벗어난 PR을 오래된 섹션 이름과 함께 실패시킨다. `bernstein readme-l10n sync`는 영어를 편집한 뒤 다시 묶는다. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)을 보라.
 
 ### 지원하는 에이전트
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 57건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 55건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 57건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 55건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 한 실행 안에서 에이전트를 섞을 수 있다. 정형 작업에는 값싼 로컬 모델을, 설계에는 무거운 클라우드 모델을. `bernstein integrations list --installed`는 자기 머신에서 쓸 수 있는 것을 보여준다.
 

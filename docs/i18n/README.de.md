@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### die Open-Source-Governance-Schicht für KI-Agenten
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **Status: Beta.** Von einer Einzelperson gepflegt, in aktiver Entwicklung. Die Versionsnummer zählt Releases, nicht Reife – Minor-Versionen können Schnittstellen ändern. Versionen für produktive Abhängigkeiten fixieren; Regressionen werden zügig behoben, [Fehler bitte melden](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein ist die Open-Source-Governance-Schicht für KI-Agenten. Es läuft auf policy as code: Du schreibst die Policy - wer was tun darf, was eine Freigabe braucht, was protokolliert werden muss -, und Bernstein setzt sie durch und erzeugt den verifizierbaren Nachweis. Ein deterministischer Scheduler - kein Modell in der Koordinationsschleife - führt Agenten parallel aus, prüft ihre Ergebnisse an Gates und protokolliert jeden Schritt, sodass sich ein Lauf im Nachhinein verifizieren lässt: offline, allein aus den Artefakten. CLI-Coding-Agenten laufen ab Werk (Claude Code, Codex, Gemini CLI und 50+ weitere), und dieselbe Schicht governt jede Agenten-Workload: das Ergebnis kann ein Diff sein, ein Forschungsbericht, ein Datensatz oder ein Audit-Evidence-Pack. Air-Gap-Installationsprofil inklusive. Apache-2.0.
+Bernstein ist die Open-Source-Governance-Schicht für KI-Agenten. Es läuft auf policy as code: Du schreibst die Policy - wer was tun darf, was eine Freigabe braucht, was protokolliert werden muss -, und Bernstein setzt sie durch und erzeugt den verifizierbaren Nachweis. Ein deterministischer Scheduler - kein Modell in der Koordinationsschleife - führt Agenten parallel aus, prüft ihre Ergebnisse an Gates und protokolliert jeden Schritt, sodass sich ein Lauf im Nachhinein verifizieren lässt: offline, allein aus den Artefakten. CLI-Coding-Agenten laufen ab Werk (Claude Code, Codex, Gemini CLI), und dieselbe Schicht governt jede Agenten-Workload: das Ergebnis kann ein Diff sein, ein Forschungsbericht, ein Datensatz oder ein Audit-Evidence-Pack. Air-Gap-Installationsprofil inklusive. Apache-2.0.
 
 ### auf einen Blick
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 Fünf Dinge zeichnen es aus; alles Weitere sind Details.
 
@@ -40,7 +40,7 @@ Fünf Dinge zeichnen es aus; alles Weitere sind Details.
 - **Nachweise für Hardwareschlüssel.** Offline-Prüfer für PIV-Verwahrung und FIDO2-Freigaben nutzen dasselbe Belegprotokoll mit festgelegten Vertrauensankern und expliziter Zeit. Token-Verwahrung erhöht keine TRACE-Vertrauensstufen. [Nachweise für Hardwareschlüssel](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Nachträglich überprüfbar.** Das Replay-Journal zeichnet jeden Lauf auf, und das durchgehend aktive Lineage-Rückgrat registriert jeden schrittweisen Herkunftsnachweis; das optionale HMAC-verkettete Audit-Log (`BERNSTEIN_AUDIT=1`) ergänzt Belege (Receipts), die offline verifiziert werden können. Nichtdeterminismus zeigt sich als Hash-Abweichung am exakten Einzelschritt statt als sporadischer Testfehler. Nicht-Code-Ergebnisse erhalten dieselbe Behandlung: Ein Task kann einen Artefakt-Vertrag (Report, Datensatz, Aktionsprotokoll, Ops-Ergebnis) definieren und schließt mit einem signierten Lineage-Receipt statt einem Git-Commit ab.
 - **Von Grund auf isoliert.** Jeder Programmier-Task erhält ein eigenes Git-Worktree hinter Merge-Gates; Artefakt-Modus-Tasks erhalten ein Arbeitsverzeichnis unter `.sdd/workspaces/`. Agenten teilen standardmäßig keinen veränderlichen Workspace; der einzige gemeinsame Zustand ist das Task-Backlog, das atomar beansprucht wird. Strengere Dateisystembeschränkungen sind optional über [Sandbox-Backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) verfügbar. Werden Worktrees deaktiviert, läuft jeder Task im geteilten Checkout.
-- **Umfassend und lokal.** Über 53 CLI-Agenten-Adapter plus ein generischer `--prompt`-Wrapper, dateibasierter Zustand, kein SaaS-Umweg, keine externe Datenebene.
+- **Umfassend und lokal.** 55 auswählbare CLI-Agenten-Adapternamen, einschließlich des generischen `--prompt`-Wrappers. dateibasierter Zustand, kein SaaS-Umweg, keine externe Datenebene.
 
 Die vollständige Liste befindet sich auf der [Funktionsübersicht](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); die [Feature-Matrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) bietet den vollständigen Index.
 
@@ -235,9 +235,9 @@ Der Laufzustand wird bei jedem Knoten als Checkpoint unter `.sdd/runs/<run_id>/`
 Repository-Hygieneprüfungen: `bernstein readme-l10n verify` lässt PRs fehlschlagen, deren übersetzte READMEs von der englischen Quelle abweichen (mit Nennung des veralteten Abschnitts), `bernstein readme-l10n sync` aktualisiert die Bindungen nach englischen Änderungen. Siehe [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### unterstützte Agenten
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen und mehr. Der [Adapter-Index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) enthält Installationsbefehle für 30 davon. `bernstein integrations list` führt alle 57 angebundenen Integrationen aus `src/bernstein/adapters/registry.py` auf, der zentralen Quelle der Wahrheit. 55 davon sind wählbare Agentenadapter; die beiden anderen Zeilen sind der Test-Stub `mock` und das Endpunkt-Profil `self-hosted-endpoints`. Jedes andere Werkzeug mit `--prompt`-Flag funktioniert über den generischen Wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen und mehr. Der [Adapter-Index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) enthält Installationsbefehle für 30 davon. `bernstein integrations list` führt alle 57 angebundenen Integrationen aus `src/bernstein/adapters/registry.py` auf, der zentralen Quelle der Wahrheit. 55 davon sind wählbare Agentenadapter; die beiden anderen Zeilen sind der Test-Stub `mock` und das Endpunkt-Profil `self-hosted-endpoints`. Jedes andere Werkzeug mit `--prompt`-Flag funktioniert über den generischen Wrapper. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 Kombinieren Sie Agenten im selben Lauf: Günstige lokale Modelle für Boilerplate-Code, leistungsfähigere Cloud-Modelle für Architekturfragen. `bernstein integrations list --installed` zeigt verfügbare Installationen auf Ihrem System.
 

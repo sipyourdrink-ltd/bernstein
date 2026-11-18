@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### avoimen lähdekoodin governance-kerros AI-agenteille
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **Tila: beta.** Yhden henkilön ylläpitämä, aktiivisessa kehityksessä. Versionumero laskee julkaisuja, ei kypsyyttä — pienet versiopäivitykset (minor) voivat muuttaa rajapintoja. Lukitse versio kriittisissä riippuvuuksissa; regressiot korjataan nopeasti, [ilmoita niistä](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein on avoimen lähdekoodin governance-kerros AI-agenteille. Se toimii policy as code -periaatteella: sinä kirjoitat käytännön - kuka saa tehdä mitä, mikä vaatii hyväksynnän, mikä on kirjattava - ja Bernstein toteuttaa sen ja tuottaa todennettavan tallenteen. Deterministinen skeduloija - ei mallia koordinaatiosilmukassa - ajaa agentteja rinnakkain, portittaa niiden tuotokset ja kirjaa jokaisen askeleen, joten ajon voi verifioida jälkikäteen, offline, pelkistä artefakteista. CLI-koodiagentit toimivat suoraan (Claude Code, Codex, Gemini CLI ja 50+ muuta), ja sama kerros governoi mitä tahansa agenttikuormaa: tulos voi olla diff, tutkimusraportti, datasetti tai auditointievidenssipaketti. Air-gap-asennusprofiili mukana. Apache-2.0.
+Bernstein on avoimen lähdekoodin governance-kerros AI-agenteille. Se toimii policy as code -periaatteella: sinä kirjoitat käytännön - kuka saa tehdä mitä, mikä vaatii hyväksynnän, mikä on kirjattava - ja Bernstein toteuttaa sen ja tuottaa todennettavan tallenteen. Deterministinen skeduloija - ei mallia koordinaatiosilmukassa - ajaa agentteja rinnakkain, portittaa niiden tuotokset ja kirjaa jokaisen askeleen, joten ajon voi verifioida jälkikäteen, offline, pelkistä artefakteista. CLI-koodiagentit toimivat suoraan (Claude Code, Codex, Gemini CLI), ja sama kerros governoi mitä tahansa agenttikuormaa: tulos voi olla diff, tutkimusraportti, datasetti tai auditointievidenssipaketti. Air-gap-asennusprofiili mukana. Apache-2.0.
 
 ### lyhyesti
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 Viisi asiaa erottaa sen muista; loput ovat yksityiskohtia.
 
@@ -40,7 +40,7 @@ Viisi asiaa erottaa sen muista; loput ovat yksityiskohtia.
 - **Laitteistoavainten todisteet.** PIV-säilytyksen ja FIDO2-hyväksynnän offline-tarkistimet jakavat kuittiprotokollan, kiinnitetyt luottamusankkurit ja nimenomaisen ajan. Tokenin säilytys ei nosta TRACE-luottamustasoja. [Laitteistoavainten todisteet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Tarkistettavissa jälkikäteen.** Toistoloki (replay journal) tallentaa jokaisen ajon, ja aina aktiivinen alkuperärunko (lineage spine) kirjaa jokaisen jäljitettävän vaiheen; valinnainen HMAC-ketjutettu audit-loki (`BERNSTEIN_AUDIT=1`) lisää kuitteja (receipts), jotka voidaan vahvistaa offline-tilassa. Epädeterministisyys näkyy tarkkana tiiviste-erona kyseisessä vaiheessa eikä satunnaisena epävakautena uudelleenajossa. Muut kuin koodituotokset käsitellään samalla tavalla: tehtävä voi määritellä artefaktisopimuksen (raportti, tietoaineisto, toimintaloki, operaatiotulos) ja se valmistuu allekirjoitetulla alkuperäkuitilla git-commitin sijaan.
 - **Eristetty rakenteellisesti.** Jokainen koodaustehtävä saa oman git worktreen merge-porttien taakse; artefaktitilan tehtävät saavat työhakemiston polkuun `.sdd/workspaces/`. Agentit eivät oletusarvoisesti jaa muokattavaa työtilaa; ainoa jaettu tila on tehtäväjono, joka varataan atomisesti. Tiukemmat tiedostojärjestelmärajoitukset ovat valinnaisia [sandbox-taustajärjestelmien](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) kautta. Jos poistat worktreen käytöstä, jokainen tehtävä suoritetaan jaetussa työtilassa.
-- **Kattava ja paikallinen.** Yli 53 CLI-agenttisovitinta sekä yleinen `--prompt`-kääre, tiedostopohjainen tila, ei SaaS-riippuvuuksia, ei ulkopuolista datatasoa.
+- **Kattava ja paikallinen.** 55 valittavaa CLI-agenttisovittimen nimeä, mukaan lukien yleinen `--prompt`-kääre. tiedostopohjainen tila, ei SaaS-riippuvuuksia, ei ulkopuolista datatasoa.
 
 Täydellinen luettelo löytyy [kyvykkyyssivulta](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ominaisuusmatriisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) toimii kattavana hakemistona.
 
@@ -235,9 +235,9 @@ Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` joka
 Koodihygieniaportit: `bernstein readme-l10n verify` hylkää PR:n, jonka käännetyt README-tiedostot poikkeavat englanninkielisestä lähteestä (nimetten vanhentuneen osion), ja `bernstein readme-l10n sync` päivittää sidokset englanninkielisten muokkausten jälkeen. Katso [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### tuetut agentit
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ja muita. [Sovitinindeksi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) sisältää asennuskomennot 30 agentille. `bernstein integrations list` luettelee kaikki 57 kytkettyä integraatiota tiedostosta `src/bernstein/adapters/registry.py`, joka on ainoa totuuden lähde. 55 niistä on valittavia agenttisovittimia; kaksi muuta riviä ovat testivastine `mock` ja päätepisteprofiili `self-hosted-endpoints`. Kaikki muut työkalut, joissa on `--prompt`-valitsin, toimivat yleisen kääreen kautta.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ja muita. [Sovitinindeksi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) sisältää asennuskomennot 30 agentille. `bernstein integrations list` luettelee kaikki 57 kytkettyä integraatiota tiedostosta `src/bernstein/adapters/registry.py`, joka on ainoa totuuden lähde. 55 niistä on valittavia agenttisovittimia; kaksi muuta riviä ovat testivastine `mock` ja päätepisteprofiili `self-hosted-endpoints`. Kaikki muut työkalut, joissa on `--prompt`-valitsin, toimivat yleisen kääreen kautta. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 Yhdistele agentteja samassa ajossa: edullisia paikallisia malleja rutiinikoodiin, raskaampia pilvimalleja arkkitehtuuriin. `bernstein integrations list --installed` näyttää koneellasi käytettävissä olevat työkalut.
 

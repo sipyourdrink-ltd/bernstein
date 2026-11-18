@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### שכבת הגברנס בקוד פתוח לסוכני AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **סטטוס: בטא.** מתוחזק על ידי אדם יחיד, בפיתוח פעיל. מספר הגרסה סופר שחרורים ולא בשלות — גרסאות משניות (minor) עשויות לשנות ממשקים. קבע גרסה עבור תלויות קריטיות; נסיגות (regressions) מתוקנות במהירות, [דווח עליהן](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא פועל לפי policy as code: אתה כותב את המדיניות - מי רשאי לעשות מה, מה טעון אישור, מה חייב להירשם - ו-Bernstein אוכף אותה ומפיק רשומה שניתנת לאימות. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI ועוד 50+), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
+Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא פועל לפי policy as code: אתה כותב את המדיניות - מי רשאי לעשות מה, מה טעון אישור, מה חייב להירשם - ו-Bernstein אוכף אותה ומפיק רשומה שניתנת לאימות. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
 
 ### במבט חטוף
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 חמישה דברים מייחדים אותו; כל השאר הוא פרטים.
 
@@ -40,7 +40,7 @@ Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא
 - **ראיות של מפתחות חומרה.** מאמתי החזקה של PIV ואישור FIDO2 פועלים ללא רשת ומשתמשים באותו פרוטוקול קבלות, עם אמון מקובע וזמן מפורש. החזקת הטוקן אינה מעלה את רמות האמון של TRACE. [ראיות של מפתחות חומרה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **ניתן לבדיקה בדיעבד.** יומן השחזור (replay journal) רושם כל ריצה, ועמוד השדרה של השושלת (lineage spine) הפעיל תמיד מתעד כל שלב נושא שושלת; יומן הביקורת האופציונלי המשורשר ב-HMAC (`BERNSTEIN_AUDIT=1`) מוסיף קבלות (receipts) שניתן לאמת במצב לא מקוון. אי-דטרמיניזם צף כאי-התאמת גיבוב (hash mismatch) בשלב המדויק, ולא כחוסר יציבות אקראי בהרצה חוזרת. תוצרים שאינם קוד זוכים לאותו יחס: משימה יכולה להצהיר על חוזה ארטיפקט (דוח, מערך נתונים, יומן פעולות, תוצאת ops) ומסתיימת בקבלת שושלת חתומה במקום ב-commit של git.
 - **מבודד מעצם המבנה.** כל משימת קידוד מקבלת git worktree משלה מאחורי שערי מיזוג; משימות במצב ארטיפקט מקבלות ספריית עבודה תחת `.sdd/workspaces/`. כברירת מחדל, סוכנים אינם חולקים סביבת עבודה הניתנת לשינוי; המצב המשותף היחיד הוא מאגר המשימות (backlog), הנתבע בצורה אטומית. אכיפה מחמירה יותר של מערכת הקבצים היא אופציונלית דרך [מנועי סביבת החול (sandbox)](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). השבת את ה-worktrees וכל משימה תרוץ בסביבת העבודה המשותפת.
-- **רחב ומקומי.** מעל 53 מתאמים לסוכני CLI בתוספת מעטפת `--prompt` גנרית, מצב מבוסס קבצים, ללא תלות ב-SaaS, ללא מישור נתונים של צד שלישי.
+- **רחב ומקומי.** 55 שמות מתאמים לסוכני CLI שניתן לבחור, כולל מעטפת `--prompt` הגנרית. מצב מבוסס קבצים, ללא תלות ב-SaaS, ללא מישור נתונים של צד שלישי.
 
 הרשימה המלאה נמצאת ב[דף היכולות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [מטריצת התכונות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) מהווה את האינדקס הממצה.
 
@@ -235,9 +235,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 שערי היגיינה של המאגר: `bernstein readme-l10n verify` מכשיל PR שבו קובצי README מתורגמים סטו מהמקור האנגלי (תוך ציון החלק המיושן), ו-`bernstein readme-l10n sync` מצמיד אותם מחדש לאחר עריכה באנגלית. ראה [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### סוכנים נתמכים
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ועוד. [אינדקס המתאמים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) כולל פקודות התקנה עבור 30 מהם. הפקודה `bernstein integrations list` מונה את כל 57 האינטגרציות המחוברות מ-`src/bernstein/adapters/registry.py`, מקור האמת היחיד. 55 מהן הן מתאמי סוכנים לבחירה; שתי השורות האחרות הן רכיב הבדיקה `mock` ופרופיל נקודות הקצה `self-hosted-endpoints`. כל כלי אחר עם דגל `--prompt` פועל דרך המעטפת הגנרית.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ועוד. [אינדקס המתאמים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) כולל פקודות התקנה עבור 30 מהם. הפקודה `bernstein integrations list` מונה את כל 57 האינטגרציות המחוברות מ-`src/bernstein/adapters/registry.py`, מקור האמת היחיד. 55 מהן הן מתאמי סוכנים לבחירה; שתי השורות האחרות הן רכיב הבדיקה `mock` ופרופיל נקודות הקצה `self-hosted-endpoints`. כל כלי אחר עם דגל `--prompt` פועל דרך המעטפת הגנרית. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 שלב סוכנים באותה ריצה: מודלים מקומיים זולים לקוד שגרתי, מודלי ענן חזקים יותר לארכיטקטורה. הפקודה `bernstein integrations list --installed` מציגה מה זמין במחשבך.
 
