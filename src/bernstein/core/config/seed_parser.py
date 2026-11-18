@@ -1532,6 +1532,15 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
             "no one. Pin each peer as 'gossip_peer_keys: {<node_id>: <ed25519 public key>}' "
             "(the peer's .sdd/cluster/identity/claim_signing.pub).",
         )
+    shards_raw = cluster_dict.get("shards", {})
+    if not isinstance(shards_raw, dict):
+        raise SeedError("cluster.shards must be a mapping of shard IDs to URLs")
+    shards = tuple(cast("dict[str, str]", shards_raw).items())
+    shard_vnodes = cast("int", cluster_dict.get("shard_vnodes", 128))
+    try:
+        ClusterConfig(shards=shards, shard_vnodes=shard_vnodes)
+    except ValueError as exc:
+        raise SeedError(str(exc)) from exc
     return ClusterConfig(
         enabled=bool(cluster_dict.get("enabled", False)),
         topology=topology,
@@ -1544,6 +1553,8 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         claim_lease_ttl_s=lease_raw,
         claim_journal_path=journal_path,
         gossip_peer_keys=peer_keys,
+        shards=shards,
+        shard_vnodes=shard_vnodes,
     )
 
 

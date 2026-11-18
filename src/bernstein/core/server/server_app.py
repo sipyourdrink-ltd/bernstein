@@ -1750,9 +1750,27 @@ _default_cluster_config = (
 
 def get_app() -> FastAPI:
     """Get or create the default FastAPI app (lazy singleton)."""
+    from dataclasses import replace
+
+    from bernstein.core.config.seed_parser import _parse_seed
+    from bernstein.core.seed import resolve_seed_path
+
+    cluster_config = _default_cluster_config
+    seed_path = resolve_seed_path(Path.cwd())
+    if seed_path.exists():
+        # The server child receives the selected seed path, not a serialized
+        # ClusterConfig. Load startup-only partition settings before serving
+        # requests; reloading metadata later must not replace a live ring.
+        seed_cluster = _parse_seed(seed_path, apply_tuning=False).cluster
+        if seed_cluster is not None:
+            cluster_config = replace(
+                cluster_config or ClusterConfig(),
+                shards=seed_cluster.shards,
+                shard_vnodes=seed_cluster.shard_vnodes,
+            )
     return create_app(
         auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
-        cluster_config=_default_cluster_config,
+        cluster_config=cluster_config,
         readonly=os.environ.get("BERNSTEIN_READONLY", "").lower() in ("1", "true", "yes"),
         slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
     )

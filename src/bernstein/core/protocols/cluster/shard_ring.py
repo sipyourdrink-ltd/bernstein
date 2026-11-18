@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bernstein.core.tasks.models import NodeInfo
 
 
 @dataclass(frozen=True)
@@ -64,3 +69,33 @@ class ShardMap:
 
     def get_url(self, shard_id: str) -> str | None:
         return self.shard_map.get(shard_id)
+
+
+class NodeShardStorage(MutableMapping[str, "NodeInfo"]):
+    """Authoritative local node partitions, selected by stable node ID.
+
+    All point operations use the ring; iteration spans the partitions for
+    identity lookup, persistence, scheduling and cluster-wide summaries.
+    URLs describe owners but do not initiate network traffic.
+    """
+
+    def __init__(self, shards: tuple[tuple[str, str], ...], vnodes: int) -> None:
+        self.shard_map = ShardMap.from_config(shards)
+        self.ring = HashRing(tuple(self.shard_map.shard_map), vnodes)
+        self._partitions: dict[str, dict[str, NodeInfo]] = {shard: {} for shard in self.shard_map.shard_map}
+
+    def __getitem__(self, key: str) -> NodeInfo:
+        return self._partitions[self.ring.lookup(key)][key]
+
+    def __setitem__(self, key: str, value: NodeInfo) -> None:
+        self._partitions[self.ring.lookup(key)][key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._partitions[self.ring.lookup(key)][key]
+
+    def __iter__(self) -> Iterator[str]:
+        for partition in self._partitions.values():
+            yield from partition
+
+    def __len__(self) -> int:
+        return sum(len(partition) for partition in self._partitions.values())
