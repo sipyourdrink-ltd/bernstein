@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import bisect
 import hashlib
-from collections.abc import Iterator, MutableMapping
+from collections.abc import ItemsView, Iterator, KeysView, MutableMapping, ValuesView
 from dataclasses import dataclass
+from threading import RLock
 from typing import TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
@@ -86,15 +87,19 @@ class NodeShardStorage(MutableMapping[str, "NodeInfo"]):
         self.shard_map = ShardMap.from_config(shards)
         self.ring = HashRing(tuple(self.shard_map.shard_map), vnodes)
         self._partitions: dict[str, dict[str, NodeInfo]] = {shard: {} for shard in self.shard_map.shard_map}
+        self._lock = RLock()
 
     def __getitem__(self, key: str) -> NodeInfo:
-        return self._partitions[self.ring.lookup(key)][key]
+        with self._lock:
+            return self._partitions[self.ring.lookup(key)][key]
 
     def __setitem__(self, key: str, value: NodeInfo) -> None:
-        self._partitions[self.ring.lookup(key)][key] = value
+        with self._lock:
+            self._partitions[self.ring.lookup(key)][key] = value
 
     def __delitem__(self, key: str) -> None:
-        del self._partitions[self.ring.lookup(key)][key]
+        with self._lock:
+            del self._partitions[self.ring.lookup(key)][key]
 
     @overload
     def pop(self, key: str) -> NodeInfo: ...
@@ -105,14 +110,33 @@ class NodeShardStorage(MutableMapping[str, "NodeInfo"]):
     def pop(self, key: str, default: object = _POP_MISSING) -> object:
         # MutableMapping.pop separates lookup from deletion. Keep duplicate
         # unregister calls atomic like the registry's original dict.pop.
-        partition = self._partitions[self.ring.lookup(key)]
-        if default is _POP_MISSING:
-            return partition.pop(key)
-        return partition.pop(key, default)
+        with self._lock:
+            partition = self._partitions[self.ring.lookup(key)]
+            if default is _POP_MISSING:
+                return partition.pop(key)
+            return partition.pop(key, default)
+
+    def _snapshot(self) -> dict[str, NodeInfo]:
+        # Freeze membership while holding the same lock as structural writers.
+        # NodeInfo objects remain shared, as they were in the original registry.
+        with self._lock:
+            snapshot: dict[str, NodeInfo] = {}
+            for partition in self._partitions.values():
+                snapshot.update(partition)
+            return snapshot
+
+    def values(self) -> ValuesView[NodeInfo]:
+        return self._snapshot().values()
+
+    def items(self) -> ItemsView[str, NodeInfo]:
+        return self._snapshot().items()
+
+    def keys(self) -> KeysView[str]:
+        return self._snapshot().keys()
 
     def __iter__(self) -> Iterator[str]:
-        for partition in self._partitions.values():
-            yield from partition
+        return iter(self._snapshot())
 
     def __len__(self) -> int:
-        return sum(len(partition) for partition in self._partitions.values())
+        with self._lock:
+            return sum(len(partition) for partition in self._partitions.values())

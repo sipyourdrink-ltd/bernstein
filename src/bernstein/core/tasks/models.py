@@ -2166,8 +2166,8 @@ class ClusterConfig:
             if shard_id in seen:
                 raise ValueError("cluster.shards IDs must be unique")
             seen.add(shard_id)
-            if not isinstance(url, str) or any(c.isspace() for c in url):
-                raise ValueError("cluster.shards URLs must be strings without whitespace")
+            if not isinstance(url, str) or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+                raise ValueError("cluster.shards URLs must be strings without whitespace or control characters")
             try:
                 parsed = urlsplit(url)
                 port = parsed.port

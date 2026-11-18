@@ -6,9 +6,10 @@ import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event, get_ident
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -64,6 +65,12 @@ def test_vnodes_rejected_consistently(value: object) -> None:
         ("a", "https://central?"),
         ("a", "https://central#"),
         ("a", "https://central/path\n"),
+        ("a", "\x00https://central"),
+        ("a", "https://central\x00"),
+        ("a", "https://central/\x07path"),
+        ("a", "https://central/\x7fpath"),
+        (b"a", "https://central"),
+        ("a", b"https://central"),
         ("a", 123),
         (123, "https://central"),
     ],
@@ -96,6 +103,16 @@ def test_config_duplicate_ids_and_partition_limit() -> None:
         _parse_cluster({"shards": raw})
     with pytest.raises(ValidationError, match="shards"):
         ClusterSchema.model_validate({"shards": raw})
+
+
+def test_yaml_binary_shard_url_is_rejected_consistently() -> None:
+    import yaml
+
+    raw = yaml.safe_load("shards:\n  alpha: !!binary aHR0cHM6Ly9jZW50cmFs\n")
+    with pytest.raises(SeedError, match="shards"):
+        _parse_cluster(raw)
+    with pytest.raises(ValidationError, match="shards"):
+        ClusterSchema.model_validate(raw)
 
 
 @pytest.mark.parametrize("shards", [(), SHARDS])
@@ -230,6 +247,113 @@ def test_default_server_rejects_invalid_seed_shards(tmp_path: Path, monkeypatch:
     monkeypatch.setenv("BERNSTEIN_SEED_PATH", str(seed_path))
     with pytest.raises(SeedError, match="shard_vnodes"):
         server_app.get_app()
+
+
+@pytest.mark.parametrize("text", ["cli: codex\n", "goal: [\n", "goal: test\ncluster:\n  topology: invalid\n"])
+def test_default_server_preserves_handled_metadata_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    from bernstein.core.server import server_app
+
+    seed_path = tmp_path / "bernstein.yaml"
+    seed_path.write_text(text)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
+    expected = FastAPI()
+    monkeypatch.setattr(server_app, "create_app", lambda **kwargs: expected)
+    assert server_app.get_app() is expected
+
+
+def test_default_server_reads_only_shards_before_handled_metadata_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.server import server_app
+
+    seed_path = tmp_path / "selected.yaml"
+    seed_path.write_text("cli: codex\ncluster:\n  shards:\n    alpha: https://central\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_SEED_PATH", str(seed_path))
+    monkeypatch.setattr(server_app, "_default_cluster_config", ClusterConfig(enabled=True, auth_token=TOKEN))
+    expected = FastAPI()
+    captured: dict[str, object] = {}
+
+    def capture_app(**kwargs: object) -> FastAPI:
+        captured.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(server_app, "create_app", capture_app)
+    assert server_app.get_app() is expected
+    config = captured["cluster_config"]
+    assert isinstance(config, ClusterConfig)
+    assert config.shards == (("alpha", "https://central"),)
+    assert config.enabled and config.auth_token == TOKEN
+
+
+@pytest.mark.parametrize("scan", ["list_nodes", "cluster_summary"])
+def test_aggregate_scans_do_not_relookup_removed_keys(monkeypatch: pytest.MonkeyPatch, scan: str) -> None:
+    registry = NodeRegistry(ClusterConfig(shards=SHARDS))
+    node = registry.register(NodeInfo(id="worker"))
+    original_getitem = NodeShardStorage.__getitem__
+
+    def remove_before_lookup(storage: NodeShardStorage, key: str) -> NodeInfo:
+        # The inherited values view separates key iteration and lookup. An
+        # unregister can occupy precisely this gap; snapshots must avoid it.
+        storage.pop(key, None)
+        return original_getitem(storage, key)
+
+    monkeypatch.setattr(NodeShardStorage, "__getitem__", remove_before_lookup)
+    result = getattr(registry, scan)()
+    if scan == "list_nodes":
+        assert result == [node]
+    else:
+        assert result["total_nodes"] == 1
+
+
+def test_partition_views_snapshot_membership_before_mutation() -> None:
+    storage = NodeShardStorage(SHARDS, 128)
+    node = NodeInfo(id="worker")
+    storage[node.id] = node
+    values, items, keys, iterator = storage.values(), storage.items(), storage.keys(), iter(storage)
+    assert storage.pop(node.id) is node
+    assert list(values) == [node]
+    assert list(items) == [(node.id, node)]
+    assert list(keys) == list(iterator) == [node.id]
+
+
+@pytest.mark.parametrize("scan", ["list_nodes", "cluster_summary"])
+def test_aggregate_snapshot_survives_concurrent_unregister(monkeypatch: pytest.MonkeyPatch, scan: str) -> None:
+    registry = NodeRegistry(ClusterConfig(shards=SHARDS))
+    node = registry.register(NodeInfo(id="worker"))
+    captured, removed = Event(), Event()
+    reader_thread: int | None = None
+    original_values = NodeShardStorage.values
+
+    def pause_after_snapshot(storage: NodeShardStorage):
+        snapshot = original_values(storage)
+        if get_ident() == reader_thread:
+            captured.set()
+            assert removed.wait(timeout=5)
+        return snapshot
+
+    def read_registry():
+        nonlocal reader_thread
+        reader_thread = get_ident()
+        return getattr(registry, scan)()
+
+    monkeypatch.setattr(NodeShardStorage, "values", pause_after_snapshot)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result_future = executor.submit(read_registry)
+        try:
+            assert captured.wait(timeout=5)
+            assert registry.unregister(node.id)
+        finally:
+            removed.set()
+        result = result_future.result(timeout=5)
+    if scan == "list_nodes":
+        assert result == [node]
+    else:
+        assert result["total_nodes"] == 1
+    assert registry.list_nodes() == []
 
 
 @pytest.mark.parametrize("shards", [(), SHARDS])

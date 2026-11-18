@@ -24,4 +24,11 @@ client routing or online topology migration is implemented.
 Regression coverage lives in `tests/unit/test_registry_shards.py` and
 `tests/unit/test_shard_ring.py`, including real application routes.
 
-The default server factory reads shard settings from its selected seed at startup, preserving environment-derived authentication and cluster enablement. Metadata reload does not replace the live ring; restart is required to change partitions. Invalid selected seeds fail startup validation.
+Aggregate reads snapshot partition membership under the same lock as structural
+mutations. The snapshots retain the registry's shared node objects.
+
+The default server factory reads only shard settings from its selected effective
+seed mapping at startup, preserving environment-derived authentication and cluster
+enablement. Invalid shard settings fail startup validation; unrelated metadata
+errors retain the existing handled reload path. Metadata reload does not replace
+the live ring; restart is required to change partitions.

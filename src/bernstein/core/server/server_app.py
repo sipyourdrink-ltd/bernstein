@@ -1752,7 +1752,7 @@ def get_app() -> FastAPI:
     """Get or create the default FastAPI app (lazy singleton)."""
     from dataclasses import replace
 
-    from bernstein.core.config.seed_parser import _parse_seed
+    from bernstein.core.config.seed_parser import SeedError, _load_seed_mapping, _parse_cluster
     from bernstein.core.seed import resolve_seed_path
 
     cluster_config = _default_cluster_config
@@ -1761,7 +1761,19 @@ def get_app() -> FastAPI:
         # The server child receives the selected seed path, not a serialized
         # ClusterConfig. Load startup-only partition settings before serving
         # requests; reloading metadata later must not replace a live ring.
-        seed_cluster = _parse_seed(seed_path, apply_tuning=False).cluster
+        try:
+            seed_data = _load_seed_mapping(seed_path)
+        except SeedError:
+            # Metadata loading already handles unreadable or malformed seeds.
+            # Shard opt-in must not turn those errors into a new boot failure.
+            seed_data = {}
+        raw_cluster = seed_data.get("cluster")
+        shard_settings = (
+            {key: raw_cluster[key] for key in ("shards", "shard_vnodes") if key in raw_cluster}
+            if isinstance(raw_cluster, dict)
+            else {}
+        )
+        seed_cluster = _parse_cluster(shard_settings) if shard_settings else None
         if seed_cluster is not None:
             cluster_config = replace(
                 cluster_config or ClusterConfig(),

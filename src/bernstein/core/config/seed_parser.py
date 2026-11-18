@@ -2542,8 +2542,8 @@ def parse_seed(path: Path) -> SeedConfig:
     return _parse_seed(path, apply_tuning=True)
 
 
-def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
-    """Share parsing with launch validation without rebinding parent tuning."""
+def _load_seed_mapping(path: Path) -> dict[str, object]:
+    """Read the effective seed mapping without validating unrelated sections."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
 
@@ -2574,6 +2574,12 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
     except (RunOverlayError, LayerValidationError) as exc:
         raise SeedError(str(exc)) from exc
 
+    return data
+
+
+def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
+    """Share parsing with launch validation without rebinding parent tuning."""
+    data = _load_seed_mapping(path)
     _warn_unknown_top_level_keys(data)
 
     # --- Required fields ---

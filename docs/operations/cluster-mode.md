@@ -645,7 +645,7 @@ cluster:
 Shard IDs must be unique ASCII identifiers matching
 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`; at most 256 are accepted. URLs must be
 absolute HTTP(S) URLs with a hostname and valid port, without credentials,
-whitespace, query or fragment. A path prefix is allowed. `shard_vnodes` must be
+whitespace, ASCII control characters, query or fragment. A path prefix is allowed. `shard_vnodes` must be
 an integer from 1 to 1024; booleans, floats and numeric strings are rejected.
 Invalid values fail config loading, including direct `ClusterConfig` construction
 (the runtime `shards` value is a tuple of ID/URL pairs).
