@@ -57,12 +57,15 @@ class ObservedApp(BernsteinApp):
         super().__init__()
         self.frames: list[dict[str, Any]] = []
         self.refresh_before_success = False
+        self.poll_worker_retained_on_refresh = False
 
     def _apply_data(self, data: dict[str, Any]) -> None:
         if self.refresh_before_success:
             self.refresh_before_success = False
             # A real refresh caller runs before the current frame is applied.
+            worker = self._poll_worker
             self.action_refresh()
+            self.poll_worker_retained_on_refresh = worker is not None and self._poll_worker is worker
         super()._apply_data(data)
         self.frames.append(data)
 
@@ -84,8 +87,8 @@ async def eventually(predicate: Callable[[], bool]) -> None:
             await asyncio.sleep(0.01)
 
 
-def frame_node(app: ObservedApp) -> str:
-    return str(app.frames[-1]["cluster"]["nodes"][0]["name"])
+def frame_node(app: ObservedApp, frame_index: int = -1) -> str:
+    return str(app.frames[frame_index]["cluster"]["nodes"][0]["name"])
 
 
 @pytest.mark.asyncio
@@ -145,13 +148,12 @@ async def test_refresh_does_not_duplicate_a_poll_waiting_to_start(
 async def test_terminal_result_is_applied_before_a_refresh_can_start_another_batch(central: Central) -> None:
     app = ObservedApp()
     app.refresh_before_success = True
-    async with app.run_test() as pilot:
+    async with app.run_test():
         await eventually(lambda: central.calls == 1)
         central.release.set()
         await eventually(lambda: bool(app.frames))
-        await pilot.pause()
-        assert central.calls == 1
-        assert frame_node(app) == "node-1"
+        assert app.poll_worker_retained_on_refresh
+        assert frame_node(app, 0) == "node-1"
 
 
 @pytest.mark.asyncio
