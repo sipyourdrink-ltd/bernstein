@@ -12,10 +12,13 @@ import bisect
 import hashlib
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
     from bernstein.core.tasks.models import NodeInfo
+
+
+_POP_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,20 @@ class NodeShardStorage(MutableMapping[str, "NodeInfo"]):
 
     def __delitem__(self, key: str) -> None:
         del self._partitions[self.ring.lookup(key)][key]
+
+    @overload
+    def pop(self, key: str) -> NodeInfo: ...
+
+    @overload
+    def pop[T](self, key: str, default: T) -> NodeInfo | T: ...
+
+    def pop(self, key: str, default: object = _POP_MISSING) -> object:
+        # MutableMapping.pop separates lookup from deletion. Keep duplicate
+        # unregister calls atomic like the registry's original dict.pop.
+        partition = self._partitions[self.ring.lookup(key)]
+        if default is _POP_MISSING:
+            return partition.pop(key)
+        return partition.pop(key, default)
 
     def __iter__(self) -> Iterator[str]:
         for partition in self._partitions.values():

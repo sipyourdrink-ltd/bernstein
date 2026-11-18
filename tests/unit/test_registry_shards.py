@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -228,3 +230,44 @@ def test_default_server_rejects_invalid_seed_shards(tmp_path: Path, monkeypatch:
     monkeypatch.setenv("BERNSTEIN_SEED_PATH", str(seed_path))
     with pytest.raises(SeedError, match="shard_vnodes"):
         server_app.get_app()
+
+
+@pytest.mark.parametrize("shards", [(), SHARDS])
+def test_duplicate_unregister_is_atomic(monkeypatch: pytest.MonkeyPatch, shards: tuple[tuple[str, str], ...]) -> None:
+    registry = NodeRegistry(ClusterConfig(shards=shards))
+    registry.register(NodeInfo(id="worker"))
+    barrier = Barrier(2)
+    original_getitem = NodeShardStorage.__getitem__
+
+    def pause_after_read(storage: NodeShardStorage, key: str) -> NodeInfo:
+        node = original_getitem(storage, key)
+        if key == "worker":
+            barrier.wait(timeout=5)
+        return node
+
+    # Force the read/delete interleaving of MutableMapping.pop. A native
+    # partition pop has no intermediate __getitem__ call to pause.
+    monkeypatch.setattr(NodeShardStorage, "__getitem__", pause_after_read)
+
+    def unregister_once(_: int) -> bool:
+        if not shards:
+            barrier.wait(timeout=5)
+        return registry.unregister("worker")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(unregister_once, range(2)))
+    assert sorted(outcomes) == [False, True]
+    assert not registry.list_nodes()
+
+
+def test_partition_pop_preserves_mapping_defaults() -> None:
+    storage = NodeShardStorage(SHARDS, 128)
+    with pytest.raises(KeyError):
+        storage.pop("missing")
+    assert storage.pop("missing", None) is None
+    marker = object()
+    assert storage.pop("missing", marker) is marker
+    node = NodeInfo(id="worker")
+    storage[node.id] = node
+    assert storage.pop(node.id) is node
+    assert len(storage) == 0
