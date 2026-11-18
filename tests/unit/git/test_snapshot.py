@@ -592,9 +592,9 @@ def test_each_git_call_gets_the_timeout_it_was_meant_to_have(repo: Path, monkeyp
     SnapshotStore(repo).take(task_id="t-1")
 
     by_command = dict(seen)
-    assert by_command["add"] == snapshot_module._GIT_ADD_TIMEOUT_S
+    assert by_command["add"] == snapshot_module._GIT_ADD_TIMEOUT_S  # pyright: ignore[reportPrivateUsage]
     assert by_command["add"] == 300, "the add bound is the decision this module makes; pin it"
-    assert by_command["write-tree"] == snapshot_module._GIT_TIMEOUT_S
+    assert by_command["write-tree"] == snapshot_module._GIT_TIMEOUT_S  # pyright: ignore[reportPrivateUsage]
     assert by_command["write-tree"] == 30
 
 
@@ -613,7 +613,7 @@ def test_a_killed_git_add_does_not_orphan_its_lock_file(repo: Path, monkeypatch:
 
     def leave_a_lock(args: list[str], cwd: Path, **kwargs: object) -> GitResult:
         if args[0] == "add":
-            index = Path(str(kwargs.get("env", {}).get("GIT_INDEX_FILE", "")))  # type: ignore[union-attr]
+            index = Path(str(kwargs.get("env", {}).get("GIT_INDEX_FILE", "")))  # type: ignore[attr-defined]
             lock = index.with_name(index.name + ".lock")
             lock.write_text("", encoding="utf-8")
             created.append(lock)
