@@ -73,7 +73,9 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — the terminal dashboard, including remote cluster workers | `bernstein gui serve` — the browser dashboard |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — the terminal dashboard, including remote cluster workers | `<task-server-url>/ui/` — browser dashboard of the running task server when GUI assets are installed. `bernstein gui serve` starts a standalone server in the current workspace. |
+
+For an authenticated server, set `BERNSTEIN_AUTH_TOKEN` for the terminal and enter an authorized token on the browser login screen. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### at a glance
 
@@ -280,7 +282,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 
 ### why the name?
 
-Bernstein is named after Leonard Bernstein, the American conductor and composer. The project governs a crew of AI agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result.
+Bernstein is named after Leonard Bernstein, the American conductor and composer. The orchestrator coordinates a crew of AI agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
 
@@ -298,10 +300,11 @@ The full tracked list, including every awesome-list entry, catalog listing, prio
 
 ### Administrative runs
 
-Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
+These are MCP bridge tool calls. Reuse the returned `runId` value as `run_id` in
+later calls. Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
 empty, audited container without a planner or agent process. Add manual work with
-`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`
-and poll `bernstein_run_status(run_id="admin-...")`. Members are claimable through
+`bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")`
+and poll `bernstein_run_status(run_id="<returned runId>")`. Members are claimable through
 the usual claim API and excluded from automatic orchestration. A nonempty run
 completes when every member has status `done`, `closed`, or `cancelled`; an empty run
 stays open. See [the operator workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
