@@ -2376,6 +2376,9 @@ class AgentSpawner:
         defer_cleanup: bool = False,
     ) -> MergeResult | None:
         """Terminate and wait on the subprocess for a completed agent."""
+        # Reaping may itself terminate a live process after work has completed.
+        # Preserve the execution outcome before cleanup replaces its exit code.
+        execution_succeeded = session.status != "dead" and not session.abort_reason and session.exit_code in (None, 0)
         result = _reap_completed_agent(
             session,
             skip_merge=skip_merge,
@@ -2412,7 +2415,11 @@ class AgentSpawner:
         if isinstance(getattr(self, "_workdir", None), Path):
             from bernstein.core.cost.model_call_ledger import finalize_session_model_call
 
-            finalize_session_model_call(self._workdir / ".sdd", session)
+            finalize_session_model_call(
+                self._workdir / ".sdd",
+                session,
+                execution_succeeded=execution_succeeded,
+            )
         return result
 
     def update_trace_outcome(self, session_id: str, outcome: str) -> None:

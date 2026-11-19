@@ -385,3 +385,26 @@ def test_refresh_clean_exit_preserves_successful_call(tmp_path: Path) -> None:
     assert final is not None
     assert final.status == "succeeded"
     assert final.output_text == "completed output\n"
+
+
+@pytest.mark.parametrize("cleanup_exit", [-15, 143])
+def test_completed_call_survives_cleanup_termination(tmp_path: Path, make_task, cleanup_exit: int) -> None:
+    spawner = AgentSpawner(
+        _SpawnOnlyTestAdapter(),
+        tmp_path / "templates",
+        tmp_path,
+        use_worktrees=False,
+        default_model="fake",
+    )
+    session = spawner.spawn_for_tasks([make_task(role="backend")])
+    proc = MagicMock()
+    proc.poll.return_value = None
+    proc.wait.return_value = cleanup_exit
+    spawner._procs[session.id] = proc
+    spawner.reap_completed_agent(session, skip_merge=True)
+    assert session.exit_code == cleanup_exit
+    proc.terminate.assert_called_once()
+    record = ModelCallLedger(tmp_path / ".sdd").get_record(session.model_call_id)
+    assert record is not None
+    assert record.status == "succeeded"
+    assert "agent completed cleanly" in record.output_text

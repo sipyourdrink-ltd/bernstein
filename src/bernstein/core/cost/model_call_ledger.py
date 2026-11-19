@@ -51,12 +51,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
+from bernstein.core.persistence.file_locks import cross_process_lock
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 logger = logging.getLogger(__name__)
-
-from bernstein.core.persistence.file_locks import cross_process_lock
 
 MODEL_CALL_SCHEMA_VERSION = 1
 """Schema version stamped on every row this module writes."""
