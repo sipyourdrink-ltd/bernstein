@@ -484,9 +484,13 @@ def govern_audit_cmd(
 
     if output_format in ("json", "sarif"):
         report = _sarif(findings, root) if output_format == "sarif" else [_finding_dict(f) for f in findings]
-        if required is not None and isinstance(report, list):
-            for item in report:
-                item["required"] = item["check_id"] in required
+        if required is not None:
+            if isinstance(report, list):
+                for item in report:
+                    item["required"] = item["check_id"] in required
+            else:
+                for result in report["runs"][0]["results"]:
+                    result["properties"]["required"] = result["ruleId"] in required
         click.echo(json.dumps(report, indent=2))
         raise SystemExit(exit_code)
 

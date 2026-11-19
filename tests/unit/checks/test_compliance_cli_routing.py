@@ -67,9 +67,10 @@ def test_policy_snapshot_reads_workspace_and_explicit_flags_override_it(tmp_path
     assert baseline["checks"] == explicit["checks"]
 
 
-def test_audit_profile_marks_required_ids_without_changing_findings(tmp_path: Path) -> None:
+@pytest.mark.parametrize("output_format", ["json", "sarif"])
+def test_audit_profile_marks_required_ids_without_changing_findings(tmp_path: Path, output_format: str) -> None:
     runner = CliRunner()
-    args = ["govern", "audit", "--only", "CMP", "--workdir", str(tmp_path), "--json"]
+    args = ["govern", "audit", "--only", "CMP", "--workdir", str(tmp_path), "--format", output_format]
     ordinary = runner.invoke(cli, args)
     selected = runner.invoke(cli, [*args, "--profile", "soc2"])
     assert ordinary.exit_code in (0, 1), ordinary.output
@@ -77,8 +78,12 @@ def test_audit_profile_marks_required_ids_without_changing_findings(tmp_path: Pa
     base = json.loads(ordinary.output)
     profiled = json.loads(selected.output)
     required = required_check_ids(ComplianceFramework.SOC2)
-    for finding in profiled:
+    findings = (
+        profiled if output_format == "json" else [result["properties"] for result in profiled["runs"][0]["results"]]
+    )
+    for finding in findings:
         assert finding.pop("required") == (finding["check_id"] in required)
+    assert selected.exit_code == ordinary.exit_code
     assert profiled == base
 
 
