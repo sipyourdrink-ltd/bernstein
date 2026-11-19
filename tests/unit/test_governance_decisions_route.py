@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -294,6 +295,21 @@ def test_nesting_failure_returns_controlled_error(tmp_path: Path, monkeypatch: p
     client = _client(tmp_path)
     for route in ("/governance/decisions", "/governance/decisions/unknown"):
         assert client.get(route, params={"run_id": "run-1"}).status_code == 409
+
+
+def test_response_model_depth_failure_returns_controlled_error(tmp_path: Path) -> None:
+    context = {}
+    for _ in range(260):
+        context = {"nested": context}
+    path = _record(tmp_path, context=context)
+    record = governance.GovernanceDecision.from_dict(json.loads(path.read_bytes()))
+    decision_id = hashlib.sha256(json.dumps(record.to_dict(), sort_keys=True, allow_nan=False).encode()).hexdigest()
+    before = _snapshot(tmp_path)
+    client = _client(tmp_path)
+    for route in ("/governance/decisions", f"/governance/decisions/{decision_id}"):
+        assert client.get(route, params={"run_id": "run-1"}).status_code == 409
+    assert path.read_bytes() == before[str(path.relative_to(tmp_path))]
+    assert _snapshot(tmp_path) == before
 
 
 def test_public_schema_matches_response_models() -> None:

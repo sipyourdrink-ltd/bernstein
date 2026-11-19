@@ -243,18 +243,27 @@ def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
     return RecordedDecisions(run_id=run_id, decisions=decisions)
 
 
+def _decision_response(model: RecordedDecisions | RecordedDecision) -> Response:
+    """Finish response serialization inside the controlled evidence boundary."""
+    try:
+        payload = model.model_dump_json()
+    except (ValueError, RecursionError):
+        raise HTTPException(status_code=409, detail="recorded decisions are unreadable") from None
+    return Response(content=payload, media_type=_JSON_MEDIA_TYPE)
+
+
 @router.get("/governance/decisions", response_model=RecordedDecisions)
-def list_recorded_decisions(request: Request, run_id: str = "") -> RecordedDecisions:
+def list_recorded_decisions(request: Request, run_id: str = "") -> Response:
     """Read persisted decisions without creating directories, keys or records."""
-    return _recorded_decisions(request, run_id)
+    return _decision_response(_recorded_decisions(request, run_id))
 
 
 @router.get("/governance/decisions/{decision_id}", response_model=RecordedDecision)
-def get_recorded_decision(decision_id: str, request: Request, run_id: str = "") -> RecordedDecision:
+def get_recorded_decision(decision_id: str, request: Request, run_id: str = "") -> Response:
     """Read one exact recorded projection; this does not verify its anchor."""
     for decision in _recorded_decisions(request, run_id).decisions:
         if decision.decision_id == decision_id:
-            return decision
+            return _decision_response(decision)
     raise HTTPException(status_code=404, detail="recorded decision not found")
 
 
