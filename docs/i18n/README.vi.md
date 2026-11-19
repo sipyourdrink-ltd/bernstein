@@ -49,7 +49,7 @@ Máy chủ tác vụ hỗ trợ cổng nhận tác vụ mới do người vận 
 Chính sách bộ điều hợp theo vai trò hỗ trợ danh sách cho phép mặc định tùy chọn cho các vai trò không được liệt kê riêng; xem [hướng dẫn](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### một lần chạy trông như thế nào
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 Một file YAML duy nhất khai báo cả lần chạy: các phase, vai trò, phụ thuộc và điều kiện để một node được chạy. Bộ lập lịch thực thi nó như Python thuần - không có gì trong file là prompt, và không model nào quyết định điều gì xảy ra tiếp theo. Đồ thị này tạo ra một gói bằng chứng kiểm toán; file đầy đủ nằm ở [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+
+Các lần thử lại giữ nguyên `dispatch_tier`; khi mở lại tác vụ, có thể chọn cấp một cách tường minh. Xem [hợp đồng cấp điều phối](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### cài đặt trong 30 giây
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->

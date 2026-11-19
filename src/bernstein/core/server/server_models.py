@@ -493,6 +493,14 @@ class TaskReopenRequest(BaseModel):
     """Body for POST /tasks/{task_id}/reopen."""
 
     reason: str = ""
+    dispatch_tier: DispatchTier | None = None
+
+    @field_validator("dispatch_tier", mode="before", json_schema_input_type=DispatchTier)
+    @classmethod
+    def _reject_null_tier(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("dispatch_tier cannot be null; omit it to preserve the current tier")
+        return value
 
     @field_validator("reason")
     @classmethod

@@ -1944,7 +1944,10 @@ async def reopen_task(task_id: str, body: TaskReopenRequest, request: Request) -
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
-        task = await store.reopen(task_id, body.reason)
+        if body.dispatch_tier is None:
+            task = await store.reopen(task_id, body.reason)
+        else:
+            task = await store.reopen(task_id, body.reason, dispatch_tier=body.dispatch_tier)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:

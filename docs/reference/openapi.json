@@ -23600,6 +23600,9 @@
             "type": "string",
             "title": "Reason",
             "default": ""
+          },
+          "dispatch_tier": {
+            "$ref": "#/components/schemas/DispatchTier"
           }
         },
         "type": "object",

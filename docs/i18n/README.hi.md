@@ -49,7 +49,7 @@ Bernstein AI एजेंटों के लिए ओपन-सोर्स �
 भूमिका-अडैप्टर नीति में सूचीबद्ध न की गई भूमिकाओं के लिए वैकल्पिक डिफ़ॉल्ट अनुमति सूची तय की जा सकती है; [मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) देखें।
 
 ### एक रन कैसा दिखता है
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 एक ही YAML फ़ाइल पूरे रन को घोषित करती है: फेज़, रोल, निर्भरताएँ और वे शर्तें जिनके तहत कोई नोड चलता ही है। शेड्यूलर इसे शुद्ध Python की तरह चलाता है - फ़ाइल में कुछ भी प्रॉम्प्ट नहीं है, और आगे क्या होगा यह कोई मॉडल तय नहीं करता। यह ग्राफ़ एक ऑडिट एविडेंस पैक बनाता है; पूरी फ़ाइल [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) में है।
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
+
+दोबारा प्रयास में `dispatch_tier` बना रहता है; कार्य को फिर से खोलते समय स्तर स्पष्ट रूप से चुना जा सकता है। [डिस्पैच स्तर का अनुबंध](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) देखें।
 
 ### 30 सेकंड में इंस्टॉल
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->

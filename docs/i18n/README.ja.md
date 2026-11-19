@@ -49,7 +49,7 @@ Bernstein は AI エージェントのためのオープンソース・ガバナ
 ロール別アダプターポリシーでは、個別に指定されていないロールに既定の許可リストを任意で設定できます。[ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)を参照してください。
 
 ### 実行はこう見える
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 1 つの YAML ファイルが実行全体を宣言します: フェーズ、ロール、依存関係、そしてノードが実行される条件。スケジューラはそれを素の Python として実行します - ファイルの中にプロンプトは一切なく、次に何が起きるかをモデルが決めることもありません。このグラフは監査エビデンスパックを生成します。完全なファイルは [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) にあります。
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 各ノードは、フェーズが許可するロールを持つエージェントが取ります。ロールの柵と承認ゲートは、エージェントがタスク内で何をしようと保持されます。コードのノードは自分専用の git worktree でマージゲートの先に完了します。上のノードは違う終わり方をします: [アーティファクト契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)が成果物(レポート、データセット、スキャン、アクションログ)を名指しし、ノードはコミットではなく署名付き lineage レシートで閉じます。同じスケジューラ、同じジャーナル、同じオフライン検証 - グラフが運ぶのがコードでも、調査でも、ops 変更でも、その混在でも。ソフトウェア、リサーチ、ドキュメント、エンタープライズ、コントリビューターワークフロー向けの既製グラフは [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) にあります。
+
+再試行では `dispatch_tier` が維持され、タスクを再オープンする際には階層を明示的に選択できます。[ディスパッチ階層の仕様](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)を参照してください。
 
 ### 30 秒でインストール
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->

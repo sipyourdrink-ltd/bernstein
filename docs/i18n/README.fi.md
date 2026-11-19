@@ -49,7 +49,7 @@ Tehtäväpalvelin tukee operaattorin hallitsemaa, tilansa säilyttävää portti
 Roolien sovitinkäytäntö tukee valinnaista sallittujen sovittimien oletuslistaa rooleille, joita ei ole määritelty erikseen; katso [opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### miltä ajo näyttää
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 Yksi YAML-tiedosto deklaroi ajon: vaiheet, roolit, riippuvuudet ja ehdot, joilla solmu ylipäätään ajetaan. Skeduloija suorittaa sen puhtaana Pythonina - mikään tiedostossa ei ole prompti, eikä mikään malli päätä mitä seuraavaksi tapahtuu. Tämä graafi tuottaa auditointievidenssipaketin; koko tiedosto on [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 Jokaisen solmun ottaa agentti, jonka roolin vaihe sallii; rooliaidat ja hyväksyntäportit pitävät riippumatta siitä, mitä agentti tekee tehtävän sisällä. Koodisolmu päättyy merge-porttien taakse omassa git worktreessään. Yllä olevat solmut päättyvät toisin: [artefaktisopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nimeää tuloksen (raportti, datasetti, skannaus, toimiloki), ja solmu sulkeutuu allekirjoitetulla lineage-kuitilla commitin sijaan. Sama skeduloija, sama journal, sama offline-verifiointi - kantoi graafi sitten koodia, tutkimusta, ops-muutosta tai näiden sekoitusta. Valmiit graafit ohjelmistoille, tutkimukselle, dokumentaatiolle, enterprise-käyttöön ja kontribuutiovirroille ovat [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+
+Uudelleenyritykset säilyttävät `dispatch_tier`-arvon; tehtävää uudelleen avattaessa tason voi valita erikseen. Katso [suoritustasojen sopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### asennus 30 sekunnissa
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->

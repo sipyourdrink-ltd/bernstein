@@ -49,7 +49,7 @@ Uppgiftsservern stöder en beständig, operatörsstyrd spärr för att ta nya up
 Adapterpolicyn för roller stöder en valfri standardlista över tillåtna adaptrar för roller som inte anges separat; se [guiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### hur en körning ser ut
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 En enda YAML-fil deklarerar körningen: faser, roller, beroenden och villkoren under vilka en nod alls körs. Schemaläggaren exekverar den som ren Python - inget i filen är en prompt, och ingen modell bestämmer vad som händer härnäst. Den här grafen bygger ett paket med revisionsbevis; hela filen finns i [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkännandegrindar håller oavsett vad agenten gör i uppgiften. En kodnod avslutas bakom merge gates i sitt eget git worktree. Noderna ovan avslutas annorlunda: ett [artefaktkontrakt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) namnger leveransen (rapport, dataset, skanning, åtgärdslogg) och noden stängs med ett signerat lineage-kvitto i stället för en commit. Samma schemaläggare, samma journal, samma offlineverifiering - oavsett om grafen levererar kod, forskning, en ops-ändring eller en blandning av alla tre. Färdiga grafer för mjukvara, forskning, dokumentation, enterprise och bidragsflöden finns i [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+
+Nya försök behåller `dispatch_tier`; när en uppgift öppnas igen kan nivån väljas uttryckligen. Se [kontraktet för körningsnivåer](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installera på 30 sekunder
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->

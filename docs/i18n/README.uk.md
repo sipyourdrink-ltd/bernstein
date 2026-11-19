@@ -49,7 +49,7 @@ Bernstein — опенсорсний governance-шар для AI-агентів.
 У політиці адаптерів можна задати типовий список дозволених адаптерів для ролей, не вказаних окремо; див. [посібник](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### як виглядає запуск
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 Один YAML-файл оголошує весь запуск: фази, ролі, залежності та умови, за яких вузол узагалі виконується. Планувальник виконує його як звичайний Python — у файлі немає жодного промпта, і жодна модель не вирішує, що буде далі. Цей граф збирає пакет аудиторських свідчень; повний файл лежить у [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+
+Повторні спроби зберігають `dispatch_tier`; під час повторного відкриття завдання можна явно вибрати рівень. Див. [контракт рівнів виконання](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### встановлення за 30 секунд
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->

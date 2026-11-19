@@ -49,7 +49,7 @@ Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code
 角色适配器策略支持为未列出的角色设置可选的默认允许列表；请参阅[指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)。
 
 ### 一次运行长什么样
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 一个 YAML 文件声明整次运行:阶段、角色、依赖,以及节点在什么条件下才会执行。调度器把它当作纯 Python 执行 - 文件里没有任何提示词,也没有模型决定下一步发生什么。这张图生成一份审计证据包;完整文件在 [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)。
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 每个节点由角色被该阶段允许的智能体认领;无论智能体在任务内做什么,角色围栏和审批门禁始终生效。代码节点在自己的 git worktree 里、合并门禁之后完成。上面这些节点的完成方式不同:[工件契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(报告、数据集、扫描、操作日志),节点以签名的 lineage 回执而非提交收尾。同一个调度器、同一份日志、同样的离线验证 - 无论图里装的是代码、研究、运维变更,还是三者混合。面向软件、研究、文档、企业和贡献者工作流的现成图都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
+
+重试会保留 `dispatch_tier`；重新打开任务时可以显式选择层级。参见[调度层级契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)。
 
 ### 30 秒安装
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
