@@ -2,131 +2,86 @@
 
 from __future__ import annotations
 
-import logging
+import os
 import subprocess
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters._contract import SystemAddendumChannel
+from bernstein.adapters.base import (
+    DEFAULT_TIMEOUT_SECONDS,
+    CLIAdapter,
+    SpawnResult,
+    append_system_addendum,
+)
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.models import ModelConfig
 
 
 class {{ cookiecutter.adapter_class }}(CLIAdapter):
-    """{{ cookiecutter.adapter_name }} CLI adapter.
-
-    {{ cookiecutter.description }}
+    """{{ cookiecutter.description }}
 
     Args:
-        workdir: Project working directory.
-        session_id: Unique agent session identifier.
-        **kwargs: Additional adapter configuration.
+        cli_path: Executable for the target CLI.
     """
 
-    name = "{{ cookiecutter.adapter_name }}"
+    def __init__(self, *, cli_path: str = "{{ cookiecutter.adapter_name }}") -> None:
+        super().__init__()
+        self._cli_path = cli_path
 
-    def __init__(
-        self,
-        workdir: Path,
-        session_id: str,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(workdir, session_id, **kwargs)
-        self._cli_path = kwargs.get("cli_path", "{{ cookiecutter.adapter_name }}")
+    def name(self) -> str:
+        """Return the adapter's display name."""
+        return "{{ cookiecutter.adapter_name }}"
+
+    def system_addendum_channel(self) -> SystemAddendumChannel:
+        """Deliver protocol instructions by appending them to the prompt."""
+        return SystemAddendumChannel.PROMPT_APPEND
 
     def spawn(
         self,
-        task_description: str,
-        files: list[str] | None = None,
-        model: str | None = None,
-        effort: str | None = None,
-        timeout: int | None = None,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
+        multimodal_context: Any | None = None,
     ) -> SpawnResult:
-        """Spawn {{ cookiecutter.adapter_name }} agent for a task.
+        """Launch the CLI and return its handle without waiting for completion.
 
-        Args:
-            task_description: Task description to execute.
-            files: Optional list of files to include in context.
-            model: Optional model override.
-            effort: Optional effort level override.
-            timeout: Optional timeout in seconds.
-
-        Returns:
-            SpawnResult with agent PID and session info.
+        Adapt the command flags to your CLI. MCP configuration and scope-based
+        budgets require CLI-specific support; this template does not wire them.
+        Launch and log-file errors propagate to the caller.
         """
-        # Build command
-        cmd = [self._cli_path, "run"]
+        self.refuse_multimodal_if_needed(multimodal_context)
+        cmd = [self._cli_path, "run", "--description", append_system_addendum(prompt, system_addendum)]
+        if model_config.model:
+            cmd.extend(["--model", model_config.model])
+        if model_config.effort:
+            cmd.extend(["--effort", model_config.effort])
 
-        # Add task description
-        cmd.extend(["--description", task_description])
-
-        # Add files if provided
-        if files:
-            for f in files:
-                cmd.extend(["--file", f])
-
-        # Add model if provided
-        if model:
-            cmd.extend(["--model", model])
-
-        # Add effort if provided
-        if effort:
-            cmd.extend(["--effort", effort])
-
-        # Set timeout
-        if timeout is None:
-            timeout = self._default_timeout
-
-        logger.info("Spawning %s agent for task", self.name)
-        logger.debug("Command: %s", " ".join(cmd))
-
-        # Spawn process
-        # Note: In production, use proper process management
-        # This is a template - adapt to your adapter's actual CLI
-        try:
-            result = subprocess.run(
+        log_path = workdir / f".bernstein-{session_id}.log"
+        with log_path.open("w", encoding="utf-8") as log_file:
+            proc = subprocess.Popen(
                 cmd,
-                cwd=self._workdir,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
+                cwd=workdir,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=os.name == "posix",
+                preexec_fn=self._get_preexec_fn(),
             )
 
-            return SpawnResult(
-                success=result.returncode == 0,
-                pid=None,  # Template - replace with actual PID tracking
-                output=result.stdout,
-                error=result.stderr,
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning("%s agent timed out after %ds", self.name, timeout)
-            return SpawnResult(
-                success=False,
-                pid=None,
-                output="",
-                error=f"Timeout after {timeout}s",
-            )
-        except Exception as exc:
-            logger.error("%s agent spawn failed: %s", self.name, exc)
-            return SpawnResult(
-                success=False,
-                pid=None,
-                output="",
-                error=str(exc),
-            )
+        result = SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
+        if timeout_seconds > 0:
+            result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
+        return result
 
     def detect_tier(self) -> Any | None:
-        """Detect the pricing tier for this adapter.
-
-        Returns:
-            Tier information or None if unavailable.
-        """
-        # Template - implement based on your adapter's tier detection
-        # Return something like:
-        # return TierInfo(
-        #     tier=Tier.STANDARD,
-        #     is_active=True,
-        #     rate_limit=RateLimit(requests_per_minute=60),
-        # )
+        """Detect the pricing tier; implement this for your target CLI."""
         return None

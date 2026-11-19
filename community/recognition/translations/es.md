@@ -51,7 +51,7 @@ Los nombres en la lista periódica van en orden alfabético. No por número de P
 
 ## GitHub Discussions y la página de LinkedIn no compiten entre sí
 
-Hacen trabajos distintos. Para noticias rápidas (un release, un cambio, una actualización de la comunidad), la página de LinkedIn es el canal más rápido. GitHub Discussions es donde participas de verdad en el proyecto: ves el contexto, discutes, propones, encuentras la respuesta, y queda registrado donde la siguiente persona pueda encontrarlo. Si quieres las dos cosas, la noticia y la profundidad, sigue ambos. Las decisiones siguen ocurriendo en issues y pull requests; eso no ha cambiado.
+Hacen trabajos distintos. Para noticias rápidas (un release, un cambio, una actualización de la comunidad), la página de LinkedIn es el canal más rápido. GitHub Discussions es donde participas de verdad en el proyecto: ves el contexto, discutes, propones, encuentras la respuesta, y queda registrado donde la siguiente persona pueda encontrarlo. Si quieres las dos cosas, la noticia y la profundidad, sigue ambos. Las decisiones sobre las propuestas y los pull requests de los colaboradores se toman en el issue o pull request público correspondiente; el mantenedor planifica el trabajo futuro en privado.
 
 ## Por qué hago esto en absoluto
 
@@ -88,8 +88,6 @@ Y una cosa más, humana. Si alguna vez surge una oportunidad remunerada real alr
 ## Quién está mirando, y por qué importa
 
 No podemos, por supuesto, publicar toda nuestra tubería de analítica, pero por todas las apariencias no somos los únicos que leen. Gente de grandes empresas de IT y de laboratorios de IA aparece por el sitio con bastante regularidad y hace preguntas bastante específicas sobre la documentación. Los competidores, asumamos, tampoco están dormidos.
-
-Y, por cierto: según nuestra analítica pasiva, quitando el ruido evidente de bots, Bernstein ahora funciona con regularidad en al menos unas 3.000 máquinas por todo el mundo. Creo que eso es bastante respetable. Bernstein no envía telemetría de producto por defecto y este número no proviene de ninguna; es una señal pasiva, y eso es todo lo que voy a decir sobre el método.
 
 Así que la situación ya es interesante de por sí. Estamos construyendo un producto libre que la gente realmente usa, que atrae la atención de ingenieros, laboratorios de IA y grandes empresas, y cualquier usuario puede coger el código fuente y ser dueño de él. Mi opinión, claramente una opinión: cuando puedes conseguir gratis una herramienta seria y ser dueño del código, se vuelve difícil explicar por qué alguien pagaría decenas de miles de dólares al mes por algo similar.
 

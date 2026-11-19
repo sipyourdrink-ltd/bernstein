@@ -408,6 +408,7 @@ class SeedConfig:
     # the live registry rather than a hardcoded subset (issue #2781).
     cli: str = "auto"
     max_agents: int = 6
+    hash_profile: str = "py-json-v1"
     model: str | None = None
     constraints: tuple[str, ...] = ()
     context_files: tuple[str, ...] = ()
