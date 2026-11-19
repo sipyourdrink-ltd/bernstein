@@ -387,6 +387,73 @@ def test_a_pull_request_from_the_workflow_account_needs_the_maintainer(qc: Modul
     assert "workflow account" in verdict.requirements[0].text
 
 
+@pytest.mark.parametrize("author", ["renovate[bot]", "github-actions[bot]"])
+@pytest.mark.parametrize("provenance", ["author", "committer", "coauthor"])
+def test_known_writer_approval_is_rejected_for_automation_and_workflow_authors(
+    qc: ModuleType, roster, author: str, provenance: str
+) -> None:
+    commit = {"author": {}, "committer": {}, "commit": {"message": "fix"}}
+    if provenance == "coauthor":
+        commit["commit"]["message"] += "\n\nCo-authored-by: Owner <owner@users.noreply.github.com>"
+    else:
+        commit[provenance] = {"login": "owner"}
+    pr = _pr(
+        qc,
+        author=author,
+        paths=[".github/workflows/ci.yml"],
+        contributors={author} | qc._logins_from_commit(commit),
+        reviews=[_review(qc, "owner", "APPROVED")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("independent" in req.who for req in verdict.requirements if not req.met)
+
+
+@pytest.mark.parametrize("author", ["renovate[bot]", "github-actions[bot]"])
+@pytest.mark.parametrize("current", [True, False])
+def test_nonwriter_maintainer_review_counts_for_protected_bot_change(
+    qc: ModuleType, roster, author: str, current: bool
+) -> None:
+    pr = _pr(
+        qc,
+        author=author,
+        paths=[".github/workflows/ci.yml"],
+        reviews=[_review(qc, "owner", "APPROVED", sha=HEAD if current else "old")],
+    )
+    assert _evaluate(qc, roster, pr).passed is current
+
+
+@pytest.mark.parametrize("author", ["renovate[bot]", "github-actions[bot]"])
+@pytest.mark.parametrize("proven_unchanged", [True, False])
+def test_bot_writer_exception_requires_existing_unchanged_diff_proof(
+    qc: ModuleType, roster, author: str, proven_unchanged: bool
+) -> None:
+    pr = _pr(
+        qc,
+        author=author,
+        paths=[".github/workflows/ci.yml"],
+        contributors={author, "owner"},
+        reviews=[_review(qc, "owner", "APPROVED")],
+    )
+    if proven_unchanged:
+        pr.update_only = frozenset({"owner"})
+    else:
+        pr.uncompared = (HEAD,)
+    assert _evaluate(qc, roster, pr).passed is proven_unchanged
+
+
+def test_large_ordinary_change_cannot_use_writer_for_required_maintainer_review(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        changed_lines=1100,
+        contributors={"outsider", "owner"},
+        reviews=[_review(qc, who, "APPROVED") for who in ("core1", "core2", "comm1", "owner")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("maintainer approval or a split" in req.text and not req.met for req in verdict.requirements)
+
+
 def test_the_maintainers_own_change_merges_without_approvals(qc: ModuleType, roster) -> None:
     assert _evaluate(qc, roster, _pr(qc, author="owner", contributors={"owner"})).passed
 

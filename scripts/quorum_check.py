@@ -1007,6 +1007,17 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         )
     )
 
+    # Required maintainer reviews obey the same known-writer exclusion as
+    # ordinary quorum and CODEOWNERS reviews. Only proven update-only pushes
+    # are exempt; account type never supplies independence.
+    independent_maintainer = roster.maintainer not in pr.writers and roster.maintainer != pr.author
+    maintainer_approved = roster.maintainer in approvals and independent_maintainer
+    maintainer_reviewer = (
+        f"@{roster.maintainer}"
+        if independent_maintainer
+        else "nobody: the required maintainer wrote or pushed this change; independent review is required"
+    )
+
     if pr.author in roster.automation:
         stops = sorted(
             p
@@ -1014,13 +1025,13 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             if any(word in p for word in AUTOMATION_STOP_WORDS) or p.startswith(AUTOMATION_STOP_PREFIXES)
         )
         if stops:
-            met = roster.maintainer in approvals
+            met = maintainer_approved
             verdict.requirements.append(
                 Requirement(
                     f"maintainer approval: automation changing {', '.join(f'`{p}`' for p in stops[:4])}"
                     + (" and others" if len(stops) > 4 else ""),
                     met,
-                    f"@{roster.maintainer}",
+                    maintainer_reviewer,
                 )
             )
         else:
@@ -1029,8 +1040,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         verdict.requirements.append(
             Requirement(
                 "maintainer approval: a pull request opened by the workflow account",
-                roster.maintainer in approvals,
-                f"@{roster.maintainer}",
+                maintainer_approved,
+                maintainer_reviewer,
             )
         )
     elif pr.author == roster.maintainer and not pr.commit_authors_complete:
@@ -1087,8 +1098,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
                 Requirement(
                     f"maintainer approval or a split ({pr.changed_lines} changed lines, "
                     f"over {MAINTAINER_OR_SPLIT_LINES})",
-                    roster.maintainer in approvals,
-                    f"@{roster.maintainer}, or split the change",
+                    maintainer_approved,
+                    f"{maintainer_reviewer}, or split the change",
                 )
             )
 
