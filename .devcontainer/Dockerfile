@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/python:3-3.13-trixie
+FROM mcr.microsoft.com/devcontainers/python:3-3.13-trixie@sha256:3d68402c7f3eb28f3d75f8095e2d3ddbfbbd33c6e1ece9f9f5da61afed230ef6
 
 ARG TARGETARCH
 RUN set -eux; \
