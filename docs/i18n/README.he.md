@@ -49,7 +49,7 @@ Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא
 מדיניות המתאמים לפי תפקיד מאפשרת להגדיר רשימת מתאמים מותרת כברירת מחדל לתפקידים שלא צוינו בנפרד; ראו את [המדריך](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### איך נראית ריצה
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 קובץ YAML אחד מצהיר על הריצה כולה: פאזות, תפקידים, תלויות והתנאים שבהם צומת בכלל רץ. המתזמן מריץ אותו כ-Python טהור - שום דבר בקובץ אינו פרומפט, ואף מודל לא מחליט מה קורה הלאה. הגרף הזה מייצר חבילת ראיות ביקורת; הקובץ המלא נמצא ב-[`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
@@ -128,6 +128,8 @@ flowchart LR
 ```
 
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+
+ניסיונות חוזרים שומרים על `dispatch_tier`; בפתיחה מחדש של משימה אפשר לבחור את הרמה במפורש. ראו את [חוזה רמות השיגור](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### התקנה ב-30 שניות
 <!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
