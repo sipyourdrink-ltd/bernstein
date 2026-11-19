@@ -214,7 +214,7 @@ Cada objetivo avanza a través de cuatro etapas:
 Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué determinista](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### comandos cotidianos
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,10 @@ Toda la superficie del operador (automatización de PR, programaciones, puentes 
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-El estado de ejecución guarda un punto de control en `.sdd/runs/<run_id>/` en cada nodo. La reanudación valida la huella del manifiesto al inicio de la ejecución, de modo que un cambio de especificación se rechaza en lugar de ejecutar silenciosamente un manifiesto diferente. Consulta [manifiestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+El estado de ejecución guarda un punto de control en `.sdd/runs/<run_id>/` en cada nodo. La reanudación valida la huella del manifiesto al inicio de la ejecución, de modo que un cambio de especificación se rechaza en lugar de ejecutar silenciosamente un manifiesto diferente. Consulta [manifiestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Al reanudar, vuelve a indicar el mismo valor de `-g` para sustituir `{goal}` en los prompts de los nodos pendientes.
 
 Puertas de higiene del repositorio: `bernstein readme-l10n verify` falla una PR cuyos READMEs traducidos se hayan desfasado de la fuente en inglés (indicando la sección obsoleta), `bernstein readme-l10n sync` los vuelve a vincular tras una edición en inglés. Consulta [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
