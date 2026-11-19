@@ -122,7 +122,10 @@ def test_linked_worktree_snapshot_preserves_indexes_and_shares_metadata(repo: Pa
     (linked / filename).write_text("linked unstaged\n", encoding="utf-8")
 
     snap = SnapshotStore(linked).take(task_id="T-linked", label="linked worktree")
+    sidecar = repo / ".git" / "bernstein" / "snapshots" / f"{snap.snapshot_id}.json"
 
+    assert sidecar.is_file()
+    assert json.loads(sidecar.read_text(encoding="utf-8")) == snap.to_dict()
     assert _git("show", f"{snap.tree_sha}:{filename}", cwd=linked) == "linked unstaged\n"
     assert _git("show", f":{filename}", cwd=linked) == "linked staged\n"
     assert _git("show", f":{filename}", cwd=repo) == "main staged\n"
@@ -227,14 +230,24 @@ def test_list_respects_limit(repo: Path) -> None:
 
 
 def test_list_synthesises_record_when_metadata_missing(repo: Path) -> None:
-    """A ref without its sidecar still appears in the list."""
+    """A ref without a sidecar sorts last and loses its task association."""
     store = SnapshotStore(repo)
-    snap = store.take(task_id="T-orphan")
+    tracked = store.take(task_id="T-orphan")
+    snap = store.take(task_id="T-orphan", tool_call_id="tc-orphan", agent_id="agent:test", label="before removal")
     sidecar = repo / ".git" / "bernstein" / "snapshots" / f"{snap.snapshot_id}.json"
     sidecar.unlink()
 
-    snaps = store.list()
-    assert any(s.snapshot_id == snap.snapshot_id for s in snaps)
+    fallback = Snapshot(
+        snapshot_id=snap.snapshot_id,
+        tree_sha=snap.tree_sha,
+        ref=snap.ref,
+        ts_ns=0,
+        label=snap.snapshot_id,
+    )
+    assert store.get(snap.snapshot_id) == fallback
+    assert store.list() == [tracked, fallback]
+    assert store.list(limit=1) == [tracked]
+    assert store.list(task_id="T-orphan") == [tracked]
 
 
 # ---------------------------------------------------------------------------
@@ -579,9 +592,9 @@ def test_each_git_call_gets_the_timeout_it_was_meant_to_have(repo: Path, monkeyp
     SnapshotStore(repo).take(task_id="t-1")
 
     by_command = dict(seen)
-    assert by_command["add"] == snapshot_module._GIT_ADD_TIMEOUT_S
+    assert by_command["add"] == snapshot_module._GIT_ADD_TIMEOUT_S  # pyright: ignore[reportPrivateUsage]
     assert by_command["add"] == 300, "the add bound is the decision this module makes; pin it"
-    assert by_command["write-tree"] == snapshot_module._GIT_TIMEOUT_S
+    assert by_command["write-tree"] == snapshot_module._GIT_TIMEOUT_S  # pyright: ignore[reportPrivateUsage]
     assert by_command["write-tree"] == 30
 
 
@@ -600,7 +613,7 @@ def test_a_killed_git_add_does_not_orphan_its_lock_file(repo: Path, monkeypatch:
 
     def leave_a_lock(args: list[str], cwd: Path, **kwargs: object) -> GitResult:
         if args[0] == "add":
-            index = Path(str(kwargs.get("env", {}).get("GIT_INDEX_FILE", "")))  # type: ignore[union-attr]
+            index = Path(str(kwargs.get("env", {}).get("GIT_INDEX_FILE", "")))  # type: ignore[attr-defined]
             lock = index.with_name(index.name + ".lock")
             lock.write_text("", encoding="utf-8")
             created.append(lock)

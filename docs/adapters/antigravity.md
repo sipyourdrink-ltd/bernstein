@@ -5,18 +5,11 @@ as the `agy` binary. The `antigravity` registry key resolves to the
 [`agy` adapter](agy.md): same binary, same command line, same contract
 and strategy.
 
-```bash
-# equivalent
-bernstein run --cli antigravity "fix the flaky test"
-bernstein run --cli agy "fix the flaky test"
-```
+The provider restrictions described in [`agy.md`](agy.md) apply to this key in the same way: the consumer lane is not recommended for use with Bernstein.
 
 ## Install
 
-The Antigravity CLI is a closed-source binary distributed by an upstream
-installer; Bernstein does not ship an installer URL. Install it, run
-`agy install` (environment paths and shell settings), sign in (keyring /
-OAuth by default), then confirm discovery:
+The Antigravity CLI is a closed-source binary distributed by an upstream installer; Bernstein does not ship an installer URL. Installation and authentication are described in [`agy.md`](agy.md) as reference information subject to the same restrictions. To check discovery of an installed binary:
 
 ```bash
 bernstein adapters check antigravity

@@ -49,6 +49,22 @@ Six first-party kinds ship in the wheel; third-party drivers register via
 the `bernstein.notification_sinks` entry-point group
 (`core/notifications/registry.py:37-49`).
 
+### Sink implementation contract
+
+Every driver implements `NotificationSink` in
+`src/bernstein/core/notifications/protocol.py`. Its `sink_id: str` must
+match the configured sink `id`, so audit records can be cross-referenced.
+Its `kind: str` identifies the driver and stays stable across versions.
+
+- `async def deliver(self, event: NotificationEvent) -> None` delivers an
+  event. Delivery must be idempotent: the dispatcher may retry the same
+  event after a transient failure. Raise `NotificationDeliveryError` for
+  a transient failure that should be retried, or
+  `NotificationPermanentError` when retrying cannot succeed, so the
+  dispatcher can send the event to the dead-letter file.
+- `async def close(self) -> None` releases transport resources and must
+  be idempotent.
+
 ### Common config shape (every sink)
 
 `bernstein notify list` and `bernstein notify test` read this section directly

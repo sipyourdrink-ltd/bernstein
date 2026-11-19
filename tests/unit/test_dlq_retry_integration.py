@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import httpx
 
 from bernstein.core.tasks.dead_letter_queue import DeadLetterQueue
+from bernstein.core.tasks.models import DispatchTier
 from bernstein.core.tasks.task_lifecycle import retry_or_fail_task
 
 
@@ -44,6 +45,7 @@ class _MockTask:
         self.role = "backend"
         self.priority = 1
         self.scope = _MockScope()
+        self.dispatch_tier = DispatchTier.LOCAL
         self.complexity = _MockComplexity()
         self.estimated_minutes = 10
         self.depends_on = []

@@ -13,7 +13,7 @@ from bernstein.core.mcp_skill_bridge import (
     register_skill_builder,
 )
 from bernstein.core.skill_discovery import SkillSource
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -149,8 +149,8 @@ class TestCollectMcpSkills:
 
 
 class TestBuildSkillsFromMcpServer:
-    def _make_server(self) -> FastMCP:  # type: ignore[type-arg]
-        mcp: FastMCP = FastMCP("test_srv")  # type: ignore[type-arg]
+    def _make_server(self) -> MCPServer:  # type: ignore[type-arg]
+        mcp: MCPServer = MCPServer("test_srv")  # type: ignore[type-arg]
 
         @mcp.tool()
         def do_something(x: int) -> str:
@@ -183,13 +183,13 @@ class TestBuildSkillsFromMcpServer:
         assert all(i.server_name == "test_srv" for i in infos)
 
     def test_empty_server_returns_empty_list(self) -> None:
-        mcp: FastMCP = FastMCP("empty_srv")  # type: ignore[type-arg]
+        mcp: MCPServer = MCPServer("empty_srv")  # type: ignore[type-arg]
         infos = build_skills_from_mcp_server(mcp)
         assert infos == []
 
     def test_integration_register_and_collect(self) -> None:
-        """Full integration: register FastMCP builder then collect skills."""
-        mcp: FastMCP = FastMCP("int_srv")  # type: ignore[type-arg]
+        """Full integration: register MCPServer builder then collect skills."""
+        mcp: MCPServer = MCPServer("int_srv")  # type: ignore[type-arg]
 
         @mcp.tool()
         def ping() -> str:

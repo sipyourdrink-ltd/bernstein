@@ -10,6 +10,9 @@ The adapter implements `bernstein.core.trackers.AbstractTrackerAdapter`
 and lives under `bernstein.core.trackers.builtin.asana_adapter`. It is
 disabled by default and must be opted in via `bernstein.yaml`.
 
+An Asana task is represented as a `Ticket` by the adapter. Its Asana GID
+becomes `Ticket.id`, and its permalink becomes `Ticket.external_url`.
+
 ## Auth
 
 Authentication uses an Asana Personal Access Token (PAT). Point the
