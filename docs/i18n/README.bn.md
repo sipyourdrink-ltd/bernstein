@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **স্ট্যাটাস: beta।** একজনই মেনটেইন করেন, সক্রিয় ডেভেলপমেন্টে আছে। ভার্সন নম্বর রিলিজ গোনে, পরিপক্বতা নয় — মাইনর ভার্সনেও ইন্টারফেস বদলাতে পারে। যার উপর আপনি নির্ভর করছেন তার ভার্সন পিন করে নিন; রিগ্রেশন দ্রুত সারানো হয়, [সেগুলো জানান](https://github.com/sipyourdrink-ltd/bernstein/issues)।
 
-Bernstein হলো AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার। এটি policy as code হিসেবে কাজ করে: আপনি নীতি লেখেন - কে কী করতে পারবে, কীসের জন্য অনুমোদন লাগবে, কী রেকর্ড করতে হবে - আর Bernstein তা প্রয়োগ করে যাচাইযোগ্য রেকর্ড তৈরি করে। একটি ডিটারমিনিস্টিক শিডিউলার - কো-অর্ডিনেশন লুপে কোনো মডেল নেই - এজেন্টদের সমান্তরালে চালায়, তাদের আউটপুট গেট দিয়ে যাচাই করে এবং প্রতিটি ধাপ রেকর্ড করে, তাই একটি রান পরে, অফলাইনে, শুধু আর্টিফ্যাক্ট থেকেই যাচাই করা যায়। CLI কোডিং এজেন্ট সরাসরি কাজ করে (Claude Code, Codex, Gemini CLI ও আরও 50+), আর একই লেয়ার যেকোনো এজেন্ট ওয়ার্কলোড গভর্ন করে: ডেলিভারেবল হতে পারে একটি diff, রিসার্চ রিপোর্ট, ডেটাসেট বা অডিট এভিডেন্স প্যাক। Air-gap ইনস্টল প্রোফাইল অন্তর্ভুক্ত। Apache-2.0.
+Bernstein হলো AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার। এটি policy as code হিসেবে কাজ করে: আপনি নীতি লেখেন - কে কী করতে পারবে, কীসের জন্য অনুমোদন লাগবে, কী রেকর্ড করতে হবে - আর Bernstein তা প্রয়োগ করে যাচাইযোগ্য রেকর্ড তৈরি করে। একটি ডিটারমিনিস্টিক শিডিউলার - কো-অর্ডিনেশন লুপে কোনো মডেল নেই - এজেন্টদের সমান্তরালে চালায়, তাদের আউটপুট গেট দিয়ে যাচাই করে এবং প্রতিটি ধাপ রেকর্ড করে, তাই একটি রান পরে, অফলাইনে, শুধু আর্টিফ্যাক্ট থেকেই যাচাই করা যায়। CLI কোডিং এজেন্ট সরাসরি কাজ করে (Claude Code, Codex, Gemini CLI), আর একই লেয়ার যেকোনো এজেন্ট ওয়ার্কলোড গভর্ন করে: ডেলিভারেবল হতে পারে একটি diff, রিসার্চ রিপোর্ট, ডেটাসেট বা অডিট এভিডেন্স প্যাক। Air-gap ইনস্টল প্রোফাইল অন্তর্ভুক্ত। Apache-2.0.
 
 ### এক নজরে
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 পাঁচটি বিষয় একে আলাদা করে; বাকিটা বিশদ।
 
@@ -40,7 +40,7 @@ Bernstein হলো AI এজেন্টদের জন্য ওপেন-স
 - **হার্ডওয়্যার কী-এর প্রমাণ.** অফলাইন PIV হেফাজত ও FIDO2 অনুমোদন যাচাইকারী নির্দিষ্ট বিশ্বাস ও স্পষ্ট সময়সহ একই রসিদ প্রোটোকল ব্যবহার করে। টোকেনের হেফাজত TRACE-এর বিশ্বাসের স্তর বাড়ায় না। [হার্ডওয়্যার কী-এর প্রমাণ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **পরে যাচাই করা যায়।** রিপ্লে জার্নাল প্রতিটি রান লিখে রাখে, আর সবসময় চালু লিনিয়েজ স্পাইন প্রতিটি লিনিয়েজ-বাহী ধাপ লিখে রাখে; অপ্ট-ইন HMAC-চেইন অডিট লগ (`BERNSTEIN_AUDIT=1`) এমন রসিদ যোগ করে যা আপনি অফলাইনে যাচাই করতে পারেন। নন-ডিটারমিনিজম ঠিক যে ধাপে ঘটেছে সেখানেই হ্যাশ অমিল হয়ে সামনে আসে, অস্থির রি-রান হিসেবে নয়। কোড নয় এমন ডেলিভারেবলও একই আচরণ পায়: একটি টাস্ক আর্টিফ্যাক্ট কনট্র্যাক্ট (রিপোর্ট, ডেটাসেট, অ্যাকশন লগ, অপ্‌স ফলাফল) ঘোষণা করতে পারে এবং git কমিটের বদলে স্বাক্ষরিত লিনিয়েজ রসিদে সম্পূর্ণ হয়।
 - **গঠনগতভাবেই বিচ্ছিন্ন।** প্রতিটি কোডিং টাস্ক মার্জ গেটের পিছনে নিজস্ব git worktree পায়; আর্টিফ্যাক্ট-মোডের টাস্ক `.sdd/workspaces/` এর নিচে একটি ওয়ার্কিং ডিরেক্টরি পায়। ডিফল্টে এজেন্টরা পরিবর্তনযোগ্য কোনো ওয়ার্কস্পেস ভাগ করে না; ভাগ করা অবস্থা কেবল টাস্ক ব্যাকলগ, যা অ্যাটমিকভাবে দাবি করা হয়। এর চেয়ে কড়া ফাইল-সিস্টেম নিয়ন্ত্রণ অপ্ট-ইন, [স্যান্ডবক্স ব্যাকএন্ড](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) থেকে বেছে নিয়ে। worktree বন্ধ করে দিলে প্রতিটি টাস্ক ভাগ করা চেকআউটেই চলবে।
-- **বিস্তৃত এবং লোকাল।** 53টির বেশি CLI এজেন্ট অ্যাডাপ্টার, সঙ্গে একটি জেনেরিক `--prompt` র‍্যাপার, ফাইল-ভিত্তিক স্টেট, কোনো SaaS হপ নেই, কোনো থার্ড-পার্টি ডেটা প্লেন নেই।
+- **বিস্তৃত এবং লোকাল।** 55টি নির্বাচনযোগ্য CLI এজেন্ট অ্যাডাপ্টারের নাম, জেনেরিক `--prompt` র‍্যাপারসহ। ফাইল-ভিত্তিক স্টেট, কোনো SaaS হপ নেই, কোনো থার্ড-পার্টি ডেটা প্লেন নেই।
 
 পুরো তালিকা আছে [ক্যাপাবিলিটি পাতায়](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ফিচার ম্যাট্রিক্স](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) হলো সম্পূর্ণ সূচি।
 
@@ -235,9 +235,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 রিপোজিটরি হাইজিন গেট: `bernstein readme-l10n verify` এমন PR ব্যর্থ করে যার অনূদিত README ইংরেজি উৎস থেকে সরে গেছে (এবং বাসি সেকশনটির নাম বলে দেয়), `bernstein readme-l10n sync` ইংরেজিতে সম্পাদনার পরে সেগুলো আবার বেঁধে দেয়। দেখুন [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 
 ### সমর্থিত এজেন্ট
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen এবং আরও অনেক। [অ্যাডাপ্টার সূচি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) তাদের মধ্যে 30টির ইনস্টল কমান্ড রাখে। `bernstein integrations list` `src/bernstein/adapters/registry.py` থেকে জুড়ে দেওয়া 57টি ইন্টিগ্রেশনই তালিকাভুক্ত করে — কী রিজলভ হয় তার একমাত্র উৎস ওই ফাইলটিই। এর মধ্যে 55টি বেছে নেওয়ার মতো এজেন্ট অ্যাডাপ্টার; বাকি দুটি সারি হলো `mock` টেস্ট স্টাব আর `self-hosted-endpoints` এন্ডপয়েন্ট প্রোফাইল। `--prompt` ফ্ল্যাগ আছে এমন বাকি যেকোনো কিছু জেনেরিক র‍্যাপারের মধ্য দিয়ে চলে।
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen এবং আরও অনেক। [অ্যাডাপ্টার সূচি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) তাদের মধ্যে 30টির ইনস্টল কমান্ড রাখে। `bernstein integrations list` `src/bernstein/adapters/registry.py` থেকে জুড়ে দেওয়া 57টি ইন্টিগ্রেশনই তালিকাভুক্ত করে — কী রিজলভ হয় তার একমাত্র উৎস ওই ফাইলটিই। এর মধ্যে 55টি বেছে নেওয়ার মতো এজেন্ট অ্যাডাপ্টার; বাকি দুটি সারি হলো `mock` টেস্ট স্টাব আর `self-hosted-endpoints` এন্ডপয়েন্ট প্রোফাইল। `--prompt` ফ্ল্যাগ আছে এমন বাকি যেকোনো কিছু জেনেরিক র‍্যাপারের মধ্য দিয়ে চলে। `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 একই রানে এজেন্ট মেশান: বয়লারপ্লেটের জন্য সস্তা লোকাল মডেল, আর্কিটেকচারের জন্য ভারী ক্লাউড মডেল। `bernstein integrations list --installed` দেখায় আপনার মেশিনে কী কী আছে।
 
@@ -254,7 +254,7 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড। `autopilot` নিবন্ধিত আছে, কিন্তু `TaskSource` বাস্তবায়িত না হওয়া পর্যন্ত চলতে অস্বীকার করে।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 
@@ -280,9 +280,9 @@ Bernstein নামটি এসেছে মার্কিন কন্ডা�
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, একজনই মেনটেইন করেন। লাইভ পরিসংখ্যান: [bernstein.run](https://bernstein.run)।
 
 ### যেখানে উল্লেখ হয়েছে
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-[vinta/awesome-python](https://github.com/vinta/awesome-python) এ তালিকাভুক্ত, Augment Code-এর [ওপেন-সোর্স এজেন্ট অর্কেস্ট্রেটর](https://www.augmentcode.com/tools/open-source-agent-orchestrators) সংকলনে আলোচিত, এবং [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) এ তালিকাভুক্ত। এই পদ্ধতিটি আমরা awesome-agentic-patterns-এ [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) প্যাটার্ন হিসেবেও লিখেছি।
+Augment Code-এর [ওপেন-সোর্স এজেন্ট অর্কেস্ট্রেটর](https://www.augmentcode.com/tools/open-source-agent-orchestrators) সংকলনে আলোচিত এবং [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) এ তালিকাভুক্ত। এই পদ্ধতিটি আমরা awesome-agentic-patterns-এ [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) প্যাটার্ন হিসেবেও লিখেছি।
 
 <details>
 <summary>সব উল্লেখ: 20টির বেশি awesome তালিকা, ডিরেক্টরি, নিউজলেটার ও অন্য প্রকল্পের উদ্ধৃতি</summary>

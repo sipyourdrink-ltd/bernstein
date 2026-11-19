@@ -7496,6 +7496,8 @@ if __name__ == "__main__":
                 # Carried through the env override too: dropping the pins here
                 # would leave a MESH node folding nothing from its peers (#2997).
                 gossip_peer_keys=(cluster_cfg.gossip_peer_keys if cluster_cfg else ()),
+                shards=(cluster_cfg.shards if cluster_cfg else ()),
+                shard_vnodes=(cluster_cfg.shard_vnodes if cluster_cfg else 128),
             )
 
         # Topology branch (#2558): MESH starts a leaderless coordinator instead

@@ -28,7 +28,7 @@
 
 > **Status: beta.** Solo-maintained, under active development. The version number counts releases, not maturity - minor versions may change interfaces. Pin the version for anything you depend on; regressions get fixed fast, [file them](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein is the open-source governance layer for AI agents. It runs on policy as code: you write the policy - who may do what, what needs approval, what must be recorded - and Bernstein enforces it and produces the verifiable record. A deterministic scheduler - no model in the coordination loop - runs agents in parallel, gates what they produce, and records every step, so a run can be verified after the fact, offline, from the artifacts alone. CLI coding agents work out of the box (Claude Code, Codex, Gemini CLI, and 50+ more), and the same layer governs any agent workload: the deliverable can be a diff, a research report, a dataset, or an audit evidence pack. Air-gap install profile included. Apache-2.0.
+Bernstein is the open-source governance layer for AI agents. It runs on policy as code: you write the policy - who may do what, what needs approval, what must be recorded - and Bernstein enforces it and produces the verifiable record. A deterministic scheduler - no model in the coordination loop - runs agents in parallel, gates what they produce, and records every step, so a run can be verified after the fact, offline, from the artifacts alone. CLI coding agents work out of the box (Claude Code, Codex, Gemini CLI and others), and the same layer governs any agent workload: the deliverable can be a diff, a research report, a dataset, or an audit evidence pack. Air-gap install profile included. Apache-2.0.
 
 ### install in 30 seconds
 
@@ -83,7 +83,7 @@ Five things set it apart; everything after is detail.
 - **Hardware key evidence.** Offline PIV custody and FIDO2 approval verifiers share the receipt protocol, with pinned trust and explicit time. Token custody does not raise TRACE trust levels. See [hardware key evidence](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Checkable after the fact.** The replay journal records every run, and the always-on lineage spine records every lineage-bearing step; the opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run. Non-code deliverables get the same treatment: a task can declare an artifact contract (report, dataset, action log, ops result) and completes on a signed lineage receipt rather than a git commit.
 - **Isolated by construction.** Each coding task gets its own git worktree behind merge gates; artifact-mode tasks get a working directory under `.sdd/workspaces/`. Agents share no mutable workspace by default; the only shared state is the task backlog, which is claimed atomically. Stricter filesystem enforcement is opt-in, from the [sandbox backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Disable worktrees and every task runs in the shared checkout.
-- **Broad and local.** More than 50 selectable CLI agent adapters plus a generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
+- **Broad and local.** 55 selectable CLI agent adapter names, including the generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
 
 The full list is on the [capabilities page](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); the [feature matrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
 
@@ -242,7 +242,7 @@ Repository hygiene gates: `bernstein readme-l10n verify` fails a PR whose transl
 
 ### supported agents
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 30 of them. `bernstein integrations list` enumerates all 57 wired-in integrations from `src/bernstein/adapters/registry.py`, the single source of truth for what resolves. 55 of them are selectable agent adapters; the other two rows are the `mock` test stub and the `self-hosted-endpoints` endpoint profile. Anything else with a `--prompt` flag works through the generic wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 30 of them. `bernstein integrations list` enumerates all 57 wired-in integrations from `src/bernstein/adapters/registry.py`, the single source of truth for what resolves. 55 of them are selectable agent adapters; the other two rows are the `mock` test stub and the `self-hosted-endpoints` endpoint profile. `bernstein adapters list` prints `Selectable CLI agent adapter names: 55`. This counts selectable registry names, including the `agy`/`antigravity` alias pair and `generic`; it does not count unique upstream tools or prove that binaries are installed or admitted. Anything else with a `--prompt` flag works through the generic wrapper.
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
@@ -274,6 +274,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | read-only query receipts, plus a query driver that binds each result to the schema snapshot it was derived against |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | point roles at agent definitions outside the built-in templates - a generic YAML/SKILL.md directory, or a Claude Code plugin-layout tree |
 | [integrations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/integrations.md) | what Bernstein bridges to, by the name you call it: SCIM, OIDC, Vault, OPA/Cedar, SPIFFE, OpenTelemetry, MCP, A2A - with what is shipped, what is wired, and what is not planned |
+| [plugins](https://github.com/sipyourdrink-ltd/bernstein/blob/main/community/awesome-bernstein-plugins.md) | plugin list and installation instructions |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, hardening |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | how it works under the hood |
 
@@ -285,7 +286,7 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 
 ### mentioned in
 
-Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, and listed in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). We also wrote up the approach as the [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) pattern in awesome-agentic-patterns.
+Covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup and listed in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). We also wrote up the approach as the [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) pattern in awesome-agentic-patterns.
 
 <details>
 <summary>All coverage: 20+ awesome lists, directories, newsletters, and peer citations</summary>

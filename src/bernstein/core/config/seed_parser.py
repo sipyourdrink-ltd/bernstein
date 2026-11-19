@@ -1532,6 +1532,15 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
             "no one. Pin each peer as 'gossip_peer_keys: {<node_id>: <ed25519 public key>}' "
             "(the peer's .sdd/cluster/identity/claim_signing.pub).",
         )
+    shards_raw = cluster_dict.get("shards", {})
+    if not isinstance(shards_raw, dict):
+        raise SeedError("cluster.shards must be a mapping of shard IDs to URLs")
+    shards = tuple(cast("dict[str, str]", shards_raw).items())
+    shard_vnodes = cast("int", cluster_dict.get("shard_vnodes", 128))
+    try:
+        ClusterConfig(shards=shards, shard_vnodes=shard_vnodes)
+    except ValueError as exc:
+        raise SeedError(str(exc)) from exc
     return ClusterConfig(
         enabled=bool(cluster_dict.get("enabled", False)),
         topology=topology,
@@ -1544,6 +1553,8 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         claim_lease_ttl_s=lease_raw,
         claim_journal_path=journal_path,
         gossip_peer_keys=peer_keys,
+        shards=shards,
+        shard_vnodes=shard_vnodes,
     )
 
 
@@ -2531,8 +2542,8 @@ def parse_seed(path: Path) -> SeedConfig:
     return _parse_seed(path, apply_tuning=True)
 
 
-def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
-    """Share parsing with launch validation without rebinding parent tuning."""
+def _load_seed_mapping(path: Path, *, validate_layers: bool = True) -> dict[str, object]:
+    """Read the effective seed mapping without validating unrelated sections."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
 
@@ -2559,10 +2570,18 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
     # overlay and no ``$BERNSTEIN_CONFIG_OVERRIDE`` this is the identity, and
     # a setup that edits the committed file directly behaves as it always did.
     try:
-        data: dict[str, object] = cast("_StrObjDict", resolve_effective_mapping(committed, config_path=path))
+        data: dict[str, object] = cast(
+            "_StrObjDict", resolve_effective_mapping(committed, config_path=path, validate_layers=validate_layers)
+        )
     except (RunOverlayError, LayerValidationError) as exc:
         raise SeedError(str(exc)) from exc
 
+    return data
+
+
+def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
+    """Share parsing with launch validation without rebinding parent tuning."""
+    data = _load_seed_mapping(path)
     _warn_unknown_top_level_keys(data)
 
     # --- Required fields ---
