@@ -617,3 +617,66 @@ def test_bridge_registers_each_attempt_and_finalizes(tmp_path: Path, make_task, 
         assert "fake bridge launch failed" in bridge_record.error
     if fallback:
         assert next(record for record in records if record.id != bridge.call_id).status == "succeeded"
+
+
+@pytest.mark.parametrize("live_first", [False, True])
+def test_durable_cost_rows_join_model_calls_without_double_charging(
+    tmp_path: Path, make_task, live_first: bool
+) -> None:
+    from bernstein.core.orchestrator import Orchestrator
+
+    from bernstein.core.cost.cost_tracker import CostTracker, estimate_cost
+    from bernstein.core.tasks.task_lifecycle import _record_cost_and_convergence
+
+    spawner = AgentSpawner(
+        _SpawnOnlyTestAdapter(), tmp_path / "templates", tmp_path, use_worktrees=False, default_model="sonnet"
+    )
+    task = make_task(role="backend")
+    session = spawner.spawn_for_tasks([task])
+    session.response_profile = "terse"
+    session.profile_content_sha256 = "f" * 64
+    sidecar = tmp_path / ".sdd" / "runtime" / f"{session.id}.tokens"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text('{"ts": 1.0, "in": 1000, "out": 200}\n')
+    expected_cost = estimate_cost("sonnet", 1000, 200)
+    orch = SimpleNamespace(
+        _workdir=tmp_path,
+        _agents={session.id: session},
+        _cost_tracker=CostTracker(run_id="join-test"),
+        _config=SimpleNamespace(max_cost_per_agent=0),
+        _post_bulletin=MagicMock(),
+        _convergence_guard=None,
+    )
+
+    def record_live() -> None:
+        Orchestrator._record_live_costs(orch)
+
+    def record_completion() -> None:
+        metrics = SimpleNamespace(tokens_prompt=1000, tokens_completion=200)
+        with patch("bernstein.core.tasks.task_lifecycle.CompletionBudget"):
+            _record_cost_and_convergence(orch, task, session, metrics, cost_usd=expected_cost, janitor_passed=True)
+
+    first, second = (record_live, record_completion) if live_first else (record_completion, record_live)
+    first()
+    restored = CostTracker.load(tmp_path / ".sdd", "join-test")
+    assert restored is not None
+    assert len(restored.usages) == 1
+    assert restored.usages[0].cost_tags["model_call_id"] == session.model_call_id
+    orch._cost_tracker = restored
+    second()
+    second()
+    spawner.reap_completed_agent(session, skip_merge=True)
+    restored = CostTracker.load(tmp_path / ".sdd", "join-test")
+    assert restored is not None
+    assert restored.spent_usd == pytest.approx(expected_cost)
+    assert len(restored.usages) == 1
+    row = restored.usages[0]
+    call = ModelCallLedger(tmp_path / ".sdd").get_record(row.cost_tags["model_call_id"])
+    assert call is not None
+    assert call.status == "succeeded"
+    assert call.journal_entry_id == row.task_id == task.id
+    assert call.model == row.model == "sonnet"
+    assert (row.input_tokens, row.output_tokens) == (1000, 200)
+    if not live_first:
+        assert row.cost_tags["response_profile"] == "terse"
+        assert row.cost_tags["profile_content_sha256"] == "f" * 64

@@ -9,9 +9,10 @@
   append-only `running` and terminal `succeeded`/`failed` rows resolve cleanly to a
   single current record per call.
 - `AgentSpawner`, `AgentSession.model_call_id`, `reap_completed_agent()`, and
-  `agent_lifecycle` record spawned agent invocations into
-  `.sdd/runtime/model_calls.jsonl` and pass `model_call_id` into
-  `price_model_usage()`.
+  `agent_lifecycle` record fresh, crash-resume and runtime-bridge invocations into
+  `.sdd/runtime/model_calls.jsonl`, including failed launch attempts. Live and
+  completion cost writers preserve `model_call_id` in durable `cost_tags`,
+  retaining cumulative accounting without double charging.
 - `bernstein cost model-call invoke|replay` execute registered adapters implementing
   direct `CLIAdapter.invoke()` (while continuing to fail closed for spawn-only or
   unregistered adapters), and add hidden `list` and `show` subcommands. Refs #5107.

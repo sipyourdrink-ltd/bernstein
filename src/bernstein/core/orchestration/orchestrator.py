@@ -4586,6 +4586,7 @@ class Orchestrator:
                 total_input_tokens=total_in,
                 total_output_tokens=total_out,
                 role=role_label,
+                cost_tags={"model_call_id": session.model_call_id} if session.model_call_id else None,
             )
             if delta_cost > 0:
                 any_change = True
