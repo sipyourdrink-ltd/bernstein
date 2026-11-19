@@ -130,7 +130,7 @@ flowchart LR
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — לוח הבקרה במסוף (צומתי עבודה מרוחקים) | `<task-server-url>/ui/` — לוח הבקרה בדפדפן של שרת המשימות הפעיל, כאשר קובצי הממשק מותקנים. `bernstein gui serve` מפעיל שרת נפרד בתיקיית העבודה הנוכחית. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — לוח הבקרה במסוף (צומתי עבודה מרוחקים) | `<task-server-url>/ui/` — לוח הבקרה בדפדפן של שרת המשימות הפעיל, כאשר קובצי הממשק מותקנים. `bernstein gui serve` מפעיל שרת נפרד בתיקיית העבודה הנוכחית. |
 
 אם השרת דורש אימות, יש להגדיר `BERNSTEIN_AUTH_TOKEN` עבור הטרמינל ולהזין אסימון מורשה במסך הכניסה בדפדפן. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

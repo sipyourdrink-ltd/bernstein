@@ -130,7 +130,7 @@ flowchart LR
 每个节点由角色被该阶段允许的智能体认领;无论智能体在任务内做什么,角色围栏和审批门禁始终生效。代码节点在自己的 git worktree 里、合并门禁之后完成。上面这些节点的完成方式不同:[工件契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(报告、数据集、扫描、操作日志),节点以签名的 lineage 回执而非提交收尾。同一个调度器、同一份日志、同样的离线验证 - 无论图里装的是代码、研究、运维变更,还是三者混合。面向软件、研究、文档、企业和贡献者工作流的现成图都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安装
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — 终端仪表盘 (远程工作节点) | `<task-server-url>/ui/` — 已运行任务服务器的浏览器仪表盘，需安装 GUI 文件。 `bernstein gui serve` 会在当前工作区启动独立服务器。 |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — 终端仪表盘 (远程工作节点) | `<task-server-url>/ui/` — 已运行任务服务器的浏览器仪表盘，需安装 GUI 文件。 `bernstein gui serve` 会在当前工作区启动独立服务器。 |
 
 如果服务器要求身份验证，请为终端设置 `BERNSTEIN_AUTH_TOKEN`，并在浏览器登录界面输入获授权的令牌。 [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

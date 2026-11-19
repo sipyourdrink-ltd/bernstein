@@ -130,7 +130,7 @@ flowchart LR
 كل عقدة يأخذها وكيل تسمح المرحلة بدوره؛ وتبقى أسوار الأدوار وبوابات الموافقة قائمة مهما فعل الوكيل داخل المهمة. عقدة الكود تكتمل خلف بوابات الدمج في git worktree خاص بها. العقد أعلاه تكتمل بشكل مختلف: [عقد المخرجات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) يسمّي الناتج (تقرير، مجموعة بيانات، فحص، سجل إجراءات)، وتُغلق العقدة بإيصال lineage موقّع بدل commit. المجدوِل نفسه، السجل نفسه، التحقق دون اتصال نفسه - سواء حمل المخطط كودًا أو بحثًا أو تغيير عمليات أو مزيجًا من الثلاثة. مخططات جاهزة للبرمجيات والبحث والوثائق والمؤسسات ومسارات المساهمين في [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### التثبيت في 30 ثانية
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — لوحة معلومات الطرفية (عُقد العمال البعيدة) | `<task-server-url>/ui/` — لوحة متصفح خادم المهام الجاري عند تثبيت ملفات الواجهة. `bernstein gui serve` يبدأ خادماً مستقلاً في مساحة العمل الحالية. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — لوحة معلومات الطرفية (عُقد العمال البعيدة) | `<task-server-url>/ui/` — لوحة متصفح خادم المهام الجاري عند تثبيت ملفات الواجهة. `bernstein gui serve` يبدأ خادماً مستقلاً في مساحة العمل الحالية. |
 
 إذا كان الخادم يتطلب المصادقة، فاضبط `BERNSTEIN_AUTH_TOKEN` للطرفية وأدخل رمزاً مخولاً في شاشة تسجيل الدخول بالمتصفح. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

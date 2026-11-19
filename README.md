@@ -73,7 +73,7 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — the terminal dashboard, including remote cluster workers | `<task-server-url>/ui/` — browser dashboard of the running task server when GUI assets are installed. `bernstein gui serve` starts a standalone server in the current workspace. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — the terminal dashboard, including remote cluster workers | `<task-server-url>/ui/` — browser dashboard of the running task server when GUI assets are installed. `bernstein gui serve` starts a standalone server in the current workspace. |
 
 For an authenticated server, set `BERNSTEIN_AUTH_TOKEN` for the terminal and enter an authorized token on the browser login screen. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

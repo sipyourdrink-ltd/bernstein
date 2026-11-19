@@ -130,7 +130,7 @@ flowchart LR
 Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los gates de aprobación se mantienen haga lo que haga el agente dentro de la tarea. Un nodo de código termina tras merge gates en su propio git worktree. Los nodos de arriba terminan distinto: un [contrato de artefacto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nombra el entregable (informe, dataset, escaneo, registro de acciones) y el nodo se cierra con un recibo de lineage firmado en lugar de un commit. Mismo planificador, mismo journal, misma verificación offline - ya lleve el grafo código, investigación, un cambio de ops o una mezcla de los tres. Hay grafos listos para software, investigación, documentación, enterprise y flujos de contribución en [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ Una ejecución en curso se puede observar desde cualquiera de las dos interfaces
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — el panel de terminal (nodos de trabajo remotos) | `<task-server-url>/ui/` — panel web del servidor de tareas en ejecución, si están instalados los archivos de la GUI. `bernstein gui serve` inicia un servidor independiente en el espacio de trabajo actual. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — el panel de terminal (nodos de trabajo remotos) | `<task-server-url>/ui/` — panel web del servidor de tareas en ejecución, si están instalados los archivos de la GUI. `bernstein gui serve` inicia un servidor independiente en el espacio de trabajo actual. |
 
 Si el servidor requiere autenticación, configura `BERNSTEIN_AUTH_TOKEN` para el terminal e introduce un token autorizado en la pantalla de acceso del navegador. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

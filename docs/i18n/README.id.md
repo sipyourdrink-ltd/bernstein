@@ -130,7 +130,7 @@ flowchart LR
 Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate persetujuan tetap berlaku apa pun yang dilakukan agen di dalam tugas. Node kode selesai di balik merge gate dalam git worktree-nya sendiri. Node di atas selesai dengan cara lain: [kontrak artefak](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) menamai hasilnya (laporan, dataset, pemindaian, log aksi), dan node ditutup dengan tanda terima lineage yang ditandatangani, bukan commit. Penjadwal yang sama, journal yang sama, verifikasi offline yang sama - entah graf itu membawa kode, riset, perubahan ops, atau campuran ketiganya. Graf siap pakai untuk software, riset, dokumentasi, enterprise, dan alur kontributor ada di [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ Eksekusi yang sedang berjalan dapat dipantau dari salah satu antarmuka operator.
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — dasbor terminal (simpul pekerja jarak jauh) | `<task-server-url>/ui/` — dasbor peramban server tugas yang sedang berjalan jika berkas GUI terpasang. `bernstein gui serve` memulai server terpisah di ruang kerja saat ini. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — dasbor terminal (simpul pekerja jarak jauh) | `<task-server-url>/ui/` — dasbor peramban server tugas yang sedang berjalan jika berkas GUI terpasang. `bernstein gui serve` memulai server terpisah di ruang kerja saat ini. |
 
 Jika server memerlukan autentikasi, tetapkan `BERNSTEIN_AUTH_TOKEN` untuk terminal dan masukkan token yang diizinkan pada layar masuk peramban. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

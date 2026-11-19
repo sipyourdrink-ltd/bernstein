@@ -130,7 +130,7 @@ flowchart LR
 各ノードは、フェーズが許可するロールを持つエージェントが取ります。ロールの柵と承認ゲートは、エージェントがタスク内で何をしようと保持されます。コードのノードは自分専用の git worktree でマージゲートの先に完了します。上のノードは違う終わり方をします: [アーティファクト契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)が成果物(レポート、データセット、スキャン、アクションログ)を名指しし、ノードはコミットではなく署名付き lineage レシートで閉じます。同じスケジューラ、同じジャーナル、同じオフライン検証 - グラフが運ぶのがコードでも、調査でも、ops 変更でも、その混在でも。ソフトウェア、リサーチ、ドキュメント、エンタープライズ、コントリビューターワークフロー向けの既製グラフは [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) にあります。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — ターミナルダッシュボード (リモートワーカーノード) | `<task-server-url>/ui/` — GUI ファイルがインストールされている場合に、稼働中のタスクサーバーを表示するブラウザダッシュボード。 `bernstein gui serve` は現在のワークスペースで独立したサーバーを起動する。 |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — ターミナルダッシュボード (リモートワーカーノード) | `<task-server-url>/ui/` — GUI ファイルがインストールされている場合に、稼働中のタスクサーバーを表示するブラウザダッシュボード。 `bernstein gui serve` は現在のワークスペースで独立したサーバーを起動する。 |
 
 認証が必要なサーバーでは、ターミナル用に `BERNSTEIN_AUTH_TOKEN` を設定し、ブラウザのログイン画面に許可されたトークンを入力してください。 [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

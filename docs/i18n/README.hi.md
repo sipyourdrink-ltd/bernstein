@@ -130,7 +130,7 @@ flowchart LR
 हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — टर्मिनल डैशबोर्ड (दूरस्थ वर्कर नोड) | `<task-server-url>/ui/` — GUI फ़ाइलें स्थापित होने पर चालू टास्क सर्वर का ब्राउज़र डैशबोर्ड. `bernstein gui serve` मौजूदा वर्कस्पेस में अलग सर्वर शुरू करता है. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — टर्मिनल डैशबोर्ड (दूरस्थ वर्कर नोड) | `<task-server-url>/ui/` — GUI फ़ाइलें स्थापित होने पर चालू टास्क सर्वर का ब्राउज़र डैशबोर्ड. `bernstein gui serve` मौजूदा वर्कस्पेस में अलग सर्वर शुरू करता है. |
 
 सर्वर पर प्रमाणीकरण चालू हो तो टर्मिनल के लिए `BERNSTEIN_AUTH_TOKEN` सेट करें और ब्राउज़र की लॉगिन स्क्रीन पर अधिकृत टोकन डालें। [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

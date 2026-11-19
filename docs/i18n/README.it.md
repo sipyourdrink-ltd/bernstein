@@ -130,7 +130,7 @@ flowchart LR
 Ogni nodo viene preso da un agente il cui ruolo è ammesso dalla fase; i recinti di ruolo e i gate di approvazione reggono qualunque cosa l'agente faccia dentro il task. Un nodo di codice termina dietro merge gate nel proprio git worktree. I nodi qui sopra terminano diversamente: un [contratto di artefatto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomina il deliverable (report, dataset, scansione, log di azioni) e il nodo si chiude con una ricevuta di lineage firmata invece di un commit. Stesso scheduler, stesso journal, stessa verifica offline - che il grafo consegni codice, ricerca, un cambio ops o un mix dei tre. Grafi pronti per software, ricerca, documentazione, enterprise e workflow dei contributor vivono in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installazione in 30 secondi
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ Un'esecuzione in corso può essere monitorata da entrambe le interfacce operator
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — la dashboard da terminale (nodi worker remoti) | `<task-server-url>/ui/` — dashboard nel browser del server delle attività in esecuzione, se sono installati i file della GUI. `bernstein gui serve` avvia un server autonomo nello spazio di lavoro corrente. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — la dashboard da terminale (nodi worker remoti) | `<task-server-url>/ui/` — dashboard nel browser del server delle attività in esecuzione, se sono installati i file della GUI. `bernstein gui serve` avvia un server autonomo nello spazio di lavoro corrente. |
 
 Se il server richiede autenticazione, imposta `BERNSTEIN_AUTH_TOKEN` per il terminale e inserisci un token autorizzato nella schermata di accesso del browser. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

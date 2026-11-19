@@ -130,7 +130,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — terminal kontrol paneli (uzak çalışan düğümleri) | `<task-server-url>/ui/` — GUI dosyaları kuruluysa çalışan görev sunucusunun tarayıcı kontrol paneli. `bernstein gui serve` geçerli çalışma alanında bağımsız bir sunucu başlatır. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — terminal kontrol paneli (uzak çalışan düğümleri) | `<task-server-url>/ui/` — GUI dosyaları kuruluysa çalışan görev sunucusunun tarayıcı kontrol paneli. `bernstein gui serve` geçerli çalışma alanında bağımsız bir sunucu başlatır. |
 
 Sunucu kimlik doğrulaması gerektiriyorsa terminal için `BERNSTEIN_AUTH_TOKEN` ayarlayın ve tarayıcının giriş ekranına yetkili bir token girin. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 

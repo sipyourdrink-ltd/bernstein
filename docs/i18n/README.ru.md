@@ -130,7 +130,7 @@ flowchart LR
 Каждый узел забирает агент, чья роль разрешена фазой; ролевые ограничения и гейты одобрения держатся независимо от того, что агент делает внутри задачи. Кодовый узел завершается за merge-гейтами в собственном git worktree. Узлы выше завершаются иначе: [контракт артефакта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) называет результат (отчёт, датасет, скан, лог действий), и узел закрывается подписанной lineage-квитанцией вместо коммита. Тот же планировщик, тот же журнал, та же офлайн-верификация — несёт ли граф код, исследование, ops-изменение или всё сразу. Готовые графы для софта, исследований, документации, энтерпрайза и контрибьюторских процессов лежат в [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### установка за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![Терминальный дашборд в две колонки: слева агенты с живыми логами, справа доска задач, снизу лента активности во всю ширину и строка стоимости](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![Браузерный дашборд со списком из шестидесяти двух задач, одиннадцать выполняются, одна раскрыта до диффа рабочего дерева](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `BERNSTEIN_SERVER_URL="<task-server-url>" bernstein live` — терминальный дашборд (удалённые рабочие узлы) | `<task-server-url>/ui/` — панель в браузере уже работающего сервера задач, если установлены файлы GUI. `bernstein gui serve` запускает отдельный сервер в текущем рабочем каталоге. |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — терминальный дашборд (удалённые рабочие узлы) | `<task-server-url>/ui/` — панель в браузере уже работающего сервера задач, если установлены файлы GUI. `bernstein gui serve` запускает отдельный сервер в текущем рабочем каталоге. |
 
 Если сервер требует аутентификацию, задайте `BERNSTEIN_AUTH_TOKEN` для терминала и введите разрешённый токен на экране входа в браузере. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
