@@ -48,10 +48,19 @@ under `/api/v1`:
 Both return the recorded fields listed above. The list response schema is
 [`recorded-decisions.schema.json`](../api/recorded-decisions.schema.json);
 its `RecordedDecision` definition is also the detail response. Empty runs
-return an empty list. Missing or invalid run IDs return 400. Unreadable records
-or records naming a different run return 409. The existing record reader
-skips malformed JSON records. These endpoints create no keys, files or
+return an empty list. Run IDs accept 1-200 ASCII letters, digits, underscores,
+dots, colons or hyphens, subject to the spine's parent-path restrictions;
+missing or invalid IDs return 400. Unreadable records or records naming a
+different run return 409. The reader retains the existing malformed-JSON
+skipping behavior. These endpoints create no keys, files or
 directories and accept no client-selected ledger path.
+
+Decision files are enumerated and opened relative to the same directory
+descriptor, refusing links during the open. The endpoints require descriptor
+relative no-follow support; on platforms without it (including Windows),
+they return 409 rather than fall back to unanchored pathname reads. Ledger
+projection reuses a read-only anchored descriptor through `/dev/fd`; if that
+descriptor view is unavailable, budget evidence is `unavailable`.
 
 Budget rows additionally carry `budget.cap_usd` and `budget.prior_spend_usd`.
 Each has `value` (USD or null), `state`, `provenance` and `reason`. The cap

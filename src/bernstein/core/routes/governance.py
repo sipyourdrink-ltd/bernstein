@@ -33,19 +33,21 @@ import hashlib
 import json
 import logging
 import math
-from typing import TYPE_CHECKING, Any, Literal
+import os
+import re
+import stat
+from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from bernstein.core.lineage.spine import SpineRunIdError, _validate_run_id
+from bernstein.core.persistence.anchored_read import ANCHORED_OPEN_SUPPORTED, open_anchored
 from bernstein.core.security import governance as recorded_governance
 from bernstein.core.security.governance_coverage import governance_coverage_json
 from bernstein.core.security.governance_receipt_verdict import receipt_verdict_json
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +93,6 @@ class RecordedDecisions(BaseModel):
     decisions: list[RecordedDecision]
 
 
-def _contained(root: Path, path: Path) -> Path:
-    """Reject symlinks escaping the configured project or record directory."""
-    resolved = path.resolve()
-    if not resolved.is_relative_to(root.resolve()):
-        raise HTTPException(status_code=400, detail="evidence path escapes its configured root")
-    return resolved
-
-
 def _finite_usd(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (float, int)):
         return None
@@ -118,14 +112,20 @@ def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Pa
     prior: float | None = None
     if cap is not None and next_cost is not None and dimension in ("agent", "task", "role", "feature_label"):
         try:
-            ledger = _contained(workdir, workdir / ".sdd" / "cost" / "ledger.jsonl")
+            fd = open_anchored(workdir, ".sdd", "cost", "ledger.jsonl", flags=os.O_RDONLY, require_regular_file=True)
             # A missing ledger is not evidence of zero spend. Observe its bytes
             # around both existing projections so concurrent appends cannot be
-            # reported as a verified decision-time value.
-            before = ledger.read_bytes()
-            problem = recorded_governance._verify_budget_row(record, ledger)
-            candidate = recorded_governance.seat_spend(ledger, record.subject, dimension=dimension)
-            after = ledger.read_bytes()
+            # reported as a verified decision-time value. Both projections open
+            # the same descriptor through /dev/fd, never a re-resolved pathname.
+            with os.fdopen(fd, "rb", buffering=0) as stream:
+                ledger = Path("/dev/fd") / str(stream.fileno())
+                before = stream.read()
+                stream.seek(0)
+                problem = recorded_governance._verify_budget_row(record, ledger)
+                stream.seek(0)
+                candidate = recorded_governance.seat_spend(ledger, record.subject, dimension=dimension)
+                stream.seek(0)
+                after = stream.read()
             if before != after:
                 reason = "Ledger changed while projecting budget inputs."
             elif not math.isfinite(candidate):
@@ -159,18 +159,53 @@ def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Pa
     )
 
 
+def _read_recorded_decisions(workdir: Path, run_id: str) -> list[recorded_governance.GovernanceDecision]:
+    """Parse the same directory snapshot whose files are opened without links."""
+    if not ANCHORED_OPEN_SUPPORTED:
+        raise HTTPException(status_code=409, detail="anchored decision reads are unavailable on this platform")
+    try:
+        directory_fd = open_anchored(
+            workdir,
+            ".sdd",
+            "lineage",
+            run_id,
+            "governance_decisions",
+            flags=os.O_RDONLY | os.O_DIRECTORY,
+        )
+    except FileNotFoundError:
+        return []
+    try:
+        records = []
+        for name in sorted(os.listdir(directory_fd)):
+            if not name.endswith(".json"):
+                continue
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+            with os.fdopen(fd, "rb") as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise OSError("decision is not a regular file")
+                try:
+                    records.append(recorded_governance.GovernanceDecision.from_dict(json.loads(stream.read())))
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    # Preserve the existing reader's malformed-record behavior.
+                    logger.warning("governance: malformed decision record")
+        return records
+    finally:
+        os.close(directory_fd)
+
+
 def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
     try:
         _validate_run_id(run_id)
     except SpineRunIdError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,200}", run_id):
+        raise HTTPException(
+            status_code=400,
+            detail="run_id must be 1-200 ASCII letters, digits, underscores, dots, colons or hyphens",
+        )
     workdir = _workdir(request)
-    root = _contained(workdir, workdir / ".sdd" / "lineage")
-    directory = _contained(root, recorded_governance.decisions_dir(root, run_id))
-    for path in directory.glob("*.json"):
-        _contained(directory, path)
     try:
-        records = recorded_governance.read_decisions(root, run_id)
+        records = _read_recorded_decisions(workdir, run_id)
         decisions = []
         for record in records:
             if record.run_id != run_id:
@@ -193,7 +228,7 @@ def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
                     budget=_budget_evidence(record, workdir) if record.action == "budget" else None,
                 )
             )
-    except (OSError, ValueError, TypeError, AttributeError) as exc:
+    except (OSError, ValueError, TypeError, AttributeError, OverflowError) as exc:
         logger.warning("Cannot read recorded governance decisions: %s", type(exc).__name__)
         raise HTTPException(status_code=409, detail="recorded decisions are unreadable") from None
     return RecordedDecisions(run_id=run_id, decisions=decisions)

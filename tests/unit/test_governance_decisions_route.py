@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,12 @@ from fastapi.testclient import TestClient
 from bernstein.core.cost.spend_ledger import CallTags, SpendLedger
 from bernstein.core.routes import governance as routes
 from bernstein.core.security import governance
+
+
+@pytest.fixture(autouse=True)
+def _platform_support(request: pytest.FixtureRequest) -> None:
+    if not routes.ANCHORED_OPEN_SUPPORTED and request.node.name != "test_unsupported_platform_fails_closed":
+        pytest.skip("descriptor-bound no-follow reads are unavailable on this platform")
 
 
 def _client(workdir: Path) -> TestClient:
@@ -105,7 +113,7 @@ def test_empty_run_writes_nothing(tmp_path: Path) -> None:
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("run_id", ["", "..", "../other", "a/b", "a\\b", "a\x00b"])
+@pytest.mark.parametrize("run_id", ["", "..", "../other", "a/b", "a\\b", "a\x00b", "a" * 201, "a b"])
 def test_invalid_run_ids_are_rejected(tmp_path: Path, run_id: str) -> None:
     assert _client(tmp_path).get("/governance/decisions", params={"run_id": run_id}).status_code == 400
 
@@ -116,7 +124,7 @@ def test_outside_record_link_is_rejected(tmp_path: Path) -> None:
     outside.write_text(record.read_text())
     record.unlink()
     record.symlink_to(outside)
-    assert _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"}).status_code == 400
+    assert _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"}).status_code == 409
 
 
 def test_different_run_in_record_is_rejected(tmp_path: Path) -> None:
@@ -181,6 +189,67 @@ def test_nonobject_record_returns_controlled_error(tmp_path: Path) -> None:
     path = _record(tmp_path)
     path.write_text("[]")
     assert _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"}).status_code == 409
+
+
+def test_overflowing_timestamp_returns_controlled_error_for_list_and_detail(tmp_path: Path) -> None:
+    path = _record(tmp_path)
+    client = _client(tmp_path)
+    (healthy,) = _list(client)["decisions"]
+    malformed = json.loads(path.read_text()) | {"timestamp": float("inf")}
+    (path.parent / "000001-invalid.json").write_text(json.dumps(malformed))
+    before = _snapshot(tmp_path)
+    for route in ("/governance/decisions", f"/governance/decisions/{healthy['decision_id']}"):
+        assert client.get(route, params={"run_id": "run-1"}).status_code == 409
+    assert _snapshot(tmp_path) == before
+
+
+def test_unsupported_platform_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _record(tmp_path)
+    monkeypatch.setattr(routes, "ANCHORED_OPEN_SUPPORTED", False)
+    response = _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"})
+    assert response.status_code == 409
+    assert "unavailable on this platform" in response.json()["detail"]
+
+
+def test_record_open_refusal_after_enumeration_cannot_return_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _record(tmp_path)
+    original = os.open
+    opened = []
+
+    def open_record(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if str(path).endswith(".json"):
+            opened.append(path)
+            assert flags & os.O_NOFOLLOW
+            assert flags & os.O_NONBLOCK
+            assert isinstance(kwargs.get("dir_fd"), int)
+            # Deterministically model the OS refusing a replaced link at open;
+            # no racing writer or outside-file read is needed for this test.
+            raise OSError(errno.ELOOP, "no-follow open refused the record")
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(routes.os, "open", open_record)
+    monkeypatch.setattr(governance, "read_decisions", lambda *args: pytest.fail("unrestricted reader must not be used"))
+    response = _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"})
+    assert response.status_code == 409
+    assert len(opened) == 1
+
+
+def test_ledger_open_refusal_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _budget_refusal(tmp_path)
+    original = routes.open_anchored
+
+    def open_evidence(root: Path, *components: str, **kwargs: object) -> int:
+        if components[-1] == "ledger.jsonl":
+            assert kwargs["require_regular_file"]
+            raise OSError(errno.ELOOP, "no-follow open refused the ledger")
+        return original(root, *components, **kwargs)
+
+    monkeypatch.setattr(routes, "open_anchored", open_evidence)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
 
 
 def test_public_schema_matches_response_models() -> None:
