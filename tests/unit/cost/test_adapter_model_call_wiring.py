@@ -462,3 +462,26 @@ def test_spawn_records_task_scope_and_retry_multiplier(tmp_path: Path, make_task
         assert record.parameters[name] == spawn.call_args.kwargs[name]
     assert record.parameters["task_scope"] == "large"
     assert record.parameters["budget_multiplier"] == 2.0
+
+
+@pytest.mark.parametrize("drift", ["model", "schema", "parameters"])
+def test_exact_replay_rejects_provenance_drift_before_invocation(tmp_path: Path, drift: str) -> None:
+    adapter = _DirectTestAdapter()
+    ledger = ModelCallLedger(tmp_path / ".sdd")
+    original = ledger.invoke_adapter(
+        adapter=adapter,
+        capability_id="test",
+        model="fake",
+        input_text="input",
+        parameters={"temperature": 0.2},
+    )
+    if drift == "model":
+        adapter.model_version = "new-model-version"
+    elif drift == "schema":
+        adapter.parameter_schema_version = "new-schema-version"
+    else:
+        adapter.validate_parameters = lambda parameters: {"temperature": 0.1}
+    with pytest.raises(ValueError, match="Incompatible exact replay"):
+        ledger.replay_adapter(original.id, adapter=adapter)
+    assert len(adapter.calls) == 1
+    assert ledger.replays_of(original.id) == []

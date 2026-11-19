@@ -780,6 +780,15 @@ class ModelCallLedger:
             logger.warning("model call ledger: replay of unknown record %s", record_id)
             return None
         validated_params = _validate_adapter_parameters(adapter, original.parameters)
+        current_schema = str(getattr(adapter, "parameter_schema_version", "") or "")
+        if (
+            _resolve_model_version(adapter, original.model) != original.model_version
+            or current_schema != original.parameter_schema_version
+            or validated_params != original.parameters
+        ):
+            raise ValueError(
+                "Incompatible exact replay: model version, parameter schema, or resolved parameters changed"
+            )
         return self.replay(
             record_id,
             call=lambda: str(
