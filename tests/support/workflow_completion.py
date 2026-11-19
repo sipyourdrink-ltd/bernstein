@@ -390,10 +390,12 @@ def env(tmp_path: Path) -> Iterator[_Env]:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(pid, signal.SIGKILL)
         _wait_for(lambda: not any(_pid_alive(p) for p in e.logged_children()), "all controlled children reaped")
-        for run in e.runs:
-            run.wait(BOUND_S)
-        driver.close()
-        e.driver.close()
+        try:
+            for run in e.runs:
+                assert run.wait(BOUND_S), f"harness: workflow runner did not stop within {BOUND_S}s"
+        finally:
+            driver.close()
+            e.driver.close()
 
 
 def _spec_text(sentinel: Path, *, produce_extra: str = "", timeout: int = AGENT_TIMEOUT_S) -> str:

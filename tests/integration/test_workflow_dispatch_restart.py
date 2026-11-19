@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sys
+import threading
+from pathlib import Path
 
 import pytest
 
 from bernstein.core.tasks.models import TaskStatus
-from bernstein.core.workflows import NodeStatus
+from bernstein.core.workflows import NodeStatus, WorkflowExecution
 from tests.support.workflow_completion import (
     _CHILD,
     AGENT_TIMEOUT_S,
@@ -35,6 +37,32 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-g
 def test_harness_sentinel_dispatcher_and_reaper_are_sound(env: _Env) -> None:
     """[EXISTING] Detect running children, sentinel writes and process cleanup."""
     assert_harness_sentinel_dispatcher_and_reaper_are_sound(env)
+
+
+def test_harness_teardown_rejects_unfinished_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """[EXISTING] A runner surviving the cleanup bound causes an ordinary teardown error."""
+    monkeypatch.setattr("tests.support.workflow_completion.BOUND_S", 1.0)
+    fixture = env.__wrapped__(tmp_path)
+    nested = next(fixture)
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_run() -> WorkflowExecution:
+        started.set()
+        assert release.wait(BOUND_S), "negative control was not released"
+        return WorkflowExecution(spec_name="cleanup-control", run_id="cleanup-control")
+
+    run = nested.start(blocked_run)
+    try:
+        assert started.wait(BOUND_S), "precondition: negative-control runner started"
+        with pytest.raises(AssertionError, match="workflow runner did not stop"):
+            fixture.close()
+        assert not run.done(), "precondition: cleanup rejected a live runner"
+        assert nested.driver._loop.is_closed(), "store disposal must still run on teardown failure"
+    finally:
+        release.set()
+        assert run.wait(BOUND_S), "negative-control runner was not joined"
+        nested.driver.close()
 
 
 def test_resume_after_crash_before_dispatch_dispatches_once(env: _Env) -> None:

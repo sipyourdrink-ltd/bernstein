@@ -22,6 +22,10 @@ require the precise proposed-contract gap after successful dispatch.
 Run `uv run pytest tests/integration/test_workflow_dispatch_restart.py -q`.
 The shared `tests/support/workflow_completion.py` fixture checks that a live
 child is observable, the command sentinel fires, and children are reaped.
+Every runner join must finish within the cleanup bound; a surviving runner
+causes an ordinary teardown error, with store disposal still guaranteed.
+A blocked-runner negative control verifies this failure remains outside
+expected-failure conversion and releases and joins its own runner afterward.
 Only explicitly reproduced proposed-contract assertions count as strict
 expected failures; an unexpected pass requires revisiting the contract test.
 A green characterization suite with expected failures does not implement
