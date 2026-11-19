@@ -3,7 +3,7 @@
 Release history lives in ``docs/release-notes/``, one ``vX.Y.Z.md`` page per
 tagged version. ``fetch_release_notes()`` retrieves the page for the installed
 version from a remote URL with a timeout. When the network is unavailable, an
-installed prerelease can use its exact local page. The general fallback is the
+installed prerelease can use a local page for its version. The general fallback is the
 newest stable page in ``docs/release-notes/``.
 """
 
@@ -134,6 +134,30 @@ def _fetch_remote(url: str) -> str | None:
         return None
 
 
+def _read_prerelease_notes(notes_dir: Path, version: str) -> str | None:
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        installed = Version(version)
+    except InvalidVersion:
+        return None
+    if not installed.is_prerelease:
+        return None
+
+    # Build backends may normalize the installed version. Prefer an exact
+    # filename, then read equivalent filenames in a predictable order.
+    exact_name = f"v{version}.md"
+    for path in sorted(notes_dir.glob("v*.md"), key=lambda entry: (entry.name != exact_name, entry.name)):
+        try:
+            if Version(path.stem[1:]) == installed:
+                return path.read_text(encoding="utf-8")
+        except InvalidVersion:
+            continue
+        except (OSError, UnicodeError):
+            logger.debug("Local prerelease notes unreadable: %s", path)
+    return None
+
+
 def _find_local_changelog(workdir: Path, *, version: str | None = None) -> str | None:
     """Read local notes for a prerelease, the latest stable release, or a pointer.
 
@@ -145,13 +169,9 @@ def _find_local_changelog(workdir: Path, *, version: str | None = None) -> str |
         File contents, or None if nothing readable was found.
     """
     if version:
-        from packaging.version import InvalidVersion, Version
-
-        try:
-            if Version(version).is_prerelease:
-                return (workdir / _RELEASE_NOTES_DIR / f"v{version}.md").read_text(encoding="utf-8")
-        except (InvalidVersion, OSError):
-            logger.debug("Local prerelease notes unavailable for %s", version)
+        prerelease = _read_prerelease_notes(workdir / _RELEASE_NOTES_DIR, version)
+        if prerelease is not None:
+            return prerelease
 
     latest = latest_release_notes_path(workdir)
     if latest is not None:
