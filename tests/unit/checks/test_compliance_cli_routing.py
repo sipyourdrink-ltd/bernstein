@@ -117,8 +117,23 @@ def test_nullable_config_keeps_unreadable_controls_in_the_report(tmp_path: Path)
     assert payload["checks"] == json.loads(audit.output)
     findings = {finding["check_id"]: finding for finding in payload["checks"]}
     for cid in ("CMP-010", "CMP-011"):
+        assert findings[cid]["area"] == "CMP"
         assert findings[cid]["verdict"] == "not_measurable"
         assert findings[cid]["passed"] is None
         assert findings[cid]["what_would_make_it_measurable"]
     assert findings["CMP-001"]["passed"] is True
     assert next(r for r in payload["results"] if r["policy_id"] == "soc2-cc7-01")["passed"] is True
+
+
+@pytest.mark.parametrize("output_args", [["--json"], ["--format", "sarif"], ["--quiet"]])
+def test_cmp_crash_takes_precedence_over_strict_incompleteness(tmp_path: Path, output_args: list[str]) -> None:
+    (tmp_path / "bernstein.yaml").write_text("quality_gates: null\n", encoding="utf-8")
+    skipped = [
+        arg for spec in iter_compliance_checks() if spec.check_id != "CMP-010" for arg in ("--skip", spec.check_id)
+    ]
+    result = CliRunner().invoke(
+        cli, ["govern", "audit", "--only", "CMP", "--strict", "--workdir", str(tmp_path), *skipped, *output_args]
+    )
+    assert result.exit_code == 1, result.output
+    if output_args == ["--quiet"]:
+        assert result.stdout == result.stderr == ""

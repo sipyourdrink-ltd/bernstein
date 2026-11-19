@@ -489,21 +489,8 @@ def run_compliance_checks(
     only: Iterable[str] = (),
     skip: Iterable[str] = (),
 ) -> tuple[CheckOutcome, ...]:
-    """Run selected checks, retaining an unreadable control as its own finding."""
-    outcomes: list[CheckOutcome] = []
-    for cid in select_check_ids(only=only, skip=skip):
-        try:
-            outcome = _outcome_for(_SPEC_BY_ID[cid], project_root)
-        except Exception as exc:
-            outcome = CheckOutcome(
-                check_id=cid,
-                area=CMP_AREA,
-                verdict=CheckVerdict.NOT_MEASURABLE,
-                summary=f"Check execution failed with {type(exc).__name__}",
-                what_would_make_it_measurable="Readable configuration and artifacts for this control.",
-            )
-        outcomes.append(outcome)
-    return tuple(outcomes)
+    """Run selected checks; the shared registry isolates execution errors."""
+    return tuple(_outcome_for(_SPEC_BY_ID[cid], project_root) for cid in select_check_ids(only=only, skip=skip))
 
 
 def count_by_outcome(outcomes: Iterable[CheckOutcome]) -> dict[str, int]:

@@ -485,7 +485,12 @@ def check_policies(
 
     if as_json:
         from bernstein.core.checks.adapters import ComplianceLibraryAdapter
+        from bernstein.core.checks.registry import CheckRegistry
         from bernstein.core.govern.compliance_checks import iter_compliance_checks
+
+        checks = CheckRegistry()
+        for spec in iter_compliance_checks():
+            checks.register(ComplianceLibraryAdapter(spec))
 
         click.echo(
             json.dumps(
@@ -498,7 +503,7 @@ def check_policies(
                     },
                     "results": [r.to_dict() for r in results],
                     "checks": [
-                        ComplianceLibraryAdapter(spec).run(workdir).to_dict() for spec in iter_compliance_checks()
+                        finding.to_dict() for finding in checks.run_all(workdir, only_areas=("CMP",), log_errors=False)
                     ],
                 },
                 indent=2,

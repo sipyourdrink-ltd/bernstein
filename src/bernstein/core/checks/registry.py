@@ -161,6 +161,7 @@ class CheckRegistry:
                     )
                 finding = Finding(
                     check_id=check.check_id,
+                    area=check_area(check),
                     verdict=Verdict.NOT_MEASURABLE,
                     what_would_make_it_measurable=f"{exc.__class__.__name__}: {exc}",
                     reason=exc.__class__.__name__,

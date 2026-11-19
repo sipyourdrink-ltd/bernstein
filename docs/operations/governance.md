@@ -497,3 +497,8 @@ window.
 
 For `--skip` (check exclusion), see the audit check contract defined in
 issue #5072.
+
+CMP execution errors use the shared audit error handling: the failed control
+remains in the report, remaining controls still run, and `--strict` returns 1
+for the crash. Exit 2 is reserved for missing prerequisites without a failure
+or crash.
