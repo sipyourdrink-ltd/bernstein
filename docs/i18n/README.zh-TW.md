@@ -130,7 +130,7 @@ flowchart LR
 每個節點由角色獲該階段允許的代理認領;無論代理在任務內做什麼,角色圍欄與核准閘門始終有效。程式碼節點在自己的 git worktree 裡、合併閘門之後完成。上面這些節點的完成方式不同:[工件契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(報告、資料集、掃描、操作日誌),節點以簽章的 lineage 收據而非提交收尾。同一個排程器、同一份日誌、同樣的離線驗證 - 無論圖裡裝的是程式碼、研究、維運變更,還是三者混合。面向軟體、研究、文件、企業與貢獻者工作流的現成圖都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +166,9 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — 終端機儀表板 (遠端工作節點) | `bernstein gui serve` — 瀏覽器儀表板 |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — 終端機儀表板 (遠端工作節點) | `<task-server-url>/ui/` — 執行中的任務伺服器的瀏覽器儀表板，需安裝 GUI 檔案。 `bernstein gui serve` 會在目前工作區啟動獨立伺服器。 |
+
+如果伺服器要求身分驗證，請為終端機設定 `BERNSTEIN_AUTH_TOKEN`，並在瀏覽器登入畫面輸入已獲授權的權杖。 [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### 證明一次執行
 <!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
@@ -273,9 +275,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 底層運作原理 |
 
 ### 為什麼叫這個名字？
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案像 Bernstein 指揮紐約愛樂樂團那樣治理一支 AI 代理隊伍：每個樂手準時到位，樂譜確定，指揮對結果負責。
+Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案的編排器像 Bernstein 指揮紐約愛樂樂團那樣治理一支 AI 代理隊伍：每個樂手準時到位，樂譜確定，指揮對結果負責。
 
 我寫 bernstein 是因為我每月為並行執行三個編碼代理支付 400 美元的 claude 帳單，卻得到不確定性的合併。Apache 2.0，單人維護。即時資料：[bernstein.run](https://bernstein.run)。
 
@@ -293,9 +295,9 @@ Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案�
 </details>
 
 ### 管理執行
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
-使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 建立經稽核的空容器，不啟動規劃器或代理程序。透過 `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` 加入手動任務，並用 `bernstein_run_status(run_id="admin-...")` 查詢狀態。成員任務可透過一般認領 API 領取，但不會自動編排。非空執行在所有成員的狀態均為 `done`、`closed` 或 `cancelled` 時結束；空執行保持開放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+這些呼叫使用 MCP 橋接工具。後續呼叫中，請將傳回的 `runId` 值用作 `run_id`。 使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 建立經稽核的空容器，不啟動規劃器或代理程序。透過 `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` 加入手動任務，並用 `bernstein_run_status(run_id="<returned runId>")` 查詢狀態。成員任務可透過一般認領 API 領取，但不會自動編排。非空執行在所有成員的狀態均為 `done`、`closed` 或 `cancelled` 時結束；空執行保持開放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### 貢獻、支援與授權
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
