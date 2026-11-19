@@ -19,8 +19,9 @@ Alternatively, a single top-level object {"events": [...], "diff": "..."} or lis
 may be supplied to apply across all evaluated tasks. Events may include an optional
 numeric "intent_score" from a recorded evaluator. Finite scores with non-negative
 integer steps are projected into "intent_scores" in step order (preserving event
-order within a step); missing or invalid scores are omitted. No evaluator is called,
-and intent scores do not participate in hard measurements or threshold decisions.
+order within a step); missing or invalid scores are omitted. By default no evaluator
+is called. Library callers may explicitly supply an in-process intent_scorer;
+its recorded scores do not participate in hard measurements or threshold decisions.
 Trajectory payloads may also supply intent_calibration_records in the existing
 calibration-log JSON shape. The separate quality report uses the recorded policy
 identifier and population; missing/ambiguous evidence is unavailable, never fitted.
