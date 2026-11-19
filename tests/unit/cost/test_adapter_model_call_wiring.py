@@ -438,3 +438,27 @@ def test_forced_stop_finalizes_without_worktree(tmp_path: Path, make_task, timed
     with patch.object(adapter, "kill"):
         spawner.kill(session)
     assert ModelCallLedger(tmp_path / ".sdd").get_record(session.model_call_id) == record
+
+
+def test_spawn_records_task_scope_and_retry_multiplier(tmp_path: Path, make_task) -> None:
+    from bernstein.core.models import Scope
+
+    adapter = _SpawnOnlyTestAdapter()
+    spawner = AgentSpawner(
+        adapter,
+        tmp_path / "templates",
+        tmp_path,
+        use_worktrees=False,
+        default_model="fake",
+    )
+    tasks = [make_task(role="backend", scope=Scope.LARGE), make_task(role="backend", scope=Scope.SMALL)]
+    tasks[0].metadata["budget_multiplier"] = 2.0
+    tasks[1].metadata["budget_multiplier"] = 1.5
+    with patch.object(adapter, "spawn", wraps=adapter.spawn) as spawn:
+        session = spawner.spawn_for_tasks(tasks)
+    record = ModelCallLedger(tmp_path / ".sdd").get_record(session.model_call_id)
+    assert record is not None
+    for name in ("task_scope", "budget_multiplier", "timeout_seconds"):
+        assert record.parameters[name] == spawn.call_args.kwargs[name]
+    assert record.parameters["task_scope"] == "large"
+    assert record.parameters["budget_multiplier"] == 2.0

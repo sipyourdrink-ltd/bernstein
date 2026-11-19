@@ -5540,11 +5540,24 @@ class AgentSpawner:
                         finalize_session_model_call,
                     )
 
+                    spawned_in_process = self._in_process is not None and self._backend == AgentBackend.IN_PROCESS
+                    direct_spawn = not (
+                        spawned_in_process
+                        or self._sandbox_session_routing_active()
+                        or self._sandbox is not None
+                        or self._container_mgr is not None
+                    )
+                    # Only direct subprocess spawns currently consume retry budgets.
+                    _budget_mult = (
+                        max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks) if direct_spawn else 1.0
+                    )
                     _resolved_spawn_params: dict[str, Any] = {
                         "effort": model_config.effort,
                         "timeout_seconds": session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-                        "task_scope": getattr(model_config, "task_scope", "") or "",
-                        "budget_multiplier": float(getattr(model_config, "budget_multiplier", 1.0)),
+                        "task_scope": max_scope
+                        if not spawned_in_process and not self._sandbox_session_routing_active()
+                        else "medium",
+                        "budget_multiplier": _budget_mult,
                     }
                     _spawn_call_record = (
                         begin_adapter_call(
@@ -5625,9 +5638,6 @@ class AgentSpawner:
                                 system_addendum=style_addendum,
                             )
                         else:
-                            # Extract budget_multiplier from task metadata
-                            # (set by retry logic when previous attempt hit budget cap).
-                            _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
                             # Explicit per-task max_turns override (Task.max_turns):
                             # thread it to the adapter as explicit_max_turns, but
                             # only when its spawn() signature accepts the
@@ -5685,8 +5695,8 @@ class AgentSpawner:
                                 session_id=session_id,
                                 mcp_config=attempt_mcp,
                                 timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-                                task_scope=max_scope,
-                                budget_multiplier=_budget_mult,
+                                task_scope=_resolved_spawn_params["task_scope"],
+                                budget_multiplier=_resolved_spawn_params["budget_multiplier"],
                                 system_addendum=style_addendum,
                                 **_extra_spawn_kwargs,
                             )
