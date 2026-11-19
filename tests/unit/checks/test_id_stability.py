@@ -31,6 +31,8 @@ ACTIVE_PINNED_IDS: frozenset[str] = frozenset(
         "duplication:receipt-verify-kinds",
         "duplication:registry-duplicate-ids",
         "duplication:verification-result-shapes",
+        # Existing policy-library IDs, now exposed by the shared registry (#5075).
+        *(f"CMP-{number:03}" for number in range(1, 24)),
     }
 )
 
@@ -85,13 +87,16 @@ def test_cli_installation_catalog_is_explicit_stable_and_idempotent() -> None:
 
 
 def test_check_ids_are_properly_namespaced() -> None:
-    """Core default check IDs use a non-empty colon namespace."""
+    """Core check IDs use a colon namespace or a stable CMP-nnn ID."""
     registry = CheckRegistry()
     populate_default_checks(registry)
 
     for check in registry.iter_checks(include_opt_in=True):
         cid = check.check_id
         assert isinstance(cid, str) and cid.strip() == cid
+        if re.fullmatch(r"CMP-\d{3}", cid):
+            assert check.area == "CMP"
+            continue
         assert ":" in cid, f"Check ID '{cid}' is not namespaced with a colon"
         assert not cid.startswith(":"), f"Check ID '{cid}' has leading colon"
         assert not cid.endswith(":"), f"Check ID '{cid}' has trailing colon"

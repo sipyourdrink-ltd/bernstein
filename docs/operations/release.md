@@ -155,13 +155,18 @@ empty. `tests/unit/test_unreleased_notes_rotation.py` fails on any entry naming
 an issue or PR a tagged release page already documents, so a page left
 un-rotated stops the next PR rather than the next release.
 
-The script does not write the page. `bernstein`'s local release-notes lookup
-resolves the highest-versioned page in this directory, so a bump without its
-page serves the previous release as if it were current;
-`tests/unit/test_release_notes.py` fails on exactly that state.
+Write `docs/release-notes/v<version>.md` before running the bump script.
+Bernstein first fetches the installed version's release notes or uses the
+explicit URL when one is supplied. If the default fetch fails for a prerelease,
+Bernstein first tries the exact local filename, then checks filenames with a
+PEP 440-equivalent version in alphabetical order. If it finds no readable
+match, it tries the latest numeric stable page, then `CHANGELOG.md`,
+`docs/CHANGELOG.md`, and `README.md` in that order. Stable installations and
+calls with an explicit URL start their local fallback at the latest stable
+page. `tests/unit/test_release_notes.py` checks that the local checkout serves
+the page for its package version.
 
-`CHANGELOG.md` and `docs/CHANGELOG.md` are pointer documents. Do not add release
-entries to them.
+Keep `CHANGELOG.md` and `docs/CHANGELOG.md` as pointers to the release history.
 
 ## RPM channel (Copr)
 

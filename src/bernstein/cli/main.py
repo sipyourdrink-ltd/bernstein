@@ -412,13 +412,16 @@ def print_rich_help() -> None:
     from rich.panel import Panel
     from rich.table import Table
 
+    from bernstein.adapters.registry import selectable_adapter_names
+
     c = console
     c.print()
     c.print(
         Panel(
             "[bold]bernstein[/bold]  the open-source governance layer for AI agents.\n"
             "  No model in the coordination loop, so a plan replays to the same task graph.\n"
-            "  40+ adapters, per-task git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
+            f"  {len(selectable_adapter_names())} selectable adapter names, per-task git worktrees, "
+            "opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
             expand=False,

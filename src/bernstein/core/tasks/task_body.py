@@ -37,6 +37,7 @@ FORWARDED_FIELDS: frozenset[str] = frozenset(
         "cli",
         "model",
         "effort",
+        "requires",
         "upgrade_details",
         "artifact_spec",
         "completion_signals",
@@ -122,14 +123,15 @@ def build_task_body(task: Task, *, plan_mode: bool = False) -> dict[str, Any]:
         "depends_on": task.depends_on,
         "owned_files": task.owned_files,
         "task_type": task.task_type.value,
+        "requires": list(task.requires),
     }
     # Routing hints: dropping ``model`` collapses plan-driven runs onto the
     # orchestrator default, violating per-step ``cli:``/``model:`` directives.
-    if task.cli:
+    if task.cli is not None:
         body["cli"] = task.cli
-    if task.model:
+    if task.model is not None:
         body["model"] = task.model
-    if task.effort:
+    if task.effort is not None:
         body["effort"] = task.effort
     if task.upgrade_details:
         body["upgrade_details"] = asdict(task.upgrade_details)

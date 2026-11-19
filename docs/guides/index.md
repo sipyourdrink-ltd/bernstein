@@ -24,7 +24,7 @@ group below is a section in the left nav with its own set of pages.
 
     ---
 
-    Wire in Claude Code, Codex, Gemini CLI, and 40+ other CLI agents.
+    Wire in CLI agents through 55 selectable adapter names, including Claude Code, Codex and Gemini CLI.
 
     [:octicons-arrow-right-24: Adapters](../adapters/index.md)
 

@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### опенсорсний governance-шар для AI-агентів
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **Статус: бета.** Підтримується однією людиною, в активній розробці. Номер версії рахує релізи, а не зрілість — мінорні версії можуть змінювати інтерфейси. Фіксуйте версію для всього, від чого залежите; регресії виправляються швидко, [повідомляйте про них](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein — опенсорсний governance-шар для AI-агентів. Працює на policy as code: ти пишеш політику — хто що може робити, що потребує погодження, що має фіксуватися — а Bernstein застосовує її і формує запис, який можна перевірити. Детермінований планувальник — без моделі в циклі координації — запускає агентів паралельно, перевіряє результат на гейтах і записує кожен крок, тож запуск можна верифікувати постфактум, офлайн, лише за артефактами. CLI-агенти для коду працюють з коробки (Claude Code, Codex, Gemini CLI і ще 50+), і той самий шар говернить будь-яке агентне навантаження: результатом може бути диф, дослідницький звіт, датасет або пакет аудиторських свідчень. Профіль установки для air-gap у комплекті. Apache-2.0.
+Bernstein — опенсорсний governance-шар для AI-агентів. Працює на policy as code: ти пишеш політику — хто що може робити, що потребує погодження, що має фіксуватися — а Bernstein застосовує її і формує запис, який можна перевірити. Детермінований планувальник — без моделі в циклі координації — запускає агентів паралельно, перевіряє результат на гейтах і записує кожен крок, тож запуск можна верифікувати постфактум, офлайн, лише за артефактами. CLI-агенти для коду працюють з коробки (Claude Code, Codex, Gemini CLI), і той самий шар говернить будь-яке агентне навантаження: результатом може бути диф, дослідницький звіт, датасет або пакет аудиторських свідчень. Профіль установки для air-gap у комплекті. Apache-2.0.
 
 ### короткий огляд
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 Його вирізняють п’ять речей; решта — деталі.
 
@@ -40,9 +40,13 @@ Bernstein — опенсорсний governance-шар для AI-агентів.
 - **Свідчення апаратного ключа.** Офлайн-перевірки володіння PIV та схвалень FIDO2 використовують спільний протокол квитанцій із закріпленою довірою та явним часом. Володіння токеном не підвищує рівні довіри TRACE. [Свідчення апаратного ключа](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Перевірка постфактум.** Журнал відтворення записує кожне виконання, а завжди активний хребет походження (lineage spine) фіксує кожен крок, що несе історію походження; опціональний журнал аудиту, зв'язаний через HMAC (`BERNSTEIN_AUDIT=1`), додає квитанції (receipts), які можна верифікувати офлайн. Недетермінізм виявляється як розбіжність хешу на конкретному кроці, а не як нестабільність повторного запуску. Результати, що не є кодом, проходять таку саму перевірку: завдання може оголосити контракт на артефакт (звіт, набір даних, журнал дій, результат операцій) і завершується підписаною квитанцією походження замість git-коміту.
 - **Ізольованість за конструкцією.** Кожне завдання з кодування отримує власний git worktree за гейтами злиття; завдання в режимі артефактів отримують робочий каталог у `.sdd/workspaces/`. За замовчуванням агенти не мають спільного змінного робочого простору; єдиним спільним станом є беклог завдань, що резервується атомарно. Більш суворі обмеження файлової системи є опціональними завдяки [бекендам пісочниці](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Якщо вимкнути worktree, кожне завдання виконуватиметься у спільному робочому каталозі.
-- **Широкий та локальний.** Понад 53 адаптерів для CLI-агентів плюс універсальна обгортка `--prompt`, стан на основі файлів, без проміжних SaaS-сервісів, без сторонніх платформ обробки даних.
+- **Широкий та локальний.** 55 доступних для вибору імен CLI-адаптерів агентів, включно з універсальною обгорткою `--prompt`. стан на основі файлів, без проміжних SaaS-сервісів, без сторонніх платформ обробки даних.
 
 Повний список наведено на [сторінці можливостей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [матриця функцій](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) є вичерпним покажчиком.
+
+Сервер завдань підтримує операторський контроль видачі нових завдань зі збереженням стану; див. [посібник](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
+
+У політиці адаптерів можна задати типовий список дозволених адаптерів для ролей, не вказаних окремо; див. [посібник](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### як виглядає запуск
 <!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
@@ -126,7 +130,7 @@ flowchart LR
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:c6100e146735" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:acd3cf9f0a36" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,6 +140,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` також виводить результати контракту аудиту `findings`, які збігаються з результатами `bernstein govern audit --only INS --json` за однакових спостережень за станом встановлення. Звичайний звіт doctor зберігає попередній вигляд. Стабільні ідентифікатори перевірок описано в [посібнику з експлуатації doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
+
+Doctor повідомляє про давно залишені ресурси виконання у JSON; якщо свідчення витоку неможливо перевірити, перевірка завершується помилкою. Нічого не видаляється.
 
 pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://docs.bernstein.run/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
@@ -165,7 +171,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 Якщо сервер вимагає автентифікацію, задайте `BERNSTEIN_AUTH_TOKEN` для термінала й введіть дозволений токен на екрані входу в браузері. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### підтвердження виконання
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 Детермінізм тут — це властивість, яку ви перевіряєте, а не те, що приймається на віру. Запустіть один раз з увімкненим аудитом, а потім перевірте збережені записи:
 
@@ -189,7 +195,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 Така ж перевірюваність застосовується до оціночних показників. `bernstein bench run <suite> --reliability k` (також записується як `bernstein eval --reliability k`) запускає кожне завдання `k` разів за фіксованої координації, а потім звітує про нижню межу `pass^k` (усі `k` спроб мають бути успішними) разом із верхньою межею `pass@1`. Цей результат запечатується в підписаній квитанції, яку `bernstein bench reliability-verify` перераховує офлайн, тому сфальсифікована нижня межа не пройде верифікацію. Подробиці: [нижня межа надійності pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Для машинозчитуваних результатів перевірок використовуйте `bernstein govern audit --format json` або `--format sarif`, а для перевірки в CI — `--strict --quiet`. Докладніше: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Для машинозчитуваних результатів перевірок використовуйте `bernstein govern audit --format json` або `--format sarif`, а для перевірки в CI — `--strict --quiet`. Докладніше: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Пакет доказів `cosai` містить класи загроз MCP із зафіксованої версії документа від 2026-01-08 і вказує на решту прогалин у покритті.
 
 `bernstein delegation verify RUN` порівнює ланцюжок квитанцій із кінцевим хешем і кількістю переходів, запечатаними в маніфесті запуску за допомогою HMAC із ключем аудиту. Перевірка виявляє видалення хвоста, підміну й нарощування ланцюжка після закриття, зокрема переписування оголошення без ключа. Видалення оголошення залишає запуск незавершеним (код виходу `3`), і він ніколи не вважається дійсним. Це не виявляє повторного пред’явлення старішого справжнього знімка й не захищає від автора запису, який володіє ключем аудиту. Див. [порядок перевірки делегування](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
@@ -231,9 +237,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 Гейти гігієни репозиторію: `bernstein readme-l10n verify` блокує PR, перекладені README якого відстали від англійського оригіналу (називаючи застарілий розділ), а `bernstein readme-l10n sync` оновлює зв'язки після змін в англійському тексті. Дивіться [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### підтримувані агенти
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen та інші. [Індекс адаптерів](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) містить команди встановлення для 30 з них. Команда `bernstein integrations list` перелічує всі 57 підключені інтеграції з файлу `src/bernstein/adapters/registry.py`, єдиного джерела істини. 55 з них — це доступні для вибору адаптери агентів; інші два рядки — тестова заглушка `mock` та профіль кінцевих точок `self-hosted-endpoints`. Будь-який інший інструмент із прапорцем `--prompt` працює через універсальну обгортку.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen та інші. [Індекс адаптерів](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) містить команди встановлення для 30 з них. Команда `bernstein integrations list` перелічує всі 57 підключені інтеграції з файлу `src/bernstein/adapters/registry.py`, єдиного джерела істини. 55 з них — це доступні для вибору адаптери агентів; інші два рядки — тестова заглушка `mock` та профіль кінцевих точок `self-hosted-endpoints`. Будь-який інший інструмент із прапорцем `--prompt` працює через універсальну обгортку. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 Комбінуйте агентів в одному запуску: дешеві локальні моделі для шаблонного коду, потужніші хмарні моделі для архітектури. Команда `bernstein integrations list --installed` показує, що доступно на вашому комп'ютері.
 
@@ -250,13 +256,14 @@ bernstein volunteer browse --budget 60
 [Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`. `autopilot` зареєстровано, але він відмовляється запускатися, доки не реалізовано `TaskSource`.
 
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
 
 Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
 | сторінка | що вона охоплює |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | повний список можливостей: режим MCP-сервера, підписані картки агентів, бекенди пісочниці, приймачі артефактів, регуляторна відповідність |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | де виникає цінність і коли Bernstein не є потрібним інструментом |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативні YAML DAG із вузлів agent / command / loop |
@@ -275,9 +282,9 @@ Bernstein названо на честь Леонарда Бернстайна, 
 я написав bernstein, тому що платив по $400 на місяць за рахунками claude, запускаючи три агенти кодування паралельно й отримуючи недетерміновані злиття. Ліцензія Apache 2.0, підтримується однією людиною. Статистика наживо: [bernstein.run](https://bernstein.run).
 
 ### згадки
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-Включено до [vinta/awesome-python](https://github.com/vinta/awesome-python), розглянуто в огляді [open source оркестраторів агентів](https://www.augmentcode.com/tools/open-source-agent-orchestrators) від Augment Code та згадано в [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Ми також описали цей підхід як патерн [детермінованої оркестрації без LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) у збірці awesome-agentic-patterns.
+Розглянуто в огляді [open source оркестраторів агентів](https://www.augmentcode.com/tools/open-source-agent-orchestrators) від Augment Code та згадано в [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Ми також описали цей підхід як патерн [детермінованої оркестрації без LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) у збірці awesome-agentic-patterns.
 
 <details>
 <summary>Усі згадки: понад 20 списків awesome, каталогів, розсилок та цитувань</summary>

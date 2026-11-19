@@ -32,7 +32,7 @@ Depends:
 Description: The open-source governance layer for AI agents
  Bernstein spawns short-lived CLI coding agents, coordinates them
  via a file-based state directory, and works with any CLI agent
- (Claude Code, Codex, Gemini CLI, and 40+ more).
+ (Claude Code, Codex, Gemini CLI and others).
  .
  There is no model in the coordination loop, so parallel runs in
  per-task git worktrees replay byte-identically. Model and effort

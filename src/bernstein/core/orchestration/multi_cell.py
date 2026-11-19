@@ -178,6 +178,8 @@ class MultiCellOrchestrator:
         client: httpx.Client | None = None,
         clearance_coordinator: ClearanceGateCoordinator | None = None,
     ) -> None:
+        if config.hash_profile not in ("py-json-v1", "jcs-v2"):
+            raise ValueError(f"unknown hash_profile {config.hash_profile!r}")
         self._config = config
         self._spawner = spawner
         if hasattr(self._spawner, "set_max_agent_runtime_s"):
@@ -189,7 +191,9 @@ class MultiCellOrchestrator:
         self._running = False
         self._closure_outcome = RunClosureOutcome.COMPLETED
         self._run_id = os.environ.get("BERNSTEIN_RUN_ID") or datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        self._recorder = EventJournal(run_id=self._run_id, sdd_dir=workdir / ".sdd")
+        self._recorder = EventJournal.resume(
+            run_id=self._run_id, sdd_dir=workdir / ".sdd", hash_profile=config.hash_profile
+        )
         self._last_bulletin_ts: float = 0.0
         # Optional clearance-gate coordinator (#2556). When wired, a posted
         # ``blocker`` is not merely logged: it is deterministically projected

@@ -451,10 +451,10 @@ def _operator_pinned_model(
 def _choose_retry_escalation(
     task: Task,
     next_retry: int,
-    current_model: str,
+    current_model: str | None,
     current_effort: str,
     pinned_model: str | None = None,
-) -> tuple[str, str]:
+) -> tuple[str | None, str]:
     """Decide model and effort for the retry based on terminal reason and context.
 
     ``pinned_model`` is the model the operator explicitly chose for this task
@@ -464,7 +464,8 @@ def _choose_retry_escalation(
     configured provider a model it does not serve (#4274).
 
     A supplied provider-prefixed model is retained instead of a bare Claude
-    tier. Effort follows the existing branch policy independently.
+    tier. With no model context, leave resolution to the adapter as on the
+    first attempt. Effort follows the existing branch policy independently.
 
     Returns (new_model, new_effort).
     """
@@ -472,10 +473,14 @@ def _choose_retry_escalation(
 
     terminal_reason = task.terminal_reason
 
-    def _model(escalated: str) -> str:
+    def _model(escalated: str | None) -> str | None:
         # A pinned model is an instruction; never substitute a bare tier name for it.
         if pinned_model:
             return pinned_model
+        # No resolved identity means there is no evidence for a Claude tier.
+        # Keeping it unset reuses the first attempt's adapter/default route.
+        if not current_model:
+            return None
         # Retain the supplied provider/model identity; the local Claude ladder
         # cannot establish a replacement in that provider's model catalog.
         if "/" in current_model and escalated in _MODEL_LADDER:
@@ -503,7 +508,7 @@ def _choose_retry_escalation(
         return _model(current_model), _bump_effort(current_effort)
 
     # Second+ retry: escalate model, reset effort to high
-    return _model(_escalate_model(current_model)), "high"
+    return _model(_escalate_model(current_model) if current_model else None), "high"
 
 
 def _stamp_checkpoint_retry_metadata_safe(
@@ -775,17 +780,21 @@ def maybe_retry_task(
     base_delay = task.retry_delay_s if task.retry_delay_s > 0 else 30.0
     backoff_delay = min(base_delay * (2**retry_count), 300.0)
 
-    current_model = task.model or "sonnet"
+    current_model = task.model
     current_effort = task.effort or "high"
 
     pinned_model = _operator_pinned_model(task.role, role_model_policy, run_pinned_model)
-    new_model, new_effort = _choose_retry_escalation(
+    new_model, escalated_effort = _choose_retry_escalation(
         task,
         next_retry,
         current_model,
         current_effort,
         pinned_model=pinned_model,
     )
+    # An effort-only override skips role-template resolution at spawn. When
+    # the model was never resolved here, replay both original inputs instead
+    # of manufacturing an override the first attempt did not carry.
+    new_effort = task.effort if new_model is None else escalated_effort
     if pinned_model:
         logger.info(
             "maybe_retry_task: task %s retries on the operator-pinned model %r "
@@ -1490,6 +1499,7 @@ def retry_or_fail_task(
 
         # Effort escalates on its own schedule; only the model is subject to
         # the pin. ``tier_model`` is what the Claude tier ladder would pick.
+        retry_effort: str | None
         if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
             tier_model, retry_effort = "opus", "max"
         elif retry_count >= 1:
@@ -1499,6 +1509,11 @@ def retry_or_fail_task(
 
         if operator_pinned_model:
             retry_model = operator_pinned_model
+        elif not task.model:
+            # A configured endpoint alone cannot identify a model. Preserve
+            # the unset override so the adapter resolves its own default.
+            retry_model = None
+            retry_effort = task.effort
         elif task.model and "/" in task.model:
             # This independent retry creator must preserve the same supplied
             # provider/model identity as _choose_retry_escalation (#6605).
