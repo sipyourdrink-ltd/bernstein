@@ -148,6 +148,23 @@ Prints policy id, framework, control id, severity, name. Without
 
 ### `check` - evaluate policies against a runtime snapshot
 
+The default snapshot now reads the workspace through the same CMP library
+used by `govern audit --only CMP`. Explicit flags such as `--no-audit-logging`
+override that snapshot for legacy policy evaluation and remain operator
+declarations. Numeric thresholds that the library cannot measure retain their
+conservative defaults; audit retention still comes from retained audit segments.
+
+JSON output preserves `summary` and `results`, and adds `checks`: the same
+23 workspace findings emitted by `govern audit --only CMP --json`, with the
+same IDs, verdicts and evidence. Runtime declaration flags affect the legacy
+policy results, while `checks` continues to describe the workspace. A key found
+in a config file remains `declared`, with no measured pass. Profile and severity
+selection never turn those observations into a conformance claim.
+Default and relative workdirs are resolved to the same workspace as the audit
+runner. A failing library observation remains `not_measurable` in `checks`;
+the legacy policy snapshot treats that control as unsatisfied while retaining
+other readable observations.
+
 ```
 bernstein compliance check [--framework <name>] [--workdir .]
                            [--fail-on critical|high|medium|low|none]

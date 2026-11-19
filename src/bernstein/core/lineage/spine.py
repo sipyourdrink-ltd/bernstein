@@ -390,7 +390,9 @@ class LineageSpine:
         root: Parent directory for run-specific stores.
         run_id: Run identifier used as the store subdirectory.
         hmac_key: Key used to authenticate lineage rows.
-        hash_profile: Canonicalization profile, defaulting to ``py-json-v1``.
+        hash_profile: Optional explicit profile. Otherwise append using the
+            recorded spine profile, or the run journal's profile for a new
+            spine. With neither record present, use ``py-json-v1``.
 
     Raises:
         ValueError: If the hash profile is unknown.
@@ -403,7 +405,7 @@ class LineageSpine:
         *,
         run_id: str,
         hmac_key: bytes,
-        hash_profile: str = HASH_PROFILE_LEGACY,
+        hash_profile: str | None = None,
     ) -> None:
         self._root = Path(root)
         self._run_id = _validate_run_id(run_id)
@@ -413,9 +415,10 @@ class LineageSpine:
         # domain tag. ``self._hmac_key`` stays the raw master key for v1
         # backward compatibility.
         self._derived_key = derive_store_key(hmac_key, DOMAIN_LINEAGE)
-        if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+        if hash_profile is not None and hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
             raise ValueError(f"unknown hash_profile {hash_profile!r}")
-        self._hash_profile = hash_profile
+        self._requested_hash_profile = hash_profile
+        self._hash_profile = hash_profile if hash_profile is not None else HASH_PROFILE_LEGACY
 
     # -- paths --------------------------------------------------------------
 
@@ -467,6 +470,60 @@ class LineageSpine:
         tmp.replace(self.head_path)
 
     # -- record -------------------------------------------------------------
+
+    def _select_write_profile(self) -> str:
+        """Resolve under the append lock; never change a recorded profile.
+
+        All run writers share the first journal row's selection. Standalone
+        stores without a journal still support the explicit low-level option.
+        A reader's constructor does not inspect or modify evidence.
+        """
+        from bernstein.core.replay.journal import (
+            JournalPathError,
+            _validated_run_id,  # pyright: ignore[reportPrivateUsage] - reuse the journal naming contract
+            run_journal_path,
+        )
+
+        journal_profile: str | None = None
+        try:
+            _validated_run_id(self._run_id)
+        except JournalPathError:
+            # Standalone spines admit safe IDs outside the journal alphabet.
+            # They cannot name a run journal, so there is no profile to inherit.
+            journal_path = None
+        else:
+            # Keep containment failures fatal: an optional lookup must never
+            # follow a symlink outside the run-journal root.
+            journal_path = run_journal_path(self._root.parent, self._run_id)
+        first_line = b""
+        if journal_path is not None:
+            try:
+                with journal_path.open("rb") as stream:
+                    first_line = next((line for line in stream if line.strip()), b"")
+            except FileNotFoundError:
+                pass
+        if first_line:
+            first = json.loads(first_line)
+            if not isinstance(first, dict):
+                raise ValueError("journal hash_profile row must be an object")
+            journal_profile = first.get("hash_profile", HASH_PROFILE_LEGACY)
+            if journal_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+                raise ValueError(f"unknown hash_profile {journal_profile!r}")
+
+        profile = self._requested_hash_profile or journal_profile or HASH_PROFILE_LEGACY
+        if self.head_path.exists():
+            head = json.loads(self.head_path.read_bytes())
+            if not isinstance(head, dict):
+                raise ValueError("spine hash_profile header must be an object")
+            recorded = head.get("hash_profile", HASH_PROFILE_LEGACY)
+            if recorded not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+                raise ValueError(f"unknown hash_profile {recorded!r}")
+            if self._requested_hash_profile is not None and self._requested_hash_profile != recorded:
+                raise ValueError("hash_profile conflicts with the recorded spine profile")
+            profile = recorded
+        if journal_profile is not None and journal_profile != profile:
+            raise ValueError("hash_profile conflicts between the journal and spine")
+        return profile
 
     def record(
         self,
@@ -540,6 +597,7 @@ class LineageSpine:
 
         with _exclusive_lock(self.spine_path):
             prev_hash, count = self._read_head()
+            self._hash_profile = self._select_write_profile()
             e_hash = compute_entry_hash(
                 prev_hash=prev_hash,
                 artifact_path=artifact_path,
