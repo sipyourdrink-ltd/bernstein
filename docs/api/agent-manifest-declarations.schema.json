@@ -1,0 +1,93 @@
+{
+  "additionalProperties": false,
+  "description": "Required assertions; none is derived from a clock, config or sibling hop.",
+  "properties": {
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "availability_reasons": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Availability Reasons",
+      "type": "object"
+    },
+    "classification": {
+      "enum": [
+        "public",
+        "internal",
+        "confidential",
+        "restricted"
+      ],
+      "title": "Classification",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "issuer": {
+      "minLength": 1,
+      "title": "Issuer",
+      "type": "string"
+    },
+    "key_type": {
+      "enum": [
+        "software",
+        "hsm",
+        "tee-sealed"
+      ],
+      "title": "Key Type",
+      "type": "string"
+    },
+    "manifest_id": {
+      "minLength": 1,
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "prompt_bound_at": {
+      "format": "date-time",
+      "title": "Prompt Bound At",
+      "type": "string"
+    },
+    "prompt_version": {
+      "minLength": 1,
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "signed_at": {
+      "format": "date-time",
+      "title": "Signed At",
+      "type": "string"
+    },
+    "version": {
+      "const": "0.1",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_id",
+    "agent_id",
+    "issuer",
+    "version",
+    "issued_at",
+    "expires_at",
+    "signed_at",
+    "prompt_bound_at",
+    "prompt_version",
+    "classification",
+    "key_type",
+    "availability_reasons"
+  ],
+  "title": "CompositionDeclarations",
+  "type": "object"
+}

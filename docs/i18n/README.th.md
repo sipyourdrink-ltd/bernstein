@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### เลเยอร์ governance โอเพนซอร์สสำหรับ AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **สถานะ: เบต้า** ดูแลรักษาโดยผู้พัฒนาคนเดียว และอยู่ระหว่างการพัฒนาอย่างต่อเนื่อง หมายเลขเวอร์ชันนับตามรอบการเปิดตัว ไม่ใช่ระดับความสมบูรณ์ — เวอร์ชันย่อย (minor) อาจมีการเปลี่ยนแปลงอินเทอร์เฟซ โปรดตรึงเวอร์ชันสำหรับงานที่ต้องพึ่งพาอย่างยิ่งยวด โดยข้อผิดพลาดที่เกิดขึ้นซ้ำจะได้รับการแก้ไขอย่างรวดเร็ว [แจ้งปัญหาได้ที่นี่](https://github.com/sipyourdrink-ltd/bernstein/issues)
 
-Bernstein คือเลเยอร์ governance โอเพนซอร์สสำหรับ AI agent ทำงานแบบ policy as code คุณเขียนนโยบายเอง - ใครทำอะไรได้บ้าง อะไรต้องขออนุมัติ อะไรต้องถูกบันทึก - แล้ว Bernstein จะบังคับใช้และสร้างบันทึกที่ตรวจสอบย้อนกลับได้ ตัวจัดตารางแบบดีเทอร์มินิสติก - ไม่มีโมเดลในลูปประสานงาน - รัน agent แบบขนาน คัดกรองผลงานผ่านเกต และบันทึกทุกขั้นตอน ทำให้ตรวจสอบการรันย้อนหลังได้แบบออฟไลน์จากอาร์ติแฟกต์ล้วน ๆ CLI coding agent ใช้ได้ทันที (Claude Code, Codex, Gemini CLI และอีก 50+) และเลเยอร์เดียวกันนี้กำกับเวิร์กโหลด agent ทุกแบบ: ผลส่งมอบจะเป็น diff รายงานวิจัย ชุดข้อมูล หรือแพ็กหลักฐานการตรวจสอบก็ได้ มาพร้อมโปรไฟล์ติดตั้งแบบ air-gap Apache-2.0
+Bernstein คือเลเยอร์ governance โอเพนซอร์สสำหรับ AI agent ทำงานแบบ policy as code คุณเขียนนโยบายเอง - ใครทำอะไรได้บ้าง อะไรต้องขออนุมัติ อะไรต้องถูกบันทึก - แล้ว Bernstein จะบังคับใช้และสร้างบันทึกที่ตรวจสอบย้อนกลับได้ ตัวจัดตารางแบบดีเทอร์มินิสติก - ไม่มีโมเดลในลูปประสานงาน - รัน agent แบบขนาน คัดกรองผลงานผ่านเกต และบันทึกทุกขั้นตอน ทำให้ตรวจสอบการรันย้อนหลังได้แบบออฟไลน์จากอาร์ติแฟกต์ล้วน ๆ CLI coding agent ใช้ได้ทันที (Claude Code, Codex, Gemini CLI) และเลเยอร์เดียวกันนี้กำกับเวิร์กโหลด agent ทุกแบบ: ผลส่งมอบจะเป็น diff รายงานวิจัย ชุดข้อมูล หรือแพ็กหลักฐานการตรวจสอบก็ได้ มาพร้อมโปรไฟล์ติดตั้งแบบ air-gap Apache-2.0
 
 ### สรุปภาพรวม
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 มีห้าสิ่งที่ทำให้แตกต่าง ส่วนที่เหลือคือรายละเอียด
 
@@ -40,12 +40,16 @@ Bernstein คือเลเยอร์ governance โอเพนซอร์�
 - **หลักฐานกุญแจฮาร์ดแวร์.** ตัวตรวจสอบการครอบครอง PIV และการอนุมัติ FIDO2 แบบออฟไลน์ใช้โปรโตคอลใบรับร่วมกัน โดยตรึงแหล่งความเชื่อถือและระบุเวลาอย่างชัดเจน การครอบครองโทเค็นไม่เพิ่มระดับความเชื่อถือ TRACE [หลักฐานกุญแจฮาร์ดแวร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **ตรวจสอบย้อนหลังได้จริง** เจอร์นัลการเล่นซ้ำ (replay journal) บันทึกทุกรอบการทำงาน และแกนสืบสายประวัติ (lineage spine) ที่เปิดทำงานตลอดเวลาจะบันทึกทุกขั้นตอนที่สร้างประวัติ ส่วนบันทึกการตรวจสอบแบบผูกโยง HMAC ทางเลือก (`BERNSTEIN_AUDIT=1`) จะเพิ่มใบเสร็จ (receipts) ที่คุณสามารถตรวจสอบแบบออฟไลน์ได้ ความไม่แน่นอนจะปรากฏเป็นค่าแฮชไม่ตรงกันในขั้นตอนที่แน่นอน แทนที่จะเป็นข้อผิดพลาดแบบสุ่มเมื่อรันใหม่ ผลงานที่ไม่ใช่โค้ดก็ได้รับการจัดการเช่นเดียวกัน: งานสามารถประกาศสัญญาอาร์ติแฟกต์ (รายงาน, ชุดข้อมูล, บันทึกการดำเนินการ, ผลการทำงานฝ่ายปฏิบัติการ) และเสร็จสิ้นด้วยใบเสร็จสายประวัติที่มีลายเซ็นกำกับแทนการทำ git commit
 - **แยกส่วนอย่างเคร่งครัดตามโครงสร้าง** แต่ละงานเขียนโค้ดจะได้ git worktree ของตนเองหลังเกตการรวมโค้ด ส่วนงานโหมดอาร์ติแฟกต์จะได้ไดเรกทอรีทำงานใต้ `.sdd/workspaces/` เอเจนต์จะไม่แชร์พื้นที่ทำงานที่แก้ไขได้โดยค่าเริ่มต้น สถานะเดียวที่ใช้ร่วมกันคือรายการงานค้าง (backlog) ซึ่งถูกจองแบบอะตอมิก การบังคับใช้ระบบไฟล์ที่เข้มงวดยิ่งขึ้นเป็นตัวเลือกเสริมผ่าน [แบ็กเอนด์แซนด์บ็อกซ์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) หากปิดการใช้งาน worktree แต่ละงานจะทำงานในไดเรกทอรีร่วมกัน
-- **ครอบคลุมและทำงานในเครื่อง** มีอะแดปเตอร์เอเจนต์ CLI มากกว่า 53 รายการ พร้อมตัวครอบ `--prompt` ทั่วไป สถานะอิงตามไฟล์ ไม่ต้องพึ่งพา SaaS และไม่มีระนาบข้อมูลภายนอก
+- **ครอบคลุมและทำงานในเครื่อง** ชื่ออะแดปเตอร์ CLI agent ที่เลือกได้ 55 ชื่อ รวม wrapper ทั่วไป `--prompt` สถานะอิงตามไฟล์ ไม่ต้องพึ่งพา SaaS และไม่มีระนาบข้อมูลภายนอก
 
 ดูรายการทั้งหมดได้ที่ [หน้ารวมความสามารถ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) และ [ตารางเปรียบเทียบฟีเจอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) ซึ่งเป็นดัชนีอย่างละเอียด
 
+เซิร์ฟเวอร์งานรองรับการควบคุมการรับงานใหม่โดยผู้ดูแล พร้อมบันทึกสถานะไว้อย่างถาวร ดู[คู่มือ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
+
+นโยบายอะแดปเตอร์ตามบทบาทรองรับรายการอนุญาตเริ่มต้นแบบเลือกใช้สำหรับบทบาทที่ไม่ได้ระบุไว้แยกต่างหาก ดู[คู่มือ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)
+
 ### การรันหน้าตาเป็นอย่างไร
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 ไฟล์ YAML ไฟล์เดียวประกาศการรันทั้งหมด: เฟส บทบาท การพึ่งพา และเงื่อนไขที่โหนดจะถูกรัน ตัวจัดตารางรันมันเป็น Python ล้วน - ไม่มีอะไรในไฟล์เป็นพรอมป์ต และไม่มีโมเดลตัดสินว่าจะเกิดอะไรต่อไป กราฟนี้สร้างแพ็กหลักฐานการตรวจสอบ ไฟล์เต็มอยู่ที่ [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)
 
@@ -125,8 +129,10 @@ flowchart LR
 
 แต่ละโหนดถูกรับโดย agent ที่บทบาทได้รับอนุญาตจากเฟสนั้น รั้วบทบาทและเกตอนุมัติยังคงอยู่ไม่ว่า agent จะทำอะไรในงาน โหนดโค้ดจบหลัง merge gate ใน git worktree ของตัวเอง โหนดข้างบนจบต่างออกไป: [สัญญาอาร์ติแฟกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ระบุผลส่งมอบ (รายงาน ชุดข้อมูล การสแกน บันทึกการกระทำ) และโหนดปิดด้วยใบรับ lineage ที่ลงนามแทนคอมมิต ตัวจัดตารางเดียวกัน เจอร์นัลเดียวกัน การตรวจสอบออฟไลน์แบบเดียวกัน - ไม่ว่ากราฟจะส่งมอบโค้ด งานวิจัย การเปลี่ยนแปลง ops หรือทั้งสามผสมกัน กราฟสำเร็จรูปสำหรับซอฟต์แวร์ วิจัย เอกสาร องค์กร และเวิร์กโฟลว์ผู้ร่วมพัฒนาอยู่ที่ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)
 
+การลองใหม่จะคงค่า `dispatch_tier` ไว้ และสามารถเลือกระดับอย่างชัดเจนเมื่อเปิดงานอีกครั้ง ดู[ข้อกำหนดระดับการส่งงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)
+
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,6 +142,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` แสดง `findings` ตามสัญญาการตรวจสอบด้วย ซึ่งเหมือนกับผลของ `bernstein govern audit --only INS --json` เมื่อใช้ข้อมูลสังเกตการติดตั้งชุดเดียวกัน รูปแบบการแสดงผลของรายงาน doctor ปกติยังคงเดิม ดูรหัสการตรวจสอบที่คงที่ได้ใน[คู่มือการใช้งาน doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)
+
+Doctor รายงานเส้นทางการทำงานที่ตกค้างเกินเวลาที่กำหนดในรูปแบบ JSON หากตรวจสอบหลักฐานไม่ได้ การตรวจจะล้มเหลว โดยไม่มีการลบสิ่งใด
 
 pipx, pip, brew, dnf, npm และ Docker มีเนื้อหาอยู่ใน [คู่มือการติดตั้ง](https://docs.bernstein.run/en/latest/getting-started/install/) ส่วนแพ็กเกจสำหรับระบบแยกเครือข่ายมี [คู่มือ air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) โดยเฉพาะ
 
@@ -160,10 +168,12 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — แดชบอร์ดในเทอร์มินัล (โหนดปฏิบัติงานระยะไกล) | `bernstein gui serve` — แดชบอร์ดในเบราว์เซอร์ |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — แดชบอร์ดในเทอร์มินัล (โหนดปฏิบัติงานระยะไกล) | `<task-server-url>/ui/` — แดชบอร์ดเบราว์เซอร์ของเซิร์ฟเวอร์งานที่กำลังทำงาน เมื่อติดตั้งไฟล์ GUI แล้ว. `bernstein gui serve` เริ่มเซิร์ฟเวอร์แยกในพื้นที่ทำงานปัจจุบัน. |
+
+หากเซิร์ฟเวอร์ต้องการการยืนยันตัวตน ให้ตั้งค่า `BERNSTEIN_AUTH_TOKEN` สำหรับเทอร์มินัล และป้อนโทเค็นที่ได้รับอนุญาตในหน้าลงชื่อเข้าใช้ของเบราว์เซอร์ [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### พิสูจน์รอบการทำงาน
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 การกำหนดผลลัพธ์แน่นอนในที่นี้คือสิ่งที่คุณตรวจสอบได้จริง ไม่ใช่สิ่งที่ต้องยอมรับด้วยความเชื่อ รันหนึ่งครั้งโดยเปิดใช้งานการตรวจสอบ แล้วตรวจดูสิ่งที่บันทึกไว้:
 
@@ -187,7 +197,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 ความสามารถในการตรวจสอบแบบเดียวกันนี้ใช้กับตัวเลขการประเมินผล `bernstein bench run <suite> --reliability k` (เขียนว่า `bernstein eval --reliability k` ได้เช่นกัน) จะรันแต่ละงาน `k` ครั้งภายใต้การประสานงานคงที่ จากนั้นรายงานขอบเขตล่าง `pass^k` (การทดสอบทั้ง `k` ครั้งต้องผ่านทั้งหมด) ควบคู่กับขอบเขตบน `pass@1` ผลลัพธ์นี้จะถูกประทับตราในใบเสร็จที่มีลายเซ็นกำกับซึ่ง `bernstein bench reliability-verify` คำนวณใหม่แบบออฟไลน์ ทำให้ขอบเขตล่างที่สร้างขึ้นปลอมๆ ไม่ผ่านการตรวจสอบ รายละเอียด: [ขอบเขตล่างความน่าเชื่อถือ pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)
 
-ใช้ `bernstein govern audit --format json` หรือ `--format sarif` เพื่อแสดงผลการตรวจสอบที่เครื่องอ่านได้ และใช้ `--strict --quiet` เป็นเงื่อนไขผ่าน CI ดู [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+ใช้ `bernstein govern audit --format json` หรือ `--format sarif` เพื่อแสดงผลการตรวจสอบที่เครื่องอ่านได้ และใช้ `--strict --quiet` เป็นเงื่อนไขผ่าน CI ดู [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). แพ็กหลักฐาน `cosai` รวมหมวดหมู่ภัยคุกคาม MCP จากเอกสารฉบับที่ตรึงไว้ลงวันที่ 2026-01-08 และระบุส่วนที่ยังครอบคลุมไม่ครบ
 
 `bernstein delegation verify RUN` เปรียบเทียบสายโซ่ใบรับกับค่าเฮดสุดท้ายและจำนวนฮอปที่ผนึกไว้ในแมนิเฟสต์การรันด้วย HMAC โดยใช้คีย์ตรวจสอบ จึงตรวจพบการลบส่วนท้าย การแทนที่ และการต่อสายโซ่หลังปิดการรัน รวมถึงการเขียนคำประกาศใหม่โดยไม่มีคีย์ การลบคำประกาศทำให้การรันยังไม่สมบูรณ์ (รหัสออก `3`) และไม่ถือว่าถูกต้อง การตรวจสอบนี้ไม่สามารถตรวจพบการนำสแนปช็อตแท้ที่เก่ากว่ามาใช้ซ้ำ และไม่ป้องกันผู้เขียนที่ถือคีย์ตรวจสอบ ดู[ขั้นตอนการตรวจสอบการมอบหมาย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)
 
@@ -229,9 +239,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 เกตสุขอนามัยของที่เก็บโค้ด: `bernstein readme-l10n verify` จะทำให้ PR ที่ไฟล์ README ฉบับแปลคลาดเคลื่อนจากต้นฉบับภาษาอังกฤษล้มเหลว (พร้อมระบุส่วนที่ล้าสมัย) ส่วน `bernstein readme-l10n sync` จะผูกการเชื่อมโยงใหม่หลังจากการแก้ไขภาษาอังกฤษ ดูที่ [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)
 
 ### เอเจนต์ที่รองรับ
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen และอื่นๆ [ดัชนีอะแดปเตอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) มีคำสั่งติดตั้งสำหรับ 30 รายการในจำนวนนี้ คำสั่ง `bernstein integrations list` แสดงรายการการเชื่อมต่อทั้งหมด 57 รายการจาก `src/bernstein/adapters/registry.py` ซึ่งเป็นแหล่งความจริงเพียงแห่งเดียว โดย 55 รายการเป็นอะแดปเตอร์เอเจนต์ที่เลือกใช้งานได้ ส่วนอีกสองแถวคือตัวทดสอบ `mock` และโปรไฟล์ปลายทาง `self-hosted-endpoints` เครื่องมืออื่นๆ ที่มีแฟล็ก `--prompt` สามารถทำงานผ่านตัวครอบทั่วไปได้
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen และอื่นๆ [ดัชนีอะแดปเตอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) มีคำสั่งติดตั้งสำหรับ 30 รายการในจำนวนนี้ คำสั่ง `bernstein integrations list` แสดงรายการการเชื่อมต่อทั้งหมด 57 รายการจาก `src/bernstein/adapters/registry.py` ซึ่งเป็นแหล่งความจริงเพียงแห่งเดียว โดย 55 รายการเป็นอะแดปเตอร์เอเจนต์ที่เลือกใช้งานได้ ส่วนอีกสองแถวคือตัวทดสอบ `mock` และโปรไฟล์ปลายทาง `self-hosted-endpoints` เครื่องมืออื่นๆ ที่มีแฟล็ก `--prompt` สามารถทำงานผ่านตัวครอบทั่วไปได้ `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 ผสมผสานเอเจนต์ในการรันรอบเดียวกัน: ใช้โมเดลในเครื่องราคาประหยัดสำหรับโค้ดโครงสร้างพื้นฐาน และใช้โมเดลบนคลาวด์ที่ทรงพลังกว่าสำหรับสถาปัตยกรรม คำสั่ง `bernstein integrations list --installed` จะแสดงรายการที่มีอยู่ในเครื่องของคุณ
 
@@ -248,13 +258,14 @@ bernstein volunteer browse --budget 60
 [คู่มือผู้บริจาค](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ครอบคลุมการรัน worker และงบประมาณที่คุณกำหนด [คู่มือโปรเจกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ครอบคลุมการประกาศ manifest และ [แบบจำลองภัยคุกคาม](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ระบุว่าขอบเขตแต่ละชั้นป้องกันอะไรและไม่ป้องกันอะไร ตัวรันแบบคำสั่งเดียวยังไม่ถูกปล่อยออกมา วันนี้คำสั่งย่อยที่ใช้งานได้คือ `verify`, `browse`, `budget`, `verify-bundle` และ `hub` มีการลงทะเบียน `autopilot` แล้ว แต่จะปฏิเสธการทำงานจนกว่าจะมีการพัฒนา `TaskSource`
 
 ### เนื้อหาเชิงลึกนอกเหนือจากหน้าแรก
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
 
 เนื้อหาเชิงลึกทั้งหมดอยู่ใน [เว็บไซต์เอกสารคู่มือ](https://docs.bernstein.run/):
 
 | หน้า | สิ่งที่ครอบคลุม |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | รายการความสามารถทั้งหมด: โหมดเซิร์ฟเวอร์ MCP, การ์ดเอเจนต์ที่มีลายเซ็นกำกับ, แบ็กเอนด์แซนด์บ็อกซ์, ปลายทางบันทึกอาร์ติแฟกต์, การแมปตามข้อกำหนดกำกับดูแล |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | จุดที่สร้างคุณค่า และกรณีที่ Bernstein ไม่ใช่เครื่องมือที่เหมาะสม |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | YAML DAG แบบประกาศโครงสร้างของโหนด agent / command / loop |
@@ -266,16 +277,16 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | การทำงานเชิงลึกภายในระบบ |
 
 ### ที่มาของชื่อ?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
 
-Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกรและคีตกวีชาวอเมริกัน โครงการนี้กำกับดูแลทีมเอเจนต์ AI เหมือนที่ Bernstein อำนวยเพลงวง New York Philharmonic: ผู้เล่นทุกคนเข้าตรงจังหวะ โน้ตเพลงกำหนดผลลัพธ์แน่นอน และวาทยกรรับผิดชอบต่อผลงานในภาพรวม
+Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกรและคีตกวีชาวอเมริกัน ตัวประสานงานของโครงการนี้กำกับดูแลทีมเอเจนต์ AI เหมือนที่ Bernstein อำนวยเพลงวง New York Philharmonic: ผู้เล่นทุกคนเข้าตรงจังหวะ โน้ตเพลงกำหนดผลลัพธ์แน่นอน และวาทยกรรับผิดชอบต่อผลงานในภาพรวม
 
 ผมเขียน bernstein ขึ้นมาเพราะต้องจ่ายค่าบริการ claude เดือนละ $400 จากการรันเอเจนต์เขียนโค้ดสามตัวพร้อมกันแล้วได้ผลลัพธ์การรวมโค้ดที่ไม่แน่นอน ลิขสิทธิ์ Apache 2.0 ดูแลโดยผู้พัฒนาคนเดียว ดูสถิติสดได้ที่: [bernstein.run](https://bernstein.run)
 
 ### ได้รับการกล่าวถึงใน
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-มีรายชื่ออยู่ใน [vinta/awesome-python](https://github.com/vinta/awesome-python), ได้รับการนำเสนอในบทความรวม [ตัวประสานงานเอเจนต์โอเพนซอร์ส](https://www.augmentcode.com/tools/open-source-agent-orchestrators) ของ Augment Code และมีรายชื่อใน [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) นอกจากนี้เรายังได้บันทึกแนวทางนี้เป็นรูปแบบ [การประสานงานแบบกำหนดผลลัพธ์แน่นอนโดยไม่ใช้ LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) ใน awesome-agentic-patterns
+ได้รับการนำเสนอในบทความรวม [ตัวประสานงานเอเจนต์โอเพนซอร์ส](https://www.augmentcode.com/tools/open-source-agent-orchestrators) ของ Augment Code และมีรายชื่อใน [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) นอกจากนี้เรายังได้บันทึกแนวทางนี้เป็นรูปแบบ [การประสานงานแบบกำหนดผลลัพธ์แน่นอนโดยไม่ใช้ LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) ใน awesome-agentic-patterns
 
 <details>
 <summary>การกล่าวถึงทั้งหมด: กว่า 20 รายการ awesome list, ไดเรกทอรี, จดหมายข่าว และการอ้างอิงทางวิชาการ</summary>
@@ -286,9 +297,9 @@ Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกร
 </details>
 
 ### การรันงานบริหาร
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
-ใช้ `bernstein_run(template="administrative", goal="Weekly sprint")` เพื่อสร้างคอนเทนเนอร์ว่างที่มีบันทึกตรวจสอบ โดยไม่เริ่มตัววางแผนหรือโพรเซสเอเจนต์ เพิ่มงานด้วยตนเองผ่าน `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` และตรวจสอบสถานะด้วย `bernstein_run_status(run_id="admin-...")` งานยังรับผ่าน API ตามปกติได้ แต่จะไม่ถูกจัดการอัตโนมัติ การรันที่มีงานจะเสร็จเมื่อทุกงานมีสถานะ `done`, `closed` หรือ `cancelled` ส่วนการรันที่ว่างจะยังเปิดอยู่ [ขั้นตอนการปฏิบัติงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+การเรียกเหล่านี้ใช้เครื่องมือผ่านบริดจ์ MCP ในการเรียกครั้งต่อไป ให้ใช้ค่า `runId` ที่ได้รับกลับมาเป็น `run_id` ใช้ `bernstein_run(template="administrative", goal="Weekly sprint")` เพื่อสร้างคอนเทนเนอร์ว่างที่มีบันทึกตรวจสอบ โดยไม่เริ่มตัววางแผนหรือโพรเซสเอเจนต์ เพิ่มงานด้วยตนเองผ่าน `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` และตรวจสอบสถานะด้วย `bernstein_run_status(run_id="<returned runId>")` งานยังรับผ่าน API ตามปกติได้ แต่จะไม่ถูกจัดการอัตโนมัติ การรันที่มีงานจะเสร็จเมื่อทุกงานมีสถานะ `done`, `closed` หรือ `cancelled` ส่วนการรันที่ว่างจะยังเปิดอยู่ [ขั้นตอนการปฏิบัติงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### การมีส่วนร่วม, การสนับสนุน, ลิขสิทธิ์
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

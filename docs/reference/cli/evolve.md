@@ -8,6 +8,12 @@
 - **`bernstein evolve status`** - show the evolution history table.
 - **`bernstein evolve export [OUTPUT]`** - write a static HTML or Markdown report.
 
+`bernstein evolve review` shows evidence for pending proposals. Rollback
+results, when present, are recorded separately by the upgrade executor;
+see the [self-evolution decision record](../../decisions/003-self-evolution.md#component-4-execution-engine)
+for rollback outcomes and the on-disk receipts. Reviewing a proposal does
+not apply or roll back an upgrade.
+
 `bernstein evolve run` needs an initialised workspace. In a directory with no `.sdd/`, it exits before starting rather than creating state behind your back.
 
 ## Exporting a report

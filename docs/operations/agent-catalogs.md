@@ -33,6 +33,14 @@ for matching. Plugin agents use a matching priority of 100. The matcher
 compares loaded agents as described below. An entry with `enabled: false`
 is parsed but never loaded.
 
+The raw loader (`_parse_catalog_entry` in `src/bernstein/agents/catalog.py`)
+requires an explicit `type` and defaults an omitted `priority` to 50, as
+shown above. The separate `CatalogEntry` validation model in
+`src/bernstein/core/config/config_schema.py` supplies `type: agency` and
+`priority: 100` when those fields are omitted while constructing the model.
+These are defaults at different parsing entry points; the model defaults
+do not change the raw loader's requirements.
+
 ## The `plugin` catalog type
 
 Reads three on-disk shapes under `path`, matching what Claude Code itself

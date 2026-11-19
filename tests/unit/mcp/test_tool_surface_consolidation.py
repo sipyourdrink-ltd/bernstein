@@ -90,13 +90,12 @@ async def _call_json(mcp: Any, name: str, args: dict[str, Any]) -> Any:
 
 def _list_tools(mcp: Any) -> Any:
     """Invoke the low-level tools/list handler (what a client actually sees)."""
-    from mcp.types import ListToolsRequest
-
-    handler = mcp._mcp_server.request_handlers[ListToolsRequest]
+    entry = mcp._lowlevel_server.get_request_handler("tools/list")
+    assert entry is not None
 
     async def run() -> Any:
-        response = await handler(ListToolsRequest(method="tools/list"))
-        return response.root.tools
+        response = await entry.handler(None, None)
+        return response.tools
 
     return asyncio.run(run())
 

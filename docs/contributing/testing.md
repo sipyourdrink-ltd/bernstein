@@ -8,6 +8,30 @@ locally without waiting for the cloud runner.
 > harness MUST update this page in the same PR. See the project-wide
 > [Documentation duty](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md#docs-alongside-code) rule.
 
+## Workflow dispatch crash and restart characterization
+
+`tests/integration/test_workflow_dispatch_restart.py` uses the real
+workflow runner and task store with controlled POSIX local subprocesses and
+a command sentinel. Exercises resume before dispatch and after a launched attempt loses its acknowledgement or crashes before the terminal checkpoint. Invocation counters are backed by successful real-child launch preconditions outside expected failures, so fixture launch errors block the suite. The latter audit hook characterizes the current early node-finish behavior; it does not claim to cover an in-flight confirmed-dispatch checkpoint after a future completion implementation.
+
+Resume observation waits for dispatch return or run termination within the
+existing harness bound before checking launch preconditions. Positive controls
+delay real child startup beyond the observation window in both crash cases and
+require the precise proposed-contract gap after successful dispatch.
+
+Run `uv run pytest tests/integration/test_workflow_dispatch_restart.py -q`.
+The shared `tests/support/workflow_completion.py` fixture checks that a live
+child is observable, the command sentinel fires, and children are reaped.
+Every runner join must finish within the cleanup bound; a surviving runner
+causes an ordinary teardown error, with store disposal still guaranteed.
+A blocked-runner negative control verifies this failure remains outside
+expected-failure conversion and releases and joins its own runner afterward.
+Only explicitly reproduced proposed-contract assertions count as strict
+expected failures; an unexpected pass requires revisiting the contract test.
+A green characterization suite with expected failures does not implement
+workflow completion. Acceptance-evidence, loop and legacy-migration work
+remain separate (see #6639 and #6841).
+
 ## Tool ↔ bug-class matrix
 
 | Tool                        | Bug class                                                         | When                |
@@ -143,6 +167,22 @@ inherited `PYTHONPATH`. Only the limit-readback cases load the POSIX
 `resource` probe; the diagnostic remains tested on Windows without it.
 
 ## Run any of the above locally
+
+Choose the selector for the scope you need. The repository runner's `-k`
+is a literal substring filter on test file stems; it selects whole files.
+Pytest's `-k` instead evaluates a keyword expression against collected test
+cases. A node ID selects one specific case:
+
+```bash
+# Whole files whose stems contain quickstart_poll
+uv run python scripts/run_tests.py -k quickstart_poll
+
+# Cases matching a keyword expression within one file
+uv run pytest tests/unit/test_quickstart_poll.py -k 'exits_early and dict_shaped' -q
+
+# One exact case
+uv run pytest tests/unit/test_quickstart_poll.py::test_quickstart_poll_exits_early_on_the_dict_shaped_status_payload -q
+```
 
 ```bash
 # Identity anchoring, including a real two-process race against one audit dir

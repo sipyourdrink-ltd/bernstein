@@ -53,6 +53,10 @@ trackers:
 
 ## Pulling, commenting, transitioning
 
+The normalized `Ticket.id` is the ServiceNow record's `sys_id`. Its
+display `number` identifies the record in the user interface; it is
+available as `ticket.raw["number"]` and is not the adapter's record ID.
+
 ```python
 from bernstein.core.trackers import ServiceNowConfig, ServiceNowTracker
 
