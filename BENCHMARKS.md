@@ -12,6 +12,7 @@ This document records the canonical benchmark suites provided by `bernstein.eval
 | `goal-drift-v1` | Trajectory goal drift measurement across contract boundaries with planted distractions | `CTRL-GOAL-ALIGNMENT`, `ASI01` | 10 fixtures | unmeasured by default; supply `--trajectory` |
 | `collusion/1` | Cross-task collusion detection: paired change fixtures where each half passes its gate alone but the pair violates a stated invariant; flags name the invariant and both tasks and are recorded in the merge receipt (#5398) — eval suite only; live admission wiring is #5463 slice 2. Runs via the signed-bundle path (`bernstein.eval.bench.collusion_bundle`), not `bernstein bench run` | — | 10 paired fixtures (5 colluding + 5 benign) | 1.0 (100%) |
 | `leakage-v1` | Seeded canaries scanned on the bytes each output surface actually emits; five surfaces and four of five seed points driven, the rest need a governed run | — | 8 surfaces | zero hits on every exercised surface (today 1 of 5 clean, see `docs/eval/bench.md`) |
+| `self-conformance-bench-v1` | Actual benchmark-envelope verifier: five canonical mutations with a valid signed control per probe; no audit/journal-chain or runtime coverage claim | `CTL-ROB-01` measurement association | 5 probes | Each control must match and its named mutation must produce the expected rejection; this is not a release gate |
 
 ---
 
@@ -69,6 +70,16 @@ policy/version identifier, sample count and calibration quality metrics; absent
 or ambiguous calibration is unavailable and never changes the hard drift gate.
 See [recorded intent calibration](docs/eval/bench.md#recorded-intent-calibration).
 
+
+## Benchmark-envelope conformance (`self-conformance-bench-v1`)
+
+The suite measures receipt byte flips, signed-result reordering, result
+deletion, receipt reuse across typed fixture contexts and fixture signer trust
+removal. Inner keys are public test fixtures; the outer result uses ordinary
+installation signing and independently pinned verification. No model, network
+or runtime isolation measurement is involved. Full tamper-chain, determinism,
+isolation and chaos suites in #5451 remain open. See the
+[operator workflow](docs/operations/bench-envelope-conformance.md).
 
 ## Running and Verifying Benchmarks
 
