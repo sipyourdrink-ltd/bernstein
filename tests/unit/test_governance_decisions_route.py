@@ -52,18 +52,18 @@ def _snapshot(root: Path) -> dict[str, bytes | None]:
     return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
 
 
-def _budget_refusal(workdir: Path) -> tuple[SpendLedger, Path]:
+def _budget_refusal(workdir: Path, *, prior_spend: float = 9.0) -> tuple[SpendLedger, Path]:
     path = workdir / ".sdd" / "cost" / "ledger.jsonl"
     path.parent.mkdir(parents=True)
     ledger = SpendLedger(path=path)
-    ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=9.0)
+    ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=prior_spend)
     with pytest.raises(governance.BudgetRefused):
         governance.check_budget_decision(
             run_id="run-1",
             lineage_root=workdir / ".sdd" / "lineage",
             hmac_key=b"synthetic-test-key-only",
             subject="alice",
-            cap_usd=10.0,
+            cap_usd=prior_spend + 1.0,
             next_cost_usd=2.0,
             ledger_path=path,
             now=1000,
@@ -250,6 +250,50 @@ def test_ledger_open_refusal_is_unavailable(tmp_path: Path, monkeypatch: pytest.
     (row,) = _list(_client(tmp_path))["decisions"]
     assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
     assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
+@pytest.mark.parametrize("alias_state", ["absent", "different-file"])
+def test_unusable_descriptor_alias_never_verifies_zero_spend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, alias_state: str
+) -> None:
+    _budget_refusal(tmp_path, prior_spend=0.0)
+    client = _client(tmp_path)
+    (normal,) = _list(client)["decisions"]
+    assert normal["budget"]["prior_spend_usd"]["state"] == "verified"
+    alias = tmp_path / "descriptor-view"
+    if alias_state == "different-file":
+        alias.write_text("")
+
+    class DescriptorView:
+        def __truediv__(self, name: str) -> Path:
+            return alias
+
+    monkeypatch.setattr(routes, "Path", lambda name: DescriptorView())
+    (row,) = _list(client)["decisions"]
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
+@pytest.mark.parametrize("stage", ["parsing", "serialization"])
+def test_nesting_failure_returns_controlled_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    _record(tmp_path)
+    original = json.dumps
+
+    def fail_parsing(value: object, *args: object, **kwargs: object) -> object:
+        raise RecursionError("simulated parser nesting limit")
+
+    def fail_serialization(value: object, *args: object, **kwargs: object) -> str:
+        if isinstance(value, dict) and "subject" in value:
+            raise RecursionError("simulated serializer nesting limit")
+        return original(value, *args, **kwargs)
+
+    if stage == "parsing":
+        monkeypatch.setattr(routes.json, "loads", fail_parsing)
+    else:
+        monkeypatch.setattr(routes.json, "dumps", fail_serialization)
+    client = _client(tmp_path)
+    for route in ("/governance/decisions", "/governance/decisions/unknown"):
+        assert client.get(route, params={"run_id": "run-1"}).status_code == 409
 
 
 def test_public_schema_matches_response_models() -> None:

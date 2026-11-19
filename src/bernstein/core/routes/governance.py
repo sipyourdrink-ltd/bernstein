@@ -103,6 +103,13 @@ def _finite_usd(value: Any) -> float | None:
     return result if math.isfinite(result) and result >= 0 else None
 
 
+def _check_descriptor_view(path: Path, fd: int) -> None:
+    """Require a readable alias for this exact open file, not a missing path."""
+    with path.open("rb", buffering=0) as bridge:
+        if not os.path.samestat(os.fstat(fd), os.fstat(bridge.fileno())):
+            raise OSError("descriptor view names a different file")
+
+
 def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Path) -> BudgetEvidence:
     cap = _finite_usd(record.context.get("cap_usd"))
     next_cost = _finite_usd(record.context.get("next_cost_usd"))
@@ -119,6 +126,7 @@ def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Pa
             # the same descriptor through /dev/fd, never a re-resolved pathname.
             with os.fdopen(fd, "rb", buffering=0) as stream:
                 ledger = Path("/dev/fd") / str(stream.fileno())
+                _check_descriptor_view(ledger, stream.fileno())
                 before = stream.read()
                 stream.seek(0)
                 problem = recorded_governance._verify_budget_row(record, ledger)
@@ -126,6 +134,7 @@ def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Pa
                 candidate = recorded_governance.seat_spend(ledger, record.subject, dimension=dimension)
                 stream.seek(0)
                 after = stream.read()
+                _check_descriptor_view(ledger, stream.fileno())
             if before != after:
                 reason = "Ledger changed while projecting budget inputs."
             elif not math.isfinite(candidate):
@@ -137,7 +146,7 @@ def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Pa
                 state = "verified"
                 reason = "Existing budget verifier matched the recorded inputs hash and verdict."
                 prior = candidate
-        except (OSError, ValueError, TypeError, HTTPException):
+        except (OSError, ValueError, TypeError, OverflowError, AttributeError, RecursionError):
             reason = "Ledger evidence is unavailable."
 
     return BudgetEvidence(
@@ -228,7 +237,7 @@ def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
                     budget=_budget_evidence(record, workdir) if record.action == "budget" else None,
                 )
             )
-    except (OSError, ValueError, TypeError, AttributeError, OverflowError) as exc:
+    except (OSError, ValueError, TypeError, AttributeError, OverflowError, RecursionError) as exc:
         logger.warning("Cannot read recorded governance decisions: %s", type(exc).__name__)
         raise HTTPException(status_code=409, detail="recorded decisions are unreadable") from None
     return RecordedDecisions(run_id=run_id, decisions=decisions)
