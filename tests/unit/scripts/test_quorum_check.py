@@ -81,6 +81,8 @@ def _pr(
         reviews=reviews or [],
         contributors=contributors if contributors is not None else {author},
         last_push=NOW - timedelta(hours=pushed_hours_ago),
+        commit_authors=frozenset({author}),
+        commit_authors_complete=True,
     )
 
 
@@ -387,6 +389,95 @@ def test_a_pull_request_from_the_workflow_account_needs_the_maintainer(qc: Modul
 
 def test_the_maintainers_own_change_merges_without_approvals(qc: ModuleType, roster) -> None:
     assert _evaluate(qc, roster, _pr(qc, author="owner", contributors={"owner"})).passed
+
+
+def _carried_pr(qc: ModuleType, *, commit_author: str = "outsider", message: str = "change", reviews=None):
+    commit = _raw_commit(SHA_A, commit_author, committer="owner", message=message)
+    fake = FakeGitHub(
+        commits=[commit],
+        compares={SHA_A: _compare([commit])},
+        author="owner",
+        reviews=reviews,
+        paths=["src/bernstein/core/security/example.py"],
+    )
+    return _fetch(qc, fake)
+
+
+def test_maintainer_carried_outside_commit_needs_sensitive_quorum(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc)
+    verdict = qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW)
+    assert not verdict.passed
+    assert any("3 approvals, 2 from a core reviewer" in req.text for req in verdict.requirements)
+
+
+def test_maintainer_carried_outside_commit_passes_with_independent_quorum(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc, reviews=[_raw_review(who, SHA_A) for who in ("core1", "core2", "comm1")])
+    assert qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW).passed
+
+
+def test_maintainer_coauthor_credit_alone_does_not_change_rule(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(
+        qc, commit_author="owner", message="change\n\nCo-authored-by: guest <guest@users.noreply.github.com>"
+    )
+    assert "guest" in pr.contributors
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_maintainer_carrying_roster_commit_does_not_change_rule(qc: ModuleType, roster) -> None:
+    assert _evaluate(qc, roster, _carried_pr(qc, commit_author="comm1")).passed
+
+
+def test_maintainer_builtin_workflow_commit_does_not_change_rule(qc: ModuleType, roster) -> None:
+    assert _evaluate(qc, roster, _carried_pr(qc, commit_author=qc.GITHUB_ACTIONS_BOT)).passed
+
+
+@pytest.mark.parametrize("gap", ["count", "head", "missing_count", "limit"])
+def test_incomplete_author_evidence_holds_even_with_approvals(qc: ModuleType, roster, gap: str) -> None:
+    commits = [_raw_commit(SHA_A, "owner", committer="owner")]
+    if gap == "limit":
+        commits = [_raw_commit(f"{index:040x}", "owner") for index in range(qc.PR_COMMIT_LIMIT)]
+    fake = FakeGitHub(
+        commits=commits,
+        compares={},
+        author="owner",
+        paths=["src/bernstein/core/security/example.py"],
+        reviews=[_raw_review(who, commits[-1]["sha"]) for who in ("core1", "core2", "comm1")],
+    )
+
+    def api(*args):
+        result = fake(*args)
+        if args[1] == f"repos/{REPO}/pulls/1":
+            if gap == "count":
+                result["commits"] = len(commits) + 1
+            elif gap == "head":
+                result["head"]["sha"] = SHA_B
+            elif gap == "missing_count":
+                result.pop("commits", None)
+        return result
+
+    pr = qc.fetch_pull_request(REPO, 1, api=api)
+    verdict = qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW)
+    assert not verdict.passed
+    assert any("complete commit-author evidence" in req.text and not req.met for req in verdict.requirements)
+
+
+def test_maintainer_unlinked_commit_author_needs_quorum(qc: ModuleType, roster) -> None:
+    assert not _evaluate(qc, roster, _carried_pr(qc, commit_author="")).passed
+
+
+def test_carried_outside_commit_keeps_governance_window(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc, reviews=[_raw_review(who, SHA_A) for who in ("core1", "core2", "comm1")])
+    pr.paths = ["GOVERNANCE.md"]
+    verdict = qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW)
+    assert not verdict.passed
+    assert any("72 hours" in req.text and not req.met for req in verdict.requirements)
+
+
+def test_maintainer_carried_outside_commit_keeps_owner_requirement(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc, reviews=[_raw_review(who, SHA_A) for who in ("core1", "core2", "comm1")])
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("approval from the owner" in req.text and not req.met for req in verdict.requirements)
 
 
 def test_a_committer_can_block_the_maintainer(qc: ModuleType, roster) -> None:
@@ -1007,6 +1098,7 @@ class FakeGitHub:
                 "base": {"ref": "main"},
                 "additions": 60,
                 "deletions": 40,
+                "commits": len(self.commits),
             }
         if endpoint == f"repos/{REPO}/pulls/1/files":
             return [{"filename": path} for path in self.paths]
@@ -1193,6 +1285,10 @@ def test_a_maintainer_content_commit_keeps_them_out(qc: ModuleType, roster) -> N
 def _governance(fake: FakeGitHub) -> FakeGitHub:
     fake.author = "owner"
     fake.paths = ["GOVERNANCE.md"]
+    # Isolate the objection-window rule from outside-commit quorum tests.
+    for commit in fake.commits:
+        commit["author"] = {"login": "owner"}
+        commit["committer"] = {"login": "owner"}
     return fake
 
 
