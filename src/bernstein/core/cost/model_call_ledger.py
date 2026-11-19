@@ -56,6 +56,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from bernstein.core.persistence.file_locks import cross_process_lock
+
 MODEL_CALL_SCHEMA_VERSION = 1
 """Schema version stamped on every row this module writes."""
 
@@ -372,6 +374,7 @@ class ModelCallLedger:
     def __init__(self, sdd_dir: Path) -> None:
         self._sdd_dir = sdd_dir
         self._path = sdd_dir / "runtime" / "model_calls.jsonl"
+        self._lock_path = self._path.with_suffix(".lock")
         self._records: list[ModelCallRecord] = []
         self._refusals: list[TransitionRefusal] = []
         self._loaded = False
@@ -503,6 +506,13 @@ class ModelCallLedger:
             InvalidStatusTransitionError: *to_status* is not reachable
                 from ``record.status``.
         """
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            current = self.get_record(record.id) or record
+            return self._transition(current, to_status)
+
+    def _transition(self, record: ModelCallRecord, to_status: ModelCallStatus) -> ModelCallRecord:
+        """Apply the status graph while the caller holds the ledger lock."""
         if to_status not in _ALLOWED_TRANSITIONS[record.status]:
             refusal = TransitionRefusal(
                 record_id=record.id,
@@ -680,18 +690,31 @@ class ModelCallLedger:
         output_text: str = "",
         error: str = "",
     ) -> ModelCallRecord:
-        """Finalize a ``running`` record to ``succeeded`` or ``failed``."""
+        """Finalize a running call, refusing stale terminal snapshots."""
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            current = self.get_record(running.id) or running
+            return self._finish_call(current, output_text=output_text, error=error)
+
+    def _finish_call(
+        self,
+        running: ModelCallRecord,
+        *,
+        output_text: str,
+        error: str,
+    ) -> ModelCallRecord:
+        """Check and persist a terminal transition under the ledger lock."""
         if error:
             terminal = replace(
-                self.transition(running, "failed"),
+                self._transition(running, "failed"),
                 error=error,
             )
         else:
             terminal = replace(
-                self.transition(running, "succeeded"),
+                self._transition(running, "succeeded"),
                 output_text=output_text,
             )
-        self._store(terminal)
+        self._store_locked(terminal)
         return terminal
 
     def finalize_call(
@@ -709,12 +732,14 @@ class ModelCallLedger:
         """
         if not record_id:
             return None
-        current = self.get_record(record_id)
-        if current is None:
-            return None
-        if current.status in ("succeeded", "failed"):
-            return current
-        return self.finish_call(current, output_text=output_text, error=error)
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            current = self.get_record(record_id)
+            if current is None:
+                return None
+            if current.status in ("succeeded", "failed"):
+                return current
+            return self._finish_call(current, output_text=output_text, error=error)
 
     def invoke_adapter(
         self,
@@ -784,7 +809,13 @@ class ModelCallLedger:
         self._records.append(record)
 
     def _store(self, record: ModelCallRecord) -> None:
-        """Append *record* to memory (updating by id) and to the JSONL file."""
+        """Serialize record appends with terminal load/check/write operations."""
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            self._store_locked(record)
+
+    def _store_locked(self, record: ModelCallRecord) -> None:
+        """Append a row while the caller holds the ledger lock."""
         self._ensure_loaded()
         self._upsert_in_memory(record)
         self._append_row({"kind": _ROW_KIND_RECORD, "record": record.to_dict()})
