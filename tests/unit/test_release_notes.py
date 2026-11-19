@@ -47,6 +47,13 @@ def project_with_release_notes(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture()
+def project_with_prerelease_notes(project_with_release_notes: Path) -> Path:
+    notes = project_with_release_notes / "docs" / "release-notes"
+    (notes / "v4.0.0-rc1.md").write_text("# v4.0.0-rc1\n- release candidate\n", encoding="utf-8")
+    return project_with_release_notes
+
+
 # --- TestFetchRemote ---
 
 
@@ -134,6 +141,25 @@ class TestFetchReleaseNotes:
     def test_falls_back_to_local_release_notes(self, project_with_release_notes: Path) -> None:
         with patch("bernstein.cli.release_notes._fetch_remote", return_value=None):
             result = fetch_release_notes(workdir=project_with_release_notes)
+        assert "newest release" in result
+
+    def test_offline_prerelease_uses_its_exact_notes(self, project_with_prerelease_notes: Path) -> None:
+        with (
+            patch("bernstein.cli.release_notes.installed_version", return_value="4.0.0-rc1"),
+            patch("bernstein.cli.release_notes._fetch_remote", return_value=None),
+        ):
+            result = fetch_release_notes(workdir=project_with_prerelease_notes)
+        assert "release candidate" in result
+
+    @pytest.mark.parametrize("version", ["3.9.0", "4.0.0-rc2"])
+    def test_offline_without_matching_prerelease_uses_latest_stable(
+        self, project_with_prerelease_notes: Path, version: str
+    ) -> None:
+        with (
+            patch("bernstein.cli.release_notes.installed_version", return_value=version),
+            patch("bernstein.cli.release_notes._fetch_remote", return_value=None),
+        ):
+            result = fetch_release_notes(workdir=project_with_prerelease_notes)
         assert "newest release" in result
 
     def test_falls_back_to_local(self, project_with_changelog: Path) -> None:
