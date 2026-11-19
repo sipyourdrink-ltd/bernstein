@@ -277,9 +277,9 @@ Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernste
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | hoe het onder de motorkap werkt |
 
 ### waarom deze naam?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componist. De orkestrator van het project bestuurt een team van AI-agents zoals Bernstein het New York Philharmonic dirigeerde: elke muzikant op het juiste moment, de partituur deterministisch, de dirigent verantwoordelijk voor het eindresultaat.
+Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componist. De orkestrator van het project bestuurt een team van AI-agents zoals Bernstein het New York Philharmonic dirigeerde: elke muzikant op het juiste moment, de partituur deterministisch, de dirigent verantwoordelijk voor het eindresultaat. De dirigentenmetafoor beschrijft Bernsteins vermogen om agenttaken te orkestreren die code, onderzoeksrapporten of datasets opleveren.
 
 ik heb bernstein geschreven omdat ik maandelijks $400 aan claude-rekeningen betaalde door drie coding-agents parallel te draaien en niet-deterministische merges kreeg. Apache 2.0, onderhouden door één persoon. Live statistieken: [bernstein.run](https://bernstein.run).
 

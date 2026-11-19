@@ -277,9 +277,9 @@ Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | cómo funciona por dentro |
 
 ### ¿por qué este nombre?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein lleva el nombre de Leonard Bernstein, el director de orquesta y compositor estadounidense. El orquestador del proyecto coordina un equipo de agentes de IA de la misma manera que Bernstein dirigía la Filarmónica de Nueva York: cada músico a tiempo, la partitura determinista, el director responsable del resultado.
+Bernstein lleva el nombre de Leonard Bernstein, el director de orquesta y compositor estadounidense. El orquestador del proyecto coordina un equipo de agentes de IA de la misma manera que Bernstein dirigía la Filarmónica de Nueva York: cada músico a tiempo, la partitura determinista, el director responsable del resultado. La metáfora del director describe la capacidad de orquestación de Bernstein para tareas de agentes que producen código, informes de investigación o conjuntos de datos.
 
 escribí bernstein porque pagaba $400 al mes en facturas de claude ejecutando tres agentes de codificación en paralelo y obteniendo merges no deterministas. Apache 2.0, mantenido por una sola persona. Estadísticas en vivo: [bernstein.run](https://bernstein.run).
 

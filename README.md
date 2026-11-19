@@ -284,7 +284,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 
 ### why the name?
 
-Bernstein is named after Leonard Bernstein, the American conductor and composer. The orchestrator coordinates a crew of AI agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result.
+Bernstein is named after Leonard Bernstein, the American conductor and composer. The orchestrator coordinates a crew of AI agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result. The conductor metaphor describes Bernstein's orchestration capability for agent workloads that produce code, research reports, or datasets.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
 

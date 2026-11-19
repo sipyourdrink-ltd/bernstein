@@ -277,9 +277,9 @@ Alle weiterführenden Details finden sich auf der [Dokumentations-Website](https
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | technische Funktionsweise im Detail |
 
 ### warum dieser Name?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein ist nach Leonard Bernstein benannt, dem US-amerikanischen Dirigenten und Komponisten. Der Orchestrator des Projekts steuert ein Ensemble von KI-Agenten so, wie Bernstein die New Yorker Philharmoniker dirigierte: Jeder Musiker auf den Punkt, die Partitur deterministisch, der Dirigent für das Gesamtergebnis verantwortlich.
+Bernstein ist nach Leonard Bernstein benannt, dem US-amerikanischen Dirigenten und Komponisten. Der Orchestrator des Projekts steuert ein Ensemble von KI-Agenten so, wie Bernstein die New Yorker Philharmoniker dirigierte: Jeder Musiker auf den Punkt, die Partitur deterministisch, der Dirigent für das Gesamtergebnis verantwortlich. Die Dirigentenmetapher beschreibt Bernsteins Fähigkeit zur Orchestrierung von Agentenaufgaben, die Code, Forschungsberichte oder Datensätze erzeugen.
 
 Ich habe Bernstein entwickelt, weil ich monatlich 400 $ für Claude-Rechnungen zahlte, während drei parallele Coding-Agenten nichtdeterministische Merge-Konflikte erzeugten. Apache 2.0, von einer Einzelperson gepflegt. Live-Statistiken: [bernstein.run](https://bernstein.run).
 

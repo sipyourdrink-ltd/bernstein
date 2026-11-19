@@ -277,9 +277,9 @@ All fördjupad information finns på [dokumentationswebbplatsen](https://docs.be
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | hur det fungerar under huven |
 
 ### varför namnet?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein är uppkallat efter Leonard Bernstein, den amerikanske dirigenten och kompositören. Projektets orkestrerare styr en ensemble av AI-agenter på samma sätt som Bernstein ledde New York Philharmonic: varje musiker på rätt insats, partituret deterministiskt, dirigenten ansvarig för slutresultatet.
+Bernstein är uppkallat efter Leonard Bernstein, den amerikanske dirigenten och kompositören. Projektets orkestrerare styr en ensemble av AI-agenter på samma sätt som Bernstein ledde New York Philharmonic: varje musiker på rätt insats, partituret deterministiskt, dirigenten ansvarig för slutresultatet. Dirigentmetaforen beskriver Bernsteins förmåga att orkestrera agentuppgifter som producerar kod, forskningsrapporter eller datamängder.
 
 jag skrev bernstein eftersom jag betalade 400 dollar i månaden i claude-räkningar för att köra tre kodningsagenter parallellt och fick icke-deterministiska sammanslagningar. Apache 2.0, underhålls av en person. Realtidsstatistik: [bernstein.run](https://bernstein.run).
 

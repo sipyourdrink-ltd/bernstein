@@ -277,9 +277,9 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | sistemin iç mekanizması ve çalışma prensibi |
 
 ### neden bu isim?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Projenin orkestratörü, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur.
+Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Projenin orkestratörü, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur. Orkestra şefi benzetmesi, Bernstein’ın kod, araştırma raporları veya veri kümeleri üreten ajan görevlerini orkestre etme yeteneğini anlatır.
 
 bernstein'ı yazdım çünkü üç kodlama ajanını paralel çalıştırıp deterministik olmayan birleştirmeler alırken ayda 400 dolar claude faturası ödüyordum. Apache 2.0, tek kişi tarafından sürdürülmektedir. Canlı istatistikler: [bernstein.run](https://bernstein.run).
 

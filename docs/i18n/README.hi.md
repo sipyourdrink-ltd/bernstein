@@ -277,9 +277,9 @@ bernstein volunteer browse --budget 60
 | [आर्किटेक्चर](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | अंदर यह कैसे काम करता है |
 
 ### यह नाम क्यों?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein का नाम अमेरिकी कंडक्टर और संगीतकार लियोनार्ड बर्नस्टीन पर रखा गया है। इस प्रोजेक्ट का ऑर्केस्ट्रेटर AI एजेंटों की टोली को ठीक वैसे नियंत्रित करता है जैसे बर्नस्टीन न्यूयॉर्क फ़िलहार्मोनिक को संचालित करते थे: हर वादक अपने संकेत पर, स्कोर डिटर्मिनिस्टिक, और कंडक्टर नतीजे के लिए जवाबदेह।
+Bernstein का नाम अमेरिकी कंडक्टर और संगीतकार लियोनार्ड बर्नस्टीन पर रखा गया है। इस प्रोजेक्ट का ऑर्केस्ट्रेटर AI एजेंटों की टोली को ठीक वैसे नियंत्रित करता है जैसे बर्नस्टीन न्यूयॉर्क फ़िलहार्मोनिक को संचालित करते थे: हर वादक अपने संकेत पर, स्कोर डिटर्मिनिस्टिक, और कंडक्टर नतीजे के लिए जवाबदेह। कंडक्टर का यह रूपक कोड, शोध रिपोर्ट या डेटासेट बनाने वाले एजेंट कार्यों को ऑर्केस्ट्रेट करने की Bernstein की क्षमता बताता है।
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, अकेले मेंटेन किया जाता है। लाइव आँकड़े: [bernstein.run](https://bernstein.run)।
 
