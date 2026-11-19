@@ -851,14 +851,15 @@ def finalize_session_model_call(
     session: Any,
     *,
     error: str = "",
+    execution_succeeded: bool = False,
 ) -> ModelCallRecord | None:
-    """Idempotently finalize ``session.model_call_id`` in ``ModelCallLedger``."""
+    """Finalize a session, separating known success from process-stop metadata."""
     model_call_id = getattr(session, "model_call_id", "")
     if not isinstance(model_call_id, str) or not model_call_id:
         return None
 
     resolved_error = error
-    if not resolved_error:
+    if not resolved_error and not execution_succeeded:
         abort_reason = getattr(session, "abort_reason", "")
         abort_detail = getattr(session, "abort_detail", "")
         exit_code = getattr(session, "exit_code", None)

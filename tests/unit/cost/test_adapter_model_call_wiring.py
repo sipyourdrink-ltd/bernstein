@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
@@ -321,3 +323,65 @@ def test_cli_model_call_invoke_replay_list_show_with_registered_adapter(tmp_path
     finally:
         _ADAPTERS.pop("direct-test", None)
         _ADAPTERS.pop("spawn-only-test", None)
+
+
+def _refresh_dead_session(tmp_path: Path, session: Any) -> None:
+    from bernstein.core.agents.agent_lifecycle import refresh_agent_states
+
+    spawner = MagicMock()
+    spawner.check_alive.return_value = False
+    orch = SimpleNamespace(
+        _workdir=tmp_path,
+        _agents={session.id: session},
+        _spawner=spawner,
+        _agent_failure_timestamps={},
+        _rate_limit_tracker=None,
+        _signal_mgr=MagicMock(),
+        _crash_counts={},
+        _spawn_failures={},
+        _SPAWN_BACKOFF_MAX_S=60,
+        _MAX_DEAD_AGENTS_KEPT=10,
+        _processed_done_tasks={},
+        _MAX_PROCESSED_DONE=10,
+    )
+    with ExitStack() as stack:
+        for name in (
+            "_capture_agent_crash",
+            "_propagate_abort_to_children",
+            "_release_file_ownership",
+            "_release_task_to_session",
+            "_preserve_runner_logs",
+            "_write_retry_checkpoint",
+            "_dispose_dead_worktree",
+            "_reevaluate_pending_death_judgments",
+            "_release_orphaned_file_locks",
+        ):
+            stack.enter_context(patch(f"bernstein.core.agents.agent_lifecycle.{name}"))
+        refresh_agent_states(orch, {})
+
+
+def test_refresh_clean_exit_preserves_successful_call(tmp_path: Path) -> None:
+    from bernstein.core.models import AgentSession
+
+    log = tmp_path / "agent.log"
+    log.write_text("completed output\n")
+    call = ModelCallLedger(tmp_path / ".sdd").begin_call(
+        capability_id="agent.spawn",
+        adapter_id="fake",
+        model="fake",
+    )
+    session = AgentSession(
+        id="clean-exit",
+        role="backend",
+        task_ids=[],
+        model_config=ModelConfig("fake", "high"),
+        exit_code=0,
+        log_path=str(log),
+        model_call_id=call.id,
+    )
+    _refresh_dead_session(tmp_path, session)
+    assert session.status == "dead"
+    final = ModelCallLedger(tmp_path / ".sdd").get_record(call.id)
+    assert final is not None
+    assert final.status == "succeeded"
+    assert final.output_text == "completed output\n"

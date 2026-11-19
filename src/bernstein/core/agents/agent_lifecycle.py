@@ -643,7 +643,7 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     if isinstance(workdir, Path):
         from bernstein.core.cost.model_call_ledger import finalize_session_model_call
 
-        finalize_session_model_call(workdir / ".sdd", session)
+        finalize_session_model_call(workdir / ".sdd", session, execution_succeeded=session.exit_code == 0)
 
 
 def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> None:
