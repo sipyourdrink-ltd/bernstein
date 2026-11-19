@@ -7657,6 +7657,9 @@ class AgentSpawner:
                 abort_detail=detail,
                 finish_reason="kill_requested",
             )
+        from bernstein.core.cost.model_call_ledger import finalize_session_model_call
+
+        finalize_session_model_call(self._workdir / ".sdd", session, error=session.abort_detail or detail)
         try:
             TeamStateStore(self._workdir / ".sdd").on_kill(session.id)
         except Exception as _ts_exc:

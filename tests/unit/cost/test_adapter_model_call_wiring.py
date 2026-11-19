@@ -408,3 +408,33 @@ def test_completed_call_survives_cleanup_termination(tmp_path: Path, make_task, 
     assert record is not None
     assert record.status == "succeeded"
     assert "agent completed cleanly" in record.output_text
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_forced_stop_finalizes_without_worktree(tmp_path: Path, make_task, timed_out: bool) -> None:
+    from bernstein.core.models import AbortReason
+
+    adapter = _SpawnOnlyTestAdapter()
+    spawner = AgentSpawner(
+        adapter,
+        tmp_path / "templates",
+        tmp_path,
+        use_worktrees=False,
+        default_model="fake",
+    )
+    session = spawner.spawn_for_tasks([make_task(role="backend")])
+    if timed_out:
+        session.status = "dead"
+        session.abort_reason = AbortReason.TIMEOUT
+        session.abort_detail = "timeout budget exceeded"
+        session.exit_code = 124
+    with patch.object(adapter, "kill"):
+        spawner.kill(session)
+    _refresh_dead_session(tmp_path, session)
+    record = ModelCallLedger(tmp_path / ".sdd").get_record(session.model_call_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert record.error == ("timeout budget exceeded" if timed_out else "local process kill requested by orchestrator")
+    with patch.object(adapter, "kill"):
+        spawner.kill(session)
+    assert ModelCallLedger(tmp_path / ".sdd").get_record(session.model_call_id) == record
