@@ -32,7 +32,7 @@ SYSTEM_DESCRIPTION: Final[str] = (
     "The governance layer for AI agents. A deterministic scheduler - no model in the "
     "coordination loop - runs agents in parallel, gates what they produce, and records "
     "every step, so a run can be verified after the fact, offline, from the artifacts "
-    "alone. CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more) work out of "
+    "alone. CLI coding agents (Claude Code, Codex, Gemini CLI and others) work out of "
     "the box, and the same layer governs any agent workload. It is governance "
     "middleware, not a decision-making AI system."
 )

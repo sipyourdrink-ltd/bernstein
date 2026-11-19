@@ -35,9 +35,10 @@ from bernstein.core.protocols.cluster.cluster_tls import (
     TLSConfig,
     build_httpx_client_kwargs,
 )
+from bernstein.core.protocols.cluster.shard_ring import NodeShardStorage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, MutableMapping
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,9 @@ class NodeRegistry:
     """
 
     def __init__(self, config: ClusterConfig, persist_path: Path | None = None) -> None:
-        self._nodes: dict[str, NodeInfo] = {}
+        self._nodes: MutableMapping[str, NodeInfo] = (
+            NodeShardStorage(config.shards, config.shard_vnodes) if config.shards else {}
+        )
         self._config = config
         self._persist_path = persist_path
         if persist_path is not None:

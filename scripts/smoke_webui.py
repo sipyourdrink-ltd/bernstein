@@ -460,6 +460,10 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
     saved_ids: list[str] = []
     pending_create: list[Route] = []
     pending_check: list[Route] = []
+    release_create = False
+
+    def lose_create_response(route: Route) -> None:
+        route.fulfill(status=500, json={"detail": "The task response could not be delivered."})
 
     def respond_to_create(route: Route) -> None:
         response = route.fetch()
@@ -468,6 +472,8 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
         assert route.request.post_data_json["id"] == task_id
         saved_ids.append(task_id)
         pending_create.append(route)
+        if release_create:
+            lose_create_response(route)
 
     page.goto(f"{base}/ui/tasks")
     page.get_by_role("button", name="Failed").click()
@@ -489,9 +495,13 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
             page.keyboard.press(key)
             expect(submit).to_be_focused()
         expect(page.get_by_role("dialog", name="Command palette")).to_have_count(0)
-        assert len(saved_ids) == len(pending_create) == 1
-        pending_create[0].fulfill(status=500, json={"detail": "The task response could not be delivered."})
+        # Busy-state checks can finish before route.fetch() returns. Release a
+        # ready response now, or let the handler release it when the save ends.
+        release_create = True
+        if pending_create:
+            lose_create_response(pending_create[0])
         expect(form.get_by_role("alert")).to_contain_text("Check the task before retrying")
+        assert len(saved_ids) == len(pending_create) == 1
         task_url = f"{tasks_url}/{saved_ids[0]}"
         page.route(task_url, lambda route: pending_check.append(route), times=1)
         check = form.get_by_role("button", name="Check task", exact=True)
