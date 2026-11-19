@@ -231,6 +231,7 @@ class TestResumeSpawnWiring:
         from bernstein.adapters.base import CLIAdapter, SpawnResult
 
         adapter = MagicMock(spec=CLIAdapter)
+        adapter.name.return_value = "stateless-test"
         adapter.spawn.return_value = SpawnResult(pid=200, proc=None, log_path=None)
         adapter.is_alive.return_value = True
         adapter.is_rate_limited.return_value = False

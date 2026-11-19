@@ -3629,24 +3629,45 @@ class AgentSpawner:
         """
         if self._runtime_bridge is None:
             return False
-        bridge_status: AgentStatus = self._run_bridge_call(
-            self._runtime_bridge.spawn(
-                SpawnRequest(
-                    agent_id=session.id,
-                    image="openclaw-agent",
-                    command=[],
-                    prompt=prompt,
-                    workdir=str(spawn_cwd),
-                    timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-                    log_path=str(preferred_log_path),
-                    role=session.role,
-                    model=model_config.model,
-                    effort=model_config.effort,
-                    labels={"session_id": session.id},
+        from bernstein.core.cost.model_call_ledger import begin_adapter_call, finalize_session_model_call
+
+        record = begin_adapter_call(
+            self._workdir / ".sdd",
+            adapter=self._runtime_bridge,
+            capability_id=f"agent.{session.role}" if session.role else "agent.spawn",
+            adapter_id=self._runtime_bridge.name(),
+            model=model_config.model,
+            parameters={
+                "effort": model_config.effort,
+                "timeout_seconds": session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+            },
+            input_text=prompt,
+            journal_entry_id=session.task_ids[0] if session.task_ids else "",
+        )
+        session.model_call_id = record.id
+        try:
+            bridge_status: AgentStatus = self._run_bridge_call(
+                self._runtime_bridge.spawn(
+                    SpawnRequest(
+                        agent_id=session.id,
+                        image="openclaw-agent",
+                        command=[],
+                        prompt=prompt,
+                        workdir=str(spawn_cwd),
+                        timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                        log_path=str(preferred_log_path),
+                        role=session.role,
+                        model=model_config.model,
+                        effort=model_config.effort,
+                        labels={"session_id": session.id},
+                    )
                 )
             )
-        )
+        except BaseException as exc:
+            finalize_session_model_call(self._workdir / ".sdd", session, error=f"{type(exc).__name__}: {exc}")
+            raise
         if not isinstance(bridge_status, object):
+            finalize_session_model_call(self._workdir / ".sdd", session, error="bridge did not accept spawn")
             return False
         session.runtime_backend = self._runtime_bridge.name()
         session.pid = None
@@ -6324,7 +6345,25 @@ class AgentSpawner:
                 raise SpawnError(
                     f"Cannot hand preserved worktree {preserved_path} to resume session {session_id}: {exc}"
                 ) from exc
+        from bernstein.core.cost.model_call_ledger import begin_adapter_call, finalize_session_model_call
+
         try:
+            record = begin_adapter_call(
+                self._workdir / ".sdd",
+                adapter=resume_adapter,
+                capability_id=f"agent.{session.role}" if session.role else "agent.spawn",
+                adapter_id=resume_adapter.name(),
+                model=model_config.model,
+                parameters={
+                    "effort": model_config.effort,
+                    "timeout_seconds": session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                    "task_scope": resume_scope,
+                    "budget_multiplier": 1.0,
+                },
+                input_text=prompt,
+                journal_entry_id=tasks[0].id,
+            )
+            session.model_call_id = record.id
             result = resume_adapter.spawn(
                 prompt=prompt,
                 workdir=worktree_path,
@@ -6335,7 +6374,8 @@ class AgentSpawner:
                 system_addendum=_resume_addendum,
                 **_resume_extra,
             )
-        except BaseException:
+        except BaseException as exc:
+            finalize_session_model_call(self._workdir / ".sdd", session, error=f"{type(exc).__name__}: {exc}")
             if owner is not None and worktree_path != preserved_path:
                 try:
                     owner.adopt(worktree_path, preserved_path.name)

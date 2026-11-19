@@ -14,8 +14,9 @@ from bernstein.core.models import ModelConfig
 from bernstein.core.spawner import AgentSpawner
 from click.testing import CliRunner
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.base import CLIAdapter, SpawnError, SpawnResult
 from bernstein.adapters.registry import _ADAPTERS, register_adapter
+from bernstein.bridges.base import AgentState, AgentStatus, BridgeConfig, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.cli.commands.cost import cost_cmd
 from bernstein.core.agents.agent_lifecycle import _read_runner_cost_usd, _resolve_tokens_sidecar_path
 from bernstein.core.cost.model_call_ledger import ModelCallLedger
@@ -515,3 +516,104 @@ def test_reap_captures_stopped_output_before_workspace_removal(tmp_path: Path, m
     record = ModelCallLedger(tmp_path / ".sdd").get_record(session.model_call_id)
     assert record is not None
     assert record.output_text == "final output at process stop\n"
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_resume_registers_call_before_launch_and_finalizes(tmp_path: Path, make_task, fails: bool) -> None:
+    adapter = _SpawnOnlyTestAdapter()
+    spawner = AgentSpawner(adapter, tmp_path / "templates", tmp_path, use_worktrees=False, default_model="fake")
+    worktree = tmp_path / "preserved"
+    worktree.mkdir()
+    task = make_task(role="backend")
+    original_spawn = adapter.spawn
+
+    def spawn(**kwargs):
+        records = ModelCallLedger(tmp_path / ".sdd").list_records()
+        assert len(records) == 1
+        assert records[0].status == "running"
+        assert records[0].journal_entry_id == task.id
+        assert records[0].parameters["task_scope"] == kwargs["task_scope"]
+        assert records[0].parameters["timeout_seconds"] == kwargs["timeout_seconds"]
+        if fails:
+            raise RuntimeError("resume launch failed")
+        return original_spawn(**kwargs)
+
+    with patch.object(adapter, "spawn", side_effect=spawn):
+        if fails:
+            with pytest.raises(RuntimeError, match="resume launch failed"):
+                spawner.spawn_for_resume([task], worktree_path=worktree, changed_files=[])
+        else:
+            session = spawner.spawn_for_resume([task], worktree_path=worktree, changed_files=[])
+            assert session.model_call_id
+            spawner.reap_completed_agent(session, skip_merge=True)
+    records = ModelCallLedger(tmp_path / ".sdd").list_records()
+    assert len(records) == 1
+    assert records[0].status == ("failed" if fails else "succeeded")
+    assert (
+        ("resume launch failed" in records[0].error) if fails else ("agent completed cleanly" in records[0].output_text)
+    )
+
+
+class _LedgerTestBridge(RuntimeBridge):
+    def __init__(self, workdir: Path, *, fails: bool, fallback: bool) -> None:
+        super().__init__(BridgeConfig(bridge_type="fake", endpoint="", extra={"fallback_to_local": fallback}))
+        self.workdir = workdir
+        self.fails = fails
+        self.call_id = ""
+
+    def name(self) -> str:
+        return "openclaw"
+
+    async def spawn(self, request: SpawnRequest) -> AgentStatus:
+        records = ModelCallLedger(self.workdir / ".sdd").list_records()
+        assert len(records) == 1
+        record = records[0]
+        self.call_id = record.id
+        assert record.status == "running"
+        assert record.adapter_id == self.name()
+        assert record.model == request.model
+        assert record.parameters == {"effort": request.effort, "timeout_seconds": request.timeout_seconds}
+        if self.fails:
+            raise BridgeError("fake bridge launch failed")
+        return AgentStatus(agent_id=request.agent_id, state=AgentState.RUNNING)
+
+    async def status(self, agent_id: str) -> AgentStatus:
+        return AgentStatus(agent_id=agent_id, state=AgentState.COMPLETED, exit_code=0)
+
+    async def cancel(self, agent_id: str) -> None:
+        pass
+
+    async def logs(self, agent_id: str, *, tail: int | None = None) -> bytes:
+        return b"bridge completed cleanly\n"
+
+
+@pytest.mark.parametrize("fails,fallback", [(False, False), (True, False), (True, True)])
+def test_bridge_registers_each_attempt_and_finalizes(tmp_path: Path, make_task, fails: bool, fallback: bool) -> None:
+    bridge = _LedgerTestBridge(tmp_path, fails=fails, fallback=fallback)
+    adapter = _SpawnOnlyTestAdapter()
+    spawner = AgentSpawner(
+        adapter, tmp_path / "templates", tmp_path, use_worktrees=False, default_model="fake", runtime_bridge=bridge
+    )
+    task = make_task(role="backend")
+    with patch.object(adapter, "spawn", wraps=adapter.spawn) as spawn:
+        if fails and not fallback:
+            with pytest.raises(SpawnError, match="fake bridge launch failed"):
+                spawner.spawn_for_tasks([task])
+        else:
+            session = spawner.spawn_for_tasks([task])
+            assert session.model_call_id
+            if fails:
+                assert session.model_call_id != bridge.call_id
+            else:
+                assert session.model_call_id == bridge.call_id
+            spawner.reap_completed_agent(session, skip_merge=True)
+        assert spawn.call_count == int(fails and fallback)
+    records = ModelCallLedger(tmp_path / ".sdd").list_records()
+    assert len(records) == (2 if fails and fallback else 1)
+    bridge_record = next(record for record in records if record.id == bridge.call_id)
+    assert bridge_record.status == ("failed" if fails else "succeeded")
+    assert bridge_record.journal_entry_id == task.id
+    if fails:
+        assert "fake bridge launch failed" in bridge_record.error
+    if fallback:
+        assert next(record for record in records if record.id != bridge.call_id).status == "succeeded"
