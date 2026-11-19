@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 from contextlib import ExitStack
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
 
