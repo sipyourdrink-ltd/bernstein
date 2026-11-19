@@ -191,6 +191,13 @@ a canonical subject dictionary:
 
 #### Canonicalization profile
 
+For orchestrated runs, the top-level `hash_profile` option in `bernstein.yaml`
+selects one profile for the journal, lineage spine and receipt. The first
+release containing that option is the compatibility release and retains the
+`py-json-v1` default. A new-run default of `jcs-v2` requires a separate later
+PR after measured soak. Existing records are never rewritten; reopening uses
+their recorded profile, or legacy when no field was recorded.
+
 The binding block above is turned into bytes by one of two profiles, named by
 a top-level `hash_profile` field on the receipt and echoed into the binding
 block itself:

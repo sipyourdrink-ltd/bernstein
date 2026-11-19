@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AIエージェントのためのオープンソース・ガバナンスレイヤー
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **ステータス: beta。** 単独メンテナンスで、活発に開発中。バージョン番号が数えているのはリリース回数であって成熟度ではない。マイナーバージョンでもインターフェースが変わりうる。依存するものはバージョンを固定すること。リグレッションは速やかに直すので、[報告してほしい](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein は AI エージェントのためのオープンソース・ガバナンスレイヤーです。policy as code の上で動きます。誰が何をしてよいか・何に承認が要るか・何を記録すべきかをポリシーとして書けば、Bernstein がそれを適用し、検証可能な記録を作ります。決定論的スケジューラ - 調整ループにモデルは入らない - がエージェントを並列に走らせ、成果物をゲートで検査し、全ステップを記録します。だから実行は事後に、オフラインで、アーティファクトだけから検証できます。CLI コーディングエージェントはそのまま動き(Claude Code、Codex、Gemini CLI ほか 50+)、同じレイヤーがあらゆるエージェントワークロードをガバナンスします: 成果物は diff でも、調査レポートでも、データセットでも、監査エビデンスパックでも構いません。エアギャップ用インストールプロファイル同梱。Apache-2.0。
+Bernstein は AI エージェントのためのオープンソース・ガバナンスレイヤーです。policy as code の上で動きます。誰が何をしてよいか・何に承認が要るか・何を記録すべきかをポリシーとして書けば、Bernstein がそれを適用し、検証可能な記録を作ります。決定論的スケジューラ - 調整ループにモデルは入らない - がエージェントを並列に走らせ、成果物をゲートで検査し、全ステップを記録します。だから実行は事後に、オフラインで、アーティファクトだけから検証できます。CLI コーディングエージェントはそのまま動き(Claude Code, Codex, Gemini CLI)、同じレイヤーがあらゆるエージェントワークロードをガバナンスします: 成果物は diff でも、調査レポートでも、データセットでも、監査エビデンスパックでも構いません。エアギャップ用インストールプロファイル同梱。Apache-2.0。
 
 ### 概要
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 際立つ点は5つ。あとは詳細です。
 
@@ -40,9 +40,13 @@ Bernstein は AI エージェントのためのオープンソース・ガバナ
 - **ハードウェア鍵の証拠.** オフラインの PIV 保管証明と FIDO2 承認検証は、信頼先の固定と明示的な時刻を用い、共通のレシートプロトコルに従います。トークンの保管は TRACE の信頼レベルを引き上げません。 [ハードウェア鍵の証拠](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **事後に検証できる。** リプレイジャーナルがすべての実行を記録し、常時稼働のリネージ・スパインがリネージを持つ各ステップを記録する。オプトインの HMAC チェーン監査ログ（`BERNSTEIN_AUDIT=1`）は、オフラインで検証できるレシートを追加する。非決定性は再実行のゆらぎではなく、該当ステップちょうどでのハッシュ不一致として表面化する。コード以外の成果物も同じ扱いを受ける。タスクはアーティファクト契約（レポート、データセット、アクションログ、運用結果）を宣言でき、git コミットではなく署名済みリネージレシートをもって完了する。
 - **構造として隔離されている。** コーディングタスクはそれぞれマージゲートの背後にある自分の git worktree を得る。アーティファクトモードのタスクは `.sdd/workspaces/` 配下の作業ディレクトリを得る。エージェントは既定で可変ワークスペースを共有しない。共有される状態はタスクバックログだけで、これはアトミックに取得される。より厳しいファイルシステム強制はオプトインで、[サンドボックスバックエンド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)から選ぶ。worktree を無効にすれば、すべてのタスクは共有チェックアウトで走る。
-- **広く、そしてローカル。** 53 以上の CLI エージェントアダプタに加え、汎用の `--prompt` ラッパー、ファイルベースの状態、SaaS 経由なし、サードパーティのデータプレーンなし。
+- **広く、そしてローカル。** 選択可能な CLI エージェントアダプター名は55個で、汎用 `--prompt` ラッパーも含みます。 ファイルベースの状態、SaaS 経由なし、サードパーティのデータプレーンなし。
 
 全一覧は[ケーパビリティのページ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)に、網羅的な索引は[機能マトリクス](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)にある。
+
+タスクサーバーでは、新規タスクの取得に対して、状態を永続化するオペレーター管理のゲートを設定できます。[ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
+
+ロール別アダプターポリシーでは、個別に指定されていないロールに既定の許可リストを任意で設定できます。[ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)を参照してください。
 
 ### 実行はこう見える
 <!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
@@ -128,7 +132,7 @@ flowchart LR
 再試行では `dispatch_tier` が維持され、タスクを再オープンする際には階層を明示的に選択できます。[ディスパッチ階層の仕様](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)を参照してください。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +142,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` は監査契約に基づく `findings` も出力します。同じインストール観測結果に対して、これらは `bernstein govern audit --only INS --json` の結果と同一です。通常の doctor レポートの表示は変わりません。安定したチェック ID については、[doctor 運用ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)を参照してください。
+
+Doctor は長時間残っている実行レーンを JSON で報告します。証拠を検証できない場合はチェックが失敗し、何も削除しません。
 
 pipx、pip、brew、dnf、npm、Docker については[インストールガイド](https://docs.bernstein.run/en/latest/getting-started/install/)を参照。エアギャップ環境向けの wheelhouse には専用の[エアギャップガイド](https://docs.bernstein.run/en/latest/installation/air-gap/)がある。
 
@@ -165,7 +171,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — ターミナルダッシュボード (リモートワーカーノード) | `bernstein gui serve` — ブラウザダッシュボード |
 
 ### 実行を証明する
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 ここでの決定性は、信じるものではなく確かめるものである。監査を有効にして一度走らせ、記録された内容を検証する:
 
@@ -189,7 +195,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 同じ検証可能性は評価の数値にも当てはまる。`bernstein bench run <suite> --reliability k`（`bernstein eval --reliability k` とも書ける）は各タスクを固定された協調のもとで `k` 回実行し、`pass^k` の下限（`k` 回すべてが通ること）を `pass@1` の上限と並べて報告する。その結果は署名済みレシートに封じられ、`bernstein bench reliability-verify` がオフラインで再計算するので、捏造された下限は検証に落ちる。詳細: [pass^k 信頼性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
 
-機械可読な検査結果には `bernstein govern audit --format json` または `--format sarif` を、CI の判定には `--strict --quiet` を使います。詳しくは [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+機械可読な検査結果には `bernstein govern audit --format json` または `--format sarif` を、CI の判定には `--strict --quiet` を使います。詳しくは [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` エビデンスパックには、2026-01-08付の文書の固定バージョンにあるMCP脅威クラスと、未対応の範囲が明記されます。
 
 `bernstein delegation verify RUN` は、監査キーを使った HMAC によって実行マニフェストに封印された最終ヘッドとホップ数をレシートチェーンと比較し、末尾の削除、置き換え、終了後のチェーンの延長を検出します。キーを持たずに宣言を書き換える行為も検出対象です。宣言を削除すると、実行は未完了（終了コード `3`）となり、有効とは判定されません。古い真正なスナップショットの再利用は検出できず、監査キーを持つ書き手からの保護も提供しません。詳しくは[委任の検証手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)を参照してください。
 
@@ -231,9 +237,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 リポジトリ衛生のゲート: `bernstein readme-l10n verify` は、翻訳版 README が英語の原文からずれた PR を（古くなったセクション名を挙げて）失敗させる。`bernstein readme-l10n sync` は英語を編集したあとに束ね直す。[readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md) を参照。
 
 ### 対応エージェント
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen ほか。[アダプタ索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)はそのうち 30 個のインストールコマンドを載せている。`bernstein integrations list` は `src/bernstein/adapters/registry.py` から、配線済みの統合 57 件すべてを列挙する。このファイルが「何が解決されるか」の唯一の情報源である。うち 55 件は選択可能なエージェントアダプタで、残り 2 行は `mock` テストスタブと `self-hosted-endpoints` エンドポイントプロファイルである。`--prompt` フラグを持つそれ以外のものは、汎用ラッパー経由で動く。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen ほか。[アダプタ索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)はそのうち 30 個のインストールコマンドを載せている。`bernstein integrations list` は `src/bernstein/adapters/registry.py` から、配線済みの統合 57 件すべてを列挙する。このファイルが「何が解決されるか」の唯一の情報源である。うち 55 件は選択可能なエージェントアダプタで、残り 2 行は `mock` テストスタブと `self-hosted-endpoints` エンドポイントプロファイルである。`--prompt` フラグを持つそれ以外のものは、汎用ラッパー経由で動く。 `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 同じ実行の中でエージェントを混ぜられる。定型作業には安価なローカルモデル、設計には重いクラウドモデルというように。`bernstein integrations list --installed` は自分のマシンで使えるものを表示する。
 
@@ -250,13 +256,14 @@ bernstein volunteer browse --budget 60
 [提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。 `autopilot` は登録されていますが、`TaskSource` が実装されるまで実行を拒否します。
 
 ### 表紙の先へ
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
 
 踏み込んだ内容はすべて[ドキュメントサイト](https://docs.bernstein.run/)にある:
 
 | ページ | 扱う内容 |
 |---|---|
 | [ケーパビリティ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | 全機能一覧: MCP サーバーモード、署名済みエージェントカード、サンドボックスバックエンド、アーティファクトシンク、規制対応マッピング |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [誰のためのものか](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 価値が出る場所と、Bernstein が不適切な場面 |
 | [ワークフロー](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | エージェント / コマンド / ループのノードから成る宣言的 YAML DAG |
@@ -275,9 +282,9 @@ Bernstein の名は、アメリカの指揮者・作曲家レナード・バー�
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0、単独メンテナンス。稼働統計: [bernstein.run](https://bernstein.run)。
 
 ### 掲載
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-[vinta/awesome-python](https://github.com/vinta/awesome-python) に掲載、Augment Code の[オープンソースのエージェントオーケストレーター](https://www.augmentcode.com/tools/open-source-agent-orchestrators)まとめで紹介、[Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) にも掲載。このアプローチは awesome-agentic-patterns に [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) パターンとして書き起こしている。
+Augment Code の[オープンソースのエージェントオーケストレーター](https://www.augmentcode.com/tools/open-source-agent-orchestrators)まとめで紹介、[Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) にも掲載。このアプローチは awesome-agentic-patterns に [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) パターンとして書き起こしている。
 
 <details>
 <summary>掲載一覧: 20 以上の awesome リスト、ディレクトリ、ニュースレター、被引用</summary>

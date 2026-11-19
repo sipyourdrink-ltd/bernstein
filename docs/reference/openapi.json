@@ -5932,6 +5932,78 @@
         }
       }
     },
+    "/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/identities": {
       "get": {
         "tags": [
@@ -15399,6 +15471,78 @@
         }
       }
     },
+    "/api/v1/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_api_v1_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_api_v1_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/identities": {
       "get": {
         "tags": [
@@ -20261,6 +20405,67 @@
         "title": "ChannelResponseResponse",
         "description": "Single channel response in API responses."
       },
+      "ClaimAdmissionStatus": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "controller_id": {
+            "type": "string",
+            "title": "Controller Id"
+          },
+          "halted": {
+            "type": "boolean",
+            "title": "Halted"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "controller_id",
+          "halted",
+          "revision",
+          "actor",
+          "reason"
+        ],
+        "title": "ClaimAdmissionStatus"
+      },
+      "ClaimControlRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason",
+          "expected_revision"
+        ],
+        "title": "ClaimControlRequest",
+        "description": "A reason, never an authority, controller path or installation selector."
+      },
       "ClaimGossipRequest": {
         "properties": {
           "receipts": {
@@ -22636,6 +22841,16 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -23588,6 +23803,13 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -24520,6 +24742,16 @@
               }
             ],
             "title": "Cli"
+          },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
           },
           "batch_eligible": {
             "type": "boolean",

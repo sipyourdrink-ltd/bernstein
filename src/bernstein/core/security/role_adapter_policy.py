@@ -14,6 +14,8 @@ Default semantics - back-compat:
 * A non-empty allow-list = strict - any adapter not on the list raises
   :exc:`RoleAdapterDenied` and emits a structured ``role.adapter.denied``
   audit event.
+* An optional ``*`` entry applies to roles with no named entry. Its empty
+  allow-list denies every adapter; omitting it preserves the defaults above.
 
 Mapping to standards:
 
@@ -73,21 +75,26 @@ class RolePolicy:
     Attributes:
         per_role_allowlists: ``{role: (adapter, ...)}``. Empty tuple for a
             role = all adapters allowed (back-compat). Roles missing from
-            the map are also unrestricted.
+            the map use the optional ``*`` default. An empty default denies
+            every adapter; an absent default keeps unlisted roles unrestricted.
     """
 
     per_role_allowlists: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def is_allowed(self, role: str, adapter: str) -> bool:
         """Return True iff *role* may spawn *adapter* under this policy."""
-        allowed = self.per_role_allowlists.get(role)
-        if not allowed:
-            return True
-        return adapter in allowed
+        if role != "*" and role in self.per_role_allowlists:
+            allowed = self.per_role_allowlists[role]
+            return not allowed or adapter in allowed
+        default = self.per_role_allowlists.get("*")
+        return default is None or adapter in default
 
     def allowed_for(self, role: str) -> tuple[str, ...]:
-        """Return the configured allow-list for *role* (empty = all allowed)."""
-        return tuple(self.per_role_allowlists.get(role, ()))
+        """Return the named or default list; use ``is_allowed`` for its meaning.
+
+        Empty named lists are unrestricted; an empty default denies all.
+        """
+        return tuple(self.per_role_allowlists.get(role, self.per_role_allowlists.get("*", ())))
 
     def to_dict(self) -> dict[str, list[str]]:
         """Serialise to a JSON-safe dict (sorted for determinism)."""
@@ -99,7 +106,8 @@ class RolePolicy:
 
         Args:
             data: ``{role: [adapter, ...]}``. Empty list / non-list values
-                are normalised to an empty tuple (no-op for that role).
+                are normalised to an empty tuple (unrestricted for a named
+                role, deny-all for the ``*`` default).
 
         Returns:
             A frozen :class:`RolePolicy`.
@@ -199,8 +207,8 @@ def enforce(
 
     Args:
         role: The effective role of the spawn site (``backend``, ``security``,
-            etc.). Free-form string - unrecognised roles are treated as
-            unrestricted for back-compat.
+            etc.). Free-form string - unrecognised roles use the optional
+            ``*`` default, or remain unrestricted when it is absent.
         adapter: Adapter id (e.g. ``claude``, ``aider``, ``mock``).
         audit_log: Optional :class:`AuditLog`. When provided, a deny emits a
             ``role.adapter.denied`` event into the HMAC chain.

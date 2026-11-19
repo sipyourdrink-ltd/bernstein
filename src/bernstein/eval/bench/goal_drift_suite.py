@@ -21,6 +21,9 @@ numeric "intent_score" from a recorded evaluator. Finite scores with non-negativ
 integer steps are projected into "intent_scores" in step order (preserving event
 order within a step); missing or invalid scores are omitted. No evaluator is called,
 and intent scores do not participate in hard measurements or threshold decisions.
+Trajectory payloads may also supply intent_calibration_records in the existing
+calibration-log JSON shape. The separate quality report uses the recorded policy
+identifier and population; missing/ambiguous evidence is unavailable, never fitted.
 """
 
 from __future__ import annotations
@@ -29,10 +32,15 @@ import hashlib
 import json
 import math
 import posixpath
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
+from bernstein.eval.calibration import CalibrationRecord, compute_report
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
@@ -181,6 +189,7 @@ class DriftTrajectoryCurve:
     unmeasured: bool = False
     step_coverage: float = 1.0
     intent_scores: tuple[tuple[int, float], ...] = ()
+    intent_calibration: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,6 +203,9 @@ class DriftTrajectoryCurve:
             "unmeasured": self.unmeasured,
             "step_coverage": self.step_coverage,
             "intent_scores": [{"step_index": step, "intent_score": score} for step, score in self.intent_scores],
+            "intent_calibration": deepcopy(self.intent_calibration)
+            if self.intent_calibration is not None
+            else _intent_calibration_report(()),
         }
 
     @classmethod
@@ -212,6 +224,7 @@ class DriftTrajectoryCurve:
             intent_scores=tuple(
                 (int(s["step_index"]), float(s["intent_score"])) for s in data.get("intent_scores", ())
             ),
+            intent_calibration=deepcopy(data.get("intent_calibration")),
         )
 
 
@@ -329,12 +342,68 @@ def _project_intent_scores(events: list[dict[str, Any]]) -> tuple[tuple[int, flo
     return tuple(sorted(scores, key=lambda item: item[0]))
 
 
+def _intent_calibration_report(records: Sequence[CalibrationRecord]) -> dict[str, Any]:
+    """Report existing calibration quality without fitting or changing scores."""
+    versions = {record.policy_path for record in records}
+    if not records or len(versions) != 1 or not next(iter(versions)).strip():
+        return {"status": "unavailable", "version": None, "sample_count": 0, "report": None}
+    ordered = sorted(records, key=lambda r: (r.timestamp, r.decision_kind, r.predicted_prob, r.observed_outcome))
+    report = compute_report(ordered)
+    return {
+        "status": "available",
+        "version": next(iter(versions)),
+        "sample_count": report.decisions,
+        "report": report.to_dict(),
+    }
+
+
+def _recorded_intent_calibration(raw: object) -> tuple[CalibrationRecord, ...]:
+    """Read the existing calibration-log JSON shape, omitting unrelated metadata."""
+    if not isinstance(raw, list):
+        return ()
+    records: list[CalibrationRecord] = []
+    try:
+        for row in raw:
+            if not isinstance(row, dict):
+                return ()
+            if any(not isinstance(row.get(key), str) for key in ("decision_kind", "policy_path")):
+                return ()
+            if any(type(row.get(key)) not in (int, float) for key in ("ts", "predicted_prob")):
+                return ()
+            timestamp, probability = float(row["ts"]), float(row["predicted_prob"])
+            if not math.isfinite(timestamp):
+                return ()
+            records.append(
+                CalibrationRecord(
+                    timestamp, row["decision_kind"], row["policy_path"], probability, row["observed_outcome"]
+                )
+            )
+    except (KeyError, ValueError, TypeError, OverflowError):
+        return ()
+    return tuple(records)
+
+
+def _intent_calibration_payload(records: Sequence[CalibrationRecord]) -> list[dict[str, Any]]:
+    return [
+        {
+            "ts": r.timestamp,
+            "decision_kind": r.decision_kind,
+            "policy_path": r.policy_path,
+            "predicted_prob": r.predicted_prob,
+            "observed_outcome": r.observed_outcome,
+        }
+        for r in records
+    ]
+
+
 def evaluate_trajectory_drift(
     task: GoalDriftTask,
     events: list[dict[str, Any]],
     diff_text: str = "",
     threshold: float = 0.0,
     require_step_coverage: bool = False,
+    *,
+    intent_calibration_records: Sequence[CalibrationRecord] = (),
 ) -> DriftTrajectoryCurve:
     """Evaluate full trajectory drift deterministically from lineage events and diff."""
     if not events and not diff_text:
@@ -348,6 +417,7 @@ def evaluate_trajectory_drift(
             passed_gate=False,
             unmeasured=True,
             step_coverage=0.0,
+            intent_calibration=_intent_calibration_report(intent_calibration_records),
         )
 
     step_paths_map: dict[int, list[str]] = {}
@@ -415,6 +485,7 @@ def evaluate_trajectory_drift(
         unmeasured=unmeasured,
         step_coverage=step_coverage,
         intent_scores=_project_intent_scores(events),
+        intent_calibration=_intent_calibration_report(intent_calibration_records),
     )
 
 
@@ -608,12 +679,15 @@ class GoalDriftReplayAdapter:
 
         events: list[dict[str, Any]] = []
         diff: str = ""
+        calibration_raw: object = None
 
         task_traj = self._trajectory_data.get(task.id)
         if task_traj is not None and isinstance(task_traj, dict):
+            calibration_raw = task_traj.get("intent_calibration_records")
             events = list(task_traj.get("events", []))
             diff = str(task_traj.get("diff", self._diff_text or ""))
         elif "events" in self._trajectory_data:
+            calibration_raw = self._trajectory_data.get("intent_calibration_records")
             events = list(self._trajectory_data.get("events", []))
             diff = str(self._trajectory_data.get("diff", self._diff_text or ""))
         elif isinstance(self._trajectory_data, list):
@@ -641,12 +715,14 @@ class GoalDriftReplayAdapter:
             events = []
             diff = ""
 
+        calibration_records = _recorded_intent_calibration(calibration_raw)
         curve = evaluate_trajectory_drift(
             drift_task,
             events,
             diff,
             threshold=threshold,
             require_step_coverage=require_step_coverage,
+            intent_calibration_records=calibration_records,
         )
 
         task_hash = task.content_hash()
@@ -661,6 +737,7 @@ class GoalDriftReplayAdapter:
             "run_id": f"goal-drift-{task_hash[:12]}",
             "task_id": drift_task.id,
             "drift_curve": curve.to_dict(),
+            "intent_calibration_records": _intent_calibration_payload(calibration_records),
             "events": events,
             "diff": diff,
             "passed_gate": curve.passed_gate,
@@ -681,6 +758,7 @@ class GoalDriftReplayAdapter:
             diff,
             threshold=threshold,
             require_step_coverage=self._require_step_coverage,
+            intent_calibration_records=_recorded_intent_calibration(receipt.get("intent_calibration_records")),
         )
 
         for assertion in task.assertions:

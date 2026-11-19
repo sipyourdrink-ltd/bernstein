@@ -25,7 +25,7 @@ about:
     the same plan replays byte-identically. The signature and Merkle legs of
     verification check from the on-disk artefacts alone; replaying the HMAC
     chain needs the install's audit key. Adapters ship for Claude Code, Codex,
-    Gemini CLI, Aider, OpenHands and 40+ other agent CLIs. The MCP server
+    Gemini CLI, Aider, OpenHands and other agent CLIs. The MCP server
     exposes 14 tools covering run control, task listing and claiming, progress
     updates, artifact posting, approvals, subtasks, cost reporting, and skill
     loading. Every MCP tool description states whether the call reads files,

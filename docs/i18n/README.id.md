@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### lapisan governance open source untuk agen AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **Status: beta.** Dikelola secara mandiri, dalam pengembangan aktif. Nomor versi menghitung rilis, bukan kematangan — versi minor dapat mengubah antarmuka. Kunci versi untuk ketergantungan penting; regresi diperbaiki dengan cepat, [laporkan di sini](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein adalah lapisan governance open source untuk agen AI. Berjalan di atas policy as code: kamu menulis kebijakannya - siapa boleh melakukan apa, apa yang butuh persetujuan, apa yang harus dicatat - dan Bernstein menegakkannya serta menghasilkan catatan yang bisa diverifikasi. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI, dan 50+ lainnya), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
+Bernstein adalah lapisan governance open source untuk agen AI. Berjalan di atas policy as code: kamu menulis kebijakannya - siapa boleh melakukan apa, apa yang butuh persetujuan, apa yang harus dicatat - dan Bernstein menegakkannya serta menghasilkan catatan yang bisa diverifikasi. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
 
 ### sekilas pandang
-<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 Lima hal membedakannya; selebihnya adalah detail.
 
@@ -40,9 +40,13 @@ Lima hal membedakannya; selebihnya adalah detail.
 - **Bukti kunci perangkat keras.** Pemverifikasi offline penguasaan PIV dan persetujuan FIDO2 berbagi protokol tanda terima, dengan kepercayaan yang dipatok dan waktu eksplisit. Penguasaan token tidak meningkatkan tingkat kepercayaan TRACE. [Bukti kunci perangkat keras](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Dapat diaudit setelah selesai.** Jurnal pemutaran ulang (replay journal) mencatat setiap eksekusi, dan tulang punggung asal-usul (lineage spine) yang selalu aktif merekam setiap langkah bernilai silsilah; log audit berantai HMAC opsional (`BERNSTEIN_AUDIT=1`) menambahkan tanda terima (receipts) yang dapat diverifikasi secara offline. Non-determinisme muncul sebagai ketidakcocokan hash pada langkah yang tepat, bukan sebagai kegagalan acak saat eksekusi ulang. Hasil kerja non-kode diperlakukan sama: tugas dapat mendeklarasikan kontrak artefak (laporan, dataset, log tindakan, hasil ops) dan diselesaikan dengan tanda terima silsilah yang ditandatangani, bukan commit git.
 - **Terisolasi secara terstruktur.** Setiap tugas pengodean mendapatkan git worktree terpisah di balik gerbang penggabungan; tugas mode artefak mendapatkan direktori kerja di bawah `.sdd/workspaces/`. Agen secara default tidak berbagi ruang kerja yang dapat diubah; satu-satunya status bersama adalah backlog tugas, yang diklaim secara atomik. Penegakan sistem berkas yang lebih ketat bersifat opsional melalui [backend sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Nonaktifkan worktree dan setiap tugas akan berjalan di direktori bersama.
-- **Luas dan lokal.** Lebih dari 53 adaptor agen CLI ditambah wrapper `--prompt` generik, status berbasis berkas, tanpa perantara SaaS, tanpa lapisan data pihak ketiga.
+- **Luas dan lokal.** 55 nama adapter agen CLI yang dapat dipilih, termasuk wrapper generik `--prompt`. status berbasis berkas, tanpa perantara SaaS, tanpa lapisan data pihak ketiga.
 
 Daftar lengkap ada di [halaman kemampuan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [matriks fitur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) adalah indeks lengkapnya.
+
+Server tugas mendukung gerbang pengambilan tugas baru yang dikendalikan operator dan menyimpan statusnya; lihat [panduan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/claim-admission.md).
+
+Kebijakan adaptor per peran mendukung daftar adaptor yang diizinkan secara default dan bersifat opsional untuk peran yang tidak tercantum; lihat [panduan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### seperti apa sebuah run
 <!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
@@ -128,7 +132,7 @@ Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate
 Percobaan ulang mempertahankan `dispatch_tier`; saat tugas dibuka kembali, tingkat dapat dipilih secara eksplisit. Lihat [kontrak tingkat dispatch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:b40c617d0eda" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -138,6 +142,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 `bernstein doctor --json` juga menampilkan temuan kontrak audit `findings`, yang identik dengan hasil `bernstein govern audit --only INS --json` untuk pengamatan instalasi yang sama. Tampilan laporan doctor biasa tetap sama. Lihat [panduan operasional doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) untuk ID pemeriksaan yang stabil.
+
+Doctor melaporkan jalur eksekusi yang tertinggal melebihi batas usia dalam JSON. Pemeriksaan gagal jika buktinya tidak dapat diverifikasi; tidak ada yang dihapus.
 
 pipx, pip, brew, dnf, npm, dan Docker dibahas dalam [panduan instalasi](https://docs.bernstein.run/en/latest/getting-started/install/); paket terisolasi memiliki [panduan air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) tersendiri.
 
@@ -165,7 +171,7 @@ Eksekusi yang sedang berjalan dapat dipantau dari salah satu antarmuka operator.
 | `bernstein live` — dasbor terminal (simpul pekerja jarak jauh) | `bernstein gui serve` — dasbor peramban |
 
 ### buktikan eksekusi
-<!-- l10n: en="prove a run" hash="sha256:2bf0bf2378da" -->
+<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
 
 Determinisme di sini adalah sesuatu yang Anda buktikan sendiri, bukan diterima atas dasar keyakinan semata. Jalankan sekali dengan audit aktif, lalu verifikasi apa yang tercatat:
 
@@ -189,7 +195,7 @@ Di antarmuka web, buka **Governance** dan gunakan **Verify a receipt** untuk mem
 
 Verifikasi yang sama berlaku untuk angka evaluasi. `bernstein bench run <suite> --reliability k` (juga ditulis `bernstein eval --reliability k`) menjalankan setiap tugas `k` kali di bawah koordinasi tetap, lalu melaporkan batas bawah `pass^k` (semua `k` percobaan harus berhasil) di samping batas atas `pass@1`. Hasil tersebut disegel dalam tanda terima bertanda tangan yang dihitung ulang secara offline oleh `bernstein bench reliability-verify`, sehingga batas bawah palsu akan gagal diverifikasi. Detail: [batas keandalan pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Gunakan `bernstein govern audit --format json` atau `--format sarif` untuk hasil pemeriksaan yang dapat dibaca mesin, dan `--strict --quiet` sebagai syarat kelulusan CI. Lihat [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Gunakan `bernstein govern audit --format json` atau `--format sarif` untuk hasil pemeriksaan yang dapat dibaca mesin, dan `--strict --quiet` sebagai syarat kelulusan CI. Lihat [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Paket bukti `cosai` mencakup kelas ancaman MCP dari versi tetap makalah bertanggal 2026-01-08 dan menjelaskan celah cakupan yang masih ada.
 
 `bernstein delegation verify RUN` membandingkan rantai tanda terima dengan kepala akhir dan jumlah hop yang disegel dalam manifes proses menggunakan HMAC dengan kunci audit, sehingga mendeteksi penghapusan ujung rantai, penggantian, dan penambahan setelah penutupan, termasuk penulisan ulang deklarasi tanpa kunci. Menghapus deklarasi membuat proses tetap tidak lengkap (kode keluar `3`), tidak pernah dinyatakan valid. Pemeriksaan ini tidak mendeteksi penggunaan ulang snapshot autentik yang lebih lama dan tidak melindungi dari penulis yang memegang kunci audit. Lihat [alur verifikasi delegasi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
@@ -231,9 +237,9 @@ Status eksekusi disimpan sebagai checkpoint ke `.sdd/runs/<run_id>/` pada setiap
 Gerbang kebersihan repositori: `bernstein readme-l10n verify` menggagalkan PR yang terjemahan README-nya menyimpang dari sumber bahasa Inggris (menyebutkan bagian yang usang), `bernstein readme-l10n sync` mengikat ulang tautan setelah pengeditan bahasa Inggris. Lihat [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### agen yang didukung
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, dan banyak lagi. [Indeks adaptor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) memuat perintah instalasi untuk 30 di antaranya. `bernstein integrations list` menampilkan ke-57 integrasi aktif dari `src/bernstein/adapters/registry.py`, satu-satunya sumber kebenaran. 55 di antaranya adalah adaptor agen yang dapat dipilih; dua baris lainnya adalah stub uji `mock` dan profil endpoint `self-hosted-endpoints`. Alat lain dengan flag `--prompt` dapat berjalan melalui wrapper generik.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, dan banyak lagi. [Indeks adaptor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) memuat perintah instalasi untuk 30 di antaranya. `bernstein integrations list` menampilkan ke-57 integrasi aktif dari `src/bernstein/adapters/registry.py`, satu-satunya sumber kebenaran. 55 di antaranya adalah adaptor agen yang dapat dipilih; dua baris lainnya adalah stub uji `mock` dan profil endpoint `self-hosted-endpoints`. Alat lain dengan flag `--prompt` dapat berjalan melalui wrapper generik. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 Gabungkan berbagai agen dalam satu eksekusi: model lokal hemat biaya untuk kode repetitif, model cloud berkapasitas besar untuk arsitektur. `bernstein integrations list --installed` menampilkan apa saja yang tersedia di mesin Anda.
 
@@ -250,13 +256,14 @@ bernstein volunteer browse --budget 60
 [Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi. `autopilot` sudah terdaftar, tetapi menolak berjalan sampai `TaskSource` diimplementasikan.
 
 ### di luar halaman utama
-<!-- l10n: en="beyond the front page" hash="sha256:4e9c035c508e" -->
+<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
 
 Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstein.run/):
 
 | halaman | cakupan materi |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | daftar kemampuan lengkap: mode server MCP, kartu agen bertanda tangan, backend sandbox, penampung artefak, kepatuhan regulasi |
+| [Agent Manifest export](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-manifest.md) | `bernstein manifest export-agent` · `composition-only` · `agent-manifest==0.12.0` |
 | [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | di mana nilai gunanya dan kapan Bernstein bukan alat yang tepat |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAG YAML deklaratif dari node agent / command / loop |
@@ -275,9 +282,9 @@ Bernstein dinamai berdasarkan Leonard Bernstein, konduktor dan komposer asal Ame
 saya menulis bernstein karena menghabiskan $400/bulan untuk tagihan claude saat menjalankan tiga agen pengodean secara paralel dan mendapatkan hasil merge yang non-deterministik. Berlisensi Apache 2.0, dikelola secara mandiri. Statistik langsung: [bernstein.run](https://bernstein.run).
 
 ### disebutkan dalam
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-Terdaftar di [vinta/awesome-python](https://github.com/vinta/awesome-python), diulas dalam rangkuman Augment Code tentang [orkestrator agen open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators), dan dicantumkan di [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Kami juga mendokumentasikan pendekatan ini sebagai pola [orkestrasi deterministik tanpa LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) di awesome-agentic-patterns.
+Diulas dalam rangkuman Augment Code tentang [orkestrator agen open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) dan dicantumkan di [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Kami juga mendokumentasikan pendekatan ini sebagai pola [orkestrasi deterministik tanpa LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) di awesome-agentic-patterns.
 
 <details>
 <summary>Semua liputan: lebih dari 20 daftar awesome, direktori, buletin, dan kutipan rekan</summary>
