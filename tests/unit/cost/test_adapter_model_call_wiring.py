@@ -485,3 +485,33 @@ def test_exact_replay_rejects_provenance_drift_before_invocation(tmp_path: Path,
         ledger.replay_adapter(original.id, adapter=adapter)
     assert len(adapter.calls) == 1
     assert ledger.replays_of(original.id) == []
+
+
+def test_reap_captures_stopped_output_before_workspace_removal(tmp_path: Path, make_task) -> None:
+    spawner = AgentSpawner(
+        _SpawnOnlyTestAdapter(),
+        tmp_path / "templates",
+        tmp_path,
+        use_worktrees=False,
+        default_model="fake",
+    )
+    session = spawner.spawn_for_tasks([make_task(role="backend")])
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    log = workspace / "agent.log"
+    log.write_text("before stop\n")
+    session.log_path = str(log)
+    spawner._artifact_workdirs[session.id] = workspace
+    proc = MagicMock()
+
+    def stopped(timeout):
+        log.write_text("final output at process stop\n")
+        return -15
+
+    proc.wait.side_effect = stopped
+    spawner._procs[session.id] = proc
+    spawner.reap_completed_agent(session, skip_merge=True)
+    assert not workspace.exists()
+    record = ModelCallLedger(tmp_path / ".sdd").get_record(session.model_call_id)
+    assert record is not None
+    assert record.output_text == "final output at process stop\n"

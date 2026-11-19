@@ -628,6 +628,11 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     if _rl_tracker is not None and session.provider:
         _rl_tracker.decrement_active(session.provider)
     _preserve_runner_logs(orch, session)
+    workdir = getattr(orch, "_workdir", None)
+    if isinstance(workdir, Path):
+        from bernstein.core.cost.model_call_ledger import finalize_session_model_call
+
+        finalize_session_model_call(workdir / ".sdd", session, execution_succeeded=session.exit_code == 0)
     # issue #5844: record the checkpointed-retry reference before any of this
     # session's tasks reach a retry decision below, and before _dispose_dead_worktree
     # touches the worktree.
@@ -639,11 +644,6 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     _dispose_dead_worktree(orch, session, reason="dead_agent")
     with contextlib.suppress(OSError):
         orch._signal_mgr.clear_signals(session.id)
-    workdir = getattr(orch, "_workdir", None)
-    if isinstance(workdir, Path):
-        from bernstein.core.cost.model_call_ledger import finalize_session_model_call
-
-        finalize_session_model_call(workdir / ".sdd", session, execution_succeeded=session.exit_code == 0)
 
 
 def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> None:

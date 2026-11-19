@@ -2379,10 +2379,11 @@ class AgentSpawner:
         # Reaping may itself terminate a live process after work has completed.
         # Preserve the execution outcome before cleanup replaces its exit code.
         execution_succeeded = session.status != "dead" and not session.abort_reason and session.exit_code in (None, 0)
+        retain_output = bool(session.model_call_id)
         result = _reap_completed_agent(
             session,
             skip_merge=skip_merge,
-            defer_cleanup=defer_cleanup,
+            defer_cleanup=defer_cleanup or retain_output,
             runtime_bridge=self._runtime_bridge,
             run_bridge_call_fn=self._run_bridge_call,
             container_mgr=self._container_mgr,
@@ -2403,23 +2404,24 @@ class AgentSpawner:
             merge_queue=self._merge_queue,
             quality_gate_config=self._quality_gate_config,
         )
-        # Artifact-mode session (issue #2996): no worktree, so the merge path
-        # above was a structural no-op; remove the plain workspace directory
-        # unless the caller asked to keep it for inspection.
-        if not defer_cleanup:
-            cleanup_artifact_workspace(session.id, artifact_workdirs=self._artifact_workdirs)
-        # Reap-time write-boundary sweep (#2793): keep the operator checkout
-        # clean after a planning agent exits. Best-effort; never fails a reap.
-        with suppress(Exception):
-            self._sweep_manager_write_boundary(session)
-        if isinstance(getattr(self, "_workdir", None), Path):
-            from bernstein.core.cost.model_call_ledger import finalize_session_model_call
+        try:
+            if isinstance(getattr(self, "_workdir", None), Path):
+                from bernstein.core.cost.model_call_ledger import finalize_session_model_call
 
-            finalize_session_model_call(
-                self._workdir / ".sdd",
-                session,
-                execution_succeeded=execution_succeeded,
-            )
+                finalize_session_model_call(
+                    self._workdir / ".sdd",
+                    session,
+                    execution_succeeded=execution_succeeded,
+                )
+        finally:
+            if not defer_cleanup:
+                # The process is stopped and its output is durable before either
+                # worktree or artifact workspace cleanup removes the source log.
+                if retain_output:
+                    self._merge_and_cleanup_worktree(session, skip_merge=True)
+                cleanup_artifact_workspace(session.id, artifact_workdirs=self._artifact_workdirs)
+            with suppress(Exception):
+                self._sweep_manager_write_boundary(session)
         return result
 
     def update_trace_outcome(self, session_id: str, outcome: str) -> None:
