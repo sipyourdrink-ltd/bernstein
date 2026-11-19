@@ -25,6 +25,66 @@ Every access and budget decision is one record binding:
 Records land under `.sdd/lineage/<run>/governance_decisions/`, colocated with
 the run's spine so the record and its anchor share one root.
 
+## Reading recorded decisions
+
+In the web UI, open **Governance**, enter a **Run ID** under **Recorded
+decisions**, and choose **Load decisions**. Expand a row to see subject,
+action, recorded verdict, input hash, timestamp, recorded context, policy
+version and `journal_entry_hash`. When no policy version is named in the
+record's context, the field says exactly `this decision names no policy version`.
+The record is meaningless without its journal anchor. Displaying an anchor
+does not verify it; these reads do not verify the journal or signer, and the
+browser does not recompute the verdict. The separate coverage panel remains
+an explicitly labelled checked-in sample.
+
+The authenticated server exposes two additive read endpoints, also mounted
+under `/api/v1`:
+
+- `GET /governance/decisions?run_id=<id>` returns `run_id` and `decisions`.
+- `GET /governance/decisions/<decision_id>?run_id=<id>` returns one decision,
+  or 404 when that exact record is absent. `decision_id` is an opaque digest
+  of the presented record, including its anchor; editing the record changes it.
+
+Both return the recorded fields listed above. The list response schema is
+[`recorded-decisions.schema.json`](../api/recorded-decisions.schema.json);
+its `RecordedDecision` definition is also the detail response. Empty runs
+return an empty list. Missing or invalid run IDs return 400. Unreadable records
+or records naming a different run return 409. The existing record reader
+skips malformed JSON records. These endpoints create no keys, files or
+directories and accept no client-selected ledger path.
+
+Budget rows additionally carry `budget.cap_usd` and `budget.prior_spend_usd`.
+Each has `value` (USD or null), `state`, `provenance` and `reason`. The cap
+comes from recorded `context.cap_usd`. Prior spend comes from the project's
+`.sdd/cost/ledger.jsonl` through `seat_spend`, checked against the recorded
+input hash and verdict by the existing budget verifier. Both values share
+the resulting budget-input evidence state:
+
+| State | Meaning |
+|---|---|
+| `verified` | The existing budget verifier reproduced the recorded input hash and verdict using the presented ledger. Prior spend is shown. This is budget input consistency only, not journal, signer or ledger authenticity verification. |
+| `unavailable` | Required policy context or ledger evidence is absent, unreadable or changed during the read. Prior spend is null; a missing ledger never implies zero spend. |
+| `mismatch` | The presented ledger and context do not reproduce the recorded inputs or verdict. Prior spend is null so a current total cannot be mistaken for decision-time spend. |
+
+The recorded cap remains visible when available, including on a mismatch.
+No historical ledger snapshot is stored in a decision, so later ledger
+appends may produce a mismatch. These reads use the existing verifier's
+ledger interpretation; they do not certify ledger completeness. To verify
+the anchored record, use the separate offline governance verification workflow.
+
+Regenerate the public response schema after changing its models:
+
+```sh
+uv run --locked python - <<'PY'
+import json
+from pathlib import Path
+from bernstein.core.routes.governance import RecordedDecisions
+Path('docs/api/recorded-decisions.schema.json').write_text(
+    json.dumps(RecordedDecisions.model_json_schema(), indent=2) + '\n'
+)
+PY
+```
+
 ## Access control (RBAC)
 
 `decide_access` resolves a subject's IDP groups to a role via a **signed

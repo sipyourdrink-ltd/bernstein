@@ -31,6 +31,7 @@
 // it is this property demonstrated with real data, not a hypothetical.
 
 import { ReceiptVerification } from '@/components/governance/ReceiptVerification';
+import { RecordedDecisions } from '@/components/governance/RecordedDecisions';
 import { Pill, SectionLabel } from '@/lib/states';
 import fixture from './governance-coverage.fixture.json';
 import notCoveredFixture from './governance-not-covered.json';
@@ -278,7 +279,8 @@ export function GovernancePanel({
 export default function Governance() {
   return (
     <>
-      <div className="px-6 pt-6">
+      <div className="space-y-6 px-6 pt-6">
+        <RecordedDecisions />
         <ReceiptVerification />
       </div>
       <GovernancePanel coverage={coverageFixture} />

@@ -1,4 +1,4 @@
-"""Governance coverage route (#5067).
+"""Governance evidence routes (#5067, #5070).
 
 ``GET /governance/coverage?run_id=<id>`` -- what one run's recorded evidence
 can account for: the fraction of its actions tied to a principal, and the
@@ -7,14 +7,20 @@ fraction covered by a recorded ``allow`` verdict.
 ``POST /governance/verify-receipt`` -- what one dropped receipt proves, with
 the tier the pass reached attached to it.
 
-The route owns no arithmetic. It parses the query string, hands the values to
+``GET /governance/decisions?run_id=<id>`` and
+``GET /governance/decisions/<decision_id>?run_id=<id>`` -- recorded decision
+fields and explicitly sourced budget projections. These reads do not create
+keys, records or directories and do not verify journal anchors. Budget input
+consistency delegates to the existing verifier, with no route-owned arithmetic.
+
+The coverage route parses the query string, hands the values to
 :func:`bernstein.core.security.governance_coverage.governance_coverage_json`,
 and returns those bytes verbatim -- the same rule ``/artifacts/health``
 follows, and for the same reason: an operator must be able to pin a number
 from the screen and recompute it offline from ``.sdd`` alone, which is only
 structurally true while there is one implementation and one serialiser.
 
-The status is always 200 for a well-formed request. Low coverage, an empty
+The coverage status is always 200 for a well-formed request. Low coverage, an empty
 run, and a tampered chain are all successfully computed answers about the
 evidence, not failed requests; a run that recorded nothing reports absent
 ratios rather than 404, because "this run proves nothing" is the answer the
@@ -23,13 +29,18 @@ operator came for.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import TYPE_CHECKING
+import math
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
+from pydantic import BaseModel
 
-from bernstein.core.lineage.spine import SpineRunIdError
+from bernstein.core.lineage.spine import SpineRunIdError, _validate_run_id
+from bernstein.core.security import governance as recorded_governance
 from bernstein.core.security.governance_coverage import governance_coverage_json
 from bernstein.core.security.governance_receipt_verdict import receipt_verdict_json
 
@@ -41,6 +52,166 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["governance"])
 
 _JSON_MEDIA_TYPE = "application/json"
+
+_NO_POLICY_VERSION = "this decision names no policy version"
+_BUDGET_SCOPE = "Budget input consistency only; journal anchor and signer are not verified by this read."
+
+
+class BudgetValue(BaseModel):
+    """A recorded or projected USD value with an explicit evidence state."""
+
+    value: float | None
+    state: Literal["verified", "unavailable", "mismatch"]
+    provenance: str
+    reason: str
+
+
+class BudgetEvidence(BaseModel):
+    cap_usd: BudgetValue
+    prior_spend_usd: BudgetValue
+    verification_scope: str = _BUDGET_SCOPE
+
+
+class RecordedDecision(BaseModel):
+    decision_id: str
+    run_id: str
+    subject: str
+    action: str
+    verdict: str
+    inputs_hash: str
+    timestamp: int
+    context: dict[str, Any]
+    journal_entry_hash: str
+    policy_version: str
+    budget: BudgetEvidence | None
+
+
+class RecordedDecisions(BaseModel):
+    run_id: str
+    decisions: list[RecordedDecision]
+
+
+def _contained(root: Path, path: Path) -> Path:
+    """Reject symlinks escaping the configured project or record directory."""
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        raise HTTPException(status_code=400, detail="evidence path escapes its configured root")
+    return resolved
+
+
+def _finite_usd(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        return None
+    try:
+        result = float(value)
+    except (OverflowError, ValueError):
+        return None
+    return result if math.isfinite(result) and result >= 0 else None
+
+
+def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Path) -> BudgetEvidence:
+    cap = _finite_usd(record.context.get("cap_usd"))
+    next_cost = _finite_usd(record.context.get("next_cost_usd"))
+    dimension = record.context.get("dimension", "agent")
+    state: Literal["verified", "unavailable", "mismatch"] = "unavailable"
+    reason = "Budget policy context is missing or unsupported."
+    prior: float | None = None
+    if cap is not None and next_cost is not None and dimension in ("agent", "task", "role", "feature_label"):
+        try:
+            ledger = _contained(workdir, workdir / ".sdd" / "cost" / "ledger.jsonl")
+            # A missing ledger is not evidence of zero spend. Observe its bytes
+            # around both existing projections so concurrent appends cannot be
+            # reported as a verified decision-time value.
+            before = ledger.read_bytes()
+            problem = recorded_governance._verify_budget_row(record, ledger)
+            candidate = recorded_governance.seat_spend(ledger, record.subject, dimension=dimension)
+            after = ledger.read_bytes()
+            if before != after:
+                reason = "Ledger changed while projecting budget inputs."
+            elif not math.isfinite(candidate):
+                reason = "Ledger projection is not a finite USD value."
+            elif problem:
+                state = "mismatch"
+                reason = problem
+            else:
+                state = "verified"
+                reason = "Existing budget verifier matched the recorded inputs hash and verdict."
+                prior = candidate
+        except (OSError, ValueError, TypeError, HTTPException):
+            reason = "Ledger evidence is unavailable."
+
+    return BudgetEvidence(
+        cap_usd=BudgetValue(
+            value=cap,
+            state=state,
+            provenance="recorded context.cap_usd (USD)",
+            reason=reason,
+        ),
+        prior_spend_usd=BudgetValue(
+            value=prior,
+            state=state,
+            provenance=(
+                ".sdd/cost/ledger.jsonl via seat_spend, checked by the existing budget verifier "
+                "against recorded inputs_hash; no historical ledger snapshot is stored"
+            ),
+            reason=reason,
+        ),
+    )
+
+
+def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
+    try:
+        _validate_run_id(run_id)
+    except SpineRunIdError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    workdir = _workdir(request)
+    root = _contained(workdir, workdir / ".sdd" / "lineage")
+    directory = _contained(root, recorded_governance.decisions_dir(root, run_id))
+    for path in directory.glob("*.json"):
+        _contained(directory, path)
+    try:
+        records = recorded_governance.read_decisions(root, run_id)
+        decisions = []
+        for record in records:
+            if record.run_id != run_id:
+                raise HTTPException(status_code=409, detail="decision names a different run")
+            # The ID names these exact record bytes, including an absent anchor.
+            encoded = json.dumps(record.to_dict(), sort_keys=True, allow_nan=False).encode()
+            version = record.context.get("policy_version")
+            decisions.append(
+                RecordedDecision(
+                    decision_id=hashlib.sha256(encoded).hexdigest(),
+                    run_id=record.run_id,
+                    subject=record.subject,
+                    action=record.action,
+                    verdict=record.verdict,
+                    inputs_hash=record.inputs_hash,
+                    timestamp=record.timestamp,
+                    context=record.context,
+                    journal_entry_hash=record.journal_entry_hash,
+                    policy_version=version if isinstance(version, str) and version.strip() else _NO_POLICY_VERSION,
+                    budget=_budget_evidence(record, workdir) if record.action == "budget" else None,
+                )
+            )
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        logger.warning("Cannot read recorded governance decisions: %s", type(exc).__name__)
+        raise HTTPException(status_code=409, detail="recorded decisions are unreadable") from None
+    return RecordedDecisions(run_id=run_id, decisions=decisions)
+
+
+@router.get("/governance/decisions", response_model=RecordedDecisions)
+def list_recorded_decisions(request: Request, run_id: str = "") -> RecordedDecisions:
+    """Read persisted decisions without creating directories, keys or records."""
+    return _recorded_decisions(request, run_id)
+
+
+@router.get("/governance/decisions/{decision_id}", response_model=RecordedDecision)
+def get_recorded_decision(decision_id: str, request: Request, run_id: str = "") -> RecordedDecision:
+    """Read one exact recorded projection; this does not verify its anchor."""
+    for decision in _recorded_decisions(request, run_id).decisions:
+        if decision.decision_id == decision_id:
+            return decision
+    raise HTTPException(status_code=404, detail="recorded decision not found")
 
 
 def _workdir(request: Request) -> Path:

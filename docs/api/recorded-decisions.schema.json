@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "BudgetEvidence": {
+      "properties": {
+        "cap_usd": {
+          "$ref": "#/$defs/BudgetValue"
+        },
+        "prior_spend_usd": {
+          "$ref": "#/$defs/BudgetValue"
+        },
+        "verification_scope": {
+          "default": "Budget input consistency only; journal anchor and signer are not verified by this read.",
+          "title": "Verification Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cap_usd",
+        "prior_spend_usd"
+      ],
+      "title": "BudgetEvidence",
+      "type": "object"
+    },
+    "BudgetValue": {
+      "description": "A recorded or projected USD value with an explicit evidence state.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "state": {
+          "enum": [
+            "verified",
+            "unavailable",
+            "mismatch"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "provenance": {
+          "title": "Provenance",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "state",
+        "provenance",
+        "reason"
+      ],
+      "title": "BudgetValue",
+      "type": "object"
+    },
+    "RecordedDecision": {
+      "properties": {
+        "decision_id": {
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "subject": {
+          "title": "Subject",
+          "type": "string"
+        },
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "verdict": {
+          "title": "Verdict",
+          "type": "string"
+        },
+        "inputs_hash": {
+          "title": "Inputs Hash",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "integer"
+        },
+        "context": {
+          "additionalProperties": true,
+          "title": "Context",
+          "type": "object"
+        },
+        "journal_entry_hash": {
+          "title": "Journal Entry Hash",
+          "type": "string"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BudgetEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "decision_id",
+        "run_id",
+        "subject",
+        "action",
+        "verdict",
+        "inputs_hash",
+        "timestamp",
+        "context",
+        "journal_entry_hash",
+        "policy_version",
+        "budget"
+      ],
+      "title": "RecordedDecision",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/RecordedDecision"
+      },
+      "title": "Decisions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "decisions"
+  ],
+  "title": "RecordedDecisions",
+  "type": "object"
+}
