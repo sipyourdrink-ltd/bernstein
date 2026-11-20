@@ -164,6 +164,105 @@ def test_installation_readiness_requires_matching_worker(tmp_path: Path, monkeyp
     assert legacy[-1]["ok"]
 
 
+def _init_worker_project(tmp_path: Path, worker: str) -> None:
+    _git(tmp_path, "init", "-b", "work")
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "fixture",
+    )
+    (tmp_path / "bernstein.yaml").write_text(
+        f"goal: test\ncli: {worker}\nmodel: fixture\ninternal_llm_provider: none\n"
+    )
+
+
+def test_gemini_requires_its_own_setup_for_project_and_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.cli.first_run_readiness import operator_installation_checks, project_handoff
+
+    _init_worker_project(tmp_path, "gemini")
+    config = tmp_path / ".config" / "gemini"
+    config.mkdir(parents=True)
+    (config / "settings.json").write_text("{}")
+    binary = tmp_path / ("gemini.cmd" if os.name == "nt" else "gemini")
+    binary.write_text("")
+    binary.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env = {"PATH": str(tmp_path), "HOME": str(tmp_path), "ANTHROPIC_API_KEY": "offline-fixture"}
+    observed = [
+        {"name": "Python version", "ok": True},
+        {"name": "Adapter: gemini", "ok": True},
+        {"name": "Auth: gemini", "ok": True, "detail": "config"},
+        {"name": "Auth: claude", "ok": True},
+        {"name": "Ready to run", "ok": True},
+    ]
+    for has_gemini_key in (False, True):
+        if has_gemini_key:
+            env["GEMINI_API_KEY"] = "offline-fixture"
+        setup = project_handoff(tmp_path, worker_env=env)
+        assert setup.worker == "gemini"
+        assert (not setup.actions) == has_gemini_key
+        if not has_gemini_key:
+            assert any("Gemini sign-in" in step for step in setup.actions)
+        checks = {row["name"]: row for row in operator_installation_checks(observed, env=env)}
+        assert checks["Auth: gemini"]["ok"] == has_gemini_key
+        assert checks["Ready to run"]["ok"] == has_gemini_key
+
+
+def test_codex_custom_provider_without_first_party_login(tmp_path: Path) -> None:
+    from bernstein.cli.first_run_readiness import operator_installation_checks, project_handoff
+
+    _init_worker_project(tmp_path, "codex")
+    binary = tmp_path / ("codex.cmd" if os.name == "nt" else "codex")
+    binary.write_text("@exit /b 1" if os.name == "nt" else "#!/bin/sh\nexit 1\n")
+    binary.chmod(0o755)
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    config = codex_home / "config.toml"
+    env = {"PATH": str(tmp_path), "HOME": str(tmp_path)}
+    observations = [
+        {"name": "Python version", "ok": True},
+        {"name": "Adapter: codex", "ok": True},
+        {"name": "Auth: codex", "ok": True},
+        {"name": "Ready to run", "ok": True},
+    ]
+    custom = (
+        'model_provider = "fixture"\n[model_providers.fixture]\nname = "Fixture"\n'
+        'base_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n'
+    )
+    for settings, ready in [
+        ('model = "fixture"\n', False),
+        (custom, True),
+        (custom + 'env_key = "FIXTURE_KEY"\n', False),
+        (custom + "requires_openai_auth = true\n", False),
+    ]:
+        config.write_text(settings)
+        assert (not project_handoff(tmp_path, worker_env=env).actions) == ready
+        checks = {row["name"]: row for row in operator_installation_checks(observations, env=env)}
+        assert checks["Auth: codex"]["ok"] == ready
+        assert checks["Ready to run"]["ok"] == ready
+
+
+def test_other_workers_use_their_declared_binary_and_access(tmp_path: Path) -> None:
+    from bernstein.cli.first_run_readiness import worker_handoff
+
+    env = {"PATH": str(tmp_path), "HOME": str(tmp_path)}
+    assert "Install aider" in worker_handoff("ollama", env=env)
+    binary = tmp_path / ("aider.cmd" if os.name == "nt" else "aider")
+    binary.write_text("")
+    binary.chmod(0o755)
+    assert worker_handoff("ollama", env=env) == ""
+    assert "Could not confirm" in worker_handoff("aider", env=env)
+    assert worker_handoff("aider", env={**env, "OPENAI_API_KEY": "offline-fixture"}) == ""
+
+
 def test_preflight_never_needs_to_probe_for_example_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from bernstein.cli.run_preflight import _abort_if_default_branch_merge_target
 

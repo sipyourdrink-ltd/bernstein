@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -80,23 +81,75 @@ def _cli_login(worker: str, binary: str, env: Mapping[str, str]) -> bool:
         return False
 
 
+def _codex_custom_provider(env: Mapping[str, str]) -> bool | None:
+    """Check a selected custom provider offline. None defers to first-party login."""
+    home = env.get("HOME") or env.get("USERPROFILE")
+    codex_home = env.get("CODEX_HOME") or (Path(home) / ".codex" if home else None)
+    if not codex_home:
+        return None
+    try:
+        with (Path(codex_home) / "config.toml").open("rb") as stream:
+            config = tomllib.load(stream)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return False
+    name = config.get("model_provider")
+    providers = config.get("model_providers")
+    if not isinstance(name, str) or name == "openai" or not isinstance(providers, dict):
+        return None
+    provider = providers.get(name)
+    if not isinstance(provider, dict):
+        return False
+    endpoint = provider.get("base_url")
+    if not isinstance(endpoint, str) or not endpoint.startswith(("http://", "https://")):
+        return False
+    if provider.get("wire_api", "responses") != "responses" or "auth" in provider or "gateway_oauth" in provider:
+        return False
+    if provider.get("requires_openai_auth"):
+        return None
+    key = provider.get("env_key")
+    return key is None or (isinstance(key, str) and bool(env.get(key)))
+
+
 def worker_handoff(worker: str, *, env: Mapping[str, str] | None = None) -> str:
-    from bernstein.core.orchestration.preflight import _get_api_key_error
+    from bernstein.adapters._contract import AuthBasis, ContractSpec
+    from bernstein.core.orchestration.preflight import _check_qwen_auth
 
     if worker == "auto":
         return "Set cli in bernstein.yaml to the worker you want to check, or keep auto for runtime routing."
     source = os.environ if env is None else env
-    binary = shutil.which(worker, path=source.get("PATH", ""))
+    try:
+        contract = ContractSpec.load(worker)
+    except FileNotFoundError:
+        contract = None
+    executable = contract.binary if contract is not None else worker
+    binary = shutil.which(executable, path=source.get("PATH", ""))
     if binary is None:
-        return f"Install the {worker} worker and make sure it is on PATH."
+        return f"Install {executable} for the {worker} worker and make sure it is on PATH."
+    if worker == "codex":
+        custom = _codex_custom_provider(source)
+        if custom is not None:
+            return "" if custom else "Could not confirm the Codex custom provider. Check its config.toml settings."
     if worker in {"claude", "codex"}:
         key = "ANTHROPIC_API_KEY" if worker == "claude" else "OPENAI_API_KEY"
         if source.get(key) or _cli_login(worker, binary, source):
             return ""
         login = "claude auth login" if worker == "claude" else "codex login"
         return f"Could not confirm the {worker} login. Run {login} or configure {key}."
-    problem = _get_api_key_error(worker, env=env)
-    return problem[2] if problem else ""
+    if worker == "gemini":
+        if source.get("GEMINI_API_KEY") or source.get("GOOGLE_API_KEY"):
+            return ""
+        return "Could not confirm the Gemini login. Check your Gemini sign-in or configure GEMINI_API_KEY."
+    if worker == "qwen":
+        problem = _check_qwen_auth(env=source)
+        return problem[2] if problem else ""
+    if contract is not None and (
+        contract.auth_basis == AuthBasis.LOCAL
+        or (contract.auth_basis == AuthBasis.API_KEY and any(source.get(key) for key in contract.auth_secret_envs))
+    ):
+        return ""
+    return f"Could not confirm the {worker} setup. Check the worker configuration before starting."
 
 
 def operator_installation_checks(
@@ -108,13 +161,13 @@ def operator_installation_checks(
     installed = {
         name.removeprefix("Adapter: ") for name, row in rows.items() if name.startswith("Adapter: ") and row["ok"]
     }
-    for worker in installed.intersection({"claude", "codex"}):
+    for worker in installed:
         row = rows.get(f"Auth: {worker}")
         if row is not None:
             problem = worker_handoff(worker, env=env)
             row.update(
                 ok=not problem,
-                detail="Login or API key configured" if not problem else "Login unconfirmed",
+                detail="Worker access configured" if not problem else "Worker access unconfirmed",
                 fix=problem,
             )
     matching = any(rows.get(f"Auth: {worker}", {}).get("ok") for worker in installed)
@@ -122,7 +175,7 @@ def operator_installation_checks(
         ok = bool(rows.get("Python version", {}).get("ok") and matching)
         rows["Ready to run"].update(
             ok=ok,
-            detail="Python and a matching worker login are configured"
+            detail="Python and a matching worker are configured"
             if ok
             else "Python or a matching worker login is missing",
             fix="" if ok else "Check the Python version and configure the login for an installed worker.",
@@ -177,9 +230,6 @@ def project_handoff(root: Path, *, remote: bool = False, worker_env: Mapping[str
         return ProjectHandoff(checkout, None, None, tuple(actions))
     try:
         data = _load_seed_mapping(config_path)
-        budget = data.get("budget")
-        if budget is not None and not isinstance(budget, (str, int, float)):
-            raise SeedError("The budget must be a dollar amount or number.")
         has_goal = "goal" in data
         seed = _parse_seed(config_path, apply_tuning=False, mapping=data if has_goal else {**data, "goal": "First run"})
     except (OSError, ValueError, SeedError):

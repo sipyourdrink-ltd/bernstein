@@ -105,7 +105,7 @@ type _CAST_DICT_STR_ANY = dict[str, Any]
 type _CAST_STR_INT_FLOAT_NONE = str | int | float | None
 
 
-def _parse_budget(raw: str | int | float | None) -> float | None:
+def _parse_budget(raw: object) -> float | None:
     """Extract a numeric dollar amount from a budget value.
 
     Args:
@@ -121,7 +121,8 @@ def _parse_budget(raw: str | int | float | None) -> float | None:
         return None
     if isinstance(raw, (int, float)):
         return float(raw)
-    # At this point raw must be str (the only remaining type).
+    if not isinstance(raw, str):
+        raise SeedError("Invalid budget format. Expected '$N' or a number.")
     m = _BUDGET_RE.match(raw.strip())
     if m:
         return float(m.group(1))
@@ -2590,7 +2591,7 @@ def _parse_seed(path: Path, *, apply_tuning: bool, mapping: dict[str, object] | 
         raise SeedError("Seed file must contain a non-empty 'goal' string.")
 
     # --- Optional fields ---
-    budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
+    budget_usd = _parse_budget(data.get("budget"))
     team = _parse_team(data.get("team"))
 
     # ``team_manifest: <name>[@sha256]`` expands deterministically into the

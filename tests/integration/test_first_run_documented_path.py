@@ -174,23 +174,29 @@ def test_configured_first_run_completes_and_recaps(
         BERNSTEIN_NO_SPLASH="1",
     )
 
-    def run(command: list[str], *, check: bool = True) -> str:
+    def run(command: list[str], *, expected_code: int | None = 0) -> subprocess.CompletedProcess[str]:
         argv = [sys.executable, "-m", "bernstein", *command[1:]] if command[0] == "bernstein" else command
         result = subprocess.run(argv, cwd=project, env=env, timeout=150, capture_output=True, text=True)
-        if check:
-            assert result.returncode == 0, result.stdout + result.stderr
-        return result.stdout
+        if expected_code is not None:
+            assert result.returncode == expected_code, result.stdout + result.stderr
+        return result
 
     guide = (Path(__file__).resolve().parents[2] / "docs/getting-started/first-run.md").read_text(encoding="utf-8")
-    assert "bernstein" in run(["bernstein", "--version"]).lower()
+    assert "bernstein" in run(["bernstein", "--version"]).stdout.lower()
     run(["git", "init", "--initial-branch=main"])
     run(["git", "commit", "--allow-empty", "-m", "init"])
-    assert "git switch -c" in run(["bernstein", "init"])
+    assert "git switch -c" in run(["bernstein", "init"]).stdout
     # Doctor still reports all installation checks when a preserved seed is malformed.
     (project / "bernstein.yaml").write_text("goal: Test\nbudget: []\n", encoding="utf-8")
-    malformed = json.loads(run(["bernstein", "doctor", "--json"], check=False))
+    assert "config validate" in run(["bernstein", "init"]).stdout
+    assert (project / "bernstein.yaml").read_text() == "goal: Test\nbudget: []\n"
+    malformed = json.loads(run(["bernstein", "doctor", "--json"], expected_code=None).stdout)
     assert malformed["checks"] and not malformed["project_setup"]["ready"]
     assert any("config validate" in step for step in malformed["project_setup"]["next_steps"])
+    invalid = run(["bernstein", "config", "validate"], expected_code=1)
+    validation = invalid.stdout + invalid.stderr
+    assert "Invalid budget format" in validation and "or a number" in validation
+    assert "Traceback" not in validation
     config = guide.split("A minimal `bernstein.yaml` looks like:", 1)[1].split("```yaml\n", 1)[1].split("\n```", 1)[0]
     (project / "bernstein.yaml").write_text(config, encoding="utf-8")
     steps = (
@@ -198,17 +204,17 @@ def test_configured_first_run_completes_and_recaps(
     )
     run(shlex.split(steps[0], comments=True))
     # Installation-wide warnings can set doctor exit 1. The project result is independent.
-    setup = json.loads(run(["bernstein", "doctor", "--json"], check=False))["project_setup"]
+    setup = json.loads(run(["bernstein", "doctor", "--json"], expected_code=None).stdout)["project_setup"]
     assert setup["ready"] and setup["worker"] == "codex" and setup["planner"] == "none", setup
 
     try:
         # Noninteractive CI confirms the example and selects its own unused local port.
-        output = run([*shlex.split(steps[1]), "--auto-approve", "--port", str(unused_tcp_port), "--wait", "90"])
+        output = run([*shlex.split(steps[1]), "--auto-approve", "--port", str(unused_tcp_port), "--wait", "90"]).stdout
         assert "Total tasks: 1" in output, output
         assert "Hello, world!" in (project / "src/greeting.py").read_text(encoding="utf-8")
-        assert run(["git", "diff", "--name-only", "main...HEAD"]).strip() == "src/greeting.py"
+        assert run(["git", "diff", "--name-only", "main...HEAD"]).stdout.strip() == "src/greeting.py"
         recap = guide.split("## Step 6: See what happened", 1)[1].split("```bash\n", 1)[1].split("\n```", 1)[0]
-        report = json.loads(run([*shlex.split(recap), "--as-json"]))
+        report = json.loads(run([*shlex.split(recap), "--as-json"]).stdout)
         assert report["summary"] == {"total": 1, "completed": 1, "failed": 0, "success_rate": 100.0}
     finally:
         from bernstein.cli.run_confirm import _stop_demo_processes
