@@ -54,26 +54,25 @@ _STYLE_BOLD_CYAN = "bold cyan"
     "--interval",
     default=2.0,
     show_default=True,
-    help="Polling interval in seconds.",
+    help="Polling interval in seconds for --classic.",
 )
 @click.option(
     "--classic",
     is_flag=True,
     default=False,
-    help="Use the classic Rich Live display instead of the interactive TUI.",
+    help="Use the classic Rich Live display.",
 )
 @click.option(
     "--no-splash",
     is_flag=True,
     default=False,
-    help="Skip the premium startup splash.",
+    help="Skip the Textual startup splash.",
 )
 def live(interval: float, classic: bool, no_splash: bool) -> None:
-    """Live dashboard: active agents, task events, and stats (Ctrl+C to exit).
+    """Live dashboard for active agents, tasks, and activity (Ctrl+C to exit).
 
-    Launches the two-column interactive Textual TUI by default:
-    Agents | Tasks, with a full-width activity feed + sparkline + chat input below.
-    Mouse + keyboard. Pass --classic for the simpler Rich Live display.
+    The default Textual dashboard shows Agents and Tasks side by side, with
+    the activity feed below. Use --classic for the Rich Live display.
     """
     seed_path = find_seed_file()
     seed_cfg = _load_live_seed_config(seed_path)
