@@ -21,6 +21,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any, cast
@@ -138,7 +139,14 @@ class ValidationReport:
 # Schema loading
 # ---------------------------------------------------------------------------
 
-_SCHEMA_CACHE: dict[str, dict[str, Any]] = {}
+
+@dataclass
+class _PackagedSchema:
+    definition: str
+    public_view: dict[str, Any] | None = None
+
+
+_SCHEMA_CACHE: dict[str, _PackagedSchema] = {}
 _VERSION_RE = re.compile(r"^v\d+(?:\.\d+)?$", re.ASCII)
 
 
@@ -156,6 +164,13 @@ def load_schema(version: str = "v1") -> dict[str, Any]:
 
     Raises :class:`SchemaNotFoundError` if the file is not packaged.
     """
+    entry = _packaged_schema(version)
+    if entry.public_view is None:
+        entry.public_view = json.loads(entry.definition)
+    return cast("dict[str, Any]", entry.public_view)
+
+
+def _packaged_schema(version: str) -> _PackagedSchema:
     canonical = _coerce_version(version)
     cached = _SCHEMA_CACHE.get(canonical)
     if cached is not None:
@@ -177,8 +192,9 @@ def load_schema(version: str = "v1") -> dict[str, Any]:
     loaded: dict[str, Any] = cast("dict[str, Any]", loaded_raw).copy()
     # Sanity-check it really is Draft-07 compatible.
     jsonschema.Draft7Validator.check_schema(loaded)
-    _SCHEMA_CACHE[canonical] = loaded
-    return loaded
+    entry = _PackagedSchema(json.dumps(loaded))
+    _SCHEMA_CACHE[canonical] = entry
+    return entry
 
 
 def list_recommended_keys(version: str = "v1") -> tuple[str, ...]:
@@ -294,6 +310,25 @@ def _format_checker() -> FormatChecker:
     return _format_checker_singleton
 
 
+@lru_cache(maxsize=8)
+def _validator_for_definition(definition: str) -> Any:
+    """Compile a private snapshot. JSON object order also determines diagnostic order."""
+    return jsonschema.Draft7Validator(json.loads(definition), format_checker=_format_checker())
+
+
+def _ticket_validator(version: str) -> Any:
+    entry = _packaged_schema(version)
+    if entry.public_view is None:
+        return _validator_for_definition(entry.definition)
+    # Public callers share a mutable dict. Include its current contents and
+    # order in the key, and pass Python-only overrides directly to jsonschema.
+    try:
+        definition = json.dumps(entry.public_view)
+    except (TypeError, ValueError):
+        return jsonschema.Draft7Validator(entry.public_view, format_checker=_format_checker())
+    return _validator_for_definition(definition)
+
+
 def _issue_from_error(err: jsonschema.ValidationError) -> ValidationIssue:
     path_parts: tuple[str | int, ...] = tuple(err.absolute_path)
     code = err.validator if isinstance(err.validator, str) else ""
@@ -331,8 +366,7 @@ def validate_ticket_metadata(
     if not isinstance(metadata, Mapping):  # type: ignore[unreachable]
         return ValidationReport.error(target, "frontmatter is not a mapping", code="not_mapping")
 
-    schema = load_schema(schema_version)
-    validator: Any = jsonschema.Draft7Validator(schema, format_checker=_format_checker())
+    validator = _ticket_validator(schema_version)
     instance: dict[str, Any] = dict(metadata)
     raw_errors = cast("list[jsonschema.ValidationError]", list(validator.iter_errors(instance)))
     errors = [_issue_from_error(e) for e in raw_errors]

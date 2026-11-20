@@ -16,6 +16,7 @@ from copy import deepcopy
 from importlib import resources
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import jsonschema
 import pytest
@@ -29,6 +30,7 @@ from bernstein.sdd import (
     validate_ticket,
     validate_ticket_metadata,
 )
+from bernstein.sdd import validator as validator_module
 from bernstein.sdd.validator import (
     RECOMMENDED_KEYS,
     parse_frontmatter,
@@ -63,6 +65,56 @@ def test_load_schema_caches_result() -> None:
     a = load_schema("v1")
     b = load_schema("v1")
     assert a is b
+
+
+def test_warm_validator_reuses_packaged_definition(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A fresh packaged lookup also exercises the first construction in a warm test process.
+    monkeypatch.setattr(validator_module, "_SCHEMA_CACHE", {})
+    validator_module._validator_for_definition.cache_clear()
+    with patch.object(jsonschema, "Draft7Validator", wraps=jsonschema.Draft7Validator) as construct:
+        assert validate_ticket_metadata(_minimal_meta()).ok
+        assert load_schema() is load_schema()
+        invalid = {**_minimal_meta(), "created": "2026-02-30", "priority": "invalid"}
+        report = validate_ticket_metadata(invalid)
+        strict = validate_ticket_metadata(invalid, strict=True)
+        assert [(i.path, i.code) for i in report.errors] == [(("created",), "format"), (("priority",), "enum")]
+        assert [i.path for i in report.warnings] == [(key,) for key in RECOMMENDED_KEYS]
+        assert strict.errors == report.errors + report.warnings
+        assert strict.warnings == []
+        with pytest.raises(SchemaNotFoundError):
+            validate_ticket_metadata(invalid, schema_version="v999")
+        assert construct.call_count == 1
+
+
+def test_warm_validator_observes_changed_definition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Isolate the public mutable schema from other users in this test process.
+    monkeypatch.setattr(validator_module, "_SCHEMA_CACHE", {})
+    schema = load_schema()
+    assert validate_ticket_metadata(_minimal_meta()).ok
+    assert load_schema() is schema
+    schema["required"] = [*schema["required"], "synthetic"]
+    assert [i.code for i in validate_ticket_metadata(_minimal_meta()).errors] == ["required"]
+
+    replacement = deepcopy(schema)
+    replacement["required"].remove("synthetic")
+    replacement["properties"]["priority"]["enum"] = ["custom"]
+    (tmp_path / "ticket.v1.json").write_text(json.dumps(replacement), encoding="utf-8")
+    monkeypatch.setattr(resources, "files", lambda _package: tmp_path)
+    monkeypatch.setattr(validator_module, "_SCHEMA_CACHE", {})
+    assert [(i.path, i.code) for i in validate_ticket_metadata(_minimal_meta()).errors] == [(("priority",), "enum")]
+    assert validate_ticket_metadata({**_minimal_meta(), "priority": "custom"}).ok
+
+
+def test_mutable_schema_preserves_diagnostic_order_and_python_annotations(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(validator_module, "_SCHEMA_CACHE", {})
+    schema = load_schema()
+    invalid = {**_minimal_meta(), "priority": "invalid", "created": "unknown"}
+    assert [i.path for i in validate_ticket_metadata(invalid).errors] == [("created",), ("priority",)]
+    properties = schema["properties"]
+    properties["created"] = properties.pop("created")
+    assert [i.path for i in validate_ticket_metadata(invalid).errors] == [("priority",), ("created",)]
+    schema["x-annotation"] = object()
+    assert [i.path for i in validate_ticket_metadata(invalid).errors] == [("priority",), ("created",)]
 
 
 def test_load_schema_unknown_version_raises() -> None:
