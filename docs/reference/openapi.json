@@ -8591,6 +8591,103 @@
         }
       }
     },
+    "/governance/decisions": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "List Recorded Decisions",
+        "description": "Read persisted decisions without creating directories, keys or records.",
+        "operationId": "list_recorded_decisions_governance_decisions_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordedDecisions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/governance/decisions/{decision_id}": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Get Recorded Decision",
+        "description": "Read one exact recorded projection; this does not verify its anchor.",
+        "operationId": "get_recorded_decision_governance_decisions__decision_id__get",
+        "parameters": [
+          {
+            "name": "decision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Decision Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordedDecision"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/governance/coverage": {
       "get": {
         "tags": [
@@ -18130,6 +18227,103 @@
         }
       }
     },
+    "/api/v1/governance/decisions": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "List Recorded Decisions",
+        "description": "Read persisted decisions without creating directories, keys or records.",
+        "operationId": "list_recorded_decisions_api_v1_governance_decisions_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordedDecisions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/governance/decisions/{decision_id}": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Get Recorded Decision",
+        "description": "Read one exact recorded projection; this does not verify its anchor.",
+        "operationId": "get_recorded_decision_api_v1_governance_decisions__decision_id__get",
+        "parameters": [
+          {
+            "name": "decision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Decision Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordedDecision"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/governance/coverage": {
       "get": {
         "tags": [
@@ -20150,6 +20344,68 @@
         "title": "BroadcastRequest",
         "description": "Body for ``POST /broadcast``.\n\nTyping the body with a model lets FastAPI reject non-object or\nmalformed JSON with a ``422`` instead of letting ``dict.get`` (or a\n``JSONDecodeError``) raise an unhandled exception. ``message``\ndefaults to an empty string so a missing field still funnels into\nthe existing ``400 message is required`` path."
       },
+      "BudgetEvidence": {
+        "properties": {
+          "cap_usd": {
+            "$ref": "#/components/schemas/BudgetValue"
+          },
+          "prior_spend_usd": {
+            "$ref": "#/components/schemas/BudgetValue"
+          },
+          "verification_scope": {
+            "type": "string",
+            "title": "Verification Scope",
+            "default": "Budget input consistency only; journal anchor and signer are not verified by this read."
+          }
+        },
+        "type": "object",
+        "required": [
+          "cap_usd",
+          "prior_spend_usd"
+        ],
+        "title": "BudgetEvidence"
+      },
+      "BudgetValue": {
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "unavailable",
+              "mismatch"
+            ],
+            "title": "State"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "state",
+          "provenance",
+          "reason"
+        ],
+        "title": "BudgetValue",
+        "description": "A recorded or projected USD value with an explicit evidence state."
+      },
       "BulletinMessageResponse": {
         "properties": {
           "agent_id": {
@@ -21986,6 +22242,97 @@
         ],
         "title": "RecordEventRequest",
         "description": "Body for recording a task completion/failure event.\n\nAttributes:\n    task_id: Task identifier.\n    success: Whether the task succeeded.\n    duration_s: Task wall-clock duration in seconds.\n    cost_usd: Estimated cost of the task in USD.\n    initial_stage: Stage to initialise the record at when no record exists yet."
+      },
+      "RecordedDecision": {
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "title": "Decision Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "verdict": {
+            "type": "string",
+            "title": "Verdict"
+          },
+          "inputs_hash": {
+            "type": "string",
+            "title": "Inputs Hash"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          },
+          "context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context"
+          },
+          "journal_entry_hash": {
+            "type": "string",
+            "title": "Journal Entry Hash"
+          },
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "decision_id",
+          "run_id",
+          "subject",
+          "action",
+          "verdict",
+          "inputs_hash",
+          "timestamp",
+          "context",
+          "journal_entry_hash",
+          "policy_version",
+          "budget"
+        ],
+        "title": "RecordedDecision"
+      },
+      "RecordedDecisions": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedDecision"
+            },
+            "type": "array",
+            "title": "Decisions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "decisions"
+        ],
+        "title": "RecordedDecisions"
       },
       "ResolveRequest": {
         "properties": {
