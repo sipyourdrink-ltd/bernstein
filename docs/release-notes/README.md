@@ -44,7 +44,9 @@ python scripts/bump_version.py 4.0.0
 
 The first command reads the unreleased entries and the fragments in filename
 order. Its inputs in `scripts/release_cuts/v4.0.0.toml` identify deferred
-fragments, links to relocate, wording corrections and known limitations.
+fragments, wording corrections and known limitations. Listed relative links
+point to the tagged document on GitHub so the same URL works in the docs
+and in the standalone GitHub Release body.
 It adds the new page to navigation and removes only the fragments it used.
 
 For a manually curated version, `scripts/rotate_release_notes.py rotate

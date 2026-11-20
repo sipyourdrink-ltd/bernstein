@@ -27,7 +27,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import os.path
 import re
 import sys
 import tomllib
@@ -170,8 +169,10 @@ def assemble(repo: Path, version: str) -> None:
             url = urlsplit(original)
             if not url.path or url.scheme or url.netloc or url.path.startswith("/"):
                 raise ValueError(f"{fragment.name}: expected a relative document link, got {original!r}")
-            moved_path = Path(os.path.relpath(fragment.parent / url.path, page.parent)).as_posix()
-            moved_url = urlunsplit(url._replace(path=moved_path))
+            # The same Markdown is published by MkDocs and as a standalone GitHub Release body.
+            doc = (fragment.parent / url.path).resolve(strict=True).relative_to(repo.resolve())
+            blob_path = f"/sipyourdrink-ltd/bernstein/blob/{version}/{doc.as_posix()}"
+            moved_url = urlunsplit(("https", "github.com", blob_path, url.query, url.fragment))
             body = _replace_once(body, f"]({original})", f"]({moved_url})", fragment)
         parts.append(body)
     if cut["limitations"]:

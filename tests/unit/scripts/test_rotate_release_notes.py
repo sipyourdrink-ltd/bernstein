@@ -16,6 +16,7 @@ import sys
 from collections.abc import Generator
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -458,6 +459,7 @@ def _release_inputs(root: Path) -> tuple[Path, Path, Path]:
     fragments = notes / "fragments"
     fragments.mkdir(parents=True)
     (notes / "unreleased.md").write_text("# Unreleased\n\nIntro.\n\n## Changes\n\nAn entry.\n")
+    (root / "docs/guide.md").write_text("## Setup\n")
     (fragments / "0001.md").write_text("Read [the guide](../../guide.md#setup).\n")
     held = fragments / "held.md"
     held.write_bytes(b"excluded sentinel\n")
@@ -477,7 +479,14 @@ def test_moved_fragment_link_resolves_to_same_document_and_anchor(rotate_module:
     original = source.read_text().split("](")[1].split(")")[0]
     rotate_module.assemble(tmp_path, version_page.stem)
     moved = version_page.read_text().split("](")[1].split(")")[0]
-    assert (version_page.parent / moved).resolve() == (source.parent / original).resolve()
+    target = urlsplit(moved)
+    assert (target.scheme, target.netloc) == ("https", "github.com")
+    prefix = f"/sipyourdrink-ltd/bernstein/blob/{version_page.stem}/"
+    assert target.path.startswith(prefix)
+    target_doc = tmp_path / target.path.removeprefix(prefix)
+    assert target_doc == (source.parent / urlsplit(original).path).resolve()
+    assert target.fragment == urlsplit(original).fragment == "setup"
+    assert "## Setup" in target_doc.read_text()
 
 
 def test_assembly_preserves_the_held_fragment(
@@ -509,7 +518,7 @@ def test_assembly_is_byte_identical_from_the_same_inputs(rotate_module: ModuleTy
     assert first == generated(tmp_path / "b")
     assert (
         first[0]
-        == b"# v4.0.0\n\n## Changes\n\nAn entry.\n\nRead [the guide](../guide.md#setup).\n\n## Known limitations\n\n- Pending follow-up.\n"
+        == b"# v4.0.0\n\n## Changes\n\nAn entry.\n\nRead [the guide](https://github.com/sipyourdrink-ltd/bernstein/blob/v4.0.0/docs/guide.md#setup).\n\n## Known limitations\n\n- Pending follow-up.\n"
     )
     assert first[1] == b"# Unreleased\n\nIntro.\n"
     assert first[2].endswith(b"  - v4.0.0: release-notes/v4.0.0.md\n")
@@ -535,3 +544,15 @@ def test_assembly_restores_inputs_after_a_fragment_removal_fails(
         rotate_module.assemble(tmp_path, page.stem)
     assert not page.exists()
     assert {path: path.read_bytes() for path in paths} == before
+
+
+def test_github_release_body_links_to_the_tagged_govern_audit_heading() -> None:
+    page = (REPO_ROOT / "docs/release-notes/v4.0.0.md").read_text(encoding="utf-8")
+    # publish.yml strips the first heading before handing the rest to gh release --notes-file.
+    heading, body = page.split("\n", 1)
+    assert heading == "# v4.0.0"
+    link = body.split("[governance operations](", 1)[1].split(")", 1)[0]
+    doc = "docs/operations/governance.md"
+    anchor = "govern-audit-machine-readable-output-and-ci-gates"
+    assert link == f"https://github.com/sipyourdrink-ltd/bernstein/blob/v4.0.0/{doc}#{anchor}"
+    assert "## `govern audit`: machine-readable output and CI gates" in (REPO_ROOT / doc).read_text(encoding="utf-8")
