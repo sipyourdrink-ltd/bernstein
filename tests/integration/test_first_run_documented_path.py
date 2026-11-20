@@ -197,6 +197,7 @@ def test_configured_first_run_completes_and_recaps(
     validation = invalid.stdout + invalid.stderr
     assert "Invalid budget format" in validation and "or a number" in validation
     assert "Traceback" not in validation
+    assert "No project configuration found" not in validation
     config = guide.split("A minimal `bernstein.yaml` looks like:", 1)[1].split("```yaml\n", 1)[1].split("\n```", 1)[0]
     (project / "bernstein.yaml").write_text(config, encoding="utf-8")
     steps = (
