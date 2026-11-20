@@ -16,10 +16,12 @@ help-text shape. The group can be removed together with the alias.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner, Result
 
 from bernstein.cli.commands.run_changelog_cmd import run_changelog_default
@@ -224,6 +226,31 @@ class TestBareChangelogDefaultsToRunBehaviour:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("selection", "until", "history_path"),
+    [
+        (["--since", "HEAD~1"], "HEAD", "compare/HEAD~1...HEAD"),
+        (["--all"], "HEAD", "commits/HEAD"),
+        (["--all"], "HEAD~1", "commits/HEAD~1"),
+    ],
+    ids=["range", "all", "earlier-end-ref"],
+)
+def test_changelog_links_use_until_ref(tmp_path: Path, selection: list[str], until: str, history_path: str) -> None:
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    for subject in ("feat: first change", "fix: second change"):
+        subprocess.run([*git, "commit", "--allow-empty", "--no-gpg-sign", "-qm", subject], cwd=tmp_path, check=True)
+
+    repo_url = "https://example.invalid/project"
+    options = ["--until", until, "--version", "Preview", "--format", "keepachangelog", "--repo-url", repo_url]
+    result = CliRunner().invoke(cli, ["changelog", "conventional", *selection, *options, "--workdir", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    heading = next(line for line in result.output.splitlines() if line.startswith("## "))
+    assert heading.startswith("## [Preview] - ")
+    assert heading.endswith(f" ({repo_url}/{history_path})")
+
+
 class TestConventionalSubcommand:
     """The conventional-commit command moves under ``changelog conventional``."""
 
@@ -233,8 +260,6 @@ class TestConventionalSubcommand:
         with runner.isolated_filesystem():
             cwd = Path().resolve()
             # Initialise an empty git repo and make one conventional commit.
-            import subprocess
-
             subprocess.run(["git", "init", "-q", "--initial-branch=main"], cwd=cwd, check=True)
             subprocess.run(
                 ["git", "config", "user.email", "test@example.com"],
