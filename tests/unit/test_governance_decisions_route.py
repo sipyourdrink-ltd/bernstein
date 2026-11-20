@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from fastapi import FastAPI
@@ -97,7 +98,7 @@ def test_list_and_detail_preserve_recorded_fields_without_writes_or_keys(
     detail = client.get(f"/governance/decisions/{row['decision_id']}", params={"run_id": "run-1"})
     assert detail.status_code == 200
     assert detail.json() == row
-    assert client.get("/governance/decisions/unknown", params={"run_id": "run-1"}).status_code == 404
+    assert client.get(f"/governance/decisions/{'0' * 64}", params={"run_id": "run-1"}).status_code == 404
     assert _snapshot(tmp_path) == before
 
 
@@ -114,9 +115,57 @@ def test_empty_run_writes_nothing(tmp_path: Path) -> None:
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("run_id", ["", "..", "../other", "a/b", "a\\b", "a\x00b", "a" * 201, "a b"])
-def test_invalid_run_ids_are_rejected(tmp_path: Path, run_id: str) -> None:
-    assert _client(tmp_path).get("/governance/decisions", params={"run_id": run_id}).status_code == 400
+@pytest.mark.parametrize("run_id", ["", ".", "..", "../other", "/run", "a/b", "a\\b", "a\x00b", "a" * 201, "a b"])
+def test_invalid_run_ids_are_rejected(tmp_path: Path, run_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "_read_recorded_decisions", lambda *_: pytest.fail("invalid run reached storage"))
+    client = _client(tmp_path)
+    for suffix in ("", "/" + "a" * 64):
+        assert client.get(f"/governance/decisions{suffix}", params={"run_id": run_id}).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "decision_id", ["unknown", "a" * 63, "a" * 65, "A" * 64, "..hidden", "a/b", "/a", "a\\b", "a\x00b"]
+)
+def test_invalid_decision_id_never_reads_the_run(
+    tmp_path: Path, decision_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(routes, "_read_recorded_decisions", lambda *_: pytest.fail("invalid digest reached storage"))
+    url = f"/governance/decisions/{quote(decision_id, safe='')}"
+    assert _client(tmp_path).get(url, params={"run_id": "run-1"}).status_code == 404
+
+
+def test_valid_run_id_keeps_its_stored_spelling(tmp_path: Path) -> None:
+    run_id = "run:v1.2_A-b"
+    record = _record(tmp_path, run_id=run_id)
+    run = record.parent.parent
+    run.rename(run.with_name(run_id))
+    response = _client(tmp_path).get("/governance/decisions", params={"run_id": run_id})
+    assert response.status_code == 200
+    assert [row["run_id"] for row in response.json()["decisions"]] == [run_id]
+
+
+@pytest.mark.parametrize("component", ["run", "decisions", "record"])
+@pytest.mark.parametrize("within_project", [True, False], ids=["sibling", "outside"])
+def test_redirected_evidence_is_rejected_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component: str, within_project: bool
+) -> None:
+    project = tmp_path / "project"
+    record = _record(project)
+    link = {"run": record.parent.parent, "decisions": record.parent, "record": record}[component]
+    target = (project if within_project else tmp_path) / "elsewhere"
+    link.rename(target)
+    link.symlink_to(target, target_is_directory=component != "record")
+    original = os.open
+
+    def guarded_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if kwargs.get("dir_fd") is not None and path == link.name:
+            pytest.fail("redirected evidence reached the descriptor-relative open")
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", guarded_open)
+    client = _client(project)
+    for suffix in ("", "/" + "a" * 64):
+        assert client.get(f"/governance/decisions{suffix}", params={"run_id": "run-1"}).status_code == 409
 
 
 def test_outside_record_link_is_rejected(tmp_path: Path) -> None:
@@ -253,6 +302,26 @@ def test_ledger_open_refusal_is_unavailable(tmp_path: Path, monkeypatch: pytest.
     assert row["budget"]["prior_spend_usd"]["value"] is None
 
 
+def test_redirected_ledger_is_unavailable_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = tmp_path / "project"
+    _, ledger = _budget_refusal(project)
+    target = tmp_path / "other-ledger"
+    ledger.rename(target)
+    ledger.symlink_to(target)
+    original = routes.open_anchored
+
+    def open_evidence(root: Path, *components: str, **kwargs: object) -> int:
+        if components[-1] == ledger.name:
+            pytest.fail("redirected ledger reached the descriptor-relative open")
+        return original(root, *components, **kwargs)
+
+    monkeypatch.setattr(routes, "open_anchored", open_evidence)
+    (row,) = _list(_client(project))["decisions"]
+    assert row["budget"]["cap_usd"]["value"] == 10.0
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
 @pytest.mark.parametrize("alias_state", ["absent", "different-file"])
 def test_unusable_descriptor_alias_never_verifies_zero_spend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, alias_state: str
@@ -293,7 +362,7 @@ def test_nesting_failure_returns_controlled_error(tmp_path: Path, monkeypatch: p
     else:
         monkeypatch.setattr(routes.json, "dumps", fail_serialization)
     client = _client(tmp_path)
-    for route in ("/governance/decisions", "/governance/decisions/unknown"):
+    for route in ("/governance/decisions", f"/governance/decisions/{'0' * 64}"):
         assert client.get(route, params={"run_id": "run-1"}).status_code == 409
 
 

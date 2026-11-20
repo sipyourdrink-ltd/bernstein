@@ -48,6 +48,7 @@ from bernstein.core.persistence.anchored_read import ANCHORED_OPEN_SUPPORTED, op
 from bernstein.core.security import governance as recorded_governance
 from bernstein.core.security.governance_coverage import governance_coverage_json
 from bernstein.core.security.governance_receipt_verdict import receipt_verdict_json
+from bernstein.core.security.path_containment import contained_subpath
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,14 @@ def _check_descriptor_view(path: Path, fd: int) -> None:
             raise OSError("descriptor view names a different file")
 
 
+def _checked_evidence_path(root: Path, relative: str) -> Path:
+    """Resolve below a canonical root and reject redirection even within it."""
+    checked = contained_subpath(root, relative, label="decision evidence")
+    if checked != root / relative:
+        raise ValueError("decision evidence path contains a symlink")
+    return checked
+
+
 def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Path) -> BudgetEvidence:
     cap = _finite_usd(record.context.get("cap_usd"))
     next_cost = _finite_usd(record.context.get("next_cost_usd"))
@@ -119,7 +128,8 @@ def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Pa
     prior: float | None = None
     if cap is not None and next_cost is not None and dimension in ("agent", "task", "role", "feature_label"):
         try:
-            fd = open_anchored(workdir, ".sdd", "cost", "ledger.jsonl", flags=os.O_RDONLY, require_regular_file=True)
+            path = _checked_evidence_path(workdir, ".sdd/cost/ledger.jsonl")
+            fd = open_anchored(workdir, *path.relative_to(workdir).parts, flags=os.O_RDONLY, require_regular_file=True)
             # A missing ledger is not evidence of zero spend. Observe its bytes
             # around both existing projections so concurrent appends cannot be
             # reported as a verified decision-time value. Both projections open
@@ -173,12 +183,10 @@ def _read_recorded_decisions(workdir: Path, run_id: str) -> list[recorded_govern
     if not ANCHORED_OPEN_SUPPORTED:
         raise HTTPException(status_code=409, detail="anchored decision reads are unavailable on this platform")
     try:
+        directory = _checked_evidence_path(workdir, f".sdd/lineage/{run_id}/governance_decisions")
         directory_fd = open_anchored(
             workdir,
-            ".sdd",
-            "lineage",
-            run_id,
-            "governance_decisions",
+            *directory.relative_to(workdir).parts,
             flags=os.O_RDONLY | os.O_DIRECTORY,
         )
     except FileNotFoundError:
@@ -188,7 +196,8 @@ def _read_recorded_decisions(workdir: Path, run_id: str) -> list[recorded_govern
         for name in sorted(os.listdir(directory_fd)):
             if not name.endswith(".json"):
                 continue
-            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+            record_path = _checked_evidence_path(directory, name)
+            fd = os.open(record_path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
             with os.fdopen(fd, "rb") as stream:
                 if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                     raise OSError("decision is not a regular file")
@@ -212,8 +221,8 @@ def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
             status_code=400,
             detail="run_id must be 1-200 ASCII letters, digits, underscores, dots, colons or hyphens",
         )
-    workdir = _workdir(request)
     try:
+        workdir = _workdir(request).resolve()
         records = _read_recorded_decisions(workdir, run_id)
         decisions = []
         for record in records:
@@ -261,6 +270,8 @@ def list_recorded_decisions(request: Request, run_id: str = "") -> Response:
 @router.get("/governance/decisions/{decision_id}", response_model=RecordedDecision)
 def get_recorded_decision(decision_id: str, request: Request, run_id: str = "") -> Response:
     """Read one exact recorded projection; this does not verify its anchor."""
+    if not re.fullmatch(r"[0-9a-f]{64}", decision_id):
+        raise HTTPException(status_code=404, detail="recorded decision not found")
     for decision in _recorded_decisions(request, run_id).decisions:
         if decision.decision_id == decision_id:
             return _decision_response(decision)

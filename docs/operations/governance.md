@@ -42,8 +42,9 @@ under `/api/v1`:
 
 - `GET /governance/decisions?run_id=<id>` returns `run_id` and `decisions`.
 - `GET /governance/decisions/<decision_id>?run_id=<id>` returns one decision,
-  or 404 when that exact record is absent. `decision_id` is an opaque digest
-  of the presented record, including its anchor; editing the record changes it.
+  or 404 when that exact record is absent. `decision_id` is the 64-character
+  lowercase hexadecimal digest of the presented record, including its anchor.
+  An identifier of any other shape returns 404 before the run is read.
 
 Both return the recorded fields listed above. The list response schema is
 [`recorded-decisions.schema.json`](../api/recorded-decisions.schema.json);
@@ -55,8 +56,11 @@ different run return 409. The reader retains the existing malformed-JSON
 skipping behavior. These endpoints create no keys, files or
 directories and accept no client-selected ledger path.
 
-Decision files are enumerated and opened relative to the same directory
-descriptor, refusing links during the open. The endpoints require descriptor
+The server resolves the decision directory under its configured project root
+and each record under that directory. It rejects paths redirected by symlinks,
+including the path to the budget ledger. Decision files are enumerated and
+opened relative to the same directory descriptor, refusing links during the
+open even if the directory contents change. The endpoints require descriptor
 relative no-follow support; on platforms without it (including Windows),
 they return 409 rather than fall back to unanchored pathname reads. Ledger
 projection reuses a read-only anchored descriptor through `/dev/fd`; if that
