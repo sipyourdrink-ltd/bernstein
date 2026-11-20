@@ -12,11 +12,18 @@ Use the same lockfile, Python version and fixture for both revisions.
 Measure the installed console script directly so dependency setup stays
 outside the timer. For a cold-bytecode diagnostic, give each process a
 fresh `PYTHONPYCACHEPREFIX`. For warm runs, prime and reuse that directory.
-Record the elapsed time to exit and the exit code for each process.
+The external-process harness records wall time, exit codes and output hashes.
 
-Run `python -X importtime -m bernstein --help` with the installed Python to
-inspect imports. The adapter count in help uses the registry's names and
-still checks installed plugin entry points. The command registry loads the
+```bash
+PATH=/usr/bin:/bin .venv/bin/python benchmarks/bench_cli_startup.py \
+  --console .venv/bin/bernstein --runs 5 --importtime-dir /tmp/bernstein-imports
+```
+
+Use `--entrypoint module` for the installed Python module path and `--runs 50`
+to include a p95. Use `--cache warm` or `--cache cold` to select one mode.
+Import traces are collected separately with empty bytecode directories.
+Cold samples preserve the OS filesystem cache. The adapter count in help
+uses the registry's names and checks installed plugin entry points. The command registry loads the
 selected command modules, including adapters and benchmarks, when Click
 resolves those commands. JSON log setup can run before the task server loads.
 

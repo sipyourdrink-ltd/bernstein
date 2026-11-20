@@ -100,6 +100,9 @@ assert "bernstein.cli.commands.adapter_cmd" not in sys.modules
 assert "bernstein.cli.commands.resume_cmd" not in sys.modules
 assert "bernstein.eval.bench.bench_cli" not in sys.modules
 assert "bernstein.core.server.server_app" not in sys.modules
+assert "bernstein.cli.commands.approval_cmd" not in sys.modules
+assert "bernstein.cli.commands.compliance_cmd" not in sys.modules
+assert "bernstein.cli.commands.governance_cmd" not in sys.modules
 """
     env = {
         "PATH": os.defpath,
