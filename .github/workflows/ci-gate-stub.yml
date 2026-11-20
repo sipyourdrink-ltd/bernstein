@@ -57,7 +57,7 @@ name: CI gate stub
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       # Documentation & prose
       - "docs/**"
@@ -135,21 +135,78 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # Both the classifier and its paths-ignore policy come from the event base.
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
       - name: Collect changed paths
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          # The REST file list is the same diff GitHub itself filters on,
-          # so this needs no base-ref fetch and no merge-base arithmetic.
-          gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" \
-            --jq '.[].filename' > changed-paths.txt
-          echo "Collected $(wc -l < changed-paths.txt) changed path(s)."
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          pr="repos/${REPO}/pulls/${PR_NUMBER}"
+          gh api "$pr" > stub-before.json
+          gh api --paginate --slurp "$pr/files?per_page=100" > stub-pages.json
+          gh api "$pr" > stub-after.json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def read_json(name):
+              return json.loads(Path(name).read_text(encoding="utf-8"))
+
+          def snapshot(name):
+              pr = read_json(name)
+              for ref in ("base", "head"):
+                  expected = os.environ["EXPECTED_" + ref.upper()]
+                  if not expected or pr[ref]["sha"] != expected:
+                      raise SystemExit(f"PR {ref} differs from this event")
+              count = pr["changed_files"]
+              if type(count) is not int or count <= 0:
+                  raise SystemExit("Missing or empty PR file count")
+              return count
+
+          def checked_path(path):
+              # The base classifier reads one path per line with splitlines() and strip().
+              if (not isinstance(path, str) or not path or path != path.strip()
+                      or path.splitlines() != [path] or "\x00" in path):
+                  raise SystemExit("Filename cannot be passed intact to the classifier")
+              return path
+
+          before = snapshot("stub-before.json")
+          after = snapshot("stub-after.json")
+          pages = read_json("stub-pages.json")
+          if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+              raise SystemExit("Invalid paginated PR file list")
+          paths = []
+          filenames = set()
+          for page in pages:
+              for change in page:
+                  current = checked_path(change["filename"])
+                  if current in filenames:
+                      raise SystemExit("Duplicate filename in paginated PR file list")
+                  filenames.add(current)
+                  paths.append(current)
+                  status = change["status"]
+                  if status not in {"added", "removed", "modified", "renamed", "copied", "changed", "unchanged"}:
+                      raise SystemExit("Unknown PR file status")
+                  if status in {"renamed", "copied"} or "previous_filename" in change:
+                      previous = checked_path(change.get("previous_filename"))
+                      if previous == current:
+                          raise SystemExit("Indistinguishable old and new filenames")
+                      paths.append(previous)
+          if len(filenames) != before or len(filenames) != after:
+              raise SystemExit("Incomplete or changing PR file list")
+          Path("stub-paths.txt").write_text("\n".join(paths) + "\n", encoding="utf-8")
+          PY
       - name: Evaluate against ci.yml paths-ignore
         id: guard
-        run: python3 scripts/ci_gate_stub_guard.py --changed-paths changed-paths.txt
+        run: python3 scripts/ci_gate_stub_guard.py --changed-paths "$RUNNER_TEMP/stub-paths.txt"
 
   ci-gate:
     # The check-run name posted to the PR is taken from this `name:`, and

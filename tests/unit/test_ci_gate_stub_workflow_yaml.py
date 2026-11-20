@@ -38,7 +38,11 @@ Invariants exercised here:
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -225,6 +229,109 @@ def test_guard_script_reads_patterns_from_ci_yml() -> None:
         "The guard must read `on.pull_request.paths-ignore` from ci.yml. A duplicated "
         "list drifts, and a drifted list is how the stub starts vouching for code again."
     )
+
+
+def test_classifier_uses_event_base_and_collects_around_pagination(stub_doc: dict) -> None:
+    steps = stub_doc["jobs"]["classify"]["steps"]
+    checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
+    collect = next(step for step in steps if step.get("name") == "Collect changed paths")
+    for ref in ("base", "head"):
+        assert collect["env"]["EXPECTED_" + ref.upper()] == f"${{{{ github.event.pull_request.{ref}.sha }}}}"
+    assert [line.strip() for line in collect["run"].splitlines() if line.strip().startswith("gh api ")] == [
+        'gh api "$pr" > stub-before.json',
+        'gh api --paginate --slurp "$pr/files?per_page=100" > stub-pages.json',
+        'gh api "$pr" > stub-after.json',
+    ]
+    assert 'cd "$RUNNER_TEMP"' in collect["run"]
+    guard = next(step for step in steps if step.get("id") == "guard")
+    assert guard["run"] == 'python3 scripts/ci_gate_stub_guard.py --changed-paths "$RUNNER_TEMP/stub-paths.txt"'
+    real = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    assert set(stub_doc[True]["pull_request"]["types"]) == set(real[True]["pull_request"]["types"])
+    assert "merge_group" not in stub_doc[True]
+
+
+def _collect_paths(
+    stub_doc: dict,
+    tmp_path: Path,
+    pages: object,
+    count: int,
+    *,
+    before_fields: dict | None = None,
+    after_fields: dict | None = None,
+) -> tuple[int, list[str]]:
+    base, head = "a" * 40, "b" * 40
+    snapshot = {"base": {"sha": base}, "head": {"sha": head}, "changed_files": count}
+    for name, data in (
+        ("stub-before.json", snapshot | (before_fields or {})),
+        ("stub-after.json", snapshot | (after_fields or {})),
+        ("stub-pages.json", pages),
+    ):
+        (tmp_path / name).write_text(json.dumps(data), encoding="utf-8")
+    step = next(step for step in stub_doc["jobs"]["classify"]["steps"] if step.get("name") == "Collect changed paths")
+    program = re.search(r"^python3 - <<'PY'\n(.+?)^PY$", step["run"], re.MULTILINE | re.DOTALL)
+    assert program
+    result = subprocess.run(
+        [sys.executable, "-c", program[1]],
+        cwd=tmp_path,
+        env={**os.environ, "EXPECTED_BASE": base, "EXPECTED_HEAD": head},
+        check=False,
+    )
+    paths = tmp_path / "stub-paths.txt"
+    return result.returncode, _MOD.read_changed_paths(paths) if paths.exists() else []
+
+
+def test_complete_docs_only_pages_can_emit(stub_doc: dict, tmp_path: Path, patterns: list[str]) -> None:
+    files = [{"filename": f"docs/file-{n}.md", "status": "modified"} for n in range(101)]
+    status, paths = _collect_paths(stub_doc, tmp_path, [files[:100], files[100:]], 101)
+    assert status == 0
+    assert paths == [entry["filename"] for entry in files]
+    assert all_paths_ignored(paths, patterns)
+
+
+def test_rename_out_of_source_cannot_emit(stub_doc: dict, tmp_path: Path, patterns: list[str]) -> None:
+    change = {"filename": "docs/old.py", "previous_filename": "src/old.py", "status": "renamed"}
+    status, paths = _collect_paths(stub_doc, tmp_path, [[change]], 1)
+    assert status == 0
+    assert paths == ["docs/old.py", "src/old.py"]
+    assert not all_paths_ignored(paths, patterns)
+
+
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize("fields", [{"head": {"sha": "c" * 40}}, {"base": {"sha": "d" * 40}}, {"changed_files": 2}])
+def test_changed_snapshot_has_no_verdict(stub_doc: dict, tmp_path: Path, when: str, fields: dict) -> None:
+    files = [[{"filename": "docs/a.md", "status": "modified"}]]
+    status, paths = _collect_paths(stub_doc, tmp_path, files, 1, **{f"{when}_fields": fields})
+    assert status != 0
+    assert not paths
+
+
+@pytest.mark.parametrize(
+    ("pages", "count"),
+    [
+        ([], 0),
+        ([[{"filename": "docs/a.md", "status": "added"}]], 3001),
+        ([[{"filename": "docs/a.md", "status": "added"}]] * 2, 2),
+        ([{"filename": "docs/a.md", "status": "added"}], 1),
+        ([[{"filename": "docs/a.md", "status": "renamed"}]], 1),
+        ([[{"filename": "docs/a.md", "status": "unknown"}]], 1),
+        ([[{"filename": "docs/a.md", "previous_filename": "docs/a.md", "status": "renamed"}]], 1),
+    ],
+    ids=["empty", "truncated", "duplicate", "malformed-page", "missing-old-name", "unknown-status", "same-old-name"],
+)
+def test_incomplete_file_evidence_has_no_verdict(stub_doc: dict, tmp_path: Path, pages: list, count: int) -> None:
+    status, paths = _collect_paths(stub_doc, tmp_path, pages, count)
+    assert status != 0
+    assert not paths
+
+
+@pytest.mark.parametrize("key", ["filename", "previous_filename"])
+@pytest.mark.parametrize("path", [" docs/a.md", "docs/a.md\r", "docs/a\nsrc/b.py", "docs/a\u2028src/b.py", "docs/a\0b"])
+def test_ambiguous_filename_has_no_verdict(stub_doc: dict, tmp_path: Path, key: str, path: str) -> None:
+    change = {"filename": "docs/b.md", "previous_filename": "docs/a.md", "status": "renamed", key: path}
+    status, paths = _collect_paths(stub_doc, tmp_path, [[change]], 1)
+    assert status != 0
+    assert not paths
 
 
 # ---------------------------------------------------------------------------

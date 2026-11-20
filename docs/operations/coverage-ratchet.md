@@ -109,6 +109,9 @@ is a warning, not an error - the ratchet still runs, and the next click
 records provenance.
 
 The primary measurement now comes from the cadenced full-suite run on `main`.
+The coverage report requires all eight Ubuntu 3.13 shards. Each
+`coverage-data-N` artifact must supply its own nonempty `.coverage.N`.
+If any input is missing or unreadable, the job fails before publishing XML.
 Ordinary post-merge pushes do not produce coverage, so rapid merge traffic can
 no longer turn a cancelled push run into a partial coverage measurement.
 

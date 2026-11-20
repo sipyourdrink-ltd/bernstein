@@ -441,6 +441,14 @@ def _ci_gate_rollup_script(ci_doc: dict[str, object]) -> str:
     return textwrap.dedent(match.group(1))
 
 
+_IRRELEVANT_PLAN = {
+    "docs_only": "false",
+    "macos_sensitive": "false",
+    "rpm_relevant_changed": "false",
+    "gate_evasion_relevant": "false",
+}
+
+
 def _run_rollup(
     tmp_path: Path,
     script: str,
@@ -453,7 +461,9 @@ def _run_rollup(
     (tmp_path / "results.json").write_text(json.dumps(needs))
     (tmp_path / "plan.json").write_text(json.dumps(plan))
     payload_path = tmp_path / "event.json"
-    payload_path.write_text(json.dumps(event_payload or {}))
+    if event_payload is None:
+        event_payload = {"pull_request": {"labels": []}} if event == "pull_request" else {}
+    payload_path.write_text(json.dumps(event_payload))
     return subprocess.run(
         [sys.executable, "-c", script],
         cwd=tmp_path,
@@ -499,6 +509,74 @@ _MERGE_GROUP_NEEDS = {
 }
 
 
+@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+def test_gate_accepts_a_complete_run_and_rejects_each_failed_dependency(
+    ci_doc: dict, tmp_path: Path, event: str
+) -> None:
+    dependencies = ci_doc["jobs"][REQUIRED_JOB_KEY]["needs"]
+    assert "proto-drift" in dependencies
+    skipped = {"test-macos", "adapter-integration-macos", "install-smoke-rpm", "gate-evasion", "coverage-report"}
+    if event == "merge_group":
+        skipped.add("plan-affected-tests")
+    needs = {job: {"result": "skipped" if job in skipped else "success"} for job in dependencies}
+    script = _ci_gate_rollup_script(ci_doc)
+    valid = _run_rollup(tmp_path, script, event=event, needs=needs, plan=_IRRELEVANT_PLAN)
+    assert valid.returncode == 0, valid.stdout + valid.stderr
+    for job in dependencies:
+        for result in ("failure", "cancelled"):
+            proc = _run_rollup(
+                tmp_path, script, event=event, needs=needs | {job: {"result": result}}, plan=_IRRELEVANT_PLAN
+            )
+            assert proc.returncode == 1 and f"{job}: result={result}" in proc.stdout
+
+
+@pytest.mark.parametrize("flag", list(_IRRELEVANT_PLAN))
+@pytest.mark.parametrize("value", [None, "", "unknown"])
+def test_gate_requires_explicit_planner_flags(ci_doc: dict, tmp_path: Path, flag: str, value: str | None) -> None:
+    plan = _IRRELEVANT_PLAN.copy()
+    if value is None:
+        del plan[flag]
+    else:
+        plan[flag] = value
+    proc = _run_rollup(
+        tmp_path, _ci_gate_rollup_script(ci_doc), event="merge_group", needs=_MERGE_GROUP_NEEDS, plan=plan
+    )
+    assert proc.returncode == 1 and flag in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("event", "job", "rpm_relevant", "expected"),
+    [
+        ("merge_group", "integration-tests", "false", 0),
+        ("pull_request", "integration-tests", "false", 1),
+        ("push", "integration-tests", "false", 1),
+        ("workflow_dispatch", "integration-tests", "false", 1),
+        ("merge_group", "install-smoke-rpm", "true", 1),
+    ],
+)
+def test_docs_only_exception_matches_job_condition(
+    ci_doc: dict, tmp_path: Path, event: str, job: str, rpm_relevant: str, expected: int
+) -> None:
+    plan = _IRRELEVANT_PLAN | {"docs_only": "true", "rpm_relevant_changed": rpm_relevant}
+    proc = _run_rollup(
+        tmp_path, _ci_gate_rollup_script(ci_doc), event=event, needs={job: {"result": "skipped"}}, plan=plan
+    )
+    assert proc.returncode == expected, proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("pr", [{}, {"labels": None}, {"labels": [{"name": "MacOS-Needed"}]}])
+def test_macos_skip_requires_an_explicit_unlabelled_pr(ci_doc: dict, tmp_path: Path, pr: dict) -> None:
+    proc = _run_rollup(
+        tmp_path,
+        _ci_gate_rollup_script(ci_doc),
+        event="pull_request",
+        needs={"test-macos": {"result": "skipped"}},
+        plan=_IRRELEVANT_PLAN,
+        event_payload={"pull_request": pr},
+    )
+    assert proc.returncode != 0, proc.stdout
+
+
 def test_ci_gate_rollup_passes_on_merge_group(ci_doc: dict[str, object], tmp_path: Path) -> None:
     """The shipped roll-up must PASS on a merge_group event whose only
     non-success jobs are the ones legitimately skipped under merge_group.
@@ -513,7 +591,7 @@ def test_ci_gate_rollup_passes_on_merge_group(ci_doc: dict[str, object], tmp_pat
         script,
         event="merge_group",
         needs=_MERGE_GROUP_NEEDS,
-        plan={"docs_only": "false", "macos_sensitive": "false"},
+        plan=_IRRELEVANT_PLAN,
     )
     assert proc.returncode == 0, (
         "CI gate roll-up FAILED on a merge_group event -- enabling a merge "
@@ -536,7 +614,7 @@ def test_ci_gate_rollup_still_fails_on_real_failure_under_merge_group(
         script,
         event="merge_group",
         needs=needs,
-        plan={"docs_only": "false", "macos_sensitive": "false"},
+        plan=_IRRELEVANT_PLAN,
     )
     assert proc.returncode == 1, (
         "CI gate roll-up must FAIL when a real required job fails under "
@@ -562,7 +640,7 @@ def test_ci_gate_rollup_accepts_planner_skip_only_outside_pull_requests(
     needs["plan-affected-tests"] = {"result": planner_result}
     needs["test-macos"] = {"result": "success"}
     needs["adapter-integration-macos"] = {"result": "success"}
-    proc = _run_rollup(tmp_path, _ci_gate_rollup_script(ci_doc), needs=needs, event=event, plan={})
+    proc = _run_rollup(tmp_path, _ci_gate_rollup_script(ci_doc), needs=needs, event=event, plan=_IRRELEVANT_PLAN)
     assert proc.returncode == expected, proc.stdout + proc.stderr
 
 
@@ -580,7 +658,7 @@ def test_ci_gate_rollup_passes_on_push(ci_doc: dict[str, object], tmp_path: Path
         script,
         event="push",
         needs=needs,
-        plan={"docs_only": "false", "macos_sensitive": "false"},
+        plan=_IRRELEVANT_PLAN,
     )
     assert proc.returncode == 0, f"CI gate roll-up must pass on push.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
 
@@ -601,7 +679,7 @@ def test_ci_gate_rollup_passes_on_a_macos_sensitive_merge_group(ci_doc: dict[str
         script,
         needs=_MERGE_GROUP_NEEDS,
         event="merge_group",
-        plan={"docs_only": "false", "macos_sensitive": "true"},
+        plan=_IRRELEVANT_PLAN | {"macos_sensitive": "true"},
     )
     assert proc.returncode == 0, (
         "CI gate roll-up FAILED on a macOS-sensitive merge_group -- the queue would wedge on every entry "
@@ -628,7 +706,7 @@ def test_ci_gate_rollup_tolerates_the_macos_shards_skipping_on_a_plain_push(
         script,
         needs=needs,
         event="push",
-        plan={"docs_only": "false", "macos_sensitive": "false"},
+        plan=_IRRELEVANT_PLAN,
     )
     assert proc.returncode == 0, (
         "CI gate roll-up FAILED to tolerate a test-macos skip on a non-macOS-sensitive push to main."
@@ -654,7 +732,7 @@ def test_ci_gate_rollup_fails_when_the_macos_shards_skip_a_macos_sensitive_push(
         script,
         needs=needs,
         event="push",
-        plan={"docs_only": "false", "macos_sensitive": "true"},
+        plan=_IRRELEVANT_PLAN | {"macos_sensitive": "true"},
     )
     assert proc.returncode == 1, (
         "CI gate roll-up must FAIL when test-macos skips on a macOS-sensitive push to main."
@@ -680,7 +758,7 @@ def test_ci_gate_rollup_still_requires_adapter_integration_macos_on_push(
         script,
         needs=needs,
         event="push",
-        plan={"docs_only": "false", "macos_sensitive": "false"},
+        plan=_IRRELEVANT_PLAN,
     )
     assert proc.returncode == 1, (
         "CI gate roll-up must FAIL when adapter-integration-macos skips on a push to main -- otherwise a "
@@ -705,7 +783,7 @@ def test_ci_gate_rollup_tolerates_rpm_smoke_skip_when_diff_is_rpm_irrelevant(
         script,
         event="merge_group",
         needs=needs,
-        plan={"docs_only": "false", "macos_sensitive": "false", "rpm_relevant_changed": "false"},
+        plan=_IRRELEVANT_PLAN,
     )
     assert proc.returncode == 0, (
         "CI gate roll-up FAILED to tolerate an install-smoke-rpm skip on an RPM-irrelevant "
@@ -731,7 +809,7 @@ def test_ci_gate_rollup_fails_when_rpm_smoke_skips_on_an_rpm_relevant_diff(
         script,
         event="merge_group",
         needs=needs,
-        plan={"docs_only": "false", "macos_sensitive": "false", "rpm_relevant_changed": "true"},
+        plan=_IRRELEVANT_PLAN | {"rpm_relevant_changed": "true"},
     )
     assert proc.returncode == 1, (
         "CI gate roll-up must FAIL when install-smoke-rpm skips while the diff is RPM-relevant "
@@ -1028,7 +1106,7 @@ def test_classify_step_resolves_the_root_through_merge_base(ci_doc: dict[str, ob
     script = _classify_script(ci_doc)
     branch = script.split('elif [ "$EVENT_NAME" = "merge_group" ]; then', 1)[1].split("\n          else\n", 1)[0]
     assert "git merge-base refs/remotes/origin/queue-trunk HEAD" in branch, branch
-    assert 'git diff --name-only "${ROOT}...HEAD"' in branch, branch
+    assert 'git diff --no-renames --name-only "${ROOT}...HEAD"' in branch, branch
     assert '"${MERGE_GROUP_BASE_SHA}...HEAD"' not in branch, (
         "the merge_group branch must not diff from github.event.merge_group.base_sha"
     )
@@ -1193,6 +1271,30 @@ def test_planner_fails_safe_when_the_trunk_shares_no_history(ci_doc: dict[str, o
 # ---------------------------------------------------------------------------
 
 
+@requires_shell_tools
+@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+def test_planner_classifies_both_paths_of_a_rename(ci_doc: dict, tmp_path: Path, event: str) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "--initial-branch=main")
+    source = "src/bernstein/core/tunnels/old.py"
+    base = _commit_file(origin, source, "sample = 1\n", "base")
+    repo = tmp_path / "checkout"
+    _git(tmp_path, "clone", "--quiet", str(origin), str(repo))
+    (repo / "docs").mkdir()
+    _git(repo, "mv", source, "docs/old.md")
+    _git(repo, "commit", "-m", "move sample to docs")
+    outputs = _run_classify(
+        repo,
+        _classify_script(ci_doc),
+        event=event,
+        extra_env={"BASE_REF": "main", "MERGE_GROUP_BASE_REF": "refs/heads/main", "MERGE_GROUP_BASE_SHA": base},
+    )
+    assert outputs["docs_only"] == "false"
+    assert outputs["macos_sensitive"] == "true"
+    assert outputs["python_changed"] == "true"
+
+
 def _repo_with_one_change(tmp_path: Path, relpath: str) -> Path:
     """A two-commit repo: a base commit, then one commit touching `relpath`."""
     repo = tmp_path / "rpm-gate-repo"
@@ -1220,6 +1322,14 @@ def test_planner_flags_rpm_relevant_paths(ci_doc: dict[str, object], tmp_path: P
     assert outputs["rpm_relevant_changed"] == "true", (
         f"changing {relpath} must set rpm_relevant_changed=true; outputs={outputs!r}"
     )
+
+
+@requires_shell_tools
+def test_planner_runs_all_checks_for_a_git_quoted_path(ci_doc: dict, tmp_path: Path) -> None:
+    repo = _repo_with_one_change(tmp_path, "docs/sample\tname.md")
+    outputs = _run_classify(repo, _classify_script(ci_doc), event="push")
+    assert outputs["docs_only"] == "false"
+    assert {value for key, value in outputs.items() if key != "docs_only"} == {"true"}
 
 
 @requires_shell_tools

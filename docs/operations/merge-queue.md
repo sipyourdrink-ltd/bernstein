@@ -80,6 +80,13 @@ group, including docs-only ones, and always publishes `CI gate`. Adding
 `merge_group` to the stub would publish a second check run under the same
 required-context name on the queue for no benefit.
 
+On a PR, the stub uses the classifier and ignore patterns from the event's
+base commit. It checks the base, head and file count around pagination and
+classifies both paths of a rename. An incomplete or changing list cannot
+produce a synthetic success. On a merge group, the real gate requires
+the proto drift check and explicit planner flags. Only a docs-only group
+can use the docs-only exemption for the heavy jobs.
+
 That makes `ci.yml`'s **unconditional** `merge_group: {}` trigger a
 load-bearing invariant: adding any filter to it would silently wedge the
 queue for every diff the filter excludes. It is locked by
