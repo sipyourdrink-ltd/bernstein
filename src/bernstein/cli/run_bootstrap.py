@@ -2684,9 +2684,11 @@ def _run_impl(
     # ``--from-plan`` on a YAML plan: the file carries stages and steps, so run
     # it exactly like the positional plan file instead of reducing it to a goal
     # and re-decomposing (which dropped every step, model pin and dependency).
+    yaml_plan_option = ""
     if plan_file is None and from_plan is not None and from_plan.suffix.lower() in _YAML_PLAN_SUFFIXES:
         _staged_config = _stage_yaml_from_plan(from_plan)
         plan_file, from_plan = from_plan, None
+        yaml_plan_option = "--from-plan "
         if cli is None:
             cli = _staged_config.cli
         if budget_spec is None and max_cost_usd is None:
@@ -2953,12 +2955,13 @@ def _run_impl(
                 console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
                 console.print(f"[dim]Plan name:[/dim] {loaded_goal}")
             plan_obj = create_plan(loaded_goal, tasks)
-            # Not --from-plan: that path reads only the ``**Goal:**`` line out
-            # of the saved markdown and re-decomposes from the plan name, which
-            # silently drops every task just previewed.
+            # Reuse the original YAML and its invocation mode. --from-plan
+            # applies top-level adapter and budget settings from that file.
             from bernstein.core.config.platform_compat import shell_quote
 
-            rerun_hint = f"bernstein run {shell_quote(str(plan_file))}"
+            if not yaml_plan_option and str(plan_file).startswith("-"):
+                yaml_plan_option = "-- "
+            rerun_hint = f"bernstein run {yaml_plan_option}{shell_quote(str(plan_file))}"
         else:
             if from_plan is not None:
                 try:

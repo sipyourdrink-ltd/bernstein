@@ -7,10 +7,14 @@ dropped while the command printed "Loaded plan from" and exited 0.
 
 from __future__ import annotations
 
+import json
+import shlex
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
+from click.testing import CliRunner
 
 from bernstein.cli import run_bootstrap
 from tests.unit.test_issue_3255_plan_only_honors_plan_file import (
@@ -70,6 +74,39 @@ def test_from_plan_yaml_applies_plan_cli_and_budget(tmp_path: Path, monkeypatch:
     bootstrap_goal = _run(tmp_path, monkeypatch, PLAN)
 
     assert bootstrap_goal.call_args.kwargs["cli"] == "codex"
+
+
+@pytest.mark.parametrize("source_option", ["--from-plan", "--"])
+def test_json_preview_rerun_replays_the_original_yaml_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_option: str
+) -> None:
+    from bernstein.cli.main import cli
+
+    monkeypatch.chdir(tmp_path)
+    name = "-execution plan.yaml"
+    Path(name).write_text(PLAN, encoding="utf-8")
+    runner = CliRunner()
+    with _run_impl_environment(), _no_execution() as (bootstrap_goal, _, _):
+        preview = runner.invoke(cli, ["--json", "run", "--plan-only", source_option, name])
+        assert preview.exit_code == 0, preview.output
+        document = json.loads(preview.stdout)
+        assert document["plan"] == Path(document["saved_plan"]).read_text(encoding="utf-8")
+        command = document["plan"].split("<!-- Re-run with `", 1)[1].split("` -->", 1)[0]
+        args = shlex.split(command)
+        assert args == ["bernstein", "run", source_option, name]
+        bootstrap_goal.assert_not_called()
+
+        flags = Mock()
+        monkeypatch.setattr(run_bootstrap, "_propagate_env_flags", flags)
+        monkeypatch.setattr(run_bootstrap, "_abort_if_default_branch_merge_target", lambda _: None)
+        monkeypatch.setattr(run_bootstrap, "_emit_preflight_runtime_warnings", lambda **_: None)
+        execution = runner.invoke(cli, args[1:])
+        assert execution.exit_code == 0, execution.output
+        kwargs = bootstrap_goal.call_args.kwargs
+        assert [task.title for task in kwargs["tasks"]] == ["Add the limiter", "Cover the limiter"]
+        if source_option == "--from-plan":
+            assert kwargs["cli"] == "codex"
+            assert flags.call_args.kwargs["max_cost_usd"] == 5.0
 
 
 def test_explicit_cli_flag_beats_plan_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
