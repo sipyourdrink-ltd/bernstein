@@ -425,6 +425,7 @@ def print_dry_run_table(workdir: Path) -> None:
     from bernstein.core.sync import BacklogTask, parse_backlog_file
 
     structured = is_json()
+    plain = plain_run_output()
     rows: list[dict[str, Any]] = []
     open_dir = workdir / ".sdd" / "backlog" / "open"
     issues_dir = workdir / ".sdd" / "backlog" / "issues"
@@ -449,18 +450,23 @@ def print_dry_run_table(workdir: Path) -> None:
             # format (e.g. plain YAML with no `---` block and no `# ` title)
             # would otherwise be silently skipped (issue #2785). Surface it so
             # the operator can see the ticket will not be picked up.
-            warning_console = make_console(no_color=True, file=sys.stderr) if structured else console
-            warning_console.print(
-                f"[yellow]Warning:[/yellow] {backlog_file.name} could not be parsed as a backlog ticket "
+            warning = (
+                f"{backlog_file.name} could not be parsed as a backlog ticket "
                 "(expected YAML frontmatter delimited by '---' or a Markdown '# ' title); skipping."
             )
+            if structured or plain:
+                click.echo(f"Warning: {warning}", err=True, color=False)
+            else:
+                console.print(f"[yellow]Warning:[/yellow] {warning}")
 
-    if not structured:
+    if not (structured or plain):
         console.print("\n[bold cyan][DRY RUN] Planned task spawns:[/bold cyan]")
 
     if not tasks:
         if structured:
             click.echo(json.dumps({"tasks": []}))
+        elif plain:
+            click.echo("No open tasks found in backlog.")
         else:
             console.print("[dim]No open tasks found in backlog.[/dim]")
         return
@@ -470,14 +476,6 @@ def print_dry_run_table(workdir: Path) -> None:
     providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
     if providers_yaml.exists():
         load_providers_from_yaml(providers_yaml, router)
-
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Role", style="cyan")
-    table.add_column("Title")
-    table.add_column("Priority", justify="center")
-    table.add_column("Provider", style="green")
-    table.add_column("Model", style="dim")
-    table.add_column("Effort", style="dim", justify="center")
 
     for bt in sorted(tasks, key=lambda t: t.priority):
         # Create a temporary Task object for the router
@@ -503,30 +501,36 @@ def print_dry_run_table(workdir: Path) -> None:
             model_display = "auto"
             effort_display = "auto"
 
-        if structured:
-            rows.append(
-                {
-                    "role": bt.role,
-                    "title": bt.title,
-                    "priority": bt.priority,
-                    "provider": provider_display,
-                    "model": model_display,
-                    "effort": effort_display,
-                }
-            )
-            continue
-        table.add_row(
-            bt.role,
-            bt.title,
-            str(bt.priority),
-            provider_display,
-            model_display,
-            effort_display,
+        rows.append(
+            {
+                "role": bt.role,
+                "title": bt.title,
+                "priority": bt.priority,
+                "provider": provider_display,
+                "model": model_display,
+                "effort": effort_display,
+            }
         )
 
     if structured:
         click.echo(json.dumps({"tasks": rows}))
         return
+    if plain:
+        click.echo("Role\tTitle\tPriority\tProvider\tModel\tEffort")
+        for row in rows:
+            click.echo("\t".join(str(value) for value in row.values()), color=False)
+        click.echo(f"Total: {len(tasks)} task(s): no agents were spawned.")
+        return
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Role", style="cyan")
+    table.add_column("Title")
+    table.add_column("Priority", justify="center")
+    table.add_column("Provider", style="green")
+    table.add_column("Model", style="dim")
+    table.add_column("Effort", style="dim", justify="center")
+
+    for row in rows:
+        table.add_row(*(str(value) for value in row.values()))
     console.print(table)
     console.print(f"\n[dim]Total: {len(tasks)} task(s): no agents were spawned.[/dim]")
 

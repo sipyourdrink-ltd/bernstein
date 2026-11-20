@@ -793,7 +793,8 @@ def _show_dry_run_plan(
     from rich.table import Table
 
     structured = is_json()
-    if not structured:
+    plain = plain_run_output()
+    if not (structured or plain):
         console.print("\n[bold]Dry-run mode: no agents will be spawned.[/bold]\n")
 
     if plan_file is not None:
@@ -813,48 +814,61 @@ def _show_dry_run_plan(
         click.echo(json.dumps({"tasks": [task.to_dict() for task in tasks]}))
         return
     if not tasks:
-        console.print("[yellow]No tasks to schedule.[/yellow]")
+        if plain:
+            click.echo("No tasks to schedule.")
+        else:
+            console.print("[yellow]No tasks to schedule.[/yellow]")
         return
 
-    table = Table(title="Dry-Run Scheduling Plan", show_header=True, header_style="bold cyan")
-    table.add_column("#", justify="right")
-    table.add_column("Role", style="cyan")
-    table.add_column("Title")
-    table.add_column("Model", style="green")
-    table.add_column("Effort")
-    table.add_column("Priority", justify="center")
+    if plain:
+        click.echo("#\tRole\tTitle\tModel\tEffort\tPriority")
+        for index, task in enumerate(tasks, 1):
+            click.echo(
+                f"{index}\t{task.role}\t{task.title}\t{task.model or 'auto'}\t{task.effort or 'auto'}\t{task.priority}",
+                color=False,
+            )
+    else:
+        table = Table(title="Dry-Run Scheduling Plan", show_header=True, header_style="bold cyan")
+        table.add_column("#", justify="right")
+        table.add_column("Role", style="cyan")
+        table.add_column("Title")
+        table.add_column("Model", style="green")
+        table.add_column("Effort")
+        table.add_column("Priority", justify="center")
 
-    for i, task in enumerate(tasks, 1):
-        table.add_row(
-            str(i),
-            task.role,
-            task.title[:60] + "..." if len(task.title) > 60 else task.title,
-            task.model or "auto",
-            task.effort or "auto",
-            str(task.priority),
-        )
+        for i, task in enumerate(tasks, 1):
+            table.add_row(
+                str(i),
+                task.role,
+                task.title[:60] + "..." if len(task.title) > 60 else task.title,
+                task.model or "auto",
+                task.effort or "auto",
+                str(task.priority),
+            )
 
-    console.print(table)
+        console.print(table)
 
+    write_line = click.echo if plain else console.print
     deps_found = False
     for task in tasks:
         if task.depends_on:
             if not deps_found:
-                console.print("\n[bold]Dependency graph:[/bold]")
+                write_line("Dependency graph:" if plain else "\n[bold]Dependency graph:[/bold]")
                 deps_found = True
             dep_str = ", ".join(task.depends_on)
-            console.print(f"  {task.title} -> [{dep_str}]")
+            write_line(f"  {task.title} -> [{dep_str}]")
 
     est_model = model_override or "sonnet"
-    console.print(f"\n  Total tasks: {len(tasks)}")
+    write_line(f"\n  Total tasks: {len(tasks)}")
     if not model_cost_is_known(est_model):
         # No pricing-table entry: meters at $0 but is not free (issue #5337).
-        console.print(f"  Estimated cost: unpriced ({est_model} not in pricing table)")
+        write_line(f"  Estimated cost: unpriced ({est_model} not in pricing table)")
     else:
         low_usd, high_usd = estimate_run_cost(len(tasks), est_model)
-        console.print(f"  Estimated cost: ${(low_usd + high_usd) / 2:.2f} (${low_usd:.2f}-${high_usd:.2f})")
+        write_line(f"  Estimated cost: ${(low_usd + high_usd) / 2:.2f} (${low_usd:.2f}-${high_usd:.2f})")
 
-    console.print("\n[green]Dry run complete. No agents were spawned.[/green]")
+    if not plain:
+        console.print("\n[green]Dry run complete. No agents were spawned.[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -2656,6 +2670,9 @@ def _run_impl(
     # Prints the one-time notice and emits first_run_* events around the
     # body.  Fail-closed: any internal failure is swallowed.
     ctx = click.get_current_context(silent=True)
+    if quiet and ctx is not None:
+        # The root result callback prints tips after the run context has closed.
+        ctx.ensure_object(dict)["QUIET"] = True
     output = (ctx.obj or {}) if ctx is not None else {}
     plain_output = quiet or plain_run_output()
     if not plain_output:
