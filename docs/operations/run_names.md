@@ -72,9 +72,10 @@ When a reverse mapping is needed:
 
 ## Lookup command
 
-`bernstein run-lookup NAME` resolves a memorable name back to its run
-UUID. It searches the active run id (read from `.sdd/runtime/run_id`) plus
-any ids passed with `--candidate`:
+`bernstein run-lookup NAME` resolves a display name within the known run
+UUIDs: the active run ID (read from `.sdd/runtime/run_id`) and any IDs
+passed with `--candidate`. A saved name alone does not identify a run
+globally. The command can print multiple matching UUIDs:
 
 ```text
 bernstein run-lookup swift-otter-07

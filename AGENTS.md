@@ -3,7 +3,7 @@
 
 ## Overview
 
-Bernstein is the open-source governance layer for AI agents. It runs on policy as code: you write the policy - who may do what, what needs approval, what must be recorded - and Bernstein enforces it and produces the verifiable record. A deterministic scheduler - no model in the coordination loop - runs agents in parallel, gates what they produce, and records every step, so a run can be verified after the fact, offline, from the artifacts alone. CLI coding agents work out of the box (Claude Code, Codex, Gemini CLI, and 50+ more), and the same layer governs any agent workload: the deliverable can be a diff, a research report, a dataset, or an audit evidence pack. Air-gap install profile included. Apache-2.0.
+Bernstein is an open-source governance layer for AI agents. It runs on policy as code: you write the policy - who may do what, what needs approval, what must be recorded - and Bernstein enforces it and produces the verifiable record. A deterministic scheduler - no model in the coordination loop - runs agents in parallel, gates what they produce, and records every step, so a run can be verified after the fact, offline, from the artifacts alone. CLI coding agents work out of the box (Claude Code, Codex, Gemini CLI and others), and the same layer governs any agent workload: the deliverable can be a diff, a research report, a dataset, or an audit evidence pack. Air-gap install profile included. Apache-2.0.
 
 ## Module map
 
@@ -44,9 +44,9 @@ uv sync                             # install + lock
 uv run python scripts/run_tests.py  # tests (isolated per-file runner)
 uv run ruff check .                 # lint
 uv run ruff format .                # format
-uv run mypy src                     # type-check
 make test
 make lint
+make typecheck
 make install
 ```
 
@@ -107,3 +107,20 @@ Every PR that adds or changes a feature MUST update docs in the same PR:
 - New test layer: also update `docs/contributing/testing.md`.
 
 PRs without the matching docs change will be sent back. Docs and code ship together.
+
+## Review guidelines
+
+Bernstein's job is a record of agent work that can be verified later, so review first for changes that would make the scheduler or the record report something that did not happen.
+
+- Completion: a task or workflow node is done only on an accepted attempt. Flag code that releases dependents, marks a task completed or reports success on a session ID, a spawn, a queued signal or a non-zero exit.
+- Cost and budgets: cumulative cost adds, never overwrites; the budget check runs before the next spawn; a late adjustment cannot lower a total already counted.
+- Determinism: the scheduler has no model in the loop. Flag unordered iteration, wall-clock or random values in planning, replay or audit output.
+- Audit chain and lineage: flag any change that weakens an existing check, skips a write without an error, or describes a receipt as signed when no signing key is configured.
+- Back-compat: legacy import paths go through `_REDIRECT_MAP` in `src/bernstein/core/__init__.py`; flag new shim modules at old paths.
+- Tests: a behaviour change has a test under `tests/` that fails without it and passes with `uv run python scripts/run_tests.py`.
+- Docs: a user-visible or operator change updates its docs in the same PR (see Documentation duty). Claims in README, docs and release notes match the code: no superlatives, no counts the code does not produce, and "test vectors" rather than "conformance vectors".
+- Secrets: no keys, tokens or personal data in code, fixtures or logs.
+
+Severity: P0 a false record, data loss, a security or money defect; P1 a wrong result or broken contract; P2 a missing test or doc. Style is ruff's job.
+
+Output: one comment per finding with severity, file:line, the failing scenario in one sentence and a suggested fix. Done when every changed file was read; with no P0-P2 finding, say so and name the checks above that you ran.

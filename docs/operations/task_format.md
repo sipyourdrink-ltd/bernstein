@@ -25,10 +25,51 @@ two shapes so the orchestrator can extract a title and route the task:
 2. **Markdown fields** - a `# ` heading for the title plus optional
    `**Role:**` / `**Priority:**` / `**Scope:**` / `**Complexity:**` lines.
 
-A file that is neither (for example a plain YAML file with no `---` block and
-no `# ` heading) cannot be parsed as a ticket. It is skipped rather than
-spawned, and `bernstein --dry-run` prints a warning naming the file so the
-gap is visible instead of silent.
+### Parsing precedence and defaults
+
+The parser tries frontmatter first. It treats falsey YAML values, such as an
+empty block, `null`, `false`, `0`, an empty string, and an empty list, as an
+empty mapping. If a closed YAML mapping supplies a title or can use a body
+heading, its fields take precedence. Absent optional fields then use defaults:
+role `backend`, priority **2 (normal)**, scope `medium`, and complexity
+`medium`. Markdown metadata lines do not override those defaults.
+
+The parser converts the mapping's `title` value to text and strips surrounding
+whitespace. If the field is omitted or the resulting text is empty, the first
+`# ` heading after the block supplies the title. A null value, including a
+blank `title:` field, becomes the literal title `None` and takes precedence
+over any heading.
+
+For example, this frontmatter produces title **Build the cache** and priority
+**1 (critical)**, even if the body contains another heading or priority line:
+
+```yaml
+---
+title: Build the cache
+priority: 1
+---
+# A different heading
+```
+
+If the frontmatter parser returns no task, the Markdown parser reads the
+whole file. This can happen when frontmatter is absent, unterminated, invalid
+YAML, has a truthy non-mapping value, or has no usable title or body heading.
+The first `# ` heading in the file supplies the title. Omitted or
+unrecognized Markdown priority defaults to **2 (normal)**. For example:
+
+```markdown
+# Document the cache
+
+**Priority:** 3
+```
+
+This fallback produces title **Document the cache** and priority **3
+(nice-to-have)**. Priority values are normalized to the internal 1-3 scale:
+0 or 1 becomes 1, 2 stays 2, and 3 or 4 becomes 3.
+
+If neither parser finds a title, the file is skipped. Look for the warning
+naming the file in `bernstein --dry-run`. Backlog sync logs frontmatter
+declaration errors such as a malformed `artifact_spec`.
 
 ## YAML frontmatter (Ticket Format v1)
 

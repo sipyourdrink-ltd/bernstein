@@ -55,9 +55,10 @@ bernstein demo --flask-todo --real --adapter codex
    - a pytest suite covering the API (role: `qa`)
 3. Starts a task server on port 8056 and bootstraps orchestration
    (`bootstrap_from_goal`) against those tasks.
-4. Polls `/status` every 2 seconds, printing each task's completion or
-   failure as it happens, until every task reaches `done`/`failed` or the
-   timeout elapses.
+4. Polls `/status` every 2 seconds, reporting each task attempt's completion or
+   failure as it happens. A failed attempt does not stop polling, since a retry
+   may get a new task ID. Polling ends when the count of completed seeded
+   lineages reaches the seeded count (three), or the deadline expires.
 5. Stops the server, spawner, and watchdog processes it started.
 6. Prints a summary table (tasks completed, elapsed time, Python files
    produced, API cost) and, unless `--keep` is passed, deletes the temp
@@ -71,9 +72,11 @@ task, an interrupted run, a bootstrap that raised — exits `1`.
 The denominator in `Tasks completed` is the seeded count, not the length of the
 task list the server happens to hold, so a retry that spawns a fresh task id
 cannot inflate it and a torn-down server cannot deflate it to `0 / 0`. The
-snapshot behind the table is taken while the server is still running; if it
-could not be read, the table says `Task server unreachable` instead of quietly
-reporting zeros.
+snapshot behind the table is taken while the server is still running. When that
+snapshot records an unreachable server, the table includes a `Task server` row
+whose value is `unreachable - counts unread`: any displayed `0 / 3` is a fallback,
+not a verified count of completed tasks. By contrast, a reachable snapshot with
+no completed tasks is a verified `0 / 3` and has no `Task server` row.
 
 ## Cost
 

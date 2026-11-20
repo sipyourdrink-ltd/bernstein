@@ -13,8 +13,10 @@ isolated git worktrees, and merges verified results back to your branch automati
 **What you'll need**:
 - [ ] Python 3.12 or later
 - [ ] Git (any recent version)
-- [ ] At least one CLI coding agent (Claude Code, Codex, or Gemini - see Step 2)
-- [ ] An API key for your chosen agent
+- [ ] For this walkthrough, at least one CLI coding agent (Claude Code, Codex, or Gemini - see Step 2)
+- [ ] An eligible worker account login or the API key for your chosen agent
+
+Bernstein also supports other adapter types; see the [adapter catalog](../adapters/index.md) for the options beyond CLI agents.
 
 ---
 
@@ -48,8 +50,7 @@ bernstein, version 3.20.0
 
 ## Step 2: Check for CLI agents
 
-Bernstein does not run models directly - it orchestrates CLI coding agents that you install
-separately. Check which ones are available on your system:
+For this walkthrough, use a CLI coding agent installed separately. Check which ones are available on your system:
 
 ```bash
 bernstein doctor
@@ -81,10 +82,9 @@ npm install -g @google/gemini-cli
 
 ---
 
-## Step 3: Set your API key
+## Step 3: Sign in to your worker
 
-Each CLI agent authenticates with its own provider. Bernstein passes the environment
-through to the agents - set the key for whichever agent you installed:
+For account access, use the login for your installed worker, such as `codex login` or `claude auth login`. For API billing, set the key for your chosen worker:
 
 ```bash
 # Claude Code
@@ -120,8 +120,11 @@ Created templates/ (default roles & prompts)
 Created .gitignore (added .sdd/runtime/)
 
 Done. Next steps:
-  1. Edit bernstein.yaml: set a goal
-  2. Run bernstein to start the orchestra
+Project setup: action needed
+Working branch: main
+Worker: auto  |  Internal planner: openrouter_free
+  Create a working branch with git switch -c bernstein/first-run.
+  Edit bernstein.yaml: set a goal for bernstein run.
 ```
 
 This creates:
@@ -135,19 +138,20 @@ This creates:
 
 ## Step 5: Run your first orchestration
 
-Give Bernstein a goal:
+In `bernstein.yaml`, set your `goal`, `cli`, `model` and `budget`. Select `internal_llm_provider: none` to disable optional internal LLM calls in this one-worker example. If you're on the project's default branch, create a working branch before running the goal. Bernstein merges verified changes back into that branch.
 
 ```bash
-bernstein -g "Add a hello() function to src/utils.py that returns 'Hello, world!'"
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein run --worker backend
 ```
 
 Bernstein will:
 1. Start the task server on port 8052
-2. Break the goal into tasks
+2. Assign the configured goal to the backend worker
 3. Spawn agents in isolated git worktrees
 4. Monitor agent progress via heartbeats
 5. Run quality gates (lint, type-check, tests) on the output
-6. Merge verified results back to your branch
+6. Merge verified results back to your branch for review in a pull request
 
 Watch it work in real time:
 
@@ -167,10 +171,10 @@ skills, worker PID, agent PID, runtime), followed by the spend so far.
 
 ## Step 6: Understand the output
 
-When a task completes, Bernstein merges the changes and shows a summary:
+While the task server is running, use `bernstein recap`. After it exits, read the local task journal:
 
 ```bash
-bernstein recap
+bernstein recap --archive .sdd/runtime/tasks.jsonl
 ```
 
 Example output:
@@ -183,9 +187,7 @@ Example output:
   Success rate    100.0%
 ```
 
-`bernstein recap` then prints a git diff summary, quality scores, and a
-per-model cost breakdown below that table. The exact numbers depend on what
-the run produced.
+Live recap includes the git diff, quality scores and cost breakdown. The archive reports recorded task outcomes.
 
 Inspect a specific task's changes:
 

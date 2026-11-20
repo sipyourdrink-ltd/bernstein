@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 
@@ -355,10 +355,10 @@ def test_auth_basis_subscription_oauth_is_refused_in_volunteer_mode(fixture_repo
     assert isinstance(outcome, TaskRefusal)
     assert outcome.stage == RefusalStage.AGENT
     assert outcome.reason == "provider_terms_unavailable"
-    record = outcome.as_record()
-    assert "subscription OAuth" in record["detail"]
-    assert "API-key adapter" in record["detail"]
-    assert "local endpoint adapter" in record["detail"]
+    detail = cast(str, outcome.as_record()["detail"])
+    assert "subscription OAuth" in detail
+    assert "API-key adapter" in detail
+    assert "local endpoint adapter" in detail
 
 
 def test_auth_basis_unknown_is_refused_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
@@ -376,10 +376,10 @@ def test_auth_basis_unknown_is_refused_in_volunteer_mode(fixture_repo: Path, tmp
     assert isinstance(outcome, TaskRefusal)
     assert outcome.stage == RefusalStage.AGENT
     assert outcome.reason == "provider_terms_unavailable"
-    record = outcome.as_record()
-    assert "unknown" in record["detail"].lower()
-    assert "API-key adapter" in record["detail"]
-    assert "local endpoint adapter" in record["detail"]
+    detail = cast(str, outcome.as_record()["detail"])
+    assert "unknown" in detail.lower()
+    assert "API-key adapter" in detail
+    assert "local endpoint adapter" in detail
 
 
 def test_auth_basis_api_key_is_accepted_in_volunteer_mode(fixture_repo: Path, tmp_path: Path) -> None:
@@ -532,16 +532,21 @@ def test_private_github_repository_is_refused_in_volunteer_mode(
     class _FakeResponse:
         status = 200
 
-        def read(self):
-            return b'{"private": true, "full_name": "owner/repo"}'
+        def __init__(self) -> None:
+            import io
 
-        def __enter__(self):
+            self.body = io.BytesIO(b'{"private": true, "full_name": "owner/repo"}')
+
+        def read(self, size: int = -1) -> bytes:
+            return self.body.read(size)
+
+        def __enter__(self) -> _FakeResponse:
             return self
 
-        def __exit__(self, *exc_info):
+        def __exit__(self, *exc_info: object) -> Literal[False]:
             return False
 
-    def mock_urlopen(req, *, timeout: int = 10):
+    def mock_urlopen(req: urllib.request.Request, *, timeout: int = 10) -> _FakeResponse:
         assert req.full_url.startswith("https://api.github.com/repos/owner/repo")
         return _FakeResponse()
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as datetime_module
 import json
 import time
-from datetime import UTC, datetime, tzinfo
+from datetime import datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -23,28 +23,33 @@ from bernstein.core.metrics import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+_FIXED_METRIC_NOW = datetime(2026, 1, 1, 12)
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def metric_date(monkeypatch: pytest.MonkeyPatch) -> str:
-    fixed = datetime(2026, 6, 15, 12, tzinfo=UTC)
-
-    class FixedDatetime(datetime):
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:
-            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
-
-    # The JSONL writer imports datetime inside the method.
-    monkeypatch.setattr(datetime_module, "datetime", FixedDatetime)
-    return "2026-06-15"
+def collector(tmp_path: Path) -> MetricsCollector:
+    return MetricsCollector(metrics_dir=tmp_path / "metrics")
 
 
 @pytest.fixture
-def collector(tmp_path: Path) -> MetricsCollector:
-    return MetricsCollector(metrics_dir=tmp_path / "metrics")
+def same_metric_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz: datetime_module.tzinfo | None = None) -> datetime:
+            return _FIXED_METRIC_NOW.replace(tzinfo=tz)
+
+    # Each point resolves its daily filename inside the writer.
+    monkeypatch.setattr(datetime_module, "datetime", FixedDatetime)
+
+
+def _single_metric_file(metrics_dir: Path, metric_type: MetricType) -> Path:
+    matches = sorted(metrics_dir.glob(f"{metric_type.value}_*.jsonl"))
+    assert len(matches) == 1, matches
+    return matches[0]
 
 
 # ---------------------------------------------------------------------------
@@ -136,11 +141,10 @@ class TestCompleteTask:
         assert m.success is False
         assert m.error == "timeout"
 
-    def test_writes_jsonl_file(self, collector: MetricsCollector, tmp_path: Path, metric_date: str) -> None:
+    def test_writes_jsonl_file(self, collector: MetricsCollector, tmp_path: Path) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
         collector.complete_task("t1", success=True)
-        jsonl = collector._metrics_dir / f"task_completion_time_{metric_date}.jsonl"
-        assert jsonl.exists()
+        jsonl = _single_metric_file(collector._metrics_dir, MetricType.TASK_COMPLETION_TIME)
         lines = jsonl.read_text().strip().splitlines()
         assert len(lines) >= 1
         data = json.loads(lines[0])
@@ -148,11 +152,10 @@ class TestCompleteTask:
         assert "value" in data
         assert data["labels"]["task_id"] == "t1"
 
-    def test_also_writes_cost_efficiency_file(self, collector: MetricsCollector, metric_date: str) -> None:
+    def test_also_writes_cost_efficiency_file(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
         collector.complete_task("t1", success=True, cost_usd=0.05)
-        cost_file = collector._metrics_dir / f"cost_efficiency_{metric_date}.jsonl"
-        assert cost_file.exists()
+        _single_metric_file(collector._metrics_dir, MetricType.COST_EFFICIENCY)
 
     def test_janitor_fields(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
@@ -222,23 +225,21 @@ class TestAgentMetrics:
         assert m is not None
         assert before <= m.end_time <= after  # type: ignore[operator]
 
-    def test_end_agent_writes_success_rate(self, collector: MetricsCollector, metric_date: str) -> None:
+    def test_end_agent_writes_success_rate(self, collector: MetricsCollector) -> None:
         collector.start_agent("a1", "backend", "sonnet", "claude")
         collector.complete_agent_task("a1", success=True)
         collector.end_agent("a1")
-        f = collector._metrics_dir / f"agent_success_{metric_date}.jsonl"
-        assert f.exists()
+        f = _single_metric_file(collector._metrics_dir, MetricType.AGENT_SUCCESS)
         data = json.loads(f.read_text().strip().splitlines()[0])
         assert data["value"] == pytest.approx(1.0)
 
     def test_end_agent_unknown_returns_none(self, collector: MetricsCollector) -> None:
         assert collector.end_agent("ghost") is None
 
-    def test_end_agent_no_tasks_skips_write(self, collector: MetricsCollector, metric_date: str) -> None:
+    def test_end_agent_no_tasks_skips_write(self, collector: MetricsCollector) -> None:
         collector.start_agent("a1", "backend", "sonnet", "claude")
         collector.end_agent("a1")
-        f = collector._metrics_dir / f"agent_success_{metric_date}.jsonl"
-        assert not f.exists()
+        assert not list(collector._metrics_dir.glob(f"{MetricType.AGENT_SUCCESS.value}_*.jsonl"))
 
 
 # ---------------------------------------------------------------------------
@@ -338,10 +339,9 @@ class TestUsageQuotas:
 
 
 class TestQualityAndErrors:
-    def test_record_janitor_result_writes_metric(self, collector: MetricsCollector, metric_date: str) -> None:
+    def test_record_janitor_result_writes_metric(self, collector: MetricsCollector) -> None:
         collector.record_janitor_result("t1", passed=True, role="backend", model="sonnet", provider="claude")
-        f = collector._metrics_dir / f"agent_success_{metric_date}.jsonl"
-        assert f.exists()
+        f = _single_metric_file(collector._metrics_dir, MetricType.AGENT_SUCCESS)
         data = json.loads(f.read_text().strip().splitlines()[0])
         assert data["value"] == pytest.approx(1.0)
         assert data["labels"]["verification"] == "janitor"
@@ -351,10 +351,9 @@ class TestQualityAndErrors:
         collector.record_janitor_result("t1", passed=True, role="backend", model="sonnet", provider="claude")
         assert collector._task_metrics["t1"].janitor_passed is True
 
-    def test_record_error_writes_metric(self, collector: MetricsCollector, metric_date: str) -> None:
+    def test_record_error_writes_metric(self, collector: MetricsCollector) -> None:
         collector.record_error("timeout", "claude", model="sonnet", role="backend")
-        f = collector._metrics_dir / f"error_rate_{metric_date}.jsonl"
-        assert f.exists()
+        f = _single_metric_file(collector._metrics_dir, MetricType.ERROR_RATE)
         data = json.loads(f.read_text().strip().splitlines()[0])
         assert data["labels"]["error_type"] == "timeout"
 
@@ -363,7 +362,8 @@ class TestQualityAndErrors:
         h = collector.get_provider_health("claude")
         assert h.consecutive_failures >= 1
 
-    def test_record_free_tier_usage(self, collector: MetricsCollector, metric_date: str) -> None:
+    @pytest.mark.usefixtures("same_metric_date")
+    def test_record_free_tier_usage(self, collector: MetricsCollector) -> None:
         collector.record_free_tier_usage(
             "claude",
             "sonnet",
@@ -372,15 +372,13 @@ class TestQualityAndErrors:
             tokens_used=1000,
             tokens_limit=10000,
         )
-        f = collector._metrics_dir / f"free_tier_usage_{metric_date}.jsonl"
-        assert f.exists()
+        f = _single_metric_file(collector._metrics_dir, MetricType.FREE_TIER_USAGE)
         lines = f.read_text().strip().splitlines()
         assert len(lines) == 2  # one for requests, one for tokens
 
-    def test_record_free_tier_usage_skips_zero_limits(self, collector: MetricsCollector, metric_date: str) -> None:
+    def test_record_free_tier_usage_skips_zero_limits(self, collector: MetricsCollector) -> None:
         collector.record_free_tier_usage("claude", "sonnet", requests_used=0, requests_limit=0)
-        f = collector._metrics_dir / f"free_tier_usage_{metric_date}.jsonl"
-        assert not f.exists()
+        assert not list(collector._metrics_dir.glob(f"{MetricType.FREE_TIER_USAGE.value}_*.jsonl"))
 
 
 # ---------------------------------------------------------------------------
@@ -389,30 +387,31 @@ class TestQualityAndErrors:
 
 
 class TestJsonlFileWriting:
-    def test_metric_point_structure(self, collector: MetricsCollector, metric_date: str) -> None:
+    def test_metric_point_structure(self, collector: MetricsCollector) -> None:
         collector._write_metric_point(MetricType.ERROR_RATE, 1.0, {"key": "val"})
         collector.flush()
-        f = collector._metrics_dir / f"error_rate_{metric_date}.jsonl"
+        f = _single_metric_file(collector._metrics_dir, MetricType.ERROR_RATE)
         data = json.loads(f.read_text().strip())
         assert "timestamp" in data
         assert data["metric_type"] == "error_rate"
         assert data["value"] == pytest.approx(1.0)
         assert data["labels"] == {"key": "val"}
 
+    @pytest.mark.usefixtures("same_metric_date")
     def test_multiple_points_appended(self, collector: MetricsCollector) -> None:
         for i in range(5):
             collector._write_metric_point(MetricType.ERROR_RATE, float(i), {})
         collector.flush()
-        today = datetime.now().strftime("%Y-%m-%d")
-        f = collector._metrics_dir / f"error_rate_{today}.jsonl"
+        f = _single_metric_file(collector._metrics_dir, MetricType.ERROR_RATE)
         lines = f.read_text().strip().splitlines()
         assert len(lines) == 5
 
-    def test_file_named_by_date(self, collector: MetricsCollector, metric_date: str) -> None:
+    @pytest.mark.usefixtures("same_metric_date")
+    def test_file_named_by_date(self, collector: MetricsCollector) -> None:
         collector._write_metric_point(MetricType.API_USAGE, 1.0, {})
         collector.flush()
-        expected = collector._metrics_dir / f"api_usage_{metric_date}.jsonl"
-        assert expected.exists()
+        metric_file = _single_metric_file(collector._metrics_dir, MetricType.API_USAGE)
+        assert metric_file.name == f"api_usage_{_FIXED_METRIC_NOW.date().isoformat()}.jsonl"
 
     def test_write_metric_fires_plugin_hook(self, collector: MetricsCollector) -> None:
         """Verify metric recording fires the on_metric_record plugin hook."""
@@ -433,9 +432,7 @@ class TestJsonlFileWriting:
             collector._write_metric_point(MetricType.ERROR_RATE, 1.0, {})
             collector.flush()
             # JSONL file should still exist
-            today = datetime.now().strftime("%Y-%m-%d")
-            f = collector._metrics_dir / f"error_rate_{today}.jsonl"
-            assert f.exists()
+            _single_metric_file(collector._metrics_dir, MetricType.ERROR_RATE)
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +443,7 @@ class TestJsonlFileWriting:
 class TestRecordApiCall:
     def test_writes_api_usage_metric(self, collector: MetricsCollector) -> None:
         collector.record_api_call("claude", "sonnet", latency_ms=200, tokens=300, cost_usd=0.01, success=True)
-        today = datetime.now().strftime("%Y-%m-%d")
-        f = collector._metrics_dir / f"api_usage_{today}.jsonl"
-        assert f.exists()
+        _single_metric_file(collector._metrics_dir, MetricType.API_USAGE)
 
     def test_updates_avg_latency(self, collector: MetricsCollector) -> None:
         collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, cost_usd=0.0, success=True)

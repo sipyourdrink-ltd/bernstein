@@ -355,6 +355,7 @@ def _compare_audit_reports(root: Path, since: str, against: str, *, output_forma
 @click.option("--quiet", is_flag=True, help="Print nothing; report the result only through the exit code.")
 @click.option("--since", help="Compare from this stored audit report hash.")
 @click.option("--against", help="Compare against this stored audit report hash.")
+@click.option("--profile", help="Mark the CMP IDs required by an existing compliance framework; no conformance claim.")
 @click.option(
     "--json",
     "--json-output",
@@ -374,6 +375,7 @@ def govern_audit_cmd(
     registry: CheckRegistry | None = None,
     since: str | None = None,
     against: str | None = None,
+    profile: str | None = None,
 ) -> None:
     """Run registered governance audit checks across the workspace.
 
@@ -397,11 +399,22 @@ def govern_audit_cmd(
     if as_json:
         output_format = "json"
 
+    required: frozenset[str] | None = None
+    if profile is not None:
+        from bernstein.core.govern.compliance_checks import ComplianceFramework, required_check_ids
+
+        try:
+            required = required_check_ids(ComplianceFramework(profile.lower()))
+        except ValueError as exc:
+            raise click.UsageError(f"Unknown compliance profile {profile!r}.") from exc
+        if not only_areas:
+            only_areas = ("CMP",)
+
     root = Path(workdir).resolve()
     if since is not None or against is not None:
         if since is None or against is None:
             raise click.UsageError("--since and --against must be supplied together")
-        if list_checks or only_areas or skip_ids or strict or output_format == "sarif":
+        if list_checks or only_areas or skip_ids or strict or profile or output_format == "sarif":
             raise click.UsageError("Report comparison supports text or JSON without check execution options")
         _compare_audit_reports(root, since, against, output_format=output_format, quiet=quiet)
         return
@@ -426,6 +439,9 @@ def govern_audit_cmd(
                 }
                 for c in checks
             ]
+            if required is not None:
+                for item in payload:
+                    item["required"] = item["check_id"] in required
             click.echo(json.dumps(payload, indent=2))
             raise SystemExit(0)
 
@@ -436,10 +452,13 @@ def govern_audit_cmd(
         table.add_column("Description", style="dim")
 
         for c in checks:
-            table.add_row(c.check_id, check_area(c), getattr(c, "title", ""), getattr(c, "description", ""))
+            marker = " *" if required is not None and c.check_id in required else ""
+            table.add_row(c.check_id + marker, check_area(c), getattr(c, "title", ""), getattr(c, "description", ""))
 
         console.print(table)
         console.print(f"\n[bold]{len(checks)}[/bold] check(s) matched.")
+        if required is not None:
+            console.print("* Required by the selected profile; this is not a conformance assessment.")
         raise SystemExit(0)
 
     from bernstein.core.checks.adapters import AuditSentinelCheck
@@ -465,6 +484,13 @@ def govern_audit_cmd(
 
     if output_format in ("json", "sarif"):
         report = _sarif(findings, root) if output_format == "sarif" else [_finding_dict(f) for f in findings]
+        if required is not None:
+            if isinstance(report, list):
+                for item in report:
+                    item["required"] = item["check_id"] in required
+            else:
+                for result in report["runs"][0]["results"]:
+                    result["properties"]["required"] = result["ruleId"] in required
         click.echo(json.dumps(report, indent=2))
         raise SystemExit(exit_code)
 
@@ -494,10 +520,13 @@ def govern_audit_cmd(
         if f.what_would_make_it_measurable and f.verdict == Verdict.NOT_MEASURABLE:
             msg += f" (Prerequisite: {f.what_would_make_it_measurable})"
 
-        table.add_row(status_badge, f.check_id, f.area, msg)
+        marker = " *" if required is not None and f.check_id in required else ""
+        table.add_row(status_badge, f.check_id + marker, f.area, msg)
 
     console.print()
     console.print(table)
+    if required is not None:
+        console.print("* Required by the selected profile; this is not a conformance assessment.")
     console.print()
 
     passed_count = sum(

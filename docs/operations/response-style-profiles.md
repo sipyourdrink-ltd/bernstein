@@ -56,10 +56,36 @@ role_model_policy:
 ```
 
 The value is validated against the closed vocabulary
-(`verbose` / `balanced` / `terse`) at parse time. A style whose mapped
-template file is missing raises a typed `ResponseStyleTemplateError`
-during config validation - not at spawn time - so a dangling template
-reference fails fast.
+(`verbose` / `balanced` / `terse`) at parse time. During seed loading,
+availability is checked for styles declared under `role_model_policy`
+(including its `default` entry). A missing template for a declared
+non-neutral style raises a typed `ResponseStyleTemplateError` during seed
+validation, not at spawn time. Seed validation does not check a future
+`Task.metadata['mode']`; that per-task mode is resolved when a worker starts,
+and a missing template it selects is reported while rendering that worker's
+addendum.
+
+## Template lookup and neutral rendering
+
+For each lookup, Bernstein first checks whether the project has a
+`templates/mode_profiles/` directory. If it does, that directory takes
+precedence over the bundled directory; if it does not, the bundled directory
+is used. The directory is chosen before checking for the individual mapped
+file, with no per-file fallback: when a project directory is selected, a
+mapped file must be present there whenever a style needs it.
+
+`balanced` is the exception: rendering it returns an empty addendum before
+looking up or reading `smart.yaml`, so it needs no template file. For example,
+if the project's selected directory contains only `fast.yaml` (the `terse`
+template):
+
+- `terse` loads `fast.yaml` and renders its addendum.
+- `verbose` needs `deep.yaml` and fails with `ResponseStyleTemplateError`
+  because that file is missing. If `verbose` is declared in the seed, this is
+  caught during seed validation; if chosen by task metadata, it is caught
+  when that worker's addendum is rendered.
+- `balanced` renders an empty addendum and succeeds without reading or
+  requiring `smart.yaml`.
 
 ## Resolution order
 
@@ -81,20 +107,35 @@ The same inputs always resolve to the same style and the same rendered
 addendum, so the resolution is snapshot-testable and reproducible across
 machines.
 
-## Identity, ledger, and audit
+## Schedule projection versus worker resolution
 
-When a profile is **explicitly** declared (anything other than the
-built-in default), the SHA-256 of the rendered addendum is:
+A schedule declaration and a worker's resolved style are separate stages.
+Schedules with an explicit `response_profile` declaration project
+`response_profile` and `profile_content_sha256` into the deterministic task
+identity and canonical payload (and into the projected node metadata). This
+includes an explicit `balanced` declaration. A schedule with no declaration
+omits both projection fields, preserving the pre-profile projection shape; it
+does not imply that the worker will have no resolved style.
 
-- folded into the task identity used by the deterministic schedule
-  projection, and
-- stamped onto the task's cost-ledger entry (`response_profile` plus
-  `profile_content_sha256`) and audit trail.
+When the worker starts, it resolves the profile using the order above. It
+records the resolved `response_profile` and `profile_content_sha256` on task
+metadata even when no source declares a style and it selects the built-in
+`balanced` default. In that case the addendum is empty, but its SHA-256 is
+still recorded. The worker's resolved metadata is distinct from the schedule's
+projected fields: an undeclared schedule can omit those fields while the
+worker still records `balanced` and the empty-addendum hash.
 
-That stamping is what makes per-profile cost attribution possible - see
-[Per-profile cost attribution](profile-cost-attribution.md). A spawn that
-falls through to the built-in `balanced` default is not folded into
-identity, keeping unset-profile runs byte-identical to before.
+Template context differs between those stages. Schedule rendering uses the
+bundled templates because no project workdir is available to the scheduler.
+At spawn time a worker uses the project's `templates/mode_profiles/` directory
+when present, falling back to the bundled templates only when that directory
+is absent. Thus a project template override can make the worker's rendered
+addendum hash differ from the hash used by the schedule projection.
+
+The worker's profile and addendum hash also support cost attribution; see
+[Per-profile cost attribution](profile-cost-attribution.md). The built-in
+`balanced` default is not folded into an undeclared schedule's identity, but
+it is still recorded on the worker's task metadata.
 
 ## Related
 

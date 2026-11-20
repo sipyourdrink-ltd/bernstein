@@ -1,7 +1,7 @@
 ---
 name: bernstein-cost
 description: >
-  Show detailed cost breakdown and budget status for the Bernstein orchestrator.
+  Show detailed cost breakdown and budget status using Bernstein's cost reporting.
   Use when the user asks about spending, budget, cost per model, cost per agent,
   or wants a cost projection.
 ---

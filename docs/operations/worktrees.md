@@ -20,7 +20,34 @@ lifecycle event for plugins.
 
 The tool honours both the spec layout (`.sdd/runtime/worktrees/`) and
 the legacy layout (`.sdd/worktrees/`) the `WorktreeManager` currently
-produces.
+produces. `list` reads **one layout only**: it uses
+`.sdd/runtime/worktrees/` when that path is a directory, otherwise it
+falls back to `.sdd/worktrees/`. The existence of the preferred directory
+is decisive even when it is empty; entries in the legacy directory are
+not merged in. If the preferred path is absent or is a regular file, the
+legacy path is selected instead. If the selected path is not a directory,
+`list` reports no worktrees there.
+
+Within the selected directory, entries are considered in ascending
+lexicographic name order. Only immediate child directories are listed;
+hidden entries (including `.locks`), ordinary files, and the `locks`
+bookkeeping directory are omitted.
+
+`list` is read-only. For example, inspect a project and request JSON
+without changing its worktrees:
+
+```sh
+bernstein worktrees list --workdir /path/to/project --json
+```
+
+## Inspecting a parallel run graph
+
+`bernstein worktrees graph FANOUT_ID` displays a sealed parallel run
+receipt. Each branch is paired with its own run record using the supplied
+session-to-run mapping. A branch without a matching run ID remains
+`unresolved`; it is not reported as a failing branch.
+See the [command reference](../reference/cli-reference.md#bernstein-worktrees-graph)
+for receipt selection, `--run-id SESSION=RUN`, and output options.
 
 ## State machine
 

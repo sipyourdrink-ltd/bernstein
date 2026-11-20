@@ -278,6 +278,10 @@ def node_to_response(node: NodeInfo) -> NodeResponse:
             active_agents=node.capacity.active_agents,
             gpu_available=node.capacity.gpu_available,
             supported_models=node.capacity.supported_models,
+            disk_free_mb=node.capacity.disk_free_mb,
+            mem_used_pct=node.capacity.mem_used_pct,
+            mesh_rtt_ms=node.capacity.mesh_rtt_ms,
+            platform=node.capacity.platform,
         ),
         last_heartbeat=node.last_heartbeat,
         registered_at=node.registered_at,
@@ -316,6 +320,7 @@ def task_to_response(task: Task) -> TaskResponse:
         model=task.model,
         effort=task.effort,
         cli=task.cli,
+        requires=list(task.requires),
         batch_eligible=task.batch_eligible,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         # Issue #3110: the declared artifact contract must survive the
@@ -331,6 +336,7 @@ def task_to_response(task: Task) -> TaskResponse:
         progress_log=cast("list[ProgressEntry]", task.progress_log).copy(),  # type: ignore[reportUnknownMemberType]
         version=task.version,
         parent_session_id=task.parent_session_id,
+        claimed_by_session=task.claimed_by_session,
         # expose typed retry bookkeeping so clients read the
         # single source of truth rather than regex-ing the title.
         retry_count=task.retry_count,
@@ -1034,6 +1040,8 @@ def create_app(
     plan_mode: bool = False,
     readonly: bool = False,
     slack_signing_secret: str | None = None,
+    claim_control_path: Path | None = None,
+    claim_controller_id: str | None = None,
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -1049,6 +1057,9 @@ def create_app(
             rejected with 405.  The dashboard, events stream, and read
             endpoints remain fully accessible.  Useful for public demo
             deployments.
+        claim_control_path: Explicit operator-owned persistent claim controller database.
+            Paired with claim_controller_id; omitted keeps existing claim behavior.
+        claim_controller_id: Operator-chosen installation controller identity.
         slack_signing_secret: Slack app signing secret for verifying webhook
             request signatures.  Defaults to ``SLACK_SIGNING_SECRET`` env var.
 
@@ -1067,6 +1078,7 @@ def create_app(
     from bernstein.core.auth_middleware import SSOAuthMiddleware
     from bernstein.core.routes.agents import router as agents_router
     from bernstein.core.routes.auth import router as auth_router
+    from bernstein.core.routes.claim_admission import router as claim_admission_router
     from bernstein.core.routes.costs import router as costs_router
     from bernstein.core.routes.dashboard import router as dashboard_router
     from bernstein.core.routes.discord import router as discord_router
@@ -1118,7 +1130,12 @@ def create_app(
     _cluster_auth_secret = effective_cluster.auth_token or ""
     cluster_authenticator: ClusterAuthenticator | None = None
 
-    store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
+    store = TaskStore(
+        jsonl_path,
+        metrics_jsonl_path=metrics_jsonl_path,
+        claim_control_path=claim_control_path,
+        claim_controller_id=claim_controller_id,
+    )
     sse_bus = SSEBus()
 
     def _publish_task_update(task_obj: Any) -> None:
@@ -1258,7 +1275,7 @@ def create_app(
         title="Bernstein Task Server",
         version="1.0.0",
         description=(
-            "Bernstein REST API - the open-source governance layer for AI agents, "
+            "Bernstein REST API - an open-source governance layer for AI agents, "
             "one git worktree per task.\n\n"
             "## Authentication\n\n"
             "Authentication is ENABLED by default.  Include a Bearer token in "
@@ -1626,6 +1643,7 @@ def create_app(
         file_health_router,
         fleet_router,
         drain_router,
+        claim_admission_router,
         identities_router,
         acp_router,
         approvals_router,
@@ -1736,9 +1754,45 @@ _default_cluster_config = (
 
 def get_app() -> FastAPI:
     """Get or create the default FastAPI app (lazy singleton)."""
+    from dataclasses import replace
+
+    from bernstein.core.config.seed_parser import SeedError, _load_seed_mapping, _parse_cluster
+    from bernstein.core.seed import resolve_seed_path
+
+    cluster_config = _default_cluster_config
+    seed_path = resolve_seed_path(Path.cwd())
+    if seed_path.exists():
+        # The server child receives the selected seed path, not a serialized
+        # ClusterConfig. Load startup-only partition settings before serving
+        # requests; reloading metadata later must not replace a live ring.
+        try:
+            # Full metadata loads retain layer validation. Here only effective
+            # registry settings are validated, below, outside this read-error path.
+            seed_data = _load_seed_mapping(seed_path, validate_layers=False)
+        except SeedError:
+            # Metadata loading already handles unreadable or malformed seeds.
+            # Shard opt-in must not turn those errors into a new boot failure.
+            seed_data = {}
+        raw_cluster = seed_data.get("cluster")
+        registry_fields = ("shards", "shard_vnodes", "min_disk_free_mb", "max_mem_used_pct", "max_mesh_rtt_ms")
+        registry_settings = (
+            {key: raw_cluster[key] for key in registry_fields if key in raw_cluster}
+            if isinstance(raw_cluster, dict)
+            else {}
+        )
+        seed_cluster = _parse_cluster(registry_settings) if registry_settings else None
+        if seed_cluster is not None:
+            cluster_config = replace(
+                cluster_config or ClusterConfig(),
+                shards=seed_cluster.shards,
+                shard_vnodes=seed_cluster.shard_vnodes,
+                min_disk_free_mb=seed_cluster.min_disk_free_mb,
+                max_mem_used_pct=seed_cluster.max_mem_used_pct,
+                max_mesh_rtt_ms=seed_cluster.max_mesh_rtt_ms,
+            )
     return create_app(
         auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
-        cluster_config=_default_cluster_config,
+        cluster_config=cluster_config,
         readonly=os.environ.get("BERNSTEIN_READONLY", "").lower() in ("1", "true", "yes"),
         slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
     )

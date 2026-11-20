@@ -34,10 +34,33 @@ bernstein cost --by profile --json
 | `--ledger PATH` | `.sdd/cost/ledger.jsonl` | Spend ledger to read. |
 | `--json` | off | Emit raw JSON. |
 
-When the ledger is present, attribution is per entry with transition
-exclusion (below). When it is missing, the command degrades to the
-`response_profile` tag on task records so older runs still show a
-breakdown.
+When the ledger path exists, attribution uses only its entries in the selected
+window, with transition exclusion described below. Task records are not a
+fallback in this case: an existing empty ledger, or a window containing no
+ledger entries, produces an empty grouped result rather than a task-record
+breakdown. If the ledger file is absent, the command instead groups task
+records by their `cost_tags.response_profile`; records without that tag go to
+`unattributed`. The time-window filter applies before this fallback too, so an
+empty selected task-record window has no profile buckets (and if the whole cost
+view has no data, the command uses its normal no-data output).
+
+## Attribution buckets
+
+A named profile bucket (for example, `terse`) means ledger entries carry that
+`response_profile` tag and their task has no recorded profile transition.
+`unattributed` means an entry has no profile tag; it does not name a profile
+or imply that spend was assigned to a default profile. `excluded (profile
+transition)` means the task has a recorded transition between profiles. All
+ledger entries for that task go in this one bucket, not under either named
+profile, because their spend cannot be reliably split between the profiles.
+The excluded bucket appears only when it has entries.
+
+For example, with three synthetic ledger records: `t-1` is tagged `terse`
+with $0.10 of cost; `t-2` has no profile tag and $0.02; and `t-3` is tagged
+`verbose` with $0.30 but has a recorded transition from `verbose` to `terse`.
+The grouped buckets are `terse` ($0.10), `unattributed` ($0.02), and
+`excluded (profile transition)` ($0.30); none of `t-3`'s cost is attributed to
+either named profile.
 
 ## Transition exclusion
 
@@ -85,9 +108,38 @@ bernstein cost profile-report --json
 | `--json` | off | Emit raw JSON. |
 
 The report carries, per profile: task count, output tokens, cost USD,
-mean output tokens per task, and (joined from metrics) the verification
-pass rate. Comparable cohorts that clear the honesty rule are listed
-separately.
+mean output tokens per task, and a quality block when recorded verification
+verdicts join. The report joins the profile's distinct attributed task IDs to
+metrics task records by `task_id`. For repeated records of one task, the last
+record that contains `janitor_passed` supplies its verdict; a later record
+without `janitor_passed` does not erase an earlier verdict. Records with no
+verdict do not count as outcomes.
+
+The quality block's exact fields are `tasks_with_outcome` and
+`verdict_pass_rate`. `tasks_with_outcome` is the number of distinct attributed
+tasks with a joined verdict, and the rate is the fraction of those joined tasks
+whose verdict is pass. Thus, the denominator is `tasks_with_outcome`, not the
+profile's total task count. The whole `quality` block is omitted when no
+verdict joins.
+
+For example, suppose profile `terse` has distinct attributed task IDs `t-1`,
+`t-2`, and `t-3`, with these metrics records in order:
+
+```jsonl
+{"task_id":"t-1","janitor_passed":false}
+{"task_id":"t-1","janitor_passed":true}
+{"task_id":"t-1"}
+{"task_id":"t-2","janitor_passed":false}
+{"task_id":"t-3"}
+```
+
+For `t-1`, the last record carrying a verdict is the pass, and the later
+record without a verdict leaves that pass in effect. `t-2` joins as a failure;
+`t-3` has no verdict and does not join. The resulting quality block is
+`{"tasks_with_outcome":2,"verdict_pass_rate":0.5}`: one pass among two joined
+tasks. Comparable cohorts that clear the honesty rule are listed separately.
+Unlike `cost --by profile`, `profile-report` remains ledger-only; it does not
+fall back to task records when the ledger is missing or empty.
 
 ### Audit anchoring is mandatory
 

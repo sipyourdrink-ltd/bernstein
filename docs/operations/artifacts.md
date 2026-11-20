@@ -39,6 +39,33 @@ Every kind routes through one core so two kinds can never disagree:
   not silently normalised, so two byte-different inputs can never both pass as
   "the same" artifact. NaN / Infinity are rejected in JSON kinds.
 
+### JSONL input and canonical output
+
+For `dataset` and `action_log`, the artifact reader decodes UTF-8, treats LF,
+CRLF, and lone CR as line separators, and ignores lines containing only
+whitespace. Those differences disappear before canonicalisation. If a nonblank
+row is invalid JSON, the error reports its **nonblank-row number** (starting at
+1), not its physical line number; blank and whitespace-only lines do not count.
+
+The documented row convention is one JSON object per row. The loader itself
+parses JSON values without requiring each value to be an object; it does not
+apply a schema check unless the task declares a `schema_valid` criterion. Thus,
+for example, an array-valued row can be loaded and canonicalised when no such
+criterion rejects it. The JSONL canonicaliser preserves row order, serialises
+compactly with object keys sorted, and joins rows with one LF (`\n`) between
+them, with **no final LF**. For example, the following notation uses `\r\n`
+and `\r` to mark actual CRLF and lone-CR separators (not literal backslash
+characters):
+
+```text
+Input:     {"z": 2, "a": 1}\r\n   \r["x", 1]
+Canonical: {"a":1,"z":2}\n["x",1]
+```
+
+The whitespace-only input line is discarded; row order is unchanged, and the
+canonical result has no LF after its final `]`. `dataset` and `action_log` use
+the same behavior.
+
 The artifact's identity is `content_hash = sha256(canonical_bytes)`.
 
 ## Determinism
@@ -64,9 +91,9 @@ coding task.
 
 ### Declaring one
 
-The contract is declared where tasks are declared (issue #3110). One strict
-parser (`parse_artifact_spec` in `core/tasks/artifacts.py`) sits behind every
-surface, so they cannot drift.
+The contract is declared where tasks are declared (issue #3110). Plan, backlog,
+CLI, and API declarations share one strict parser (`parse_artifact_spec` in
+`core/tasks/artifacts.py`). Scenario templates use a separate loader, noted below.
 
 **On a plan step** (`stages[].steps[].artifact_spec`):
 
@@ -83,6 +110,30 @@ stages:
             - type: hash_stable
               value: 'sha256:...'
 ```
+
+**On a scenario task template** (`tasks[].artifact_spec`):
+
+```yaml
+id: weekly-report
+name: Weekly report
+tasks:
+  - title: Produce the weekly report
+    role: analyst
+    artifact_spec:
+      kind: report
+      output_path: reports/weekly.md
+```
+
+Set `kind` to `report` for a report, or `dataset` for JSONL data (for example,
+`output_path: out/rows.jsonl`). Use a workdir-relative `output_path` for the
+file the agent should produce. Invoking the scenario passes each template's
+`artifact_spec` through to the created task, including the `POST /tasks` payload
+for a non-default spec. See the [routine scenarios guide](../routine-scenarios.md)
+for the invocation flow.
+
+The scenario loader uses `ArtifactSpec.from_dict`, not the strict declaration
+parser: an omitted spec or an invalid kind falls back to `code_diff`. The default
+spec is omitted from the task-create payload.
 
 **On a backlog entry** (YAML frontmatter, same block):
 
@@ -105,19 +156,19 @@ bernstein add-task "Produce the weekly report" \
   --artifact-criterion 'hash_stable:sha256:...'
 ```
 
-The declared block accepts exactly four keys - `kind` (required), `output_path`
-(required for every kind except `code_diff`), `canonicalisation` (optional; only
-the kind's default rule ships), and `criteria` (optional list of
-`{type, value}`). `output_path` is where the agent writes its deliverable; it
-must stay workdir-relative. A task constructed through the Python API may leave
-it empty to get the `.sdd/outbox/<task-id>/artifact` default, but a declaration
-names it explicitly.
+For plan, backlog, CLI, and API declarations, the block accepts exactly four keys -
+`kind` (required), `output_path` (required for every kind except `code_diff`),
+`canonicalisation` (optional; only the kind's default rule ships), and `criteria`
+(optional list of `{type, value}`). `output_path` is where the agent writes its
+deliverable; it must stay workdir-relative. A task constructed through the Python
+API may leave it empty to get the `.sdd/outbox/<task-id>/artifact` default, but a
+declaration names it explicitly.
 
-**Malformed declarations are refused at load, with the offending field
-named.** An unknown kind, a missing or workdir-escaping `output_path`, an
-unknown key, or a malformed criterion stops the plan load (or refuses the
-backlog file / CLI invocation / `POST /tasks` body) - it never silently becomes
-a `code_diff` task that completes on a git SHA. A refused backlog file is
+**Malformed plan, backlog, CLI, and API declarations are refused at load, with
+the offending field named.** An unknown kind, a missing or workdir-escaping
+`output_path`, an unknown key, or a malformed criterion stops the plan load (or
+refuses the backlog file / CLI invocation / `POST /tasks` body) - it never silently
+becomes a `code_diff` task that completes on a git SHA. A refused backlog file is
 skipped with the field named in the log while the rest of the scan continues.
 The same validated payload rides `POST /tasks` (`artifact_spec` on the create
 body) and comes back on every task response, so the declaration survives the
@@ -207,6 +258,40 @@ artifact bytes (in addition to the six filesystem/test completion signals):
 | `figures_grounded` | On a report bundle, requires every declared figure's anchor to resolve to a verifying lineage record and every material number in the body to be declared (see [Figure grounding](#figure-grounding-report-artifacts)) |
 
 Each has a closed evaluator; none executes artifact-supplied code.
+
+A `criteria_match` value is a JSON list of predicates. Each predicate has an
+`op`, a `path`, and (except where not needed) a `value`; every predicate in the
+list must pass. For example:
+
+```json
+[
+  {"op": "eq", "path": "status", "value": "ok"},
+  {"op": "ge", "path": "metrics.changed", "value": 1},
+  {"op": "eq", "path": "rows.0.id", "value": 7}
+]
+```
+
+Paths walk nested object keys separated by dots, and use zero-based numeric
+segments to select array entries (`rows.0.id` is the `id` in the first row).
+An empty path (`""`) addresses the whole document; for example,
+`[{"op":"eq","path":"","value":{"status":"ok"}}]` compares the
+entire document with that object.
+
+For a dataset, the document is the array of JSONL rows. Consider these rows:
+
+```json
+{"id": 7, "optional": null}
+{"id": 8}
+```
+
+`0.optional` is present and has the value `null`; `1.optional` is missing.
+Ordinary comparisons (`eq`, `ne`, `contains`, and numeric comparisons) fail
+when a path is missing, rather than treating it as a value to compare. Thus
+`[{"op":"eq","path":"1.optional","value":null}]` fails, while
+`[{"op":"eq","path":"0.optional","value":null}]` passes. Use `exists`
+to test presence explicitly: `[{"op":"exists","path":"1.optional","value":false}]`
+passes for the missing path, and changing the value to `true` tests for a
+present path (including one whose value is null).
 
 Artifact completion enforces `artifact_spec.criteria` without requiring callers
 to repeat those gates in `completion_signals`. It evaluates the declared
@@ -352,7 +437,38 @@ VERIFIED task=RPT-1
 A failing figure renders `UNANCHORED <number> (<category>) at line L, col C`
 and the command exits `2`.
 
+## Storage protocol (`ArtifactSink`)
+
+Storage backends for `.sdd/` persistence (WAL segments, audit logs, task
+outputs, and metrics) implement the `@runtime_checkable` `ArtifactSink`
+`Protocol` in `src/bernstein/core/storage/sink.py`:
+
+- **Logical names.** Operations take forward-slash-delimited logical keys
+  (for example `runtime/wal/run-123.wal.jsonl`) rather than host file paths;
+  each sink maps keys to its native addressing (`normalise_key` strips leading
+  slashes and rejects empty keys or `.`/`..` segments). A sink also exposes a
+  stable `name: str` attribute (such as `"local_fs"`, `"s3"`, `"gcs"`).
+- **Asynchronous read and write.** Every method on `ArtifactSink` is `async`:
+  - `async def write(self, key: str, data: bytes, *, durable: bool = True, content_type: str | None = None) -> None`
+  - `async def read(self, key: str) -> bytes` (raises `FileNotFoundError` when `key` is absent, or `SinkError` on transient/protocol failures)
+  - `async def list(self, prefix: str) -> list[str]`
+  - `async def delete(self, key: str) -> None` (idempotent on missing keys)
+  - `async def exists(self, key: str) -> bool`
+  - `async def stat(self, key: str) -> ArtifactStat` (raises `FileNotFoundError` when `key` is absent)
+  - `async def close(self) -> None` (flushes pending writes and releases client resources; idempotent)
+- **Sorted listing.** `list(prefix)` internally paginates and returns all keys
+  whose identifier starts with `prefix` (pass `""` for every key), sorted
+  lexicographically.
+- **Durable write guarantee.** When `durable=True` (the default), the write
+  must be observably durable before `write()` returns (local `fsync` on
+  `LocalFsSink`, synchronous PUT on object-store sinks); the WAL depends on this
+  guarantee for crash safety. When `durable=False`, the backend may buffer the
+  write for later flush.
+
 ## Source
+
+- `src/bernstein/core/storage/sink.py` - the `ArtifactSink` storage protocol,
+  `ArtifactStat`, `SinkError`, and key helpers (`normalise_key`, `join_keys`).
 
 - `src/bernstein/core/tasks/artifacts.py` - kinds, canonicalisers, criteria,
   and the strict declaration parser (`parse_artifact_spec`).

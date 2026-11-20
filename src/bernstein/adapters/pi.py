@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 
-#: Pi's switch that turns off extension discovery (``-ne``); explicit ``-e``
+#: Pi's contract-declared switch that turns off extension discovery; explicit ``-e``
 #: paths would still load.
 _NO_EXTENSIONS = "--no-extensions"
 
@@ -74,7 +74,9 @@ class PiAdapter(CLIAdapter):
         # loaded the operator's personal extensions -- their MCP servers
         # included -- into a run bernstein never configured them for (#5965).
         # bernstein passes pi no extension of its own, so none is lost.
-        cmd = ["pi", _NO_EXTENSIONS]
+        # Stream events to the runner log so log-mtime liveness sees active
+        # work, and exit after the prompt instead of opening the TUI (#6943).
+        cmd = ["pi", _NO_EXTENSIONS, "--print", "--mode", "json"]
         if model_config.model and model_config.model.lower() != "auto":
             cmd.extend(["--model", model_config.model])
         cmd.append(prompt)
@@ -99,6 +101,8 @@ class PiAdapter(CLIAdapter):
                     wrapped_cmd,
                     cwd=workdir,
                     env=env,
+                    # Pi reads piped stdin before emitting, even in JSON mode.
+                    stdin=subprocess.DEVNULL,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,

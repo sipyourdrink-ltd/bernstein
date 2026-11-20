@@ -93,19 +93,17 @@ async def test_origin_check_has_a_one_release_opt_out(_clean_env: None, monkeypa
 # ---------------------------------------------------------------------------
 
 
-async def test_unsupported_protocol_version_returns_400(transport: StreamableHTTPTransport) -> None:
-    status, _, body = await transport.handle_request(
-        "POST", "/mcp", {"mcp-protocol-version": "1999-01-01"}, _req("ping")
-    )
+@pytest.mark.parametrize("version", ["1999-01-01", "2026-07-28"])
+async def test_unsupported_protocol_version_returns_400(transport: StreamableHTTPTransport, version: str) -> None:
+    status, _, body = await transport.handle_request("POST", "/mcp", {"mcp-protocol-version": version}, _req("ping"))
     assert status == 400
     # The refusal names the supported revisions so the client can downgrade.
     assert b"2025-03-26" in body
 
 
-async def test_supported_protocol_version_is_served(transport: StreamableHTTPTransport) -> None:
-    status, _, _body = await transport.handle_request(
-        "POST", "/mcp", {"mcp-protocol-version": "2025-03-26"}, _req("ping")
-    )
+@pytest.mark.parametrize("version", ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"])
+async def test_supported_protocol_version_is_served(transport: StreamableHTTPTransport, version: str) -> None:
+    status, _, _body = await transport.handle_request("POST", "/mcp", {"mcp-protocol-version": version}, _req("ping"))
     assert status == 200
 
 
@@ -159,15 +157,78 @@ async def test_initialize_echoes_a_supported_requested_version(
     assert result["capabilityCard"]["specRevision"] == "2025-06-18"
 
 
+@pytest.mark.parametrize("version", ["1999-01-01", "2026-07-28"])
 async def test_initialize_falls_back_on_an_unknown_requested_version(
     transport: StreamableHTTPTransport,
+    version: str,
 ) -> None:
-    body = _req("initialize", {"clientInfo": {"name": "t"}, "protocolVersion": "1999-01-01"})
+    body = _req("initialize", {"clientInfo": {"name": "t"}, "protocolVersion": version})
     status, _, resp = await transport.handle_request("POST", "/mcp", {}, body)
     assert status == 200
     result = json.loads(resp)["result"]
     assert result["protocolVersion"] == "2025-03-26"
     assert result["capabilityCard"]["specRevision"] == "2025-03-26"
+
+
+async def test_http_protocol_admission_preserves_the_four_implemented_revisions() -> None:
+    from bernstein.mcp.remote_transport import _supported_protocol_versions
+
+    assert _supported_protocol_versions() == ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
+
+
+async def test_native_sdk_auto_http_client_negotiates_legacy_and_lists_all_surfaces(_clean_env: None) -> None:
+    import httpx2
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+
+    from bernstein.mcp.remote_transport import create_asgi_app
+
+    requests = []
+    app = create_asgi_app(config=RemoteMCPConfig(auth_type="none"))
+
+    async def record_request(request):
+        if request.method == "POST":
+            requests.append((json.loads(request.content)["method"], request.headers.get("mcp-protocol-version")))
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), event_hooks={"request": [record_request]}, timeout=5
+    ) as http:
+        wire = streamable_http_client("http://testserver/mcp", http_client=http, terminate_on_close=False)
+        async with Client(wire, read_timeout_seconds=5) as client:
+            assert client.protocol_version == "2025-11-25"
+            assert "bernstein_run" in {tool.name for tool in (await client.list_tools()).tools}
+            assert (await client.list_prompts()).prompts
+            await client.list_resources()
+            await client.list_resource_templates()
+    assert requests[0] == ("server/discover", "2026-07-28")
+    assert any(method == "initialize" for method, _ in requests)
+
+
+async def test_native_sdk_pinned_modern_http_client_receives_protocol_rejection(_clean_env: None) -> None:
+    import httpx2
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.shared.exceptions import MCPError
+
+    from bernstein.mcp.remote_transport import create_asgi_app
+
+    app = create_asgi_app(config=RemoteMCPConfig(auth_type="none"))
+    responses = []
+
+    async def record_response(response):
+        if response.request.method == "POST":
+            await response.aread()
+            responses.append((response.status_code, response.json()))
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), event_hooks={"response": [record_response]}, timeout=5
+    ) as http:
+        wire = streamable_http_client("http://testserver/mcp", http_client=http, terminate_on_close=False)
+        async with Client(wire, mode="2026-07-28", read_timeout_seconds=5) as client:
+            with pytest.raises(MCPError):
+                await client.list_tools()
+    assert responses[-1][0] == 400
+    assert "Unsupported MCP-Protocol-Version" in responses[-1][1]["error"]
 
 
 # ---------------------------------------------------------------------------

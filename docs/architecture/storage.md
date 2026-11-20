@@ -64,6 +64,40 @@ All five pass the shared `ArtifactSinkConformance` test suite
 only against `LocalFsSink`; the cloud sinks run the same suite in the
 integration folder behind emulator-availability gates.
 
+## Local filesystem listing and metadata
+
+`LocalFsSink.list(prefix)` treats the prefix as a path under the sink root,
+not as a general string-prefix filter. An empty prefix (`""`) lists every
+file beneath the root. A directory prefix (for example, `"reports"` or
+`"reports/"`) lists files recursively beneath that directory; it does not
+include similarly named siblings such as `reports-old/`. A prefix naming an
+exact file returns that file's key. A missing prefix returns an empty list.
+Directories are not listed as artifacts. Results are in ascending
+lexicographic order, and every returned key is relative to the sink root
+(with `/` separators), never an absolute filesystem path.
+
+For a local file, `stat` supplies `size_bytes` and `last_modified_unix`
+(the file size in bytes and modification time as a Unix timestamp). The
+optional `etag` and `content_type` fields are both `None`: the local sink
+does not provide an ETag or retain MIME metadata. A directory is not an
+artifact, so stat on a directory or a missing key raises `FileNotFoundError`.
+
+```python
+from pathlib import Path
+
+from bernstein.core.storage import LocalFsSink
+
+
+async def inspect_local_artifacts() -> None:
+    sink = LocalFsSink(Path(".sdd"))
+    reports = await sink.list("reports")
+    # e.g. ["reports/daily.json", "reports/monthly.json"]
+    print(reports)
+    metadata = await sink.stat("reports/daily.json")
+    print(metadata.size_bytes, metadata.last_modified_unix)
+    # metadata.etag and metadata.content_type are None for LocalFsSink.
+```
+
 ## Durability: `BufferedSink`
 
 The WAL crash-safety contract requires a `durable=True` write to be on
@@ -85,19 +119,51 @@ WAL.append() ──▶ LocalFsSink.write(durable=True)   ← synchronous fsync
    the local `.sdd/` with the full `fsync` semantics from
    `atomic_write.write_atomic_bytes`. If the orchestrator dies after
    `write` returns, every line is already on the OS page cache barrier.
-2. **Remote next, asynchronously.** The same payload is queued for a
-   best-effort mirror to the configured remote sink. The queue is
-   bounded so a slow remote applies back-pressure rather than growing
-   unbounded.
-3. **Graceful shutdown.** `close()` blocks until every pending mirror
-   write drains (ACKed or failed); callers that construct a buffered
-   sink must call it on exit (the orchestrator does not use the storage
-   sinks today).
+2. **Remote next, asynchronously, with back-pressure.** After the local
+   write succeeds, the payload is queued for a best-effort mirror to the
+   configured remote sink. The queue is bounded. If it is full, the caller
+   waits for a queue slot; a slow remote therefore back-pressures producers
+   rather than allowing unbounded growth. Local persistence happens before
+   that wait.
+3. **Graceful shutdown.** Call `close()` to wait for queued and in-flight
+   mirror attempts to finish before the sinks are closed (the orchestrator
+   does not use the storage sinks today).
 
-Reads prefer the remote sink - that's the crash-recovery path where
-the ephemeral local disk may be empty. They fall back to local when
-the remote is unreachable or doesn't have the key (e.g. the mirror is
-still pending).
+`BufferedSink.stats()` reports mirror progress and outcomes:
+
+| Field | Meaning |
+| ----- | ------- |
+| `pending_writes` | Number of items currently waiting in the queue. |
+| `oldest_pending_age_seconds` | Age of the oldest item still in the queue; `0.0` if the queue is empty. |
+| `completed_mirrors` | Total remote writes that succeeded. |
+| `failed_mirrors` | Total remote writes that failed. |
+
+The pending count and oldest age describe queued items only. Once the
+background worker takes an item, it is no longer counted as pending, even
+while the remote write is still in progress. Thus an empty queue (and zero
+oldest pending age) does not prove that the mirror work has finished. Use
+`close()` when you need to wait for all attempts, then inspect the counters
+to learn their outcomes. Draining alone is not proof of success: failed
+attempts also leave the queue and are counted as `failed_mirrors`. The storage
+unit tests verify that `test_failed_mirror_counted` reports
+`failed_mirrors == 2` and `completed_mirrors == 1` after two failures and one
+success; `test_drain_waits_for_in_flight_mirror` confirms draining waits for a
+delayed in-flight write before reporting its final counters.
+
+Buffered operations consult the two copies differently:
+
+| Operation | First copy checked | When the other copy is consulted |
+| --------- | ------------------ | -------------------------------- |
+| `read`    | Remote             | Falls back to local if remote raises `FileNotFoundError` or `SinkError`. |
+| `list`    | Local              | Always also lists remote, then returns the sorted union of both key lists with duplicates removed. If remote listing raises `SinkError`, it returns the local keys. |
+| `exists`  | Local              | Checks remote only if local says the key is absent. If remote raises `SinkError`, returns `False`. |
+| `stat`    | Local              | Falls back to remote only if local raises `FileNotFoundError`. |
+
+If both copies contain a key but their contents or metadata differ, `read`
+returns the remote bytes, which may be an older mirror of the local write;
+`stat` returns the local metadata. The read preference is useful for crash
+recovery when ephemeral local storage is empty, but it does not guarantee that
+the remote mirror is the newest copy.
 
 ## Sandbox integration
 

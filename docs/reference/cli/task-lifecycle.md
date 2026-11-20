@@ -80,27 +80,64 @@ bernstein add-task "Add JWT middleware" \
 
 The server responds with the created task as JSON; in `--json` mode the CLI re-emits it on stdout. Pipe to `jq -r .id` to capture the ID.
 
+### If creation returns no result
+
+Do not automatically retry `add-task` after a timeout or lost response. Its
+create payload has no caller-chosen task ID; the task store generates a new
+ID for each creation. The first request may already have created a task even
+when the caller did not receive its ID, and a second request can create a
+duplicate.
+
+Read the current backlog before deciding whether to submit again:
+
+```bash
+bernstein plan --export task-backlog.json
+jq '.[] | select(.title == "Add SBOM endpoint" and .role == "backend")' task-backlog.json
+```
+
+Compare the candidate's description, dependencies, and other submitted
+fields as well as its title and role. If it is the task you created, reuse
+its ID. Titles are not unique, so a title match alone does not establish
+identity. This export makes one unpaginated `GET /tasks` request, which
+returns at most 500 tasks. No match in that export is not proof that creation
+failed: the new task may be outside the returned page. A larger backlog
+requires complete, paginated task readback before deciding it is absent.
+If readback fails or leaves the result ambiguous, resolve that uncertainty
+before issuing another create. Retry safety depends on the individual
+command; a successful read does not make task creation idempotent.
+
 ---
 
 ## `bernstein list-tasks`
 
-List tasks visible to the running task server, with optional filters.
+Intended to list tasks visible to the running task server, with optional
+status and role filters. See the current readback limitation below.
 
 **Synopsis:** `bernstein list-tasks [flags]`
 
-**Flags:** *(source: `cli/commands/task_cmd.py:637-647`)*
+**Flags:** *(source: `cli/commands/task_cmd.py`, `list_tasks`)*
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--status-filter` | none | One of `open / claimed / in_progress / done / failed / blocked`. |
 | `--role ROLE` | none | Filter by role (e.g. `backend`, `qa`, `security`). |
-| `--json` | off | Emit raw JSON list instead of the Rich table. |
+| `--json` | off | Emit the raw `tasks` value from `/status`; see the current envelope limitation below. |
 
-The data source is `GET /status`; only tasks the server currently knows about are returned (archived tasks are not in this view - use `bernstein recap` or `bernstein replay` for archive views).
+The data source is `GET /status`. The CLI currently expects its `tasks`
+member to be a flat list, but the server returns an object containing counts
+and an `items` list. With no filters, `list-tasks --json` therefore emits
+that object rather than a flat task list. The table renderer and status or
+role filters can fail because they iterate it as though it were a list of
+task objects. The flags above describe the intended filters; they do not
+resolve this server/CLI mismatch.
+
+For automation that already knows a task ID, read the task directly with
+`GET /tasks/{id}`, as the polling example below does. Set `SERVER_URL` to
+the same server as the CLI (the local default is shown):
 
 ```bash
-# Only the in-flight backend tasks, JSON
-bernstein list-tasks --status-filter in_progress --role backend --json
+SERVER_URL=http://127.0.0.1:8052
+curl --fail --silent --show-error --max-time 10 "$SERVER_URL/tasks/$TASK_ID" | jq '{id, status, role}'
 ```
 
 For a holistic view including dependency edges and the critical path, use `bernstein plan --graph`. (`cli/commands/task_cmd.py:454-486`.)
@@ -253,47 +290,67 @@ Internally, both strategies converge on the same task FSM transition `DONE → C
 
 ## End-to-end script example
 
-A single bash flow that creates a task, watches it complete, and merges. Assumes the Bernstein server is already running (`bernstein start` or a previous `bernstein run`).
+A single bash flow that creates a task and waits for verified closure, with a
+bounded polling period. Run it from the same project directory as the server
+so `pending` reads that project's approval files. Set `SERVER_URL` to the
+same task server used by the CLI (the example uses the local default).
+The normal verification-and-merge path must be enabled.
+
+The script exits with `2` when an operator decision is needed; inspect
+`bernstein pending` and review the task before choosing `approve` or
+`reject`, then resume monitoring that task ID. `done` means agent work has
+finished, not that verification and merge succeeded. Only `closed` is success.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 1. Create a task and capture the ID.
+SERVER_URL=http://127.0.0.1:8052
+POLL_TIMEOUT_S=${POLL_TIMEOUT_S:-600}
+
+# 1. Create once and capture the ID; do not blindly retry a lost response.
 TASK_JSON=$(bernstein --json add-task "Add SBOM endpoint" \
   --role backend \
   --description "Expose POST /sbom that returns CycloneDX." \
   --priority 1 \
   --scope small)
-TASK_ID=$(echo "$TASK_JSON" | jq -r .id)
+TASK_ID=$(echo "$TASK_JSON" | jq -er .id)
 echo "Created $TASK_ID"
 
-# 2. Poll until the task reaches a terminal-ish state.
-while :; do
-  STATUS=$(bernstein --json list-tasks \
-    | jq -r --arg id "$TASK_ID" '.[] | select(.id == $id) | .status')
+# 2. Check approvals before waiting, including pre-spawn approval requests.
+DEADLINE=$((SECONDS + POLL_TIMEOUT_S))
+while (( SECONDS < DEADLINE )); do
+  PENDING=$(bernstein --json pending)
+  if jq -e --arg id "$TASK_ID" \
+    '[.approval_pending[], .spawn_pending[]] | any(.task_id == $id)' \
+    <<<"$PENDING" >/dev/null; then
+    echo "task $TASK_ID needs operator review; inspect bernstein pending"
+    exit 2
+  fi
+
+  # Read one task directly, rather than depending on the task-list envelope.
+  STATUS=$(curl --fail --silent --show-error --max-time 10 \
+    "$SERVER_URL/tasks/$TASK_ID" | jq -er .status)
   case "$STATUS" in
-    done|failed|cancelled|closed) break ;;
-    "")  echo "task $TASK_ID disappeared from server"; exit 1 ;;
-    *)   sleep 5 ;;
+    closed) echo "Task $TASK_ID is closed"; exit 0 ;;
+    planned|pending_approval)
+      echo "task $TASK_ID needs operator review"; exit 2 ;;
+    failed|cancelled|abandoned|refused|blocked_by_abandon|blocked_by_failed_dep)
+      echo "task $TASK_ID stopped in state $STATUS, not closed"; exit 1 ;;
+    done) : ;; # Continue waiting for verification and merge.
+    *) : ;;    # Other transient states remain bounded by the deadline.
   esac
+  sleep 5
 done
-
-# 3. If the run paused for review, resolve it.
-if bernstein --json pending | jq -e --arg id "$TASK_ID" '.[] | select(.task_id == $id)' >/dev/null; then
-  bernstein approve "$TASK_ID"
-fi
-
-# 4. Trigger the merge (if the run wasn't already auto-merging).
-bernstein merge
-
-# 5. Final state - anything other than `closed` means the merge failed.
-bernstein --json list-tasks \
-  | jq --arg id "$TASK_ID" '.[] | select(.id == $id)'
+echo "timed out waiting for task $TASK_ID to close"
+exit 1
 ```
 
-Notes:
+If automatic merging is not enabled and a completed task needs a manual merge, select it explicitly (the task must still be `done` and its agent branch must exist):
 
-- All four state-mutating commands (`add-task`, `approve`, `reject`, `cancel`) are safe to retry. The server / orchestrator dedupes on `task_id`.
-- Treat `cancelled` / `failed` / `closed` as terminal in scripts. `done` is **not** terminal - it precedes verification + merge.
-- For long-running orchestrations, prefer `bernstein watch` (streams events) over a polling loop. (`cli/watch_cmd.py:252`.)
+```bash
+bernstein merge pick --pick "$TASK_ID"
+curl --fail --silent --show-error --max-time 10 "$SERVER_URL/tasks/$TASK_ID" | jq '{id, status, role}'
+```
+
+The second command checks the task's actual state; do not assume the merge invocation itself moved it to `closed`. The bare `bernstein merge` group prints help when no selection is supplied.

@@ -50,7 +50,7 @@ bernstein volunteer browse --index https://registry.example/index.json
 
 | Command | Purpose |
 | --- | --- |
-| `bernstein volunteer verify [repo]` | Validate a manifest and print its digest. |
+| `bernstein volunteer verify` | Validate a manifest and print its digest. Accepts an optional checkout path. |
 | `bernstein volunteer browse --index URL` | List projects from a volunteer index. |
 | `bernstein volunteer budget` | Set or inspect persistent donor limits and usage. |
 | `bernstein volunteer autopilot` | Load an autopilot profile. Running tasks requires a Python task-source implementation. |

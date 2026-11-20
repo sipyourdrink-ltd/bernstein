@@ -227,6 +227,7 @@ REVIEW-*.md
 /test.txt
 
 # Qwen Code internal files (never part of the repo)
+/.qwen/
 *.qwen*.json
 
 # Web-research notes an orchestrated run writes beside the checkout while it

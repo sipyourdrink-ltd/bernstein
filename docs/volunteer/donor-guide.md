@@ -4,9 +4,11 @@
 
 ### Available CLI commands
 
-Use `bernstein volunteer browse --index URL` to list opt-in projects, `verify` to
-validate a project manifest, and `budget` to set donor limits. The CLI also
-provides `hub` and `verify-bundle`.
+Use `bernstein volunteer browse --index URL` to list opt-in projects and `budget`
+to set donor limits. `verify` checks a project's volunteer manifest and returns
+its digest. After a task completes, use `verify-bundle` to rerun the bundle's
+declared checks against its attested base in a fresh worktree; see the
+[runner reference](reference/volunteer-runner.md). The CLI also provides `hub`.
 
 The `autopilot` command loads a donor profile. Running the loop requires
 a Python `TaskSource` implementation. The CLI cannot run an individual
@@ -39,9 +41,9 @@ task from an issue URL.
 
 ## Federated index discovery (Python API)
 
-Federation is an explicit opt-in for Python callers. The existing
-`bernstein volunteer browse` command and unconfigured `browse_indexes()`
-keep their flat-index behavior; CLI donor-configuration support is not included.
+Federation is an explicit opt-in for Python callers. The CLI project browser
+and unconfigured `browse_indexes()` keep their flat-index behavior. CLI
+donor-configuration support is not included.
 
 ```python
 from bernstein.core.volunteer.registry import FederationPolicy, browse_indexes
@@ -99,9 +101,8 @@ The resolver does not fetch project manifests or distribute keys.
 ### Wall-Clock Budget
 - Each task has a configured maximum runtime (default: 24 hours = 1440 minutes)
 - Projects can set stricter limits in their `volunteer.json`
-- `bernstein volunteer browse --budget <minutes>` already filters the offered
-  projects to what fits the wall clock you are willing to give; the same figure
-  becomes the runner's own limit once it lands
+- Add `--budget <minutes>` to the `bernstein volunteer browse --index URL`
+  command to filter projects by their declared runtime limits.
 - Exceeding the budget results in automatic task termination
 
 ### Memory Limits

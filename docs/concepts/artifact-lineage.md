@@ -47,9 +47,26 @@ bernstein lineage export r-2026-05-05 --format html  --output /tmp/audit.html
 bernstein lineage export r-2026-05-05 --format csv   --output /tmp/audit.csv
 bernstein lineage export r-2026-05-05 --format jsonld --output /tmp/audit.jsonld
 
-# Re-verify the HMAC + customer-key chain
+# Re-verify the HMAC + customer-key chain for one run
 bernstein lineage verify r-2026-05-05
 ```
+
+For one parallel fan-out, use the worktrees graph to inspect its branches; this
+is different from verifying one run's artifact spine with `lineage verify`:
+
+```bash
+# Render the branches recorded for this fan-out
+bernstein worktrees graph <fanout-id>
+
+# Print the saved signed receipt as JSON (this does not verify it)
+bernstein worktrees graph <fanout-id> --json
+
+# Re-derive and verify the receipt; pair a branch session with its run as needed
+bernstein worktrees graph <fanout-id> --run-id sess-a=run-a --verify --public-key ./public.pem
+```
+
+`--json` prints the saved receipt verbatim. `--verify` checks the receipt and
+requires the public key; it is the verification option, not `--json`.
 
 The walk lists the records whose output artefact matches the path (and
 line); it does not recurse into input artefacts. Output is chronological

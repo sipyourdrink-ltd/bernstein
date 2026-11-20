@@ -1,0 +1,1 @@
+- Add an explicitly configured persistent operator controller for new TaskStore claims, with fail-closed state validation and serialized halt/resume. This first slice does not stop running workers or implement installation-wide halt.

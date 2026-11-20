@@ -9,7 +9,20 @@
 - **`bernstein replay verify <RECEIPT>`** - offline verifier for an exported or published receipt.
 - **`bernstein replay diff-journal A B`** - per-step divergence finder across two journals.
 
-All subcommands read from the same underlying journal on disk. The base command additionally supports **task-trace replay**, which re-creates a new task from a stored task trace and (optionally) compares the replay's `result_summary` against the original via a colour diff.
+## Choosing replay inputs
+
+These replay modes read different recorded data; choose the identifier or file that matches the job:
+
+| Job | Command and identifier/file | Recorded data read |
+|---|---|---|
+| Display run events | `bernstein replay <RUN_ID>` (or `latest`) | The run's event journal under `.sdd/runs/<RUN_ID>/` (the `journal.jsonl` run journal). |
+| Compare run events | `bernstein replay diff <RUN_A> <RUN_B>` | The two runs' recorded event logs (`events.jsonl`) under `.sdd/runs/`. |
+| Display an agent's steps | `bernstein replay <AGENT_ID>` | That agent's per-step journal under `.sdd/runtime/journal/<AGENT_ID>/`. If this journal directory exists, a plain identifier resolves here first, ahead of run-event or task-trace replay. |
+| Compare agent journals | `bernstein replay diff-journal <AGENT_A> <AGENT_B>` | The two agents' per-step journals under `.sdd/runtime/journal/`. |
+| Verify a receipt offline | `bernstein replay verify <RECEIPT>` | The supplied exported or published receipt file; it does not read the run journal. |
+| Re-submit a task trace | `bernstein replay <TASK_ID>` (when no agent journal or run with that ID takes precedence) | The latest recorded trace for that task under `.sdd/traces/`; submits a new task from its snapshot. |
+
+The run-journal check is a flag on run replay: `bernstein replay <RUN_ID> --verify` checks that run's journal chain. It is distinct from the `verify` verb, which verifies a receipt file offline.
 
 ## What replay does (and doesn't do)
 
@@ -61,7 +74,7 @@ The fingerprint shown after a replay is the Merkle head over the journal's event
 |---|---|---|
 | `RUN_ID_OR_TASK_ID` | required | Run ID, the literal `latest`, the literal `list`, or a task ID. |
 | `--sdd-dir PATH` | `.sdd` | Path to the `.sdd` state directory. |
-| `--as-json` | off | Emit raw JSONL (one event per line) instead of the Rich table. |
+| `--as-json` | off | For recorded-run replay, emit one JSON object with `run_id`, an `events` array, and optional `metadata`, instead of the Rich table. |
 | `--limit N` | none | Show only the first N events. |
 | `--model NAME` | none | Override model for **task-trace replay** (e.g. `opus`, `sonnet`, `o3`). |
 | `--extra-context TEXT` | none | Append extra hint text to the replayed task description. |
@@ -94,6 +107,7 @@ The flag is `--as-json`, and every subcommand emits a payload on success:
 
 | Surface | Emits on success |
 |---|---|
+| `bernstein replay <RUN_ID> --as-json` | `{run_id, events[], metadata?}` for a non-empty recorded run; `--limit` bounds the events array. |
 | `bernstein replay <AGENT_ID>` | `{agent_id, head_hash, steps, entries[]}` |
 | `bernstein replay <RUN_ID> --verify` | chain verdict, head hash, and the divergent step when one exists |
 | `bernstein replay diff-journal A B` | `{diverged, seq, fields_changed[], left_values, right_values, reason}` |
@@ -102,23 +116,39 @@ The flag is `--as-json`, and every subcommand emits a payload on success:
 | `bernstein replay publish` | the same, **plus `original_head_hash`** |
 | `bernstein replay verify <RECEIPT>` | `{ok, head_hash, steps, errors, signed}` |
 
+Recorded-run output is a single JSON envelope, not one JSON object per event.
+Use `.events[]` to select its events, as in the examples above. `metadata`
+is included only when recorded session metadata is available. This envelope
+is distinct from the per-agent journal view (`entries[]`) and the
+run-journal verification or receipt-verification results shown in the table.
+
 `publish` reporting both hashes is the machine-readable form of what redaction
 means: it rewrites the payloads, so the published head is *not* the exported
 one. A script comparing `head_hash` across an export and a publish of the same
 agent would otherwise reasonably conclude something had been corrupted.
 
-**Failure paths are still prose**, on every one of these. That matters most on
-`verify`, which has two different failures that both exit `1`:
+**Receipt verification failures are JSON with `--as-json`.** A malformed
+receipt exits `1` and emits an error envelope on stdout:
 
-- the receipt verifies *false* - emits `{ok: false, ..., errors: [...]}`
-- the receipt is *malformed* - prints prose
+```json
+{
+  "ok": false,
+  "error": "receipt_malformed",
+  "detail": "<diagnostic text>"
+}
+```
 
-Same exit status, one parseable and one not, and no way to tell which you are
-getting before you try. Those route to different people: "this chain does not
-verify" is a finding about the run, "this file is not a receipt" is a finding
-about the invocation. Until that is closed, a scripted caller has to treat a
-parse failure as a third outcome rather than an error. Tracked in
-[#3996](https://github.com/sipyourdrink-ltd/bernstein/issues/3996).
+`detail` contains diagnostic text; `error` is the machine-readable discriminator.
+A well-formed receipt that fails verification also exits `1`, but emits the
+normal result `{ok: false, head_hash, steps, errors: [...], signed}` instead.
+It has an `errors` array and **no `error` key**. Both outcomes are parseable JSON:
+branch on the `error` discriminator rather than inferring the category from a
+JSON parse failure.
+
+A missing receipt instead exits `2` and emits
+`{"ok": false, "error": "receipt_not_found", "detail": "receipt not found: <path>"}`.
+Successful verification exits `0` with `ok: true` in the normal result.
+Without `--as-json`, verification failures remain human-readable prose.
 
 **The exit code is the verdict, not the payload.** This was true when these
 verbs ignored `--as-json` and it stays true now that they honour it: `verify`
