@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import click
 import pytest
@@ -31,6 +32,7 @@ from bernstein.cli.commands.blast_radius_cmd import blast_radius_group
 from bernstein.cli.commands.dep_impact_cmd import dep_impact_cmd
 from bernstein.cli.commands.impact_cmd import blast_radius_alias_group, impact_group
 from bernstein.cli.main import cli
+from bernstein.core import api_compat_checker, dep_impact
 
 _DEP_IMPACT_WARNING = "WARNING: 'bernstein dep-impact' is deprecated"
 _BLAST_RADIUS_WARNING = "WARNING: 'bernstein blast-radius' is deprecated"
@@ -118,6 +120,63 @@ def test_canonical_path_emits_no_deprecation_warning() -> None:
     res = CliRunner().invoke(cli, ["impact", "deps", "--help"])
     assert res.exit_code == 0, res.output
     assert "deprecated" not in res.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Impact analysis flags
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", [("impact", "api"), ("api-check",)], ids=["impact-api", "api-check"])
+def test_api_compatibility_uses_explicit_base_and_workdir(
+    path: tuple[str, ...], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = api_compat_checker.CompatReport(
+        additions=[api_compat_checker.Addition(file="greetings.py", name="greet", kind="function")]
+    )
+    check = Mock(return_value=report)
+    monkeypatch.setattr(api_compat_checker, "check_git_diff", check)
+
+    res = CliRunner().invoke(cli, [*path, "--base", "fixture-base", "--workdir", str(tmp_path)])
+
+    assert res.exit_code == 0, res.output
+    check.assert_called_once_with(tmp_path.resolve(), base_ref="fixture-base")
+    assert "greetings.py: greet (function)" in res.stdout
+
+
+def test_impact_deps_uses_explicit_base_and_workdir_and_prints_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = dep_impact.DepImpactReport(
+        api_breaking=[
+            api_compat_checker.BreakingChange(
+                file="greetings.py",
+                name="greet",
+                change_type=api_compat_checker.ChangeType.REMOVED_PARAMETER,
+                description="Parameter 'name' was removed",
+                line=1,
+            )
+        ],
+        call_site_impacts=[
+            dep_impact.CallSiteImpact(
+                caller_file="consumer.py",
+                caller_line=3,
+                callee_qualified="greetings.greet",
+                reason="Passes the removed 'name' parameter",
+            )
+        ],
+    )
+    analyze = Mock(return_value=report)
+    monkeypatch.setattr(dep_impact, "analyze_dep_impact", analyze)
+
+    res = CliRunner().invoke(cli, ["impact", "deps", "--base", "fixture-base", "--workdir", str(tmp_path), "--json"])
+
+    assert res.exit_code == 1, res.output
+    analyze.assert_called_once_with(tmp_path.resolve(), base_ref="fixture-base")
+    payload = json.loads(res.stdout)
+    assert payload["blocks_merge"] is True
+    assert [change["name"] for change in payload["api_breaking"]] == ["greet"]
+    assert [impact["caller_file"] for impact in payload["call_site_impacts"]] == ["consumer.py"]
 
 
 # ---------------------------------------------------------------------------
