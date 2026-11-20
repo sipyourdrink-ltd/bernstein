@@ -61,15 +61,12 @@ jobs:
         run: |
           uv sync --group dev
 
-      - name: Configure git identity for worktree flow
-        run: |
-          # The worktree flow runs `git worktree add` / `commit` inside a
-          # throwaway repo it creates; CI runners ship no global identity.
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-
       - name: Run real-run canary
         env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           # Block-on-full so a slow sink does not silently drop the one
           # failure event the ingester needs; bounded internally to ~1s.
           BERNSTEIN_TELEMETRY_BACKPRESSURE: queue

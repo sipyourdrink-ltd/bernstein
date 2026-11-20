@@ -229,19 +229,32 @@ def _count_worktrees(repo_root: Path) -> int:
 
 
 @pytest.fixture
-def temp_git_repo(tmp_path: Path, canary: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Path:
+def temp_git_repo(tmp_path: Path, canary: ModuleType) -> Path:
+    canary._git_init(tmp_path)
+    return tmp_path
+
+
+@pytest.mark.parametrize("inherited_env", [False, True], ids=["gitconfig", "environment"])
+def test_canary_seed_commit_uses_actions_bot_identity(
+    tmp_path: Path, canary: ModuleType, monkeypatch: pytest.MonkeyPatch, inherited_env: bool
+) -> None:
+    config = tmp_path / "gitconfig"
+    config.write_text(
+        "[author]\n name = Local Author\n email = author@example.org\n"
+        "[committer]\n name = Local Committer\n email = committer@example.org\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
     for role in ("AUTHOR", "COMMITTER"):
-        for field in ("NAME", "EMAIL"):
-            monkeypatch.delenv(f"GIT_{role}_{field}", raising=False)
-    repo = tmp_path / "canary_repo"
-    repo.mkdir()
-    canary._git_init(repo)
-    return repo
-
-
-def test_canary_seed_commit_uses_actions_bot_identity(temp_git_repo: Path) -> None:
+        for field, value in [("NAME", "Local Operator"), ("EMAIL", "operator@example.org")]:
+            key = f"GIT_{role}_{field}"
+            if inherited_env:
+                monkeypatch.setenv(key, value)
+            else:
+                monkeypatch.delenv(key, raising=False)
+    canary._git_init(tmp_path)
     identities = subprocess.check_output(
-        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=temp_git_repo, text=True
+        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=tmp_path, text=True
     ).splitlines()
     bot = "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
     assert identities == [bot, bot]
