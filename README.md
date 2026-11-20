@@ -73,7 +73,9 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — the terminal dashboard, including remote cluster workers | `bernstein gui serve` — the browser dashboard |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — the terminal dashboard, including remote cluster workers | `<task-server-url>/ui/` — browser dashboard of the running task server when GUI assets are installed. `bernstein gui serve` starts a standalone server in the current workspace. |
+
+For an authenticated server, set `BERNSTEIN_AUTH_TOKEN` for the terminal and enter an authorized token on the browser login screen. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### at a glance
 
@@ -171,6 +173,8 @@ flowchart LR
 
 Each node is claimed by an agent whose role the phase allows; role fences and approval gates hold no matter what the agent does inside the task. A coding node completes behind merge gates in its own git worktree. The nodes above complete differently: an [artifact contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) names the deliverable (report, dataset, scan, action log), and the node finishes on a signed lineage receipt instead of a commit. Same scheduler, same journal, same offline verification - whether the graph ships code, research, an ops change, or a mix of all three. Ready-made graphs for software, research, docs, enterprise, and contributor workflows live in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
+Retries preserve `dispatch_tier`; reopening a task can explicitly select a tier. See the [dispatch-tier contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
+
 ### prove a run
 
 Determinism here is something you check, not something you take on faith. Run once with audit enabled, then verify what was recorded:
@@ -233,10 +237,12 @@ The full operator surface (PR automation, schedules, chat bridges, the autofix d
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Run state checkpoints to `.sdd/runs/<run_id>/` on every node. Resume validates the manifest digest at run start, so a spec change is refused rather than silently executing a different manifest. See [workflow manifests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Run state checkpoints to `.sdd/runs/<run_id>/` on every node. Resume validates the manifest digest at run start, so a spec change is refused rather than silently executing a different manifest. See [workflow manifests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Supply the same `-g` value again on resume so `{goal}` is substituted in prompts for unfinished nodes.
+
+`bernstein compliance controls` lists benchmark suites for each control and shows the latest complete measurement, when available. [Benchmark coverage](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Repository hygiene gates: `bernstein readme-l10n verify` fails a PR whose translated READMEs drifted from the English source (naming the stale section), `bernstein readme-l10n sync` rebinds them after an English edit. See [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -270,6 +276,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browser dashboard with task creation and review on the same API the TUI uses |
+| [cluster worker health](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | workers pause new task claims while their reported disk space, memory use or mesh latency is outside the configured thresholds |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: run agents on Cloudflare Workers with R2 workspace sync against your own account. The hosted `api.bernstein.run` service is not yet available |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | read-only query receipts, plus a query driver that binds each result to the schema snapshot it was derived against |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | point roles at agent definitions outside the built-in templates - a generic YAML/SKILL.md directory, or a Claude Code plugin-layout tree |
@@ -280,7 +287,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 
 ### why the name?
 
-Bernstein is named after Leonard Bernstein, the American conductor and composer. The project governs a crew of AI agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result.
+Bernstein is named after Leonard Bernstein, the American conductor and composer. The orchestrator coordinates a crew of AI agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result. The conductor metaphor describes Bernstein's orchestration capability for agent workloads that produce code, research reports, or datasets.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
 
@@ -298,10 +305,11 @@ The full tracked list, including every awesome-list entry, catalog listing, prio
 
 ### Administrative runs
 
-Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
+These are MCP bridge tool calls. Reuse the returned `runId` value as `run_id` in
+later calls. Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
 empty, audited container without a planner or agent process. Add manual work with
-`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`
-and poll `bernstein_run_status(run_id="admin-...")`. Members are claimable through
+`bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")`
+and poll `bernstein_run_status(run_id="<returned runId>")`. Members are claimable through
 the usual claim API and excluded from automatic orchestration. A nonempty run
 completes when every member has status `done`, `closed`, or `cancelled`; an empty run
 stays open. See [the operator workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
