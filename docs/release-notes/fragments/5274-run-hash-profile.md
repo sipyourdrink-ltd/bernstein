@@ -1,3 +1,0 @@
-- Add one `hash_profile` selection in `bernstein.yaml` for a new run's journal, lineage spine and signed receipt. `jcs-v2` opts into RFC 8785; unknown profiles fail closed.
-- The first release containing this fragment is the declared compatibility release. `py-json-v1` remains the default for that whole release. Changing the new-run default to `jcs-v2` requires a separate later PR after measured soak; this release does not flip it.
-- Existing evidence retains its recorded profile, or `py-json-v1` when absent, and reopens and verifies without rewriting historical bytes.

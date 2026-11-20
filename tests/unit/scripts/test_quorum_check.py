@@ -498,6 +498,12 @@ def test_maintainer_builtin_workflow_commit_does_not_change_rule(qc: ModuleType,
     assert _evaluate(qc, roster, _carried_pr(qc, commit_author=qc.GITHUB_ACTIONS_BOT)).passed
 
 
+def test_outside_commit_authors_excludes_actions_bot_but_keeps_outsider(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, author="owner")
+    pr.commit_authors = frozenset({"github-actions[bot]", "canary"})
+    assert qc.outside_commit_authors(pr, roster) == {"canary"}
+
+
 @pytest.mark.parametrize("gap", ["count", "head", "missing_count", "limit"])
 def test_incomplete_author_evidence_holds_even_with_approvals(qc: ModuleType, roster, gap: str) -> None:
     commits = [_raw_commit(SHA_A, "owner", committer="owner")]
