@@ -1,1 +1,0 @@
-- Preserve declared verification scopes in plugin results and cached gate reports, and retain the reason for inconclusive plugin results. Legacy cache entries remain without coverage declarations.

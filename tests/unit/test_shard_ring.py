@@ -22,6 +22,26 @@ class TestHashRing:
         assert result1 == result2
         assert result1 in shard_ids
 
+    @pytest.mark.parametrize(
+        ("node_id", "expected_shard"),
+        [
+            ("node-1", "shard-0"),
+            ("node-2", "shard-0"),
+            ("node-3", "shard-1"),
+            ("node-4", "shard-2"),
+            ("node-5", "shard-0"),
+            ("node-6", "shard-2"),
+            ("node-7", "shard-2"),
+            ("node-8", "shard-0"),
+            ("node-9", "shard-0"),
+            ("node-10", "shard-1"),
+        ],
+    )
+    def test_lookup_matches_known_placements(self, node_id: str, expected_shard: str) -> None:
+        ring = HashRing(shard_ids=("shard-0", "shard-1", "shard-2"), vnodes=128)
+
+        assert ring.lookup(node_id) == expected_shard
+
     def test_lookup_many_keys(self) -> None:
         shard_ids = ("shard-0", "shard-1", "shard-2")
         ring = HashRing(shard_ids=shard_ids, vnodes=128)

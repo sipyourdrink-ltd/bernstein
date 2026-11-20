@@ -20,6 +20,7 @@ import yaml
 from click.testing import CliRunner
 
 from bernstein.cli.commands.simulate_cmd import simulate_cmd
+from bernstein.cli.main import cli
 
 _PLAN: dict[str, object] = {
     "name": "CLI demo plan",
@@ -75,6 +76,16 @@ def test_simulate_cli_out_markdown_sidecar(plan_path: Path, tmp_path: Path) -> N
     assert "# Bernstein simulate" in body
 
 
+def test_simulate_cli_out_does_not_change_stdout_format(plan_path: Path, tmp_path: Path) -> None:
+    out_path = tmp_path / "report.md"
+    result = CliRunner().invoke(cli, ["simulate", str(plan_path), "--format", "json", "--out", str(out_path)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["plan_name"] == "CLI demo plan"
+    assert "# Bernstein simulate" in out_path.read_text(encoding="utf-8")
+    assert "Report written to" in result.stderr
+
+
 def test_simulate_cli_out_unknown_extension_defaults_to_json(plan_path: Path, tmp_path: Path) -> None:
     out_path = tmp_path / "report.txt"
     runner = CliRunner()
@@ -120,6 +131,7 @@ def test_simulate_cli_help_lists_options() -> None:
     assert "--from-traces" in result.output
     assert "--seed" in result.output
     assert "--budget-cap" in result.output
+    assert "does not change stdout" in " ".join(result.output.split())
 
 
 def test_simulate_cli_traces_dir_increments_history(plan_path: Path, tmp_path: Path) -> None:
@@ -138,6 +150,40 @@ def test_simulate_cli_traces_dir_increments_history(plan_path: Path, tmp_path: P
     assert result.exit_code == 0, result.output
     parsed = json.loads(result.output)
     assert parsed["history_samples"] == 2
+
+
+@pytest.mark.parametrize(("limit", "expected_p50"), [(1, 30.0), (2, 20.0)])
+def test_simulate_cli_from_traces_limits_latency_samples(
+    plan_path: Path, tmp_path: Path, limit: int, expected_p50: float
+) -> None:
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    (traces / "local.jsonl").write_text(
+        '{"role": "backend", "adapter": "mock", "status": "completed", "latency_seconds": 10}\n'
+        '{"role": "backend", "adapter": "mock", "status": "completed", "latency_seconds": 30}\n',
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "simulate",
+            str(plan_path),
+            "--format",
+            "json",
+            "--seed",
+            "42",
+            "--traces-dir",
+            str(traces),
+            "--from-traces",
+            str(limit),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.stdout)
+    assert report["history_samples"] == 2
+    backend = next(task for task in report["tasks"] if task["role"] == "backend")
+    assert backend["latency_p50"] == pytest.approx(expected_p50, abs=2)
 
 
 def test_simulate_cli_metrics_dir_argument(plan_path: Path, tmp_path: Path) -> None:

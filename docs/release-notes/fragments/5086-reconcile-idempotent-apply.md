@@ -1,1 +1,0 @@
-Add a callback-based reconcile apply helper that records already-satisfied intents as skips, stops on failure, and resumes trusted same-context partial receipts without repeating successful changes. Retain stable intent keys and require separate policy authorization.
