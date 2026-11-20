@@ -599,9 +599,11 @@ def _emit_preflight_runtime_warnings(
     if budget_cap is not None and budget_cap > 0.0:
         p90 = band.p90 if band is not None else estimate.high_usd
         if p90 > budget_cap:
-            console.print(
-                f"[bold red]Budget cap exceeded:[/bold red] p90 ${p90:.2f} > cap ${budget_cap:.2f}. Aborting spawn."
-            )
+            detail = f"p90 ${p90:.2f} > cap ${budget_cap:.2f}. Aborting spawn."
+            if quiet or plain_run_output():
+                click.echo(f"Budget cap exceeded: {detail}", err=True)
+            else:
+                console.print(f"[bold red]Budget cap exceeded:[/bold red] {detail}")
             raise SystemExit(1)
 
     # Cost confirmation is skipped when the plan approval prompt follows
@@ -613,6 +615,7 @@ def _emit_preflight_runtime_warnings(
         and not click.confirm(
             f"Warning: estimated cost may reach ${estimate.high_usd:.2f}. Continue?",
             default=True,
+            err=quiet or plain_run_output(),
         )
     ):
         raise SystemExit(1)

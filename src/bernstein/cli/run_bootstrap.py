@@ -351,15 +351,19 @@ def _confirm_run(
         default_cli=cli_override or (_seed.cli if _seed and _seed.cli != "auto" else None),
     )
 
+    plain = plain_run_output()
     if effective_goal:
         plan_obj, plan_tasks = _build_synthetic_plan(effective_goal, team)
         from bernstein.cli.plan_display import display_plan_and_confirm
 
-        return display_plan_and_confirm(plan_obj, plan_tasks, console=console)
+        return display_plan_and_confirm(plan_obj, plan_tasks, console=console, plain=plain)
 
     with suppress(UnicodeDecodeError, EOFError):
-        if not click.confirm("\nProceed with execution?", default=True):
-            console.print("[dim]Cancelled.[/dim]")
+        if not click.confirm("\nProceed with execution?", default=True, err=plain):
+            if plain:
+                click.echo("Cancelled.", err=True)
+            else:
+                console.print("[dim]Cancelled.[/dim]")
             return False
     return True
 
