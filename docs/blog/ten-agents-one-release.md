@@ -122,4 +122,4 @@ The other six are infrastructure that makes the first four work cleanly under lo
 
 ---
 
-*Bernstein is an open-source governance layer for AI agents. It applies declared controls to code and other deliverables and records verifiable results. Deterministic orchestration is one capability: its Python dispatcher runs agents such as Claude Code, Codex and Gemini CLI. State lives in files, not in agent memory. Apache-2.0. [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein).*
+*Bernstein is the open-source governance layer for AI agents. It applies declared controls to code and other deliverables and records verifiable results. Deterministic orchestration is one capability: its Python dispatcher runs agents such as Claude Code, Codex and Gemini CLI. State lives in files, not in agent memory. Apache-2.0. [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein).*
