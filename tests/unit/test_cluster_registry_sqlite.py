@@ -71,3 +71,15 @@ def test_restart_and_partial_capacity_keep_unhealthy_worker_ineligible(tmp_path:
     assert node.unhealthy_since == unhealthy.unhealthy_since
     restored.heartbeat("n1", disk_free_mb=4096)
     assert node.is_schedulable
+
+
+def test_latest_reading_survives_restart_even_if_health_verdict_does_not_change(tmp_path: Path) -> None:
+    path = tmp_path / "nodes.json"
+    old = NodeRegistry(ClusterConfig(), persist_path=path)
+    old.register(_node(1))
+    old.heartbeat("n1", disk_free_mb=4096)
+    old.heartbeat("n1", disk_free_mb=2048)
+    restored = NodeRegistry(ClusterConfig(min_disk_free_mb=3000), persist_path=path)
+    node = restored.heartbeat("n1", NodeCapacity(available_slots=1))
+    assert node is not None and node.capacity.disk_free_mb == 2048
+    assert not node.is_schedulable

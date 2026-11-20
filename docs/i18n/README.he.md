@@ -258,7 +258,7 @@ bernstein volunteer browse --budget 60
 [מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse`, `budget`, `verify-bundle` ו-`hub` הן תת-הפקודות שעובדות. `autopilot` רשום, אך מסרב לפעול עד שימומש `TaskSource`.
 
 ### מעבר לעמוד הראשי
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:538fb5704bc4" -->
 
 כל החומר המעמיק נמצא ב[אתר התיעוד](https://docs.bernstein.run/):
 
@@ -270,6 +270,7 @@ bernstein volunteer browse --budget 60
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | היכן נוצר הערך ומתי Bernstein אינו הכלי המתאים |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | גרפי DAG הצהרתיים ב-YAML המורכבים מצומתי סוכן / פקודה / לולאה |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | לוח בקרה בדפדפן המבוסס על אותו API בו משתמש ה-TUI (יצירה וסקירה של משימות) |
+| [מצב העובדים באשכול](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) | עובד מפסיק לקבל משימות חדשות כאשר נפח הדיסק הפנוי, השימוש בזיכרון או השהיית הרשת חורגים מהספים שהוגדרו. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | ניסיוני: הרצת סוכנים ב-Cloudflare Workers עם סנכרון סביבת עבודה ב-R2 בחשבון האישי שלך. השירות המנוהל `api.bernstein.run` טרם זמין |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | קבלות שאילתות לקריאה בלבד ומנהל התקן הקושר כל תוצאה לתמונת הסכמה המתאימה |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | הפנה תפקידים להגדרות סוכנים מחוץ לתבניות המובנות — ספריית YAML/SKILL.md כללית או מבנה תוסף של Claude Code |

@@ -152,5 +152,6 @@ def test_worker_waits_for_recovery_before_claiming_through_task_server(cluster_a
         assert worker._claim_task(client, "backend", node_id) is None
         assert client.post(path, json={"capacity": {"active_agents": 0}}).status_code == 200
         assert worker._claim_task(client, "backend", node_id) is None
-        assert client.post(path, json={"capacity": {"disk_free_mb": 4096}}).status_code == 200
+        # The worker has just freed a slot locally and polls before its next capacity heartbeat.
+        assert client.post(path, json={"capacity": {"disk_free_mb": 4096, "available_slots": 0}}).status_code == 200
         assert worker._claim_task(client, "backend", node_id)["id"] == created.json()["id"]

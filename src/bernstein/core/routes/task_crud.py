@@ -1429,7 +1429,8 @@ async def next_task(
     allowed_tasks = agent_task_scope(request)
     registry = getattr(request.app.state, "node_registry", None)
     worker = registry.get(claimed_by_session) if registry is not None and claimed_by_session else None
-    if worker is not None and not worker.is_schedulable:
+    # A pull reports a slot that may have opened since the last heartbeat.
+    if worker is not None and not worker.can_accept_work:
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     task = await store.claim_next(
         role,

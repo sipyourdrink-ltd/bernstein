@@ -211,8 +211,8 @@ class NodeRegistry:
         cap.mem_used_pct = mem_used_pct if mem_used_pct is not None else cap.mem_used_pct
         cap.mesh_rtt_ms = mesh_rtt_ms if mesh_rtt_ms is not None else cap.mesh_rtt_ms
         cap.platform = platform if platform is not None else cap.platform
-        health_changed = self._update_capacity(node, cap)
-        if status_flipped or health_changed:
+        readings_changed = self._update_capacity(node, cap)
+        if status_flipped or readings_changed:
             self._save()
         if status_flipped:
             self._sync_node_count_metrics()
@@ -245,7 +245,13 @@ class NodeRegistry:
         elif verdict == "ok":
             node.unhealthy_since = None
         node.health = verdict
-        return changed
+        return (
+            changed
+            or capacity.disk_free_mb != previous.disk_free_mb
+            or capacity.mem_used_pct != previous.mem_used_pct
+            or capacity.mesh_rtt_ms != previous.mesh_rtt_ms
+            or capacity.platform != previous.platform
+        )
 
     def unregister(self, node_id: str) -> bool:
         """Remove a node from the registry."""
@@ -371,11 +377,7 @@ class NodeRegistry:
         4. Prefer nodes matching label affinities
         5. Among remaining, pick the one with most available slots
         """
-        candidates = [
-            n
-            for n in self._nodes.values()
-            if n.status == NodeStatus.ONLINE and n.health == "ok" and n.capacity.available_slots > 0
-        ]
+        candidates = [n for n in self._nodes.values() if n.is_schedulable]
         if not candidates:
             return None
 

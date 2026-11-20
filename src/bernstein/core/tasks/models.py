@@ -1999,8 +1999,12 @@ class NodeInfo:
         return self.health == "ok"
 
     @property
+    def can_accept_work(self) -> bool:
+        return self.status == NodeStatus.ONLINE and self.is_healthy
+
+    @property
     def is_schedulable(self) -> bool:
-        return self.status == NodeStatus.ONLINE and self.health == "ok" and self.capacity.available_slots > 0
+        return self.can_accept_work and self.capacity.available_slots > 0
 
 
 @dataclass(frozen=True)
