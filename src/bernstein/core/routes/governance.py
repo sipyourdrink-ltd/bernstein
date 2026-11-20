@@ -39,12 +39,13 @@ import stat
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from bernstein.core.lineage.spine import SpineRunIdError, _validate_run_id
 from bernstein.core.persistence.anchored_read import ANCHORED_OPEN_SUPPORTED, open_anchored
+from bernstein.core.routes._operator import require_operator
 from bernstein.core.security import governance as recorded_governance
 from bernstein.core.security.governance_coverage import governance_coverage_json
 from bernstein.core.security.governance_receipt_verdict import receipt_verdict_json
@@ -267,13 +268,13 @@ def _decision_response(model: RecordedDecisions | RecordedDecision) -> Response:
     return Response(content=payload, media_type=_JSON_MEDIA_TYPE)
 
 
-@router.get("/governance/decisions", response_model=RecordedDecisions)
+@router.get("/governance/decisions", response_model=RecordedDecisions, dependencies=[Depends(require_operator)])
 def list_recorded_decisions(request: Request, run_id: str = "") -> Response:
     """Read persisted decisions without creating directories, keys or records."""
     return _decision_response(_recorded_decisions(request, run_id))
 
 
-@router.get("/governance/decisions/{decision_id}", response_model=RecordedDecision)
+@router.get("/governance/decisions/{decision_id}", response_model=RecordedDecision, dependencies=[Depends(require_operator)])
 def get_recorded_decision(decision_id: str, request: Request, run_id: str = "") -> Response:
     """Read one exact recorded projection; this does not verify its anchor."""
     if not re.fullmatch(r"[0-9a-f]{64}", decision_id):

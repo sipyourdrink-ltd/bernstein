@@ -29,6 +29,7 @@ def _client(workdir: Path) -> TestClient:
     app.include_router(routes.router)
     app.include_router(routes.router, prefix="/api/v1")
     app.state.workdir = workdir
+    app.dependency_overrides[routes.require_operator] = lambda: "fixture-operator"
     return TestClient(app)
 
 
@@ -412,3 +413,13 @@ def test_response_model_depth_failure_returns_controlled_error(tmp_path: Path) -
 def test_public_schema_matches_response_models() -> None:
     path = Path(__file__).resolve().parents[2] / "docs" / "api" / "recorded-decisions.schema.json"
     assert json.loads(path.read_text()) == routes.RecordedDecisions.model_json_schema()
+
+
+def test_direct_mount_requires_authenticated_operator(tmp_path: Path) -> None:
+    app = FastAPI()
+    app.state.workdir = tmp_path
+    app.include_router(routes.router)
+    client = TestClient(app)
+    for suffix in ("", "/" + "a" * 64):
+        response = client.get("/governance/decisions" + suffix, params={"run_id": "run-1"})
+        assert response.status_code == 403
