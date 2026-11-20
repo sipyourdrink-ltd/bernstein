@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **स्थिति: beta।** अकेले मेंटेन किया जा रहा है, सक्रिय विकास में। वर्ज़न नंबर रिलीज़ गिनता है, परिपक्वता नहीं — माइनर वर्ज़न में भी इंटरफ़ेस बदल सकते हैं। जिस पर आप निर्भर हैं उसका वर्ज़न पिन कर लें; रिग्रेशन जल्दी ठीक होते हैं, [उन्हें दर्ज करें](https://github.com/sipyourdrink-ltd/bernstein/issues)।
 
-Bernstein AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर है। यह policy as code पर चलता है: आप नीति लिखते हैं - कौन क्या कर सकता है, किसे स्वीकृति चाहिए, क्या दर्ज होना चाहिए - और Bernstein इसे लागू करता है और सत्यापन-योग्य रिकॉर्ड बनाता है। एक डिटर्मिनिस्टिक शेड्यूलर - कोऑर्डिनेशन लूप में कोई मॉडल नहीं - एजेंटों को समानांतर चलाता है, उनके आउटपुट को गेट से जाँचता है और हर कदम रिकॉर्ड करता है, इसलिए रन को बाद में, ऑफ़लाइन, केवल आर्टिफ़ैक्ट्स से सत्यापित किया जा सकता है। CLI कोडिंग एजेंट सीधे काम करते हैं (Claude Code, Codex, Gemini CLI और 50+ अन्य), और यही लेयर किसी भी एजेंट वर्कलोड को गवर्न करती है: डिलिवरेबल एक diff, रिसर्च रिपोर्ट, डेटासेट या ऑडिट एविडेंस पैक हो सकता है। Air-gap इंस्टॉल प्रोफ़ाइल शामिल। Apache-2.0.
+Bernstein AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर है। यह policy as code पर चलता है: आप नीति लिखते हैं - कौन क्या कर सकता है, किसे स्वीकृति चाहिए, क्या दर्ज होना चाहिए - और Bernstein इसे लागू करता है और सत्यापन-योग्य रिकॉर्ड बनाता है। एक डिटर्मिनिस्टिक शेड्यूलर - कोऑर्डिनेशन लूप में कोई मॉडल नहीं - एजेंटों को समानांतर चलाता है, उनके आउटपुट को गेट से जाँचता है और हर कदम रिकॉर्ड करता है, इसलिए रन को बाद में, ऑफ़लाइन, केवल आर्टिफ़ैक्ट्स से सत्यापित किया जा सकता है। CLI कोडिंग एजेंट सीधे काम करते हैं (Claude Code, Codex, Gemini CLI), और यही लेयर किसी भी एजेंट वर्कलोड को गवर्न करती है: डिलिवरेबल एक diff, रिसर्च रिपोर्ट, डेटासेट या ऑडिट एविडेंस पैक हो सकता है। Air-gap इंस्टॉल प्रोफ़ाइल शामिल। Apache-2.0.
 
 ### एक नज़र में
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 पाँच बातें इसे अलग बनाती हैं; बाकी विस्तार है।
 
@@ -40,7 +40,7 @@ Bernstein AI एजेंटों के लिए ओपन-सोर्स �
 - **हार्डवेयर कुंजी का साक्ष्य.** ऑफ़लाइन PIV अभिरक्षा और FIDO2 अनुमोदन सत्यापक, निश्चित भरोसे और स्पष्ट समय के साथ एक ही रसीद प्रोटोकॉल साझा करते हैं। टोकन की अभिरक्षा TRACE के भरोसा स्तर नहीं बढ़ाती। [हार्डवेयर कुंजी का साक्ष्य](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **बाद में जाँचा जा सकता है।** रिप्ले जर्नल हर रन दर्ज करता है, और हमेशा चालू रहने वाली लीनिएज स्पाइन हर लीनिएज-वाहक स्टेप दर्ज करती है; ऑप्ट-इन HMAC-चेन ऑडिट लॉग (`BERNSTEIN_AUDIT=1`) ऐसी रसीदें जोड़ता है जिन्हें आप ऑफ़लाइन सत्यापित कर सकते हैं। नॉन-डिटर्मिनिज़्म ठीक उसी स्टेप पर हैश मिसमैच बनकर सामने आता है, न कि किसी अस्थिर री-रन के रूप में। ग़ैर-कोड डिलिवरेबल के साथ भी यही बर्ताव है: कोई टास्क आर्टिफ़ैक्ट कॉन्ट्रैक्ट (रिपोर्ट, डेटासेट, ऐक्शन लॉग, ऑप्स नतीजा) घोषित कर सकता है और git कमिट के बजाय हस्ताक्षरित लीनिएज रसीद पर पूरा होता है।
 - **बनावट से ही अलग-थलग।** हर कोडिंग टास्क को मर्ज गेट के पीछे अपना git worktree मिलता है; आर्टिफ़ैक्ट-मोड टास्क को `.sdd/workspaces/` के नीचे एक वर्किंग डायरेक्टरी मिलती है। डिफ़ॉल्ट रूप से एजेंट कोई बदलने-योग्य वर्कस्पेस साझा नहीं करते; साझा अवस्था सिर्फ़ टास्क बैकलॉग है, जिसे एटॉमिक ढंग से क्लेम किया जाता है। इससे सख़्त फ़ाइल-सिस्टम पाबंदी ऑप्ट-इन है, [सैंडबॉक्स बैकएंड](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) से चुनकर। worktree बंद कर दीजिए तो हर टास्क साझा चेकआउट में चलेगा।
-- **व्यापक और लोकल।** 53 से ज़्यादा CLI एजेंट अडैप्टर, साथ में एक जेनेरिक `--prompt` रैपर, फ़ाइल-आधारित स्टेट, कोई SaaS हॉप नहीं, कोई थर्ड-पार्टी डेटा प्लेन नहीं।
+- **व्यापक और लोकल।** 55 चयन योग्य CLI एजेंट अडैप्टर नाम, जिनमें जेनेरिक `--prompt` रैपर भी शामिल है। फ़ाइल-आधारित स्टेट, कोई SaaS हॉप नहीं, कोई थर्ड-पार्टी डेटा प्लेन नहीं।
 
 पूरी सूची [कैपेबिलिटी पेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) पर है; [फ़ीचर मैट्रिक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) संपूर्ण अनुक्रमणिका है।
 
@@ -49,7 +49,7 @@ Bernstein AI एजेंटों के लिए ओपन-सोर्स �
 भूमिका-अडैप्टर नीति में सूचीबद्ध न की गई भूमिकाओं के लिए वैकल्पिक डिफ़ॉल्ट अनुमति सूची तय की जा सकती है; [मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) देखें।
 
 ### एक रन कैसा दिखता है
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 एक ही YAML फ़ाइल पूरे रन को घोषित करती है: फेज़, रोल, निर्भरताएँ और वे शर्तें जिनके तहत कोई नोड चलता ही है। शेड्यूलर इसे शुद्ध Python की तरह चलाता है - फ़ाइल में कुछ भी प्रॉम्प्ट नहीं है, और आगे क्या होगा यह कोई मॉडल तय नहीं करता। यह ग्राफ़ एक ऑडिट एविडेंस पैक बनाता है; पूरी फ़ाइल [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) में है।
 
@@ -129,8 +129,10 @@ flowchart LR
 
 हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
 
+दोबारा प्रयास में `dispatch_tier` बना रहता है; कार्य को फिर से खोलते समय स्तर स्पष्ट रूप से चुना जा सकता है। [डिस्पैच स्तर का अनुबंध](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) देखें।
+
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +168,9 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — टर्मिनल डैशबोर्ड (दूरस्थ वर्कर नोड) | `bernstein gui serve` — ब्राउज़र डैशबोर्ड |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — टर्मिनल डैशबोर्ड (दूरस्थ वर्कर नोड) | `<task-server-url>/ui/` — GUI फ़ाइलें स्थापित होने पर चालू टास्क सर्वर का ब्राउज़र डैशबोर्ड. `bernstein gui serve` मौजूदा वर्कस्पेस में अलग सर्वर शुरू करता है. |
+
+सर्वर पर प्रमाणीकरण चालू हो तो टर्मिनल के लिए `BERNSTEIN_AUTH_TOKEN` सेट करें और ब्राउज़र की लॉगिन स्क्रीन पर अधिकृत टोकन डालें। [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### रन को साबित कीजिए
 <!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
@@ -210,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 शेड्यूलर सादा Python क्यों है, और इसके बदले क्या छोड़ा गया: [क्यों डिटर्मिनिस्टिक](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)।
 
 ### रोज़मर्रा के कमांड
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -227,17 +231,19 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)।
+रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। दोबारा शुरू करते समय वही `-g` मान फिर से दें, ताकि अधूरे नोड्स के प्रॉम्प्ट में `{goal}` की जगह वह मान डाला जाए।
+
+`bernstein compliance controls` हर नियंत्रण के लिए परीक्षण समूह और उपलब्ध होने पर नवीनतम पूर्ण माप दिखाता है। [बेंचमार्क कवरेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 रिपॉज़िटरी हाइजीन गेट: `bernstein readme-l10n verify` उस PR को फ़ेल करता है जिसके अनूदित README अंग्रेज़ी स्रोत से भटक गए हों (और बासी सेक्शन का नाम बताता है), `bernstein readme-l10n sync` अंग्रेज़ी में बदलाव के बाद उन्हें दोबारा बाँध देता है। देखिए [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 
 ### समर्थित एजेंट
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen और भी कई। [अडैप्टर इंडेक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) उनमें से 30 के इंस्टॉल कमांड रखता है। `bernstein integrations list` `src/bernstein/adapters/registry.py` से जुड़े हुए सभी 57 इंटीग्रेशन गिनाता है — क्या रिज़ॉल्व होता है, इसका यही इकलौता स्रोत है। उनमें 55 चुनने-योग्य एजेंट अडैप्टर हैं; बाक़ी दो पंक्तियाँ `mock` टेस्ट स्टब और `self-hosted-endpoints` एंडपॉइंट प्रोफ़ाइल हैं। `--prompt` फ़्लैग वाली बाक़ी कोई भी चीज़ जेनेरिक रैपर से चलती है।
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen और भी कई। [अडैप्टर इंडेक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) उनमें से 30 के इंस्टॉल कमांड रखता है। `bernstein integrations list` `src/bernstein/adapters/registry.py` से जुड़े हुए सभी 57 इंटीग्रेशन गिनाता है — क्या रिज़ॉल्व होता है, इसका यही इकलौता स्रोत है। उनमें 55 चुनने-योग्य एजेंट अडैप्टर हैं; बाक़ी दो पंक्तियाँ `mock` टेस्ट स्टब और `self-hosted-endpoints` एंडपॉइंट प्रोफ़ाइल हैं। `--prompt` फ़्लैग वाली बाक़ी कोई भी चीज़ जेनेरिक रैपर से चलती है। `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 एक ही रन में एजेंट मिलाइए: बॉयलरप्लेट के लिए सस्ते लोकल मॉडल, आर्किटेक्चर के लिए भारी क्लाउड मॉडल। `bernstein integrations list --installed` दिखाता है कि आपकी मशीन पर क्या उपलब्ध है।
 
@@ -254,7 +260,7 @@ bernstein volunteer browse --budget 60
 [दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse`, `budget`, `verify-bundle` और `hub` काम करने वाले सब-कमांड हैं। `autopilot` पंजीकृत है, लेकिन `TaskSource` लागू होने तक चलने से इनकार करता है।
 
 ### पहले पन्ने से आगे
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 गहराई की हर चीज़ [डॉक्स साइट](https://docs.bernstein.run/) पर रहती है:
 
@@ -266,6 +272,7 @@ bernstein volunteer browse --budget 60
 | [यह किसके लिए है](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | कहाँ इसका मूल्य बनता है, और कहाँ Bernstein ग़लत औज़ार है |
 | [वर्कफ़्लो](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | एजेंट / कमांड / लूप नोड्स के घोषणात्मक YAML DAG |
 | [वेब UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | उसी API पर चलने वाला ब्राउज़र डैशबोर्ड जिस पर TUI चलता है (कार्य बनाना और उनकी समीक्षा करना) |
+| [क्लस्टर वर्कर की स्थिति](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | खाली डिस्क स्थान, मेमोरी उपयोग या नेटवर्क विलंब तय सीमा से बाहर होने पर वर्कर नए कार्य लेना रोक देता है। |
 | [क्लाउड एग्ज़ीक्यूशन](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | प्रयोगात्मक: अपने ही अकाउंट पर Cloudflare Workers में एजेंट चलाइए, R2 वर्कस्पेस सिंक के साथ। होस्टेड `api.bernstein.run` सेवा अभी उपलब्ध नहीं है |
 | [डेटासोर्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | केवल-पढ़ने वाली क्वेरी रसीदें, और एक क्वेरी ड्राइवर जो हर नतीजे को उस स्कीमा स्नैपशॉट से बाँधता है जिससे वह निकला |
 | [एजेंट कैटलॉग](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | भूमिकाओं को बिल्ट-इन टेम्पलेट्स के बाहर की एजेंट परिभाषाओं पर लगाइए — एक सामान्य YAML/SKILL.md डायरेक्टरी, या Claude Code प्लगइन-लेआउट ट्री |
@@ -273,16 +280,16 @@ bernstein volunteer browse --budget 60
 | [आर्किटेक्चर](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | अंदर यह कैसे काम करता है |
 
 ### यह नाम क्यों?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein का नाम अमेरिकी कंडक्टर और संगीतकार लियोनार्ड बर्नस्टीन पर रखा गया है। यह प्रोजेक्ट AI एजेंटों की टोली को ठीक वैसे नियंत्रित करता है जैसे बर्नस्टीन न्यूयॉर्क फ़िलहार्मोनिक को संचालित करते थे: हर वादक अपने संकेत पर, स्कोर डिटर्मिनिस्टिक, और कंडक्टर नतीजे के लिए जवाबदेह।
+Bernstein का नाम अमेरिकी कंडक्टर और संगीतकार लियोनार्ड बर्नस्टीन पर रखा गया है। इस प्रोजेक्ट का ऑर्केस्ट्रेटर AI एजेंटों की टोली को ठीक वैसे नियंत्रित करता है जैसे बर्नस्टीन न्यूयॉर्क फ़िलहार्मोनिक को संचालित करते थे: हर वादक अपने संकेत पर, स्कोर डिटर्मिनिस्टिक, और कंडक्टर नतीजे के लिए जवाबदेह। कंडक्टर का यह रूपक कोड, शोध रिपोर्ट या डेटासेट बनाने वाले एजेंट कार्यों को ऑर्केस्ट्रेट करने की Bernstein की क्षमता बताता है।
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, अकेले मेंटेन किया जाता है। लाइव आँकड़े: [bernstein.run](https://bernstein.run)।
 
 ### जहाँ ज़िक्र हुआ
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-[vinta/awesome-python](https://github.com/vinta/awesome-python) में सूचीबद्ध, Augment Code के [ओपन-सोर्स एजेंट ऑर्केस्ट्रेटर](https://www.augmentcode.com/tools/open-source-agent-orchestrators) राउंडअप में शामिल, और [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) में सूचीबद्ध। इस तरीक़े को हमने awesome-agentic-patterns में [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) पैटर्न के रूप में भी लिखा है।
+Augment Code के [ओपन-सोर्स एजेंट ऑर्केस्ट्रेटर](https://www.augmentcode.com/tools/open-source-agent-orchestrators) राउंडअप में शामिल और [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) में सूचीबद्ध। इस तरीक़े को हमने awesome-agentic-patterns में [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) पैटर्न के रूप में भी लिखा है।
 
 <details>
 <summary>पूरी सूची: 20 से ज़्यादा awesome लिस्ट, डायरेक्ट्री, न्यूज़लेटर और अन्य परियोजनाओं के उद्धरण</summary>
@@ -293,9 +300,9 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 </details>
 
 ### प्रशासनिक रन
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
-`bernstein_run(template="administrative", goal="Weekly sprint")` से प्लानर या एजेंट प्रक्रिया शुरू किए बिना ऑडिट वाला खाली कंटेनर बनाएँ। `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` से मैनुअल कार्य जोड़ें और `bernstein_run_status(run_id="admin-...")` से स्थिति देखें। सामान्य क्लेम API से कार्य लिए जा सकते हैं, लेकिन वे स्वचालित ऑर्केस्ट्रेशन से बाहर रहते हैं। गैर-खाली रन तब पूरा होता है जब हर कार्य की स्थिति `done`, `closed` या `cancelled` हो; खाली रन खुला रहता है। [संचालन प्रक्रिया](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+ये कॉल MCP ब्रिज के टूल इस्तेमाल करती हैं। बाद की कॉल में लौटे हुए `runId` मान को `run_id` के रूप में इस्तेमाल करें। `bernstein_run(template="administrative", goal="Weekly sprint")` से प्लानर या एजेंट प्रक्रिया शुरू किए बिना ऑडिट वाला खाली कंटेनर बनाएँ। `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` से मैनुअल कार्य जोड़ें और `bernstein_run_status(run_id="<returned runId>")` से स्थिति देखें। सामान्य क्लेम API से कार्य लिए जा सकते हैं, लेकिन वे स्वचालित ऑर्केस्ट्रेशन से बाहर रहते हैं। गैर-खाली रन तब पूरा होता है जब हर कार्य की स्थिति `done`, `closed` या `cancelled` हो; खाली रन खुला रहता है। [संचालन प्रक्रिया](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### योगदान, सहायता, लाइसेंस
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

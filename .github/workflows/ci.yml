@@ -2317,7 +2317,11 @@ jobs:
   coverage-report:
     name: Coverage report
     needs: [test]
+    # Full runs skip the PR-only planner upstream of test. Override the
+    # implicit success() check so that skip does not hide a successful matrix.
     if: >-
+      !cancelled() &&
+      needs.test.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'push' &&

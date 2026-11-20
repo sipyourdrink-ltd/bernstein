@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### a camada de governança open source para agentes de IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **Status: beta.** Mantido por uma única pessoa, em desenvolvimento ativo. O número da versão conta lançamentos, não maturidade — versões menores podem alterar interfaces. Fixe a versão para qualquer dependência; regressões são corrigidas rapidamente, [abra uma issue](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein é a camada de governança open source para agentes de IA. Funciona em cima de policy as code: você escreve a política - quem pode fazer o quê, o que precisa de aprovação, o que precisa ser registrado - e o Bernstein a aplica e produz o registro verificável. Um escalonador determinístico - sem modelo no loop de coordenação - executa agentes em paralelo, filtra o que produzem com gates e registra cada passo, de modo que uma execução pode ser verificada depois, offline, apenas com os artefatos. Agentes CLI de código funcionam de fábrica (Claude Code, Codex, Gemini CLI e mais 50+), e a mesma camada governa qualquer carga agêntica: a entrega pode ser um diff, um relatório de pesquisa, um dataset ou um pacote de evidências de auditoria. Perfil de instalação air-gap incluído. Apache-2.0.
+Bernstein é a camada de governança open source para agentes de IA. Funciona em cima de policy as code: você escreve a política - quem pode fazer o quê, o que precisa de aprovação, o que precisa ser registrado - e o Bernstein a aplica e produz o registro verificável. Um escalonador determinístico - sem modelo no loop de coordenação - executa agentes em paralelo, filtra o que produzem com gates e registra cada passo, de modo que uma execução pode ser verificada depois, offline, apenas com os artefatos. Agentes CLI de código funcionam de fábrica (Claude Code, Codex, Gemini CLI), e a mesma camada governa qualquer carga agêntica: a entrega pode ser um diff, um relatório de pesquisa, um dataset ou um pacote de evidências de auditoria. Perfil de instalação air-gap incluído. Apache-2.0.
 
 ### em resumo
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 Cinco coisas o diferenciam; o resto são detalhes.
 
@@ -40,7 +40,7 @@ Cinco coisas o diferenciam; o resto são detalhes.
 - **Evidências de chaves físicas.** Os verificadores offline de custódia PIV e aprovação FIDO2 compartilham o protocolo de recibos, com confiança fixada e tempo explícito. A custódia do token não eleva os níveis de confiança TRACE. [Evidências de chaves físicas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Auditável após o fato.** O journal de replay registra cada execução, e a espinha de lineage sempre ativa grava cada etapa geradora de linhagem; o log de auditoria opcional encadeado por HMAC (`BERNSTEIN_AUDIT=1`) adiciona recibos que você verifica offline. O não determinismo surge como divergência de hash na etapa exata, não como uma reexecução instável. Entregáveis que não são código recebem o mesmo tratamento: uma tarefa pode declarar um contrato de artefato (relatório, dataset, log de ações, resultado de ops) e é concluída com um recibo assinado de linhagem em vez de um commit git.
 - **Isolado por construção.** Cada tarefa de código recebe seu próprio git worktree atrás de gates de merge; tarefas em modo artefato recebem um diretório de trabalho sob `.sdd/workspaces/`. Os agentes não compartilham espaço de trabalho mutável por padrão; o único estado compartilhado é o backlog de tarefas, reivindicado atomicamente. Restrições mais rígidas no sistema de arquivos são opcionais, a partir dos [backends de sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Desative worktrees e cada tarefa rodará no checkout compartilhado.
-- **Amplo e local.** Mais de 53 adaptadores de agentes CLI mais um wrapper genérico `--prompt`, estado baseado em arquivos, sem dependência de SaaS, sem plano de dados de terceiros.
+- **Amplo e local.** 55 nomes selecionáveis de adaptadores de agentes CLI, incluindo o wrapper genérico `--prompt`. estado baseado em arquivos, sem dependência de SaaS, sem plano de dados de terceiros.
 
 A lista completa está na [página de capacidades](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); a [matriz de recursos](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) é o índice exaustivo.
 
@@ -49,7 +49,7 @@ O servidor de tarefas oferece um controle persistente do operador para a obtenç
 A política de adaptadores por função permite definir uma lista padrão opcional de adaptadores permitidos para funções não listadas; consulte o [guia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### como é uma execução
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 Um único arquivo YAML declara a execução: fases, papéis, dependências e as condições sob as quais um nó chega a rodar. O escalonador o executa como Python puro - nada no arquivo é um prompt e nenhum modelo decide o que acontece a seguir. Este grafo produz um pacote de evidências de auditoria; o arquivo completo está em [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
@@ -129,8 +129,10 @@ flowchart LR
 
 Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de papel e gates de aprovação valem independente do que o agente faça dentro da tarefa. Um nó de código termina atrás de merge gates no seu próprio git worktree. Os nós acima terminam diferente: um [contrato de artefato](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomeia a entrega (relatório, dataset, varredura, log de ações) e o nó fecha com um recibo de lineage assinado em vez de um commit. Mesmo escalonador, mesmo journal, mesma verificação offline - leve o grafo código, pesquisa, uma mudança de ops ou uma mistura dos três. Grafos prontos para software, pesquisa, docs, enterprise e fluxos de contribuição vivem em [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
+As novas tentativas preservam `dispatch_tier`; ao reabrir uma tarefa, é possível selecionar explicitamente o nível. Consulte o [contrato dos níveis de execução](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
+
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -166,7 +168,9 @@ Uma execução em andamento pode ser assistida a partir de qualquer uma das inte
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — o dashboard no terminal (nós de trabalho remotos) | `bernstein gui serve` — o dashboard no navegador |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — o dashboard no terminal (nós de trabalho remotos) | `<task-server-url>/ui/` — painel web do servidor de tarefas em execução, quando os arquivos da GUI estão instalados. `bernstein gui serve` inicia um servidor independente no espaço de trabalho atual. |
+
+Se o servidor exigir autenticação, defina `BERNSTEIN_AUTH_TOKEN` para o terminal e insira um token autorizado na tela de login do navegador. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### comprovar uma execução
 <!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
@@ -210,7 +214,7 @@ Cada objetivo passa por quatro etapas:
 Por que o agendador é Python puro e quais são os trade-offs: [por que determinístico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### comandos do dia a dia
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -227,17 +231,19 @@ A superfície completa de operador (automação de PR, agendamentos, pontes de c
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-O estado da execução grava checkpoints em `.sdd/runs/<run_id>/` a cada nó. A retomada valida o digest do manifesto no início da execução, de modo que uma mudança na especificação é recusada em vez de executar silenciosamente um manifesto diferente. Veja [manifestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+O estado da execução grava checkpoints em `.sdd/runs/<run_id>/` a cada nó. A retomada valida o digest do manifesto no início da execução, de modo que uma mudança na especificação é recusada em vez de executar silenciosamente um manifesto diferente. Veja [manifestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Ao retomar, forneça novamente o mesmo valor de `-g` para substituir `{goal}` nos prompts dos nós ainda não concluídos.
+
+`bernstein compliance controls` mostra os conjuntos de testes de cada controle e a última medição completa disponível. [Cobertura dos testes](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Gates de higiene do repositório: `bernstein readme-l10n verify` falha um PR cujos READMEs traduzidos divergiram do original em inglês (nomeando a seção desatualizada), `bernstein readme-l10n sync` os reatribui após edições em inglês. Veja [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### agentes suportados
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen e mais. O [índice de adaptadores](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) traz comandos de instalação para 30 deles. `bernstein integrations list` enumera todas as 57 integrações conectadas em `src/bernstein/adapters/registry.py`, a única fonte da verdade para resoluções. 55 são adaptadores de agentes selecionáveis; as outras duas linhas são o stub de teste `mock` e o perfil de endpoints `self-hosted-endpoints`. Qualquer outra ferramenta com flag `--prompt` funciona através do wrapper genérico.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen e mais. O [índice de adaptadores](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) traz comandos de instalação para 30 deles. `bernstein integrations list` enumera todas as 57 integrações conectadas em `src/bernstein/adapters/registry.py`, a única fonte da verdade para resoluções. 55 são adaptadores de agentes selecionáveis; as outras duas linhas são o stub de teste `mock` e o perfil de endpoints `self-hosted-endpoints`. Qualquer outra ferramenta com flag `--prompt` funciona através do wrapper genérico. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 Misture agentes na mesma execução: modelos locais econômicos para código repetitivo, modelos em nuvem mais potentes para arquitetura. `bernstein integrations list --installed` mostra o que está disponível na sua máquina.
 
@@ -254,7 +260,7 @@ bernstein volunteer browse --budget 60
 O [guia do doador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cobre a execução de um worker e o orçamento que você define, o [guia do projeto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cobre a declaração de um manifesto, e o [modelo de ameaças](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) diz o que cada fronteira protege e o que não protege. O executor de um único comando ainda não foi lançado: hoje `verify`, `browse`, `budget`, `verify-bundle` e `hub` são os subcomandos que funcionam. `autopilot` está registado, mas recusa executar até que seja implementado um `TaskSource`.
 
 ### além da página inicial
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Tudo aprofundado reside no [site de documentação](https://docs.bernstein.run/):
 
@@ -266,6 +272,7 @@ Tudo aprofundado reside no [site de documentação](https://docs.bernstein.run/)
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | onde está o valor e onde Bernstein não é a ferramenta certa |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs declarativos em YAML de nós agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | dashboard no navegador sobre a mesma API usada pela TUI (criar e revisar tarefas) |
+| [estado dos nós do cluster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Os nós deixam de aceitar novas tarefas enquanto o espaço livre em disco, o uso de memória ou a latência da rede estiverem fora dos limites configurados. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: execute agentes em Cloudflare Workers com sincronização de workspace no R2 na sua própria conta. O serviço hospedado `api.bernstein.run` ainda não está disponível |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | recibos de consulta somente leitura, mais um driver de consulta que vincula cada resultado ao snapshot do esquema correspondente |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | aponte papéis para definições de agentes fora dos templates embutidos — um diretório genérico YAML/SKILL.md ou árvore de plugin do Claude Code |
@@ -273,16 +280,16 @@ Tudo aprofundado reside no [site de documentação](https://docs.bernstein.run/)
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | como funciona por baixo dos panos |
 
 ### por que o nome?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein leva o nome de Leonard Bernstein, o maestro e compositor americano. O projeto governa uma equipe de agentes de IA da mesma forma que Bernstein conduzia a Filarmônica de Nova York: cada músico no tempo certo, a partitura determinística, o maestro responsável pelo resultado.
+Bernstein leva o nome de Leonard Bernstein, o maestro e compositor americano. O orquestrador do projeto coordena uma equipe de agentes de IA da mesma forma que Bernstein conduzia a Filarmônica de Nova York: cada músico no tempo certo, a partitura determinística, o maestro responsável pelo resultado. A metáfora do maestro descreve a capacidade de orquestração do Bernstein para tarefas de agentes que produzem código, relatórios de pesquisa ou conjuntos de dados.
 
 escrevi o bernstein porque estava pagando $400/mês em contas do claude rodando três agentes de codificação em paralelo e obtendo merges não determinísticos. Apache 2.0, mantido por uma só pessoa. Estatísticas em tempo real: [bernstein.run](https://bernstein.run).
 
 ### mencionado em
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-Listado em [vinta/awesome-python](https://github.com/vinta/awesome-python), coberto no resumo de [orquestradores de agentes open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) da Augment Code e citado no [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Também descrevemos a abordagem como o padrão [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) no awesome-agentic-patterns.
+Coberto no resumo de [orquestradores de agentes open-source](https://www.augmentcode.com/tools/open-source-agent-orchestrators) da Augment Code e citado no [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Também descrevemos a abordagem como o padrão [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) no awesome-agentic-patterns.
 
 <details>
 <summary>Toda a cobertura: mais de 20 listas awesome, diretórios, newsletters e citações</summary>
@@ -293,9 +300,9 @@ A lista completa monitorada, incluindo cada entrada em listas awesome, catálogo
 </details>
 
 ### execuções administrativas
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
-Use `bernstein_run(template="administrative", goal="Weekly sprint")` para criar um contêiner vazio e auditado sem planejador nem processos de agentes. Adicione tarefas manuais com `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` e consulte `bernstein_run_status(run_id="admin-...")`. As tarefas podem ser reivindicadas pela API habitual, mas ficam fora da orquestração automática. Uma execução com tarefas termina quando cada tarefa tem o estado `done`, `closed` ou `cancelled`; uma execução vazia permanece aberta. [Fluxo operacional](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Estas chamadas usam a ponte MCP. Reutilize o valor `runId` retornado como `run_id` nas chamadas seguintes. Use `bernstein_run(template="administrative", goal="Weekly sprint")` para criar um contêiner vazio e auditado sem planejador nem processos de agentes. Adicione tarefas manuais com `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` e consulte `bernstein_run_status(run_id="<returned runId>")`. As tarefas podem ser reivindicadas pela API habitual, mas ficam fora da orquestração automática. Uma execução com tarefas termina quando cada tarefa tem o estado `done`, `closed` ou `cancelled`; uma execução vazia permanece aberta. [Fluxo operacional](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### contribuição, suporte, licença
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
