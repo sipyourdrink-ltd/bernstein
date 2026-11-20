@@ -81,6 +81,8 @@ def _pr(
         reviews=reviews or [],
         contributors=contributors if contributors is not None else {author},
         last_push=NOW - timedelta(hours=pushed_hours_ago),
+        commit_authors=frozenset({author}),
+        commit_authors_complete=True,
     )
 
 
@@ -385,8 +387,164 @@ def test_a_pull_request_from_the_workflow_account_needs_the_maintainer(qc: Modul
     assert "workflow account" in verdict.requirements[0].text
 
 
+@pytest.mark.parametrize("author", ["renovate[bot]", "github-actions[bot]"])
+@pytest.mark.parametrize("provenance", ["author", "committer", "coauthor"])
+def test_known_writer_approval_is_rejected_for_automation_and_workflow_authors(
+    qc: ModuleType, roster, author: str, provenance: str
+) -> None:
+    commit = {"author": {}, "committer": {}, "commit": {"message": "fix"}}
+    if provenance == "coauthor":
+        commit["commit"]["message"] += "\n\nCo-authored-by: Owner <owner@users.noreply.github.com>"
+    else:
+        commit[provenance] = {"login": "owner"}
+    pr = _pr(
+        qc,
+        author=author,
+        paths=[".github/workflows/ci.yml"],
+        contributors={author} | qc._logins_from_commit(commit),
+        reviews=[_review(qc, "owner", "APPROVED")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("independent" in req.who for req in verdict.requirements if not req.met)
+
+
+@pytest.mark.parametrize("author", ["renovate[bot]", "github-actions[bot]"])
+@pytest.mark.parametrize("current", [True, False])
+def test_nonwriter_maintainer_review_counts_for_protected_bot_change(
+    qc: ModuleType, roster, author: str, current: bool
+) -> None:
+    pr = _pr(
+        qc,
+        author=author,
+        paths=[".github/workflows/ci.yml"],
+        reviews=[_review(qc, "owner", "APPROVED", sha=HEAD if current else "old")],
+    )
+    assert _evaluate(qc, roster, pr).passed is current
+
+
+@pytest.mark.parametrize("author", ["renovate[bot]", "github-actions[bot]"])
+@pytest.mark.parametrize("proven_unchanged", [True, False])
+def test_bot_writer_exception_requires_existing_unchanged_diff_proof(
+    qc: ModuleType, roster, author: str, proven_unchanged: bool
+) -> None:
+    pr = _pr(
+        qc,
+        author=author,
+        paths=[".github/workflows/ci.yml"],
+        contributors={author, "owner"},
+        reviews=[_review(qc, "owner", "APPROVED")],
+    )
+    if proven_unchanged:
+        pr.update_only = frozenset({"owner"})
+    else:
+        pr.uncompared = (HEAD,)
+    assert _evaluate(qc, roster, pr).passed is proven_unchanged
+
+
+def test_large_ordinary_change_cannot_use_writer_for_required_maintainer_review(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        changed_lines=1100,
+        contributors={"outsider", "owner"},
+        reviews=[_review(qc, who, "APPROVED") for who in ("core1", "core2", "comm1", "owner")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("maintainer approval or a split" in req.text and not req.met for req in verdict.requirements)
+
+
 def test_the_maintainers_own_change_merges_without_approvals(qc: ModuleType, roster) -> None:
     assert _evaluate(qc, roster, _pr(qc, author="owner", contributors={"owner"})).passed
+
+
+def _carried_pr(qc: ModuleType, *, commit_author: str = "outsider", message: str = "change", reviews=None):
+    commit = _raw_commit(SHA_A, commit_author, committer="owner", message=message)
+    fake = FakeGitHub(
+        commits=[commit],
+        compares={SHA_A: _compare([commit])},
+        author="owner",
+        reviews=reviews,
+        paths=["src/bernstein/core/security/example.py"],
+    )
+    return _fetch(qc, fake)
+
+
+def test_maintainer_carried_outside_commit_needs_sensitive_quorum(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc)
+    verdict = qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW)
+    assert not verdict.passed
+    assert any("3 approvals, 2 from a core reviewer" in req.text for req in verdict.requirements)
+
+
+def test_maintainer_carried_outside_commit_passes_with_independent_quorum(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc, reviews=[_raw_review(who, SHA_A) for who in ("core1", "core2", "comm1")])
+    assert qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW).passed
+
+
+def test_maintainer_coauthor_credit_alone_does_not_change_rule(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(
+        qc, commit_author="owner", message="change\n\nCo-authored-by: guest <guest@users.noreply.github.com>"
+    )
+    assert "guest" in pr.contributors
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_maintainer_carrying_roster_commit_does_not_change_rule(qc: ModuleType, roster) -> None:
+    assert _evaluate(qc, roster, _carried_pr(qc, commit_author="comm1")).passed
+
+
+def test_maintainer_builtin_workflow_commit_does_not_change_rule(qc: ModuleType, roster) -> None:
+    assert _evaluate(qc, roster, _carried_pr(qc, commit_author=qc.GITHUB_ACTIONS_BOT)).passed
+
+
+@pytest.mark.parametrize("gap", ["count", "head", "missing_count", "limit"])
+def test_incomplete_author_evidence_holds_even_with_approvals(qc: ModuleType, roster, gap: str) -> None:
+    commits = [_raw_commit(SHA_A, "owner", committer="owner")]
+    if gap == "limit":
+        commits = [_raw_commit(f"{index:040x}", "owner") for index in range(qc.PR_COMMIT_LIMIT)]
+    fake = FakeGitHub(
+        commits=commits,
+        compares={},
+        author="owner",
+        paths=["src/bernstein/core/security/example.py"],
+        reviews=[_raw_review(who, commits[-1]["sha"]) for who in ("core1", "core2", "comm1")],
+    )
+
+    def api(*args):
+        result = fake(*args)
+        if args[1] == f"repos/{REPO}/pulls/1":
+            if gap == "count":
+                result["commits"] = len(commits) + 1
+            elif gap == "head":
+                result["head"]["sha"] = SHA_B
+            elif gap == "missing_count":
+                result.pop("commits", None)
+        return result
+
+    pr = qc.fetch_pull_request(REPO, 1, api=api)
+    verdict = qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW)
+    assert not verdict.passed
+    assert any("complete commit-author evidence" in req.text and not req.met for req in verdict.requirements)
+
+
+def test_maintainer_unlinked_commit_author_needs_quorum(qc: ModuleType, roster) -> None:
+    assert not _evaluate(qc, roster, _carried_pr(qc, commit_author="")).passed
+
+
+def test_carried_outside_commit_keeps_governance_window(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc, reviews=[_raw_review(who, SHA_A) for who in ("core1", "core2", "comm1")])
+    pr.paths = ["GOVERNANCE.md"]
+    verdict = qc.evaluate(pr, roster, [("*", ["core1", "core2"])], NOW)
+    assert not verdict.passed
+    assert any("72 hours" in req.text and not req.met for req in verdict.requirements)
+
+
+def test_maintainer_carried_outside_commit_keeps_owner_requirement(qc: ModuleType, roster) -> None:
+    pr = _carried_pr(qc, reviews=[_raw_review(who, SHA_A) for who in ("core1", "core2", "comm1")])
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("approval from the owner" in req.text and not req.met for req in verdict.requirements)
 
 
 def test_a_committer_can_block_the_maintainer(qc: ModuleType, roster) -> None:
@@ -541,10 +699,98 @@ def test_the_window_does_not_lift_the_third_approval_on_a_sensitive_path(qc: Mod
 
 def test_the_window_closes_on_its_date(qc: ModuleType, roster) -> None:
     pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
-    after = qc.BACKLOG_WINDOW_ENDS + timedelta(minutes=1)
+    after = qc.SPRINT_WINDOW_ENDS + timedelta(minutes=1)
     verdict = qc.evaluate(pr, roster, OWNERS, after)
     assert not verdict.passed
     assert "2026-10-05" not in verdict.requirements[0].text
+
+
+# --- the sprint window (charter section 3, until 2026-11-23 00:00 UTC) -------
+
+SPRINT_NOW = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+SPRINT_END = datetime(2026, 11, 23, 0, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("at", [SPRINT_NOW, SPRINT_END - timedelta(microseconds=1)])
+def test_sprint_window_accepts_the_maintainer_alone(qc: ModuleType, roster, at: datetime) -> None:
+    pr = _pr(qc, changed_lines=400, reviews=[_review(qc, "owner", "APPROVED")])
+    verdict = qc.evaluate(pr, roster, OWNERS, at)
+    assert verdict.passed
+    assert "2026-11-23 00:00 UTC" in verdict.requirements[0].text
+
+
+@pytest.mark.parametrize("at", [SPRINT_END, SPRINT_END + timedelta(microseconds=1)])
+def test_sprint_window_ends_at_midnight_utc(qc: ModuleType, roster, at: datetime) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
+    verdict = qc.evaluate(pr, roster, OWNERS, at)
+    assert not verdict.passed
+    assert "alone until" not in verdict.requirements[0].text
+    pr.reviews.append(_review(qc, "comm1", "APPROVED"))
+    assert qc.evaluate(pr, roster, OWNERS, at).passed
+
+
+@pytest.mark.parametrize(
+    ("changed_lines", "paths"),
+    [(401, ["README.md"]), (12, ["src/bernstein/core/security/auth.py"])],
+    ids=["large", "sensitive"],
+)
+def test_sprint_window_keeps_three_approvals_and_two_core(
+    qc: ModuleType, roster, changed_lines: int, paths: list[str]
+) -> None:
+    pr = _pr(qc, changed_lines=changed_lines, paths=paths, reviews=[_review(qc, "owner", "APPROVED")])
+    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
+    pr.reviews.append(_review(qc, "comm1", "APPROVED"))
+    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
+    pr.reviews.append(_review(qc, "comm2", "APPROVED"))
+    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
+    pr.reviews.append(_review(qc, "core1", "APPROVED"))
+    assert qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
+
+
+def test_sprint_window_keeps_the_protected_path_owner_requirement(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        paths=["src/bernstein/core/tasks/claim.py"],
+        reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "core2", "APPROVED")],
+    )
+    verdict = qc.evaluate(pr, roster, OWNERS, SPRINT_NOW)
+    assert not verdict.passed
+    assert verdict.requirements[0].met
+    assert any("owner of" in req.text and not req.met and "@owner" in req.who for req in verdict.requirements)
+    pr.reviews.append(_review(qc, "owner", "APPROVED"))
+    assert qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
+
+
+def test_sprint_window_does_not_replace_a_different_path_owner(qc: ModuleType, roster) -> None:
+    owners = [*OWNERS, ("/docs/special/", ["core1"])]
+    pr = _pr(qc, paths=["docs/special/guide.md"], reviews=[_review(qc, "owner", "APPROVED")])
+    verdict = qc.evaluate(pr, roster, owners, SPRINT_NOW)
+    assert not verdict.passed
+    assert verdict.requirements[0].met
+    assert any("owner of" in req.text and not req.met for req in verdict.requirements)
+
+
+def test_sprint_window_keeps_standing_changes_requested(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "owner", "APPROVED"),
+            _review(qc, "comm1", "CHANGES_REQUESTED", sha="0" * 40),
+            _review(qc, "comm1", "COMMENTED", at="2026-09-10T11:00:00Z"),
+        ],
+    )
+    verdict = qc.evaluate(pr, roster, OWNERS, SPRINT_NOW)
+    assert not verdict.passed
+    assert "changes requested" in verdict.requirements[0].text
+    assert verdict.requirements[1].met
+
+
+@pytest.mark.parametrize("case", ["missing", "stale", "writer"])
+def test_sprint_window_still_needs_an_eligible_maintainer_approval(qc: ModuleType, roster, case: str) -> None:
+    reviews = [] if case == "missing" else [_review(qc, "owner", "APPROVED", sha="0" * 40 if case == "stale" else HEAD)]
+    contributors = {"outsider", "owner"} if case == "writer" else {"outsider"}
+    pr = _pr(qc, reviews=reviews, contributors=contributors)
+    assert not qc.evaluate(pr, roster, OWNERS, SPRINT_NOW).passed
 
 
 def test_the_window_applies_to_the_workflows_that_invoke_the_check(qc: ModuleType, roster) -> None:
@@ -919,6 +1165,7 @@ class FakeGitHub:
                 "base": {"ref": "main"},
                 "additions": 60,
                 "deletions": 40,
+                "commits": len(self.commits),
             }
         if endpoint == f"repos/{REPO}/pulls/1/files":
             return [{"filename": path} for path in self.paths]
@@ -1105,6 +1352,10 @@ def test_a_maintainer_content_commit_keeps_them_out(qc: ModuleType, roster) -> N
 def _governance(fake: FakeGitHub) -> FakeGitHub:
     fake.author = "owner"
     fake.paths = ["GOVERNANCE.md"]
+    # Isolate the objection-window rule from outside-commit quorum tests.
+    for commit in fake.commits:
+        commit["author"] = {"login": "owner"}
+        commit["committer"] = {"login": "owner"}
     return fake
 
 

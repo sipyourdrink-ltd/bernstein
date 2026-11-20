@@ -498,6 +498,8 @@ class GateRunner:
             duration_ms=0,
             details=plugin_result.details,
             metadata=dict(plugin_result.metadata),
+            reason=plugin_result.reason,
+            scope=plugin_result.scope,
         )
 
     async def _execute_gate(
@@ -2060,6 +2062,27 @@ class GateRunner:
         status = raw.get("status")
         if status not in {"pass", "fail", "warn", "skipped"}:
             return None
+        raw_scope = raw.get("scope")
+        scope = None
+        if raw_scope is not None:
+            if not isinstance(raw_scope, dict):
+                return None
+            # Validate the wire shape before from_dict converts sequences:
+            # tuple("path.py") would otherwise invent character coverage.
+            for field_name in ("checked", "cannot_check"):
+                values = raw_scope.get(field_name)
+                if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+                    return None
+            for field_name in ("oracle_id", "kind"):
+                value = raw_scope.get(field_name)
+                if value is not None and not isinstance(value, str):
+                    return None
+            if not isinstance(raw_scope.get("evidence_ref", ""), str):
+                return None
+            try:
+                scope = VerificationScope.from_dict(raw_scope)
+            except (KeyError, TypeError, ValueError):
+                return None
         return GateResult(
             name=str(raw["name"]),
             status=status,
@@ -2069,6 +2092,7 @@ class GateRunner:
             duration_ms=int(raw["duration_ms"]),
             details=str(raw["details"]),
             metadata=dict(raw.get("metadata", {})),
+            scope=scope,
         )
 
     def _store_cached_result_sync(self, cache_key: str, result: GateResult) -> None:
@@ -2082,6 +2106,7 @@ class GateRunner:
                 "duration_ms": result.duration_ms,
                 "details": result.details,
                 "metadata": result.metadata,
+                "scope": result.scope.to_dict() if result.scope is not None else None,
             }
             cache_path = self._workdir / ".sdd" / "caching" / "gate_cache.json"
             cache_path.parent.mkdir(parents=True, exist_ok=True)

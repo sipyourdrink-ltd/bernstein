@@ -6,7 +6,7 @@ This module exposes two flavours of helpers:
   used by tests and the CLI.
 * **MCP tool registration** (:func:`register_scenario_tools`) which wires
   ``bernstein_scenario``, ``bernstein_scenarios``, and
-  ``bernstein_scenario_status`` onto a FastMCP server.
+  ``bernstein_scenario_status`` onto a MCPServer server.
 
 The MCP tools delegate to the Bernstein task server over HTTP - they do not
 run orchestration in-process - keeping the MCP layer thin and stateless.
@@ -35,7 +35,7 @@ from bernstein.mcp.input_validation import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ def _error_response(exc: Exception) -> str:
 
 
 def _validation_error_response(err: ValidationError) -> str:
-    """Render a validation failure as the JSON string FastMCP tools return."""
+    """Render a validation failure as the JSON string MCPServer tools return."""
     return validation_error_response(err)
 
 
@@ -278,7 +278,7 @@ def _scenario_run_handle(result: dict[str, Any]) -> dict[str, Any]:
     return handle
 
 
-def register_scenario_tools(mcp: FastMCP[None], server_url: str) -> None:
+def register_scenario_tools(mcp: MCPServer[None], server_url: str) -> None:
     """Register the consolidated ``bernstein_scenario`` MCP tool (#3087).
 
     One tool with an ``action`` selector replaces the former three-tool
@@ -287,7 +287,7 @@ def register_scenario_tools(mcp: FastMCP[None], server_url: str) -> None:
     aliases registered by the server module.
 
     Args:
-        mcp: FastMCP instance to attach the tool to.
+        mcp: MCPServer instance to attach the tool to.
         server_url: Bernstein task server base URL the tool will hit.
     """
 

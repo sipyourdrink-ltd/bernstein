@@ -55,7 +55,7 @@ Names in the periodic list go in alphabetical order. Not by number of PRs, not b
 
 ## GitHub Discussions and the LinkedIn page are not competing
 
-They do different jobs. For fast news (a release, a change, a community update) the LinkedIn page is the quicker channel. GitHub Discussions is where you take part in the project properly: you see the context, you argue, you propose, you find the answer, and it stays on record where the next person can find it. If you want both the news and the depth, follow both. Decisions still happen in issues and pull requests; that has not changed.
+They do different jobs. For fast news (a release, a change, a community update) the LinkedIn page is the quicker channel. GitHub Discussions is where you take part in the project properly: you see the context, you argue, you propose, you find the answer, and it stays on record where the next person can find it. If you want both the news and the depth, follow both. Contributor proposals and pull requests are decided in their public issue or pull request; the maintainer plans future work privately.
 
 ## Why I am doing this at all
 
@@ -92,8 +92,6 @@ And one more human thing. If a real paid opportunity ever shows up around Bernst
 ## Who is watching, and why it matters
 
 We cannot, of course, publish our whole analytics pipeline, but by all appearances we are not the only ones reading. People from large IT companies and AI labs turn up on the site fairly regularly and ask quite specific questions of the documentation. The competitors, let us assume, are not asleep either.
-
-And, by the way: by our passive analytics, with the obvious bot noise removed, Bernstein now runs regularly on at least around 3,000 machines around the world. I think that is fairly respectable. Bernstein sends no product telemetry by default and this number does not come from any; it is a passive signal, and that is all I will say about the method.
 
 So the situation is already an interesting one. We are building a free product that people actually use, it draws the attention of engineers, AI labs and large companies, and any user can take the source and own it. My opinion, clearly an opinion: when you can get a serious tool for free and own the code, it becomes hard to explain why anyone would pay tens of thousands of dollars a month for something similar.
 

@@ -2,7 +2,7 @@
 
 > Bernstein is the open-source governance layer for AI agents, with a deterministic
 > scheduler driving CLI coding agents (Claude Code,
-> Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the
+> Codex, Gemini CLI and others). Scheduling is plain Python - no LLM in the
 > coordination loop - so runs are reproducible end to end.
 >
 > Every coding task runs in its own git worktree behind lint/type/test gates;
@@ -27,7 +27,7 @@ itself is deterministic Python - zero LLM tokens on scheduling. Every run is
 reproducible. Every step is logged and replayable.
 
 - Pure Python orchestration. No LLM in the coordination loop.
-- 40+ CLI agent adapters. Mix Claude Code, Codex, Gemini CLI, Aider, Cursor,
+- 55 selectable CLI agent adapter names. Mix Claude Code, Codex, Gemini CLI, Aider, Cursor,
   and more in the same run.
 - Git worktree isolation per agent. Main branch stays clean.
 - Janitor verification: tests, lint, types, PII gating.

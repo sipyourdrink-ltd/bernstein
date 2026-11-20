@@ -1,0 +1,1 @@
+Clarify README dashboard connections to an existing task server, identify administrative MCP tools and returned run identifiers, and make the name analogy specific to orchestration. Keep all translated README sections aligned.

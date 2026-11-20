@@ -714,3 +714,19 @@ required context is `missing`, or it is present and `failing`.
 
 Which paths each type job covers, and what the `|| true` runs report,
 are documented in `docs/operations/type-check-scope.md`.
+
+### Coupled trufflehog updates
+
+Renovate tracks the pinned scanner action and its Docker image version in the
+`trufflehog` group. `minimumGroupSize: 2` postpones branch creation when only
+one update is available. The custom regex manager still checks the actual
+Docker image, rather than assuming that every action tag has a published image.
+`tests/unit/test_trufflehog_workflow_yaml.py` checks extraction and the grouping
+barrier as well as equality of the scanner and wrapper versions. A pending
+companion update must be resolved before a scanner bump can land.
+
+## peter-evans/create-pull-request version
+
+The topology healer, weekly and continuous coverage ratchets, observability snapshot and major/minor release bump use create-pull-request v8.1.2. Their branch names, token selection, inputs and permissions stay as configured. This action uses Node.js 24 on the existing Ubuntu runners.
+
+The action is pinned to `15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8`. Its upstream `v8.1.2` tag resolves to that commit.
