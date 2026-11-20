@@ -140,3 +140,15 @@ def test_backward_compat_main_imports() -> None:
     assert recap is not None
     assert help_all is not None
     assert retro is not None
+
+
+def test_deferred_commands_keep_their_click_objects() -> None:
+    from bernstein.cli import commands, main
+    from bernstein.cli.commands.adapter_cmd import adapters_group, test_adapter
+    from bernstein.cli.commands.resume_cmd import resume_cmd
+    from bernstein.eval.bench.bench_cli import bench_group
+
+    assert commands.adapters_group is main.adapters_group is main.cli.commands["adapters"] is adapters_group
+    assert main.test_adapter is main.cli.commands["test-adapter"] is test_adapter
+    assert main.resume_cmd is main.cli.commands["resume"] is resume_cmd
+    assert main.bench_group is main.cli.commands["bench"] is bench_group

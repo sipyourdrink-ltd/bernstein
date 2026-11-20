@@ -85,8 +85,8 @@ def test_rich_help_counts_selectable_names(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.parametrize("args", [("--help",), ("--version",), ("config-path", "--json")])
-def test_lightweight_cli_skips_adapter_implementations(tmp_path: Path, args: tuple[str, ...]) -> None:
-    """A fresh CLI process can finish without loading Qwen or the OpenAI SDK."""
+def test_lightweight_cli_defers_unrelated_imports(tmp_path: Path, args: tuple[str, ...]) -> None:
+    """Check imports in a fresh process so test collection cannot preload them."""
     source = Path(__file__).resolve().parents[3] / "src"
     script = """
 import sys
@@ -96,6 +96,10 @@ from bernstein.cli.main import cli
 cli.main(args=sys.argv[1:], standalone_mode=False)
 assert "bernstein.adapters.qwen" not in sys.modules
 assert "openai" not in sys.modules
+assert "bernstein.cli.commands.adapter_cmd" not in sys.modules
+assert "bernstein.cli.commands.resume_cmd" not in sys.modules
+assert "bernstein.eval.bench.bench_cli" not in sys.modules
+assert "bernstein.core.server.server_app" not in sys.modules
 """
     env = {
         "PATH": os.defpath,

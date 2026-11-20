@@ -35,9 +35,9 @@ from bernstein.core.models import (
     NodeInfo,
     Task,
 )
+from bernstein.core.observability.json_logging import setup_json_logging
 from bernstein.core.protocols.a2a.server_receipts import build_receipt_issuer
 from bernstein.core.server.access_log import StructuredAccessLogMiddleware
-from bernstein.core.server.json_logging import setup_json_logging
 from bernstein.core.server.server_middleware import (
     CrashGuardMiddleware,
     IPAllowlistMiddleware,

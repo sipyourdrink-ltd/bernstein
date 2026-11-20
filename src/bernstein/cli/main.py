@@ -20,11 +20,12 @@ And existing subcommand modules:
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator, MutableMapping
+from importlib import import_module
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import click
-
-from bernstein.cli.adapter_cmd import adapters_group, test_adapter
 
 # Import commands from decomposed modules (NEW)
 from bernstein.cli.advanced_cmd import (
@@ -48,7 +49,6 @@ from bernstein.cli.agents_cmd import agents_group
 from bernstein.cli.aliases import aliases_cmd, expand_alias
 from bernstein.cli.audit_cmd import audit_group
 from bernstein.cli.auth_cmd import auth_group, auth_login
-from bernstein.cli.cache_cmd import cache_group
 from bernstein.cli.changelog_cmd import changelog_group as changelog_cmd
 from bernstein.cli.changelog_cmd import changelog_run_alias
 from bernstein.cli.chaos_cmd import chaos_group
@@ -80,13 +80,11 @@ from bernstein.cli.commands.impact_cmd import (
     dep_impact_alias_cmd,
     impact_group,
 )
-from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.issue_to_pr_cmd import issue_to_pr_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
 from bernstein.cli.commands.model_cmd import model_group
 from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.receipt_cmd import receipt_group
-from bernstein.cli.commands.resume_cmd import resume_cmd
 from bernstein.cli.commands.role_adapter_policy_cmd import security_group as _role_adapter_security_group
 from bernstein.cli.commands.run_graph_cmd import run_graph_cmd
 from bernstein.cli.commands.run_names_cmd import run_lookup_cmd
@@ -170,8 +168,15 @@ from bernstein.cli.workflow_cmd import workflow_group
 from bernstein.cli.workspace_cmd import config_group, workspace_group
 from bernstein.cli.worktrees_cmd import worktrees_group
 from bernstein.cli.wrap_up_cmd import wrap_up
-from bernstein.core.json_logging import setup_json_logging
-from bernstein.eval.bench.bench_cli import bench_group
+from bernstein.core.observability.json_logging import setup_json_logging
+
+if TYPE_CHECKING:
+    from bernstein.cli.commands.adapter_cmd import adapters_group, test_adapter
+    from bernstein.cli.commands.autofix_cmd import autofix_group as autofix_group
+    from bernstein.cli.commands.cache_cmd import cache_group as cache_group
+    from bernstein.cli.commands.integrations_cmd import integrations_group as integrations_group
+    from bernstein.cli.commands.resume_cmd import resume_cmd as resume_cmd
+    from bernstein.eval.bench.bench_cli import bench_group as bench_group
 
 # ---------------------------------------------------------------------------
 # Re-export shared state so existing imports like
@@ -281,7 +286,6 @@ __all__ = [
 
 # Operator-experience commands (feat/operator-experience)
 from bernstein.cli.commands.approval_cmd import approve_tool_cmd, reject_tool_cmd
-from bernstein.cli.commands.autofix_cmd import autofix_group
 from bernstein.cli.commands.creds_cmd import connect_cmd, creds_group
 from bernstein.cli.commands.daemon_cmd import daemon_group
 from bernstein.cli.commands.hooks_cmd import hooks as hooks_group
@@ -518,6 +522,61 @@ def print_rich_help() -> None:
 # ---------------------------------------------------------------------------
 
 
+type _CommandTarget = tuple[str, str]
+
+
+def _load_command(target: _CommandTarget) -> click.Command:
+    module, attribute = target
+    return cast("click.Command", getattr(import_module(module), attribute))
+
+
+class _CommandRegistry(MutableMapping[str, click.Command]):
+    """Keep command names available before their modules are imported."""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, click.Command | _CommandTarget] = {}
+        self.exports: dict[str, _CommandTarget] = {}
+
+    def defer(self, name: str, module: str, attribute: str) -> None:
+        target = (module, attribute)
+        self._entries[name] = target
+        self.exports[attribute] = target
+
+    def __getitem__(self, name: str) -> click.Command:
+        entry = self._entries[name]
+        return _load_command(entry) if isinstance(entry, tuple) else entry
+
+    def __setitem__(self, name: str, command: click.Command) -> None:
+        self._entries[name] = command
+
+    def __delitem__(self, name: str) -> None:
+        del self._entries[name]
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._entries
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
+_commands = _CommandRegistry()
+
+
+def __getattr__(name: str) -> click.Command:
+    """Keep direct imports of deferred command objects from this module working."""
+    target = _commands.exports.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return _load_command(target)
+
+
+def __dir__() -> list[str]:
+    return sorted(globals().keys() | _commands.exports.keys())
+
+
 class _RichGroup(click.Group):
     """Click group that renders help with Rich instead of plain text.
 
@@ -606,7 +665,7 @@ def _validate_evolve_mode(evolve: bool, budget: float, max_cycles: int, yes: boo
             raise SystemExit(0)
 
 
-@click.group(cls=_RichGroup, invoke_without_command=True)
+@click.group(cls=_RichGroup, commands=_commands, invoke_without_command=True)
 @click.version_option(package_name="bernstein")
 @click.option("--goal", "-g", default=None, help="Inline goal (no seed file needed).")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output in JSON format.")
@@ -993,7 +1052,7 @@ cli.add_command(plan)
 cli.add_command(plan, "tasks")
 cli.add_command(spec_group)
 cli.add_command(backlog_group, "backlog")
-cli.add_command(bench_group)
+_commands.defer("bench", "bernstein.eval.bench.bench_cli", "bench_group")
 cli.add_command(logs_group, "logs")
 cli.add_command(decisions_group, "decisions")
 # #3144: consensus is deprecated (relay store has no producer in the shipped
@@ -1007,7 +1066,7 @@ cli.add_command(config_group)
 
 # From advanced_cmd module - groups and commands
 cli.add_command(benchmark_alias_group, "benchmark")
-cli.add_command(cache_group, "cache")
+_commands.defer("cache", "bernstein.cli.commands.cache_cmd", "cache_group")
 cli.add_command(gc_group, "gc")
 cli.add_command(eval_group)
 cli.add_command(best_of_n_group)
@@ -1075,7 +1134,7 @@ cli.add_command(sandbox_group, "sandbox")
 cli.add_command(security_review_cmd, "security-review")
 cli.add_command(seal_group, "seal")
 cli.add_command(daemon_group, "daemon")
-cli.add_command(autofix_group, "autofix")
+_commands.defer("autofix", "bernstein.cli.commands.autofix_cmd", "autofix_group")
 cli.add_command(pipeline_group, "pipeline")
 cli.add_command(connect_cmd, "connect")
 cli.add_command(creds_group, "creds")
@@ -1116,9 +1175,9 @@ cli.add_command(estimate_alias_cmd, "estimate")
 cli.add_command(status)
 cli.add_command(ps_cmd, "ps")
 cli.add_command(stop)
-cli.add_command(test_adapter, "test-adapter")
-cli.add_command(adapters_group, "adapters")
-cli.add_command(integrations_group, "integrations")
+_commands.defer("test-adapter", "bernstein.cli.commands.adapter_cmd", "test_adapter")
+_commands.defer("adapters", "bernstein.cli.commands.adapter_cmd", "adapters_group")
+_commands.defer("integrations", "bernstein.cli.commands.integrations_cmd", "integrations_group")
 cli.add_command(endpoints_group, "endpoints")
 cli.add_command(trackers_group, "trackers")
 cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`
@@ -1128,7 +1187,7 @@ cli.add_command(start)
 cli.add_command(serve)  # foreground task server for containers / central node (#2803)
 cli.add_command(demo)
 cli.add_command(checkpoint_cmd, "checkpoint")
-cli.add_command(resume_cmd, "resume")
+_commands.defer("resume", "bernstein.cli.commands.resume_cmd", "resume_cmd")
 cli.add_command(fork_cmd, "fork")
 cli.add_command(wrap_up, "wrap-up")
 cli.add_command(audit_group, "audit")
