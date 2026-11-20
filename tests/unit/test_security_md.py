@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-#: This test reads two fixed repo-root files by path rather than importing
+#: This test reads fixed repository files by path rather than importing
 #: any `bernstein` module, so no diff ever produces an import edge to it. A
 #: release bump that rewrites `pyproject.toml`'s version and leaves
 #: `SECURITY.md` stale is exactly the change this file exists to catch, so it
@@ -93,29 +93,42 @@ def test_project_minor_version_ignores_a_prerelease_patch_suffix(
     assert _project_minor_version() == "3.21"
 
 
-def test_supported_versions_table_has_current_minor_marked_yes() -> None:
-    minor = _project_minor_version()
-    rows = _supported_versions_table()
-    expected_row = (f"{minor}.x", "Yes")
-    assert expected_row in rows, (
-        f"SECURITY.md's Supported Versions table does not mark the current "
-        f"release line ({minor}.x) as supported; got {rows}. "
-        f"pyproject.toml declares version {minor}.x -- update the table."
+def test_supported_versions_table_has_one_current_line_marked_yes() -> None:
+    current_line = f"{_project_minor_version()}.x"
+    current_rows = [row for row in _supported_versions_table() if row[0] == current_line]
+    assert current_rows == [(current_line, "Yes")], (
+        f"SECURITY.md must list the current release line ({current_line}) exactly once, marked Yes; got {current_rows}."
     )
 
 
-def test_supported_versions_names_only_the_planned_3_24_2_backport() -> None:
+def test_supported_versions_table_names_only_the_planned_exception() -> None:
     minor = _project_minor_version()
-    expected = [(f"{minor}.x", "Yes")]
+    other_lines = [row for row in _supported_versions_table() if row[0] not in {f"{minor}.x", "All other versions"}]
+    expected = [("3.24.x", "3.24.2 backport only")] if minor == "4.0" else []
+    assert other_lines == expected
+
+
+def test_supported_versions_table_has_one_unsupported_catchall() -> None:
+    catchall = "All other versions"
+    catchall_rows = [row for row in _supported_versions_table() if row[0] == catchall]
+    assert catchall_rows == [(catchall, "No")]
+
+
+def test_supported_versions_table_orders_current_line_exception_then_catchall() -> None:
+    minor = _project_minor_version()
+    expected = [f"{minor}.x"]
     if minor == "4.0":
-        expected.append(("3.24.x", "3.24.2 backport only"))
-    expected.append(("All other versions", "No"))
-    assert _supported_versions_table() == expected
+        expected.append("3.24.x")
+    expected.append("All other versions")
+    assert [version for version, _supported in _supported_versions_table()] == expected
 
 
 def test_backport_policy_matches_the_release_notes() -> None:
     if _project_minor_version() == "4.0":
         policy = "Regular fixes ship on 4.0.x. The only planned 3.24.x backport is 3.24.2."
-        assert policy in SECURITY_MD.read_text(encoding="utf-8")
+        assert policy in SECURITY_MD.read_text(encoding="utf-8").splitlines()
+        cut = REPO_ROOT / "scripts" / "release_cuts" / "v4.0.0.toml"
+        assert policy in tomllib.loads(cut.read_text(encoding="utf-8"))["limitations"]
         page = REPO_ROOT / "docs" / "release-notes" / "v4.0.0.md"
-        assert policy in page.read_text(encoding="utf-8").split("## Known limitations", 1)[1]
+        limitations = page.read_text(encoding="utf-8").split("## Known limitations\n", 1)[1]
+        assert f"- {policy}" in limitations.splitlines()
