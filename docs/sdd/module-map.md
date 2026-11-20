@@ -59,7 +59,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `memory/`                   | Persistent memory stores and tamper-evident MemoryChain provenance |
 | `notifications/`            | Outbound notification subsystem (release 1.9) |
 | `observability/`            | observability sub-package |
-| `orchestration/`            | orchestration sub-package |
+| `orchestration/`            | Run preparation and execution, with bootstrap errors routed by `bootstrap_output.py` |
 | `payments/`                 | Sub-package: enforce, mandate, receipt |
 | `persistence/`              | persistence sub-package |
 | `planning/`                 | planning sub-package |
