@@ -32,6 +32,8 @@ def _make_bundle(
     suite: BenchSuite | None = None,
     adapter: str = "fixture",
     mismatched_task: bool = False,
+    refused: bool = False,
+    override_score: float | None = None,
 ) -> SubmissionBundle:
     """Construct a valid, hash-checked SubmissionBundle fixture."""
     results: list[TaskResult] = []
@@ -39,13 +41,15 @@ def _make_bundle(
     for idx, task in enumerate(suite.tasks):
         passed = idx < len(passed_flags) and passed_flags[idx]
         receipt = {"task": f"{suite_version}-{idx}", "passed": passed, "submitted_at": submitted_at}
+        if refused:
+            receipt["status"] = "refused"
         results.append(
             TaskResult(
                 task_id=task.id,
                 task_hash="bad-task-hash" if mismatched_task else task.content_hash(),
                 receipt=receipt,
                 passed=passed,
-                score=1.0 if passed else -0.5,
+                score=override_score if override_score is not None else (1.0 if passed else -0.5),
             )
         )
     resolved_suite_hash = suite_hash or suite.suite_hash
@@ -296,3 +300,25 @@ def test_nonfinite_submission_time_is_refused_before_ranking(tmp_path: Path) -> 
     result = CliRunner().invoke(compliance_group, ["controls", "--bundle", str(path)])
     assert result.exit_code != 0
     assert "finite" in result.output
+
+
+def test_refused_suite_does_not_replace_recorded_measurement(tmp_path: Path) -> None:
+    for time, refused in [(10, False), (20, True)]:
+        bundle = _make_bundle(suite_version="goal-drift-v1", submitted_at=time, passed_flags=[False], refused=refused)
+        bundle.save(tmp_path / f"{time}.json")
+    result = CliRunner().invoke(compliance_group, ["controls", "--format", "json", "--bundle-dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    row = next(row for row in json.loads(result.stdout) if row["control_id"] == "CTL-ROB-02")
+    assert row["latest_measurement"]["submitted_at"] == 10
+
+
+def test_nonfinite_score_cannot_produce_invalid_json(tmp_path: Path) -> None:
+    bundle = _make_bundle(
+        suite_version="goal-drift-v1", submitted_at=10, passed_flags=[False], override_score=float("nan")
+    )
+    path = tmp_path / "bad-score.json"
+    bundle.save(path)
+    result = CliRunner().invoke(compliance_group, ["controls", "--format", "json", "--bundle", str(path)])
+    assert result.exit_code != 0
+    assert not result.stdout
+    assert "finite" in result.stderr

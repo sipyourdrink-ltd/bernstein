@@ -34,6 +34,8 @@ class RecordedMeasurement:
         """Build a measurement summary from a verified :class:`SubmissionBundle`."""
         if not math.isfinite(bundle.submitted_at):
             raise ValueError("Benchmark submission time must be finite")
+        if not math.isfinite(bundle.overall_score) or any(not math.isfinite(r.score) for r in bundle.task_results):
+            raise ValueError("Benchmark scores must be finite")
         total = len(bundle.task_results)
         passed = sum(1 for r in bundle.task_results if r.passed)
         return cls(
@@ -127,7 +129,9 @@ def select_latest_measurements(
 
     latest: dict[str, RecordedMeasurement] = {}
     for item in measurements:
-        if isinstance(item, SubmissionBundle) and item.scheduler_config.get("adapter") == "mock":
+        if isinstance(item, SubmissionBundle) and (
+            item.scheduler_config.get("adapter") == "mock" or item.refused_results()
+        ):
             continue
         rec = RecordedMeasurement.from_bundle(item) if isinstance(item, SubmissionBundle) else item
         if not math.isfinite(rec.submitted_at):
@@ -221,7 +225,7 @@ def discover_bench_coverage_inputs(
     measurements = []
     for bundle in bundles:
         name = bundle.suite_version
-        if name not in suite_controls or bundle.scheduler_config.get("adapter") == "mock":
+        if name not in suite_controls or bundle.scheduler_config.get("adapter") == "mock" or bundle.refused_results():
             continue
         if name not in manifests:
             manifests[name] = _get_suite(name)
