@@ -303,6 +303,28 @@ class TestRecordCumulative:
         assert t.spent_usd == pytest.approx(1.0)
         assert len(t.usages) == 1
 
+    @pytest.mark.parametrize("counter", ["input", "output", "cache_read", "cache_write"])
+    def test_charged_correction_does_not_rewind_token_watermark(self, counter: str) -> None:
+        t = Tracker(run_id="r")
+
+        def report(tokens: int, cost: float | None = None) -> float:
+            return t.record_cumulative(
+                "a",
+                "t",
+                "sonnet",
+                tokens if counter == "input" else 0,
+                tokens if counter == "output" else 0,
+                total_cache_read_tokens=tokens if counter == "cache_read" else 0,
+                total_cache_write_tokens=tokens if counter == "cache_write" else 0,
+                total_cost_usd=cost,
+            )
+
+        assert report(1000, 1.0) == pytest.approx(1.0)
+        assert report(500, 2.0) == pytest.approx(1.0)
+        assert report(1000) == 0.0
+        assert t.spent_usd == pytest.approx(2.0)
+        assert len(t.usages) == 2
+
     def test_loaded_identical_report_is_free_and_seeds_monetary_baseline(self, tmp_path: Path) -> None:
         t = Tracker(run_id="r", hard_budget_usd=1.5)
         t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)

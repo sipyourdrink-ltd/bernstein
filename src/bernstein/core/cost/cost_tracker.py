@@ -1015,6 +1015,12 @@ class CostTracker:
         )
         self._cumulative_tokens[key] = (cur_input, cur_output, cur_cache_read, cur_cache_write)
         if total_cost_usd is not None:
+            self._cumulative_tokens[key] = (
+                max(prev_input, cur_input),
+                max(prev_output, cur_output),
+                max(prev_cache_read, cur_cache_read),
+                max(prev_cache_write, cur_cache_write),
+            )
             self._cumulative_costs[key] = max(0.0, float(total_cost_usd))
             self._restored_cumulative_keys.discard(key)
         return self._spent_usd - before
