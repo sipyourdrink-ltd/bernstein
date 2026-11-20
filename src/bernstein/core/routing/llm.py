@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+API_PROVIDERS = frozenset({"openrouter", "openrouter_free", "oxen", "together", "g4f", "openai"})
+
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
@@ -285,9 +287,7 @@ async def call_llm(
         )
 
     # API-based providers go through the OpenAI-compatible client.
-    _API_PROVIDERS = {"openrouter", "openrouter_free", "oxen", "together", "g4f", "openai"}
-
-    if provider in _API_PROVIDERS:
+    if provider in API_PROVIDERS:
         result = await _call_api_provider(prompt, model, provider, max_tokens=max_tokens, temperature=temperature)
     else:
         result = await _call_cli_provider(prompt, model, provider)

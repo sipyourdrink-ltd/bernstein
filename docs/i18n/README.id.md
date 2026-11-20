@@ -132,14 +132,18 @@ Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate
 Percobaan ulang mempertahankan `dispatch_tier`; saat tugas dibuka kembali, tingkat dapat dipilih secara eksplisit. Lihat [kontrak tingkat dispatch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Jalankan tugas dari cabang kerja. Bernstein menggabungkan perubahan yang telah diperiksa ke cabang aktif dan menghentikan proses yang dapat menggabungkan perubahan ke cabang bawaan. Tinjau perubahan di cabang kerja sebelum membuka pull request.
 
 `bernstein doctor --json` juga menampilkan temuan kontrak audit `findings`, yang identik dengan hasil `bernstein govern audit --only INS --json` untuk pengamatan instalasi yang sama. Tampilan laporan doctor biasa tetap sama. Lihat [panduan operasional doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) untuk ID pemeriksaan yang stabil.
 
