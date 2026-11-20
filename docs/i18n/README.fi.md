@@ -132,14 +132,18 @@ Jokaisen solmun ottaa agentti, jonka roolin vaihe sallii; rooliaidat ja hyväksy
 Uudelleenyritykset säilyttävät `dispatch_tier`-arvon; tehtävää uudelleen avattaessa tason voi valita erikseen. Katso [suoritustasojen sopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### asennus 30 sekunnissa
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Käynnistä ajo työhaarasta. Bernstein yhdistää tarkistetut muutokset nykyiseen haaraan ja estää muutoksia yhdistävät ajot oletushaarassa. Tarkista muutokset työhaarassa ennen pull requestin avaamista.
 
 `bernstein doctor --json` näyttää myös auditointisopimuksen `findings`-havainnot, jotka ovat samoilla asennushavainnoilla samat kuin komennon `bernstein govern audit --only INS --json` tulokset. Tavallisen doctor-raportin esitystapa ei muutu. Pysyvät tarkistustunnisteet löytyvät [doctorin käyttöoppaasta](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
@@ -214,7 +218,7 @@ Jokainen tavoite etenee neljän vaiheen läpi:
 Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja siihen liittyy: [miksi deterministinen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +239,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
+
+`bernstein compliance controls` näyttää kunkin kontrollin testikokoelmat ja viimeisimmän täydellisen mittauksen, jos sellainen on saatavilla. [Vertailutestien kattavuus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Koodihygieniaportit: `bernstein readme-l10n verify` hylkää PR:n, jonka käännetyt README-tiedostot poikkeavat englanninkielisestä lähteestä (nimetten vanhentuneen osion), ja `bernstein readme-l10n sync` päivittää sidokset englanninkielisten muokkausten jälkeen. Katso [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +264,7 @@ bernstein volunteer browse --budget 60
 [Lahjoittajan opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) käsittelee workerin ajamisen ja asettamasi budjetin, [projektin opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) manifestin ilmoittamisen, ja [uhkamalli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) kertoo, miltä kukin raja suojaa ja miltä ei. Yhden komennon ajuria ei ole vielä julkaistu: tänään toimivat alikomennot ovat `verify`, `browse`, `budget`, `verify-bundle` ja `hub`. `autopilot` on rekisteröity, mutta se kieltäytyy käynnistymästä, kunnes `TaskSource` on toteutettu.
 
 ### etusivun lisäksi
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.bernstein.run/):
 
@@ -270,6 +276,7 @@ Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.b
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | missä arvo syntyy ja milloin Bernstein ei ole oikea työkalu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratiiviset YAML DAG -rakenteet agentti- / komento- / silmukkasolmuista |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | selainpohjainen hallintapaneeli samalla rajapinnalla kuin TUI (tehtävien luonti ja tarkastelu) |
+| [klusterin työntekijäsolmujen tila](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Solmu ei ota uusia tehtäviä, kun vapaa levytila, muistinkäyttö tai verkon viive ylittää asetetut rajat tai alittaa vähimmäisarvon. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | kokeellinen: aja agentteja Cloudflare Workersissa R2-työtilatasauksella omalla tililläsi. Isännöity `api.bernstein.run` -palvelu ei ole vielä saatavilla |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | vain luku -kyselykuitit sekä kyselyajuri, joka sitoo jokaisen tuloksen vastaavaan skeematilannevedokseen |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | osoita roolit sisäänrakennettujen mallien ulkopuolisiin agenttimäärityksiin — yleiseen YAML/SKILL.md-hakemistoon tai Claude Coden lisäosarakenteeseen |

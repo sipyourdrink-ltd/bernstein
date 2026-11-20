@@ -948,6 +948,10 @@ class NodeCapacitySchema(BaseModel):
     active_agents: int = 0
     gpu_available: bool = False
     supported_models: list[str] = Field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+    disk_free_mb: int | None = Field(default=None, ge=0)
+    mem_used_pct: float | None = Field(default=None, ge=0, le=100)
+    mesh_rtt_ms: float | None = Field(default=None, ge=0)
+    platform: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class NodeRegisterRequest(BaseModel):

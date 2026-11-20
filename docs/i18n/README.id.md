@@ -132,14 +132,18 @@ Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate
 Percobaan ulang mempertahankan `dispatch_tier`; saat tugas dibuka kembali, tingkat dapat dipilih secara eksplisit. Lihat [kontrak tingkat dispatch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Jalankan tugas dari cabang kerja. Bernstein menggabungkan perubahan yang telah diperiksa ke cabang aktif dan menghentikan proses yang dapat menggabungkan perubahan ke cabang bawaan. Tinjau perubahan di cabang kerja sebelum membuka pull request.
 
 `bernstein doctor --json` juga menampilkan temuan kontrak audit `findings`, yang identik dengan hasil `bernstein govern audit --only INS --json` untuk pengamatan instalasi yang sama. Tampilan laporan doctor biasa tetap sama. Lihat [panduan operasional doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) untuk ID pemeriksaan yang stabil.
 
@@ -214,7 +218,7 @@ Setiap target melalui empat tahapan:
 Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengapa deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### perintah sehari-hari
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +239,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Status eksekusi disimpan sebagai checkpoint ke `.sdd/runs/<run_id>/` pada setiap node. Melanjutkan eksekusi akan memvalidasi digest manifes pada awal eksekusi, sehingga perubahan spesifikasi akan ditolak, bukan dijalankan diam-diam sebagai manifes yang berbeda. Lihat [manifes workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Saat melanjutkan, berikan kembali nilai `-g` yang sama agar `{goal}` diganti dalam prompt node yang belum selesai.
+
+`bernstein compliance controls` menampilkan rangkaian uji untuk setiap kontrol dan pengukuran lengkap terakhir jika tersedia. [Cakupan tolok ukur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Gerbang kebersihan repositori: `bernstein readme-l10n verify` menggagalkan PR yang terjemahan README-nya menyimpang dari sumber bahasa Inggris (menyebutkan bagian yang usang), `bernstein readme-l10n sync` mengikat ulang tautan setelah pengeditan bahasa Inggris. Lihat [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +264,7 @@ bernstein volunteer browse --budget 60
 [Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi. `autopilot` sudah terdaftar, tetapi menolak berjalan sampai `TaskSource` diimplementasikan.
 
 ### di luar halaman utama
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstein.run/):
 
@@ -270,6 +276,7 @@ Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstei
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | di mana nilai gunanya dan kapan Bernstein bukan alat yang tepat |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAG YAML deklaratif dari node agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | dasbor peramban berbasis API yang sama dengan TUI (membuat dan meninjau tugas) |
+| [kondisi pekerja klaster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Pekerja berhenti mengambil tugas baru selama ruang disk kosong, penggunaan memori, atau latensi jaringan berada di luar batas yang ditetapkan. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | eksperimental: jalankan agen di Cloudflare Workers dengan sinkronisasi workspace R2 pada akun Anda sendiri. Layanan terkelola `api.bernstein.run` belum tersedia |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | tanda terima kueri hanya-baca, ditambah driver kueri yang mengaitkan setiap hasil dengan snapshot skema terkait |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | arahkan peran ke definisi agen di luar templat bawaan — direktori YAML/SKILL.md generik atau tata letak plugin Claude Code |

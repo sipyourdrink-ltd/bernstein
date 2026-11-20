@@ -132,14 +132,18 @@ flowchart LR
 Повторные попытки сохраняют `dispatch_tier`; при повторном открытии задачи можно явно выбрать уровень. См. [контракт dispatch tier](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### установка за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Запускайте задачу из рабочей ветки. Bernstein вливает проверенные изменения в текущую ветку. В ветке по умолчанию он останавливает запуски, которые могут привести к слиянию. Проверьте изменения в рабочей ветке перед созданием pull request.
 
 `bernstein doctor --json` также выводит результаты контракта аудита `findings`, совпадающие с результатами `bernstein govern audit --only INS --json` при одинаковых наблюдениях состояния установки. Обычный отчёт doctor сохраняет прежний вид. Стабильные идентификаторы проверок описаны в [руководстве по эксплуатации doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
@@ -214,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Почему планировщик — обычный Python и чем за это платим: [почему детерминизм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### повседневные команды
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +239,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Контрольные точки прогона попадают в `.sdd/runs/<run_id>/` на каждом узле. Возобновление проверяет хеш манифеста в начале прогона, поэтому изменившаяся спецификация приводит к отказу, а не к молчаливому выполнению другого манифеста. См. [манифесты workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). При возобновлении передайте то же значение `-g` ещё раз, чтобы подставить его вместо `{goal}` в промпты незавершённых узлов.
+
+`bernstein compliance controls` показывает наборы тестов для каждого контроля и последний полный результат измерения, если он есть. [Покрытие тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Гейты гигиены репозитория: `bernstein readme-l10n verify` роняет PR, в котором переводы README разошлись с английским источником (называя устаревшую секцию), `bernstein readme-l10n sync` перепривязывает их после правки английского. См. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +264,7 @@ bernstein volunteer browse --budget 60
 [Руководство донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описывает запуск воркера и бюджет, который вы задаёте, [руководство проекта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — объявление манифеста, а [модель угроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — что каждая граница защищает, а что нет. Запуск одной командой ещё не выпущен: сегодня работают подкоманды `verify`, `browse`, `budget`, `verify-bundle` и `hub`. `autopilot` зарегистрирован, но отказывается запускаться, пока не реализован `TaskSource`.
 
 ### за пределами первой страницы
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Всё глубокое живёт на [сайте документации](https://docs.bernstein.run/):
 
@@ -270,6 +276,7 @@ bernstein volunteer browse --budget 60
 | [кому это нужно](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | где польза реальна и где Bernstein — неподходящий инструмент |
 | [workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативные YAML-DAG из узлов agent / command / loop |
 | [веб-интерфейс](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерный дашборд на том же API, что и TUI (создание и просмотр задач) |
+| [состояние узлов кластера](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Узел приостанавливает приём новых задач, пока свободное место на диске, использование памяти или задержка сети выходят за заданные пределы. |
 | [облачное исполнение](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | экспериментально: запуск агентов на Cloudflare Workers с синхронизацией workspace в R2 под твоим аккаунтом. Хостинг-сервис `api.bernstein.run` пока недоступен |
 | [источники данных](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | квитанции на read-only запросы плюс драйвер запросов, привязывающий каждый результат к снимку схемы, против которого он получен |
 | [каталоги агентов](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | направь роли на определения агентов вне встроенных шаблонов — обычный каталог YAML/SKILL.md или дерево в раскладке плагина Claude Code |

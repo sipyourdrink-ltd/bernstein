@@ -132,14 +132,18 @@ flowchart LR
 ניסיונות חוזרים שומרים על `dispatch_tier`; בפתיחה מחדש של משימה אפשר לבחור את הרמה במפורש. ראו את [חוזה רמות השיגור](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+הריצו את המשימה מענף עבודה. Bernstein ממזג שינויים שעברו בדיקה לענף הנוכחי ועוצר הרצות שעשויות למזג שינויים לענף ברירת המחדל. בדקו את השינויים בענף העבודה לפני פתיחת בקשת משיכה.
 
 `bernstein doctor --json` מציג גם את ממצאי חוזה הביקורת, `findings`, הזהים לממצאי `bernstein govern audit --only INS --json` עבור אותן תצפיות התקנה. התצוגה הרגילה של דוח doctor נשארת ללא שינוי. למזהי הבדיקות היציבים, ראו את [מדריך התפעול של doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
@@ -214,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 מדוע המתזמן נכתב ב-Python טהור ואילו פשרות נובעות מכך: [מדוע דטרמיניסטי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### פקודות יומיומיות
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +239,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 מצב הריצה נשמר כנקודת שמירה תחת `.sdd/runs/<run_id>/` בכל צומת. החידוש מאמת את גיבוב המניפסט בתחילת הריצה, כך ששינוי במפרט נדחה במקום להריץ בשקט מניפסט אחר. ראה [מניפסטים של זרימת עבודה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). בעת החידוש יש לספק שוב את אותו ערך `-g` כדי להחליף את `{goal}` בפרומפטים של הצמתים שטרם הושלמו.
+
+`bernstein compliance controls` מציגה את ערכות הבדיקות לכל בקרה ואת המדידה המלאה האחרונה, אם קיימת. [כיסוי הבדיקות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 שערי היגיינה של המאגר: `bernstein readme-l10n verify` מכשיל PR שבו קובצי README מתורגמים סטו מהמקור האנגלי (תוך ציון החלק המיושן), ו-`bernstein readme-l10n sync` מצמיד אותם מחדש לאחר עריכה באנגלית. ראה [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +264,7 @@ bernstein volunteer browse --budget 60
 [מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse`, `budget`, `verify-bundle` ו-`hub` הן תת-הפקודות שעובדות. `autopilot` רשום, אך מסרב לפעול עד שימומש `TaskSource`.
 
 ### מעבר לעמוד הראשי
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 כל החומר המעמיק נמצא ב[אתר התיעוד](https://docs.bernstein.run/):
 
@@ -270,6 +276,7 @@ bernstein volunteer browse --budget 60
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | היכן נוצר הערך ומתי Bernstein אינו הכלי המתאים |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | גרפי DAG הצהרתיים ב-YAML המורכבים מצומתי סוכן / פקודה / לולאה |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | לוח בקרה בדפדפן המבוסס על אותו API בו משתמש ה-TUI (יצירה וסקירה של משימות) |
+| [מצב העובדים באשכול](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | עובד מפסיק לקבל משימות חדשות כאשר נפח הדיסק הפנוי, השימוש בזיכרון או השהיית הרשת חורגים מהספים שהוגדרו. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | ניסיוני: הרצת סוכנים ב-Cloudflare Workers עם סנכרון סביבת עבודה ב-R2 בחשבון האישי שלך. השירות המנוהל `api.bernstein.run` טרם זמין |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | קבלות שאילתות לקריאה בלבד ומנהל התקן הקושר כל תוצאה לתמונת הסכמה המתאימה |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | הפנה תפקידים להגדרות סוכנים מחוץ לתבניות המובנות — ספריית YAML/SKILL.md כללית או מבנה תוסף של Claude Code |
