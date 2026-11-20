@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### governance-lagret med öppen källkod för AI-agenter
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkänna
 Nya försök behåller `dispatch_tier`; när en uppgift öppnas igen kan nivån väljas uttryckligen. Se [kontraktet för körningsnivåer](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installera på 30 sekunder
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Starta körningen från en arbetsgren. Bernstein slår ihop verifierade ändringar med den utcheckade grenen och stoppar körningar som kan slå ihop ändringar med standardgrenen. Granska ändringarna i arbetsgrenen innan du öppnar en pull request.
 
 `bernstein doctor --json` visar också auditkontraktets resultat `findings`, som är identiska med resultaten från `bernstein govern audit --only INS --json` för samma installationsobservationer. Den vanliga doctor-rapportens visning ändras inte. Se [driftguiden för doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) för stabila kontroll-ID:n.
 
@@ -214,7 +218,7 @@ Varje mål rör sig genom fyra steg:
 Varför schemaläggaren är i ren Python och vilka avvägningar det innebär: [varför deterministisk](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### vardagliga kommandon
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +239,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Körningens tillstånd sparas som en checkpoint under `.sdd/runs/<run_id>/` vid varje nod. Återupptagning validerar manifest-digesten vid körningens start, så en ändring av specifikationen avvisas i stället för att tyst köra ett annat manifest. Se [workflow-manifest](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Ange samma `-g`-värde igen vid återupptagning så att `{goal}` ersätts i promptarna för ofärdiga noder.
+
+`bernstein compliance controls` visar testsviterna för varje kontroll och den senaste fullständiga mätningen om den finns. [Testtäckning](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Grindar för kodhygien: `bernstein readme-l10n verify` underkänner en PR vars översatta README-filer avviker från den engelska källan (med angivande av inaktuellt avsnitt), `bernstein readme-l10n sync` uppdaterar kopplingarna efter engelska ändringar. Se [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +264,7 @@ bernstein volunteer browse --budget 60
 [Givarguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) täcker hur du kör en worker och budgeten du sätter, [projektguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) täcker att deklarera ett manifest, och [hotmodellen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) anger vad varje gräns skyddar mot och inte. Körning med ett enda kommando är ännu inte släppt: i dag är `verify`, `browse`, `budget`, `verify-bundle` och `hub` de underkommandon som fungerar. `autopilot` är registrerat men vägrar att köras tills en `TaskSource` har implementerats.
 
 ### bortom förstasidan
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 All fördjupad information finns på [dokumentationswebbplatsen](https://docs.bernstein.run/):
 
@@ -270,6 +276,7 @@ All fördjupad information finns på [dokumentationswebbplatsen](https://docs.be
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | var värdet finns och när Bernstein är fel verktyg |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklarativa YAML-DAG:ar av agent- / kommando- / loop-noder |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | webbläsardashboard baserad på samma API som TUI använder (skapa och granska uppgifter) |
+| [klusterarbetarnas status](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Arbetarna hämtar inga nya uppgifter så länge ledigt diskutrymme, minnesanvändning eller nätverksfördröjning ligger utanför de konfigurerade gränserna. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimentellt: kör agenter på Cloudflare Workers med R2-synkronisering av arbetsytan mot ditt eget konto. Den hostade tjänsten `api.bernstein.run` är ännu inte tillgänglig |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | skrivskyddade frågekvitton plus en frågedrivrutin som binder varje resultat till den schemaögonblicksbild det härleddes mot |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | peka roller mot agentdefinitioner utanför de inbyggda mallarna — en generisk YAML/SKILL.md-katalog eller Claude Code-plugin-struktur |

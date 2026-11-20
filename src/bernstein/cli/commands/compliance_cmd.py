@@ -1046,29 +1046,61 @@ def pack_ai_rmf(
     show_default=True,
     help="Output format.",
 )
-def controls_command(framework: str | None, output_format: str) -> None:
-    """List the registered compliance controls and their framework mappings."""
+@click.option(
+    "--bundle",
+    "bundle_paths",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    multiple=True,
+    help="Path to a benchmark submission bundle .json file (repeatable).",
+)
+@click.option(
+    "--bundle-dir",
+    "bundle_dirs",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    multiple=True,
+    help="Directory of benchmark submission bundle .json files (repeatable).",
+)
+def controls_command(
+    framework: str | None,
+    output_format: str,
+    bundle_paths: tuple[Path, ...],
+    bundle_dirs: tuple[Path, ...],
+) -> None:
+    """List the registered compliance controls, declaring benchmark suites, and latest measurements."""
+    from bernstein.compliance.control_coverage import (
+        build_control_coverage,
+        discover_bench_coverage_inputs,
+        render_coverage_markdown,
+        render_coverage_text,
+    )
     from bernstein.compliance.controls import get_default_registry
 
     registry = get_default_registry()
-    controls = registry.list_controls(framework=framework)
-    if framework and not controls:
+    try:
+        suite_controls, measurements = discover_bench_coverage_inputs(
+            bundle_paths=bundle_paths,
+            bundle_dirs=bundle_dirs,
+        )
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"Failed to load benchmark bundle: {exc}") from exc
+
+    entries = build_control_coverage(
+        registry,
+        suite_controls,
+        measurements,
+        framework=framework,
+    )
+    if framework and not entries:
         # A typo must not read as "no controls for this framework".
         known = sorted({k for c in registry.list_controls() for k in c.references})
         click.echo(f"No control references framework {framework!r}; known frameworks: {', '.join(known)}", err=True)
 
     if output_format == "json":
-        click.echo(json.dumps([c.to_dict() for c in controls], indent=2))
+        click.echo(json.dumps([e.to_dict() for e in entries], indent=2))
         return
 
     if output_format == "markdown":
-        click.echo(registry.to_markdown_table(framework=framework))
+        click.echo(render_coverage_markdown(entries))
         return
 
-    # Text table format
-    click.echo(f"{'Control ID':<14} {'Category':<14} {'Frameworks':<28} Title")
-    click.echo("─" * 95)
-    for c in controls:
-        fw_list = ", ".join(c.references.keys())
-        click.echo(f"{c.control_id:<14} {c.category:<14} {fw_list:<28} {c.title}")
-    click.echo(f"\nTotal: {len(controls)} controls")
+    click.echo(render_coverage_text(entries))
