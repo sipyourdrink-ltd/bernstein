@@ -120,6 +120,28 @@ def test_plan_empty_task_list() -> None:
     assert "No tasks found" in result.output
 
 
+def test_plan_graph_renders_the_task_graph() -> None:
+    graph = {
+        "nodes": [
+            {"id": "prepare", "title": "Prepare input", "status": "done"},
+            {"id": "render", "title": "Render figure", "status": "open"},
+        ],
+        "edges": [{"from": "prepare", "to": "render"}],
+        "critical_path": ["prepare", "render"],
+        "critical_path_minutes": 10,
+    }
+    with patch("bernstein.cli.task_cmd.server_get", return_value=graph) as server_get:
+        result = CliRunner().invoke(cli, ["plan", "--graph"])
+
+    assert result.exit_code == 0, result.output
+    server_get.assert_called_once_with("/tasks/graph")
+    assert "Task Dependency Graph" in result.output
+    assert "Prepare input" in result.output
+    assert "Render figure" in result.output
+    assert "Critical path: prepare → render" in result.output
+    assert "Estimated duration: 10 min" in result.output
+
+
 @pytest.mark.parametrize("state", [None, "active", "completed", "blocked"])
 def test_plan_ls_filters_managed_plans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str | None) -> None:
     plan_names = {"active": "ongoing", "completed": "finished", "blocked": "waiting"}
