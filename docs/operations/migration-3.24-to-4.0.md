@@ -63,6 +63,42 @@ layer's results before advancing. Do not rely on this boundary to interrupt
 another node already running in the same layer
 ([execution loop][workflow-run], [`_execute_layer`][workflow-layer]).
 
+## Render delta serialization
+
+[`RenderDelta`][render-delta] now carries `base_unstable_properties` and
+`head_unstable_properties` as sorted tuples of property/value pairs.
+[`render_delta`][render-compare] retains each receipt's full unstable-property
+snapshot, including unchanged values, even when the environments are
+incomparable and no property deltas are produced.
+
+Consumer upgrade checklist:
+
+- Accept the optional `base_unstable_properties` and
+  `head_unstable_properties` objects in serialized deltas. `to_dict()` writes
+  each field only when its snapshot is nonempty; it omits empty metadata
+  fields ([`RenderDelta.to_dict`][render-delta]).
+- Continue reading older deltas with those fields absent. `from_dict()` loads
+  missing fields as empty tuples; present objects are converted to sorted
+  string property/value pairs ([`RenderDelta.from_dict`][render-delta]).
+- Keep the two snapshots available when displaying an incomparable result.
+  Their presence does not mean that comparison succeeded
+  ([`render_delta`][render-compare], [`RenderDelta.is_incomparable`][render-delta]).
+
+[`first_property_difference(base, head)`][render-first] operates on flattened
+observation maps. It returns the lexicographically first changed or missing
+`(element_path, property)` tuple, ordered by element path and then property
+name, or `None` for equal maps. It does not mutate either map or validate
+environments; use [`render_delta`][render-compare] for receipt comparison with
+environment validation.
+
+**Compatibility limit:** this adds metadata to the serialized result; existing
+environment checks and comparison verdicts are unchanged
+([release note][render-note], [`render_delta`][render-compare]). Consumers that
+require an exact set of JSON keys must allow the new optional fields. Missing
+metadata can be read as empty by `from_dict()`, but metadata on an incomparable
+result does not make the receipts comparable
+([`RenderDelta` serialization][render-delta], [comparison][render-compare]).
+
 [gate-parser]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/config/seed_parser.py#L1841-L1999
 [intent-parser]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/config/seed_parser.py#L2047-L2095
 [gate-config]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/quality/quality_gates.py#L86-L294
@@ -76,3 +112,7 @@ another node already running in the same layer
 [workflow-layer]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/workflows/workflow_runner.py#L728-L761
 [workflow-spec]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/workflows/workflow_spec.py
 [workflow-note]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/docs/release-notes/fragments/workflow-run-abort-skips-later-layers.md
+[render-delta]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/evidence/render_receipt.py#L643-L713
+[render-compare]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/evidence/render_receipt.py#L715-L805
+[render-first]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/src/bernstein/core/evidence/render_receipt.py#L571-L588
+[render-note]: https://github.com/sipyourdrink-ltd/bernstein/blob/19672b2645438131a2a23b8992803ad5ef94b71e/docs/release-notes/fragments/7088-render-pair-unstable-properties.md
