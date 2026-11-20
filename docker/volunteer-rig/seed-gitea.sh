@@ -10,7 +10,8 @@ set -euo pipefail
 GITEA_URL="${GITEA_URL:-http://gitea:3000}"
 ADMIN_USER="bernstein"
 ADMIN_PASS="volunteer-rig-pass"
-ADMIN_EMAIL="admin@bernstein.test"
+RIG_BIN=$(cd -- "$(dirname -- "$0")" && pwd)
+FIXTURES_DIR="${FIXTURES_DIR:-/fixtures}"
 REPO_OWNER="bernstein"
 REPO_NAME="fixture-project"
 LABEL_NAME="volunteer-ok"
@@ -31,36 +32,33 @@ log "Admin user created by gitea container startup."
 
 # ── Get API token ─────────────────────────────────────────────────────────
 log "Generating API token..."
-TOKEN_JSON=$(curl -sf -X POST "${GITEA_URL}/api/v1/repos" \
-    -H "Authorization: token ${TOKEN}" \
+TOKEN_JSON=$(curl -sf -X POST "${GITEA_URL}/api/v1/users/${ADMIN_USER}/tokens" \
+    -u "${ADMIN_USER}:${ADMIN_PASS}" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"${REPO_NAME}\", \"private\": false, \"auto_init\": true}" > /dev/null 2>&1 || true
-
-TOKEN=$(echo "${TOKEN_JSON}" | jq -r '.sha1')
-if [[ -z "${TOKEN}" || "${TOKEN}" == "null" ]]; then
-    fail "No token returned. Check admin credentials."
-fi
+    -d '{"name":"volunteer-rig-seed","scopes":["write:repository","write:issue"]}') || fail "Failed to get seed token"
+TOKEN=$(jq -er '.sha1 | strings | select(length > 0)' <<< "${TOKEN_JSON}") || fail "No seed token returned"
 log "Token generated."
 
 # ── Create fixture repo ───────────────────────────────────────────────────
 log "Creating fixture repo..."
-curl -sf -X POST "${GITEA_URL}/api/v1/repos" \
+curl -sf -X POST "${GITEA_URL}/api/v1/user/repos" \
     -H "Authorization: token ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"${REPO_NAME}\", \"private\": false}" > /dev/null 2>&1 || true
+    -d "{\"name\": \"${REPO_NAME}\", \"private\": false}" > /dev/null
 
 # ── Push fixture files ─────────────────────────────────────────────────────
 log "Cloning fixture repo..."
-cd /tmp
-rm -rf "${REPO_NAME}"
-git clone "http://${ADMIN_USER}:${ADMIN_PASS}@gitea:3000/${REPO_OWNER}/${REPO_NAME}.git" 2>/dev/null || true
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/volunteer-rig.XXXXXXXX")
+trap 'rm -rf -- "$workdir"' EXIT
+cd "$workdir"
+git clone "http://${ADMIN_USER}:${ADMIN_PASS}@gitea:3000/${REPO_OWNER}/${REPO_NAME}.git" 2>/dev/null || fail "Failed to clone the fixture repo"
 cd "${REPO_NAME}"
 
 # Copy fixture files
-cp /fixtures/LICENSE .
-cp /fixtures/README.md .
+cp "$FIXTURES_DIR"/LICENSE .
+cp "$FIXTURES_DIR"/README.md .
 mkdir -p .bernstein
-cp /fixtures/volunteer.json .bernstein/volunteer.json
+cp "$FIXTURES_DIR"/volunteer.json .bernstein/volunteer.json
 
 git config user.email "rig@bernstein.test"
 git config user.name "Volunteer Rig"
@@ -72,10 +70,10 @@ log "Fixture repo seeded."
 
 # ── Create label ──────────────────────────────────────────────────────────
 log "Creating ${LABEL_NAME} label..."
-curl -sf -X POST "${GITEA_URL}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/labels" \
+LABEL_ID=$(curl -sf -X POST "${GITEA_URL}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/labels" \
     -H "Authorization: token ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"${LABEL_NAME}\", \"color\": \"#00a000\"}" > /dev/null 2>&1 || true
+    -d "{\"name\": \"${LABEL_NAME}\", \"color\": \"#00a000\"}" | jq -er '.id | numbers')
 
 # ── Create two issues ─────────────────────────────────────────────────────
 log "Creating volunteer issues..."
@@ -83,12 +81,12 @@ for i in 1 2; do
     curl -sf -X POST "${GITEA_URL}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/issues" \
         -H "Authorization: token ${TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "{\"title\": \"Volunteer task ${i}\", \"body\": \"This is fixture task ${i}.\", \"labels\": [\"${LABEL_NAME}\"]}" > /dev/null
+        -d "{\"title\": \"Volunteer task ${i}\", \"body\": \"This is fixture task ${i}.\", \"labels\": [${LABEL_ID}]}" > /dev/null
 done
 log "Created 2 issues with ${LABEL_NAME} label."
 
 # ── Assert ────────────────────────────────────────────────────────────────
 log "Running assert step..."
-/usr/local/bin/volunteer-rig-assert
+"${RIG_BIN}/volunteer-rig-assert"
 
 log "Seed complete. Rig is ready."
