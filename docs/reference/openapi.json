@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Bernstein Task Server",
-    "description": "Bernstein REST API - the open-source governance layer for AI agents, one git worktree per task.\n\n## Authentication\n\nAuthentication is ENABLED by default.  Include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nTo run without auth (development only), set `BERNSTEIN_AUTH_DISABLED=1` - this logs a loud warning and passes every request through.\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/ready`, `/alive`, `/.well-known/agent.json`, `/docs`, `/openapi.json`, and the auth-flow endpoints (`/auth/login`, `/auth/oidc/callback`, etc.).\n\nWebhook and hook endpoints (`/webhook`, `/webhooks/*`, `/hooks/{session_id}`) authenticate via HMAC-SHA256 signatures - they do NOT accept Bearer tokens.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited - respect the `Retry-After` header |\n| 500 | Internal server error |\n",
+    "description": "Bernstein REST API - an open-source governance layer for AI agents, one git worktree per task.\n\n## Authentication\n\nAuthentication is ENABLED by default.  Include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nTo run without auth (development only), set `BERNSTEIN_AUTH_DISABLED=1` - this logs a loud warning and passes every request through.\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/ready`, `/alive`, `/.well-known/agent.json`, `/docs`, `/openapi.json`, and the auth-flow endpoints (`/auth/login`, `/auth/oidc/callback`, etc.).\n\nWebhook and hook endpoints (`/webhook`, `/webhooks/*`, `/hooks/{session_id}`) authenticate via HMAC-SHA256 signatures - they do NOT accept Bearer tokens.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited - respect the `Retry-After` header |\n| 500 | Internal server error |\n",
     "version": "1.0.0"
   },
   "paths": {
@@ -4331,7 +4331,7 @@
     "/webhook": {
       "post": {
         "summary": "Generic Webhook",
-        "description": "Create a task directly from a generic inbound webhook payload.\n\nThe endpoint is intentionally small and separate from the trigger-manager\nflow: callers POST a task-shaped payload and Bernstein creates one task.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
+        "description": "Create a task from a generic inbound webhook payload.\n\nAfter authentication, matching trigger rules can suppress task creation.\nPolicy suppressions are recorded in trigger history and return HTTP 409.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
         "operationId": "generic_webhook_webhook_post",
         "requestBody": {
           "content": {
@@ -5926,6 +5926,78 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -13798,7 +13870,7 @@
     "/api/v1/webhook": {
       "post": {
         "summary": "Generic Webhook",
-        "description": "Create a task directly from a generic inbound webhook payload.\n\nThe endpoint is intentionally small and separate from the trigger-manager\nflow: callers POST a task-shaped payload and Bernstein creates one task.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
+        "description": "Create a task from a generic inbound webhook payload.\n\nAfter authentication, matching trigger rules can suppress task creation.\nPolicy suppressions are recorded in trigger history and return HTTP 409.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
         "operationId": "generic_webhook_api_v1_webhook_post",
         "requestBody": {
           "content": {
@@ -15393,6 +15465,78 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_api_v1_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_api_v1_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -20261,6 +20405,67 @@
         "title": "ChannelResponseResponse",
         "description": "Single channel response in API responses."
       },
+      "ClaimAdmissionStatus": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "controller_id": {
+            "type": "string",
+            "title": "Controller Id"
+          },
+          "halted": {
+            "type": "boolean",
+            "title": "Halted"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "controller_id",
+          "halted",
+          "revision",
+          "actor",
+          "reason"
+        ],
+        "title": "ClaimAdmissionStatus"
+      },
+      "ClaimControlRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason",
+          "expected_revision"
+        ],
+        "title": "ClaimControlRequest",
+        "description": "A reason, never an authority, controller path or installation selector."
+      },
       "ClaimGossipRequest": {
         "properties": {
           "receipts": {
@@ -21250,6 +21455,56 @@
             },
             "type": "array",
             "title": "Supported Models"
+          },
+          "disk_free_mb": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disk Free Mb"
+          },
+          "mem_used_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mem Used Pct"
+          },
+          "mesh_rtt_ms": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Rtt Ms"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
           }
         },
         "type": "object",
@@ -22636,6 +22891,16 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -23385,6 +23650,9 @@
             "type": "string",
             "title": "Reason",
             "default": ""
+          },
+          "dispatch_tier": {
+            "$ref": "#/components/schemas/DispatchTier"
           }
         },
         "type": "object",
@@ -23584,6 +23852,13 @@
               }
             ],
             "title": "Cli"
+          },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires"
           },
           "batch_eligible": {
             "type": "boolean",
@@ -24517,6 +24792,16 @@
               }
             ],
             "title": "Cli"
+          },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
           },
           "batch_eligible": {
             "type": "boolean",

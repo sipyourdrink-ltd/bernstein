@@ -450,6 +450,8 @@ class Orchestrator:
         formal_verification_config: Any | None = None,
         data_class: str | None = None,
     ) -> None:
+        if config.hash_profile not in ("py-json-v1", "jcs-v2"):
+            raise ValueError(f"unknown hash_profile {config.hash_profile!r}")
         self._config = config
         self._spawner = spawner
         self._warm_pool = getattr(spawner, "_warm_pool", None)
@@ -799,7 +801,7 @@ class Orchestrator:
         # identity. Records by default (issue #2293); size is bounded by
         # BERNSTEIN_REPLAY_RETENTION over past runs rather than an on/off
         # gate.
-        self._recorder = EventJournal(run_id=run_id, sdd_dir=workdir / ".sdd")
+        self._recorder = EventJournal.resume(run_id=run_id, sdd_dir=workdir / ".sdd", hash_profile=config.hash_profile)
 
         # Last ``plan.graph`` digest appended this run (issue #3613). Empty
         # until the first normal tick records one. Held on the instance so a
@@ -1272,12 +1274,15 @@ class Orchestrator:
 
     def _current_capacity(self) -> NodeCapacity:
         """Build a NodeCapacity snapshot reflecting current agent usage."""
+        from bernstein.core.protocols.cluster.cluster import local_worker_capacity
+
         alive = sum(1 for a in self._agents.values() if a.status != "dead")
-        return NodeCapacity(
+        capacity = NodeCapacity(
             max_agents=self._config.max_agents,
             available_slots=max(0, self._config.max_agents - alive),
             active_agents=alive,
         )
+        return local_worker_capacity(self._workdir, capacity)
 
     @property
     def active_agents(self) -> dict[str, AgentSession]:
@@ -3675,7 +3680,9 @@ class Orchestrator:
         try:
             from bernstein.core.replay.run_receipt import write_run_receipt_if_configured
 
-            receipt_path = write_run_receipt_if_configured(self._run_id, self._workdir / ".sdd")
+            receipt_path = write_run_receipt_if_configured(
+                self._run_id, self._workdir / ".sdd", hash_profile=self._recorder.hash_profile
+            )
         except Exception as exc:
             logger.warning("Failed to write run receipt: %s", sanitize_log(str(exc)))
         else:
@@ -6243,6 +6250,10 @@ class Orchestrator:
                 endpoint_base_url=session.endpoint_base_url,
                 endpoint_profile_name=session.endpoint_profile_name,
             )
+            # Existing artifact events become signed, hop-scoped Trust Record
+            # references. These are evidence pointers, never admission inputs.
+            for reference in session.agent_manifest_references:
+                self._recorder.record("artifact_produced", agent_id=session.id, **reference)
             # Issue #3375: pin the declared context files the spawner resolved
             # for this session at their content addresses. Recorded only when
             # the tasks declared something, so undeclared runs journal exactly
@@ -6850,7 +6861,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     from bernstein.adapters.registry import get_adapter
-    from bernstein.core.seed import SeedConfig, parse_seed
+    from bernstein.core.seed import SeedConfig, SeedError, parse_seed
     from bernstein.core.spawner import AgentSpawner
 
     parser = argparse.ArgumentParser()
@@ -6995,6 +7006,10 @@ if __name__ == "__main__":
                     getattr(seed, "model", None),
                     bool(getattr(seed, "role_model_policy", None)),
                 )
+            except SeedError as exc:
+                logger.error("Invalid seed configuration: error_type=%s", type(exc).__name__)
+                _stand_down_watchdog(workdir, "invalid-seed-configuration")
+                sys.exit(1)
             except Exception as exc:
                 logger.warning("Failed to parse seed for adapter config: error_type=%s", type(exc).__name__)
 
@@ -7484,6 +7499,8 @@ if __name__ == "__main__":
                 # Carried through the env override too: dropping the pins here
                 # would leave a MESH node folding nothing from its peers (#2997).
                 gossip_peer_keys=(cluster_cfg.gossip_peer_keys if cluster_cfg else ()),
+                shards=(cluster_cfg.shards if cluster_cfg else ()),
+                shard_vnodes=(cluster_cfg.shard_vnodes if cluster_cfg else 128),
             )
 
         # Topology branch (#2558): MESH starts a leaderless coordinator instead
@@ -7499,6 +7516,7 @@ if __name__ == "__main__":
 
         config = OrchestratorConfig(
             server_url=server_url,
+            hash_profile=seed.hash_profile if seed else "py-json-v1",
             max_agents=seed.max_agents if seed else 6,
             budget_usd=budget_usd,
             dry_run=dry_run,

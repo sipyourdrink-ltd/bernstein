@@ -63,6 +63,13 @@ A compliant trajectory scores strictly `0.0` at every step, yielding `max_hard_d
 
 ---
 
+Goal-drift trajectory input can include recorded `intent_calibration_records` in
+the existing calibration-log shape. Its output separately reports the recorded
+policy/version identifier, sample count and calibration quality metrics; absent
+or ambiguous calibration is unavailable and never changes the hard drift gate.
+See [recorded intent calibration](docs/eval/bench.md#recorded-intent-calibration).
+
+
 ## Running and Verifying Benchmarks
 
 ```bash

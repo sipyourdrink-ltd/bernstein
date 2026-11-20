@@ -21,10 +21,45 @@ from bernstein.core.checks.contract import Evidence, Finding, Verdict
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from bernstein.core.govern.compliance_checks import ComplianceCheckSpec
     from bernstein.core.govern.duplication_audit import DuplicationReport
 
 
 _P = ParamSpec("_P")
+
+
+class ComplianceLibraryAdapter:
+    """Expose one existing CMP observation through the shared check contract.
+
+    Like installation checks, the full policy library is explicitly selected;
+    registering it does not change the default workspace audit gate.
+    """
+
+    area = "CMP"
+    opt_in = True
+
+    def __init__(self, spec: ComplianceCheckSpec) -> None:
+        self.check_id = spec.check_id
+        self.title = spec.function_name.removeprefix("check_").replace("_", " ").capitalize()
+        self.description = spec.asserts
+
+    def run(self, workdir: Path | None = None) -> Finding:
+        from bernstein.core.govern.compliance_checks import run_compliance_checks
+
+        outcome = run_compliance_checks(workdir or Path.cwd(), only=(self.check_id,))[0]
+        return Finding(
+            check_id=outcome.check_id,
+            area=self.area,
+            verdict=Verdict(outcome.verdict.value),
+            passed=outcome.passed,
+            summary=outcome.summary,
+            remediation=outcome.remediation,
+            evidence=tuple(Evidence(locator, digest) for locator, digest in outcome.evidence),
+            what_would_make_it_measurable=outcome.what_would_make_it_measurable or None,
+        )
+
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
 
 
 def _installation_finding(

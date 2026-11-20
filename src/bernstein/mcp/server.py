@@ -66,30 +66,24 @@ import logging
 import os
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
-from mcp.server.fastmcp import Context, FastMCP
-
-# Patch FastMCP FuncMetadata to support CreateTaskResult without validation error
-from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import (
     CallToolResult,
-    CancelTaskRequest,
+    CancelTaskRequestParams,
     CancelTaskResult,
     CreateTaskResult,
-    GetTaskPayloadRequest,
-    GetTaskRequest,
+    GetTaskPayloadRequestParams,
+    GetTaskRequestParams,
     GetTaskResult,
-    ListTasksRequest,
     ListTasksResult,
+    ListToolsResult,
+    PaginatedRequestParams,
     Task,
-    TaskExecutionMode,
     TextContent,
     ToolExecution,
-)
-from mcp.types import (
-    Tool as MCPTool,
 )
 
 from bernstein.core.protocols.mcp.tool_tiers import (
@@ -111,17 +105,7 @@ from bernstein.mcp.input_validation import (
     validate_or_error,
     validation_error_response,
 )
-
-_orig_convert_result = FuncMetadata.convert_result
-
-
-def _patched_convert_result(self, result: Any) -> Any:
-    if isinstance(result, CreateTaskResult | CallToolResult):
-        return result
-    return _orig_convert_result(self, result)
-
-
-FuncMetadata.convert_result = _patched_convert_result  # type: ignore[method-assign]
+from bernstein.mcp.sdk_compat import legacy_tasks_middleware, task_augmentation_requested
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 
@@ -135,7 +119,7 @@ _package_repo_url = package_repo_url
 # a client that starts a run and then polls wrongly pays for a second run.
 # Budget and tool-name accuracy are asserted in tests/unit/test_mcp_server.py.
 _SERVER_INSTRUCTIONS = (
-    "Bernstein is the open-source governance layer for AI agents, one git "
+    "Bernstein is an open-source governance layer for AI agents, one git "
     "worktree per task; a plan replays to the same task graph. Verifying the audit "
     "chain offline needs the install audit key.\n"
     "Driving a run:\n"
@@ -208,7 +192,7 @@ def _completion_refusal_response(task_id: str, current_status: str) -> str:
 
 
 def _validation_error_response(err: ValidationError) -> str:
-    """Render a validation failure as the JSON string FastMCP tools return."""
+    """Render a validation failure as the JSON string MCPServer tools return."""
     return validation_error_response(err)
 
 
@@ -411,8 +395,8 @@ def _project_task_helper(data: dict[str, Any]) -> Any:
         taskId=mcp_task_id,
         status=mcp_status,  # type: ignore[arg-type]
         statusMessage=status_message,
-        createdAt=created_at,
-        lastUpdatedAt=last_updated,
+        createdAt=created_at.isoformat().replace("+00:00", "Z"),
+        lastUpdatedAt=last_updated.isoformat().replace("+00:00", "Z"),
         ttl=_TASK_TTL_MS,
         pollInterval=5000,
     )
@@ -454,7 +438,7 @@ async def _run_impl(
         # is capable of tasks. A tasks-capable client still sends plain
         # tools/call requests, and those require a CallToolResult; only a
         # task-augmented call may be answered with a CreateTaskResult.
-        is_task_call = False
+        is_task_call = task_augmentation_requested()
         traceparent = None
         tracestate = None
         baggage = None
@@ -462,14 +446,11 @@ async def _run_impl(
         if ctx is not None:
             try:
                 rc = ctx.request_context
-                if rc is not None:
-                    if rc.experimental is not None:
-                        is_task_call = bool(getattr(rc.experimental, "is_task", False))
-                    if rc.meta is not None:
-                        extra = rc.meta.model_extra or {}
-                        traceparent = extra.get("traceparent")
-                        tracestate = extra.get("tracestate")
-                        baggage = extra.get("baggage")
+                if rc is not None and rc.meta is not None:
+                    extra = rc.meta
+                    traceparent = extra.get("traceparent")
+                    tracestate = extra.get("tracestate")
+                    baggage = extra.get("baggage")
             except Exception:
                 pass
 
@@ -683,7 +664,7 @@ async def _cost_alias_impl(server_url: str) -> str:
         return _error_response(exc)
 
 
-def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
+def _register_query_tools(mcp: MCPServer[None], server_url: str) -> None:
     """Register the read surface: run and the folded status tool."""
 
     @mcp.tool()
@@ -887,7 +868,7 @@ async def _maybe_emit_progress(ctx: Context | None, sdd_dir: Path, run_id: str) 
         return
     try:
         rc = ctx.request_context
-        token = rc.meta.progressToken if rc is not None and rc.meta is not None else None
+        token = rc.meta.get("progress_token") if rc is not None and rc.meta is not None else None
         if token is None:
             return
         from bernstein.core.replay.progress import project_task_progress
@@ -963,7 +944,7 @@ async def _administrative_request(
         return _error_response(exc)
 
 
-def _register_run_status_tool(mcp: FastMCP[None], server_url: str) -> None:
+def _register_run_status_tool(mcp: MCPServer[None], server_url: str) -> None:
     """Register the ``bernstein_run_status`` Tasks-extension polling tool.
 
     The tool reprojects a verifiable run handle from the on-disk run journal
@@ -1046,7 +1027,7 @@ async def _task_capsule_impl(task_id: str, workdir: str = ".", verify: bool = Fa
         return _error_response(exc, hint="Context capsule not found")
 
 
-def _register_task_capsule_tool(mcp: FastMCP[None]) -> None:
+def _register_task_capsule_tool(mcp: MCPServer[None]) -> None:
     """Register the ``bernstein_task_capsule`` capsule tool (#2545).
 
     A spawned worker reads one signed, chain-anchored answer to "what was I
@@ -1166,7 +1147,7 @@ def _shutdown_impl(workdir: str) -> str:
         return _error_response(exc, hint="Could not write shutdown signal")
 
 
-def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
+def _register_action_tools(mcp: MCPServer[None], server_url: str) -> None:
     """Register mutation tools: claim, post_message, post_artifact, cancel,
     shutdown_orchestrator, approve, complete."""
 
@@ -1722,11 +1703,11 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             return _error_response(exc)
 
 
-def _register_skill_tools(mcp: FastMCP[None]) -> None:
+def _register_skill_tools(mcp: MCPServer[None]) -> None:
     """Register the ``load_skill`` progressive-disclosure tool (oai-004).
 
     Args:
-        mcp: FastMCP instance to register the tool on.
+        mcp: MCPServer instance to register the tool on.
     """
 
     def _skill_loader():  # type: ignore[no-untyped-def]
@@ -2016,10 +1997,12 @@ def _output_schema_for(tool_name: str) -> dict[str, Any] | None:
         return None
     if cost_meter_enabled():
         return envelope_schema(payload_schema)
-    return payload_schema
+    # Every union branch is an object. SDK2's Tool schema requires that root
+    # type explicitly even though JSON Schema also infers it from the branches.
+    return {"type": "object", **payload_schema}
 
 
-def _apply_cost_meter(mcp: FastMCP[None]) -> None:
+def _apply_cost_meter(mcp: MCPServer[None]) -> None:
     """Wrap every registered tool so its response carries a meter envelope.
 
     Each Bernstein tool returns a JSON string. This rewraps each tool's
@@ -2036,19 +2019,25 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
     no change.
 
     Args:
-        mcp: The FastMCP server whose tools should be metered.
+        mcp: The MCPServer server whose tools should be metered.
     """
     import functools
 
     structured = frozenset(_structured_payload_schemas())
 
-    # FastMCP exposes no public per-tool rewrap hook, so wrap each tool's
+    # MCPServer exposes no public per-tool rewrap hook, so wrap each tool's
     # callable directly via the tool manager's registry (same access pattern
     # as _apply_tool_tier above).
     for tool in mcp._tool_manager._tools.values():  # pyright: ignore[reportPrivateUsage]
         original = tool.fn
         tool_name = tool.name
         is_structured = tool_name in structured
+        if is_structured:
+            # These wrappers emit the explicitly advertised Bernstein envelope,
+            # not the string-shaped model inferred from the original handler.
+            # Keep this local to our structured tools instead of globally
+            # monkey-patching FuncMetadata for every SDK tool in the process.
+            tool.fn_metadata.output_model = None
 
         @functools.wraps(original)  # type: ignore[arg-type]
         async def metered(
@@ -2060,6 +2049,12 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
         ) -> Any:
             with measure_call(__name) as meter:
                 payload = await __orig(*args, **kwargs)
+            if isinstance(payload, CreateTaskResult):
+                # The SDK validates tools/call as CallToolResult before the
+                # outbound legacy bridge restores the requested task envelope.
+                return CallToolResult(
+                    content=[], structured_content=payload.model_dump(by_alias=True, exclude_none=True)
+                )
             if not isinstance(payload, str):
                 return payload
             wrapped = wrap_envelope(payload, meter)
@@ -2078,7 +2073,7 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
         tool.fn = metered
 
 
-def _apply_tool_timeouts(mcp: FastMCP[None]) -> None:
+def _apply_tool_timeouts(mcp: MCPServer[None]) -> None:
     """Enforce the declared timeoutSeconds of the host-effecting tools.
 
     The four tools that leave the process (bernstein_create_subtask,
@@ -2091,13 +2086,13 @@ def _apply_tool_timeouts(mcp: FastMCP[None]) -> None:
     error naming the tool and the limit instead of a dropped connection
     (#3647).
 
-    The wrap sits on the tool manager's call path, which every FastMCP
+    The wrap sits on the tool manager's call path, which every MCPServer
     transport (stdio and SSE) and direct ``mcp.call_tool`` calls funnel
     through. The bound is read from the registry on every call, so
     tightening a schema file takes effect without a server restart.
 
     Args:
-        mcp: The FastMCP server whose tools should be timeout-enforced.
+        mcp: The MCPServer server whose tools should be timeout-enforced.
     """
     import asyncio
     import functools
@@ -2134,16 +2129,16 @@ def _apply_tool_timeouts(mcp: FastMCP[None]) -> None:
             text = json.dumps(payload)
             return CallToolResult(content=[TextContent(type="text", text=text)])
 
-    # FastMCP exposes no public per-tool timeout hook, so replace the call
+    # MCPServer exposes no public per-tool timeout hook, so replace the call
     # path on the tool manager directly (same access pattern as
     # _apply_tool_tier).
     manager.call_tool = bounded_call  # type: ignore[method-assign] # pyright: ignore[reportAttributeAccessIssue]
 
 
-def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
+def _apply_advertised_schemas(mcp: MCPServer[None]) -> None:
     """Advertise each tool's enforced schema and host-effect description.
 
-    FastMCP derives the advertised schema from the Python signature, which
+    MCPServer derives the advertised schema from the Python signature, which
     carries none of the constraints the input firewall enforces: a caller is
     shown ``scope: string`` while ``validate_tool_call`` requires one of
     ``small`` / ``medium`` / ``large``. The caller sends a plausible value and
@@ -2153,14 +2148,14 @@ def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
     first call.
 
     Only the advertised copy is replaced. Argument coercion still runs through
-    FastMCP's signature-derived model, and enforcement still runs through
+    MCPServer's signature-derived model, and enforcement still runs through
     ``validate_tool_call`` inside each handler.
 
     Args:
-        mcp: The FastMCP server whose tools should advertise their schemas.
+        mcp: The MCPServer server whose tools should advertise their schemas.
     """
     registry = get_registry()
-    # FastMCP exposes no public per-tool schema override, so patch the tool
+    # MCPServer exposes no public per-tool schema override, so patch the tool
     # manager's registry after registration (same access pattern as
     # _apply_tool_tier).
     for name, tool in mcp._tool_manager._tools.items():  # pyright: ignore[reportPrivateUsage]
@@ -2175,7 +2170,7 @@ def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
         tool.description = str(schema["description"])
 
 
-def _register_deprecated_aliases(mcp: FastMCP[None], server_url: str) -> None:
+def _register_deprecated_aliases(mcp: MCPServer[None], server_url: str) -> None:
     """Register the deprecated tool-name aliases (#3087).
 
     Called after the tier filter, so an alias is registered only when its
@@ -2373,7 +2368,7 @@ def _register_deprecated_aliases(mcp: FastMCP[None], server_url: str) -> None:
         mcp.tool(name="bernstein_scenario_status")(bernstein_scenario_status)
 
 
-def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
+def _apply_tool_tier(mcp: MCPServer[None], active_tier: ToolTier) -> None:
     """Drop every registered tool that is outside ``active_tier``.
 
     Tools are registered unconditionally above, then filtered here so the
@@ -2383,17 +2378,17 @@ def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
     ``tools/list`` response nor callable.
 
     Args:
-        mcp: The FastMCP server whose tools should be filtered.
+        mcp: The MCPServer server whose tools should be filtered.
         active_tier: The currently selected tier.
     """
-    # FastMCP exposes no public per-tool filter, so drop out-of-tier tools
+    # MCPServer exposes no public per-tool filter, so drop out-of-tier tools
     # directly from the tool manager's registry after registration.
     out_of_tier = [name for name in list(mcp._tool_manager._tools) if not tool_in_tier(name, active_tier)]
     for name in out_of_tier:
         mcp._tool_manager._tools.pop(name, None)
 
 
-#: The ``execution.taskSupport`` mode each tool advertises in ``tools/list``.
+#: The ``execution.task_support`` mode each tool advertises in ``tools/list``.
 #:
 #: A tool that is absent from this map advertises nothing, which the Tasks
 #: extension reads as ``forbidden``. Only ``bernstein_run`` answers a
@@ -2402,21 +2397,21 @@ def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
 #: fallback: it always answers immediately and never returns a task handle,
 #: so it declares ``forbidden`` explicitly rather than leaving a caller to
 #: infer the default.
-_TOOL_TASK_SUPPORT: dict[str, TaskExecutionMode] = {
+_TOOL_TASK_SUPPORT: dict[str, Literal["forbidden", "optional", "required"]] = {
     "bernstein_run": "optional",
     "bernstein_run_status": "forbidden",
 }
 
 
-def _shape_tools_list(mcp: FastMCP[None]) -> None:
+def _shape_tools_list(mcp: MCPServer[None]) -> None:
     """Re-register the ``tools/list`` handler with the advertised shape.
 
     Three concerns share the one wrapper because they all act on the entries
-    FastMCP already built:
+    MCPServer already built:
 
     * deprecated aliases are dropped - they stay callable for one release
       but are never advertised (#3087);
-    * ``execution.taskSupport`` is stamped from :data:`_TOOL_TASK_SUPPORT` -
+    * ``execution.task_support`` is stamped from :data:`_TOOL_TASK_SUPPORT` -
       the MCP Tasks extension defaults a tool with no ``execution`` hint to
       ``forbidden``, so without it no client ever sends a task-augmented
       call;
@@ -2424,20 +2419,20 @@ def _shape_tools_list(mcp: FastMCP[None]) -> None:
       content, describing the envelope exactly as it is emitted for the
       current cost-meter state (#3086).
 
-    FastMCP (through 1.30.0) carries none of these fields at registration time
+    MCPServer (through 1.30.0) carries none of these fields at registration time
     (``@mcp.tool()`` takes no such arguments), so the low-level handler is
     wrapped here. When an SDK release adds first-class support the migration
     is deleting this function and moving the declarations into the
     registrations.
 
     Args:
-        mcp: The FastMCP server whose ``tools/list`` response is shaped.
+        mcp: The MCPServer server whose ``tools/list`` response is shaped.
     """
     from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES
 
     fastmcp_list_tools = mcp.list_tools
 
-    async def shaped_list_tools() -> list[MCPTool]:
+    async def shaped_list_tools(ctx: Any, params: PaginatedRequestParams | None) -> ListToolsResult:
         tools = [tool for tool in await fastmcp_list_tools() if tool.name not in DEPRECATED_TOOL_ALIASES]
         for tool in tools:
             mode = _TOOL_TASK_SUPPORT.get(tool.name)
@@ -2445,10 +2440,10 @@ def _shape_tools_list(mcp: FastMCP[None]) -> None:
                 tool.execution = ToolExecution(taskSupport=mode)
             output_schema = _output_schema_for(tool.name)
             if output_schema is not None:
-                tool.outputSchema = output_schema
-        return tools
+                tool.output_schema = output_schema
+        return ListToolsResult(tools=tools)
 
-    mcp._mcp_server.list_tools()(shaped_list_tools)
+    mcp._lowlevel_server.add_request_handler("tools/list", PaginatedRequestParams, shaped_list_tools)
 
 
 # MCP ``tasks/list`` is a paginated request whose only client-supplied knob is
@@ -2482,13 +2477,12 @@ def _decode_task_cursor(cursor: str | None) -> int:
     raise ValueError(f"Invalid pagination cursor: {cursor!r}")
 
 
-def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
+def _register_tasks_extension(mcp: MCPServer[None], server_url: str) -> None:
     """Register custom experimental handlers for the MCP Tasks extension."""
     import httpx
 
-    @mcp._mcp_server.experimental.get_task()
-    async def get_task(req: GetTaskRequest) -> GetTaskResult:
-        parts = req.params.taskId.split(":", 1)
+    async def get_task(ctx: Any, params: GetTaskRequestParams) -> GetTaskResult:
+        parts = params.task_id.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
@@ -2496,18 +2490,17 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             data = resp.json()
         task_obj = _project_task_helper(data)
         return GetTaskResult(
-            taskId=task_obj.taskId,
+            taskId=task_obj.task_id,
             status=task_obj.status,
-            statusMessage=task_obj.statusMessage,
-            createdAt=task_obj.createdAt,
-            lastUpdatedAt=task_obj.lastUpdatedAt,
+            statusMessage=task_obj.status_message,
+            createdAt=task_obj.created_at,
+            lastUpdatedAt=task_obj.last_updated_at,
             ttl=_TASK_TTL_MS,
             pollInterval=5000,
         )
 
-    @mcp._mcp_server.experimental.get_task_result()  # type: ignore[arg-type]
-    async def get_task_result(req: GetTaskPayloadRequest) -> CallToolResult:
-        parts = req.params.taskId.split(":", 1)
+    async def get_task_result(ctx: Any, params: GetTaskPayloadRequestParams) -> CallToolResult:
+        parts = params.task_id.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
@@ -2532,13 +2525,12 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             isError=is_error,
         )
 
-    @mcp._mcp_server.experimental.list_tasks()
-    async def list_tasks(req: ListTasksRequest) -> ListTasksResult:
+    async def list_tasks(ctx: Any, params: PaginatedRequestParams | None) -> ListTasksResult:
         # Translate the opaque cursor into an offset and always send explicit
         # limit/offset, so the server returns the paginated envelope instead of
         # the legacy flat list hard-capped at 500 (which strands the tail for
         # any operator with more than 500 tasks).
-        offset = _decode_task_cursor(req.params.cursor if req.params else None)
+        offset = _decode_task_cursor(params.cursor if params else None)
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(
                 f"{server_url}/tasks",
@@ -2557,24 +2549,29 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
         next_cursor = _encode_task_cursor(next_offset) if next_offset < total else None
         return ListTasksResult(tasks=mcp_tasks, nextCursor=next_cursor)
 
-    @mcp._mcp_server.experimental.cancel_task()
-    async def cancel_task(req: CancelTaskRequest) -> CancelTaskResult:
-        parts = req.params.taskId.split(":", 1)
+    async def cancel_task(ctx: Any, params: CancelTaskRequestParams) -> CancelTaskResult:
+        parts = params.task_id.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.post(f"{server_url}/tasks/{task_id}/cancel", headers=_auth_headers())
+            resp = await client.post(f"{server_url}/tasks/{task_id}/cancel", json={}, headers=_auth_headers())
             resp.raise_for_status()
             data = resp.json()
         task_obj = _project_task_helper(data)
         return CancelTaskResult(
-            taskId=task_obj.taskId,
+            taskId=task_obj.task_id,
             status=task_obj.status,
-            statusMessage=task_obj.statusMessage,
-            createdAt=task_obj.createdAt,
-            lastUpdatedAt=task_obj.lastUpdatedAt,
+            statusMessage=task_obj.status_message,
+            createdAt=task_obj.created_at,
+            lastUpdatedAt=task_obj.last_updated_at,
             ttl=_TASK_TTL_MS,
             pollInterval=5000,
         )
+
+    low = mcp._lowlevel_server
+    low.add_request_handler("tasks/get", GetTaskRequestParams, get_task)
+    low.add_request_handler("tasks/result", GetTaskPayloadRequestParams, get_task_result)
+    low.add_request_handler("tasks/list", PaginatedRequestParams, list_tasks)
+    low.add_request_handler("tasks/cancel", CancelTaskRequestParams, cancel_task)
 
 
 def create_mcp_server(
@@ -2584,8 +2581,8 @@ def create_mcp_server(
     lineage_enabled: bool = False,
     lineage_root: Path | None = None,
     tier: str | None = None,
-) -> FastMCP[None]:
-    """Build and return the Bernstein FastMCP server instance.
+) -> MCPServer[None]:
+    """Build and return the Bernstein MCPServer server instance.
 
     Args:
         server_url: Base URL of the Bernstein task server.
@@ -2601,14 +2598,20 @@ def create_mcp_server(
             default. Out-of-tier tools are not advertised and not callable.
 
     Returns:
-        Configured FastMCP instance with the active tier's tools registered.
+        Configured MCPServer instance with the active tier's tools registered.
     """
     from bernstein.mcp.capability import register_capability_resource
     from bernstein.mcp.prompts import register_prompt_resources
 
     active_tier = resolve_active_tier(tier)
-    mcp: FastMCP[None] = FastMCP(name, instructions=_SERVER_INSTRUCTIONS)
-    mcp._mcp_server.version = _package_version()
+    mcp: MCPServer[None] = MCPServer(
+        name,
+        instructions=_SERVER_INSTRUCTIONS,
+        version=_package_version(),
+        middleware=[
+            legacy_tasks_middleware(frozenset(name for name, mode in _TOOL_TASK_SUPPORT.items() if mode == "optional"))
+        ],
+    )
     register_capability_resource(mcp)
     register_prompt_resources(mcp)
     _register_query_tools(mcp, server_url)

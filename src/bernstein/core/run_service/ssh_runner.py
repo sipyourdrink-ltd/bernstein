@@ -68,6 +68,10 @@ _UNSAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]")
 class SSHRunnerError(RuntimeError):
     """Raised when an ssh-backed run task cannot be provisioned or executed."""
 
+    def __init__(self, message: str, *, exit_code: int | None = None) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
 
 def _safe_component(value: str) -> str:
     """Return *value* reduced to a safe ``[A-Za-z0-9._-]`` path/branch segment."""
@@ -257,7 +261,9 @@ class SSHTaskRunner:
 
     def __call__(self, task_id: str) -> None:
         """Execute *task_id* (the ``advance_run`` task-runner contract)."""
-        self.run_task(task_id)
+        receipt = self.run_task(task_id)
+        if receipt.exit_code != 0:
+            raise SSHRunnerError(f"remote task exited with code {receipt.exit_code}", exit_code=receipt.exit_code)
 
     def run_task(self, task_id: str) -> SSHTaskReceipt:
         """Provision, execute, and receipt one task on the ssh backend."""
@@ -385,15 +391,18 @@ def run_goal_on_ssh(
     close it. Returns the final ledger projection.
     """
     from bernstein.core.run_service.service import RunService
-    from bernstein.core.run_service.supervisor import advance_run
+    from bernstein.core.run_service.supervisor import _finish_run, advance_run
 
     svc = RunService(root)
     handle = svc.submit(goal, task_ids, run_id=run_id)
     write_ssh_spec(root, handle.run_id, spec)
     runner = SSHTaskRunner(spec, root, handle.run_id, backend=backend, vault=vault, command_for=command_for)
-    advance_run(root, handle.run_id, task_runner=runner)
-    svc.complete(handle.run_id)
-    return svc.project(handle.run_id)
+    try:
+        state = advance_run(root, handle.run_id, task_runner=runner)
+    except SSHRunnerError:
+        _finish_run(svc, svc.project(handle.run_id), failed=True)
+        raise
+    return _finish_run(svc, state)
 
 
 __all__ = [

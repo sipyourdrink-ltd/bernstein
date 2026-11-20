@@ -1,5 +1,7 @@
 # Register Bernstein in Cursor
 
+Cursor hosts the integration and calls Bernstein as an MCP tool server.
+
 Cursor auto-discovers MCP servers from a user-global `~/.cursor/mcp.json`
 file (and an optional project-local `./.cursor/mcp.json`).
 `bernstein desktop-register --host cursor` merges a `bernstein` entry into

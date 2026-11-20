@@ -210,7 +210,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan` | Show the task backlog. | `cli/commands/task_cmd.py:454` |
 | `bernstein plan generate "<goal>"` | Generate a plan YAML. | `cli/plan_generate_cmd.py` |
 | `bernstein plan compile SPEC` | Compile a spec into a gated task graph with requirement-hash lineage. | `cli/plan_compile_cmd.py` |
-| `bernstein plan ls` | List archived plans. | `cli/plan_archive_cmd.py:plan_ls` |
+| `bernstein plan ls` | List managed plans in all states. Use `--state` with `active`, `completed`, or `blocked` to filter the list. | `cli/commands/plan_archive_cmd.py:plan_ls` |
 | `bernstein plan show NAME` | Show a stored plan. | `cli/plan_archive_cmd.py:plan_show` |
 | `bernstein add-task TITLE` | Create a task on the running server. | `cli/commands/task_cmd.py:37` |
 | `bernstein approve TASK_ID` | Approve a pending review. | `cli/commands/task_cmd.py:249` |
@@ -367,7 +367,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein runs scorecard RUN_ID` | Build or verify one run's scorecard. | `cli/commands/runs_cmd.py:171` |
 | `bernstein runs helpers RUN_ID` | Agent-written helpers captured for a run. | `cli/commands/runs_cmd.py` |
 | `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
-| `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
+| `bernstein report` | Print a run summary in Markdown. | `cli/commands/report_cmd.py:17` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
 | `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
@@ -389,6 +389,18 @@ which commits changed the file.
 
 For example: `bernstein history src/bernstein/main.py --limit 5 --workdir .`
 
+#### `bernstein report`
+
+Print a Markdown summary of the latest run in the project.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--run-id RUN_ID` | latest run | Select a specific run. |
+| `--workdir PATH` | `.` | Project root directory. |
+| `--save` / `--no-save` | off | Use `--save` to also write `.sdd/reports/RUN_ID.md`. Use `--no-save` to print only. |
+
+To print and save a specific run, use `bernstein report --run-id RUN_ID --save`.
+
 #### `bernstein status`
 
 Compact one-screen project view.
@@ -408,11 +420,12 @@ routing is shown as `unknown`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--interval SEC` | 2.0 | Polling interval. |
-| `--classic` | off | Use the simpler Rich Live display. |
-| `--no-splash` | off | Skip the startup splash. |
+| `--interval SEC` | 2.0 | Polling interval in seconds for `--classic`. |
+| `--classic` | off | Use the classic Rich Live display. |
+| `--no-splash` | off | Skip the Textual startup splash. |
 
-The default is the 3-column Textual TUI: Agents | Tasks | Activity feed. `--classic` falls back to a single-pane Rich Live view.
+The default Textual dashboard shows Agents and Tasks side by side, with
+the activity feed below.
 
 Both views resolve the task server the same way as the rest of the CLI: `BERNSTEIN_SERVER_URL`, then the port the running orchestrator persisted in `.sdd/runtime/server.port`, then `http://localhost:8052`. When the poll cannot reach that server the header says `No connection to <url>` rather than drawing empty panels, which would be indistinguishable from an orchestrator with nothing to do. That state means *every* read failed: one route erroring while the others answer is a broken route, not a dead server, so the dashboard keeps rendering the panels that did load.
 
@@ -927,8 +940,8 @@ digest. (`cli/commands/skill_cmd.py`.)
 | Subcommand | Purpose |
 |---|---|
 | `list` | List available templates. |
-| `show TEMPLATE [OUTPUT]` | Print template content (or write to OUTPUT). |
-| `use TEMPLATE [OUTPUT]` | Copy TEMPLATE to OUTPUT (default `plans/<name>.yaml`). |
+| `show TEMPLATE_NAME` | Display the template on stdout. |
+| `use TEMPLATE_NAME [OUTPUT]` | Copy the template file to OUTPUT (default `plans/<name>.yaml`). |
 | `compress ROLE\|--all` | Operator-gated LLM compression of role prompt templates (`cli/commands/templates_cmd.py`). Rewrite via the configured adapter (`--model`, `--provider`), then mechanical validators (fenced blocks, headings, URLs, inline code, placeholders, completion-contract block; at most two targeted fix retries), then apply. Originals are stored under `~/.local/share/bernstein/template-backups/` keyed by content hash with readback verification; the receipt `{role, pre_sha256, post_sha256, pre_tokens, post_tokens, validators, adapter, model}` is chained to the audit log and a `templates.lock` row lets `bernstein team drift` classify the change as intentional. Prints only the template token delta; per-spawn savings come from `bernstein cost` grouped by role. `--workdir DIR`, `--yes` skips the confirmation. |
 | `restore ROLE` | Reverse the most recent receipted compression byte-identically (backup hash, on-disk hash, and directory digest all verified). `--workdir DIR`. |
 | `hooks list` / `hooks use` | Browse and scaffold bundled command-hook templates. |
@@ -1607,7 +1620,9 @@ systemd / launchd unit installer.
 
 #### `bernstein config-path`
 
-Print the path Bernstein would read config from. Useful for shell completion and CI. No flags.
+Print the project and workspace configuration paths in the current directory.
+Use `--json` to return the two paths and the working directory as JSON. A
+configuration file that is missing appears as `null`.
 
 ---
 
@@ -1706,7 +1721,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Command | Purpose | Source |
 |---|---|---|
-| `bernstein explain CONCEPT` | Concept explainer. | `cli/explain_help_cmd.py:171` |
+| `bernstein explain` | Detailed help and examples for CLI commands. | `cli/commands/explain_help_cmd.py:171` |
 | `bernstein help-all` | Comprehensive help screen. | `cli/commands/advanced_cmd.py:378` |
 | `bernstein aliases` | Show CLI aliases. | `cli/aliases.py` |
 | `bernstein fingerprint` | Replay verification (group). | `cli/fingerprint_cmd.py:37` |
@@ -1815,9 +1830,11 @@ Experimental voice control (see [`operations/voice-control.md`](../operations/vo
 
 #### `bernstein explain`
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `CONCEPT` | required | Concept name (e.g. `cascade-router`, `wal`, `janitor`). |
+Use `bernstein explain [COMMAND_NAME]` to see examples, tips, and related
+commands. For example, `bernstein explain run` shows ways to start a run.
+
+Run `bernstein explain` to list the commands with detailed help, or
+`bernstein explain --help` for usage.
 
 #### `bernstein test`
 

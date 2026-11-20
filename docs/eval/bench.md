@@ -7,7 +7,7 @@
 
 ## Overview
 
-`bernstein-bench` is the public evaluation surface for Bernstein, the open-source governance layer for AI agents.
+`bernstein-bench` is the public evaluation surface for Bernstein, an open-source governance layer for AI agents.
 Unlike the internal harness (which runs operator-scored tasks on the operator's own
 machine), `bernstein-bench` is designed so that:
 
@@ -694,6 +694,31 @@ docs/eval/
 The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). The evaluator consumes trajectory JSON (`events` and `diff`; schema documented in `goal_drift_suite.py`); an automatic converter from `.sdd` run journals is follow-up. Default execution without `--trajectory` evaluates empty telemetry, records `unmeasured=True`, and fails closed honestly. Pass `--trajectory <path>` with trajectory JSON to score agent runs, or `--smoke-synthetic` (requiring `--stub-signer`) for hermetic plumbing tests. By default, partial step coverage with zero drift is compliant; pass `--require-step-coverage` to enforce 100% planned step coverage as a strict gate. It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
 
 Recorded evaluators can optionally attach a finite numeric `intent_score` to an event with a non-negative integer `step`. The drift curve exposes these values separately as `intent_scores`, for example `[{"step_index": 0, "intent_score": 0.8}, {"step_index": 2, "intent_score": 0.1}]`, sorted by step (preserving event order for scores at the same step). Missing or invalid scores are omitted; runs without scores expose an empty list. These are projections of recorded output only: no evaluator is called, and the hard step measurements, hard aggregates, step coverage, score, and threshold outcome remain independent of the intent values.
+
+### Recorded intent calibration
+
+A goal-drift trajectory payload may also carry `intent_calibration_records` as
+an array of existing calibration-log records: `ts`, `decision_kind`,
+`policy_path`, `predicted_prob` and boolean `observed_outcome`. Select the recorded
+calibration population applicable to that intent evaluator before supplying it.
+A unique, nonempty recorded `policy_path` is reported as the calibration version;
+it is not inferred from timestamps or fitted during benchmarking.
+
+The curve's separate `intent_calibration` section reports `status`, `version`,
+`sample_count` and the existing `CalibrationReport` representation (Brier, ECE and
+reliability buckets). Missing, malformed, zero-sample or mixed-version input is
+`unavailable`. This reports recorded calibration **quality**, not a newly fitted
+probability transform. It never changes raw intent values, hard measurements,
+coverage, score or threshold verdict.
+
+The adapter records only the consumed calibration fields in its receipt;
+arbitrary metadata and decision IDs are omitted. The scorer recomputes the
+summary from those recorded values instead of trusting a stored curve or reading
+the current calibration log. The same recorded inputs produce identical
+serialized output. Library callers can pass existing `CalibrationRecord` values
+via `evaluate_trajectory_drift(..., intent_calibration_records=records)`.
+
+
 
 Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 

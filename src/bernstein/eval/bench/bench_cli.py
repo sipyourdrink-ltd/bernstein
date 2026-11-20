@@ -49,13 +49,14 @@ def _get_suite(name: str):
     from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
-    _BUILTIN = {
-        "gate-evasion-v1": (build_gate_evasion_suite_v1, ("CTL-SEC-04",)),
-        "goal-drift-v1": (build_goal_drift_suite, ("CTL-ROB-02",)),
-        "golden-v1": (build_golden_suite_v1, ("CTL-ROB-01",)),
-        "tool-surface-v1": (build_tool_surface_suite, ("CTL-SEC-02",)),
-        "leakage-v1": (build_leakage_suite_v1, ("CTL-SEC-03",)),
+    _BUILDERS = {
+        "gate-evasion-v1": build_gate_evasion_suite_v1,
+        "goal-drift-v1": build_goal_drift_suite,
+        "golden-v1": build_golden_suite_v1,
+        "tool-surface-v1": build_tool_surface_suite,
+        "leakage-v1": build_leakage_suite_v1,
     }
+    _BUILTIN = {suite_name: (builder, BUILTIN_SUITE_CONTROLS[suite_name]) for suite_name, builder in _BUILDERS.items()}
 
     if name in _BUILTIN:
         builder, control_ids = _BUILTIN[name]
@@ -120,6 +121,21 @@ def _refuse_install_identity_for_mock(suite_obj: BenchSuite, what: str) -> None:
         "install identity: the signature would attest a result nothing produced. "
         "Pass --stub-signer to produce a test-grade, mock-labelled output."
     )
+
+
+#: Control IDs declared by each built-in benchmark suite (#5455).
+BUILTIN_SUITE_CONTROLS: dict[str, tuple[str, ...]] = {
+    "gate-evasion-v1": ("CTL-SEC-04",),
+    "goal-drift-v1": ("CTL-ROB-02",),
+    "golden-v1": ("CTL-ROB-01",),
+    "tool-surface-v1": ("CTL-SEC-02",),
+    "leakage-v1": ("CTL-SEC-03",),
+}
+
+
+def builtin_suite_control_map() -> dict[str, tuple[str, ...]]:
+    """Return a copy of built-in benchmark suite names to their declared control IDs."""
+    return dict(BUILTIN_SUITE_CONTROLS)
 
 
 #: The checkout this package lives in:

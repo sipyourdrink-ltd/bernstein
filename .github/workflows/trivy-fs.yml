@@ -1,0 +1,122 @@
+name: Trivy (filesystem)
+
+# Dependency changes can trigger this scan independently of Semgrep and Trivy IaC.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "Dockerfile"
+      - "docker/**"
+      - "deploy/**"
+      - "examples/**/Dockerfile*"
+      - "examples/**/docker-compose*.yml"
+      - ".github/workflows/static-analysis-extended.yml"
+      - ".github/workflows/trivy-fs.yml"
+      - ".semgrep/**"
+      - "**/package-lock.json"
+      - "**/npm-shrinkwrap.json"
+      - "**/pnpm-lock.yaml"
+      - "**/yarn.lock"
+      - "**/uv.lock"
+      - "**/poetry.lock"
+      - "**/Pipfile.lock"
+      - "**/requirements*.txt"
+      - "**/package.json"
+      - "**/pyproject.toml"
+  schedule:
+    - cron: "23 5 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trivy-fs:
+    # Filesystem scan for vulnerable OS / language packages + leaked
+    # secrets across the repo. HIGH/CRITICAL fails the job; lower
+    # severities surface in Code Scanning but do not block.
+    name: Trivy (filesystem)
+    runs-on: [self-hosted, linux, vps]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run Trivy filesystem scan (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          # The scanner adapters under test need real, deliberately
+          # vulnerable inputs to scan: tests/fixtures/scanners/*/target
+          # holds lockfiles pinning known-bad packages (lodash, smallvec)
+          # and an env file with a planted secret. Our own supply-chain
+          # gate scanned them too and failed main on a finding that is the
+          # fixture's whole point. Every scanner's target tree is skipped
+          # (tests/unit/test_trivy_fs_skips_scanner_fixture_targets.py
+          # keeps this list complete); the conformance fixtures beside
+          # them are still scanned.
+          skip-dirs: "tests/fixtures/scanners/bandit/target,tests/fixtures/scanners/checkov/target,tests/fixtures/scanners/gitleaks/target,tests/fixtures/scanners/osv-scanner/target,tests/fixtures/scanners/semgrep/target,tests/fixtures/scanners/trivy/target"
+      - name: Drop suppressed SARIF results
+        if: always()
+        run: |
+          python3 scripts/sarif_drop_suppressed.py \
+            trivy-fs.sarif > trivy-fs.filtered.sarif
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        with:
+          sarif_file: trivy-fs.filtered.sarif
+          category: trivy-fs
+      - name: Run Trivy filesystem scan (failing gate)
+        # Re-run with exit-code=1 to fail the job on any HIGH/CRITICAL
+        # finding. We split SARIF upload from the failing gate so
+        # findings still reach Code Scanning when the gate fires.
+        #
+        # PR-exempt: a newly-disclosed CVE in an unchanged dependency would
+        # otherwise redden PRs that never touched it. The SARIF upload above
+        # still surfaces the finding on PRs, and dependency-review covers
+        # dependency changes, so the hard gate only runs on push/schedule.
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          # The scanner adapters under test need real, deliberately
+          # vulnerable inputs to scan: tests/fixtures/scanners/*/target
+          # holds lockfiles pinning known-bad packages (lodash, smallvec)
+          # and an env file with a planted secret. Our own supply-chain
+          # gate scanned them too and failed main on a finding that is the
+          # fixture's whole point. Every scanner's target tree is skipped
+          # (tests/unit/test_trivy_fs_skips_scanner_fixture_targets.py
+          # keeps this list complete); the conformance fixtures beside
+          # them are still scanned.
+          skip-dirs: "tests/fixtures/scanners/bandit/target,tests/fixtures/scanners/checkov/target,tests/fixtures/scanners/gitleaks/target,tests/fixtures/scanners/osv-scanner/target,tests/fixtures/scanners/semgrep/target,tests/fixtures/scanners/trivy/target"
+      - name: Upload SARIF as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: trivy-fs-sarif
+          path: trivy-fs.sarif
+          if-no-files-found: warn
+          retention-days: 14
