@@ -4,7 +4,8 @@ Additional static-analysis surface that complements the existing
 ruff + mypy + bandit + CodeQL lane. Each tool catches a different
 bug class; together they close gaps that single-tool runs miss.
 
-Workflow: `.github/workflows/static-analysis-extended.yml`.
+The jobs run in `.github/workflows/static-analysis-extended.yml` and
+`.github/workflows/trivy-fs.yml`.
 
 ## TL;DR
 
@@ -41,9 +42,15 @@ the surface those tools do not cover.
 
 - `push` to `main` (path-filtered to source / config / IaC / workflow):
   security-signal jobs only.
+- The Trivy filesystem scan also watches npm, pnpm, Yarn, uv, Poetry
+  and Pipenv lockfiles, plus `requirements*.txt`, `package.json` and
+  `pyproject.toml`, at any depth. A push to `main` that changes only
+  `.github/adapter-clis/package-lock.json` runs this scan on its own.
 - Weekly cron Sunday 05:23 UTC: all jobs, including the advisory
   vulture / refurb / perflint lane.
-- `workflow_dispatch` for ad-hoc runs: all jobs.
+- For a manual filesystem scan, select **Trivy (filesystem)** in GitHub
+  Actions and choose **Run workflow**. Running **static-analysis (extended)**
+  manually starts the other five jobs.
 
 Not on `merge_group`, deliberately: the queue's only required context
 is `CI gate`, so this lane never gated a queue merge, and Code Scanning

@@ -3,7 +3,7 @@
 Each scanner adapter under ``tests/fixtures/scanners/<tool>/`` keeps a
 ``target/`` tree of deliberately vulnerable inputs: lockfiles pinning
 known-bad packages, an env file with a planted secret, insecure IaC. The
-Trivy filesystem gate in ``static-analysis-extended.yml`` runs on push to
+Trivy filesystem gate in ``trivy-fs.yml`` runs on push to
 ``main`` and fails on any HIGH/CRITICAL finding, so a new fixture target
 that is not listed in ``skip-dirs`` turns ``main`` red on a finding that is
 the fixture's whole point. The gate step is PR-exempt, so a pull request
@@ -26,7 +26,7 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "static-analysis-extended.yml"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "trivy-fs.yml"
 SCANNER_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "scanners"
 TRIVY_ACTION = "aquasecurity/trivy-action"
 
