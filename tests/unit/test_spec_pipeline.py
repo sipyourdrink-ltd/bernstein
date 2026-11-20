@@ -99,6 +99,17 @@ def test_structural_drafter_extracts_acceptance_lines() -> None:
     assert not any(line.startswith("- [ ]") for line in lines)
 
 
+def test_structural_drafter_requires_a_complete_shall_word() -> None:
+    prose = ["The river is shallow.", "Peel the shallot.", "Marshall wrote the notes."]
+    clauses = ["The reader SHALL list rows.", "The reader shall count rows."]
+
+    assert StructuralDrafter()("\n".join(prose + clauses)) == clauses
+    for line in prose:
+        assert classify_ears(line) is EarsKind.UNKNOWN
+    for line in clauses:
+        assert classify_ears(line) is EarsKind.UBIQUITOUS
+
+
 def test_build_requirement_set_assigns_stable_ids_and_hashes() -> None:
     lines = StructuralDrafter()(_SPEC)
     req_set = build_requirement_set(lines, source_text=_SPEC)

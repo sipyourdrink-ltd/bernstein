@@ -32,6 +32,7 @@ __all__ = [
 ]
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_SHALL_RE = re.compile(r"\bshall\b", re.IGNORECASE)
 
 
 def canonical_text(text: str) -> str:
@@ -86,8 +87,8 @@ _LEADING_KEYWORDS: tuple[tuple[str, EarsKind], ...] = (
 
 
 def is_ears(text: str) -> bool:
-    """Return ``True`` when *text* reads as an EARS clause (contains ``shall``)."""
-    return "shall" in canonical_text(text).lower()
+    """Return ``True`` when *text* contains the modal verb ``shall`` as a whole word."""
+    return _SHALL_RE.search(text) is not None
 
 
 def classify_ears(text: str) -> EarsKind:
