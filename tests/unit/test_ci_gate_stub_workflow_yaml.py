@@ -230,19 +230,26 @@ def test_guard_script_reads_patterns_from_ci_yml() -> None:
     )
 
 
-def test_classifier_uses_event_base_and_collects_around_pagination(stub_doc: dict) -> None:
+def test_classifier_uses_event_base_and_isolated_graph(stub_doc: dict) -> None:
     steps = stub_doc["jobs"]["classify"]["steps"]
-    checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
+    policy, graph = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+    assert policy["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
+    assert set(policy["with"]["sparse-checkout"].splitlines()) == {
+        "/scripts/ci_gate_stub_guard.py",
+        "/.github/workflows/ci.yml",
+    }
+    assert graph["uses"] == policy["uses"]
+    assert graph["with"] == {
+        "ref": "${{ github.sha }}",
+        "path": "stub-event-graph",
+        "fetch-depth": 0,
+        "sparse-checkout-cone-mode": False,
+        "sparse-checkout": "!/*",
+        "persist-credentials": False,
+    }
     collect = next(step for step in steps if step.get("name") == "Collect changed paths")
     for ref in ("base", "head"):
         assert collect["env"]["EXPECTED_" + ref.upper()] == f"${{{{ github.event.pull_request.{ref}.sha }}}}"
-    assert [line.strip() for line in collect["run"].splitlines() if line.strip().startswith("gh api ")] == [
-        'gh api "$pr" > stub-before.json',
-        'gh api --paginate --slurp "$pr/files?per_page=100" > stub-pages.json',
-        'gh api "$pr" > stub-after.json',
-    ]
-    assert 'cd "$RUNNER_TEMP"' in collect["run"]
     guard = next(step for step in steps if step.get("id") == "guard")
     assert guard["run"] == 'python3 scripts/ci_gate_stub_guard.py --changed-paths "$RUNNER_TEMP/stub-paths.txt"'
     real = yaml.safe_load(CI.read_text(encoding="utf-8"))
@@ -250,129 +257,157 @@ def test_classifier_uses_event_base_and_collects_around_pagination(stub_doc: dic
     assert "merge_group" not in stub_doc[True]
 
 
+def _git(graph: Path, *args: str, data: bytes | None = None) -> str:
+    result = subprocess.run(["git", "-C", str(graph), *args], input=data, capture_output=True, check=True)
+    return result.stdout.decode("ascii").strip()
+
+
+@pytest.fixture
+def graph(tmp_path: Path) -> Path:
+    directory = tmp_path / "stub-event-graph"
+    directory.mkdir()
+    _git(directory, "init", "-q")
+    _git(directory, "config", "user.name", "CI fixture")
+    _git(directory, "config", "user.email", "fixture@example.test")
+    return directory
+
+
+def _commit(graph: Path, paths: list[bytes], *parents: str) -> str:
+    """Write Git trees directly so the host filesystem need not support the test filenames."""
+    blob = _git(graph, "hash-object", "-w", "--stdin", data=b"fixture\n").encode()
+
+    def tree(files: list[bytes]) -> str:
+        entries = []
+        subtrees: dict[bytes, list[bytes]] = {}
+        for path in files:
+            name, slash, remainder = path.partition(b"/")
+            if slash:
+                subtrees.setdefault(name, []).append(remainder)
+            else:
+                entries.append(b"100644 blob " + blob + b"\t" + name + b"\0")
+        for name, children in subtrees.items():
+            entries.append(b"040000 tree " + tree(children).encode() + b"\t" + name + b"\0")
+        return _git(graph, "mktree", "-z", data=b"".join(entries))
+
+    parent_args = [arg for parent in parents for arg in ("-p", parent)]
+    return _git(graph, "commit-tree", tree(paths), *parent_args, "-m", "fixture")
+
+
 def _collect_paths(
     stub_doc: dict,
-    tmp_path: Path,
-    pages: object,
-    count: int,
+    graph: Path,
+    base: str,
+    head: str,
     *,
-    before_fields: dict | None = None,
-    after_fields: dict | None = None,
-    merge_bases: dict[str, str] | None = None,
-) -> tuple[int, list[str]]:
-    base, head = "a" * 40, "b" * 40
-    snapshot = {"base": {"sha": base}, "head": {"sha": head}, "changed_files": count}
-    for name, data in (
-        ("stub-before.json", snapshot | (before_fields or {})),
-        ("stub-after.json", snapshot | (after_fields or {})),
-        ("stub-pages.json", pages),
-    ):
-        (tmp_path / name).write_text(json.dumps(data), encoding="utf-8")
+    live_head: str | None = None,
+    stale_files: list[str] | None = None,
+) -> list[str]:
+    """Execute the collector with real Git objects and a local substitute for the PR API."""
     step = next(step for step in stub_doc["jobs"]["classify"]["steps"] if step.get("name") == "Collect changed paths")
-    program = re.search(r"^python3 - <<'PY'\n(.+?)^PY$", step["run"], re.MULTILINE | re.DOTALL)
+    program = re.fullmatch(r"python3 - <<'PY'\n(.+?)\nPY\s*", step["run"], re.DOTALL)
     assert program
-    script = tmp_path / "collect.py"
+    workspace = graph.parent
+    script = workspace / "collect.py"
     script.write_text(program[1], encoding="utf-8")
-    endpoints = {
-        f"repos/test/repo/compare/{ref}...{head}?per_page=1": value for ref, value in (merge_bases or {}).items()
-    }
+    real_check_output = subprocess.check_output
+    api_calls = []
+    pr = "repos/test/repo/pulls/12"
 
-    def compare(args: list[str], *, text: bool) -> str:
-        assert text and args == ["gh", "api", args[2], "--jq", ".merge_base_commit.sha"]
-        assert args[2] in endpoints, f"Unexpected or repeated compare request {args[2]}"
-        return endpoints.pop(args[2]) + "\n"
+    def read_request(args: list[str], **kwargs):
+        if args[0] == "git":
+            return real_check_output(args, **kwargs)
+        api_calls.append(args)
+        if stale_files is not None and args[0:2] == ["gh", "api"] and any(f"{pr}/files" in arg for arg in args):
+            return json.dumps([[{"filename": name, "status": "modified"} for name in stale_files]])
+        assert args == ["gh", "api", pr, "--jq", ".head.sha"]
+        return (head if live_head is None else live_head) + "\n"
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.chdir(tmp_path)
+        patch.chdir(workspace)
         patch.setenv("EXPECTED_BASE", base)
         patch.setenv("EXPECTED_HEAD", head)
         patch.setenv("REPO", "test/repo")
-        patch.setattr(subprocess, "check_output", compare)
-        try:
-            runpy.run_path(str(script), run_name="__main__")
-        except SystemExit as error:
-            assert error.code
-            assert not (tmp_path / "stub-paths.txt").exists()
-            return 1, []
-    assert not endpoints
-    return 0, _MOD.read_changed_paths(tmp_path / "stub-paths.txt")
+        patch.setenv("PR_NUMBER", "12")
+        patch.setenv("RUNNER_TEMP", str(workspace))
+        patch.setattr(subprocess, "check_output", read_request)
+        runpy.run_path(str(script), run_name="__main__")
+    assert api_calls == [["gh", "api", pr, "--jq", ".head.sha"]]
+    return _MOD.read_changed_paths(workspace / "stub-paths.txt")
 
 
-def test_complete_docs_only_pages_can_emit(stub_doc: dict, tmp_path: Path, patterns: list[str]) -> None:
-    files = [{"filename": f"docs/file-{n}.md", "status": "modified"} for n in range(101)]
-    status, paths = _collect_paths(stub_doc, tmp_path, [files[:100], files[100:]], 101)
-    assert status == 0
-    assert paths == [entry["filename"] for entry in files]
+def test_stale_same_count_file_list_cannot_authorize_mixed_diff(
+    stub_doc: dict, graph: Path, patterns: list[str]
+) -> None:
+    base = _commit(graph, [])
+    head = _commit(graph, [b"docs/a.md", b"src/b.py"], base)
+    paths = _collect_paths(stub_doc, graph, base, head, stale_files=["docs/a.md", "docs/b.md"])
+    assert paths == ["docs/a.md", "src/b.py"]
+    assert not all_paths_ignored(paths, patterns)
+
+
+def test_docs_only_pr_with_advanced_base_can_emit(stub_doc: dict, graph: Path, patterns: list[str]) -> None:
+    common = _commit(graph, [])
+    base = _commit(graph, [b"src/base.py"], common)
+    head = _commit(graph, [b"docs/a.md"], common)
+    advanced = _commit(graph, [b"src/base.py", b"src/later.py"], base)
+    _git(graph, "update-ref", "refs/heads/main", advanced)
+    paths = _collect_paths(stub_doc, graph, base, head)
+    assert paths == ["docs/a.md"]
     assert all_paths_ignored(paths, patterns)
 
 
-def test_rename_out_of_source_cannot_emit(stub_doc: dict, tmp_path: Path, patterns: list[str]) -> None:
-    change = {"filename": "docs/old.py", "previous_filename": "src/old.py", "status": "renamed"}
-    status, paths = _collect_paths(stub_doc, tmp_path, [[change]], 1)
-    assert status == 0
+def test_changed_paths_have_no_api_page_limit(stub_doc: dict, graph: Path) -> None:
+    base = _commit(graph, [])
+    names = [f"docs/{i:04d}.md".encode() for i in range(3001)] + [b"src/last.py"]
+    head = _commit(graph, names, base)
+    assert _collect_paths(stub_doc, graph, base, head) == [name.decode() for name in names]
+
+
+def test_rename_out_of_source_cannot_emit(stub_doc: dict, graph: Path, patterns: list[str]) -> None:
+    base = _commit(graph, [b"src/old.py"])
+    head = _commit(graph, [b"docs/old.py"], base)
+    paths = _collect_paths(stub_doc, graph, base, head)
     assert paths == ["docs/old.py", "src/old.py"]
     assert not all_paths_ignored(paths, patterns)
 
 
-@pytest.mark.parametrize("when", ["before", "after"])
-@pytest.mark.parametrize("fields", [{"head": {"sha": "c" * 40}}, {"base": {"sha": "d" * 40}}, {"changed_files": 2}])
-def test_changed_snapshot_has_no_verdict(stub_doc: dict, tmp_path: Path, when: str, fields: dict) -> None:
-    files = [[{"filename": "docs/a.md", "status": "modified"}]]
-    status, paths = _collect_paths(stub_doc, tmp_path, files, 1, **{f"{when}_fields": fields})
-    assert status != 0
-    assert not paths
+def test_changed_live_head_has_no_verdict(stub_doc: dict, graph: Path) -> None:
+    base = _commit(graph, [])
+    head = _commit(graph, [b"docs/a.md"], base)
+    with pytest.raises(SystemExit, match="PR head differs"):
+        _collect_paths(stub_doc, graph, base, head, live_head=base)
+    assert not (graph.parent / "stub-paths.txt").exists()
 
 
 @pytest.mark.parametrize(
-    ("event_fork", "observed_fork", "valid"),
-    [("c" * 40, "c" * 40, True), ("d" * 40, "c" * 40, False), ("", "", False), ("z" * 40, "z" * 40, False)],
-    ids=["same-three-dot-diff", "changed-diff", "missing-fork", "invalid-sha"],
+    "path", [b" docs/a.md", b"docs/a.md\r", b"docs/a\nsrc/b.py", "docs/a\u2028b".encode(), b"docs/\xff"]
 )
-def test_stable_advanced_base_needs_equivalent_diff(
-    stub_doc: dict, tmp_path: Path, patterns: list[str], event_fork: str, observed_fork: str, valid: bool
-) -> None:
-    advanced = "e" * 40
-    snapshot = {"base": {"sha": advanced}}
-    files = [[{"filename": "docs/a.md", "status": "modified"}]]
-    status, paths = _collect_paths(
-        stub_doc,
-        tmp_path,
-        files,
-        1,
-        before_fields=snapshot,
-        after_fields=snapshot,
-        merge_bases={"a" * 40: event_fork, advanced: observed_fork},
-    )
-    assert (status == 0) is valid
-    assert all_paths_ignored(paths, patterns) is valid
+def test_ambiguous_or_undecodable_filename_has_no_verdict(stub_doc: dict, graph: Path, path: bytes) -> None:
+    base = _commit(graph, [])
+    head = _commit(graph, [path], base)
+    with pytest.raises((SystemExit, UnicodeDecodeError)):
+        _collect_paths(stub_doc, graph, base, head)
+    assert not (graph.parent / "stub-paths.txt").exists()
 
 
-@pytest.mark.parametrize(
-    ("pages", "count"),
-    [
-        ([], 0),
-        ([[{"filename": "docs/a.md", "status": "added"}]], 3001),
-        ([[{"filename": "docs/a.md", "status": "added"}]] * 2, 2),
-        ([{"filename": "docs/a.md", "status": "added"}], 1),
-        ([[{"filename": "docs/a.md", "status": "renamed"}]], 1),
-        ([[{"filename": "docs/a.md", "status": "unknown"}]], 1),
-        ([[{"filename": "docs/a.md", "previous_filename": "docs/a.md", "status": "renamed"}]], 1),
-    ],
-    ids=["empty", "truncated", "duplicate", "malformed-page", "missing-old-name", "unknown-status", "same-old-name"],
-)
-def test_incomplete_file_evidence_has_no_verdict(stub_doc: dict, tmp_path: Path, pages: list, count: int) -> None:
-    status, paths = _collect_paths(stub_doc, tmp_path, pages, count)
-    assert status != 0
-    assert not paths
+def test_missing_history_and_empty_diff_have_no_verdict(stub_doc: dict, graph: Path) -> None:
+    base = _commit(graph, [])
+    with pytest.raises(subprocess.CalledProcessError):
+        _collect_paths(stub_doc, graph, base, "f" * 40)
+    with pytest.raises(SystemExit, match="Missing or incomplete"):
+        _collect_paths(stub_doc, graph, base, base)
+    assert not (graph.parent / "stub-paths.txt").exists()
 
 
-@pytest.mark.parametrize("key", ["filename", "previous_filename"])
-@pytest.mark.parametrize("path", [" docs/a.md", "docs/a.md\r", "docs/a\nsrc/b.py", "docs/a\u2028src/b.py", "docs/a\0b"])
-def test_ambiguous_filename_has_no_verdict(stub_doc: dict, tmp_path: Path, key: str, path: str) -> None:
-    change = {"filename": "docs/b.md", "previous_filename": "docs/a.md", "status": "renamed", key: path}
-    status, paths = _collect_paths(stub_doc, tmp_path, [[change]], 1)
-    assert status != 0
-    assert not paths
+def test_multiple_merge_bases_have_no_verdict(stub_doc: dict, graph: Path) -> None:
+    root = _commit(graph, [])
+    left = _commit(graph, [b"docs/a.md"], root)
+    right = _commit(graph, [b"docs/b.md"], root)
+    base = _commit(graph, [b"docs/a.md", b"docs/b.md"], left, right)
+    head = _commit(graph, [b"docs/c.md"], right, left)
+    with pytest.raises(SystemExit, match="Expected one full commit SHA"):
+        _collect_paths(stub_doc, graph, base, head)
+    assert not (graph.parent / "stub-paths.txt").exists()
 
 
 # ---------------------------------------------------------------------------

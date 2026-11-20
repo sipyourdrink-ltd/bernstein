@@ -1326,7 +1326,8 @@ def test_planner_flags_rpm_relevant_paths(ci_doc: dict[str, object], tmp_path: P
 
 @requires_shell_tools
 def test_planner_runs_all_checks_for_a_git_quoted_path(ci_doc: dict, tmp_path: Path) -> None:
-    repo = _repo_with_one_change(tmp_path, "docs/sample\tname.md")
+    repo = _repo_with_one_change(tmp_path, "docs/café.md")
+    _git(repo, "config", "core.quotePath", "true")
     outputs = _run_classify(repo, _classify_script(ci_doc), event="push")
     assert outputs["docs_only"] == "false"
     assert {value for key, value in outputs.items() if key != "docs_only"} == {"true"}

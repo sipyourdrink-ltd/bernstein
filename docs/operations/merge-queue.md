@@ -81,13 +81,13 @@ group, including docs-only ones, and always publishes `CI gate`. Adding
 required-context name on the queue for no benefit.
 
 On a PR, the stub uses the classifier and ignore patterns from the event's
-base commit. It checks the base, head and file count around pagination and
-classifies both paths of a rename. If the target branch advanced before
-listing started, both bases must have the same merge base with the event
-head. An incomplete or changing list cannot produce a synthetic success.
-On a merge group, the real gate requires
-the proto drift check and explicit planner flags. Only a docs-only group
-can use the docs-only exemption for the heavy jobs.
+base commit. It reads every changed path from the Git diff between the
+event's merge base and head, including both paths of a rename. This
+keeps the original diff available when the target branch advances and
+avoids the PR file API's pagination limit. The stub checks that the PR
+still has the event head. On a merge group, the real gate requires the
+proto drift check and explicit planner flags. Only a docs-only group can
+use the docs-only exemption for the heavy jobs.
 
 That makes `ci.yml`'s **unconditional** `merge_group: {}` trigger a
 load-bearing invariant: adding any filter to it would silently wedge the

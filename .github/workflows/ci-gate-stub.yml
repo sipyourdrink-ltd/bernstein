@@ -138,6 +138,20 @@ jobs:
           # Both the classifier and its paths-ignore policy come from the event base.
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/ci_gate_stub_guard.py
+            /.github/workflows/ci.yml
+      - name: Fetch the event commit graph
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: stub-event-graph
+          fetch-depth: 0
+          # Only the Git objects are needed to enumerate changed paths.
+          sparse-checkout-cone-mode: false
+          sparse-checkout: '!/*'
+          persist-credentials: false
       - name: Collect changed paths
         env:
           GH_TOKEN: ${{ github.token }}
@@ -146,81 +160,41 @@ jobs:
           EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP"
-          pr="repos/${REPO}/pulls/${PR_NUMBER}"
-          gh api "$pr" > stub-before.json
-          gh api --paginate --slurp "$pr/files?per_page=100" > stub-pages.json
-          gh api "$pr" > stub-after.json
           python3 - <<'PY'
-          import json
           import os
           import re
           import subprocess
           from pathlib import Path
 
-          def read_json(name):
-              return json.loads(Path(name).read_text(encoding="utf-8"))
-
-          def checked_sha(value):
-              if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value) or value == "0" * 40:
-                  raise SystemExit("Missing or invalid commit SHA")
+          def commit_sha(value):
+              if not re.fullmatch(r"[0-9a-f]{40}", value) or value == "0" * 40:
+                  raise SystemExit("Expected one full commit SHA")
               return value
 
-          event_base = checked_sha(os.environ["EXPECTED_BASE"])
-          event_head = checked_sha(os.environ["EXPECTED_HEAD"])
+          def git(*args):
+              return subprocess.check_output(["git", "-C", "stub-event-graph", *args])
 
-          def snapshot(name):
-              pr = read_json(name)
-              if pr["head"]["sha"] != event_head:
-                  raise SystemExit("PR head differs from this event")
-              count = pr["changed_files"]
-              if type(count) is not int or count <= 0:
-                  raise SystemExit("Missing or empty PR file count")
-              return checked_sha(pr["base"]["sha"]), count
+          base = commit_sha(os.environ["EXPECTED_BASE"])
+          head = commit_sha(os.environ["EXPECTED_HEAD"])
+          if git("rev-parse", "--is-shallow-repository") != b"false\n":
+              raise SystemExit("Incomplete event history")
+          # Multiple merge bases leave the three-dot PR diff ambiguous.
+          root = commit_sha(git("merge-base", "--all", base, head).decode("ascii").removesuffix("\n"))
+          diff = git("diff", "--no-renames", "--ignore-submodules=none", "--no-ext-diff", "--no-textconv",
+                     "--name-only", "-z", root, head, "--")
+          if not diff or not diff.endswith(b"\0"):
+              raise SystemExit("Missing or incomplete changed paths")
+          paths = diff[:-1].decode("utf-8").split("\0")
+          # The trusted classifier reads one path per line with splitlines() and strip().
+          if any(not path or path != path.strip() or path.splitlines() != [path] for path in paths):
+              raise SystemExit("Filename cannot be passed intact to the classifier")
 
-          def merge_base(base):
-              endpoint = f"repos/{os.environ['REPO']}/compare/{base}...{event_head}?per_page=1"
-              output = subprocess.check_output(["gh", "api", endpoint, "--jq", ".merge_base_commit.sha"], text=True)
-              return checked_sha(output.removesuffix("\n"))
-
-          def checked_path(path):
-              # The base classifier reads one path per line with splitlines() and strip().
-              if (not isinstance(path, str) or not path or path != path.strip()
-                      or path.splitlines() != [path] or "\x00" in path):
-                  raise SystemExit("Filename cannot be passed intact to the classifier")
-              return path
-
-          observed_base, count = snapshot("stub-before.json")
-          if snapshot("stub-after.json") != (observed_base, count):
-              raise SystemExit("PR changed during pagination")
-          # An unrelated push can advance main before listing. With a fixed head,
-          # both three-dot diffs are identical if they start at the same commit.
-          if observed_base != event_base and merge_base(observed_base) != merge_base(event_base):
-              raise SystemExit("PR merge base differs from this event")
-          pages = read_json("stub-pages.json")
-          if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
-              raise SystemExit("Invalid paginated PR file list")
-          paths = []
-          filenames = set()
-          for page in pages:
-              for change in page:
-                  current = checked_path(change["filename"])
-                  if current in filenames:
-                      raise SystemExit("Duplicate filename in paginated PR file list")
-                  filenames.add(current)
-                  paths.append(current)
-                  status = change["status"]
-                  if status not in {"added", "removed", "modified", "renamed", "copied", "changed", "unchanged"}:
-                      raise SystemExit("Unknown PR file status")
-                  if status in {"renamed", "copied"} or "previous_filename" in change:
-                      previous = checked_path(change.get("previous_filename"))
-                      if previous == current:
-                          raise SystemExit("Indistinguishable old and new filenames")
-                      paths.append(previous)
-          if len(filenames) != count:
-              raise SystemExit("Incomplete or changing PR file list")
-          Path("stub-paths.txt").write_text("\n".join(paths) + "\n", encoding="utf-8")
+          # Only freshness is live. The classified filenames come from the event commit trees.
+          pr = f"repos/{os.environ['REPO']}/pulls/{os.environ['PR_NUMBER']}"
+          live_head = subprocess.check_output(["gh", "api", pr, "--jq", ".head.sha"], text=True)
+          if live_head.removesuffix("\n") != head:
+              raise SystemExit("PR head differs from this event")
+          (Path(os.environ["RUNNER_TEMP"]) / "stub-paths.txt").write_text("\n".join(paths) + "\n", encoding="utf-8")
           PY
       - name: Evaluate against ci.yml paths-ignore
         id: guard
