@@ -14,3 +14,6 @@ RUN set -eux; \
     rm /tmp/uv.tar.gz
 
 USER vscode
+
+# Editor sessions start without a server. Check the tool used by postCreateCommand.
+HEALTHCHECK --interval=1m --timeout=5s CMD ["/usr/local/bin/uv", "--version"]

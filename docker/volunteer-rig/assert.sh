@@ -16,7 +16,7 @@ fail() { echo "[assert] FAIL: $*" >&2; exit 1; }
 TOKEN_JSON=$(curl -sf -X POST "${GITEA_URL}/api/v1/users/${ADMIN_USER}/tokens" \
     -u "${ADMIN_USER}:${ADMIN_PASS}" \
     -H "Content-Type: application/json" \
-    -d '{"name": "volunteer-rig-assert"}' 2>/dev/null) || fail "Failed to get token for assert"
+    -d '{"name":"volunteer-rig-assert","scopes":["read:repository","read:issue"]}' 2>/dev/null) || fail "Failed to get token for assert"
 TOKEN=$(echo "${TOKEN_JSON}" | jq -r '.sha1')
 
 # Assert: exactly 2 issues with volunteer-ok label
