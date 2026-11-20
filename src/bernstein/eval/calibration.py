@@ -31,6 +31,7 @@ import math
 import os
 import re
 import time
+from bisect import bisect_right
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -246,20 +247,6 @@ def compute_brier(predicted: Sequence[float], observed: Sequence[bool]) -> Brier
     return BrierScore(score=total / len(predicted), sample_count=len(predicted))
 
 
-def _bucket_index(prob: float, bin_count: int) -> int:
-    """Return the bucket index for ``prob`` given ``bin_count`` buckets.
-
-    The top edge (``prob == 1.0``) belongs to the last bucket to avoid an
-    off-by-one explosion.
-    """
-    if prob >= 1.0:
-        return bin_count - 1
-    if prob <= 0.0:
-        return 0
-    idx = int(prob * bin_count)
-    return min(idx, bin_count - 1)
-
-
 def reliability_diagram_data(
     predicted: Sequence[float],
     observed: Sequence[bool],
@@ -287,19 +274,19 @@ def reliability_diagram_data(
         msg = f"bin_count must be >= 1, got {bin_count}"
         raise ValueError(msg)
     _check_pairs(predicted, observed)
+    width = 1.0 / bin_count
+    lower_edges = [i * width for i in range(bin_count)]
     sums_pred: list[float] = [0.0] * bin_count
     sums_obs: list[float] = [0.0] * bin_count
     counts: list[int] = [0] * bin_count
     for p, o in zip(predicted, observed, strict=True):
-        idx = _bucket_index(p, bin_count)
+        idx = bisect_right(lower_edges, p) - 1
         sums_pred[idx] += p
         sums_obs[idx] += 1.0 if o else 0.0
         counts[idx] += 1
-    width = 1.0 / bin_count
     out: list[ReliabilityBucket] = []
-    for i in range(bin_count):
-        lower = i * width
-        upper = 1.0 if i == bin_count - 1 else (i + 1) * width
+    for i, lower in enumerate(lower_edges):
+        upper = 1.0 if i == bin_count - 1 else lower_edges[i + 1]
         if counts[i] == 0:
             out.append(
                 ReliabilityBucket(
