@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- the open-source governance layer for AI agents.
+"""CLI entry point for Bernstein -- an open-source governance layer for AI agents.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -311,7 +311,7 @@ def print_rich_help() -> None:
     c.print()
     c.print(
         Panel(
-            "[bold]bernstein[/bold]  the open-source governance layer for AI agents.\n"
+            "[bold]bernstein[/bold]  an open-source governance layer for AI agents.\n"
             "  No model in the coordination loop, so a plan replays to the same task graph.\n"
             f"  {adapter_count}, per-task git worktrees, "
             "opt-in HMAC-SHA256 audit chain (RFC 2104).",
@@ -798,7 +798,7 @@ def cli(
     refine_spec: str | None,
     unsafe_allow_unicode_tags: bool,
 ) -> None:
-    """The open-source governance layer for AI agents.
+    """An open-source governance layer for AI agents.
 
     Parallel runs in per-task git worktrees, byte-identical run receipts, signed
     lineage that checks offline from the artefacts. Replaying the HMAC audit
