@@ -310,6 +310,18 @@ def test_missing_checkpoint_returns_json_when_git_is_unavailable(
     assert "No checkpoint" in json.loads(result.stdout)["error"]
 
 
+def test_missing_checkpoint_returns_json_when_the_optional_ledger_root_is_a_file(workdir: Path) -> None:
+    ledger_root = workdir / ".sdd" / "runtime" / "ledger"
+    ledger_root.parent.mkdir(parents=True, exist_ok=True)
+    ledger_root.write_text("unavailable")
+
+    result = CliRunner().invoke(resume_cmd, ["missing", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_NO_CHECKPOINT, result.exception
+    report = json.loads(result.stdout)
+    assert "No checkpoint" in report["error"]
+    assert report["dispatch_status"] == "not_dispatched"
+
+
 def test_cli_resume_happy_path_bumps_resume_count_and_writes_signal(workdir: Path) -> None:
     save_checkpoint(workdir, _make_checkpoint(task_id="ok"))
     runner = CliRunner()

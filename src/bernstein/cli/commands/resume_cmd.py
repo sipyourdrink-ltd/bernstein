@@ -394,7 +394,10 @@ def _work_ledger_hint(workdir: Path, resume_id: str) -> str | None:
         ledger_ref(resume_id)
     except LedgerGitError:
         return None
-    has_local = LedgerReader(run_ledger_dir(workdir / ".sdd", resume_id)).exists()
+    try:
+        has_local = LedgerReader(run_ledger_dir(workdir / ".sdd", resume_id)).exists()
+    except OSError:
+        has_local = False
     has_anchor = False
     if not has_local:
         try:
