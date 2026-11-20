@@ -1,6 +1,7 @@
 """Recorded calibration metadata stays separate from deterministic hard drift."""
 
 import json
+from itertools import permutations
 
 import pytest
 
@@ -75,6 +76,31 @@ def test_same_recorded_values_and_json_roundtrip_have_identical_output() -> None
 
     assert canonical(one) == canonical(two)
     assert canonical(DriftTrajectoryCurve.from_dict(json.loads(canonical(one)))) == canonical(one)
+
+
+def test_intent_calibration_summary_is_independent_of_input_order() -> None:
+    # Swapping the two tied records changes the Brier sum's rounding without a stable tie-break.
+    records = (
+        CalibrationRecord(99, "judge", "intent/v1", 0.1, True),
+        CalibrationRecord(100, "review", "intent/v1", 0.2, False),
+        CalibrationRecord(100, "route", "intent/v1", 0.6, True),
+    )
+    task, events = _task(), _events("outside.py")
+    bare = evaluate_trajectory_drift(task, events)
+    summaries = set()
+    for order in permutations(records):
+        supplied = list(order)
+        curve = evaluate_trajectory_drift(task, events, intent_calibration_records=supplied)
+        summary = curve.to_dict()["intent_calibration"]
+        assert summary["status"] == "available"
+        assert summary["sample_count"] == summary["report"]["decisions"] == len(records)
+        summaries.add(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+        assert tuple(supplied) == order
+        assert curve.step_measurements == bare.step_measurements
+        assert curve.max_hard_drift == bare.max_hard_drift
+        assert curve.passed_gate is bare.passed_gate
+
+    assert len(summaries) == 1
 
 
 def test_adapter_records_only_consumed_values_and_scorer_replays_them() -> None:
