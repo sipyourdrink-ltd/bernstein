@@ -334,11 +334,20 @@ class OpenAIAgentsAdapter(PluginAdapter):
             if isinstance(council, dict) and council:
                 overrides["council"] = council
 
-        # ``max_tokens`` from ``mcp_config`` (mode-profile override) wins; the
-        # model_config value is only the fallback when the override is absent.
-        # It is applied here on the RIGHT of the merge so an ``overrides``
-        # value survives, matching the other sampling overrides above.
-        overrides.setdefault("max_tokens", int(getattr(model_config, "max_tokens", 200_000)))
+        # ModelConfig.max_tokens is also the router's token-budget estimate;
+        # its 200_000 default is not an operator-requested output limit. Only
+        # completion caps supplied through mcp_config (including role/mode
+        # settings folded by the spawner) belong in the request manifest.
+        implicit = (mcp_config or {}).get("_mode_sampling_params", [])
+        if isinstance(implicit, list) and "council" not in overrides:
+            unsupported_defaults = {
+                "gpt-5-mini": ("temperature", "top_p"),
+                "gpt-5-mini-2025-08-07": ("temperature", "top_p"),
+                "kimi-k2.5": ("temperature",),
+            }.get(model_config.model, ())
+            for key in unsupported_defaults:
+                if key in implicit:
+                    overrides.pop(key, None)
 
         # Control knobs the RUNNER cannot see on its own: the spawner hands
         # the subprocess a filtered environment (env_isolation strips

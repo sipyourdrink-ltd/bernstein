@@ -871,7 +871,7 @@ class RunnerManifest:
     workdir: str
     model: str
     effort: str = "high"
-    max_tokens: int = 200_000
+    max_tokens: int | None = None
     timeout_seconds: int = 1800
     task_scope: str = "medium"
     budget_multiplier: float = 1.0
@@ -1158,15 +1158,17 @@ def _inject_alibaba_enable_thinking(
     return kwargs
 
 
+_GPT5_MINI_MODELS = frozenset({"gpt-5-mini", "gpt-5-mini-2025-08-07"})
+
+
 def _gpt5_mini_responses_rejects_sampling(manifest: RunnerManifest, base_url: str | None) -> bool:
     """Identify the standard Responses route for GPT-5 mini."""
     if manifest.council is not None or base_url:
         return False
     env_base_url = os.environ.get("OPENAI_BASE_URL")
-    return (not env_base_url or env_base_url.rstrip("/") == "https://api.openai.com/v1") and manifest.model in {
-        "gpt-5-mini",
-        "gpt-5-mini-2025-08-07",
-    }
+    return (
+        not env_base_url or env_base_url.rstrip("/") == "https://api.openai.com/v1"
+    ) and manifest.model in _GPT5_MINI_MODELS
 
 
 def _build_model_settings_kwargs(
@@ -1210,7 +1212,13 @@ def _build_model_settings_kwargs(
     if manifest.top_k is not None:
         kwargs["extra_args"] = {"top_k": manifest.top_k}
     if manifest.max_tokens and _model_settings_accepts(model_settings_cls, "max_tokens"):
-        kwargs["max_tokens"] = manifest.max_tokens
+        if base_url and manifest.council is None and manifest.model in _GPT5_MINI_MODELS:
+            # The SDK serializes ModelSettings.max_tokens literally on Chat
+            # Completions. GPT-5 mini requires max_completion_tokens there;
+            # leave max_tokens unset so only the supported field is sent.
+            kwargs.setdefault("extra_args", {})["max_completion_tokens"] = manifest.max_tokens
+        else:
+            kwargs["max_tokens"] = manifest.max_tokens
     kwargs = _inject_alibaba_enable_thinking(
         kwargs,
         base_url,
