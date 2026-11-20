@@ -206,7 +206,7 @@ Använd `bernstein govern audit --format json` eller `--format sarif` för maski
 `bernstein delegation verify RUN` jämför kvittokedjan med det slutliga kedjehuvudet och antalet delegeringssteg, som förseglats i körningsmanifestet med en HMAC baserad på granskningsnyckeln. Det upptäcker borttagning av kedjans slut, utbyte och förlängning efter avslut, inklusive omskrivning av deklarationen utan nyckeln. Om deklarationen tas bort förblir körningen ofullständig (avslutskod `3`) och betraktas aldrig som giltig. Detta upptäcker inte återanvändning av en äldre autentisk ögonblicksbild och skyddar inte mot en skribent som har granskningsnyckeln. Se [arbetsflödet för delegeringsverifiering](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### hur det fungerar
-<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Varje mål rör sig genom fyra steg:
 
@@ -217,7 +217,7 @@ Varje mål rör sig genom fyra steg:
 
 Varför schemaläggaren är i ren Python och vilka avvägningar det innebär: [varför deterministisk](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
-Bernstein slutar starta nya arbetsprocesser om en korrigering höjer de sammanlagda utgifterna till eller över budgetens inställda stoppgräns, även om inga nya token har rapporterats. Efter en omstart räcker de sparade tokenantalen inte för att återskapa den exakta sammanlagda kostnad som tidigare rapporterats för en viss kombination av agent, uppgift och modell.
+Kontrollen `can_spawn()` i kostnadsuppföljningen returnerar `False` när de korrigerade sammanlagda utgifterna når eller överskrider budgetens inställda stoppgräns, även om inga nya token har rapporterats. Efter en omstart räcker de sparade tokenantalen inte för att återskapa den exakta sammanlagda kostnad som tidigare rapporterats för en viss kombination av agent, uppgift och modell.
 
 ### vardagliga kommandon
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

@@ -206,7 +206,7 @@ Użyj `bernstein govern audit --format json` lub `--format sarif`, aby uzyskać 
 `bernstein delegation verify RUN` porównuje łańcuch potwierdzeń z końcową głową i liczbą kroków delegacji zapieczętowanymi w manifeście uruchomienia za pomocą HMAC z kluczem audytu. Wykrywa usunięcie końca łańcucha, podmianę i wydłużenie po zamknięciu, w tym przepisanie deklaracji bez klucza. Usunięcie deklaracji pozostawia uruchomienie niekompletne (kod wyjścia `3`), nigdy poprawne. Nie wykrywa to ponownego użycia starszej autentycznej migawki ani nie chroni przed osobą zapisującą dane, która ma klucz audytu. Zobacz [procedurę weryfikacji delegacji](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### jak to działa
-<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Każdy cel realizowany jest w czterech etapach:
 
@@ -217,7 +217,7 @@ Każdy cel realizowany jest w czterech etapach:
 
 Dlaczego harmonogram został zaimplementowany w czystym Pythonie i jakie niesie to kompromisy: [dlaczego determinizm](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
-Bernstein przestaje uruchamiać nowe procesy robocze, gdy po korekcie łączne wydatki osiągną lub przekroczą ustawiony próg zatrzymania dla budżetu, nawet jeśli nie zgłoszono nowych tokenów. Po ponownym uruchomieniu same zapisane liczniki tokenów nie pozwalają odtworzyć dokładnego łącznego kosztu zgłoszonego wcześniej dla danej kombinacji agenta, zadania i modelu.
+Funkcja `can_spawn()` w module śledzenia kosztów zwraca `False`, gdy łączne wydatki po korekcie osiągną lub przekroczą ustawiony próg zatrzymania dla budżetu, nawet jeśli nie zgłoszono nowych tokenów. Po ponownym uruchomieniu same zapisane liczniki tokenów nie pozwalają odtworzyć dokładnego łącznego kosztu zgłoszonego wcześniej dla danej kombinacji agenta, zadania i modelu.
 
 ### codzienne polecenia
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

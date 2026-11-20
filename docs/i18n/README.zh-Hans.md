@@ -206,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` 将回执链与运行清单中使用审计密钥的 HMAC 封存的最终链头和跳数进行比较，从而检测尾部删除、替换和关闭后的链增长，包括在没有密钥的情况下改写声明。删除声明会使运行处于未完成状态（退出码 `3`），绝不会被判定为有效。这无法检测重放较早的真实快照，也无法防范持有审计密钥的写入者。参见[委托验证流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
 
 ### 工作原理
-<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 每个目标经历四个阶段：
 
@@ -217,7 +217,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 调度器为什么是纯 Python，以及这换来什么代价：[为什么确定性](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)。
 
-如果费用更正使累计支出达到或超过配置的预算停止阈值，即使没有报告新增的词元，Bernstein 也会停止启动新的工作进程。重启后，仅凭保存的词元计数无法还原此前针对特定智能体、任务和模型组合报告的确切累计费用。
+如果更正后的累计支出达到或超过配置的预算停止阈值，即使没有报告新增的词元，费用跟踪器的 `can_spawn()` 检查也会返回 `False`。重启后，仅凭保存的词元计数无法还原此前针对特定智能体、任务和模型组合报告的确切累计费用。
 
 ### 日常命令
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

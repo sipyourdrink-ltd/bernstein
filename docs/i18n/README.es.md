@@ -206,7 +206,7 @@ Usa `bernstein govern audit --format json` o `--format sarif` para obtener resul
 `bernstein delegation verify RUN` compara la cadena de recibos con la cabecera final y el número de saltos sellados en el manifiesto de ejecución mediante un HMAC con la clave de auditoría, y detecta la eliminación del tramo final, la sustitución y la ampliación después del cierre, incluida la reescritura de la declaración sin la clave. Eliminar la declaración deja la ejecución incompleta (código de salida `3`), nunca válida. Esto no detecta la reutilización de una instantánea auténtica anterior ni protege frente a quien escribe teniendo la clave de auditoría. Consulta el [flujo de verificación de delegaciones](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cómo funciona
-<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Cada objetivo avanza a través de cuatro etapas:
 
@@ -217,7 +217,7 @@ Cada objetivo avanza a través de cuatro etapas:
 
 Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué determinista](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
-Bernstein deja de iniciar nuevos trabajadores cuando una corrección eleva el gasto acumulado hasta el umbral de parada configurado para el presupuesto o por encima de él, aunque no se haya informado de nuevos tokens. Tras un reinicio, los contadores de tokens guardados no bastan para reconstruir el coste acumulado exacto que se había comunicado para una combinación concreta de agente, tarea y modelo.
+La comprobación `can_spawn()` del módulo de seguimiento de costes devuelve `False` cuando el gasto acumulado corregido alcanza o supera el umbral de parada configurado para el presupuesto, aunque no se haya informado de nuevos tokens. Tras un reinicio, los contadores de tokens guardados no bastan para reconstruir el coste acumulado exacto que se había comunicado para una combinación concreta de agente, tarea y modelo.
 
 ### comandos cotidianos
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
