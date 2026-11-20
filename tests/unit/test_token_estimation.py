@@ -60,12 +60,7 @@ class TestBytesPerTokenForFileType:
         assert bytes_per_token_for_file_type(path) is None
 
     def test_special_filenames(self) -> None:
-        # _SPECIAL_NAMES is case-sensitive and lower comparison doesn't match
-        # so extensionless special names fall through to DEFAULT unless they
-        # happen to match (the code lowercases then checks against original-case set).
-        # Only CMakeLists.txt has a dot so it also won't match the "." guard.
-        # This tests the actual behavior of the code.
-        assert bytes_per_token_for_file_type("Makefile") == DEFAULT_BYTES_PER_TOKEN
+        assert bytes_per_token_for_file_type("Makefile") == TEXT_BYTES_PER_TOKEN
 
     def test_dotfiles(self) -> None:
         assert bytes_per_token_for_file_type(".gitignore") == TEXT_BYTES_PER_TOKEN
@@ -79,6 +74,11 @@ class TestBytesPerTokenForFileType:
 
 
 # --- estimate_tokens_for_file_size ---
+
+
+@pytest.mark.parametrize(("name", "expected"), [("Makefile", 14), ("Dockerfile", 14), ("unlisted", 12)])
+def test_special_filenames_use_the_text_ratio(name: str, expected: int) -> None:
+    assert estimate_tokens_for_file_size(name, 42) == expected
 
 
 class TestEstimateTokensForFileSize:
