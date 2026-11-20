@@ -741,20 +741,25 @@ def _verify_budget_row(record: GovernanceDecision, ledger_path: Path | None) -> 
     if ledger_path is None:
         return f"{record.subject}/budget: ledger required to verify budget decisions but none presented"
     try:
-        cap = float(record.context["cap_usd"])
-        next_cost = float(record.context["next_cost_usd"])
+        recorded_cap = record.context["cap_usd"]
+        recorded_next = record.context["next_cost_usd"]
+        amounts = [(float(recorded_cap), float(recorded_next))]
     except (KeyError, TypeError, ValueError):
         return f"{record.subject}/budget: record is missing cap_usd / next_cost_usd policy context"
     dimension = str(record.context.get("dimension", "agent"))
 
+    # Preserve the historical float projection. The writer also accepts JSON
+    # integers, whose canonical bytes differ from their float spelling.
+    if type(recorded_cap) in (int, float) and type(recorded_next) in (int, float):
+        amounts.append((recorded_cap, recorded_next))
     prior = seat_spend(ledger_path, record.subject, dimension=dimension)
-    recomputed_inputs = _budget_inputs_hash(
-        subject=record.subject,
-        cap_usd=cap,
-        prior_spend_usd=prior,
-        next_cost_usd=next_cost,
-    )
-    if recomputed_inputs != record.inputs_hash:
+    for cap, next_cost in amounts:
+        if (
+            _budget_inputs_hash(subject=record.subject, cap_usd=cap, prior_spend_usd=prior, next_cost_usd=next_cost)
+            == record.inputs_hash
+        ):
+            break
+    else:
         return (
             f"{record.subject}/budget: recomputed inputs_hash does not match the recorded one "
             "(ledger spend differs from the decision inputs)"

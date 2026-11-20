@@ -54,7 +54,9 @@ def _snapshot(root: Path) -> dict[str, bytes | None]:
     return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
 
 
-def _budget_refusal(workdir: Path, *, prior_spend: float = 9.0) -> tuple[SpendLedger, Path]:
+def _budget_refusal(
+    workdir: Path, *, prior_spend: float = 9.0, cap_usd: float | None = None, next_cost_usd: float = 2.0
+) -> tuple[SpendLedger, Path]:
     path = workdir / ".sdd" / "cost" / "ledger.jsonl"
     path.parent.mkdir(parents=True)
     ledger = SpendLedger(path=path)
@@ -65,8 +67,8 @@ def _budget_refusal(workdir: Path, *, prior_spend: float = 9.0) -> tuple[SpendLe
             lineage_root=workdir / ".sdd" / "lineage",
             hmac_key=b"synthetic-test-key-only",
             subject="alice",
-            cap_usd=prior_spend + 1.0,
-            next_cost_usd=2.0,
+            cap_usd=prior_spend + 1.0 if cap_usd is None else cap_usd,
+            next_cost_usd=next_cost_usd,
             ledger_path=path,
             now=1000,
         )
@@ -228,6 +230,22 @@ def test_changing_ledger_is_unavailable(tmp_path: Path, monkeypatch: pytest.Monk
     assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
     assert row["budget"]["prior_spend_usd"]["value"] is None
     assert "changed" in row["budget"]["prior_spend_usd"]["reason"]
+
+
+@pytest.mark.parametrize(("cap", "next_cost"), [(10, 2), (10, 2.0), (10.0, 2)])
+def test_integer_budget_inputs_match_their_recorded_hash(tmp_path: Path, cap: float, next_cost: float) -> None:
+    ledger, _ = _budget_refusal(tmp_path, cap_usd=cap, next_cost_usd=next_cost)
+    client = _client(tmp_path)
+    (row,) = _list(client)["decisions"]
+    assert row["verdict"] == "refuse"
+    assert row["budget"]["cap_usd"]["value"] == 10
+    assert row["budget"]["prior_spend_usd"]["state"] == "verified"
+    assert row["budget"]["prior_spend_usd"]["value"] == 9
+
+    ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=1)
+    (changed,) = _list(client)["decisions"]
+    assert changed["budget"]["prior_spend_usd"]["state"] == "mismatch"
+    assert changed["budget"]["prior_spend_usd"]["value"] is None
 
 
 def test_nonfinite_record_returns_controlled_error(tmp_path: Path) -> None:

@@ -70,8 +70,9 @@ Budget rows additionally carry `budget.cap_usd` and `budget.prior_spend_usd`.
 Each has `value` (USD or null), `state`, `provenance` and `reason`. The cap
 comes from recorded `context.cap_usd`. Prior spend comes from the project's
 `.sdd/cost/ledger.jsonl` through `seat_spend`, checked against the recorded
-input hash and verdict by the existing budget verifier. Both values share
-the resulting budget-input evidence state:
+input hash and verdict by the existing budget verifier. The hash check
+recognizes whole-dollar amounts recorded as JSON integers. Both values
+carry the resulting budget-input evidence state.
 
 | State | Meaning |
 |---|---|
