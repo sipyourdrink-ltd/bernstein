@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ flowchart LR
 পুনঃচেষ্টায় `dispatch_tier` অক্ষুণ্ণ থাকে; কাজটি আবার খোলার সময় স্পষ্টভাবে স্তর বেছে নেওয়া যায়। দেখুন [ডিসপ্যাচ স্তরের চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+কাজটি একটি আলাদা শাখা থেকে চালান। Bernstein যাচাই করা পরিবর্তন বর্তমান শাখায় মার্জ করে। ডিফল্ট শাখায় থাকলে মার্জ করতে পারে এমন রান শুরু হয় না। পুল রিকোয়েস্ট খোলার আগে কাজের শাখায় পরিবর্তনগুলি পর্যালোচনা করুন।
 
 `bernstein doctor --json` অডিট চুক্তির `findings`-ও প্রকাশ করে, যা একই ইনস্টলেশন পর্যবেক্ষণের ক্ষেত্রে `bernstein govern audit --only INS --json`-এর ফলাফলের সঙ্গে অভিন্ন। সাধারণ doctor প্রতিবেদনের প্রদর্শন অপরিবর্তিত থাকে। স্থায়ী চেক আইডির জন্য [doctor পরিচালনা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) দেখুন।
 
@@ -260,7 +264,7 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড। `autopilot` নিবন্ধিত আছে, কিন্তু `TaskSource` বাস্তবায়িত না হওয়া পর্যন্ত চলতে অস্বীকার করে।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 
@@ -272,6 +276,7 @@ bernstein volunteer browse --budget 60
 | [এটি কাদের জন্য](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | কোথায় এর মূল্য দাঁড়ায়, আর কোথায় Bernstein ভুল হাতিয়ার |
 | [ওয়ার্কফ্লো](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | এজেন্ট / কমান্ড / লুপ নোডের ডিক্লারেটিভ YAML DAG |
 | [ওয়েব UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI যে API ব্যবহার করে, সেই একই API-র উপর ব্রাউজার ড্যাশবোর্ড (কাজ তৈরি ও পর্যালোচনা) |
+| [কর্মী নোডের স্বাস্থ্য](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | ডিস্কের ফাঁকা স্থান, মেমরি ব্যবহার বা নেটওয়ার্কের বিলম্ব নির্ধারিত সীমার বাইরে গেলে কর্মী নতুন কাজ নেওয়া বন্ধ করে। |
 | [ক্লাউড এক্সিকিউশন](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | পরীক্ষামূলক: নিজের অ্যাকাউন্টে Cloudflare Workers-এ এজেন্ট চালান, R2 ওয়ার্কস্পেস সিংক সহ। হোস্ট করা `api.bernstein.run` সার্ভিসটি এখনও পাওয়া যাচ্ছে না |
 | [ডেটাসোর্স](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | শুধু-পড়ার কোয়েরি রসিদ, সঙ্গে এমন একটি কোয়েরি ড্রাইভার যা প্রতিটি ফলাফলকে যে স্কিমা স্ন্যাপশট থেকে সেটি এসেছে তার সঙ্গে বেঁধে দেয় |
 | [এজেন্ট ক্যাটালগ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | ভূমিকাগুলিকে বিল্ট-ইন টেমপ্লেটের বাইরের এজেন্ট সংজ্ঞার দিকে নির্দেশ করুন — একটি সাধারণ YAML/SKILL.md ডিরেক্টরি, বা Claude Code প্লাগইন-লেআউট ট্রি |

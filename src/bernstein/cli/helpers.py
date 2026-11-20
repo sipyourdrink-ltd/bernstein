@@ -477,7 +477,7 @@ _DOT_BERNSTEIN_SEED_FILENAMES = (
 )
 
 
-def find_seed_file() -> Path | None:
+def find_seed_file(root: Path = Path(".")) -> Path | None:
     """Look for a bernstein.yaml in the current directory.
 
     Checks the project-local ``.bernstein/`` directory first (e.g.
@@ -487,12 +487,8 @@ def find_seed_file() -> Path | None:
     Returns:
         Path to the seed file if found, None otherwise.
     """
-    for name in _DOT_BERNSTEIN_SEED_FILENAMES:
-        p = Path(name)
-        if p.is_file():
-            return p
-    for name in _SEED_FILENAMES:
-        p = Path(name)
+    for name in (*_DOT_BERNSTEIN_SEED_FILENAMES, *_SEED_FILENAMES):
+        p = root / name
         if p.is_file():
             return p
     return None

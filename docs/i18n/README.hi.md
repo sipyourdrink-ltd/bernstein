@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ flowchart LR
 दोबारा प्रयास में `dispatch_tier` बना रहता है; कार्य को फिर से खोलते समय स्तर स्पष्ट रूप से चुना जा सकता है। [डिस्पैच स्तर का अनुबंध](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) देखें।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+कार्य को एक अलग वर्किंग ब्रांच से चलाएँ। Bernstein जाँचे गए बदलावों को मौजूदा ब्रांच में मर्ज करता है। डिफ़ॉल्ट ब्रांच पर वह ऐसे रन रोक देता है जो बदलाव मर्ज कर सकते हैं। पुल रिक्वेस्ट खोलने से पहले वर्किंग ब्रांच में बदलावों की समीक्षा करें।
 
 `bernstein doctor --json` ऑडिट अनुबंध के `findings` भी दिखाता है, जो इंस्टॉलेशन के समान अवलोकनों के लिए `bernstein govern audit --only INS --json` के परिणामों के समान हैं। doctor की सामान्य रिपोर्ट का मौजूदा प्रदर्शन अपरिवर्तित रहता है। स्थिर जाँच आईडी के लिए [doctor संचालन मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) देखें।
 
@@ -260,7 +264,7 @@ bernstein volunteer browse --budget 60
 [दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse`, `budget`, `verify-bundle` और `hub` काम करने वाले सब-कमांड हैं। `autopilot` पंजीकृत है, लेकिन `TaskSource` लागू होने तक चलने से इनकार करता है।
 
 ### पहले पन्ने से आगे
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 गहराई की हर चीज़ [डॉक्स साइट](https://docs.bernstein.run/) पर रहती है:
 
@@ -272,6 +276,7 @@ bernstein volunteer browse --budget 60
 | [यह किसके लिए है](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | कहाँ इसका मूल्य बनता है, और कहाँ Bernstein ग़लत औज़ार है |
 | [वर्कफ़्लो](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | एजेंट / कमांड / लूप नोड्स के घोषणात्मक YAML DAG |
 | [वेब UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | उसी API पर चलने वाला ब्राउज़र डैशबोर्ड जिस पर TUI चलता है (कार्य बनाना और उनकी समीक्षा करना) |
+| [क्लस्टर वर्कर की स्थिति](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | खाली डिस्क स्थान, मेमोरी उपयोग या नेटवर्क विलंब तय सीमा से बाहर होने पर वर्कर नए कार्य लेना रोक देता है। |
 | [क्लाउड एग्ज़ीक्यूशन](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | प्रयोगात्मक: अपने ही अकाउंट पर Cloudflare Workers में एजेंट चलाइए, R2 वर्कस्पेस सिंक के साथ। होस्टेड `api.bernstein.run` सेवा अभी उपलब्ध नहीं है |
 | [डेटासोर्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | केवल-पढ़ने वाली क्वेरी रसीदें, और एक क्वेरी ड्राइवर जो हर नतीजे को उस स्कीमा स्नैपशॉट से बाँधता है जिससे वह निकला |
 | [एजेंट कैटलॉग](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | भूमिकाओं को बिल्ट-इन टेम्पलेट्स के बाहर की एजेंट परिभाषाओं पर लगाइए — एक सामान्य YAML/SKILL.md डायरेक्टरी, या Claude Code प्लगइन-लेआउट ट्री |
