@@ -50,7 +50,7 @@ PANEL_STROKE_DARK = "#3B3830"  # hairline that keeps the README panel edge visib
 MUTED_ON_DARK = "#A39D8C"
 MUTED_ON_PAPER = "#575552"
 
-TAGLINE = "The open-source governance layer for AI agents."
+TAGLINE = "An open-source governance layer for AI agents."
 SITE = "bernstein.run"
 
 

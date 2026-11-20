@@ -117,30 +117,32 @@ def test_maybe_reload_config_no_field_change_returns_false(tmp_path: Path, monke
 # ---------------------------------------------------------------------------
 
 
-def _capacity_stub(agents: dict[str, AgentSession], max_agents: int) -> SimpleNamespace:
-    stub = SimpleNamespace(_agents=agents, _config=SimpleNamespace(max_agents=max_agents))
+def _capacity_stub(workdir: Path, agents: dict[str, AgentSession], max_agents: int) -> SimpleNamespace:
+    stub = SimpleNamespace(_workdir=workdir, _agents=agents, _config=SimpleNamespace(max_agents=max_agents))
     _bind(stub, "_current_capacity")
     return stub
 
 
-def test_current_capacity_counts_only_live_agents() -> None:
+def test_current_capacity_counts_only_live_agents(tmp_path: Path) -> None:
     live = AgentSession(id="A-1", role="backend")
     live.status = "working"
     dead = AgentSession(id="A-2", role="backend")
     dead.status = "dead"
-    stub = _capacity_stub({"A-1": live, "A-2": dead}, max_agents=4)
+    stub = _capacity_stub(tmp_path, {"A-1": live, "A-2": dead}, max_agents=4)
     cap = stub._current_capacity()
+    assert cap.disk_free_mb is not None
+    assert cap.platform
     assert cap.active_agents == 1
     assert cap.available_slots == 3
     assert cap.max_agents == 4
 
 
-def test_current_capacity_clamps_available_slots_at_zero() -> None:
+def test_current_capacity_clamps_available_slots_at_zero(tmp_path: Path) -> None:
     a = AgentSession(id="A-1", role="backend")
     a.status = "working"
     b = AgentSession(id="A-2", role="backend")
     b.status = "working"
-    stub = _capacity_stub({"A-1": a, "A-2": b}, max_agents=1)
+    stub = _capacity_stub(tmp_path, {"A-1": a, "A-2": b}, max_agents=1)
     cap = stub._current_capacity()
     # Two live agents but only one slot configured: never go negative.
     assert cap.available_slots == 0

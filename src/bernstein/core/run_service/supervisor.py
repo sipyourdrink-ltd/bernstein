@@ -2,7 +2,7 @@
 
 The supervisor is a projection engine for one run: it opens the durable work
 ledger (recovering its tip after any crash), walks the resume frontier, and
-moves each task through ``task.started`` -> ``task.completed``. Because the
+moves each task through ``task.started`` to ``task.completed`` or ``task.failed``. Because the
 ledger is the authoritative state, a hard kill mid-run followed by
 :func:`serve_run` on restart resumes with zero lost completed tasks -- every
 completed task is already durable in the chain, and the restarted generation
@@ -27,7 +27,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.work_ledger import (
+    KIND_RUN_CLOSED,
     KIND_TASK_COMPLETED,
+    KIND_TASK_FAILED,
     KIND_TASK_STARTED,
     LedgerReader,
     LedgerState,
@@ -43,6 +45,7 @@ from bernstein.core.run_service.paths import (
     supervisor_log_path,
 )
 from bernstein.core.run_service.service import RunService
+from bernstein.core.run_service.ssh_runner import SSHRunnerError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -103,7 +106,7 @@ def advance_run(
     try:
         state = _project(ledger_dir, run_id)
         # Direct callers must not silently resume past a terminal boundary.
-        if state.run_closed:
+        if state.run_closed or state.failed_tasks:
             return state
         already_started = set(state.in_flight_tasks)
         frontier = state.resume_frontier()
@@ -115,7 +118,15 @@ def advance_run(
                 if stop_phase == _STOP_STARTED and stop_after is not None and started_count >= stop_after:
                     return _project(ledger_dir, run_id)
             if task_runner is not None:
-                task_runner(task_id)
+                try:
+                    task_runner(task_id)
+                except SSHRunnerError as exc:
+                    payload: dict[str, Any] = {"reason": "ssh_runner_error"}
+                    if exc.exit_code is not None:
+                        payload["exit_code"] = exc.exit_code
+                    ledger.append(kind=KIND_TASK_FAILED, task_id=task_id, payload=payload)
+                    _write_heartbeat(sdd, run_id, task_id=task_id, phase="failed")
+                    raise
             elif per_task_delay > 0:
                 time.sleep(per_task_delay)
             ledger.append(kind=KIND_TASK_COMPLETED, task_id=task_id)
@@ -126,6 +137,26 @@ def advance_run(
         return _project(ledger_dir, run_id)
     finally:
         ledger.close()
+
+
+def _finish_run(svc: RunService, state: LedgerState, *, failed: bool = False) -> LedgerState:
+    """Honor the frontier's terminal decision, including an interrupted failed close."""
+    run_id = state.run_id
+    if state.run_closed:
+        # The journal commits the outcome before the terminal receipt. A task
+        # failure alone cannot override a cancellation or an earlier completion.
+        reader = LedgerReader(run_ledger_dir(svc.root / ".sdd", run_id))
+        for entry in reader.entries():
+            if entry.kind == KIND_RUN_CLOSED:
+                if entry.payload.get("outcome") == "failed":
+                    svc.close(run_id, "failed")
+                break
+        return state
+    if failed or state.failed_tasks:
+        svc.close(run_id, "failed")
+    else:
+        svc.complete(run_id)
+    return svc.project(run_id)
 
 
 def serve_run(root: Path, run_id: str, *, per_task_delay: float = 0.0) -> LedgerState:
@@ -147,23 +178,21 @@ def serve_run(root: Path, run_id: str, *, per_task_delay: float = 0.0) -> Ledger
     root = Path(root)
     svc = RunService(root)
     state = svc.project(run_id)
-    if state.run_closed:
-        return state
+    if state.run_closed or state.failed_tasks:
+        return _finish_run(svc, state)
     if state.completed_tasks or state.in_flight_tasks:
         svc.daemon_restart(run_id)
     spec = read_ssh_spec(root, run_id)
     task_runner = SSHTaskRunner(spec, root, run_id) if spec is not None else None
     try:
-        advance_run(root, run_id, per_task_delay=per_task_delay, task_runner=task_runner)
+        state = advance_run(root, run_id, per_task_delay=per_task_delay, task_runner=task_runner)
     except KeyboardInterrupt:
         svc.close(run_id, "cancelled")
         raise
     except Exception:
-        svc.close(run_id, "failed")
+        _finish_run(svc, svc.project(run_id), failed=True)
         raise
-    else:
-        svc.complete(run_id)
-    return svc.project(run_id)
+    return _finish_run(svc, state)
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Bernstein Helm Chart
 
-This Helm chart deploys Bernstein, the open-source governance layer for AI agents, on Kubernetes.
+This Helm chart deploys Bernstein, an open-source governance layer for AI agents, on Kubernetes.
 
 ## Chart Contents
 

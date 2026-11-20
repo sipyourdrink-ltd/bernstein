@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AIエージェントのためのオープンソース・ガバナンスレイヤー
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ flowchart LR
 再試行では `dispatch_tier` が維持され、タスクを再オープンする際には階層を明示的に選択できます。[ディスパッチ階層の仕様](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)を参照してください。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+作業用ブランチから実行してください。Bernstein は検証済みの変更を現在のブランチにマージします。デフォルトブランチでは、変更をマージする実行は開始できません。プルリクエストを開く前に、作業用ブランチで変更を確認してください。
 
 `bernstein doctor --json` は監査契約に基づく `findings` も出力します。同じインストール観測結果に対して、これらは `bernstein govern audit --only INS --json` の結果と同一です。通常の doctor レポートの表示は変わりません。安定したチェック ID については、[doctor 運用ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)を参照してください。
 
@@ -202,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` は、監査キーを使った HMAC によって実行マニフェストに封印された最終ヘッドとホップ数をレシートチェーンと比較し、末尾の削除、置き換え、終了後のチェーンの延長を検出します。キーを持たずに宣言を書き換える行為も検出対象です。宣言を削除すると、実行は未完了（終了コード `3`）となり、有効とは判定されません。古い真正なスナップショットの再利用は検出できず、監査キーを持つ書き手からの保護も提供しません。詳しくは[委任の検証手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)を参照してください。
 
 ### 仕組み
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 ゴールは 4 つの段階を通る:
 
@@ -213,8 +217,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 スケジューラーが素の Python である理由と、それが何を諦めているかは[なぜ決定論的か](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)にある。
 
+訂正後の累計支出が予算に設定した停止しきい値に達するか、それを上回ると、新しいトークンの報告がなくても、コスト追跡モジュールの `can_spawn()` は `False` を返します。再起動後、保存されたトークン数だけでは、特定のエージェント、タスク、モデルの組み合わせについて以前報告された正確な累計費用を復元できません。
+
 ### 日常のコマンド
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -224,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+端末から切り離した SSH 実行でタスクが 0 以外の終了コードを返すと、そのタスクと実行全体が失敗します。終了コードはタスクのレシートに記録され、後続のタスクは保留のままです。
 
 オペレーター向けの全機能（PR 自動化、スケジュール、チャットブリッジ、autofix デーモン）は[オペレーターコマンド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)にある。
 
@@ -260,7 +268,7 @@ bernstein volunteer browse --budget 60
 [提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。 `autopilot` は登録されていますが、`TaskSource` が実装されるまで実行を拒否します。
 
 ### 表紙の先へ
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 踏み込んだ内容はすべて[ドキュメントサイト](https://docs.bernstein.run/)にある:
 
@@ -272,6 +280,7 @@ bernstein volunteer browse --budget 60
 | [誰のためのものか](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 価値が出る場所と、Bernstein が不適切な場面 |
 | [ワークフロー](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | エージェント / コマンド / ループのノードから成る宣言的 YAML DAG |
 | [Web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI と同じ API 上で動くブラウザダッシュボード (タスクの作成と確認) |
+| [クラスターワーカーの状態](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | ディスクの空き容量、メモリ使用率、ネットワーク遅延が設定範囲外にある間、ワーカーは新しいタスクを取得しません。 |
 | [クラウド実行](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 実験的: 自分のアカウントで Cloudflare Workers 上のエージェントを R2 ワークスペース同期とともに走らせる。ホステッドの `api.bernstein.run` サービスはまだ提供されていない |
 | [データソース](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 読み取り専用のクエリレシート、および各結果を導出元のスキーマスナップショットに結び付けるクエリドライバ |
 | [エージェントカタログ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 組み込みテンプレート以外のエージェント定義をロールから参照する。汎用の YAML/SKILL.md ディレクトリ、または Claude Code のプラグインレイアウトのツリー |
