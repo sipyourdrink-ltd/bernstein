@@ -1,7 +1,7 @@
 ---
-title: Bernstein - The Open-Source Governance Layer for AI Agents
+title: Bernstein - an open-source governance layer for AI agents
 description: >-
-  The open-source governance layer for AI agents. No model in the coordination
+  An open-source governance layer for AI agents. No model in the coordination
   loop, so replaying a plan reproduces its task graph byte-identically.
   Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline,
   without rerunning it. Run Claude Code, Codex, Gemini CLI and others behind
@@ -40,7 +40,7 @@ hide:
 
 ## What it does
 
-Bernstein is the open-source governance layer for AI agents: it applies declared controls and records verifiable results. Its deterministic orchestration takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges code changes when the gates allow. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
+Bernstein is an open-source governance layer for AI agents: it applies declared controls and records verifiable results. Its deterministic orchestration takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges code changes when the gates allow. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
 
 No framework to learn. No vendor lock-in. Supported agent integrations are replaceable through registered adapters, subject to task capabilities and role requirements; see the [adapter catalog](adapters/ADAPTER_GUIDE.md). The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 

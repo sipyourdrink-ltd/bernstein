@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la capa de gobernanza open source para agentes de IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los
 Los reintentos conservan `dispatch_tier`; al reabrir una tarea se puede seleccionar el nivel explícitamente. Consulta el [contrato de niveles de despacho](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Ejecuta la tarea desde una rama de trabajo. Bernstein incorpora los cambios verificados a la rama activa y detiene las ejecuciones que podrían fusionar cambios en la rama predeterminada. Revisa los cambios en la rama de trabajo antes de abrir una solicitud de incorporación.
 
 `bernstein doctor --json` también expone los hallazgos del contrato de auditoría (`findings`), idénticos a los de `bernstein govern audit --only INS --json` para las mismas observaciones de instalación. El informe habitual de doctor conserva su presentación actual. Consulta la [guía de operaciones de doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) para conocer los identificadores estables de las comprobaciones.
 
@@ -214,7 +218,7 @@ Cada objetivo avanza a través de cuatro etapas:
 Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué determinista](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### comandos cotidianos
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +239,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 El estado de ejecución guarda un punto de control en `.sdd/runs/<run_id>/` en cada nodo. La reanudación valida la huella del manifiesto al inicio de la ejecución, de modo que un cambio de especificación se rechaza en lugar de ejecutar silenciosamente un manifiesto diferente. Consulta [manifiestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Al reanudar, vuelve a indicar el mismo valor de `-g` para sustituir `{goal}` en los prompts de los nodos pendientes.
+
+`bernstein compliance controls` muestra las pruebas de cada control y la última medición completa disponible. [Cobertura de las pruebas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Puertas de higiene del repositorio: `bernstein readme-l10n verify` falla una PR cuyos READMEs traducidos se hayan desfasado de la fuente en inglés (indicando la sección obsoleta), `bernstein readme-l10n sync` los vuelve a vincular tras una edición en inglés. Consulta [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +264,7 @@ bernstein volunteer browse --budget 60
 La [guía del donante](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cubre la ejecución de un worker y el presupuesto que fijas, la [guía del proyecto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cubre la declaración de un manifiesto, y el [modelo de amenazas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica qué protege y qué no cada frontera. El ejecutor de un solo comando aún no se ha publicado: hoy `verify`, `browse`, `budget`, `verify-bundle` y `hub` son los subcomandos que funcionan. `autopilot` está registrado, pero se niega a ejecutarse hasta que se implemente un `TaskSource`.
 
 ### más allá de la portada
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run/):
 
@@ -270,6 +276,7 @@ Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | dónde reside el valor y dónde Bernstein es la herramienta equivocada |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs declarativos en YAML de nodos de agente / comando / bucle |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel de navegador sobre la misma API que utiliza la TUI (crear y revisar tareas) |
+| [estado de los nodos del clúster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Los nodos dejan de aceptar tareas nuevas mientras el espacio libre, el uso de memoria o la latencia de la red estén fuera de los límites configurados. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: ejecuta agentes en Cloudflare Workers con sincronización de workspace en R2 contra tu propia cuenta. El servicio alojado `api.bernstein.run` aún no está disponible |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | recibos de consulta de solo lectura, más un controlador de consultas que vincula cada resultado con la instantánea del esquema a partir de la cual se obtuvo |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | apunta roles a definiciones de agentes fuera de las plantillas integradas: un directorio YAML/SKILL.md genérico o un árbol con estructura de plugin de Claude Code |
