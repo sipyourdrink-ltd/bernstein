@@ -635,6 +635,23 @@ def test_subcommand_rows_resolve_and_accept_their_flags(path: str, flags: frozen
     assert not ghosts, f"`bernstein {path}`'s subcommand row mentions flags it does not accept: {ghosts}"
 
 
+@pytest.mark.parametrize("subcommand", ["show", "use"])
+def test_template_reference_matches_cli_arguments(subcommand: str) -> None:
+    """The template reference gives the same positional arguments as CLI help."""
+    command = _resolve(f"templates {subcommand}")
+    assert command is not None
+    context = click.Context(command)
+    arguments = [
+        piece
+        for param in command.get_params(context)
+        if isinstance(param, click.Argument)
+        for piece in param.get_usage_pieces(context)
+    ]
+    body = next(body for commands, body in _reference_sections() if commands == ("templates",))
+    rows = re.findall(rf"^\|[ \t]*`({subcommand} [^`\n]+)`[ \t]*\|", body, re.MULTILINE)
+    assert rows == [" ".join([subcommand, *arguments])]
+
+
 # ---------------------------------------------------------------------------
 # Command spellings named inside table cells (#3730 follow-up)
 # ---------------------------------------------------------------------------
