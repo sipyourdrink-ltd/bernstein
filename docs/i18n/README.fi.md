@@ -260,7 +260,7 @@ bernstein volunteer browse --budget 60
 [Lahjoittajan opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) käsittelee workerin ajamisen ja asettamasi budjetin, [projektin opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) manifestin ilmoittamisen, ja [uhkamalli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) kertoo, miltä kukin raja suojaa ja miltä ei. Yhden komennon ajuria ei ole vielä julkaistu: tänään toimivat alikomennot ovat `verify`, `browse`, `budget`, `verify-bundle` ja `hub`. `autopilot` on rekisteröity, mutta se kieltäytyy käynnistymästä, kunnes `TaskSource` on toteutettu.
 
 ### etusivun lisäksi
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.bernstein.run/):
 
@@ -272,6 +272,7 @@ Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.b
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | missä arvo syntyy ja milloin Bernstein ei ole oikea työkalu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratiiviset YAML DAG -rakenteet agentti- / komento- / silmukkasolmuista |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | selainpohjainen hallintapaneeli samalla rajapinnalla kuin TUI (tehtävien luonti ja tarkastelu) |
+| [klusterin työntekijäsolmujen tila](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Solmu ei ota uusia tehtäviä, kun vapaa levytila, muistinkäyttö tai verkon viive ylittää asetetut rajat tai alittaa vähimmäisarvon. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | kokeellinen: aja agentteja Cloudflare Workersissa R2-työtilatasauksella omalla tililläsi. Isännöity `api.bernstein.run` -palvelu ei ole vielä saatavilla |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | vain luku -kyselykuitit sekä kyselyajuri, joka sitoo jokaisen tuloksen vastaavaan skeematilannevedokseen |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | osoita roolit sisäänrakennettujen mallien ulkopuolisiin agenttimäärityksiin — yleiseen YAML/SKILL.md-hakemistoon tai Claude Coden lisäosarakenteeseen |
