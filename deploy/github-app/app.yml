@@ -8,7 +8,7 @@
 
 name: bernstein-orchestrator
 description: >-
-  The open-source governance layer for AI agents.
+  An open-source governance layer for AI agents.
   Converts GitHub issues, PRs, and pushes into Bernstein tasks.
 url: https://github.com/sipyourdrink-ltd/bernstein
 

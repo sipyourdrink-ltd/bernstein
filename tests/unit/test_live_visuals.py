@@ -9,7 +9,20 @@ import bernstein.cli.advanced_cmd as advanced_cmd
 import pytest
 from bernstein.cli.terminal_caps import TerminalCaps
 from bernstein.core.visual_config import VisualConfig
+from click.testing import CliRunner
 from rich.console import Console
+
+from bernstein.cli.main import cli
+
+
+def test_live_help_describes_display_modes() -> None:
+    result = CliRunner().invoke(cli, ["live", "--help"])
+
+    assert result.exit_code == 0, result.output
+    help_text = " ".join(result.output.split())
+    assert "Polling interval in seconds for --classic." in help_text
+    assert "Skip the Textual startup splash." in help_text
+    assert "Agents and Tasks side by side" in help_text
 
 
 def _live_callback() -> Callable[[float, bool, bool], None]:

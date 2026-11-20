@@ -737,7 +737,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: reviewdog/action-actionlint@48e36f54d8da326b83ab061aee2cc5e01b5ca46f # v1
+      - uses: reviewdog/action-actionlint@ae857e78c1b42b3d0a49637181b09d3d56d402b4 # v1
         with:
           reporter: github-check
           level: error
@@ -1097,9 +1097,10 @@ jobs:
         # single bootstrap step without a maintained requirements file,
         # so we route the pipx install through SHA-pinned uv instead.
         # `uv tool install pipx` puts pipx on PATH via uv's tool dir.
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          enable-cache: true
+          # This job executes the downloaded wheel. Keep its cache local to the runner.
+          enable-cache: false
       - name: Install pipx via uv
         shell: bash
         run: |

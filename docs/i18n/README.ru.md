@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### опенсорсный governance-слой для AI-агентов
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -206,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` сравнивает цепочку квитанций с конечным хешем и числом переходов, запечатанными в манифесте прогона с помощью HMAC на ключе аудита. Проверка обнаруживает удаление хвоста, подмену и наращивание цепочки после закрытия, включая переписывание объявления без ключа. Удаление объявления оставляет прогон незавершённым (код выхода `3`), и он никогда не считается действительным. Это не обнаруживает повторное предъявление более старого подлинного снимка и не защищает от автора записи, владеющего ключом аудита. См. [порядок проверки делегирования](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### как это работает
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Каждая цель проходит четыре стадии:
 
@@ -217,8 +217,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 Почему планировщик — обычный Python и чем за это платим: [почему детерминизм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+Проверка `can_spawn()` в модуле учёта расходов возвращает `False`, когда после корректировки накопленные расходы достигают заданного порога остановки по бюджету или превышают его, даже если новых токенов в отчёте нет. После перезапуска по одним сохранённым счётчикам токенов нельзя восстановить точную сумму расходов, ранее указанную для конкретной комбинации агента, задачи и модели.
+
 ### повседневные команды
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Если задача в отсоединённом SSH-запуске завершается с ненулевым кодом, задача и весь запуск получают статус ошибки. Код выхода сохраняется в квитанции задачи, а следующие задачи остаются в ожидании.
 
 Полная операторская поверхность (автоматизация PR, расписания, чат-мосты, autofix-демон) — в [командах оператора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

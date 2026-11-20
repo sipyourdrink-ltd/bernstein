@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### il layer di governance open source per agenti IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -206,7 +206,7 @@ Usa `bernstein govern audit --format json` o `--format sarif` per risultati legg
 `bernstein delegation verify RUN` confronta la catena di ricevute con la testa finale e il numero di passaggi sigillati nel manifesto dell’esecuzione tramite HMAC con la chiave di audit, rilevando la cancellazione della coda, la sostituzione e l’estensione dopo la chiusura, inclusa la riscrittura della dichiarazione senza la chiave. Rimuovere la dichiarazione lascia l’esecuzione incompleta (codice di uscita `3`), mai valida. Questo non rileva il riutilizzo di un’istantanea autentica precedente e non protegge da chi scrive possedendo la chiave di audit. Vedi il [flusso di verifica delle deleghe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### come funziona
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Ogni obiettivo attraversa quattro fasi:
 
@@ -217,8 +217,10 @@ Ogni obiettivo attraversa quattro fasi:
 
 Perché lo scheduler è in puro Python e quali sono i compromessi adottati: [perché deterministico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+Il controllo `can_spawn()` del modulo di monitoraggio dei costi restituisce `False` quando la spesa cumulativa dopo la rettifica raggiunge o supera la soglia di arresto configurata per il budget, anche se non sono stati segnalati nuovi token. Dopo un riavvio, i soli conteggi dei token salvati non consentono di ricostruire il costo cumulativo esatto comunicato in precedenza per una determinata combinazione di agente, attività e modello.
+
 ### comandi quotidiani
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Se un’attività di un’esecuzione SSH scollegata termina con un codice di uscita diverso da zero, sia l’attività sia l’esecuzione falliscono. La ricevuta dell’attività registra il codice di uscita e le attività successive restano in attesa.
 
 L'intera interfaccia operatore (automazione PR, pianificazioni, bridge di chat, demone autofix) è descritta in [comandi operatore](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

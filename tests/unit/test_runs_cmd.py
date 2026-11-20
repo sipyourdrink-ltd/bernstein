@@ -98,6 +98,12 @@ class TestRunsReportJson:
 
 
 class TestRunsReportTable:
+    def test_help_describes_runs_without_a_wrapup(self) -> None:
+        result = CliRunner().invoke(runs_group, ["report", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "List all recorded runs" in result.output
+        assert "still running" in result.output
+
     def test_table_lists_run_branch_outcome_and_evidence(self, project: Path) -> None:
         _seed_closed_run(project, "run-gate", wrapup=RunWrapUp(gate_name="lint", failing_check="ruff check ."))
         result = CliRunner().invoke(runs_group, ["report", "--workdir", str(project)])
@@ -109,7 +115,7 @@ class TestRunsReportTable:
     def test_no_runs_prints_a_clear_message(self, project: Path) -> None:
         result = CliRunner().invoke(runs_group, ["report", "--workdir", str(project)])
         assert result.exit_code == 0, result.output
-        assert "no finished runs" in result.output.lower()
+        assert "No matching runs" in result.output
 
 
 class TestRunsReportSince:
