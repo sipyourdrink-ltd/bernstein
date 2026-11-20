@@ -1,0 +1,19 @@
+name: workflow-stop
+description: Show how a failed command stops later workflow layers.
+version: "1.0.0"
+nodes:
+  - id: branch-a
+    command: echo ran > branch-a-ran.txt
+  - id: branch-b
+    command: echo ran > branch-b-ran.txt && exit 1
+
+  - id: after-a
+    depends_on: [branch-a]
+    command: echo ran > after-a-ran.txt
+  - id: after-b
+    depends_on: [branch-b]
+    command: echo ran > after-b-ran.txt
+
+  - id: after-after-a
+    depends_on: [after-a]
+    command: echo ran > after-after-a-ran.txt

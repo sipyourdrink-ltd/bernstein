@@ -132,14 +132,18 @@ Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkänna
 Nya försök behåller `dispatch_tier`; när en uppgift öppnas igen kan nivån väljas uttryckligen. Se [kontraktet för körningsnivåer](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installera på 30 sekunder
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Starta körningen från en arbetsgren. Bernstein slår ihop verifierade ändringar med den utcheckade grenen och stoppar körningar som kan slå ihop ändringar med standardgrenen. Granska ändringarna i arbetsgrenen innan du öppnar en pull request.
 
 `bernstein doctor --json` visar också auditkontraktets resultat `findings`, som är identiska med resultaten från `bernstein govern audit --only INS --json` för samma installationsobservationer. Den vanliga doctor-rapportens visning ändras inte. Se [driftguiden för doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) för stabila kontroll-ID:n.
 
