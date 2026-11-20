@@ -142,14 +142,18 @@ Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri
 Yeniden denemeler `dispatch_tier` değerini korur; görev yeniden açılırken seviye açıkça seçilebilir. [Dağıtım seviyesi sözleşmesine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) bakın.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Görevi bir çalışma dalından başlatın. Bernstein doğrulanan değişiklikleri geçerli dalla birleştirir. Varsayılan daldayken değişiklikleri birleştirebilecek çalıştırmaları durdurur. Bir çekme isteği açmadan önce değişiklikleri çalışma dalında inceleyin.
 
 `bernstein doctor --json`, denetim sözleşmesinin `findings` bulgularını da sunar; aynı kurulum gözlemleri için bunlar `bernstein govern audit --only INS --json` sonuçlarıyla aynıdır. Normal doctor raporunun mevcut görünümü korunur. Kararlı kontrol kimlikleri için [doctor işletim kılavuzuna](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) bakın.
 
@@ -224,7 +228,7 @@ Her hedef dört aşamadan geçer:
 Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: [neden deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -245,6 +249,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Devam ettirirken aynı `-g` değerini yeniden verin; böylece tamamlanmamış düğümlerin istemlerinde `{goal}` yerine bu değer konur.
+
+`bernstein compliance controls` her kontrol için test takımlarını ve varsa son tam ölçümü gösterir. [Karşılaştırma testlerinin kapsamı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Depo hijyen kapıları: `bernstein readme-l10n verify`, çevrilmiş README'leri İngilizce kaynaktan sapan bir PR'ı başarısız kılar (güncelliğini yitirmiş bölümü adlandırarak); `bernstein readme-l10n sync`, İngilizce düzenlemelerden sonra bunları yeniden bağlar. Bkz. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -268,7 +274,7 @@ bernstein volunteer browse --budget 60
 [Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse`, `budget`, `verify-bundle` ve `hub`. `autopilot` kayıtlıdır ancak bir `TaskSource` uygulanana kadar çalışmayı reddeder.
 
 ### ön sayfanın ötesinde
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein.run/) yer alır:
 
@@ -280,6 +286,7 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | değerin nerede oluştuğu ve Bernstein'ın nerede yanlış araç olduğu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | ajan / komut / döngü düğümlerinden oluşan bildirimsel YAML DAG'ları |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI'nin kullandığı API üzerinde çalışan tarayıcı kontrol paneli (görev oluşturma ve inceleme) |
+| [küme çalışanlarının durumu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Boş disk alanı, bellek kullanımı veya ağ gecikmesi belirlenen sınırların dışındayken çalışanlar yeni görev almaz. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | deneysel: kendi hesabınızda R2 çalışma alanı senkronizasyonu ile Cloudflare Workers üzerinde ajanları çalıştırın. Barındırılan `api.bernstein.run` hizmeti henüz kullanılamıyor |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | salt okunur sorgu makbuzları ve her sonucu türetildiği şema anlık görüntüsüne bağlayan sorgu sürücüsü |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | rolleri yerleşik şablonların dışındaki ajan tanımlarına yönlendirin — genel bir YAML/SKILL.md dizini veya Claude Code eklenti düzeni |

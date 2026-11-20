@@ -225,43 +225,44 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 
 ### `src/bernstein/cli/` - Click CLI
 
-| File                    | Purpose |
-|-------------------------|---------|
-| `badge.py`              | Powered-by badge helper for ``bernstein init --add-badge`` |
-| `commit_stats.py`       | Commit attribution stats: gather per-role commit stats via git log |
-| `dashboard.py`          | Bernstein TUI -- retro-futuristic agent orchestration dashboard |
-| `dashboard_actions.py`  | Dashboard side panels and expert views |
-| `dashboard_app.py`      | Bernstein TUI application -- main App class and entry point |
-| `dashboard_header.py`   | Dashboard header and agent display widgets |
-| `dashboard_polling.py`  | Dashboard polling helpers, data loaders, formatters, and constants |
-| `debug_bundle.py`       | Debug bundle export -- ``bernstein debug bundle`` |
-| `first_run_guard.py`    | First-run guard helpers wiring categorisation into CLI entry points |
-| `helpers.py`            | Shared constants, helpers, and utilities for Bernstein CLI modules |
-| `install_check.py`      | Installation mismatch detection -- detect multiple Bernstein installs and config conflicts |
-| `keybindings.py`        | Keybinding system for the Bernstein TUI |
-| `live.py`               | Live view helpers for ``bernstein live --classic`` |
-| `main.py`               | CLI entry point for Bernstein -- the open-source governance layer for AI agents |
-| `notebook_traces.py`    | Notebook-aware traces - detect and track Jupyter notebook cell edits |
-| `release_notes.py`      | Release notes display - fetch and format release notes for terminal output |
-| `run.py`                | Enhanced run output for ``bernstein run`` |
-| `run_archive.py`        | Export full run archive as ZIP |
-| `run_bootstrap.py`      | Main Click commands and execution bootstrap for Bernstein runs |
-| `run_cmd.py`            | Run commands: init, run, serve, start (legacy), and the main CLI group |
-| `run_confirm.py`        | Recipe/cook commands, demo, and confirmation helpers for Bernstein runs |
-| `run_names.py`          | Memorable deterministic run names for user-facing surfaces (#1626) |
-| `run_preflight.py`      | Preflight cost estimation and runtime warnings for Bernstein runs |
-| `settings_snapshot.py`  | Settings snapshot - capture and serialize effective settings for traces |
-| `side_query.py`         | Side-question ("btw") protocol for non-blocking agent queries |
-| `status.py`             | Formatted status output for ``bernstein status`` |
-| `transcript_search.py`  | Search across agent transcript/trace files in .sdd/traces/ |
-| `ui.py`                 | Shared Rich UI components for Bernstein CLI |
-| `usage_provisioning.py` | Usage budget tracking and overage detection for Bernstein |
-| `commands/`             | commands sub-package |
-| `display/`              | ui sub-package |
-| `doctor/`               | Bernstein doctor sub-package - extended diagnostic checks |
-| `plan/`                 | plan sub-package |
-| `scaffold/`             | Bernstein scaffold subsystem |
-| `utils/`                | utils sub-package |
+| File                     | Purpose |
+|--------------------------|---------|
+| `badge.py`               | Powered-by badge helper for ``bernstein init --add-badge`` |
+| `commit_stats.py`        | Commit attribution stats: gather per-role commit stats via git log |
+| `dashboard.py`           | Bernstein TUI -- retro-futuristic agent orchestration dashboard |
+| `dashboard_actions.py`   | Dashboard side panels and expert views |
+| `dashboard_app.py`       | Bernstein TUI application -- main App class and entry point |
+| `dashboard_header.py`    | Dashboard header and agent display widgets |
+| `dashboard_polling.py`   | Dashboard polling helpers, data loaders, formatters, and constants |
+| `debug_bundle.py`        | Debug bundle export -- ``bernstein debug bundle`` |
+| `first_run_guard.py`     | First-run guard helpers wiring categorisation into CLI entry points |
+| `first_run_readiness.py` | Read-only setup advice for a first run from the current checkout |
+| `helpers.py`             | Shared constants, helpers, and utilities for Bernstein CLI modules |
+| `install_check.py`       | Installation mismatch detection -- detect multiple Bernstein installs and config conflicts |
+| `keybindings.py`         | Keybinding system for the Bernstein TUI |
+| `live.py`                | Live view helpers for ``bernstein live --classic`` |
+| `main.py`                | CLI entry point for Bernstein -- the open-source governance layer for AI agents |
+| `notebook_traces.py`     | Notebook-aware traces - detect and track Jupyter notebook cell edits |
+| `release_notes.py`       | Release notes display - fetch and format release notes for terminal output |
+| `run.py`                 | Enhanced run output for ``bernstein run`` |
+| `run_archive.py`         | Export full run archive as ZIP |
+| `run_bootstrap.py`       | Main Click commands and execution bootstrap for Bernstein runs |
+| `run_cmd.py`             | Run commands: init, run, serve, start (legacy), and the main CLI group |
+| `run_confirm.py`         | Recipe/cook commands, demo, and confirmation helpers for Bernstein runs |
+| `run_names.py`           | Memorable deterministic run names for user-facing surfaces (#1626) |
+| `run_preflight.py`       | Preflight cost estimation and runtime warnings for Bernstein runs |
+| `settings_snapshot.py`   | Settings snapshot - capture and serialize effective settings for traces |
+| `side_query.py`          | Side-question ("btw") protocol for non-blocking agent queries |
+| `status.py`              | Formatted status output for ``bernstein status`` |
+| `transcript_search.py`   | Search across agent transcript/trace files in .sdd/traces/ |
+| `ui.py`                  | Shared Rich UI components for Bernstein CLI |
+| `usage_provisioning.py`  | Usage budget tracking and overage detection for Bernstein |
+| `commands/`              | commands sub-package |
+| `display/`               | ui sub-package |
+| `doctor/`                | Bernstein doctor sub-package - extended diagnostic checks |
+| `plan/`                  | plan sub-package |
+| `scaffold/`              | Bernstein scaffold subsystem |
+| `utils/`                 | utils sub-package |
 
 ### `src/bernstein/evolution/` - self-evolution engine
 

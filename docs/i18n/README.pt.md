@@ -142,14 +142,18 @@ Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de pape
 As novas tentativas preservam `dispatch_tier`; ao reabrir uma tarefa, é possível selecionar explicitamente o nível. Consulte o [contrato dos níveis de execução](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Execute a tarefa em uma branch de trabalho. O Bernstein integra as alterações verificadas à branch atual e interrompe execuções que poderiam integrar alterações à branch padrão. Revise as alterações na branch de trabalho antes de abrir um pull request.
 
 `bernstein doctor --json` também expõe os resultados do contrato de auditoria (`findings`), idênticos aos de `bernstein govern audit --only INS --json` para as mesmas observações de instalação. O relatório habitual do doctor mantém a apresentação atual. Consulte o [guia de operações do doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) para os identificadores estáveis das verificações.
 
@@ -224,7 +228,7 @@ Cada objetivo passa por quatro etapas:
 Por que o agendador é Python puro e quais são os trade-offs: [por que determinístico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### comandos do dia a dia
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -245,6 +249,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 O estado da execução grava checkpoints em `.sdd/runs/<run_id>/` a cada nó. A retomada valida o digest do manifesto no início da execução, de modo que uma mudança na especificação é recusada em vez de executar silenciosamente um manifesto diferente. Veja [manifestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Ao retomar, forneça novamente o mesmo valor de `-g` para substituir `{goal}` nos prompts dos nós ainda não concluídos.
+
+`bernstein compliance controls` mostra os conjuntos de testes de cada controle e a última medição completa disponível. [Cobertura dos testes](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Gates de higiene do repositório: `bernstein readme-l10n verify` falha um PR cujos READMEs traduzidos divergiram do original em inglês (nomeando a seção desatualizada), `bernstein readme-l10n sync` os reatribui após edições em inglês. Veja [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -268,7 +274,7 @@ bernstein volunteer browse --budget 60
 O [guia do doador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cobre a execução de um worker e o orçamento que você define, o [guia do projeto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cobre a declaração de um manifesto, e o [modelo de ameaças](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) diz o que cada fronteira protege e o que não protege. O executor de um único comando ainda não foi lançado: hoje `verify`, `browse`, `budget`, `verify-bundle` e `hub` são os subcomandos que funcionam. `autopilot` está registado, mas recusa executar até que seja implementado um `TaskSource`.
 
 ### além da página inicial
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Tudo aprofundado reside no [site de documentação](https://docs.bernstein.run/):
 
@@ -280,6 +286,7 @@ Tudo aprofundado reside no [site de documentação](https://docs.bernstein.run/)
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | onde está o valor e onde Bernstein não é a ferramenta certa |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs declarativos em YAML de nós agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | dashboard no navegador sobre a mesma API usada pela TUI (criar e revisar tarefas) |
+| [estado dos nós do cluster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Os nós deixam de aceitar novas tarefas enquanto o espaço livre em disco, o uso de memória ou a latência da rede estiverem fora dos limites configurados. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: execute agentes em Cloudflare Workers com sincronização de workspace no R2 na sua própria conta. O serviço hospedado `api.bernstein.run` ainda não está disponível |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | recibos de consulta somente leitura, mais um driver de consulta que vincula cada resultado ao snapshot do esquema correspondente |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | aponte papéis para definições de agentes fora dos templates embutidos — um diretório genérico YAML/SKILL.md ou árvore de plugin do Claude Code |

@@ -142,14 +142,18 @@ flowchart LR
 重試會保留 `dispatch_tier`；重新開啟任務時可以明確選擇層級。請參閱[調度層級契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+請在工作分支上執行任務。Bernstein 會將通過驗證的變更合併到目前的分支。如果目前是預設分支，它會停止可能合併變更的執行作業。請先在工作分支上檢查變更，再建立提取要求。
 
 `bernstein doctor --json` 也會輸出稽核契約的 `findings`；對於相同的安裝觀測結果，它們與 `bernstein govern audit --only INS --json` 的結果完全相同。一般 doctor 報告的顯示方式維持不變。如需穩定的檢查 ID，請參閱 [doctor 維運指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)。
 
@@ -224,7 +228,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 排程器為什麼是純 Python，以及這換來什麼代價：[為什麼確定性](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -245,6 +249,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 執行狀態會在每個節點將檢查點寫入 `.sdd/runs/<run_id>/`。續跑會在執行開始時驗證清單摘要，因此規格變更會被拒絕，而非靜默執行另一份不同的清單。見[工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 續跑時請再次傳入相同的 `-g` 值，以取代未完成節點提示詞中的 `{goal}`。
+
+`bernstein compliance controls` 列出各控制項的基準測試套件，並在有完整測量結果時顯示最近一次結果。 [基準測試涵蓋範圍](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
@@ -268,7 +274,7 @@ bernstein volunteer browse --budget 60
 [捐助者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 講執行 worker 以及你設定的預算，[專案指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 講宣告清單，[威脅模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 說明每一層邊界防護什麼、不防護什麼。單一指令的執行器尚未發布：目前可用的子指令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。 `autopilot` 已註冊，但在實作 `TaskSource` 之前會拒絕執行。
 
 ### 首頁之外
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 所有深入內容都在[文件網站](https://docs.bernstein.run/)上：
 
@@ -280,6 +286,7 @@ bernstein volunteer browse --budget 60
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 價值落在哪裡，以及 Bernstein 何時是錯誤工具 |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 代理/命令/迴圈節點的宣告式 YAML DAG |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | 與 TUI 使用同一 API 的瀏覽器儀表板 (建立和檢視任務) |
+| [叢集工作節點健康狀態](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | 可用磁碟空間、記憶體使用率或網路延遲超出設定範圍時，工作節點會暫停領取新任務。 |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 實驗性：在你的帳戶上透過 R2 workspace 同步在 Cloudflare Workers 上執行代理。託管的 `api.bernstein.run` 服務尚不可用 |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 唯讀查詢收據，外加把每個結果綁定到其推導時所依據的 schema 快照的查詢驅動 |
 | [代理目錄](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 讓角色指向內建範本以外的代理定義：通用的 YAML/SKILL.md 目錄，或 Claude Code 外掛佈局的目錄樹 |
