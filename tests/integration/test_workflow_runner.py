@@ -11,6 +11,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -746,39 +747,61 @@ nodes:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group child fixtures")
-@_proposed_gap
-def test_dependency_waits_for_accepted_agent_result(env: _Env) -> None:
-    """[PROPOSED #1] Only an accepted result releases the dependent command."""
+@pytest.mark.parametrize(
+    "accept",
+    [pytest.param(False, marks=_proposed_gap, id="no-acceptance"), pytest.param(True, id="delayed-acceptance")],
+)
+def test_dependency_waits_for_accepted_agent_result(env: _Env, accept: bool) -> None:
+    """A late consumer write still requires acceptance; closing a reported task allows one write."""
+    release_consumer = Event()
+
+    def delay_consumer(event: str, node: str, details: dict[str, Any]) -> None:
+        if event == "workflow.node_start" and node == "consume":
+            assert release_consumer.wait(BOUND_S), "harness did not release the delayed consumer"
+
     spawner = env.spawner()
-    runner = env.runner(spawner)
+    runner = env.runner(spawner, audit=delay_consumer)
     spec = _spec(env, timeout=10)
     run = env.start(lambda: runner.run(spec, run_id="acceptance-release"))
+    try:
+        task = _observe_dispatched_attempt(env, spawner, run)
+        assert task.status is TaskStatus.CLAIMED
+        assert task.claimed_by_session == spawner.sessions[0].id
+        assert spawner.procs[0].poll() is None
 
-    task = _observe_dispatched_attempt(env, spawner, run)
-    assert task.status is TaskStatus.CLAIMED
-    assert task.claimed_by_session == spawner.sessions[0].id
-    assert spawner.procs[0].poll() is None
-    writes_while_running = env.sentinel_writes()
+        spawner.release_path.touch()
+        assert spawner.procs[0].wait(timeout=BOUND_S) == 0
+        reported = env.driver.call(lambda store: store.complete(task.id, "Produced the result"))
+        assert reported.status is TaskStatus.DONE
+        assert reported.closed_at is None
 
-    spawner.release_path.touch()
-    assert spawner.procs[0].wait(timeout=BOUND_S) == 0
-    reported = env.driver.call(lambda store: store.complete(task.id, "Produced the result"))
-    assert reported.status is TaskStatus.DONE
-    assert reported.closed_at is None
-    run.wait(OBSERVE_S)
-    run.raise_unexpected()
-    writes_while_unaccepted = env.sentinel_writes()
+        # Keep the sentinel quiet through the observation window even on an ungated runner.
+        run.wait(OBSERVE_S)
+        run.raise_unexpected()
+        assert env.sentinel_writes() == 0, "fixture wrote before the consumer was released"
+        if accept:
+            accepted = env.driver.call(lambda store: store.close(task.id))
+            assert accepted.status is TaskStatus.CLOSED
+    finally:
+        release_consumer.set()
 
-    # The test driver stands in for the authority that closes a verified task.
-    accepted = env.driver.call(lambda store: store.close(task.id))
-    assert accepted.status is TaskStatus.CLOSED
     assert run.wait(BOUND_S)
     run.raise_unexpected()
+    assert run.result is not None, run.statuses()
+    assert spawner.spawn_count() == 1
+    writes = env.sentinel_writes()
+    if accept:
+        assert run.result.succeeded and writes == 1, run.statuses()
+        return
+
+    latest = env.driver.task(task.id)
+    assert latest is not None and latest.closed_at is None
+    assert writes in (0, 1)
+    if writes == 1:
+        assert run.result.succeeded, run.statuses()
     with _known_contract_gap():
-        assert writes_while_running == 0, f"dependent ran on dispatch: {run.statuses()}"
-        assert writes_while_unaccepted == 0, f"dependent ran on an unaccepted report: {run.statuses()}"
-    assert run.result is not None and run.result.succeeded, run.statuses()
-    assert env.sentinel_writes() == 1
+        assert writes == 0, f"dependent wrote after an unaccepted report: {run.statuses()}"
+    assert not run.result.succeeded, run.statuses()
 
 
 def test_agent_node_without_spawner_fails_node(runner_workdir: Path) -> None:
