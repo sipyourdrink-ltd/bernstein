@@ -67,7 +67,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-The committed receipt can be re-checked at any time with the command above, and a tampered copy fails the same check. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh run. The script joins the demo and verification recordings and adjusts the playback timing.
+`scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh run. The script joins the demo and verification recordings and adjusts the playback timing.
 
 A run in flight is watchable from either operator surface. Both read from the same task API. In `bernstein live`, the left and right columns scroll independently as whole panes, so widgets below the fold remain reachable in shorter terminals.
 
@@ -95,7 +95,7 @@ Role-adapter policy supports an optional default allow-list for unlisted roles; 
 
 ### what a run looks like
 
-One YAML file declares the run: phases, roles, dependencies, and the conditions under which a node runs at all. The Python scheduler uses these declarations to decide which nodes are ready. This example shows how to assemble an audit evidence pack; the full file ships at [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
+This excerpt illustrates a workflow design for an audit evidence pack. The YAML declares phases, roles, dependencies, and conditions for running a node. To inspect the graph, run `bernstein workflow run audit-evidence-pack --dry-run` from the repository root. The full manifest is in [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
 ```yaml
 name: audit-evidence-pack
@@ -171,7 +171,7 @@ flowchart LR
     gate -->|done| sign[sign-and-deliver]
 ```
 
-A phase can filter eligible tasks by their declared role. Coding sessions use merge gates for changes made in their worktrees. For a task in artifact mode, an [artifact contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) names the deliverable and its completion checks. The resulting lineage receipt identifies the artifact that passed those checks. Ready-made graphs for software, research, docs, enterprise, and contributor workflows live in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+The graph includes a role mismatch. The task `assemble-pack` has the `docs` role, but `validate` allows only `qa` and `security`. A scheduler applying the phase role filter excludes that task during validation. Coding sessions use merge gates for changes made in their worktrees. For a task in artifact mode, an [artifact contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) names the deliverable and its completion checks. The resulting lineage receipt identifies the artifact that passed those checks. Ready-made graphs for software, research, docs, enterprise, and contributor workflows live in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 Retries preserve `dispatch_tier`; reopening a task can explicitly select a tier. See the [dispatch-tier contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
@@ -193,7 +193,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 The journal is written on every run; the lineage spine is always on and gains an entry for each lineage-bearing step, so a short run can finish with a valid, empty spine. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
 
-Bernstein produces a signed run receipt when a signing key is configured. The receipt binds the journal head, the lineage-spine head when the run wrote spine entries, and an optional audit-chain range. It embeds the Ed25519 public key. A reviewer holding that file and the operator's public key can confirm the embedded actions and chains were not changed: no HMAC key, no live `.sdd/`, and exit `2` naming the first divergent step on tamper. That receipt identifies the journal state it embeds; proving that state is the complete finished journal additionally requires an independent head/count seal. With the file alone and no `--public-key` pin, the check is integrity-only — it proves the receipt is internally consistent, not who signed it, and the verdict says so. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+Bernstein produces a signed run receipt when a signing key is configured. The receipt binds the journal head, the lineage-spine head when the run wrote spine entries, and an optional audit-chain range. It embeds the Ed25519 public key. With the operator's public key, a reviewer can verify the signature and the authenticated contents offline. Detected tampering returns exit code `2`. If the verifier locates a divergent journal entry, it also reports the first divergent step. Proving that the embedded journal is complete requires an independent seal of its head and event count. Without a `--public-key` pin, the verifier reports integrity only and the signer's identity remains unverified. See [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 In the web UI, open **Governance** and use **Verify a receipt** to check a run receipt with the server. The browser shows the integrity-only verdict and the key source. See the [Governance operator guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#verifying-a-dropped-receipt).
 
