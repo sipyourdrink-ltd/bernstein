@@ -544,6 +544,17 @@ def estimate_cost(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class _RecordedUsage:
+    """Committed row and snapshots needed to notify observers outside the lock."""
+
+    usage: TokenUsage
+    status: BudgetStatus
+    evicted: TokenUsage | None
+    envelope_fired: EnvelopeReport | None
+    attribution: PrincipalAttribution
+
+
 @dataclass
 class CostTracker:
     """Per-run cost tracker with budget enforcement.
@@ -640,6 +651,12 @@ class CostTracker:
         init=False,
         repr=False,
     )
+    # The monetary floor includes accepted estimates for this key as well as
+    # explicit cumulative amounts. Its scope matches the token counters.
+    _cumulative_costs: dict[tuple[str, str, str], float] = field(default_factory=dict, init=False, repr=False)
+    # Existing snapshots contain token baselines only. Preserve their first
+    # report's legacy accounting until a fresh explicit cost is observed.
+    _restored_cumulative_keys: set[tuple[str, str, str]] = field(default_factory=set, init=False, repr=False)
     # Per-envelope spend totals + invocation counts (issue #1405). Updated
     # under ``_lock`` so envelope rollups stay consistent with ``record()``.
     _spent_by_envelope: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
@@ -738,6 +755,49 @@ class CostTracker:
                 :class:`PrincipalEnvelope` and admitting this call would
                 breach its ceiling.
         """
+        with self._lock:
+            recorded = self._record_locked(
+                agent_id,
+                task_id,
+                model,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                tenant_id=tenant_id,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                role=role,
+                feature_label=feature_label,
+                cost_tags=cost_tags,
+                quota_envelope=quota_envelope,
+                principal_id=principal_id,
+                grant_id=grant_id,
+                authorizing_identity=authorizing_identity,
+            )
+        self._notify_recorded_usage(recorded)
+        return recorded.status
+
+    def _record_locked(
+        self,
+        agent_id: str,
+        task_id: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float | None = None,
+        *,
+        tenant_id: str = "default",
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        role: str = "",
+        feature_label: str = "",
+        cost_tags: dict[str, str] | None = None,
+        quota_envelope: str = DEFAULT_QUOTA_ENVELOPE,
+        principal_id: str = "",
+        grant_id: str = "",
+        authorizing_identity: str = "",
+    ) -> _RecordedUsage:
+        """Admit and account for a usage row while the caller holds the tracker lock."""
         normalized_tenant = normalize_tenant_id(tenant_id)
         if cost_usd is None:
             cost_usd = estimate_cost(
@@ -812,25 +872,29 @@ class CostTracker:
         )
         evicted: TokenUsage | None = None
         envelope_fired: EnvelopeReport | None = None
-        with self._lock:
-            # Ring-buffer append: capture the row that would be evicted so we
-            # can rotate it to JSONL before it falls off the end.
-            if self._usages.maxlen is not None and len(self._usages) >= self._usages.maxlen:
-                evicted = self._usages[0]
-            self._usages.append(usage)
-            self._total_usages_recorded += 1
-            self._spent_usd += cost_usd
-            self._spent_by_agent[agent_id] = self._spent_by_agent.get(agent_id, 0.0) + cost_usd
-            self._spent_by_task[task_id] = self._spent_by_task.get(task_id, 0.0) + cost_usd
-            self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
-            self._spent_by_envelope[envelope] = self._spent_by_envelope.get(envelope, 0.0) + cost_usd
-            self._calls_by_envelope[envelope] = self._calls_by_envelope.get(envelope, 0) + 1
-            principal_bucket = principal_id or UNATTRIBUTED
-            self._spent_by_principal[principal_bucket] = self._spent_by_principal.get(principal_bucket, 0.0) + cost_usd
-            self._update_accumulators(usage)
-            status = self.status()
-            envelope_fired = self._maybe_fire_envelope_threshold_locked(envelope)
+        # Ring-buffer append: capture the row that would be evicted so we
+        # can rotate it to JSONL before it falls off the end.
+        if self._usages.maxlen is not None and len(self._usages) >= self._usages.maxlen:
+            evicted = self._usages[0]
+        self._usages.append(usage)
+        self._total_usages_recorded += 1
+        self._spent_usd += cost_usd
+        self._spent_by_agent[agent_id] = self._spent_by_agent.get(agent_id, 0.0) + cost_usd
+        self._spent_by_task[task_id] = self._spent_by_task.get(task_id, 0.0) + cost_usd
+        self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
+        self._spent_by_envelope[envelope] = self._spent_by_envelope.get(envelope, 0.0) + cost_usd
+        self._calls_by_envelope[envelope] = self._calls_by_envelope.get(envelope, 0) + 1
+        principal_bucket = principal_id or UNATTRIBUTED
+        self._spent_by_principal[principal_bucket] = self._spent_by_principal.get(principal_bucket, 0.0) + cost_usd
+        self._update_accumulators(usage)
+        status = self.status()
+        envelope_fired = self._maybe_fire_envelope_threshold_locked(envelope)
 
+        return _RecordedUsage(usage, status, evicted, envelope_fired, attribution)
+
+    def _notify_recorded_usage(self, recorded: _RecordedUsage) -> None:
+        """Emit logs, rotation, thresholds and spend-ledger observations after commit."""
+        usage = recorded.usage
         # Bug item-7 (2026-07-02): the run ledger's spent_usd sat at 0.0 for
         # whole runs because nothing fed record() - every ledger mutation now
         # logs itself so a silent-zero ledger is diagnosable from logs alone.
@@ -841,21 +905,21 @@ class CostTracker:
         logger.info(
             "ledger_update: run_spent_usd=%.6f delta=%.6f source=%s/%s model=%s "
             "input_tokens=%d output_tokens=%d tokens_sidecar_source=%s",
-            status.spent_usd,
-            cost_usd,
-            task_id,
-            agent_id,
-            model,
-            input_tokens,
-            output_tokens,
-            merged_tags.get("tokens_sidecar_source", ""),
+            recorded.status.spent_usd,
+            usage.cost_usd,
+            usage.task_id,
+            usage.agent_id,
+            usage.model,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cost_tags.get("tokens_sidecar_source", ""),
         )
 
-        if evicted is not None:
-            self._rotate_evicted(evicted)
-        self._emit_threshold_warnings(status)
-        if envelope_fired is not None:
-            self._invoke_envelope_hook(envelope_fired)
+        if recorded.evicted is not None:
+            self._rotate_evicted(recorded.evicted)
+        self._emit_threshold_warnings(recorded.status)
+        if recorded.envelope_fired is not None:
+            self._invoke_envelope_hook(recorded.envelope_fired)
 
         # Push to the rolling spend ledger (issue #1320). Best-effort:
         # ledger IO must never block the record() hot path. Import locally
@@ -864,17 +928,17 @@ class CostTracker:
             from bernstein.core.cost.spend_ledger import CallTags  # local import
 
             tags = CallTags(
-                task_id=task_id,
-                agent_id=agent_id,
-                role=str(merged_tags.get("role", "")),
-                feature_label=str(merged_tags.get("feature_label", "")),
-                quota_envelope=envelope,
-                principal_id=principal_id,
-                grant_id=grant_id,
-                authorizing_identity=authorizing_identity,
+                task_id=usage.task_id,
+                agent_id=usage.agent_id,
+                role=str(usage.cost_tags.get("role", "")),
+                feature_label=str(usage.cost_tags.get("feature_label", "")),
+                quota_envelope=usage.quota_envelope,
+                principal_id=recorded.attribution.principal_id,
+                grant_id=recorded.attribution.grant_id,
+                authorizing_identity=recorded.attribution.authorizing_identity,
                 extra={
                     k: v
-                    for k, v in merged_tags.items()
+                    for k, v in usage.cost_tags.items()
                     if k
                     not in {
                         "role",
@@ -889,17 +953,16 @@ class CostTracker:
             try:
                 self.spend_ledger.record(
                     tags=tags,
-                    model=model,
-                    cost_usd=cost_usd,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    cache_write_tokens=cache_write_tokens,
+                    model=usage.model,
+                    cost_usd=usage.cost_usd,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cache_read_tokens=usage.cache_read_tokens,
+                    cache_write_tokens=usage.cache_write_tokens,
                     ts=usage.timestamp,
                 )
             except Exception as exc:  # pragma: no cover - belt-and-braces
                 logger.debug("SpendLedger write failed: %s", exc)
-        return status
 
     def record_cumulative(
         self,
@@ -920,8 +983,15 @@ class CostTracker:
     ) -> float:
         """Record cumulative token usage for one agent/task pair.
 
-        This helper is delta-safe: callers provide running token totals and the
-        tracker records only the previously unseen token delta.
+        An explicit cost charges only the increase over the amount already
+        accounted for on this key, including token estimates. Lower costs
+        never refund spend. Each token bucket advances independently, even
+        when a report adds tokens without increasing the monetary total.
+
+        After loading a snapshot, the first explicit report for a restored
+        key retains legacy token-based proration (or no charge without new
+        tokens), then seeds the monetary baseline. The unchanged snapshot
+        format cannot recover an explicit cost from before the restart.
 
         Args:
             agent_id: Agent session ID.
@@ -934,60 +1004,72 @@ class CostTracker:
             total_cache_write_tokens: Total prompt cache write tokens.
 
         Returns:
-            Newly-recorded delta cost in USD (0.0 when no new tokens).
+            Newly-recorded delta cost in USD (0.0 when nothing new is charged).
         """
         key = (agent_id, task_id, model)
-        # We need to track more than just input/output now.
-        # Format in _cumulative_tokens: (input, output, cache_read, cache_write)
-        # Backward compat: handle 2-tuple from old persisted state.
-        prev = self._cumulative_tokens.get(key, (0, 0, 0, 0))
-        if len(prev) == 2:
-            prev_input, prev_output = prev
-            prev_cache_read, prev_cache_write = 0, 0
-        else:
-            prev_input, prev_output, prev_cache_read, prev_cache_write = prev
+        with self._lock:
+            previous = self._cumulative_tokens.get(key, (0, 0, 0, 0))
+            if len(previous) == 2:
+                previous = (*previous, 0, 0)  # Older snapshots omit the cache buckets.
+            current = (
+                max(0, total_input_tokens),
+                max(0, total_output_tokens),
+                max(0, total_cache_read_tokens),
+                max(0, total_cache_write_tokens),
+            )
+            deltas = tuple(max(0, seen - old) for seen, old in zip(current, previous, strict=True))
+            delta_input, delta_output, delta_read, delta_write = deltas
+            accounted = self._cumulative_costs.get(key, 0.0)
+            restored = key in self._restored_cumulative_keys
+            if total_cost_usd is None:
+                charge = estimate_cost(model, delta_input, delta_output, delta_read, delta_write)
+            elif restored and total_cost_usd >= 0 and any(deltas):
+                # Legacy snapshots lack the earlier monetary total. Use the old
+                # first-report proration (or token pricing if the net count fell).
+                net_tokens = sum(current) - sum(previous)
+                if net_tokens > 0:
+                    charge = total_cost_usd * (net_tokens / sum(current))
+                else:
+                    charge = estimate_cost(model, delta_input, delta_output, delta_read, delta_write)
+                if accounted > 0:
+                    # Post-restore estimates are known even though the amount
+                    # before the snapshot is not. Both legacy pricing paths
+                    # must respect the money already accounted for.
+                    charge = min(charge, max(0.0, total_cost_usd - accounted))
+            elif restored:
+                charge = 0.0
+            else:
+                charge = max(0.0, total_cost_usd - accounted)
 
-        cur_input = max(0, total_input_tokens)
-        cur_output = max(0, total_output_tokens)
-        cur_cache_read = max(0, total_cache_read_tokens)
-        cur_cache_write = max(0, total_cache_write_tokens)
+            recorded = None
+            if charge or any(deltas):
+                recorded = self._record_locked(
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    model=model,
+                    input_tokens=delta_input,
+                    output_tokens=delta_output,
+                    cost_usd=charge,
+                    tenant_id=tenant_id,
+                    cache_read_tokens=delta_read,
+                    cache_write_tokens=delta_write,
+                    role=role,
+                    feature_label=feature_label,
+                    cost_tags=cost_tags,
+                    quota_envelope=quota_envelope,
+                )
+            elif not restored:
+                return 0.0
 
-        delta_input = max(0, cur_input - prev_input)
-        delta_output = max(0, cur_output - prev_output)
-        delta_cache_read = max(0, cur_cache_read - prev_cache_read)
-        delta_cache_write = max(0, cur_cache_write - prev_cache_write)
-
-        if all(d == 0 for d in (delta_input, delta_output, delta_cache_read, delta_cache_write)):
-            return 0.0
-
-        delta_cost: float | None = None
-        if total_cost_usd is not None:
-            total_tokens = cur_input + cur_output + cur_cache_read + cur_cache_write
-            prev_tokens = prev_input + prev_output + prev_cache_read + prev_cache_write
-            delta_tokens = total_tokens - prev_tokens
-            if total_tokens > 0 and delta_tokens > 0:
-                delta_cost = float(total_cost_usd) * (delta_tokens / total_tokens)
-            elif prev_tokens == 0:
-                delta_cost = float(total_cost_usd)
-
-        before = self._spent_usd
-        self.record(
-            agent_id=agent_id,
-            task_id=task_id,
-            model=model,
-            input_tokens=delta_input,
-            output_tokens=delta_output,
-            cost_usd=delta_cost,
-            tenant_id=normalize_tenant_id(tenant_id),
-            cache_read_tokens=delta_cache_read,
-            cache_write_tokens=delta_cache_write,
-            role=role,
-            feature_label=feature_label,
-            cost_tags=cost_tags,
-            quota_envelope=quota_envelope,
-        )
-        self._cumulative_tokens[key] = (cur_input, cur_output, cur_cache_read, cur_cache_write)
-        return self._spent_usd - before
+            # Publish only accepted progress. An envelope rejection leaves both
+            # sets of counters available for a later permitted replay.
+            self._cumulative_tokens[key] = tuple(old + delta for old, delta in zip(previous, deltas, strict=True))
+            self._cumulative_costs[key] = max(accounted + charge, total_cost_usd or 0.0)
+            if total_cost_usd is not None and total_cost_usd >= 0:
+                self._restored_cumulative_keys.discard(key)
+        if recorded is not None:
+            self._notify_recorded_usage(recorded)
+        return charge
 
     def can_spawn(self, *, quota_envelope: str | None = None) -> bool:
         """Atomically check whether the budget permits spawning another agent.
@@ -1268,25 +1350,27 @@ class CostTracker:
         costs_dir = AnchoredDir(root=base_dir, parts=("runtime", "costs"))
         mkdir_anchored(costs_dir)
 
-        data: dict[str, Any] = {
-            "run_id": self.run_id,
-            "budget_usd": self.budget_usd,
-            "hard_budget_usd": self.hard_budget_usd,
-            "spent_usd": round(self._spent_usd, 6),
-            "warn_threshold": self.warn_threshold,
-            "critical_threshold": self.critical_threshold,
-            "hard_stop_threshold": self.hard_stop_threshold,
-            "usages": [u.to_dict() for u in self._usages],
-            "cumulative_tokens": {
-                # JSON doesn't support tuple keys; convert to string.
-                # key is (agent_id, task_id, model)
-                "|".join(k): list(v)
-                for k, v in self._cumulative_tokens.items()
-            },
-            "envelopes": {name: cfg.to_dict() for name, cfg in self.envelopes.items()},
-            "spent_by_envelope": self._spent_by_envelope.copy(),
-            "calls_by_envelope": self._calls_by_envelope.copy(),
-        }
+        # Snapshot monetary totals, usage rows and cumulative counters together.
+        with self._lock:
+            data: dict[str, Any] = {
+                "run_id": self.run_id,
+                "budget_usd": self.budget_usd,
+                "hard_budget_usd": self.hard_budget_usd,
+                "spent_usd": round(self._spent_usd, 6),
+                "warn_threshold": self.warn_threshold,
+                "critical_threshold": self.critical_threshold,
+                "hard_stop_threshold": self.hard_stop_threshold,
+                "usages": [u.to_dict() for u in self._usages],
+                "cumulative_tokens": {
+                    # JSON doesn't support tuple keys; convert to string.
+                    # key is (agent_id, task_id, model)
+                    "|".join(k): list(v)
+                    for k, v in self._cumulative_tokens.items()
+                },
+                "envelopes": {name: cfg.to_dict() for name, cfg in self.envelopes.items()},
+                "spent_by_envelope": self._spent_by_envelope.copy(),
+                "calls_by_envelope": self._calls_by_envelope.copy(),
+            }
         return anchored_write_text(costs_dir, f"{self.run_id}.json", json.dumps(data, indent=2))
 
     @classmethod
@@ -1409,6 +1493,7 @@ class CostTracker:
                     key = tuple(k_str.split("|"))
                     if len(key) == 3:
                         tracker._cumulative_tokens[key] = tuple(v_list)  # type: ignore[assignment]
+                        tracker._restored_cumulative_keys.add(key)  # type: ignore[arg-type]
 
             # Restore envelope state (issue #1405). Backwards compatible:
             # older snapshots without envelope blocks load as zero-state.
