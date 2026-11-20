@@ -153,16 +153,60 @@ class TestFetchAndResume:
         assert payload["completed_tasks"] == ["t1"]
         assert payload["resume_frontier"] == ["t2"]
         assert payload["head_hash"] == ledger.head_hash
+        assert payload["dispatch_status"] == "not_dispatched"
+        assert payload["signal_paths"] == []
+        assert payload["runtime_acknowledged"] is False
 
-    def test_resume_writes_signals_and_resume_entry(self, project: Path) -> None:
+    @pytest.mark.parametrize("output_json", [False, True], ids=["text", "json"])
+    def test_resume_writes_signals_and_resume_entry(self, project: Path, output_json: bool) -> None:
         _seed(project)
-        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project)])
+        args = ["resume", "run-a", "--workdir", str(project)]
+        if output_json:
+            args.append("--json")
+        result = CliRunner().invoke(ledger_group, args, color=True)
         assert result.exit_code == 0, result.output
 
         signal = project / ".sdd" / "runtime" / "resume" / "t2.signal"
         assert signal.exists()
+        assert not signal.with_name("t1.signal").exists()
         entries = list(LedgerReader(run_ledger_dir(project / ".sdd", "run-a")).entries())
         assert entries[-1].kind == KIND_RUN_RESUMED
+        if output_json:
+            payload = json.loads(result.stdout)
+            assert payload["dispatch_status"] == "queued"
+            assert payload["signal_paths"] == [str(signal)]
+            assert payload["runtime_acknowledged"] is False
+        else:
+            assert "Runtime acknowledgement: unavailable" in result.output
+
+    def test_resume_empty_frontier_reports_no_dispatch(self, project: Path) -> None:
+        ledger = _seed(project)
+        ledger.append(kind=KIND_TASK_COMPLETED, task_id="t2")
+        ledger.close()
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["resume_frontier"] == []
+        assert payload["dispatch_status"] == "not_dispatched"
+        assert payload["signal_paths"] == []
+        assert payload["runtime_acknowledged"] is False
+
+    def test_resume_signal_write_failure_reports_signals_already_written(self, project: Path) -> None:
+        ledger = _seed(project)
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t3")
+        ledger.close()
+        signal_dir = project / ".sdd" / "runtime" / "resume"
+        (signal_dir / "t3.signal").mkdir(parents=True)
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.stdout)
+        assert payload["signal_paths"] == [str(signal_dir / "t2.signal")]
+        assert payload["runtime_acknowledged"] is False
+        assert "signal" in payload["error"].lower()
 
     @pytest.mark.parametrize("dry_run", [False, True], ids=["record", "dry-run"])
     def test_resume_from_torn_append(self, project: Path, dry_run: bool) -> None:
@@ -228,12 +272,23 @@ class TestFetchAndResume:
         result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
 
         assert result.exit_code == 2, result.output
-        assert json.loads(result.stdout)["run_id"] == "run-a"
+        payload = json.loads(result.stdout)
+        assert payload["run_id"] == "run-a"
+        assert payload["dispatch_status"] == "not_dispatched"
+        assert payload["runtime_acknowledged"] is False
+        assert "write failed" in payload["error"]
         assert "Failed to record the resume entry: write failed" in result.stderr
 
     def test_resume_missing_ledger(self, project: Path) -> None:
         result = CliRunner().invoke(ledger_group, ["resume", "run-x", "--workdir", str(project)])
         assert result.exit_code == 1, result.output
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-x", "--workdir", str(project), "--json"])
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.stdout)
+        assert payload["dispatch_status"] == "not_dispatched"
+        assert payload["runtime_acknowledged"] is False
+        assert "No work ledger" in payload["error"]
 
     def test_resume_tampered_chain_exits_two(self, project: Path) -> None:
         ledger = _seed(project)
@@ -249,6 +304,12 @@ class TestFetchAndResume:
         assert result.exit_code == 2, result.output
         assert "entry 4" in result.stderr
         assert result.stdout == ""
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 2, result.output
+        payload = json.loads(result.stdout)
+        assert payload["runtime_acknowledged"] is False
+        assert any("entry 4" in error for error in payload["errors"])
 
     def test_divergent_resumes_refused_with_operator_message(self, project: Path, tmp_path: Path) -> None:
         """AC: two divergent resumes are detected and refused."""
@@ -277,6 +338,13 @@ class TestFetchAndResume:
         assert "diverge" in result.stderr.lower()
         assert "entry 6" in result.stderr
         assert result.stdout == ""
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 3, result.output
+        payload = json.loads(result.stdout)
+        assert payload["dispatch_status"] == "not_dispatched"
+        assert payload["runtime_acknowledged"] is False
+        assert "entry 6" in payload["error"]
 
 
 class TestTopLevelResumeHint:

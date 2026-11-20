@@ -11,7 +11,7 @@ the repository. This command group is the operator surface over it:
 * ``fetch``    - pull an anchored chain from a remote (after a clone) and
   materialize it locally, refusing divergence.
 * ``resume``   - verify end to end, rebuild scheduler state by replay,
-  and hand the frontier tasks to the resume watcher.
+  and write a local resume signal for each frontier task.
 * ``runs``     - list anchored runs.
 * ``gc``       - squash a ref's anchor history to bound repo growth.
 """
@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING, NoReturn
 
 import click
 from rich.panel import Panel
@@ -49,12 +50,17 @@ from bernstein.core.persistence.work_ledger import (
 )
 from bernstein.core.security.audit_chain import AuditChainStore, record_work_ledger_anchor
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 # Exit codes shared across the group so operators (and the dashboard) can
 # branch on the specific failure mode.
 EXIT_OK = 0
 EXIT_NO_LEDGER = 1
 EXIT_VERIFY_FAILED = 2
 EXIT_DIVERGED = 3
+# Preserve the generic failure status previously used for signal I/O errors.
+EXIT_SIGNAL_WRITE_FAILED = 1
 
 _WORKDIR_OPTION = click.option(
     "--workdir",
@@ -251,7 +257,7 @@ def _render_state(run_id: str, ledger_dir: Path, state: LedgerState) -> None:
     console.print()
     console.print(
         Panel(
-            f"[bold]Resuming run[/bold] [cyan]{run_id}[/cyan] from its work ledger",
+            f"[bold]Resume plan for run[/bold] [cyan]{run_id}[/cyan]",
             border_style="green",
             expand=False,
         )
@@ -271,16 +277,10 @@ def _render_state(run_id: str, ledger_dir: Path, state: LedgerState) -> None:
     console.print()
 
 
-def _write_resume_signals(root: Path, run_id: str, state: LedgerState) -> list[Path]:
-    """Drop one signal file per frontier task for the resume watcher.
-
-    The signal shape matches ``bernstein resume`` so any worker watching
-    ``.sdd/runtime/resume/`` claims a ledger-resumed task the same way it
-    claims a checkpoint-resumed one.
-    """
+def _write_resume_signals(root: Path, run_id: str, state: LedgerState) -> Iterator[Path]:
+    """Write local resume signals and yield each path once written."""
     signal_dir = root / ".sdd" / "runtime" / "resume"
     signal_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
     for task_id in state.resume_frontier():
         target = signal_dir / f"{task_id}.signal"
         payload = {
@@ -291,8 +291,7 @@ def _write_resume_signals(root: Path, run_id: str, state: LedgerState) -> list[P
             "resume_count": state.resumes,
         }
         target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        written.append(target)
-    return written
+        yield target
 
 
 @ledger_group.command("resume")
@@ -310,25 +309,55 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
 
     Verifies the chain end to end, rebuilds scheduler state by replaying
     every transition, refuses divergent chains, then records the resume as
-    a new chain entry and hands the frontier tasks to the resume watcher.
+    a new chain entry and writes local signals for the frontier tasks.
 
     \b
     Exit codes:
         0  resume prepared (state rebuilt from the verified chain)
-        1  no ledger on disk (and none anchored) for this run
+        1  no ledger on disk (and none anchored), or signal write failed
         2  chain verification failed (exact entry position reported)
         3  local and anchored chains diverge (two divergent resumes)
     """
     root = (workdir or Path.cwd()).resolve()
     ledger_dir = _ledger_dir(workdir, run_id)
+    signal_paths: list[str] = []
+    report: dict[str, object] = {
+        "run_id": run_id,
+        "ledger_dir": str(ledger_dir),
+        "dry_run": dry_run,
+        "signal_paths": signal_paths,
+        "runtime_acknowledged": False,
+    }
+
+    def emit_report() -> None:
+        report["dispatch_status"] = "queued" if signal_paths else "not_dispatched"
+        click.echo(json.dumps(report, indent=2))
+
+    def fail(exit_code: int, message: str, *, errors: list[str] | None = None, hint: str | None = None) -> NoReturn:
+        if output_json:
+            report["error"] = message
+            if errors:
+                report["errors"] = errors
+            if hint:
+                report["hint"] = hint
+            emit_report()
+        click.echo(message, err=True)
+        if errors:
+            _print_errors(errors)
+        if hint:
+            click.echo(hint, err=True)
+        raise SystemExit(exit_code) from None
+
     reader = LedgerReader(ledger_dir)
     has_local = reader.exists()
     if has_local:
         result = reader.verify(allow_interrupted_tail=True)
         if not result.ok:
-            click.echo(f"Refusing to resume run {run_id!r}: the chain does not verify.", err=True)
-            _print_errors(result.errors)
-            raise SystemExit(EXIT_VERIFY_FAILED)
+            fail(
+                EXIT_VERIFY_FAILED,
+                f"Refusing to resume run {run_id!r}: the chain does not verify.",
+                errors=result.errors,
+            )
 
     # Divergence gate: when an anchored chain exists it must be identical
     # to, an extension of, or an ancestor of the local chain. Two chains
@@ -343,33 +372,25 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
         else:
             materialized_action = materialize_ledger(root, run_id, ledger_dir).action
     except LedgerDivergenceError as exc:
-        click.echo(f"Divergence detected: {exc}", err=True)
-        raise SystemExit(EXIT_DIVERGED) from None
+        fail(EXIT_DIVERGED, f"Divergence detected: {exc}")
     except LedgerGitError as exc:
         if not has_local:
-            click.echo(f"No work ledger for run {run_id!r}: {exc}", err=True)
-            click.echo("After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.", err=True)
-            raise SystemExit(EXIT_NO_LEDGER) from None
+            fail(
+                EXIT_NO_LEDGER,
+                f"No work ledger for run {run_id!r}: {exc}",
+                hint="After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.",
+            )
         # No anchored ref, or local ahead of the anchor: both fine to resume.
 
     state = replay_state(entries, run_id=run_id)
 
-    if output_json:
-        console.print_json(
-            json.dumps(
-                {
-                    **state.to_dict(),
-                    "run_id": run_id,
-                    "ledger_dir": str(ledger_dir),
-                    "materialized": materialized_action,
-                    "dry_run": dry_run,
-                }
-            )
-        )
-    else:
+    report.update(state.to_dict(), materialized=materialized_action)
+    if not output_json:
         _render_state(run_id, ledger_dir, state)
 
     if dry_run:
+        if output_json:
+            emit_report()
         return
 
     # Record the resume as a chain entry: the nonce makes two independent
@@ -386,17 +407,25 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
             },
         )
     except LedgerError as exc:
-        click.echo(f"Failed to record the resume entry: {exc}", err=True)
-        raise SystemExit(EXIT_VERIFY_FAILED) from None
+        fail(EXIT_VERIFY_FAILED, f"Failed to record the resume entry: {exc}")
 
-    signals = _write_resume_signals(root, run_id, state)
-    if not output_json:
-        if signals:
-            for signal in signals:
-                console.print(f"[green]Resume signal written:[/green] {signal}")
-        else:
-            console.print("[yellow]Nothing to resume:[/yellow] no in-flight or scheduled tasks in the ledger.")
-        console.print("[dim]Re-anchor after the run advances: bernstein ledger anchor " + run_id + "[/dim]")
+    try:
+        for signal in _write_resume_signals(root, run_id, state):
+            signal_paths.append(str(signal))
+            if not output_json:
+                console.print(f"[green]Resume signal queued:[/green] {signal}")
+    except OSError as exc:
+        fail(EXIT_SIGNAL_WRITE_FAILED, f"Could not write resume signal: {exc}")
+
+    if output_json:
+        emit_report()
+        return
+
+    if signal_paths:
+        console.print("[dim]Runtime acknowledgement: unavailable.[/dim]")
+    else:
+        console.print("[yellow]Nothing to resume:[/yellow] no in-flight or scheduled tasks in the ledger.")
+    console.print("[dim]Re-anchor after the run advances: bernstein ledger anchor " + run_id + "[/dim]")
 
 
 # ---------------------------------------------------------------------------

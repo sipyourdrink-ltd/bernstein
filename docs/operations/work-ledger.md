@@ -91,9 +91,13 @@ bernstein ledger resume goal-42
 `resume` rebuilds scheduler state by replaying the verified chain --
 completed, in-flight, scheduled, and failed tasks -- then records the
 resume as a new chain entry and writes one signal per frontier task into
-`.sdd/runtime/resume/`, the same watch directory `bernstein resume` uses
-for checkpoint resumes. Completed work is never redone: it is part of the
-verified chain.
+`.sdd/runtime/resume/`. The verified frontier excludes completed tasks.
+
+With `--json`, stdout contains one object. `signal_paths` lists the
+files written by this invocation, and `dispatch_status` is `queued` if
+at least one file was written or `not_dispatched` otherwise.
+`runtime_acknowledged` is currently `false`. For a failed write, the
+object includes an `error` and any paths written before the failure.
 
 ## Machine migration
 
@@ -113,10 +117,9 @@ bernstein ledger resume goal-42
 ```
 
 `fetch` verifies the anchored chain before a byte is written locally.
-`resume` verifies again end to end, replays state, and continues from the
-last verified entry. Worktree contents rehydrate from committed
-checkpoints -- fork-from-step on worktree commits is the existing
-substrate; the ledger carries the commit hashes in its payloads.
+`resume` verifies the chain again, replays it through the last verified
+entry, and writes signals for the frontier. The ledger carries worktree
+checkpoint commit hashes in its payloads.
 
 ## Handoff to a colleague
 

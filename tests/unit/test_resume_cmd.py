@@ -38,6 +38,8 @@ from bernstein.core.lifecycle.hooks import (
     LifecycleContext,
     LifecycleEvent,
 )
+from bernstein.core.persistence.agent_checkpoint import AgentCheckpoint, find_checkpoint_for_task
+from bernstein.core.persistence.agent_checkpoint import save_checkpoint as save_agent_checkpoint
 from bernstein.core.persistence.resume_prompt import (
     RESUME_BANNER,
     build_resume_context,
@@ -270,6 +272,13 @@ def test_cli_resume_missing_checkpoint_exits_nonzero(workdir: Path) -> None:
     assert result.exit_code == EXIT_NO_CHECKPOINT
     assert "No checkpoint" in result.output
 
+    result = runner.invoke(resume_cmd, ["nope", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_NO_CHECKPOINT
+    payload = json.loads(result.stdout)
+    assert payload["dispatch_status"] == "not_dispatched"
+    assert payload["runtime_acknowledged"] is False
+    assert "No checkpoint" in payload["error"]
+
 
 def test_cli_resume_corrupt_exits_nonzero(workdir: Path) -> None:
     target = checkpoint_dir_for(workdir, "bad")
@@ -284,6 +293,12 @@ def test_cli_resume_corrupt_exits_nonzero(workdir: Path) -> None:
     assert result.exit_code == EXIT_CORRUPT
     assert "Corrupt" in result.output
 
+    result = runner.invoke(resume_cmd, ["bad", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_CORRUPT
+    payload = json.loads(result.stdout)
+    assert payload["runtime_acknowledged"] is False
+    assert "Corrupt" in payload["error"]
+
 
 def test_cli_resume_happy_path_bumps_resume_count_and_writes_signal(workdir: Path) -> None:
     save_checkpoint(workdir, _make_checkpoint(task_id="ok"))
@@ -293,7 +308,8 @@ def test_cli_resume_happy_path_bumps_resume_count_and_writes_signal(workdir: Pat
         ["ok", "--workdir", str(workdir)],
     )
     assert result.exit_code == EXIT_OK, result.output
-    assert "Resuming task" in result.output or "task_id" in result.output
+    assert "Resume plan for task" in result.output
+    assert "Runtime acknowledgement: unavailable" in result.output
 
     # resume_count persisted to 1
     persisted = load_checkpoint(workdir, "ok")
@@ -323,28 +339,55 @@ def test_cli_resume_dry_run_does_not_write_signal(workdir: Path) -> None:
     assert persisted.resume_count == 1
 
 
-def test_cli_resume_json_output_emits_machine_readable(workdir: Path) -> None:
+@pytest.mark.parametrize("dry_run", [False, True], ids=["queue", "dry-run"])
+def test_cli_resume_json_output_emits_machine_readable(workdir: Path, dry_run: bool) -> None:
     save_checkpoint(workdir, _make_checkpoint(task_id="jsn"))
-    runner = CliRunner()
-    result = runner.invoke(
-        resume_cmd,
-        ["jsn", "--workdir", str(workdir), "--json", "--dry-run"],
-    )
+    args = ["jsn", "--workdir", str(workdir), "--json"]
+    if dry_run:
+        args.append("--dry-run")
+    result = CliRunner().invoke(resume_cmd, args, color=True)
     assert result.exit_code == EXIT_OK, result.output
-    # The JSON line should parse and surface essential fields.
-    parsed: dict[str, object] | None = None
-    for line in result.output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            parsed = json.loads(stripped)
-            break
-        # rich.print_json may pretty-print across multiple lines; fall
-        # back to parsing the whole blob.
-    if parsed is None:
-        parsed = json.loads(result.output[result.output.index("{") : result.output.rindex("}") + 1])
-    assert parsed is not None
+    parsed = json.loads(result.stdout)
     assert parsed["task_id"] == "jsn"
     assert parsed["capability"] == RESUME_NATIVE
+    assert parsed["dry_run"] is dry_run
+    assert parsed["runtime_acknowledged"] is False
+    assert parsed["dispatch_status"] == ("not_dispatched" if dry_run else "queued")
+    signal = workdir / ".sdd" / "runtime" / "resume" / "jsn.signal"
+    assert parsed["signal_paths"] == ([] if dry_run else [str(signal)])
+    assert signal.exists() is (not dry_run)
+    assert load_checkpoint(workdir, "jsn").resume_count == 1
+
+
+def test_cli_resume_discard_reports_result_in_json(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="discard"))
+    runtime_dir = workdir / ".sdd" / "runtime"
+    checkpoint = AgentCheckpoint(agent_id="agent", task_id="discard", worktree_path=str(workdir))
+    save_agent_checkpoint(checkpoint, runtime_dir)
+
+    result = CliRunner().invoke(resume_cmd, ["discard", "--workdir", str(workdir), "--discard", "--json"])
+
+    assert result.exit_code == EXIT_OK, result.output
+    payload = json.loads(result.stdout)
+    assert payload["checkpoint_discarded"] is True
+    assert payload["dispatch_status"] == "queued"
+    assert payload["runtime_acknowledged"] is False
+    assert find_checkpoint_for_task("discard", runtime_dir) is None
+
+
+def test_cli_resume_signal_write_failure_reports_error_in_json(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="blocked"))
+    signal = workdir / ".sdd" / "runtime" / "resume" / "blocked.signal"
+    signal.mkdir(parents=True)
+
+    result = CliRunner().invoke(resume_cmd, ["blocked", "--workdir", str(workdir), "--json"])
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["signal_paths"] == []
+    assert payload["dispatch_status"] == "not_dispatched"
+    assert payload["runtime_acknowledged"] is False
+    assert "signal" in payload["error"].lower()
 
 
 # ---------------------------------------------------------------------------
