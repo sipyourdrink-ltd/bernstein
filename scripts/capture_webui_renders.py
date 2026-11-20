@@ -300,7 +300,14 @@ def gui_server(
 
 def _git(project_dir: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-c", "user.name=Bernstein Demo", "-c", "user.email=demo@example.invalid", *args],
+        [
+            "git",
+            "-c",
+            "user.name=github-actions[bot]",
+            "-c",
+            "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+            *args,
+        ],
         cwd=project_dir,
         env=_demo_environment(project_dir),
         check=True,
