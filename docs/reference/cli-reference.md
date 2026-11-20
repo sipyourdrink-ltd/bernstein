@@ -408,11 +408,12 @@ routing is shown as `unknown`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--interval SEC` | 2.0 | Polling interval. |
-| `--classic` | off | Use the simpler Rich Live display. |
-| `--no-splash` | off | Skip the startup splash. |
+| `--interval SEC` | 2.0 | Polling interval in seconds for `--classic`. |
+| `--classic` | off | Use the classic Rich Live display. |
+| `--no-splash` | off | Skip the Textual startup splash. |
 
-The default is the 3-column Textual TUI: Agents | Tasks | Activity feed. `--classic` falls back to a single-pane Rich Live view.
+The default Textual dashboard shows Agents and Tasks side by side, with
+the activity feed below.
 
 Both views resolve the task server the same way as the rest of the CLI: `BERNSTEIN_SERVER_URL`, then the port the running orchestrator persisted in `.sdd/runtime/server.port`, then `http://localhost:8052`. When the poll cannot reach that server the header says `No connection to <url>` rather than drawing empty panels, which would be indistinguishable from an orchestrator with nothing to do. That state means *every* read failed: one route erroring while the others answer is a broken route, not a dead server, so the dashboard keeps rendering the panels that did load.
 
