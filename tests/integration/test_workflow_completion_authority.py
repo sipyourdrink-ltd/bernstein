@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import subprocess
 import sys
 from collections.abc import Callable
@@ -11,7 +10,6 @@ import pytest
 
 from bernstein.core.tasks.contracts import RefusalKind, WorkerRefusal
 from bernstein.core.tasks.models import AgentSession, Task, TaskStatus
-from bernstein.core.tasks.task_store_core import TaskStore
 from bernstein.core.workflows import NodeStatus, WorkflowRunner
 from tests.support.workflow_completion import (
     BOUND_S,
@@ -72,21 +70,24 @@ def test_exit_zero_and_reported_done_without_acceptance_does_not_release(env: _E
         )
 
 
-def test_gate_accepted_attempt_positive_control_has_no_native_interface() -> None:
-    """[GATE #1/#7] No public interface can supply attempt-bound acceptance to the runner, so the
-    'accepted success releases the sentinel exactly once' positive control is not exercisable.
+def test_closed_producer_runs_its_dependent_once(env: _Env) -> None:
+    """Control for the sentinel fixture when its producer is already closed at dispatch return."""
 
-    Flips when the gate opens; then replace this probe with that positive control.
-    """
-    runner_params = set(inspect.signature(WorkflowRunner.__init__).parameters) - {"self"}
-    assert runner_params == {"spawner", "workdir", "audit_emitter", "max_parallel", "env"}, (
-        f"GATE OPENED? WorkflowRunner now accepts {sorted(runner_params)}: write the positive control"
-    )
-    assert set(inspect.signature(TaskStore.close).parameters) == {"self", "task_id"}, (
-        "GATE OPENED? TaskStore.close now takes evidence: write the positive control"
-    )
-    acceptance_api = [name for name in dir(TaskStore) if "accept" in name.lower()]
-    assert acceptance_api == [], f"GATE OPENED? TaskStore exposes {acceptance_api}: write the positive control"
+    def close_before_return(
+        sp: _LifecycleSpawner, task: Task, session: AgentSession, proc: subprocess.Popen[bytes]
+    ) -> None:
+        assert _wait_exit(proc) == 0
+        sp.driver.call(lambda store: store.complete(task.id, "worker finished"))
+        sp.driver.call(lambda store: store.close(task.id))
+
+    sp = env.spawner(_Plan(mode="0", after_launch=close_before_return))
+    run = env.start(lambda: env.runner(sp).run(_spec(env), run_id="closed-producer"))
+    task = _observe_dispatched_attempt(env, sp, run)
+    assert task.closed_at is not None
+    assert run.wait(BOUND_S)
+    run.raise_unexpected()
+    assert env.sentinel_writes() == 1
+    assert sp.spawn_count() == 1
 
 
 def _fail_outcome(sp: _LifecycleSpawner, task: Task, session: AgentSession, proc: subprocess.Popen[bytes]) -> None:
