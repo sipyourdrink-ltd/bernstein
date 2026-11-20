@@ -62,6 +62,38 @@ What is **not** captured:
 - The agent's deliberate staging decisions - the real index is left
   untouched.
 
+### Storage and inspection
+
+The temporary index lives in the **current worktree's Git admin directory**,
+resolved by `git rev-parse --path-format=absolute --git-dir`. In a linked
+worktree, `.git` is a file pointing to that admin directory, not a directory
+in which to store the index. The temporary index is removed after capture;
+the real staging index is left unchanged.
+
+Snapshot metadata JSON sidecars instead live at
+`<common-git-dir>/bernstein/snapshots/<snapshot_id>.json`, where
+`<common-git-dir>` is resolved by
+`git rev-parse --path-format=absolute --git-common-dir`. The sidecars are
+shared by the main and linked worktrees, just like the snapshot refs.
+Removing the linked worktree that created a snapshot does not remove this
+shared metadata: the snapshot and its task information remain accessible
+from another worktree of the same repository. Cloning a repository does not
+copy these JSON sidecars.
+
+For inspection, `bernstein git snapshots` lists snapshot refs, sorted
+newest-first by the metadata timestamp (`ts_ns`). If a ref still exists but
+its sidecar is missing, `SnapshotStore.get()` and `SnapshotStore.list()`
+reconstruct a minimal **ref-backed record**: the snapshot ID, tree SHA and
+ref are retained, the label is the snapshot ID, and `ts_ns=0`. These records
+sort last, after snapshots with positive metadata timestamps, regardless of
+the timestamp embedded in the snapshot ID.
+
+The fallback record has no task, tool-call, agent or parent-snapshot
+information. In particular, `task_id` is `None`, so
+`bernstein git snapshots --task <id>` excludes it even if the snapshot
+originally belonged to that task. Use the unfiltered list to find such
+snapshots; their ref-backed trees can still be used for undo.
+
 ## Pre-tool-use hook
 
 The orchestrator calls `SnapshotStore.take(...)` from the

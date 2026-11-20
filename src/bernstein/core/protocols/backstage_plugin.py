@@ -134,7 +134,7 @@ class BackstageExporter:
             kind="Component",
             name="bernstein",
             namespace=config.namespace,
-            description="The open-source governance layer for AI agents, one git worktree per task",
+            description="An open-source governance layer for AI agents, one git worktree per task",
             labels={
                 "app.bernstein.io/tier": "orchestrator",
             },

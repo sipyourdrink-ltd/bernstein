@@ -33,6 +33,7 @@ import json
 import math
 from copy import deepcopy
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.quality.absence_coverage import CompletionCoverageStatus
@@ -49,6 +50,8 @@ __all__ = [
     "ConductAggregate",
     "ConductProjection",
     "ConductScopeActivity",
+    "UnreadableRun",
+    "UnreadableRunReason",
     "aggregate_conduct",
     "derive_conduct",
     "derive_conduct_from_path",
@@ -288,6 +291,45 @@ def _build_count(positions: Sequence[int]) -> _Count:
 # ---------------------------------------------------------------------------
 
 
+class UnreadableRunReason(StrEnum):
+    """Distinct coverage gap reasons for supplied runs whose journal could not be read."""
+
+    ABSENT = "absent"
+    UNVERIFIABLE = "unverifiable"
+    TORN = "torn"
+
+
+@dataclass(frozen=True, slots=True)
+class UnreadableRun:
+    """A supplied run ID whose journal could not be folded for the period.
+
+    Uses :class:`CompletionCoverageStatus` (always ``unverified``) alongside a
+    specific :class:`UnreadableRunReason` so missing, sealed/unverifiable, and
+    torn journals never disappear from the period summary.
+    """
+
+    run_id: str
+    reason: UnreadableRunReason
+    coverage: CompletionCoverageStatus = CompletionCoverageStatus.UNVERIFIED
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reason", UnreadableRunReason(self.reason))
+        if self.coverage != CompletionCoverageStatus.UNVERIFIED:
+            raise ValueError("unreadable runs must carry unverified coverage")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON-shaped gap entry for the period summary."""
+        payload: dict[str, Any] = {
+            "run_id": self.run_id,
+            "coverage": self.coverage.value,
+            "reason": self.reason.value,
+        }
+        if self.detail:
+            payload["detail"] = self.detail
+        return payload
+
+
 @dataclass(frozen=True, slots=True)
 class ConductScopeActivity:
     """A caller-supplied recorded activity scope with its original journal citation.
@@ -393,8 +435,11 @@ class ConductAggregate:
     ``counts`` contains scalar totals, while ``runs`` retains the complete
     source projections, including each run-local event-index range. Indices
     from different journals are never combined into a synthetic range.
-    Coverage inherits the source classifications; it does not establish
-    continuous journal coverage across the requested period.
+    ``unreadable_runs`` preserves supplied run IDs whose journals were absent,
+    unverifiable, or torn so gaps remain visible alongside valid runs.
+    Coverage inherits the source classifications and degrades to
+    ``unverified`` whenever any unreadable run is present; it does not
+    establish continuous journal coverage across the requested period.
     """
 
     principal_id: str
@@ -402,6 +447,7 @@ class ConductAggregate:
     period_end: float
     runs: tuple[ConductProjection, ...]
     scope_comparison: dict[str, Any] | None = None
+    unreadable_runs: tuple[UnreadableRun, ...] = ()
 
     @property
     def event_count(self) -> int:
@@ -410,8 +456,12 @@ class ConductAggregate:
 
     @property
     def coverage(self) -> CompletionCoverageStatus:
-        """Keep absent or partially unverified evidence unverified."""
-        if self.event_count and all(run.coverage == CompletionCoverageStatus.VERIFIED for run in self.runs):
+        """Keep absent, unreadable, or partially unverified evidence unverified."""
+        if (
+            not self.unreadable_runs
+            and self.event_count
+            and all(run.coverage == CompletionCoverageStatus.VERIFIED for run in self.runs)
+        ):
             return CompletionCoverageStatus.VERIFIED
         return CompletionCoverageStatus.UNVERIFIED
 
@@ -432,7 +482,7 @@ class ConductAggregate:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        """Return totals alongside the unchanged run projections."""
+        """Return totals alongside the unchanged run projections and gap entries."""
         return {
             "schema_version": CONDUCT_FOLD_SCHEMA_VERSION,
             "principal_id": self.principal_id,
@@ -446,6 +496,7 @@ class ConductAggregate:
             "scope_comparison": deepcopy(self.scope_comparison)
             if self.scope_comparison is not None
             else _compare_conduct_scope(self.runs, (), None),
+            "unreadable_runs": [entry.to_dict() for entry in self.unreadable_runs],
         }
 
     def canonical_bytes(self) -> bytes:
@@ -461,6 +512,7 @@ def aggregate_conduct(
     period_end: float,
     scope_projection: DelegationScope | None = None,
     recorded_activities: Sequence[ConductScopeActivity] = (),
+    unreadable_runs: Sequence[UnreadableRun] = (),
 ) -> ConductAggregate:
     """Combine supplied per-run projections overlapping ``[start, end)``.
 
@@ -473,6 +525,8 @@ def aggregate_conduct(
     or re-derived without journal rows. Callers needing exact in-period counts
     must supply projections already restricted to the desired event window.
     Supply one projection per run to avoid double-counting the same evidence.
+    Supplied ``unreadable_runs`` are retained in deterministic order for
+    non-empty periods so absent, unverifiable, and torn journals stay visible.
     ``recorded_activities`` supplies verified activity scopes with run-local
     citations; ``scope_projection`` is the caller-supplied scope in force for
     this principal throughout the period. Neither is derived from counts or
@@ -498,12 +552,23 @@ def aggregate_conduct(
             key=lambda run: (run.run_id, run.canonical_bytes()),
         )
     )
+    gaps = (
+        tuple(
+            sorted(
+                unreadable_runs,
+                key=lambda entry: (entry.run_id, entry.reason.value, entry.coverage.value, entry.detail),
+            )
+        )
+        if period_start < period_end
+        else ()
+    )
     return ConductAggregate(
         principal_id=principal_id,
         period_start=period_start,
         period_end=period_end,
         runs=runs,
         scope_comparison=_compare_conduct_scope(runs, recorded_activities, scope_projection),
+        unreadable_runs=gaps,
     )
 
 
