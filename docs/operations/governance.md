@@ -32,9 +32,10 @@ decisions**, and choose **Load decisions**. Expand a row to see subject,
 action, recorded verdict, input hash, timestamp, recorded context, policy
 version and `journal_entry_hash`. When no policy version is named in the
 record's context, the field says exactly `this decision names no policy version`.
-The record is meaningless without its journal anchor. Displaying an anchor
-does not verify it; these reads do not verify the journal or signer, and the
-browser does not recompute the verdict. The separate coverage panel remains
+The record is meaningless without its journal anchor. A missing, null or empty
+anchor is shown as missing. A non-string value other than null returns 409.
+This view displays the stored anchor without verifying the journal or signer.
+The browser displays the recorded verdict. The separate coverage panel remains
 an explicitly labelled checked-in sample.
 
 The authenticated server exposes two additive read endpoints, also mounted
@@ -51,7 +52,7 @@ Both return the recorded fields listed above. The list response schema is
 its `RecordedDecision` definition is also the detail response. Empty runs
 return an empty list. Run IDs accept 1-200 ASCII letters, digits, underscores,
 dots, colons or hyphens, subject to the spine's parent-path restrictions;
-missing or invalid IDs return 400. Unreadable records or records naming a
+missing or invalid run IDs return 400. Unreadable records or records naming a
 different run return 409. The reader retains the existing malformed-JSON
 skipping behavior. These endpoints create no keys, files or
 directories and accept no client-selected ledger path.

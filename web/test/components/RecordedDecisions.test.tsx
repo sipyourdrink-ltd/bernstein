@@ -7,7 +7,7 @@ import { RecordedDecisions, type RecordedDecision } from '@/components/governanc
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 const decision: RecordedDecision = {
-  decision_id: 'record-1', run_id: 'run & 1', subject: 'alice', action: 'budget', verdict: 'refuse',
+  decision_id: 'a'.repeat(64), run_id: 'run:1', subject: 'alice', action: 'budget', verdict: 'refuse',
   inputs_hash: 'sha256:recorded-input', timestamp: 1000, context: { cap_usd: 10, next_cost_usd: 2 },
   journal_entry_hash: 'sha256:recorded-anchor', policy_version: 'this decision names no policy version',
   budget: {
@@ -33,14 +33,15 @@ it('loads authenticated live rows, expands recorded inputs and retains the recor
   vi.stubGlobal('fetch', fetch);
   localStorage.setItem('bernstein_token', 'synthetic-test-token');
   mount();
+  expect(screen.getByText(/this read cannot verify the journal anchor or signer/i)).toBeTruthy();
   expect(fetch).not.toHaveBeenCalled();
   expect(screen.queryByText(/alice/)).toBeNull();
-  load('run & 1');
+  load('run:1');
   await screen.findByText('Loading recorded decisions...');
-  expect(fetch).toHaveBeenCalledWith('/api/v1/governance/decisions?run_id=run%20%26%201', expect.objectContaining({
+  expect(fetch).toHaveBeenCalledWith('/api/v1/governance/decisions?run_id=run%3A1', expect.objectContaining({
     method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer synthetic-test-token' }),
   }));
-  resolve(Response.json({ run_id: 'run & 1', decisions: [decision] }));
+  resolve(Response.json({ run_id: 'run:1', decisions: [decision] }));
   const summary = await screen.findByText('alice · budget · refuse');
   const details = summary.closest('details')!;
   expect(details.open).toBe(false);

@@ -103,7 +103,7 @@ export function RecordedDecisions() {
   return (
     <section aria-labelledby="recorded-decisions-heading" className="space-y-3 rounded-md border border-border bg-card p-4">
       <h2 id="recorded-decisions-heading" className="text-h3 text-foreground">Recorded decisions</h2>
-      <p className="text-body text-muted-foreground">Read a run's persisted decisions. Verdicts are shown as recorded; the browser does not recompute them.</p>
+      <p className="text-body text-muted-foreground">This read cannot verify the journal anchor or signer. Expand a decision to inspect its recorded verdict and inputs.</p>
       <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
         <label className="space-y-1 text-body text-foreground">
           <span className="block">Run ID</span>

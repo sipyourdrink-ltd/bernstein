@@ -202,7 +202,13 @@ def _read_recorded_decisions(workdir: Path, run_id: str) -> list[recorded_govern
                 if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                     raise OSError("decision is not a regular file")
                 try:
-                    records.append(recorded_governance.GovernanceDecision.from_dict(json.loads(stream.read())))
+                    row = json.loads(stream.read())
+                    anchor = row.get("journal_entry_hash")
+                    if anchor is None:
+                        row["journal_entry_hash"] = ""
+                    elif not isinstance(anchor, str):
+                        raise HTTPException(status_code=409, detail="decision has an unreadable journal anchor")
+                    records.append(recorded_governance.GovernanceDecision.from_dict(row))
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                     # Preserve the existing reader's malformed-record behavior.
                     logger.warning("governance: malformed decision record")

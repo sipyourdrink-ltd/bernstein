@@ -105,11 +105,18 @@ def test_list_and_detail_preserve_recorded_fields_without_writes_or_keys(
 
 
 @pytest.mark.parametrize("context", [{}, {"policy_version": ""}, {"policy_version": None}])
-def test_missing_policy_and_anchor_are_not_invented(tmp_path: Path, context: dict) -> None:
-    _record(tmp_path, context=context, journal_entry_hash="")
+@pytest.mark.parametrize("anchor", ["", None])
+def test_missing_policy_and_anchor_are_not_invented(tmp_path: Path, context: dict, anchor: str | None) -> None:
+    _record(tmp_path, context=context, journal_entry_hash=anchor)
     (row,) = _list(_client(tmp_path))["decisions"]
     assert row["policy_version"] == "this decision names no policy version"
     assert row["journal_entry_hash"] == ""
+
+
+def test_malformed_anchor_is_not_presented_as_text(tmp_path: Path) -> None:
+    _record(tmp_path, journal_entry_hash={"value": "unreadable"})
+    response = _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"})
+    assert response.status_code == 409
 
 
 def test_empty_run_writes_nothing(tmp_path: Path) -> None:
@@ -274,9 +281,12 @@ def test_overflowing_timestamp_returns_controlled_error_for_list_and_detail(tmp_
 def test_unsupported_platform_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _record(tmp_path)
     monkeypatch.setattr(routes, "ANCHORED_OPEN_SUPPORTED", False)
-    response = _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"})
-    assert response.status_code == 409
-    assert "unavailable on this platform" in response.json()["detail"]
+    monkeypatch.setattr(routes, "open_anchored", lambda *a, **kw: pytest.fail("unsupported platform reached storage"))
+    client = _client(tmp_path)
+    for suffix in ("", "/" + "a" * 64):
+        response = client.get(f"/governance/decisions{suffix}", params={"run_id": "run-1"})
+        assert response.status_code == 409
+        assert "unavailable on this platform" in response.json()["detail"]
 
 
 def test_record_open_refusal_after_enumeration_cannot_return_data(
