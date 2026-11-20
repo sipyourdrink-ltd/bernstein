@@ -62,3 +62,16 @@ def test_health_thresholds_parse_from_seed() -> None:
 def test_invalid_health_thresholds_are_rejected(key: str, value: object) -> None:
     with pytest.raises(SeedError, match="cluster"):
         _parse_cluster({key: value})
+
+
+def test_default_server_uses_selected_seed_health_limits(tmp_path, monkeypatch) -> None:
+    from bernstein.core.server import server_app
+
+    seed = tmp_path / "cluster.yaml"
+    seed.write_text(
+        "goal: cluster test\ncluster:\n  min_disk_free_mb: 2000\n  max_mem_used_pct: 72\n  max_mesh_rtt_ms: 120\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_SEED_PATH", str(seed))
+    config = server_app.get_app().state.node_registry.config
+    assert (config.min_disk_free_mb, config.max_mem_used_pct, config.max_mesh_rtt_ms) == (2000, 72, 120)
