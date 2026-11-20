@@ -39,8 +39,8 @@ from bernstein.core.run_service import (
     verify_run,
     write_ssh_spec,
 )
-from bernstein.core.sandbox.ssh_backend import SSHSandboxBackend
 from bernstein.core.run_service.ssh_runner import SSHRunnerError
+from bernstein.core.sandbox.ssh_backend import SSHSandboxBackend
 from bernstein.core.security.audit_chain import EVENT_RUN_SSH_TASK, AuditChainStore
 from tests.support.ssh_fake import InProcessSSHTransport
 from tests.support.vault_fake import FakeVault, make_git_repo
@@ -179,9 +179,7 @@ def test_ssh_backend_kill_mid_run_then_restart_loses_zero_completed(
 
 
 @pytest.mark.parametrize("exit_code", [0, 23])
-def test_remote_exit_controls_task_outcome(
-    project: Path, remote_repo: Path, remote_root: Path, exit_code: int
-) -> None:
+def test_remote_exit_controls_task_outcome(project: Path, remote_repo: Path, remote_root: Path, exit_code: int) -> None:
     svc = RunService(project)
     run_id = svc.submit("exit status", ["t0"], run_id="run-exit").run_id
     runner = SSHTaskRunner(
@@ -210,6 +208,31 @@ def test_remote_exit_controls_task_outcome(
     events = _ssh_events(project, run_id)
     assert len(events) == 1
     assert events[0].details["exit_code"] == exit_code
+    assert verify_run(project, run_id).ok
+
+
+def test_serve_run_closes_failed_remote_task_without_running_next_task(
+    project: Path, remote_repo: Path, remote_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = _fake_backend(remote_root)
+    monkeypatch.setattr("bernstein.core.run_service.ssh_runner.build_ssh_backend", lambda spec: backend)
+    monkeypatch.setattr(SSHTaskRunner, "_default_command", lambda self, task_id: ["sh", "-c", "exit 23"])
+    svc = RunService(project)
+    run_id = svc.submit("exit status", ["t0", "t1"], run_id="run-failed").run_id
+    write_ssh_spec(project, run_id, _spec(remote_repo, remote_root))
+
+    with pytest.raises(SSHRunnerError, match="23"):
+        serve_run(project, run_id)
+
+    state = svc.project(run_id)
+    assert state.run_closed
+    assert state.failed_tasks == ["t0"]
+    assert state.completed_tasks == []
+    assert state.scheduled_tasks == ["t1"]
+    assert state.in_flight_tasks == []
+    assert [event.details["task_id"] for event in _ssh_events(project, run_id)] == ["t0"]
+    entries = list(LedgerReader(run_ledger_dir(project / ".sdd", run_id)).entries())
+    assert not any(entry.kind == "task.completed" for entry in entries)
     assert verify_run(project, run_id).ok
 
 

@@ -2,7 +2,7 @@
 
 The supervisor is a projection engine for one run: it opens the durable work
 ledger (recovering its tip after any crash), walks the resume frontier, and
-moves each task through ``task.started`` -> ``task.completed``. Because the
+moves each task through ``task.started`` to ``task.completed`` or ``task.failed``. Because the
 ledger is the authoritative state, a hard kill mid-run followed by
 :func:`serve_run` on restart resumes with zero lost completed tasks -- every
 completed task is already durable in the chain, and the restarted generation
@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.work_ledger import (
     KIND_TASK_COMPLETED,
+    KIND_TASK_FAILED,
     KIND_TASK_STARTED,
     LedgerReader,
     LedgerState,
@@ -43,6 +44,7 @@ from bernstein.core.run_service.paths import (
     supervisor_log_path,
 )
 from bernstein.core.run_service.service import RunService
+from bernstein.core.run_service.ssh_runner import SSHRunnerError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -115,7 +117,15 @@ def advance_run(
                 if stop_phase == _STOP_STARTED and stop_after is not None and started_count >= stop_after:
                     return _project(ledger_dir, run_id)
             if task_runner is not None:
-                task_runner(task_id)
+                try:
+                    task_runner(task_id)
+                except SSHRunnerError as exc:
+                    payload: dict[str, Any] = {"reason": "ssh_runner_error"}
+                    if exc.exit_code is not None:
+                        payload["exit_code"] = exc.exit_code
+                    ledger.append(kind=KIND_TASK_FAILED, task_id=task_id, payload=payload)
+                    _write_heartbeat(sdd, run_id, task_id=task_id, phase="failed")
+                    raise
             elif per_task_delay > 0:
                 time.sleep(per_task_delay)
             ledger.append(kind=KIND_TASK_COMPLETED, task_id=task_id)
