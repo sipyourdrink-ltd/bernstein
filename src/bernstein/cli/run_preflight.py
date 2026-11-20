@@ -69,7 +69,7 @@ def validate_seed_or_exit(seed_file: str | None) -> SeedConfig | None:
     except SeedError as exc:
         from bernstein.cli.utils.errors import seed_parse_error
 
-        seed_parse_error(exc).print()
+        seed_parse_error(exc).print(plain=plain_run_output())
         raise SystemExit(1) from exc
 
 
@@ -115,15 +115,19 @@ def _abort_if_default_branch_merge_target(workdir: Path) -> None:
 
     if _allow_merge_to_default_branch():
         return
-    console.print(
-        f"[bold red]Refusing to start:[/bold red] the checked-out branch {branch!r} is the "
-        "repository default branch, so every agent's work would be refused by the merge "
-        "guard and discarded instead of merged."
+    reason = (
+        f"the checked-out branch {branch!r} is the repository default branch, so every agent's "
+        "work would be refused by the merge guard and discarded instead of merged."
     )
-    console.print(
+    remedy = (
         "Fix: check out a working branch first (git checkout -b <branch>), or set "
         f"{ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 to explicitly allow merging to the default branch."
     )
+    if plain_run_output():
+        click.echo(f"Refusing to start: {reason}\n{remedy}", err=True, color=False)
+    else:
+        console.print(f"[bold red]Refusing to start:[/bold red] {reason}")
+        console.print(remedy)
     raise SystemExit(1)
 
 

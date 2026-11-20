@@ -123,7 +123,7 @@ def _resolve_goal_and_team(workdir: Path, goal: str | None, seed_file: str | Non
         if found is None:
             from bernstein.cli.errors import no_seed_or_goal
 
-            no_seed_or_goal().print()
+            no_seed_or_goal().print(plain=plain_run_output())
             raise SystemExit(1)
         seed_path = found
 
@@ -132,7 +132,7 @@ def _resolve_goal_and_team(workdir: Path, goal: str | None, seed_file: str | Non
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 
-        seed_parse_error(exc).print()
+        seed_parse_error(exc).print(plain=plain_run_output())
         raise SystemExit(1) from exc
 
     team = list(seed.team) if seed.team != "auto" else None
@@ -3136,7 +3136,7 @@ def _run_impl(
         except RuntimeError as exc:
             from bernstein.cli.errors import bootstrap_failed
 
-            bootstrap_failed(exc).print()
+            bootstrap_failed(exc).print(plain=plain_output)
             raise SystemExit(1) from exc
         _finalize_run_output(quiet=quiet, wait=wait, seed=bootstrapped.seed)
         return
@@ -3151,7 +3151,7 @@ def _run_impl(
         else:
             from bernstein.cli.errors import no_seed_or_goal
 
-            no_seed_or_goal().print()
+            no_seed_or_goal().print(plain=plain_output)
             raise SystemExit(1)
 
     if not plain_output:
@@ -3175,12 +3175,12 @@ def _run_impl(
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 
-        seed_parse_error(exc).print()
+        seed_parse_error(exc).print(plain=plain_output)
         raise SystemExit(1) from exc
     except RuntimeError as exc:
         from bernstein.cli.errors import bootstrap_failed
 
-        bootstrap_failed(exc).print()
+        bootstrap_failed(exc).print(plain=plain_output)
         raise SystemExit(1) from exc
 
     _finalize_run_output(quiet=quiet, wait=wait, seed=bootstrapped.seed)

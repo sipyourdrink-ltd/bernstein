@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
+import click
 from rich.console import Console
 
 console = Console(stderr=True)
@@ -63,21 +64,23 @@ class BernsteinError(Exception):
     def __str__(self) -> str:
         return f"{self.what}\n  Reason: {self.why}\n  Fix: {self.fix}"
 
-    def print(self) -> None:
-        """Print the structured error to stderr using Rich.
-
-        Also prints actionable next-step suggestions from the
-        error_suggestions module when a known pattern is matched.
-        """
+    def print(self, *, plain: bool = False) -> None:
+        """Print the error, remedy and any additional suggestion to stderr."""
         from bernstein.cli.error_suggestions import suggest_and_format
 
-        console.print(f"[bold red]Error:[/bold red] {self.what}")
-        console.print(f"  [yellow]Reason:[/yellow] {self.why}")
-        console.print(f"  [green]Fix:[/green] {self.fix}")
-        # Append auto-detected suggestion if different from the explicit fix
+        if plain:
+            click.echo(f"Error: {self}", err=True, color=False)
+        else:
+            console.print(f"[bold red]Error:[/bold red] {self.what}")
+            console.print(f"  [yellow]Reason:[/yellow] {self.why}")
+            console.print(f"  [green]Fix:[/green] {self.fix}")
+
         extra = suggest_and_format(f"{self.what} {self.why}")
         if extra and extra.strip() not in self.fix:
-            console.print(f"[dim]{extra}[/dim]")
+            if plain:
+                click.echo(extra, err=True, color=False)
+            else:
+                console.print(f"[dim]{extra}[/dim]")
 
 
 def port_in_use(port: int) -> BernsteinError:
