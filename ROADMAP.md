@@ -9,7 +9,7 @@ Public work is tracked live, not in this file:
 
 The maintainer's own plans are kept in a private planning tracker (see
 [GOVERNANCE.md](GOVERNANCE.md)), so a release can ship work that had no
-public issue beforehand. [CHANGELOG.md](CHANGELOG.md) lists what each
-release shipped.
+public issue beforehand. The [per-version release notes](docs/release-notes/)
+list what shipped in each release.
 
 Milestone due dates are planning targets, not commitments. Dates may shift based on actual completion.
