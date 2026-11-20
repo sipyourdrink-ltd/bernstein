@@ -31,7 +31,8 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein compare <spec> --adapters claude,codex[,...]` | Side-by-side adapter A/B in isolated per-adapter worktrees. Up to four adapters, deterministic seed, unified diff against baseline. See [docs/operations/compare.md](compare.md). |
 | `bernstein recipes list / show / run` | First-class workflow library. Parameterised recipes live in `templates/recipes/*.yaml`. See [docs/operations/recipes.md](recipes.md). |
 | `bernstein recipes register / fire / history / repair-lineage` | Content-addressed registered runs. Each fire writes a receipt to the audit chain; `fire` needs a reachable, authenticated task server (exit `2` when it cannot submit); `repair-lineage` resolves a forked definition lineage additively. See [docs/operations/recipes.md](recipes.md). |
-| `bernstein resume <task-id>` | Pick up a task from its last `checkpoint.json` instead of restarting. See [docs/operations/resume.md](resume.md). |
+| `bernstein resume <task-id>` | Prepare from a task checkpoint and queue a local resume signal. See [task checkpoint resume](resume.md). |
+| `bernstein ledger resume <run-id>` | Replay a work ledger and queue local resume signals for its frontier. See [durable work ledger](work-ledger.md). |
 | `bernstein fork --run <id> --from-step N` | Rewind a run to journal step N and branch a new run from its content-addressed worktree snapshot. The snapshot sha is recorded in the event journal, so a tampered snapshot ref is detected. See [docs/operations/fork-from-step.md](fork-from-step.md). |
 | `bernstein worktrees list / gc` | Inspect and reap orphan worktrees. Four-state classifier (`active` / `orphan` / `stale` / `corrupt`). See [docs/operations/worktrees.md](worktrees.md). |
 | `bernstein telemetry on / off / status / export` | Opt-in operator telemetry. Default off; honours `DO_NOT_TRACK` and `BERNSTEIN_TELEMETRY=0`. See [docs/telemetry.md](../telemetry.md). |
