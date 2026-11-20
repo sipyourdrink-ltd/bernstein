@@ -37,9 +37,9 @@ remain separate (see #6639 and #6841).
 Run `uv run pytest tests/integration/test_workflow_completion_authority.py -q`
 to exercise live agents, worker-reported completion, failure, refusal and
 rejected verification against the workflow runner and task store. The tests
-use the same controlled child processes as the restart suite. Six strict
-expected failures identify cases where the runner still releases dependencies
-without an accepted attempt. The passing controls check the fixture and
+use the same controlled child processes as the restart suite. Five strict
+expected failures cover dependency release before acceptance. A sixth covers
+worker dispatch when the runner has no completion authority. The passing controls check the fixture and
 dispatch failures.
 
 ## Tool ↔ bug-class matrix

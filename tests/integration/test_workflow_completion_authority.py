@@ -44,6 +44,8 @@ def test_live_claimed_attempt_does_not_release_dependents(env: _Env) -> None:
     assert sp.procs[0].poll() is None, "precondition: the agent child is still running"
     assert task.status is TaskStatus.CLAIMED
     assert task.claimed_by_session == sp.sessions[0].id
+    assert run.wait(BOUND_S), "workflow did not finish within the node deadline and harness allowance"
+    run.raise_unexpected()
     with _known_contract_gap():
         assert env.sentinel_writes() == 0, (
             f"consumer ran while the agent attempt was still live and claimed; runner reported {run.statuses()}"
@@ -64,6 +66,8 @@ def test_exit_zero_and_reported_done_without_acceptance_does_not_release(env: _E
     assert sp.procs[0].poll() == 0, "precondition: agent exited successfully"
     assert task.status is TaskStatus.DONE, "precondition: agent-reported DONE"
     assert task.closed_at is None, "precondition: never closed (no acceptance)"
+    assert run.wait(BOUND_S), "workflow did not finish within the node deadline and harness allowance"
+    run.raise_unexpected()
     with _known_contract_gap():
         assert env.sentinel_writes() == 0, (
             f"consumer ran on exit 0 + reported DONE with no acceptance; runner reported {run.statuses()}"
@@ -125,9 +129,12 @@ def test_failed_refused_or_rejected_attempt_never_releases_dependents(
     run = env.start(lambda: env.runner(sp).run(_spec(env), run_id=f"p2-{native_status.value}"))
     task = _observe_dispatched_attempt(env, sp, run)
     assert task.status is native_status, "precondition: native lifecycle outcome recorded"
+    assert run.wait(BOUND_S), "workflow did not finish after the worker outcome"
+    run.raise_unexpected()
     produce = run.node("produce")
+    assert produce is not None, "runner omitted the producer result"
     with _known_contract_gap():
-        assert produce is None or produce.status is not NodeStatus.SUCCESS, (
+        assert produce.status is not NodeStatus.SUCCESS, (
             f"{native_status.value} attempt reported as node success; runner reported {run.statuses()}"
         )
     assert env.sentinel_writes() == 0, f"consumer released after {native_status.value}"
