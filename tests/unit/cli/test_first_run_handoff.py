@@ -226,7 +226,7 @@ def test_gemini_requires_its_own_setup_for_project_and_installation(
         ("missing explicit ADC", False),
         ("empty ADC", False),
         ("directory instead of ADC", False),
-        ("local ADC", True),
+        ("local ADC", False),
         ("explicit ADC overrides local", False),
     ],
 )

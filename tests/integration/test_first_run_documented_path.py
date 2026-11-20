@@ -221,3 +221,70 @@ def test_configured_first_run_completes_and_recaps(
         from bernstein.cli.run_confirm import _stop_demo_processes
 
         _stop_demo_processes(project)
+
+
+def test_gemini_default_adc_guidance_matches_interactive_run_preflight(
+    tmp_path: Path, fake_cli_fixture: FakeCLIHandle
+) -> None:
+    from bernstein.core.orchestration.preflight import preflight_checks
+
+    profile = tmp_path / "home"
+    config = profile / ("AppData" if os.name == "nt" else ".config")
+    adc = config / "gcloud" / "application_default_credentials.json"
+    adc.parent.mkdir(parents=True)
+    adc.write_bytes(b"opaque fixture")
+    git = shutil.which("git")
+    assert git is not None
+    env = {
+        key: os.environ[key]
+        for key in ("SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR", "TEMP", "TMP")
+        if key in os.environ
+    }
+    env.update(
+        PATH=os.pathsep.join((str(fake_cli_fixture.bin_dir), str(Path(git).parent), os.defpath)),
+        HOME=str(profile),
+        USERPROFILE=str(profile),
+        APPDATA=str(config),
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
+        PYTHONUTF8="1",
+    )
+    gcloud = fake_cli_fixture.bin_dir / ("gcloud.cmd" if os.name == "nt" else "gcloud")
+    gcloud.write_text("@exit /b 1" if os.name == "nt" else "#!/bin/sh\nexit 1\n")
+    gcloud.chmod(0o755)
+    with patch.dict(os.environ, env, clear=True):
+        subprocess.run([git, "init", "-b", "work"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            [
+                git,
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "bernstein.yaml").write_text(
+            "goal: Test\ncli: gemini\nmodel: fixture\ninternal_llm_provider: none\n"
+        )
+        before = json.loads(_cli(tmp_path, "doctor", "--json").stdout)
+        assert not before["project_setup"]["ready"]
+        assert any(
+            "GOOGLE_APPLICATION_CREDENTIALS" in step and str(adc) in step
+            for step in before["project_setup"]["next_steps"]
+        )
+        with pytest.raises(SystemExit) as failure:
+            preflight_checks("gemini", 0, unattended=False)
+        assert failure.value.code == 1
+
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc)
+        after = json.loads(_cli(tmp_path, "doctor", "--json").stdout)
+        assert after["project_setup"]["ready"]
+        assert next(row for row in after["checks"] if row["name"] == "Auth: gemini")["ok"]
+        preflight_checks("gemini", 0, unattended=False)
