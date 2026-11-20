@@ -227,7 +227,7 @@ def cleanup_cmd(workdir: Path, yes: bool, force: bool) -> None:
 @click.option("--limit", type=int, default=10, show_default=True, help="Maximum number of matching tasks to show.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
 def history_cmd(file_path: Path, workdir: Path, limit: int, as_json: bool) -> None:
-    """Show archived tasks that modified a specific file."""
+    """Show archived tasks that list FILE_PATH as an owned file."""
     resolved_workdir = workdir.resolve()
     rows = _history_rows(resolved_workdir, file_path, limit=max(1, limit))
 
