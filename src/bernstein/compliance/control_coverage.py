@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -31,6 +32,8 @@ class RecordedMeasurement:
     @classmethod
     def from_bundle(cls, bundle: SubmissionBundle) -> RecordedMeasurement:
         """Build a measurement summary from a verified :class:`SubmissionBundle`."""
+        if not math.isfinite(bundle.submitted_at):
+            raise ValueError("Benchmark submission time must be finite")
         total = len(bundle.task_results)
         passed = sum(1 for r in bundle.task_results if r.passed)
         return cls(
@@ -124,7 +127,11 @@ def select_latest_measurements(
 
     latest: dict[str, RecordedMeasurement] = {}
     for item in measurements:
+        if isinstance(item, SubmissionBundle) and item.scheduler_config.get("adapter") == "mock":
+            continue
         rec = RecordedMeasurement.from_bundle(item) if isinstance(item, SubmissionBundle) else item
+        if not math.isfinite(rec.submitted_at):
+            raise ValueError("Benchmark submission time must be finite")
         existing = latest.get(rec.suite_version)
         if existing is None or rec.sort_key() > existing.sort_key():
             latest[rec.suite_version] = rec
@@ -176,12 +183,8 @@ def discover_bench_coverage_inputs(
     from bernstein.eval.bench.suite import BenchSuite
 
     suite_controls: dict[str, tuple[str, ...]] = dict(builtin_suite_control_map())
-    suite_hashes: dict[str, str] = {}
-    measurements: list[RecordedMeasurement] = []
-
-    for bundle_path in bundle_paths:
-        bundle = SubmissionBundle.load(bundle_path)
-        measurements.append(RecordedMeasurement.from_bundle(bundle))
+    manifests: dict[str, BenchSuite] = {}
+    bundles = [SubmissionBundle.load(path) for path in bundle_paths]
 
     dirs_to_scan: list[Path] = list(bundle_dirs)
     if include_default_dirs and not bundle_paths and not bundle_dirs:
@@ -203,23 +206,33 @@ def discover_bench_coverage_inputs(
                 continue
             raw_dict = cast("dict[str, Any]", raw)
             if {"bundle_hash", "suite_version", "task_results"} <= raw_dict.keys():
-                bundle = SubmissionBundle.from_dict(raw_dict)
-                measurements.append(RecordedMeasurement.from_bundle(bundle))
+                bundles.append(SubmissionBundle.from_dict(raw_dict))
             elif {"suite_hash", "version", "tasks", "measurement_control_ids"} <= raw_dict.keys():
                 suite = BenchSuite.load(json_path)
                 if suite.measurement_control_ids is None:
                     continue
-                if suite.version in suite_controls and suite.version not in suite_hashes:
-                    suite_hashes[suite.version] = _get_suite(suite.version).suite_hash
-                if suite.version in suite_hashes and suite_hashes[suite.version] != suite.suite_hash:
-                    raise ValueError(f"Conflicting manifests for suite {suite.version!r}")
+                if suite.version in suite_controls:
+                    previous = manifests.get(suite.version) or _get_suite(suite.version)
+                    if previous.suite_hash != suite.suite_hash:
+                        raise ValueError(f"Conflicting manifests for suite {suite.version!r}")
                 suite_controls[suite.version] = suite.measurement_control_ids
-                suite_hashes[suite.version] = suite.suite_hash
+                manifests[suite.version] = suite
 
-    for item in measurements:
-        if item.suite_version in suite_controls and item.suite_version not in suite_hashes:
-            suite_hashes[item.suite_version] = _get_suite(item.suite_version).suite_hash
-    return suite_controls, [m for m in measurements if suite_hashes.get(m.suite_version) == m.suite_hash]
+    measurements = []
+    for bundle in bundles:
+        name = bundle.suite_version
+        if name not in suite_controls or bundle.scheduler_config.get("adapter") == "mock":
+            continue
+        if name not in manifests:
+            manifests[name] = _get_suite(name)
+        suite = manifests[name]
+        if bundle.suite_hash != suite.suite_hash or not bundle.task_results:
+            continue
+        expected = sorted((task.id, task.content_hash()) for task in suite.tasks)
+        actual = sorted((result.task_id, result.task_hash) for result in bundle.task_results)
+        if actual == expected:
+            measurements.append(RecordedMeasurement.from_bundle(bundle))
+    return suite_controls, measurements
 
 
 def render_coverage_text(entries: Sequence[ControlCoverageEntry]) -> str:

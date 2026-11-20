@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import TYPE_CHECKING
 
@@ -30,27 +29,31 @@ def _make_bundle(
     submitted_at: float,
     passed_flags: list[bool],
     suite_hash: str | None = None,
+    suite: BenchSuite | None = None,
+    adapter: str = "fixture",
+    mismatched_task: bool = False,
 ) -> SubmissionBundle:
     """Construct a valid, hash-checked SubmissionBundle fixture."""
     results: list[TaskResult] = []
-    for idx, passed in enumerate(passed_flags):
+    suite = suite or _get_suite(suite_version)
+    for idx, task in enumerate(suite.tasks):
+        passed = idx < len(passed_flags) and passed_flags[idx]
         receipt = {"task": f"{suite_version}-{idx}", "passed": passed, "submitted_at": submitted_at}
-        task_hash = hashlib.sha256(f"{suite_version}-task-{idx}".encode()).hexdigest()
         results.append(
             TaskResult(
-                task_id=f"task-{idx}",
-                task_hash=task_hash,
+                task_id=task.id,
+                task_hash="bad-task-hash" if mismatched_task else task.content_hash(),
                 receipt=receipt,
                 passed=passed,
                 score=1.0 if passed else -0.5,
             )
         )
-    resolved_suite_hash = suite_hash or _get_suite(suite_version).suite_hash
+    resolved_suite_hash = suite_hash or suite.suite_hash
     return SubmissionBundle(
         suite_hash=resolved_suite_hash,
         suite_version=suite_version,
         task_results=results,
-        scheduler_config={"adapter": "mock", "suite": suite_version},
+        scheduler_config={"adapter": adapter, "suite": suite_version},
         submitted_at=submitted_at,
     )
 
@@ -78,8 +81,8 @@ class TestControlCoverageSelection:
 
         assert selected_forward == selected_reverse
         assert selected_forward["golden-v1"].submitted_at == 200.0
-        assert selected_forward["golden-v1"].pass_rate == pytest.approx(0.75)
-        assert selected_forward["golden-v1"].display == "75.0% (3/4)"
+        assert selected_forward["golden-v1"].pass_rate == pytest.approx(0.6)
+        assert selected_forward["golden-v1"].display == "60.0% (3/5)"
 
     def test_tie_broken_deterministically_across_input_order(self) -> None:
         a = _make_bundle(suite_version="golden-v1", submitted_at=150.0, passed_flags=[True, False])
@@ -190,8 +193,8 @@ class TestComplianceControlsCoverageCLI:
         rob_01 = by_id["CTL-ROB-01"]
         assert rob_01["suites"] == ["golden-v1"]
         assert rob_01["latest_measurement"]["submitted_at"] == 300.0
-        assert rob_01["latest_measurement"]["pass_rate"] == pytest.approx(0.75)
-        assert rob_01["latest_measurement_display"] == "75.0% (3/4)"
+        assert rob_01["latest_measurement"]["pass_rate"] == pytest.approx(0.6)
+        assert rob_01["latest_measurement_display"] == "60.0% (3/5)"
 
         # Controls whose declaring suite has no recorded bundle stay unavailable.
         sec_04 = by_id["CTL-SEC-04"]
@@ -221,7 +224,7 @@ class TestComplianceControlsCoverageCLI:
         custom_suite.save(bench_dir / "custom-gov-v1.suite.json")
         _make_bundle(
             suite_version="custom-gov-v1",
-            suite_hash=custom_suite.suite_hash,
+            suite=custom_suite,
             submitted_at=500.0,
             passed_flags=[True, True],
         ).save(bench_dir / "custom-gov.bundle.json")
@@ -232,7 +235,7 @@ class TestComplianceControlsCoverageCLI:
         auto_res = runner.invoke(compliance_group, ["controls", "--format", "text"])
         assert auto_res.exit_code == 0, auto_res.output
         assert "custom-gov-v1" in auto_res.stdout
-        assert "100.0% (2/2)" in auto_res.stdout
+        assert "100.0% (1/1)" in auto_res.stdout
 
         dir_res = runner.invoke(
             compliance_group,
@@ -241,7 +244,7 @@ class TestComplianceControlsCoverageCLI:
         assert dir_res.exit_code == 0, dir_res.output
         by_id = {row["control_id"]: row for row in json.loads(dir_res.stdout)}
         assert by_id["CTL-GOV-01"]["suites"] == ["custom-gov-v1"]
-        assert by_id["CTL-GOV-01"]["latest_measurement_display"] == "100.0% (2/2)"
+        assert by_id["CTL-GOV-01"]["latest_measurement_display"] == "100.0% (1/1)"
         assert by_id["CTL-ROB-01"]["latest_measurement_display"] == "unavailable"
 
     def test_controls_cli_rejects_corrupted_explicit_bundle(self, tmp_path: Path) -> None:
@@ -263,3 +266,33 @@ def test_unrelated_bundle_with_same_suite_name_cannot_replace_measurement(tmp_pa
     assert result.exit_code == 0, result.output
     row = next(row for row in json.loads(result.stdout) if row["control_id"] == "CTL-ROB-01")
     assert row["latest_measurement"]["submitted_at"] == 10
+
+
+@pytest.mark.parametrize(("adapter", "wrong_task"), [("mock", False), ("fixture", True)])
+def test_smoke_and_mismatched_task_results_do_not_supersede_measurements(
+    tmp_path: Path, adapter: str, wrong_task: bool
+) -> None:
+    suite = _get_suite("goal-drift-v1")
+    for time, source, mismatch in [(10, "fixture", False), (20, adapter, wrong_task)]:
+        bundle = _make_bundle(
+            suite_version=suite.version,
+            suite=suite,
+            submitted_at=time,
+            passed_flags=[True],
+            adapter=source,
+            mismatched_task=mismatch,
+        )
+        bundle.save(tmp_path / f"{time}.json")
+    result = CliRunner().invoke(compliance_group, ["controls", "--format", "json", "--bundle-dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    row = next(row for row in json.loads(result.stdout) if row["control_id"] == "CTL-ROB-02")
+    assert row["latest_measurement"]["submitted_at"] == 10
+
+
+def test_nonfinite_submission_time_is_refused_before_ranking(tmp_path: Path) -> None:
+    bundle = _make_bundle(suite_version="goal-drift-v1", submitted_at=float("nan"), passed_flags=[True])
+    path = tmp_path / "invalid-time.json"
+    bundle.save(path)
+    result = CliRunner().invoke(compliance_group, ["controls", "--bundle", str(path)])
+    assert result.exit_code != 0
+    assert "finite" in result.output
