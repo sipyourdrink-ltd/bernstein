@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 from bernstein.core.defaults import QWEN_INSTALL_HINT
+from bernstein.core.orchestration.bootstrap_output import plain_bootstrap_stderr
 
 logger = logging.getLogger(__name__)
 
@@ -508,7 +509,8 @@ def check_adapter_configured(
     if resolve_seed_path(workdir).exists():
         return
 
-    console.print(NO_ADAPTER_CONFIGURED, style="bold red", markup=False, highlight=False)
+    target = plain_bootstrap_stderr.get() or console
+    target.print(NO_ADAPTER_CONFIGURED, style="bold red", markup=False, highlight=False)
     raise SystemExit(1)
 
 
@@ -537,9 +539,10 @@ def _preflight_auto_mode() -> None:
 
     discovery = discover_agents_cached()
     if not discovery.agents:
-        console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
+        target = plain_bootstrap_stderr.get() or console
+        target.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
         for name, hint in _CLI_INSTALL_HINT.items():
-            console.print(f"  {name}: {hint}")
+            target.print(f"  {name}: {hint}")
         raise SystemExit(1)
 
     agent_parts: list[str] = []

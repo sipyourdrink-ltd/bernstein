@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import io
 import logging
 import os
 import sys
@@ -627,14 +626,7 @@ def _emit_preflight_runtime_warnings(
 
 @contextlib.contextmanager
 def _quiet_bootstrap_console(enabled: bool) -> Any:
-    """Suppress bootstrap Rich output while leaving the final summary visible.
-
-    Args:
-        enabled: When True, redirects bootstrap console writes to an in-memory buffer.
-
-    Yields:
-        ``None`` while the bootstrap module uses a muted console.
-    """
+    """Hide stage narration in plain modes and route failure details to stderr."""
     if not enabled:
         yield
         return
@@ -643,18 +635,17 @@ def _quiet_bootstrap_console(enabled: bool) -> Any:
 
     import bernstein.core.bootstrap as bootstrap_module
     from bernstein.core.orchestration import preflight
+    from bernstein.core.orchestration.bootstrap_output import plain_bootstrap_stderr
 
-    buffer = io.StringIO()
-    muted = Console(file=buffer, force_terminal=False, color_system=None)
+    muted = Console(quiet=True, force_terminal=False)
+    token = plain_bootstrap_stderr.set(Console(stderr=True, force_terminal=False, no_color=True, soft_wrap=True))
     original = bootstrap_module.console, preflight.console
     bootstrap_module.console = preflight.console = muted
     try:
         yield
-    except BaseException:
-        click.echo(buffer.getvalue(), err=True, nl=False)
-        raise
     finally:
         bootstrap_module.console, preflight.console = original
+        plain_bootstrap_stderr.reset(token)
 
 
 def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContextManager[Any]:
