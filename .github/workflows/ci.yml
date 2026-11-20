@@ -1099,7 +1099,8 @@ jobs:
         # `uv tool install pipx` puts pipx on PATH via uv's tool dir.
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          enable-cache: true
+          # This job executes the downloaded wheel. Keep its cache local to the runner.
+          enable-cache: false
       - name: Install pipx via uv
         shell: bash
         run: |
