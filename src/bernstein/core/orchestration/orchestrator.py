@@ -1274,12 +1274,15 @@ class Orchestrator:
 
     def _current_capacity(self) -> NodeCapacity:
         """Build a NodeCapacity snapshot reflecting current agent usage."""
+        from bernstein.core.protocols.cluster.cluster import local_worker_capacity
+
         alive = sum(1 for a in self._agents.values() if a.status != "dead")
-        return NodeCapacity(
+        capacity = NodeCapacity(
             max_agents=self._config.max_agents,
             available_slots=max(0, self._config.max_agents - alive),
             active_agents=alive,
         )
+        return local_worker_capacity(self._workdir, capacity)
 
     @property
     def active_agents(self) -> dict[str, AgentSession]:

@@ -94,6 +94,17 @@ bernstein run examples/plans/<plan>.yaml
 
 - **[plugins/](plugins/)** - Custom plugins: Slack/Discord notifiers, Jira/Linear integration, custom routers, quality gates, metrics, and more
 
+### Offline demos
+
+Run each demo with Python from a checkout with the project dependencies installed.
+
+- [File heading gate](plugins/file-heading-gate/) checks how a missing heading affects required and optional gates.
+- [Quality gate seed](quality-gate-seed/) prints the settings Bernstein parses from a project seed.
+- [Workflow stop](workflow-stop/) shows which commands run when one branch of a workflow fails.
+- [MCP task calls](mcp-task-wire/) compares plain and task-augmented tool responses over in-memory streams.
+
+Run the smoke tests with `python scripts/run_tests.py tests/unit/examples`.
+
 ## Plan Anatomy
 
 Every plan in the library follows this structure:

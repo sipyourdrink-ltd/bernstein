@@ -656,3 +656,24 @@ guarantee. Ring membership is fixed for that registry's lifetime; restart reload
 the existing flat node file through the configured ring. Changing configuration
 is not an online migration protocol. HTTP shard-map discovery, 421 responses,
 forwarding and client/relay routing are outside this feature.
+
+## Worker health telemetry
+
+Heartbeats accept optional `disk_free_mb`, `mem_used_pct`, `mesh_rtt_ms` and
+`platform` fields inside `capacity`. Existing payloads remain accepted.
+Heartbeat responses, `GET /cluster/nodes` and `GET /cluster/status` return
+the recorded telemetry in each node's `capacity`, with `null` for missing values.
+The registry marks a worker `unhealthy:disk`, `unhealthy:memory` or
+`unhealthy:mesh-rtt` when its reported telemetry exceeds the configured
+thresholds. The registry skips unhealthy workers when selecting a node for a
+task or choosing a recipient for task stealing. A `bernstein worker` pull
+waits for recovery before claiming more work. The separate orchestrator path
+for claiming a task by ID is tracked in [#7853](https://github.com/sipyourdrink-ltd/bernstein/issues/7853).
+Multiple reasons are comma separated. Recovery resets `unhealthy_since`.
+
+Cluster seed keys `min_disk_free_mb` (512), `max_mem_used_pct` (95.0) and
+`max_mesh_rtt_ms` (5000.0) set the thresholds. Missing telemetry contributes
+no failure reason until the first reading. Omitting a later reading preserves
+the last observed value. Local workers report free disk space for their workspace,
+platform, and memory use when available. Mesh RTT is optional. The platform string is informational. Telemetry is not
+a substitute for authentication, and does not override cordon/drain intent.

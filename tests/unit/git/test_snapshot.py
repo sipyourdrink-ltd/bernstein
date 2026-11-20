@@ -11,6 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -248,6 +249,26 @@ def test_list_synthesises_record_when_metadata_missing(repo: Path) -> None:
     assert store.list() == [tracked, fallback]
     assert store.list(limit=1) == [tracked]
     assert store.list(task_id="T-orphan") == [tracked]
+
+
+def test_populated_list_resolves_metadata_dir_once_and_sees_later_snapshots(repo: Path) -> None:
+    from bernstein.core.git import snapshot as snapshot_module
+
+    store = SnapshotStore(repo)
+    first = store.take(task_id="T-a")
+    second = store.take(task_id="T-b")
+    with patch.object(
+        snapshot_module, "_snapshot_metadata_dir", wraps=snapshot_module._snapshot_metadata_dir
+    ) as resolve:
+        assert store.list() == [second, first]
+        resolve.assert_called_once_with(repo)
+
+        third = SnapshotStore(repo).take(task_id="T-a")
+        resolve.reset_mock()  # Exclude the new snapshot's metadata write.
+        assert store.list() == [third, second, first]
+        resolve.assert_called_once_with(repo)
+
+    assert store.list(task_id="T-a", limit=1) == [third]
 
 
 # ---------------------------------------------------------------------------
