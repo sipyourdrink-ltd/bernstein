@@ -135,6 +135,12 @@ bernstein compliance controls --framework owasp_asi --format markdown
 bernstein compliance controls --format markdown
 ```
 
+Pass `--bundle results.json` to show a suite's latest recorded measurement,
+or `--bundle-dir DIR` to read bundles and suite declarations together.
+With neither option, the command looks in `.sdd/bench` and `.sdd/benchmarks`.
+Each result must match the declared suite's version and content hash.
+A control with no matching result displays `unavailable`.
+
 ### Registered Standard Controls
 
 <!-- controls-table:start -- generated from ControlRegistry.to_markdown_table(); do not edit by hand,

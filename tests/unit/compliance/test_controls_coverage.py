@@ -45,7 +45,7 @@ def _make_bundle(
                 score=1.0 if passed else -0.5,
             )
         )
-    resolved_suite_hash = suite_hash or hashlib.sha256(suite_version.encode()).hexdigest()
+    resolved_suite_hash = suite_hash or _get_suite(suite_version).suite_hash
     return SubmissionBundle(
         suite_hash=resolved_suite_hash,
         suite_version=suite_version,
@@ -250,3 +250,16 @@ class TestComplianceControlsCoverageCLI:
         res = CliRunner().invoke(compliance_group, ["controls", "--bundle", str(bad)])
         assert res.exit_code != 0
         assert "Failed to load benchmark bundle" in res.output
+
+
+def test_unrelated_bundle_with_same_suite_name_cannot_replace_measurement(tmp_path: Path) -> None:
+    genuine = tmp_path / "genuine.json"
+    _make_bundle(suite_version="golden-v1", submitted_at=10, passed_flags=[False]).save(genuine)
+    other = tmp_path / "other.json"
+    _make_bundle(suite_version="golden-v1", suite_hash="a" * 64, submitted_at=20, passed_flags=[True]).save(other)
+    result = CliRunner().invoke(
+        compliance_group, ["controls", "--format", "json", "--bundle", str(genuine), "--bundle", str(other)]
+    )
+    assert result.exit_code == 0, result.output
+    row = next(row for row in json.loads(result.stdout) if row["control_id"] == "CTL-ROB-01")
+    assert row["latest_measurement"]["submitted_at"] == 10

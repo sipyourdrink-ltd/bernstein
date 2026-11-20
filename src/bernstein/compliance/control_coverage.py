@@ -49,13 +49,14 @@ class RecordedMeasurement:
         """Human-readable pass-rate and task count summary."""
         return f"{self.pass_rate * 100:.1f}% ({self.passed_tasks}/{self.total_tasks})"
 
-    def sort_key(self) -> tuple[float, str, str, float, int, int, str]:
+    def sort_key(self) -> tuple[float, str, str, float, float, int, int, str]:
         """Total ordering key so latest-selection is independent of input order."""
         return (
             self.submitted_at,
             self.bundle_hash,
             self.suite_hash,
             self.pass_rate,
+            self.overall_score,
             self.total_tasks,
             self.passed_tasks,
             self.suite_version,
@@ -170,11 +171,12 @@ def discover_bench_coverage_inputs(
     base_dir: Path | None = None,
 ) -> tuple[dict[str, tuple[str, ...]], list[RecordedMeasurement]]:
     """Collect declaring suites and recorded bundle measurements from local artifacts."""
-    from bernstein.eval.bench.bench_cli import builtin_suite_control_map
+    from bernstein.eval.bench.bench_cli import _get_suite, builtin_suite_control_map
     from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.suite import BenchSuite
 
     suite_controls: dict[str, tuple[str, ...]] = dict(builtin_suite_control_map())
+    suite_hashes: dict[str, str] = {}
     measurements: list[RecordedMeasurement] = []
 
     for bundle_path in bundle_paths:
@@ -205,10 +207,19 @@ def discover_bench_coverage_inputs(
                 measurements.append(RecordedMeasurement.from_bundle(bundle))
             elif {"suite_hash", "version", "tasks", "measurement_control_ids"} <= raw_dict.keys():
                 suite = BenchSuite.load(json_path)
-                if suite.measurement_control_ids is not None:
-                    suite_controls[suite.version] = suite.measurement_control_ids
+                if suite.measurement_control_ids is None:
+                    continue
+                if suite.version in suite_controls and suite.version not in suite_hashes:
+                    suite_hashes[suite.version] = _get_suite(suite.version).suite_hash
+                if suite.version in suite_hashes and suite_hashes[suite.version] != suite.suite_hash:
+                    raise ValueError(f"Conflicting manifests for suite {suite.version!r}")
+                suite_controls[suite.version] = suite.measurement_control_ids
+                suite_hashes[suite.version] = suite.suite_hash
 
-    return suite_controls, measurements
+    for item in measurements:
+        if item.suite_version in suite_controls and item.suite_version not in suite_hashes:
+            suite_hashes[item.suite_version] = _get_suite(item.suite_version).suite_hash
+    return suite_controls, [m for m in measurements if suite_hashes.get(m.suite_version) == m.suite_hash]
 
 
 def render_coverage_text(entries: Sequence[ControlCoverageEntry]) -> str:
