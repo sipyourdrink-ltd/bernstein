@@ -19,6 +19,43 @@ This backend field is separate from the model classification below
 (`light`, `standard`, `heavy`, `critical`); it does not change classification
 or provider routing.
 
+## Retry and reopen
+
+Both retry paths preserve the task's current backend `dispatch_tier` in the
+new task request, including transport and unknown failures. A reason string
+is not evidence for switching a backend. This does not change model/effort
+selection, retry limits or verification gates.
+
+`POST /tasks/{task_id}/reopen` accepts an optional `dispatch_tier` with one of
+the five values above. Omit it to retain the current tier; explicit `null`
+and invalid values return HTTP 422. An explicit selection is stored with
+`metadata.dispatch_tier_transition` (`old`, `new`, `reason`) in the same
+locked DONE-to-OPEN JSONL record before another claimant can acquire the
+store lock. Replaying the record restores the selected tier. This endpoint
+does not automatically classify verification or backend-capacity outcomes;
+callers must make an explicit selection when justified by their own policy.
+
+## Routing declarations across restart
+
+Single and batch REST creation retain `model`, `effort`, `cli` and `requires`
+in task responses and the JSONL TaskStore. Model, effort and CLI pins are
+opaque optional strings: their spelling, case and empty-string values are
+preserved without aliases or normalization. Omission defaults to `null`.
+
+`requires` defaults to `[]`. It accepts at most 100 nonblank strings, each at
+most 1,000 characters; invalid declarations return HTTP 422 before persistence.
+Capability strings retain case, whitespace around nonblank content, order and
+duplicates. Request, stored-task and response lists are detached copies.
+
+On JSONL replay, the latest explicitly recorded value wins. A later record
+without these keys keeps the previous declarations; explicit `null` clears an
+optional pin and `[]` clears capabilities. Historical tasks without these keys
+retain `null` pins and an empty capability list. Replay does not rewrite them.
+
+These fields preserve the caller's declarations for later routing. They do not
+select or dispatch an executor, grant permissions or spending authority, or
+establish cross-fleet acceptance or delivery acknowledgment. Refs #6562.
+
 ## Model classification
 
 Bernstein can optionally map a task onto a small closed **tier**

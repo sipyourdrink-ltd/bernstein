@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bernstein.core.security.result_receipt_bundle import ResultBundle
@@ -38,6 +38,21 @@ SERVER_URL_ENV = "BERNSTEIN_SERVER_URL"
 
 #: Environment variable that overrides the auth token for review task creation.
 AUTH_TOKEN_ENV = "BERNSTEIN_AUTH_TOKEN"
+
+
+_MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+def _read_bounded_response(response: Any) -> bytes:
+    """Read at most 1 MiB, probing one extra byte to detect overflow."""
+    data = bytearray()
+    while True:
+        chunk = response.read(min(65536, _MAX_RESPONSE_BYTES + 1 - len(data)))
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+        if len(data) > _MAX_RESPONSE_BYTES:
+            raise OSError("response exceeds 1 MiB limit")
 
 
 def _resolve_server_url() -> str:
@@ -119,6 +134,7 @@ def create_volunteer_review_task(
         the server returned a non-2xx response.
     """
     import json
+    import urllib.error
     import urllib.request
 
     review_role = role or DEFAULT_REVIEW_ROLE
@@ -187,7 +203,7 @@ def create_volunteer_review_task(
     try:
         with urllib.request.urlopen(request, timeout=10) as response:  # nosec B310 - url constructed from config/env, not user input
             if response.status == 200 or response.status == 201:
-                result = json.loads(response.read().decode("utf-8"))
+                result = json.loads(_read_bounded_response(response).decode("utf-8"))
                 task_id = result.get("id")
                 if task_id:
                     logger.info(
@@ -202,7 +218,7 @@ def create_volunteer_review_task(
                 )
                 return None
             else:
-                body = response.read().decode("utf-8", errors="replace")
+                body = response.read(200).decode("utf-8", errors="replace")
                 logger.warning(
                     "Review task creation returned HTTP %d: %s",
                     response.status,
@@ -210,7 +226,7 @@ def create_volunteer_review_task(
                 )
                 return None
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        body = exc.read(200).decode("utf-8", errors="replace")
         logger.warning(
             "Review task creation HTTP error %d: %s",
             exc.code,

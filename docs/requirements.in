@@ -21,7 +21,7 @@ mkdocs>=1.6.1,<2
 # a build step for a project whose stated goal is air-gap friendliness.
 # Dropped rather than made resilient: nothing else in this repo needs it.
 
-mkdocs-material>=9.7.7,<10
+mkdocs-material>=9.8.1,<10
 mkdocs-minify-plugin>=0.8,<1
 # Cap below 1.2.3: that release added a runtime dependency on 
 # (a third-party fork of mkdocs 1.x). We build against upstream 

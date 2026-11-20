@@ -21,6 +21,7 @@ from bernstein.core.tasks.checkpoint_retry import (
     record_task_checkpoint,
     workspace_hash,
 )
+from bernstein.core.tasks.models import DispatchTier
 from bernstein.core.tasks.task_lifecycle import (
     _write_retry_checkpoint,
     maybe_retry_task,
@@ -48,6 +49,7 @@ class _Task:
         self.role = "backend"
         self.priority = 1
         self.scope = _Scope()
+        self.dispatch_tier = DispatchTier.LOCAL
         self.complexity = _Complexity()
         self.estimated_minutes = 10
         self.depends_on: list[str] = []

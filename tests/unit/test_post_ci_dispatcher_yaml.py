@@ -309,10 +309,40 @@ def test_ci_push_trigger_still_covers_main(ci_workflow: dict[str, Any]) -> None:
     """
     push = _on(ci_workflow).get("push")
     assert isinstance(push, dict), "ci.yml must keep a `push:` trigger"
-    assert push.get("branches") == ["main"], (
-        "ci.yml must keep `push.branches: [main]`; post-ci-dispatcher.yml listens "
+    branches = push.get("branches")
+    assert isinstance(branches, list)
+    assert "main" in branches, (
+        "ci.yml must keep main in `push.branches`; post-ci-dispatcher.yml listens "
         "for the CI run produced by the post-queue push to main."
     )
+
+
+def test_ci_workflow_run_consumers_stay_on_main() -> None:
+    """Release CI must not start follow-up work intended for main.
+
+    The dispatcher also needs main's merge-queue refs for auto-release;
+    other CI consumers must stay on main itself.
+    """
+    consumers = set()
+    workflows_dir = CI_WORKFLOW.parent
+    for path in sorted((*workflows_dir.glob("*.yml"), *workflows_dir.glob("*.yaml"))):
+        workflow = _load(path)
+        on = workflow.get(True, workflow.get("on"))
+        if not isinstance(on, dict):
+            continue
+        wfr = on.get("workflow_run")
+        if not isinstance(wfr, dict) or "CI" not in wfr.get("workflows", []):
+            continue
+        consumers.add(path.name)
+        allowed = {"main"}
+        if path == DISPATCHER:
+            allowed.add("gh-readonly-queue/main/**")
+        branches = wfr.get("branches")
+        assert isinstance(branches, list), f"{path.name} must filter CI runs by branch"
+        assert "main" in branches and set(branches) <= allowed, (
+            f"{path.name} must limit CI follow-up work to {sorted(allowed)}, not release branches (got {branches!r})"
+        )
+    assert {DISPATCHER.name, "coverage-ratchet.yml"} <= consumers
 
 
 def test_ci_push_paths_ignore_does_not_cover_release_trigger(
