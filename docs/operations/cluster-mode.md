@@ -618,3 +618,62 @@ production code is changed by this proposal.
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+
+### Consistent hash ring primitive
+
+The internal `HashRing` maps UTF-8 node keys to shard IDs using the first
+eight SHA-256 bytes as a big-endian integer. Virtual-node keys are
+`<shard-id>#<index>`; lookup selects the first clockwise token and wraps
+around at the end. An empty ring rejects lookups. `ShardMap` keeps the
+configured URL metadata for each local partition. When `cluster.shards` is
+configured, the running `NodeRegistry` uses the ring to select separate local
+storage partitions inside that one registry process. All existing node routes
+operate on that storage; the URLs do not trigger remote requests.
+
+The default is `shards: {}` and `shard_vnodes: 128`. Empty shards keep the
+existing single dictionary, routes and persistence format unchanged. To opt in:
+
+```yaml
+cluster:
+  enabled: true
+  shards:
+    partition-a: https://metadata.example/partition-a
+    partition-b: https://metadata.example/partition-b
+  shard_vnodes: 128
+```
+
+Shard IDs must be unique ASCII identifiers matching
+`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`; at most 256 are accepted. URLs must be
+absolute HTTP(S) URLs with a hostname and valid port, without credentials,
+whitespace, ASCII control characters, query or fragment. A path prefix is allowed. `shard_vnodes` must be
+an integer from 1 to 1024; booleans, floats and numeric strings are rejected.
+Invalid values fail config loading, including direct `ClusterConfig` construction
+(the runtime `shards` value is a tuple of ID/URL pairs).
+
+This partitions storage inside one process and makes no distributed-scaling
+guarantee. Ring membership is fixed for that registry's lifetime; restart reloads
+the existing flat node file through the configured ring. Changing configuration
+is not an online migration protocol. HTTP shard-map discovery, 421 responses,
+forwarding and client/relay routing are outside this feature.
+
+## Worker health telemetry
+
+Heartbeats accept optional `disk_free_mb`, `mem_used_pct`, `mesh_rtt_ms` and
+`platform` fields inside `capacity`. Existing payloads remain accepted.
+Heartbeat responses, `GET /cluster/nodes` and `GET /cluster/status` return
+the recorded telemetry in each node's `capacity`, with `null` for missing values.
+The registry marks a worker `unhealthy:disk`, `unhealthy:memory` or
+`unhealthy:mesh-rtt` when its reported telemetry exceeds the configured
+thresholds. The registry skips unhealthy workers when selecting a node for a
+task or choosing a recipient for task stealing. A `bernstein worker` pull
+waits for recovery before claiming more work. The separate orchestrator path
+for claiming a task by ID is tracked in [#7853](https://github.com/sipyourdrink-ltd/bernstein/issues/7853).
+Multiple reasons are comma separated. Recovery resets `unhealthy_since`.
+
+Cluster seed keys `min_disk_free_mb` (512), `max_mem_used_pct` (95.0) and
+`max_mesh_rtt_ms` (5000.0) set the thresholds. Missing telemetry contributes
+no failure reason until the first reading. Omitting a later reading preserves
+the last observed value. Local workers report free disk space for their workspace,
+platform, and memory use when available. Mesh RTT is optional. The platform string is informational. Telemetry is not
+a substitute for authentication, and does not override cordon/drain intent.

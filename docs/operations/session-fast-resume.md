@@ -11,6 +11,10 @@ Source: `src/bernstein/core/persistence/session.py`.
 
 `SessionState`, written to `.sdd/runtime/session.json`:
 
+This is run-level task bookkeeping for the orchestration run. It records
+which tasks are complete or still need work; individual worker sessions
+have their own lifecycle and are not restored by this snapshot.
+
 | Field | Meaning |
 |---|---|
 | `saved_at` | Unix timestamp of the snapshot |
