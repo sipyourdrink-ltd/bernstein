@@ -201,14 +201,14 @@ def test_budget_values_have_provenance_and_each_state(
         path.unlink()
     elif state == "mismatch":
         ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=1.0)
-    original = governance._verify_budget_row
+    original = governance.verify_budget_projection
     calls = []
 
-    def verify(record: governance.GovernanceDecision, ledger_path: Path | None) -> str:
-        calls.append(ledger_path)
-        return original(record, ledger_path)
+    def verify(record: governance.GovernanceDecision, prior: float) -> tuple[float | None, str]:
+        calls.append(prior)
+        return original(record, prior)
 
-    monkeypatch.setattr(governance, "_verify_budget_row", verify)
+    monkeypatch.setattr(governance, "verify_budget_projection", verify)
     before = _snapshot(tmp_path)
     (row,) = _list(_client(tmp_path))["decisions"]
     budget = row["budget"]
@@ -226,14 +226,14 @@ def test_budget_values_have_provenance_and_each_state(
 
 def test_changing_ledger_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ledger, _ = _budget_refusal(tmp_path)
-    original = governance._verify_budget_row
+    original = governance.verify_budget_projection
 
-    def verify(record: governance.GovernanceDecision, path: Path | None) -> str:
-        result = original(record, path)
+    def verify(record: governance.GovernanceDecision, prior: float) -> tuple[float | None, str]:
+        result = original(record, prior)
         ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=1.0)
         return result
 
-    monkeypatch.setattr(governance, "_verify_budget_row", verify)
+    monkeypatch.setattr(governance, "verify_budget_projection", verify)
     (row,) = _list(_client(tmp_path))["decisions"]
     assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
     assert row["budget"]["prior_spend_usd"]["value"] is None
@@ -351,24 +351,41 @@ def test_redirected_ledger_is_unavailable_before_open(tmp_path: Path, monkeypatc
     assert row["budget"]["prior_spend_usd"]["value"] is None
 
 
-@pytest.mark.parametrize("alias_state", ["absent", "different-file"])
-def test_unusable_descriptor_alias_never_verifies_zero_spend(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, alias_state: str
+@pytest.mark.parametrize("failed_read", [1, 2])
+def test_descriptor_read_error_never_verifies_zero_spend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_read: int
 ) -> None:
-    _budget_refusal(tmp_path, prior_spend=0.0)
-    client = _client(tmp_path)
-    (normal,) = _list(client)["decisions"]
-    assert normal["budget"]["prior_spend_usd"]["state"] == "verified"
-    alias = tmp_path / "descriptor-view"
-    if alias_state == "different-file":
-        alias.write_text("")
+    _, ledger = _budget_refusal(tmp_path, prior_spend=0.0)
+    ledger_stat = ledger.stat()
+    actual_fdopen = os.fdopen
 
-    class DescriptorView:
-        def __truediv__(self, name: str) -> Path:
-            return alias
+    class UnreadableStream:
+        def __init__(self, stream):
+            self.stream = stream
+            self.reads = 0
 
-    monkeypatch.setattr(routes, "Path", lambda name: DescriptorView())
-    (row,) = _list(client)["decisions"]
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.stream.close()
+
+        def read(self):
+            self.reads += 1
+            if self.reads == failed_read:
+                raise OSError("ledger read interrupted")
+            return self.stream.read()
+
+        def seek(self, offset):
+            return self.stream.seek(offset)
+
+    def open_stream(fd, *args, **kwargs):
+        is_ledger = os.path.samestat(os.fstat(fd), ledger_stat)
+        stream = actual_fdopen(fd, *args, **kwargs)
+        return UnreadableStream(stream) if is_ledger else stream
+
+    monkeypatch.setattr(os, "fdopen", open_stream)
+    (row,) = _list(_client(tmp_path))["decisions"]
     assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
     assert row["budget"]["prior_spend_usd"]["value"] is None
 
@@ -413,6 +430,122 @@ def test_response_model_depth_failure_returns_controlled_error(tmp_path: Path) -
 def test_public_schema_matches_response_models() -> None:
     path = Path(__file__).resolve().parents[2] / "docs" / "api" / "recorded-decisions.schema.json"
     assert json.loads(path.read_text()) == routes.RecordedDecisions.model_json_schema()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("run_id", None),
+        ("subject", 1),
+        ("action", []),
+        ("verdict", None),
+        ("inputs_hash", {}),
+        ("timestamp", 1000.75),
+        ("timestamp", True),
+        ("context", []),
+        ("context", None),
+        ("context", {"policy_version": 12}),
+    ],
+)
+def test_invalid_field_type_is_unreadable(tmp_path: Path, field: str, value: object) -> None:
+    _record(tmp_path, **{field: value})
+    for suffix in ("", "/" + "a" * 64):
+        response = _client(tmp_path).get("/governance/decisions" + suffix, params={"run_id": "run-1"})
+        assert response.status_code == 409
+
+
+def test_displayed_prior_spend_is_bound_to_hash_precision(tmp_path: Path) -> None:
+    ledger, _ = _budget_refusal(tmp_path)
+    ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=0.0000004)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    prior = row["budget"]["prior_spend_usd"]
+    assert prior["state"] == "verified"
+    assert prior["value"] == 9
+    assert "six decimal places" in prior["provenance"]
+
+
+def test_each_request_reads_budget_evidence_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, path = _budget_refusal(tmp_path)
+    for stamp in (1001, 1002):
+        with pytest.raises(governance.BudgetRefused):
+            governance.check_budget_decision(
+                run_id="run-1",
+                lineage_root=tmp_path / ".sdd" / "lineage",
+                hmac_key=b"synthetic-test-key-only",
+                subject="alice",
+                cap_usd=10,
+                next_cost_usd=2,
+                ledger_path=path,
+                now=stamp,
+            )
+    _record(tmp_path)
+    opened = []
+    verified = []
+    original = routes.open_anchored
+    verify = governance.verify_budget_projection
+
+    def counted_verification(record, prior):
+        verified.append(record.timestamp)
+        return verify(record, prior)
+
+    def counted(root: Path, *parts: str, **kwargs: object) -> int:
+        if parts[-1] == "ledger.jsonl":
+            opened.append(parts[-1])
+        return original(root, *parts, **kwargs)
+
+    monkeypatch.setattr(routes, "open_anchored", counted)
+    monkeypatch.setattr(governance, "verify_budget_projection", counted_verification)
+    client = _client(tmp_path)
+    rows = _list(client)["decisions"]
+    assert len(rows) == 4
+    assert len(opened) == 1
+    assert len(verified) == 3
+    for action, expected in (("budget", 1), ("tasks:write", 0)):
+        row = next(decision for decision in rows if decision["action"] == action)
+        opened.clear()
+        verified.clear()
+        assert client.get("/governance/decisions/" + row["decision_id"], params={"run_id": "run-1"}).json() == row
+        assert len(opened) == expected
+        assert len(verified) == expected
+
+
+def test_unreadable_ledger_rows_cannot_verify_zero(tmp_path: Path) -> None:
+    _, path = _budget_refusal(tmp_path, prior_spend=0.0)
+    path.write_bytes(b"unreadable ledger row\n")
+    (row,) = _list(_client(tmp_path))["decisions"]
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
+def test_operation_documents_requirements_and_responses(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    spec = client.get("/openapi.json").json()
+    for alias in ("", "/api/v1"):
+        for suffix in ("", "/{decision_id}"):
+            operation = spec["paths"][alias + "/governance/decisions" + suffix]["get"]
+            assert next(p for p in operation["parameters"] if p["name"] == "run_id")["required"]
+            assert {"200", "400", "401", "403", "409"} <= operation["responses"].keys()
+            if suffix:
+                assert "404" in operation["responses"]
+            url = alias + "/governance/decisions" + suffix.replace("{decision_id}", "a" * 64)
+            assert client.get(url).status_code == 400
+
+
+def test_one_verified_projection_supplies_the_visible_spend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _budget_refusal(tmp_path)
+    load = SpendLedger.load_entries
+    reads = 0
+
+    def read(path: Path) -> list:
+        nonlocal reads
+        reads += 1
+        return [] if reads > 1 else load(path)
+
+    monkeypatch.setattr(SpendLedger, "load_entries", read)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    prior = row["budget"]["prior_spend_usd"]
+    assert prior["value"] == 9
+    assert prior["state"] == "verified"
 
 
 def test_direct_mount_requires_authenticated_operator(tmp_path: Path) -> None:

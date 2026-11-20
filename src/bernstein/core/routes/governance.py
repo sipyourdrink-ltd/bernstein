@@ -36,13 +36,13 @@ import math
 import os
 import re
 import stat
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from bernstein.core.cost.spend_ledger import LedgerEntry
 from bernstein.core.lineage.spine import SpineRunIdError, _validate_run_id
 from bernstein.core.persistence.anchored_read import ANCHORED_OPEN_SUPPORTED, open_anchored
 from bernstein.core.routes._operator import require_operator
@@ -50,6 +50,9 @@ from bernstein.core.security import governance as recorded_governance
 from bernstein.core.security.governance_coverage import governance_coverage_json
 from bernstein.core.security.governance_receipt_verdict import receipt_verdict_json
 from bernstein.core.security.path_containment import contained_subpath
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -105,13 +108,6 @@ def _finite_usd(value: Any) -> float | None:
     return result if math.isfinite(result) and result >= 0 else None
 
 
-def _check_descriptor_view(path: Path, fd: int) -> None:
-    """Require a readable alias for this exact open file, not a missing path."""
-    with path.open("rb", buffering=0) as bridge:
-        if not os.path.samestat(os.fstat(fd), os.fstat(bridge.fileno())):
-            raise OSError("descriptor view names a different file")
-
-
 def _checked_evidence_path(root: Path, relative: str) -> Path:
     """Resolve below a canonical root and reject redirection even within it."""
     checked = contained_subpath(root, relative, label="decision evidence")
@@ -120,49 +116,29 @@ def _checked_evidence_path(root: Path, relative: str) -> Path:
     return checked
 
 
-def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Path) -> BudgetEvidence:
-    cap = _finite_usd(record.context.get("cap_usd"))
-    next_cost = _finite_usd(record.context.get("next_cost_usd"))
+def _budget_key(record: recorded_governance.GovernanceDecision) -> tuple[str, str] | None:
     dimension = record.context.get("dimension", "agent")
-    state: Literal["verified", "unavailable", "mismatch"] = "unavailable"
-    reason = "Budget policy context is missing or unsupported."
-    prior: float | None = None
-    if cap is not None and next_cost is not None and dimension in ("agent", "task", "role", "feature_label"):
-        try:
-            path = _checked_evidence_path(workdir, ".sdd/cost/ledger.jsonl")
-            fd = open_anchored(workdir, *path.relative_to(workdir).parts, flags=os.O_RDONLY, require_regular_file=True)
-            # A missing ledger is not evidence of zero spend. Observe its bytes
-            # around both existing projections so concurrent appends cannot be
-            # reported as a verified decision-time value. Both projections open
-            # the same descriptor through /dev/fd, never a re-resolved pathname.
-            with os.fdopen(fd, "rb", buffering=0) as stream:
-                ledger = Path("/dev/fd") / str(stream.fileno())
-                _check_descriptor_view(ledger, stream.fileno())
-                before = stream.read()
-                stream.seek(0)
-                problem = recorded_governance._verify_budget_row(record, ledger)
-                stream.seek(0)
-                candidate = recorded_governance.seat_spend(ledger, record.subject, dimension=dimension)
-                stream.seek(0)
-                after = stream.read()
-                _check_descriptor_view(ledger, stream.fileno())
-            if before != after:
-                reason = "Ledger changed while projecting budget inputs."
-            elif not math.isfinite(candidate):
-                reason = "Ledger projection is not a finite USD value."
-            elif problem:
-                state = "mismatch"
-                reason = problem
-            else:
-                state = "verified"
-                reason = "Existing budget verifier matched the recorded inputs hash and verdict."
-                prior = candidate
-        except (OSError, ValueError, TypeError, OverflowError, AttributeError, RecursionError):
-            reason = "Ledger evidence is unavailable."
+    if dimension not in ("agent", "task", "role", "feature_label"):
+        return None
+    if _finite_usd(record.context.get("cap_usd")) is None or _finite_usd(record.context.get("next_cost_usd")) is None:
+        return None
+    return dimension, record.subject
 
+
+def _budget_evidence(
+    record: recorded_governance.GovernanceDecision, projected: float | None, reason: str
+) -> BudgetEvidence:
+    state: Literal["verified", "unavailable", "mismatch"] = "unavailable"
+    prior = None
+    if projected is not None and not math.isfinite(projected):
+        reason = "Ledger projection is not a finite USD value."
+    elif projected is not None:
+        prior, problem = recorded_governance.verify_budget_projection(record, projected)
+        state = "mismatch" if problem else "verified"
+        reason = problem or "The projected inputs hash and verdict match the record."
     return BudgetEvidence(
         cap_usd=BudgetValue(
-            value=cap,
+            value=_finite_usd(record.context.get("cap_usd")),
             state=state,
             provenance="recorded context.cap_usd (USD)",
             reason=reason,
@@ -170,13 +146,69 @@ def _budget_evidence(record: recorded_governance.GovernanceDecision, workdir: Pa
         prior_spend_usd=BudgetValue(
             value=prior,
             state=state,
-            provenance=(
-                ".sdd/cost/ledger.jsonl via seat_spend, checked by the existing budget verifier "
-                "against recorded inputs_hash; no historical ledger snapshot is stored"
-            ),
             reason=reason,
+            provenance=(
+                ".sdd/cost/ledger.jsonl projected for the recorded subject and dimension. "
+                "The inputs hash binds USD to six decimal places. No historical ledger snapshot is stored."
+            ),
         ),
     )
+
+
+def _ledger_entries(snapshot: bytes) -> list[LedgerEntry]:
+    """Reject incomplete evidence before a partial ledger can substantiate a spend."""
+    entries = []
+    for line in snapshot.splitlines():
+        if line.strip():
+            row = json.loads(line)
+            if not isinstance(row, dict) or _finite_usd(row.get("cost_usd")) is None:
+                raise ValueError("unreadable spend entry")
+            entries.append(LedgerEntry.from_dict(row))
+    return entries
+
+
+def _project_budgets(workdir: Path, records: list[recorded_governance.GovernanceDecision]) -> list[BudgetEvidence]:
+    keys = [_budget_key(record) for record in records]
+    subjects = {key for key in keys if key is not None}
+    reason = "Budget policy context is missing or unsupported."
+    if subjects:
+        try:
+            path = _checked_evidence_path(workdir, ".sdd/cost/ledger.jsonl")
+            fd = open_anchored(workdir, *path.relative_to(workdir).parts, flags=os.O_RDONLY, require_regular_file=True)
+            with os.fdopen(fd, "rb", buffering=0) as stream:
+                snapshot = stream.read()
+                totals = recorded_governance.project_seat_spend(_ledger_entries(snapshot), subjects)
+                evidence = [
+                    _budget_evidence(record, totals[key] if key is not None else None, reason)
+                    for record, key in zip(records, keys, strict=True)
+                ]
+                stream.seek(0)
+                if stream.read() == snapshot:
+                    return evidence
+                reason = "Ledger changed while projecting budget inputs."
+        except (OSError, ValueError, TypeError, OverflowError, AttributeError, RecursionError):
+            reason = "Ledger evidence is unavailable."
+    return [_budget_evidence(record, None, reason) for record in records]
+
+
+def _read_decision(row: Any) -> recorded_governance.GovernanceDecision:
+    """Check the persisted types before the legacy deserializer normalizes them."""
+    if not isinstance(row, dict) or not all(
+        isinstance(row.get(key), str) for key in ("run_id", "subject", "action", "verdict", "inputs_hash")
+    ):
+        raise ValueError("unreadable decision fields")
+    context = row.get("context", {})
+    if type(row.get("timestamp")) is not int or not isinstance(context, dict):
+        raise ValueError("unreadable decision inputs")
+    version = context.get("policy_version")
+    if version is not None and not isinstance(version, str):
+        raise ValueError("unreadable policy version")
+    anchor = row.get("journal_entry_hash")
+    if anchor is None:
+        row["journal_entry_hash"] = ""
+    elif not isinstance(anchor, str):
+        raise ValueError("unreadable journal anchor")
+    return recorded_governance.GovernanceDecision.from_dict(row)
 
 
 def _read_recorded_decisions(workdir: Path, run_id: str) -> list[recorded_governance.GovernanceDecision]:
@@ -204,21 +236,18 @@ def _read_recorded_decisions(workdir: Path, run_id: str) -> list[recorded_govern
                     raise OSError("decision is not a regular file")
                 try:
                     row = json.loads(stream.read())
-                    anchor = row.get("journal_entry_hash")
-                    if anchor is None:
-                        row["journal_entry_hash"] = ""
-                    elif not isinstance(anchor, str):
-                        raise HTTPException(status_code=409, detail="decision has an unreadable journal anchor")
-                    records.append(recorded_governance.GovernanceDecision.from_dict(row))
-                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                    # Preserve the existing reader's malformed-record behavior.
+                except json.JSONDecodeError:
+                    # Historically, an unfinished JSON document is skipped.
                     logger.warning("governance: malformed decision record")
+                    continue
+                records.append(_read_decision(row))
         return records
     finally:
         os.close(directory_fd)
 
 
-def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
+def _recorded_decisions(request: Request, decision_id: str | None = None) -> RecordedDecisions:
+    run_id = request.query_params.get("run_id", "")
     try:
         _validate_run_id(run_id)
     except SpineRunIdError as exc:
@@ -231,16 +260,22 @@ def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
     try:
         workdir = _workdir(request).resolve()
         records = _read_recorded_decisions(workdir, run_id)
-        decisions = []
+        selected = []
         for record in records:
             if record.run_id != run_id:
                 raise HTTPException(status_code=409, detail="decision names a different run")
             # The ID names these exact record bytes, including an absent anchor.
             encoded = json.dumps(record.to_dict(), sort_keys=True, allow_nan=False).encode()
+            digest = hashlib.sha256(encoded).hexdigest()
+            if decision_id is None or (digest == decision_id and not selected):
+                selected.append((digest, record))
+        budgets = iter(_project_budgets(workdir, [record for _, record in selected if record.action == "budget"]))
+        decisions = []
+        for digest, record in selected:
             version = record.context.get("policy_version")
             decisions.append(
                 RecordedDecision(
-                    decision_id=hashlib.sha256(encoded).hexdigest(),
+                    decision_id=digest,
                     run_id=record.run_id,
                     subject=record.subject,
                     action=record.action,
@@ -250,7 +285,7 @@ def _recorded_decisions(request: Request, run_id: str) -> RecordedDecisions:
                     context=record.context,
                     journal_entry_hash=record.journal_entry_hash,
                     policy_version=version if isinstance(version, str) and version.strip() else _NO_POLICY_VERSION,
-                    budget=_budget_evidence(record, workdir) if record.action == "budget" else None,
+                    budget=next(budgets) if record.action == "budget" else None,
                 )
             )
     except (OSError, ValueError, TypeError, AttributeError, OverflowError, RecursionError) as exc:
@@ -268,21 +303,52 @@ def _decision_response(model: RecordedDecisions | RecordedDecision) -> Response:
     return Response(content=payload, media_type=_JSON_MEDIA_TYPE)
 
 
-@router.get("/governance/decisions", response_model=RecordedDecisions, dependencies=[Depends(require_operator)])
-def list_recorded_decisions(request: Request, run_id: str = "") -> Response:
+_RUN_QUERY = {
+    "parameters": [
+        {
+            "name": "run_id",
+            "in": "query",
+            "required": True,
+            "description": "Run whose recorded decisions to read.",
+            "schema": {"type": "string"},
+        }
+    ]
+}
+_READ_ERRORS = {
+    400: {"description": "Missing or invalid run ID"},
+    401: {"description": "Authentication required"},
+    403: {"description": "Installation operator authority required"},
+    409: {"description": "Unreadable evidence or descriptor-relative reads unavailable"},
+}
+
+
+@router.get(
+    "/governance/decisions",
+    response_model=RecordedDecisions,
+    dependencies=[Depends(require_operator)],
+    responses=_READ_ERRORS,
+    openapi_extra=_RUN_QUERY,
+)
+def list_recorded_decisions(request: Request) -> Response:
     """Read persisted decisions without creating directories, keys or records."""
-    return _decision_response(_recorded_decisions(request, run_id))
+    return _decision_response(_recorded_decisions(request))
 
 
-@router.get("/governance/decisions/{decision_id}", response_model=RecordedDecision, dependencies=[Depends(require_operator)])
-def get_recorded_decision(decision_id: str, request: Request, run_id: str = "") -> Response:
+@router.get(
+    "/governance/decisions/{decision_id}",
+    response_model=RecordedDecision,
+    dependencies=[Depends(require_operator)],
+    responses={**_READ_ERRORS, 404: {"description": "Invalid digest or unknown decision"}},
+    openapi_extra=_RUN_QUERY,
+)
+def get_recorded_decision(decision_id: str, request: Request) -> Response:
     """Read one exact recorded projection; this does not verify its anchor."""
     if not re.fullmatch(r"[0-9a-f]{64}", decision_id):
         raise HTTPException(status_code=404, detail="recorded decision not found")
-    for decision in _recorded_decisions(request, run_id).decisions:
-        if decision.decision_id == decision_id:
-            return _decision_response(decision)
-    raise HTTPException(status_code=404, detail="recorded decision not found")
+    matches = _recorded_decisions(request, decision_id).decisions
+    if not matches:
+        raise HTTPException(status_code=404, detail="recorded decision not found")
+    return _decision_response(matches[0])
 
 
 def _workdir(request: Request) -> Path:

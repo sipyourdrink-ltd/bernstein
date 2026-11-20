@@ -66,7 +66,10 @@ from bernstein.core.cost.spend_ledger import SpendLedger
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
+
+    from bernstein.core.cost.spend_ledger import LedgerEntry
 
 logger = logging.getLogger(__name__)
 
@@ -466,11 +469,20 @@ def seat_spend(ledger_path: Path, subject: str, *, dimension: str = "agent") -> 
         The subject's total spend in USD, or ``0.0`` when the ledger is missing
         or the subject has no rows.
     """
-    total = 0.0
-    for entry in SpendLedger.load_entries(ledger_path):
-        if _entry_subject(entry, dimension) == subject:
-            total += max(0.0, float(entry.cost_usd))
-    return total
+    key = (dimension, subject)
+    return project_seat_spend(SpendLedger.load_entries(ledger_path), {key})[key]
+
+
+def project_seat_spend(entries: Iterable[LedgerEntry], subjects: set[tuple[str, str]]) -> dict[tuple[str, str], float]:
+    """Sum the requested dimension/subject pairs in one pass over the same ledger entries."""
+    totals = dict.fromkeys(subjects, 0.0)
+    dimensions = {dimension for dimension, _ in subjects}
+    for entry in entries:
+        for dimension in dimensions:
+            key = (dimension, _entry_subject(entry, dimension))
+            if key in totals:
+                totals[key] += max(0.0, float(entry.cost_usd))
+    return totals
 
 
 def _entry_subject(entry: Any, dimension: str) -> str:
@@ -492,6 +504,9 @@ class BudgetRefused(RuntimeError):
     """Raised when a budget check refuses an action for a cap breach."""
 
 
+_BUDGET_HASH_DECIMALS = 6
+
+
 def _budget_inputs_hash(
     *,
     subject: str,
@@ -508,9 +523,9 @@ def _budget_inputs_hash(
         {
             "kind": "budget",
             "subject": subject,
-            "cap_usd": round(cap_usd, 6),
-            "prior_spend_usd": round(prior_spend_usd, 6),
-            "next_cost_usd": round(next_cost_usd, 6),
+            "cap_usd": round(cap_usd, _BUDGET_HASH_DECIMALS),
+            "prior_spend_usd": round(prior_spend_usd, _BUDGET_HASH_DECIMALS),
+            "next_cost_usd": round(next_cost_usd, _BUDGET_HASH_DECIMALS),
         }
     )
 
@@ -740,19 +755,24 @@ def _verify_budget_row(record: GovernanceDecision, ledger_path: Path | None) -> 
     """
     if ledger_path is None:
         return f"{record.subject}/budget: ledger required to verify budget decisions but none presented"
+    prior = seat_spend(ledger_path, record.subject, dimension=str(record.context.get("dimension", "agent")))
+    _, problem = verify_budget_projection(record, prior)
+    return problem
+
+
+def verify_budget_projection(record: GovernanceDecision, prior: float) -> tuple[float | None, str]:
+    """Return only the spend bound by the recorded hash and verdict, or a mismatch reason."""
     try:
         recorded_cap = record.context["cap_usd"]
         recorded_next = record.context["next_cost_usd"]
         amounts = [(float(recorded_cap), float(recorded_next))]
     except (KeyError, TypeError, ValueError):
-        return f"{record.subject}/budget: record is missing cap_usd / next_cost_usd policy context"
-    dimension = str(record.context.get("dimension", "agent"))
+        return None, f"{record.subject}/budget: record is missing cap_usd / next_cost_usd policy context"
 
     # Preserve the historical float projection. The writer also accepts JSON
     # integers, whose canonical bytes differ from their float spelling.
     if type(recorded_cap) in (int, float) and type(recorded_next) in (int, float):
         amounts.append((recorded_cap, recorded_next))
-    prior = seat_spend(ledger_path, record.subject, dimension=dimension)
     for cap, next_cost in amounts:
         if (
             _budget_inputs_hash(subject=record.subject, cap_usd=cap, prior_spend_usd=prior, next_cost_usd=next_cost)
@@ -760,14 +780,17 @@ def _verify_budget_row(record: GovernanceDecision, ledger_path: Path | None) -> 
         ):
             break
     else:
-        return (
+        return None, (
             f"{record.subject}/budget: recomputed inputs_hash does not match the recorded one "
             "(ledger spend differs from the decision inputs)"
         )
     expected = "refuse" if prior + max(0.0, next_cost) > max(0.0, cap) else "allow"
     if expected != record.verdict:
-        return f"{record.subject}/budget: recomputed verdict {expected!r} differs from recorded {record.verdict!r}"
-    return ""
+        return (
+            None,
+            f"{record.subject}/budget: recomputed verdict {expected!r} differs from recorded {record.verdict!r}",
+        )
+    return round(prior, _BUDGET_HASH_DECIMALS), ""
 
 
 __all__ = [
@@ -781,8 +804,10 @@ __all__ = [
     "check_budget_decision",
     "decide_access",
     "decisions_dir",
+    "project_seat_spend",
     "read_decisions",
     "resolve_role",
     "seat_spend",
+    "verify_budget_projection",
     "verify_governance",
 ]
