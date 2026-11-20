@@ -154,6 +154,18 @@ def test_load_traces_skips_record_that_is_a_list(tmp_path: Path) -> None:
     assert out.sample_count == 1
 
 
+def test_load_traces_keeps_zero_primary_latency(tmp_path: Path) -> None:
+    (tmp_path / "timing.jsonl").write_text(
+        '{"role": "qa", "latency_seconds": 0}\n'
+        '{"role": "qa", "latency_seconds": 0, "duration_s": 9}\n'
+        '{"role": "qa", "duration_s": 3}\n'
+        '{"role": "qa", "latency_seconds": -1, "duration_s": 7}\n',
+        encoding="utf-8",
+    )
+    samples = load_traces(tmp_path).latency_samples[("qa", "mock")]
+    assert samples == (0.0, 0.0, 3.0, 7.0)
+
+
 def test_load_traces_skips_negative_latency(tmp_path: Path) -> None:
     body = (
         '{"role": "backend", "adapter": "mock", "status": "completed", "latency_seconds": -5.0}\n'
