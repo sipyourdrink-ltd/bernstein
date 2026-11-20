@@ -60,8 +60,9 @@ EXIT_OK = 0
 EXIT_NO_LEDGER = 1
 EXIT_VERIFY_FAILED = 2
 EXIT_DIVERGED = 3
-# Preserve the generic failure status previously used for signal I/O errors.
-EXIT_SIGNAL_WRITE_FAILED = 1
+# Preserve the generic failure status for resume I/O errors.
+EXIT_IO_ERROR = 1
+EXIT_SIGNAL_WRITE_FAILED = EXIT_IO_ERROR
 
 _WORKDIR_OPTION = click.option(
     "--workdir",
@@ -306,16 +307,13 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
     \b
     Exit codes:
         0  resume prepared (state rebuilt from the verified chain)
-        1  no ledger on disk (and none anchored), or signal write failed
-        2  chain verification failed (exact entry position reported)
+        1  no ledger on disk (and none anchored), or an I/O operation failed
+        2  chain verification failed or the ledger rejected the resume entry
         3  local and anchored chains diverge (two divergent resumes)
     """
-    root = (workdir or Path.cwd()).resolve()
-    ledger_dir = _ledger_dir(workdir, run_id)
     signal_paths: list[str] = []
     report: dict[str, object] = {
         "run_id": run_id,
-        "ledger_dir": str(ledger_dir),
         "dry_run": dry_run,
         "signal_paths": signal_paths,
         "runtime_acknowledged": False,
@@ -340,41 +338,49 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
             click.echo(hint, err=True)
         raise SystemExit(exit_code) from None
 
-    reader = LedgerReader(ledger_dir)
-    has_local = reader.exists()
-    if has_local:
-        result = reader.verify(allow_interrupted_tail=True)
-        if not result.ok:
-            fail(
-                EXIT_VERIFY_FAILED,
-                f"Refusing to resume run {run_id!r}: the chain does not verify.",
-                errors=result.errors,
-            )
-
-    # Divergence gate: when an anchored chain exists it must be identical
-    # to, an extension of, or an ancestor of the local chain. Two chains
-    # extending the same parent entry are two divergent resumes.
-    entries = reader.entries()
-    materialized_action = "none"
     try:
-        if dry_run:
-            plan, anchored = plan_ledger_materialization(root, run_id, ledger_dir)
-            if plan.action in ("created", "fast-forwarded"):
-                entries = iter(anchored)
-        else:
-            materialized_action = materialize_ledger(root, run_id, ledger_dir).action
-    except LedgerDivergenceError as exc:
-        fail(EXIT_DIVERGED, f"Divergence detected: {exc}")
-    except LedgerGitError as exc:
-        if not has_local:
-            fail(
-                EXIT_NO_LEDGER,
-                f"No work ledger for run {run_id!r}: {exc}",
-                hint="After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.",
-            )
-        # No anchored ref, or local ahead of the anchor: both fine to resume.
+        root = (workdir or Path.cwd()).resolve()
+        ledger_dir = _ledger_dir(workdir, run_id)
+        report["ledger_dir"] = str(ledger_dir)
+        reader = LedgerReader(ledger_dir)
+        has_local = reader.exists()
+        if has_local:
+            result = reader.verify(allow_interrupted_tail=True)
+            if not result.ok:
+                fail(
+                    EXIT_VERIFY_FAILED,
+                    f"Refusing to resume run {run_id!r}: the chain does not verify.",
+                    errors=result.errors,
+                )
 
-    state = replay_state(entries, run_id=run_id)
+        # Divergence gate: when an anchored chain exists it must be identical
+        # to, an extension of, or an ancestor of the local chain. Two chains
+        # extending the same parent entry are two divergent resumes.
+        entries = reader.entries()
+        materialized_action = "none"
+        try:
+            if dry_run:
+                plan, anchored = plan_ledger_materialization(root, run_id, ledger_dir)
+                if plan.action in ("created", "fast-forwarded"):
+                    entries = iter(anchored)
+            else:
+                materialized_action = materialize_ledger(root, run_id, ledger_dir).action
+        except LedgerDivergenceError as exc:
+            fail(EXIT_DIVERGED, f"Divergence detected: {exc}")
+        except LedgerGitError as exc:
+            if not has_local:
+                fail(
+                    EXIT_NO_LEDGER,
+                    f"No work ledger for run {run_id!r}: {exc}",
+                    hint="After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.",
+                )
+            # No anchored ref, or local ahead of the anchor: both fine to resume.
+
+        state = replay_state(entries, run_id=run_id)
+    except UnicodeDecodeError as exc:
+        fail(EXIT_VERIFY_FAILED, f"Invalid UTF-8 in work ledger for run {run_id!r}: {exc}")
+    except OSError as exc:
+        fail(EXIT_IO_ERROR, f"Could not prepare work ledger for run {run_id!r}: {exc}")
 
     report.update(state.to_dict(), materialized=materialized_action)
     if not output_json:
@@ -398,8 +404,10 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
                 "state": RunJournalState.RESUMED.value,
             },
         )
-    except LedgerError as exc:
+    except (LedgerError, UnicodeDecodeError) as exc:
         fail(EXIT_VERIFY_FAILED, f"Failed to record the resume entry: {exc}")
+    except OSError as exc:
+        fail(EXIT_IO_ERROR, f"Could not write the resume entry: {exc}")
 
     try:
         for signal in _write_resume_signals(root, run_id, state):

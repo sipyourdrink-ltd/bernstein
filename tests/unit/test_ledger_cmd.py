@@ -290,6 +290,31 @@ class TestFetchAndResume:
         assert payload["runtime_acknowledged"] is False
         assert "No work ledger" in payload["error"]
 
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["record", "dry-run"])
+    @pytest.mark.parametrize("bad_encoding", [False, True], ids=["read-error", "invalid-utf8"])
+    def test_resume_unreadable_ledger_returns_one_json_error(
+        self, project: Path, dry_run: bool, bad_encoding: bool
+    ) -> None:
+        ledger = _seed(project)
+        path = ledger.bucket_path
+        ledger.close()
+        if bad_encoding:
+            path.write_bytes(b"\xff\n")
+        else:
+            path.unlink()
+            path.mkdir()
+        args = ["resume", "run-a", "--workdir", str(project), "--json"]
+        if dry_run:
+            args.append("--dry-run")
+        result = CliRunner().invoke(ledger_group, args)
+        assert result.exit_code == (2 if bad_encoding else 1), result.output
+        report = json.loads(result.stdout)
+        assert report["error"]
+        assert report["signal_paths"] == []
+        assert report["runtime_acknowledged"] is False
+        assert report["dispatch_status"] == "not_dispatched"
+        assert not (project / ".sdd" / "runtime" / "resume").exists()
+
     def test_resume_tampered_chain_exits_two(self, project: Path) -> None:
         ledger = _seed(project)
         bucket = ledger.ledger_dir / "000000.jsonl"

@@ -230,7 +230,7 @@ def load_checkpoint(workdir: Path, task_id: str) -> TaskResumeCheckpoint:
         )
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise CheckpointCorruptError(f"Checkpoint for task {task_id!r} is unreadable at {path}: {exc}") from exc
     try:
         data = json.loads(raw)

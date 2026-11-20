@@ -399,7 +399,7 @@ def _work_ledger_hint(workdir: Path, resume_id: str) -> str | None:
     if not has_local:
         try:
             has_anchor = resume_id in list_ledger_runs(workdir)
-        except LedgerGitError:
+        except (OSError, LedgerGitError):
             has_anchor = False
     if has_local or has_anchor:
         return (

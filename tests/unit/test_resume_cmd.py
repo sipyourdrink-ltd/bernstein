@@ -280,10 +280,11 @@ def test_cli_resume_missing_checkpoint_exits_nonzero(workdir: Path) -> None:
     assert "No checkpoint" in payload["error"]
 
 
-def test_cli_resume_corrupt_exits_nonzero(workdir: Path) -> None:
+@pytest.mark.parametrize("contents", [b"not json", b"\xff"], ids=["invalid-json", "invalid-utf8"])
+def test_cli_resume_corrupt_exits_nonzero(workdir: Path, contents: bytes) -> None:
     target = checkpoint_dir_for(workdir, "bad")
     target.mkdir(parents=True)
-    (target / CHECKPOINT_FILENAME).write_text("not json", encoding="utf-8")
+    (target / CHECKPOINT_FILENAME).write_bytes(contents)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -298,6 +299,15 @@ def test_cli_resume_corrupt_exits_nonzero(workdir: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["runtime_acknowledged"] is False
     assert "Corrupt" in payload["error"]
+
+
+def test_missing_checkpoint_returns_json_when_git_is_unavailable(
+    workdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(workdir))
+    result = CliRunner().invoke(resume_cmd, ["missing", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_NO_CHECKPOINT, result.output
+    assert "No checkpoint" in json.loads(result.stdout)["error"]
 
 
 def test_cli_resume_happy_path_bumps_resume_count_and_writes_signal(workdir: Path) -> None:
