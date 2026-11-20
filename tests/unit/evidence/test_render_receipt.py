@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
@@ -613,6 +614,23 @@ def test_render_delta_unstable_metadata_is_hashable_and_order_independent() -> N
     assert result.is_clean
     first.unstable_properties["z"] = "changed"
     assert result.to_dict()["base_unstable_properties"]["z"] == "on"
+
+
+def test_render_delta_unstable_metadata_is_detached() -> None:
+    base = _receipt(unstable_properties={"experimentalFont": "fallback"})
+    head = _receipt(unstable_properties={"experimentalFont": "loaded"})
+    delta = render_delta(base, head)
+    payload = delta.to_dict()
+    expected = deepcopy(payload)
+    original_hash = hash(delta)
+    loaded = RenderDelta.from_dict(payload)
+
+    payload["base_unstable_properties"]["experimentalFont"] = "changed"
+    payload["head_unstable_properties"].clear()
+
+    for snapshot in (delta, loaded):
+        assert snapshot.to_dict() == expected
+        assert hash(snapshot) == original_hash
 
 
 def test_render_delta_legacy_payload_keeps_its_serialized_shape() -> None:
