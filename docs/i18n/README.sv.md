@@ -220,7 +220,7 @@ Varför schemaläggaren är i ren Python och vilka avvägningar det innebär: [v
 Kontrollen `can_spawn()` i kostnadsuppföljningen returnerar `False` när de korrigerade sammanlagda utgifterna når eller överskrider budgetens inställda stoppgräns, även om inga nya token har rapporterats. Efter en omstart räcker de sparade tokenantalen inte för att återskapa den exakta sammanlagda kostnad som tidigare rapporterats för en viss kombination av agent, uppgift och modell.
 
 ### vardagliga kommandon
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Om en uppgift i en frikopplad SSH-körning avslutas med en annan slutkod än nol
 
 Hela operatörsytan (PR-automatisering, scheman, chattbryggor, autofix-demonen) finns i [operatörskommandon](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-En kommandoloop återupptas från den senaste kontrollpunkten med den ursprungliga iterationsgränsen. Om ett kommando kan ha körts eller ett villkor kan ha prövats utan att resultatet sparats, avbryts återupptagningen. Kontrollera effekterna innan du startar en ny körning.
+En kommandoloop återupptas från den senaste kontrollpunkten med den ursprungliga iterationsgränsen. Om ett kommando kan ha körts eller ett villkor kan ha prövats utan att resultatet sparats, avbryts återupptagningen. Återupptagningen avbryts även om en kontrollpunkt saknas och loopen kan ha startat redan. Kontrollera effekterna innan du startar en ny körning.
 
 `bernstein workflow` kör deklarativa YAML-DAG:ar av agent-, kommando- och loop-noder - med stöd för att återuppta avbrutna körningar:
 

@@ -220,7 +220,7 @@ Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengap
 Pemeriksaan `can_spawn()` pada pelacak biaya mengembalikan `False` ketika pengeluaran kumulatif setelah koreksi mencapai atau melampaui ambang penghentian anggaran yang ditetapkan, meskipun tidak ada token baru yang dilaporkan. Setelah sistem dimulai ulang, jumlah token yang tersimpan saja tidak cukup untuk mengetahui kembali biaya kumulatif persis yang sebelumnya dilaporkan untuk kombinasi agen, tugas, dan model tertentu.
 
 ### perintah sehari-hari
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Jika tugas dalam proses SSH yang berjalan terpisah berakhir dengan kode keluar s
 
 Seluruh antarmuka operator (otomatisasi PR, jadwal, jembatan obrolan, daemon autofix) terdapat dalam [perintah operator](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-Perulangan perintah dilanjutkan dari titik pemeriksaan terakhir dengan batas iterasi semula. Jika perintah mungkin sudah dijalankan atau kondisi mungkin sudah diperiksa tanpa hasil yang tersimpan, proses pelanjutan berhenti. Periksa dampaknya sebelum memulai eksekusi baru.
+Perulangan perintah dilanjutkan dari titik pemeriksaan terakhir dengan batas iterasi semula. Jika perintah mungkin sudah dijalankan atau kondisi mungkin sudah diperiksa tanpa hasil yang tersimpan, proses pelanjutan berhenti. Proses pelanjutan juga berhenti jika titik pemeriksaan hilang dan perulangan mungkin sudah dimulai. Periksa dampaknya sebelum memulai eksekusi baru.
 
 `bernstein workflow` menjalankan DAG YAML deklaratif dari node agent, command, dan loop - dengan dukungan untuk melanjutkan eksekusi yang terinterupsi:
 

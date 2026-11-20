@@ -220,7 +220,7 @@ Waarom de planner in puur Python is geschreven en welke afwegingen daarbij horen
 De controle `can_spawn()` van de kostenregistratie geeft `False` terug wanneer de gecorrigeerde totale uitgaven de ingestelde stopgrens voor het budget bereiken of overschrijden, ook als er geen nieuwe tokens zijn gemeld. Na een herstart zijn de opgeslagen tokenaantallen alleen niet voldoende om de exacte cumulatieve kosten te reconstrueren die eerder voor een bepaalde combinatie van agent, taak en model zijn gemeld.
 
 ### dagelijkse commando's
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Als een taak in een losgekoppelde SSH-run eindigt met een afsluitcode die niet n
 
 Het volledige beheerderoppervlak (PR-automatisering, planningen, chat-koppelingen, de autofix-daemon) is te vinden in [beheerderscommando's](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-Een opdrachtlus wordt vanaf het laatste controlepunt hervat met behoud van de oorspronkelijke iteratielimiet. Als een opdracht mogelijk is uitgevoerd of een voorwaarde mogelijk is getoetst zonder dat het resultaat is opgeslagen, stopt de hervatting. Controleer de gevolgen voordat u een nieuwe uitvoering start.
+Een opdrachtlus wordt vanaf het laatste controlepunt hervat met behoud van de oorspronkelijke iteratielimiet. Als een opdracht mogelijk is uitgevoerd of een voorwaarde mogelijk is getoetst zonder dat het resultaat is opgeslagen, stopt de hervatting. De hervatting stopt ook als een controlepunt ontbreekt terwijl de lus al begonnen kan zijn. Controleer de gevolgen voordat u een nieuwe uitvoering start.
 
 `bernstein workflow` voert declaratieve YAML-DAG's van agent-, commando- en lusknooppunten uit - met ondersteuning voor het hervatten van onderbroken runs:
 

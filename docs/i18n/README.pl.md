@@ -220,7 +220,7 @@ Dlaczego harmonogram został zaimplementowany w czystym Pythonie i jakie niesie 
 Funkcja `can_spawn()` w module śledzenia kosztów zwraca `False`, gdy łączne wydatki po korekcie osiągną lub przekroczą ustawiony próg zatrzymania dla budżetu, nawet jeśli nie zgłoszono nowych tokenów. Po ponownym uruchomieniu same zapisane liczniki tokenów nie pozwalają odtworzyć dokładnego łącznego kosztu zgłoszonego wcześniej dla danej kombinacji agenta, zadania i modelu.
 
 ### codzienne polecenia
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Jeśli zadanie w odłączonym uruchomieniu SSH kończy się kodem różnym od ze
 
 Pełny zestaw funkcji operatora (automatyzacja PR, harmonogramy, integracje czatu, demon autofix) znajduje się w [poleceniach operatora](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-Pętla poleceń jest wznawiana od ostatniego punktu kontrolnego z zachowaniem pierwotnego limitu iteracji. Jeśli polecenie mogło zostać wykonane lub warunek sprawdzony bez zapisania wyniku, wznawianie zostaje przerwane. Przed rozpoczęciem nowego przebiegu sprawdź skutki wykonania.
+Pętla poleceń jest wznawiana od ostatniego punktu kontrolnego z zachowaniem pierwotnego limitu iteracji. Jeśli polecenie mogło zostać wykonane lub warunek sprawdzony bez zapisania wyniku, wznawianie zostaje przerwane. Wznawianie zostaje również przerwane, jeśli brakuje punktu kontrolnego, a pętla mogła już się rozpocząć. Przed rozpoczęciem nowego przebiegu sprawdź skutki wykonania.
 
 `bernstein workflow` uruchamia deklaratywne grafy DAG w formacie YAML złożone z węzłów agent / command / loop — ze wsparciem dla wznawiania przerwanych przebiegów:
 

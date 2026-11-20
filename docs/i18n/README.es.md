@@ -220,7 +220,7 @@ Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué
 La comprobación `can_spawn()` del módulo de seguimiento de costes devuelve `False` cuando el gasto acumulado corregido alcanza o supera el umbral de parada configurado para el presupuesto, aunque no se haya informado de nuevos tokens. Tras un reinicio, los contadores de tokens guardados no bastan para reconstruir el coste acumulado exacto que se había comunicado para una combinación concreta de agente, tarea y modelo.
 
 ### comandos cotidianos
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Si una tarea de una ejecución SSH desacoplada termina con un código distinto d
 
 Toda la superficie del operador (automatización de PR, programaciones, puentes de chat, el demonio de autofix) se encuentra en [comandos del operador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-Un bucle de comandos se reanuda desde su último punto de control y conserva el límite de iteraciones original. Si es posible que se haya ejecutado un comando o evaluado una condición sin que se guardara el resultado, la reanudación se detiene. Revise los efectos antes de iniciar una nueva ejecución.
+Un bucle de comandos se reanuda desde su último punto de control y conserva el límite de iteraciones original. Si es posible que se haya ejecutado un comando o evaluado una condición sin que se guardara el resultado, la reanudación se detiene. La reanudación también se detiene si falta un punto de control y el bucle ya podría haber empezado. Revise los efectos antes de iniciar una nueva ejecución.
 
 `bernstein workflow` ejecuta DAGs declarativos en YAML de nodos de agente, comando y bucle - con soporte de reanudación para ejecuciones interrumpidas:
 

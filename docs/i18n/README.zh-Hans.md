@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果更正后的累计支出达到或超过配置的预算停止阈值，即使没有报告新增的词元，费用跟踪器的 `can_spawn()` 检查也会返回 `False`。重启后，仅凭保存的词元计数无法还原此前针对特定智能体、任务和模型组合报告的确切累计费用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ bernstein stop                    # graceful shutdown with drain
 
 完整的操作界面（PR 自动化、定时任务、聊天桥接、autofix 守护进程）见[操作命令](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)。
 
-命令循环从最后一个检查点恢复，并沿用原有的迭代次数上限。如果某条命令可能已经执行或某个条件可能已经求值，但结果没有保存，恢复过程就会停止。开始新的运行前，请先检查该操作造成的影响。
+命令循环从最后一个检查点恢复，并沿用原有的迭代次数上限。如果某条命令可能已经执行或某个条件可能已经求值，但结果没有保存，恢复过程就会停止。如果循环可能已经开始，缺少检查点也会使恢复停止。开始新的运行前，请先检查该操作造成的影响。
 
 `bernstein workflow` 运行智能体/命令/循环节点的声明式 YAML DAG——支持恢复中断的运行：
 

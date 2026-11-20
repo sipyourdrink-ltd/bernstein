@@ -672,7 +672,7 @@ class WorkflowRunner:
             inspect ``execution.succeeded`` and per-node statuses.
 
         Side effects (for resume support):
-        - Records a spec digest and run id under ``.sdd/runs/<run_id>/``.
+        - Records a spec digest and run id under ``<workdir>/runs/<run_id>/``.
         - Persists a terminal ``NodeExecution`` checkpoint after every node
           transitions, so a later ``bernstein workflow resume`` can re-enter
           at the first non-completed node.
@@ -684,9 +684,8 @@ class WorkflowRunner:
 
         * ``spec_snapshot.json`` - manifest name, version, digest, and
           optional source path; ``resume`` re-validates the digest.
-        * ``<node_id>.node.json`` - one checkpoint per node after its
-          terminal state is recorded.  Loop nodes carry their iteration
-          count so resume continues from the next iteration.
+        * ``<node_id>.node.json`` - one checkpoint per completed node.
+        * ``<node_id>.loop.json`` - command-loop progress and iteration count.
         * ``run_complete.json`` - sentinel written when the DAG finishes
           (succeeded or failed).
 
@@ -721,14 +720,6 @@ class WorkflowRunner:
             )
 
         spec_digest_result = spec_digest(spec)
-        if load_spec_snapshot(self._workdir, rid) is None:
-            record_spec_snapshot(self._workdir, rid, spec, manifest_source=spec.name)
-        self._audit(
-            "workflow.spec_snapshot_recorded",
-            spec.name,
-            {"run_id": rid, "spec_digest": spec_digest_result},
-        )
-
         before_effects()
         results: dict[str, NodeExecution] = {}
         layers = spec.topological_order()
@@ -825,7 +816,7 @@ class WorkflowRunner:
 
         state_dir = _run_state_dir(self._workdir, _validated_run_id(run_id))
         lock = self._workdir / ".sdd" / "runtime" / "workflow-run-locks" / f"{run_id}.lock"
-        loops = any(node.command is not None and node.loop is not None for node in spec.nodes)
+        loops = any(node.kind == "command" and node.loop is not None for node in spec.nodes)
         digest = spec_digest(spec)
         with ExitStack() as held:
             try:
@@ -834,24 +825,62 @@ class WorkflowRunner:
                 raise WorkflowRunError(f"workflow run {run_id} already has an active caller") from exc
             snapshot_path = state_dir / SPEC_SNAPSHOT_FILE
             origin = state_dir / "command_loops.json"
+            initializing_marker = {"version": 2, "spec_digest": digest, "phase": "initializing"}
+            active_marker = {**initializing_marker, "phase": "active"}
+            previous_marker = {"version": 1, "spec_digest": digest}
             try:
                 snapshot = load_spec_snapshot(self._workdir, run_id)
             except UnicodeError as exc:
                 raise WorkflowRunError(f"unreadable manifest snapshot for workflow run {run_id}") from exc
             if snapshot_path.exists() and (not isinstance(snapshot, dict) or snapshot.get("spec_digest") != digest):
                 raise WorkflowRunError(f"workflow run {run_id}: spec digest mismatch or unreadable manifest snapshot")
-            if snapshot is None and state_dir.is_dir() and any(p != origin for p in state_dir.glob("*.json")):
+            marker = _read_loop_json(origin) if origin.exists() else None
+            if marker is not None and marker not in (initializing_marker, active_marker, previous_marker):
+                raise WorkflowRunError(f"workflow run {run_id}: invalid command-loop manifest marker")
+            initializing = marker == initializing_marker
+            if snapshot is None and (
+                (marker is not None and not initializing) or any(path != origin for path in state_dir.glob("*.json"))
+            ):
                 raise WorkflowRunError(f"uncertain state for {run_id}: original manifest is missing")
-            if origin.exists():
-                if _read_loop_json(origin) != {"version": 1, "spec_digest": digest}:
-                    raise WorkflowRunError(f"workflow run {run_id}: command-loop manifest digest mismatch")
-            elif loops and new_allowed and snapshot is None:
-                write_atomic_json(origin, {"version": 1, "spec_digest": digest})
+            fresh = snapshot is None and marker is None and new_allowed
 
             def before_effects() -> None:
+                initialize: list[_CommandLoopState] = []
+                promote: list[NodeExecution] = []
                 if loops:
-                    self._preflight_loops(spec, run_id, state_dir, digest, origin.exists())
-                else:
+                    if initializing and (
+                        any(state_dir.glob(f"*{NODE_STATE_SUFFIX}"))
+                        or any(_read_loop_json(path).get("phase") != "new" for path in state_dir.glob("*.loop.json"))
+                    ):
+                        raise WorkflowRunError(
+                            f"workflow run {run_id}: progress found during command-loop initialization"
+                        )
+                    initialize, promote = self._preflight_loops(
+                        spec,
+                        run_id,
+                        state_dir,
+                        digest,
+                        undispatched=fresh or initializing,
+                        legacy=marker is None and not fresh,
+                    )
+                    if fresh:
+                        write_atomic_json(origin, initializing_marker)
+                if snapshot is None:
+                    record_spec_snapshot(self._workdir, run_id, spec, manifest_source=spec.name)
+                    self._audit(
+                        "workflow.spec_snapshot_recorded",
+                        spec.name,
+                        {"run_id": run_id, "spec_digest": digest},
+                    )
+                for state in initialize:
+                    state.write("new", 1)
+                for result in promote:
+                    record_node_state(self._workdir, run_id, result, digest)
+                if loops and (fresh or initializing):
+                    # An absent loop record is recoverable only until this
+                    # transition. All sibling effects are still undispatched.
+                    write_atomic_json(origin, active_marker)
+                if not loops:
                     held.close()
 
             yield before_effects
@@ -859,20 +888,33 @@ class WorkflowRunner:
     def _loop_state(self, node: WorkflowNode, run_id: str) -> _CommandLoopState:
         snapshot = load_spec_snapshot(self._workdir, run_id)
         assert snapshot is not None
-        return _CommandLoopState.load(_run_state_dir(self._workdir, run_id), node, snapshot["spec_digest"])
+        state = _CommandLoopState.load(_run_state_dir(self._workdir, run_id), node, snapshot["spec_digest"])
+        if not state.path.exists():
+            raise WorkflowRunError(f"uncertain command loop {node.id}: no iteration checkpoint")
+        return state
 
-    def _preflight_loops(self, spec: WorkflowSpec, run_id: str, directory: Path, digest: str, tracked: bool) -> None:
-        # Terminal node files are authoritative. Check the entire pending graph
+    def _preflight_loops(
+        self,
+        spec: WorkflowSpec,
+        run_id: str,
+        directory: Path,
+        digest: str,
+        *,
+        undispatched: bool,
+        legacy: bool,
+    ) -> tuple[list[_CommandLoopState], list[NodeExecution]]:
+        # Terminal node files are authoritative. Check the entire eligible graph
         # before writing recovery state or evaluating any sibling's condition.
         initialize: list[_CommandLoopState] = []
         promote: list[NodeExecution] = []
         blocked: set[str] = set()
-        legacy_can_have_entered = True
         for layer in spec.topological_order():
-            next_layer_possible = legacy_can_have_entered
             abort = False
             for node in layer:
-                saved = load_node_state(self._workdir, run_id, node.id)
+                try:
+                    saved = load_node_state(self._workdir, run_id, node.id)
+                except UnicodeError as exc:
+                    raise WorkflowRunError(f"unreadable saved node {node.id} in workflow run {run_id}") from exc
                 if saved is not None:
                     if (
                         not isinstance(saved, dict)
@@ -893,36 +935,32 @@ class WorkflowRunner:
                 if blocked.intersection(node.depends_on):
                     blocked.add(node.id)
                     continue
-                if node.command is not None and node.loop is not None:
-                    state = _CommandLoopState.load(directory, node, digest)
-                    if not state.path.exists() and not tracked and legacy_can_have_entered:
+                if node.kind != "command" or node.loop is None:
+                    continue
+                state = _CommandLoopState.load(directory, node, digest)
+                if not state.path.exists():
+                    if not undispatched:
+                        history = "legacy " if legacy else ""
                         raise WorkflowRunError(
-                            f"uncertain legacy command loop {node.id}: no iteration checkpoint; "
+                            f"uncertain {history}command loop {node.id}: no iteration checkpoint; "
                             "review effects before starting a new run"
                         )
-                    if state.phase in {"checking when", "running command", "checking until"}:
-                        raise WorkflowRunError(
-                            f"uncertain command loop {node.id}, iteration {state.iteration} ({state.phase}); "
-                            "review effects before starting a new run"
-                        )
-                    if not state.path.exists():
-                        initialize.append(state)
-                    if state.phase == "terminal":
-                        assert state.result is not None
-                        promote.append(state.result)
-                        if state.result.status == NodeStatus.FAILED:
-                            abort = True
-                # A runnable unconditional node would have a terminal record
-                # before any later layer. Old false conditions left no record.
-                if node.when is None:
-                    next_layer_possible = False
+                    initialize.append(state)
+                if state.phase in {"checking when", "running command", "checking until"}:
+                    raise WorkflowRunError(
+                        f"uncertain command loop {node.id}, iteration {state.iteration} ({state.phase}); "
+                        "review effects before starting a new run"
+                    )
+                if state.phase == "terminal":
+                    assert state.result is not None
+                    promote.append(state.result)
+                    if state.result.status == NodeStatus.FAILED:
+                        abort = True
+                    elif state.result.status == NodeStatus.SKIPPED and not state.result.condition_skipped:
+                        blocked.add(node.id)
             if abort:
                 break
-            legacy_can_have_entered = next_layer_possible
-        for state in initialize:
-            state.write("new", 1)
-        for result in promote:
-            record_node_state(self._workdir, run_id, result, digest)
+        return initialize, promote
 
     @staticmethod
     def _dep_satisfied(dep_result: NodeExecution | None) -> bool:
@@ -1043,7 +1081,7 @@ class WorkflowRunner:
             without the predicate passing, status is FAILED with a
             descriptive ``error`` message.
         """
-        if node.command is not None:
+        if node.kind == "command":
             return self._execute_command_loop(node, loop, goal=goal, run_id=run_id)
         last: NodeExecution | None = None
         for iteration in range(1, loop.max_iterations + 1):
@@ -1085,9 +1123,8 @@ class WorkflowRunner:
                     state.write("terminal", index, result)
                     return result
                 state.write("command finished", index, result)
-            state.write("checking until", index)
             try:
-                stopped = self._loop_predicate_passes(loop.until)
+                stopped = self._command_loop_predicate(loop.until, state, "checking until")
             except subprocess.TimeoutExpired:
                 result.status = NodeStatus.FAILED
                 result.exit_code = None
@@ -1113,14 +1150,13 @@ class WorkflowRunner:
         raise WorkflowRunError(f"invalid command-loop iteration for {node.id}")
 
     def _command_loop_when(self, node: WorkflowNode, run_id: str) -> NodeExecution | None:
-        if node.command is None or node.loop is None:
+        if node.kind != "command" or node.loop is None:
             return self._evaluate_when(node, run_id)
         state = self._loop_state(node, run_id)
         if state.phase != "new":
             return None
         if node.when is not None:
-            state.write("checking when", 1)
-            outcome = self._evaluate_when(node, run_id)
+            outcome = self._evaluate_when(node, run_id, loop_state=state)
             if outcome is not None:
                 state.write("terminal", 1, outcome)
                 if outcome.status == NodeStatus.SKIPPED:
@@ -1129,12 +1165,30 @@ class WorkflowRunner:
         state.write("ready", 1)
         return None
 
-    def _evaluate_when(self, node: WorkflowNode, run_id: str) -> NodeExecution | None:
+    def _command_loop_predicate(self, predicate: str, state: _CommandLoopState, checking_phase: str) -> bool:
+        previous = state.phase, state.iteration, state.result
+        state.write(checking_phase, state.iteration)
+        try:
+            return self._loop_predicate_passes(predicate)
+        except UntrustedWorkspaceError:
+            # This dispatch gate refuses before opening the predicate process.
+            # Restore the last known state, including a completed command.
+            state.write(*previous)
+            raise
+
+    def _evaluate_when(
+        self, node: WorkflowNode, run_id: str, *, loop_state: _CommandLoopState | None = None
+    ) -> NodeExecution | None:
         """Return the terminal outcome of a false or timed-out when predicate."""
         if node.when is None:
             return None
         try:
-            if self._loop_predicate_passes(node.when):
+            passed = (
+                self._loop_predicate_passes(node.when)
+                if loop_state is None
+                else self._command_loop_predicate(node.when, loop_state, "checking when")
+            )
+            if passed:
                 return None
         except subprocess.TimeoutExpired:
             return NodeExecution(

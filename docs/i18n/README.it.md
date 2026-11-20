@@ -220,7 +220,7 @@ Perché lo scheduler è in puro Python e quali sono i compromessi adottati: [per
 Il controllo `can_spawn()` del modulo di monitoraggio dei costi restituisce `False` quando la spesa cumulativa dopo la rettifica raggiunge o supera la soglia di arresto configurata per il budget, anche se non sono stati segnalati nuovi token. Dopo un riavvio, i soli conteggi dei token salvati non consentono di ricostruire il costo cumulativo esatto comunicato in precedenza per una determinata combinazione di agente, attività e modello.
 
 ### comandi quotidiani
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Se un’attività di un’esecuzione SSH scollegata termina con un codice di usc
 
 L'intera interfaccia operatore (automazione PR, pianificazioni, bridge di chat, demone autofix) è descritta in [comandi operatore](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-Un ciclo di comandi riprende dall’ultimo punto di controllo mantenendo il limite di iterazioni originale. Se un comando potrebbe essere stato eseguito o una condizione valutata senza che il risultato sia stato salvato, la ripresa si interrompe. Verifica gli effetti prima di avviare una nuova esecuzione.
+Un ciclo di comandi riprende dall’ultimo punto di controllo mantenendo il limite di iterazioni originale. Se un comando potrebbe essere stato eseguito o una condizione valutata senza che il risultato sia stato salvato, la ripresa si interrompe. La ripresa si interrompe anche se manca un punto di controllo e il ciclo potrebbe essere già iniziato. Verifica gli effetti prima di avviare una nuova esecuzione.
 
 `bernstein workflow` esegue DAG dichiarativi in YAML composti da nodi agent, command e loop - con supporto alla ripresa per le esecuzioni interrotte:
 

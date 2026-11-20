@@ -1,7 +1,9 @@
 """Command-loop interruptions use counted local fakes for every external effect."""
 
+import json
 import subprocess
 from collections import Counter
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -127,17 +129,16 @@ def test_unknown_effect_refuses_before_any_sibling_or_rewrite(tmp_path, monkeypa
         assert counts == before and files == {p.name: p.read_bytes() for p in folder.iterdir()}
 
 
-def test_legacy_first_layer_is_uncertain_but_missing_required_prior_layer_proves_loop_unentered(tmp_path, monkeypatch):
+@pytest.mark.parametrize("method", ["run", "resume"])
+@pytest.mark.parametrize("before", [False, True])
+def test_legacy_snapshot_does_not_prove_loop_unentered(tmp_path, monkeypatch, method, before):
     counts = calls(monkeypatch, stop_at=1)
-    spec = manifest(sibling=True)
+    spec = manifest(before=before, sibling=True)
     wr.record_spec_snapshot(tmp_path, "legacy", spec)
-    with pytest.raises(wr.WorkflowRunError, match="uncertain"):
-        wr.WorkflowRunner(workdir=tmp_path).resume(spec, run_id="legacy")
-    assert not counts
-    later = manifest(before=True)
-    wr.record_spec_snapshot(tmp_path, "later", later)
-    assert wr.WorkflowRunner(workdir=tmp_path).resume(later, run_id="later").succeeded
-    assert counts == {"prior": 1, "outer": 1, "body": 1, "until": 1}
+    prior = checkpoint_bytes(tmp_path, "legacy")
+    with pytest.raises(wr.WorkflowRunError, match="uncertain legacy"):
+        getattr(wr.WorkflowRunner(workdir=tmp_path), method)(spec, run_id="legacy")
+    assert not counts and checkpoint_bytes(tmp_path, "legacy") == prior
 
 
 def test_existing_run_checks_original_manifest_before_effects(tmp_path, monkeypatch):
@@ -247,3 +248,183 @@ def test_completed_node_is_authoritative_and_uncertainty_preserves_every_checkpo
     (tmp_path / "runs" / "historic" / "loop.loop.json").write_text("{unreadable")
     result = wr.WorkflowRunner(workdir=tmp_path).resume(spec, run_id="historic")
     assert result.succeeded and counts == {"sibling-condition": 1, "sibling": 1}
+
+
+def checkpoint_bytes(root, run_id):
+    return {p.name: p.read_bytes() for p in (root / "runs" / run_id).iterdir()}
+
+
+@pytest.mark.parametrize("method", ["run", "resume"])
+def test_restore_without_loop_record_refuses_before_sibling_effects(tmp_path, monkeypatch, method):
+    spec = manifest(before=True, sibling=True)
+    counts = calls(monkeypatch)
+    with pytest.raises(Interrupted):
+        wr.WorkflowRunner(workdir=tmp_path, audit_emitter=halt_on("workflow.loop_continue")).run(
+            spec, run_id="missing-loop"
+        )
+    (tmp_path / "runs" / "missing-loop" / "loop.loop.json").unlink()
+    before = checkpoint_bytes(tmp_path, "missing-loop")
+    assert {"command_loops.json", "spec_snapshot.json", "prior.node.json"} <= before.keys()
+    effects = dict(counts)
+    with pytest.raises(wr.WorkflowRunError, match="uncertain command loop loop"):
+        getattr(wr.WorkflowRunner(workdir=tmp_path), method)(spec, run_id="missing-loop")
+    assert counts == effects and checkpoint_bytes(tmp_path, "missing-loop") == before
+
+
+@pytest.mark.parametrize("method", ["run", "resume"])
+def test_blank_command_agent_loop_is_not_checkpointed_as_command(tmp_path, monkeypatch, method):
+    spec = WorkflowSpec.model_validate(
+        {
+            "name": "agent-loop",
+            "description": "Test with a local fake session",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "local",
+                    "prompt": "Compare",
+                    "command": "  ",
+                    "loop": {"until": "stop", "max_iterations": 2},
+                }
+            ],
+        }
+    )
+    assert spec.nodes[0].kind == "agent"
+    wr.record_spec_snapshot(tmp_path, "agent", spec)
+    tasks = []
+
+    def spawn(batch):
+        tasks.extend(batch)
+        return SimpleNamespace(id="synthetic-session")
+
+    def stop(_runner, predicate):
+        assert predicate == "stop"
+        return len(tasks) == 2
+
+    monkeypatch.setattr(wr.WorkflowRunner, "_loop_predicate_passes", stop)
+    runner = wr.WorkflowRunner(workdir=tmp_path, spawner=SimpleNamespace(spawn_for_tasks=spawn))
+    done = getattr(runner, method)(spec, run_id="agent")
+    assert done.succeeded and done.nodes[0].iterations == 2
+    assert [task.role for task in tasks] == ["local", "local"]
+    assert done.nodes[0].session_id == "synthetic-session"
+    assert set(checkpoint_bytes(tmp_path, "agent")) == {"spec_snapshot.json", "review.node.json", "run_complete.json"}
+
+
+@pytest.mark.parametrize("method", ["run", "resume"])
+@pytest.mark.parametrize("predicate", ["outer", "until"])
+def test_definite_predicate_refusal_preserves_previous_known_progress(tmp_path, monkeypatch, method, predicate):
+    spec = manifest(cap=1, when=predicate == "outer")
+    counts = Counter()
+    refuse = True
+
+    def check(_runner, resource_id, kind):
+        assert (resource_id, kind) == ("predicate", "predicate")
+        if refuse and (predicate == "outer" or counts["body"]):
+            raise wr.UntrustedWorkspaceError(tmp_path)
+
+    def command(_runner, node, **kwargs):
+        counts["body"] += 1
+        return wr.NodeExecution(node.id, wr.NodeStatus.SUCCESS, exit_code=0, stdout="completed body")
+
+    class LocalPredicate:
+        returncode = 0
+
+        def __init__(self, label, **kwargs):
+            counts[label] += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            pass
+
+        def communicate(self, *, timeout):
+            return b"", b""
+
+    monkeypatch.setattr(wr.WorkflowRunner, "_require_trusted_workspace", check)
+    runner = wr.WorkflowRunner(workdir=tmp_path)
+    with monkeypatch.context() as fixture:
+        fixture.setattr(wr.WorkflowRunner, "_execute_once", command)
+        fixture.setattr(wr.subprocess, "Popen", LocalPredicate)
+        with pytest.raises(wr.UntrustedWorkspaceError):
+            runner.run(spec, run_id="refused")
+        assert counts == ({"body": 1} if predicate == "until" else {})
+        progress = json.loads(checkpoint_bytes(tmp_path, "refused")["loop.loop.json"])
+        assert progress["phase"] == ("command finished" if predicate == "until" else "new")
+        if predicate == "until":
+            assert progress["result"]["stdout"] == "completed body"
+        refuse = False
+        done = getattr(runner, method)(spec, run_id="refused")
+    assert counts == ({"body": 1, "until": 1, "outer": 1} if predicate == "outer" else {"body": 1, "until": 1})
+    assert done.succeeded and done.nodes[0].stdout == "completed body" and done.nodes[0].iterations == 1
+
+
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("method", ["run", "resume"])
+def test_interrupted_initialization_recovers_only_before_effects(tmp_path, monkeypatch, method, published):
+    spec = manifest(before=True, sibling=True)
+    counts = calls(monkeypatch, stop_at=1)
+    emit = halt_on("workflow.spec_snapshot_recorded") if published else None
+    writer = wr.record_spec_snapshot
+
+    def interrupted_snapshot(*args, **kwargs):
+        raise Interrupted()
+
+    runner = wr.WorkflowRunner(workdir=tmp_path, audit_emitter=emit)
+    with monkeypatch.context() as fixture:
+        if not published:
+            fixture.setattr(wr, "record_spec_snapshot", interrupted_snapshot)
+        with pytest.raises(Interrupted):
+            runner.run(spec, run_id="initializing")
+    assert not counts
+    prior = checkpoint_bytes(tmp_path, "initializing")
+    assert set(prior) == ({"command_loops.json", "spec_snapshot.json"} if published else {"command_loops.json"})
+    assert json.loads(prior["command_loops.json"])["phase"] == "initializing"
+    assert wr.record_spec_snapshot is writer
+    if not published and method == "resume":
+        with pytest.raises(wr.WorkflowRunError, match="no workflow run state"):
+            runner.resume(spec, run_id="initializing")
+        assert checkpoint_bytes(tmp_path, "initializing") == prior
+        assert not counts
+        return
+    done = getattr(wr.WorkflowRunner(workdir=tmp_path), method)(spec, run_id="initializing")
+    assert done.succeeded
+    final = checkpoint_bytes(tmp_path, "initializing")
+    assert json.loads(final["command_loops.json"])["phase"] == "active"
+    assert counts == {"prior": 1, "sibling-condition": 1, "sibling": 1, "outer": 1, "body": 1, "until": 1}
+
+
+def test_inline_resume_records_snapshot_only_on_publish(tmp_path, monkeypatch):
+    spec = manifest()
+    counts = calls(monkeypatch, stop_at=2)
+    events = []
+
+    def cut(event, resource, details):
+        events.append((event, resource, details))
+        if event == "workflow.loop_continue":
+            raise Interrupted()
+
+    with pytest.raises(Interrupted):
+        wr.WorkflowRunner(workdir=tmp_path, audit_emitter=cut).run(spec, run_id="audit")
+    snapshot = tmp_path / "runs" / "audit" / "spec_snapshot.json"
+    original, original_stat = snapshot.read_bytes(), snapshot.stat()
+    assert [event for event, *_ in events].count("workflow.spec_snapshot_recorded") == 1
+    assert (
+        "workflow.spec_snapshot_recorded",
+        spec.name,
+        {
+            "run_id": "audit",
+            "spec_digest": wr.spec_digest(spec),
+        },
+    ) in events
+    events.clear()
+    done = wr.WorkflowRunner(workdir=tmp_path, audit_emitter=lambda *row: events.append(row)).run(spec, run_id="audit")
+    assert done.succeeded and counts == {"outer": 1, "body": 2, "until": 2}
+    assert [event for event, *_ in events] == [
+        "workflow.start",
+        "workflow.node_start",
+        "workflow.node_finish",
+        "workflow.finish",
+    ]
+    final_stat = snapshot.stat()
+    assert snapshot.read_bytes() == original
+    assert (final_stat.st_ino, final_stat.st_mtime_ns) == (original_stat.st_ino, original_stat.st_mtime_ns)

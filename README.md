@@ -242,7 +242,7 @@ If a task in a detached SSH run exits with a nonzero code, the task and the run 
 
 The full operator surface (PR automation, schedules, chat bridges, the autofix daemon) is in [operator commands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-A command loop resumes from its last checkpoint within the original iteration limit. If a command or condition may have run without a saved outcome, resume stops. Review its effects before starting a new run.
+A command loop resumes from its last checkpoint within the original iteration limit. If a command or condition may have run without a saved outcome, resume stops. A missing checkpoint also stops recovery if the loop could already have started. Review its effects before starting a new run.
 
 `bernstein workflow` runs declarative YAML DAGs of agent, command, and loop nodes - with resume support for interrupted runs:
 

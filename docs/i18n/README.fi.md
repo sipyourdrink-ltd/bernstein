@@ -220,7 +220,7 @@ Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja s
 Kustannusseurannan `can_spawn()`-tarkistus palauttaa arvon `False`, kun korjatut kokonaiskulut saavuttavat budjetille asetetun pysäytysrajan tai ylittävät sen, vaikka uusia tokeneita ei olisi raportoitu. Uudelleenkäynnistyksen jälkeen pelkistä tallennetuista tokenimääristä ei voi päätellä tietylle agentin, tehtävän ja mallin yhdistelmälle aiemmin raportoitua tarkkaa kokonaiskustannusta.
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Jos irrotetun SSH-ajon tehtävä päättyy nollasta poikkeavaan paluukoodiin, se
 
 Koko operaattoripinta (PR-automaatio, aikataulut, chat-sillat, autofix-taustaprosessi) löytyy sivulta [operaattorin komennot](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
-Komentosilmukka jatkuu viimeisestä tarkistuspisteestä alkuperäisen iteraatiorajan puitteissa. Jos komento on voitu suorittaa tai ehto tarkistaa ilman tallennettua tulosta, ajon jatkaminen keskeytyy. Tarkista vaikutukset ennen uuden ajon aloittamista.
+Komentosilmukka jatkuu viimeisestä tarkistuspisteestä alkuperäisen iteraatiorajan puitteissa. Jos komento on voitu suorittaa tai ehto tarkistaa ilman tallennettua tulosta, ajon jatkaminen keskeytyy. Jatkaminen keskeytyy myös, jos tarkistuspiste puuttuu ja silmukka on voinut jo alkaa. Tarkista vaikutukset ennen uuden ajon aloittamista.
 
 `bernstein workflow` ajaa deklaratiivisia YAML DAG -rakenteita, jotka koostuvat agentti-, komento- ja silmukkasolmuista - tukien keskeytyneiden ajojen jatkamista:
 

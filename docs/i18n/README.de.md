@@ -220,7 +220,7 @@ Warum der Scheduler in reinem Python geschrieben ist und welche Vor- und Nachtei
 Die Prüfung `can_spawn()` der Kostenerfassung gibt `False` zurück, wenn die korrigierten Gesamtausgaben die konfigurierte Budget-Stoppgrenze erreichen oder überschreiten, auch wenn keine neuen Tokens gemeldet wurden. Nach einem Neustart lässt sich der zuvor gemeldete genaue Gesamtbetrag für eine bestimmte Kombination aus Agent, Aufgabe und Modell allein aus den gespeicherten Tokenzählern nicht rekonstruieren.
 
 ### alltägliche Befehle
-<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,7 +235,7 @@ Endet eine Aufgabe in einem abgekoppelten SSH-Lauf mit einem Exitcode ungleich n
 
 Die vollständige Bedienoberfläche (PR-Automatisierung, Zeitpläne, Chat-Bridges, Autofix-Daemon) ist unter [Operator-Befehle](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md) beschrieben.
 
-Eine Befehlsschleife wird am letzten Prüfpunkt mit der ursprünglichen Iterationsgrenze fortgesetzt. Wurde ein Befehl oder eine Bedingungsprüfung möglicherweise ausgeführt, ohne dass das Ergebnis gespeichert wurde, wird die Wiederaufnahme angehalten. Prüfen Sie die Auswirkungen, bevor Sie einen neuen Lauf starten.
+Eine Befehlsschleife wird am letzten Prüfpunkt mit der ursprünglichen Iterationsgrenze fortgesetzt. Wurde ein Befehl oder eine Bedingungsprüfung möglicherweise ausgeführt, ohne dass das Ergebnis gespeichert wurde, wird die Wiederaufnahme angehalten. Fehlt ein Prüfpunkt und könnte die Schleife bereits begonnen haben, wird die Wiederaufnahme ebenfalls angehalten. Prüfen Sie die Auswirkungen, bevor Sie einen neuen Lauf starten.
 
 `bernstein workflow` führt deklarative YAML-DAGs aus, die aus Agenten-, Befehls- und Schleifenknoten bestehen - mit Unterstützung für die Wiederaufnahme unterbrochener Läufe:
 
