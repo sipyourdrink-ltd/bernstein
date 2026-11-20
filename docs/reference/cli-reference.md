@@ -1607,7 +1607,9 @@ systemd / launchd unit installer.
 
 #### `bernstein config-path`
 
-Print the path Bernstein would read config from. Useful for shell completion and CI. No flags.
+Print the project and workspace configuration paths in the current directory.
+Use `--json` to return the two paths and the working directory as JSON. A
+configuration file that is missing appears as `null`.
 
 ---
 
