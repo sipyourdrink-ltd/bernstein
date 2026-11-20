@@ -62,9 +62,7 @@ Upgrade check
    from bernstein.core.quality.gate_pipeline import GatePipelineStep
    from bernstein.core.quality.quality_gates import QualityGatesConfig
 
-   config = QualityGatesConfig(
-       pipeline=[GatePipelineStep(name="my_gate", required=True, condition="any_changed")]
-   )
+   config = QualityGatesConfig(pipeline=[GatePipelineStep(name="my_gate", required=True, condition="any_changed")])
    ```
 
    Replace `my_gate` with the generated name and pass `config` to `GateRunner`.
