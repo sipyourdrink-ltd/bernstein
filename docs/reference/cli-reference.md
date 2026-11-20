@@ -367,7 +367,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein runs scorecard RUN_ID` | Build or verify one run's scorecard. | `cli/commands/runs_cmd.py:171` |
 | `bernstein runs helpers RUN_ID` | Agent-written helpers captured for a run. | `cli/commands/runs_cmd.py` |
 | `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
-| `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
+| `bernstein report` | Print a run summary in Markdown. | `cli/commands/report_cmd.py:17` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
 | `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
@@ -388,6 +388,18 @@ which commits changed the file.
 | `--json` | off | Print an object with the normalized `file` path and matching `tasks` array. |
 
 For example: `bernstein history src/bernstein/main.py --limit 5 --workdir .`
+
+#### `bernstein report`
+
+Print a Markdown summary of the latest run in the project.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--run-id RUN_ID` | latest run | Select a specific run. |
+| `--workdir PATH` | `.` | Project root directory. |
+| `--save` / `--no-save` | off | Use `--save` to also write `.sdd/reports/RUN_ID.md`. Use `--no-save` to print only. |
+
+To print and save a specific run, use `bernstein report --run-id RUN_ID --save`.
 
 #### `bernstein status`
 
