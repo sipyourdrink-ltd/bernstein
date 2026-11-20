@@ -239,6 +239,11 @@ def main() -> int:
                 measurement["exit"] != 0
                 or "first_agent_ready" not in measurement
                 or (args.auto_routing and not measurement["local_adapter_invoked"])
+                or (
+                    args.phases
+                    and not {"argument_parsing", "command_dispatch", "required_preflight_complete", "server_ready"}
+                    <= measurement["phases"].keys()
+                )
             ):
                 return 1
     for key in ("health", "ready", "first_agent_registration", "first_agent_ready"):

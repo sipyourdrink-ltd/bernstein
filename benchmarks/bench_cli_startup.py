@@ -109,14 +109,17 @@ def main() -> int:
         parser.error("--runs must be positive")
     if options.timeout <= 0:
         parser.error("--timeout must be positive")
-    python = str(options.python.absolute())
+    # Keep the venv executable name. Resolving the final symlink would
+    # run its base interpreter outside the installed environment.
+    python = str(options.python.parent.resolve() / options.python.name)
     if options.entrypoint == "module":
         entry = [python, "-m", "bernstein"]
     else:
         launcher = options.console or shutil.which("bernstein")
         if launcher is None:
             parser.error("bernstein was not found on PATH. Supply --console.")
-        entry = [str(Path(launcher).absolute())]
+        executable = Path(launcher)
+        entry = [str(executable.parent.resolve() / executable.name)]
 
     commands = options.command or ["help", "config-path"]
     modes = ("cold", "warm") if options.cache == "both" else (options.cache,)

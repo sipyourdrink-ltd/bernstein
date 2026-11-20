@@ -30,7 +30,7 @@ def slow_discovery(*args, **kwargs):
 with patch("bernstein.core.agent_discovery.discover_agents_cached", slow_discovery):
     main.cli.main(args=sys.argv[1:])
 """
-    env = dict(os.environ, BERNSTEIN_NO_SPLASH="1")
+    env = dict(os.environ, HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), BERNSTEIN_NO_SPLASH="1")
     source = Path(__file__).resolve().parents[3] / "src"
     env["PYTHONPATH"] = str(source)
     result = subprocess.run(

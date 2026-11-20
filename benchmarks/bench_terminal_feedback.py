@@ -115,6 +115,7 @@ def measure(entry: list[str], args: list[str], home: Path, *, run: bool) -> dict
                 raise RuntimeError(f"Command returned {code} with first frame {first}: {data[-700:]!r}")
             return {
                 "first": first,
+                "cursor_visible_at_exit": data.rfind(b"\x1b[?25h") >= data.rfind(b"\x1b[?25l"),
                 "elapsed": time.perf_counter() - start,
                 "exit": code,
                 "sha256": hashlib.sha256(data).hexdigest(),
@@ -143,9 +144,9 @@ def main() -> int:
     options = parser.parse_args()
     if os.name != "posix" or options.runs < 1:
         parser.error("this benchmark requires a POSIX terminal and a positive sample count")
-    entry = (
-        [str(options.console.absolute())] if options.console else [str(options.python.absolute()), "-m", "bernstein"]
-    )
+    executable = options.console or options.python
+    path = str(executable.parent.resolve() / executable.name)
+    entry = [path] if options.console else [path, "-m", "bernstein"]
     args = ["run"] if options.explicit_run or options.execute else []
     if options.execute and options.adapter:
         parser.error("the execution fixture uses the idle adapter")

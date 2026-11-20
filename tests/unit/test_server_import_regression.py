@@ -108,3 +108,11 @@ assert create_github_pr is implementation
 """
     result = _import_in_fresh_interpreter(script)
     assert result.returncode == 0, result.stderr
+
+
+def test_registering_mission_routes_defers_digest_formatting() -> None:
+    result = _import_in_fresh_interpreter(
+        "from bernstein.core.routes.missions import router; "
+        "assert 'bernstein.core.orchestration.mission_digest' not in sys.modules"
+    )
+    assert result.returncode == 0, result.stderr

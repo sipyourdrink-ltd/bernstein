@@ -112,6 +112,7 @@ from bernstein.cli.main import cli
 
 cli.main(args=sys.argv[1:], standalone_mode=False)
 assert "bernstein.adapters.qwen" not in sys.modules
+assert "bernstein.core.tasks.lifecycle" not in sys.modules
 assert "openai" not in sys.modules
 assert "bernstein.cli.run_bootstrap" not in sys.modules
 assert "bernstein.cli.commands.task_cmd" not in sys.modules
