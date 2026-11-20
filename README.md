@@ -249,7 +249,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Run state checkpoints to `.sdd/runs/<run_id>/` on every node. Resume validates the manifest digest at run start, so a spec change is refused rather than silently executing a different manifest. See [workflow manifests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). To resume, repeat the exact original `-g` value, including when using `-m`. An older run without a goal digest can resume only if no remaining agent prompt can use `{goal}`.
+The direct workflow CLI saves checkpoints in `runs/<run_id>/` relative to the current working directory. Resume validates the original manifest digest. For a run with a recorded goal digest, pass the exact original `-g` value, including with `-m`. You can omit `-g` for an originally empty goal or for an older run if no remaining agent prompt can use `{goal}`. [workflow manifests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` lists benchmark suites for each control and shows the latest complete measurement, when available. [Benchmark coverage](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

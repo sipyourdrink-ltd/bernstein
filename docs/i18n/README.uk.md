@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Перевірка `can_spawn()` у модулі обліку витрат повертає `False`, коли сукупні витрати після коригування досягають заданого порога зупинки за бюджетом або перевищують його, навіть якщо про нові токени не повідомляли. Після перезапуску самих лише збережених лічильників токенів недостатньо, щоб відновити точну суму витрат, раніше зазначену для конкретної комбінації агента, завдання й моделі.
 
 ### повсякденні команди
-<!-- l10n: en="everyday commands" hash="sha256:e7d08c06ac05" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Під час відновлення передайте точне початкове значення `-g`, зокрема й у разі використання `-m`. Старий запуск без хешу цілі можна продовжити, лише якщо жоден із решти промптів агента не може використати `{goal}`.
+Прямі команди workflow зберігають контрольні точки в `runs/<run_id>/` відносно поточного робочого каталогу. Під час відновлення перевіряється хеш початкового маніфесту. Якщо хеш цілі записано, передайте точне початкове значення `-g`, зокрема й з `-m`. Можна опустити `-g`, якщо початкова ціль була порожньою або якщо в старому запуску жоден із решти промптів агента не може використати `{goal}`. [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` показує набори тестів для кожного контролю та останній повний результат вимірювання, якщо він є. [Покриття тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

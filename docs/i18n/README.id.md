@@ -220,7 +220,7 @@ Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengap
 Pemeriksaan `can_spawn()` pada pelacak biaya mengembalikan `False` ketika pengeluaran kumulatif setelah koreksi mencapai atau melampaui ambang penghentian anggaran yang ditetapkan, meskipun tidak ada token baru yang dilaporkan. Setelah sistem dimulai ulang, jumlah token yang tersimpan saja tidak cukup untuk mengetahui kembali biaya kumulatif persis yang sebelumnya dilaporkan untuk kombinasi agen, tugas, dan model tertentu.
 
 ### perintah sehari-hari
-<!-- l10n: en="everyday commands" hash="sha256:e7d08c06ac05" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Status eksekusi disimpan sebagai checkpoint ke `.sdd/runs/<run_id>/` pada setiap node. Melanjutkan eksekusi akan memvalidasi digest manifes pada awal eksekusi, sehingga perubahan spesifikasi akan ditolak, bukan dijalankan diam-diam sebagai manifes yang berbeda. Lihat [manifes workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Saat melanjutkan, berikan nilai asli `-g` secara persis, termasuk saat menggunakan `-m`. Proses lama tanpa hash tujuan hanya dapat dilanjutkan jika tidak ada prompt agen yang tersisa yang dapat menggunakan `{goal}`.
+Perintah workflow langsung menyimpan checkpoint di `runs/<run_id>/` relatif terhadap direktori kerja saat ini. Saat dilanjutkan, digest manifes asli divalidasi. Jika digest tujuan tercatat, masukkan nilai asli `-g` secara persis, termasuk saat memakai `-m`. Anda dapat menghilangkan `-g` jika tujuan awal kosong atau jika tidak ada prompt agen yang tersisa pada eksekusi lama yang dapat menggunakan `{goal}`. [manifes workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` menampilkan rangkaian uji untuk setiap kontrol dan pengukuran lengkap terakhir jika tersedia. [Cakupan tolok ukur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

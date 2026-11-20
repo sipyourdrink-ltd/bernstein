@@ -220,7 +220,7 @@ Lý do bộ lập lịch được xây dựng bằng Python thuần túy và cá
 Phép kiểm tra `can_spawn()` của bộ theo dõi chi phí trả về `False` khi tổng chi phí lũy kế sau điều chỉnh đạt hoặc vượt ngưỡng dừng đã đặt cho ngân sách, ngay cả khi không có token mới nào được báo cáo. Sau khi khởi động lại, chỉ dựa vào số token đã lưu thì không thể khôi phục chính xác chi phí lũy kế đã được báo cáo trước đó cho một tổ hợp tác nhân, tác vụ và mô hình cụ thể.
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:e7d08c06ac05" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Khi tiếp tục, hãy nhập lại chính xác giá trị `-g` ban đầu, kể cả khi dùng `-m`. Với lượt chạy cũ không có giá trị băm của mục tiêu, chỉ có thể tiếp tục nếu không lời nhắc nào còn lại của tác nhân có thể dùng `{goal}`.
+Các lệnh workflow trực tiếp lưu điểm kiểm tra trong `runs/<run_id>/` tính từ thư mục làm việc hiện tại. Khi tiếp tục, hệ thống xác thực giá trị băm của manifest ban đầu. Nếu đã lưu giá trị băm của mục tiêu, hãy nhập chính xác giá trị `-g` ban đầu, kể cả khi dùng `-m`. Bạn có thể bỏ `-g` nếu mục tiêu ban đầu để trống hoặc nếu không lời nhắc nào còn lại của tác nhân trong một lượt chạy cũ có thể dùng `{goal}`. [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` hiển thị các bộ kiểm thử cho từng biện pháp kiểm soát và phép đo đầy đủ gần nhất nếu có. [Phạm vi kiểm thử](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

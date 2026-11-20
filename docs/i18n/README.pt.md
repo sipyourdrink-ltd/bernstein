@@ -220,7 +220,7 @@ Por que o agendador é Python puro e quais são os trade-offs: [por que determin
 A verificação `can_spawn()` do módulo de acompanhamento de custos retorna `False` quando o gasto acumulado após a correção atinge ou ultrapassa o limite de parada configurado para o orçamento, mesmo que nenhum novo token tenha sido informado. Após uma reinicialização, as contagens de tokens salvas, por si só, não permitem reconstruir o custo acumulado exato informado anteriormente para uma determinada combinação de agente, tarefa e modelo.
 
 ### comandos do dia a dia
-<!-- l10n: en="everyday commands" hash="sha256:e7d08c06ac05" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-O estado da execução grava checkpoints em `.sdd/runs/<run_id>/` a cada nó. A retomada valida o digest do manifesto no início da execução, de modo que uma mudança na especificação é recusada em vez de executar silenciosamente um manifesto diferente. Veja [manifestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Ao retomar, informe exatamente o valor original de `-g`, inclusive ao usar `-m`. Uma execução antiga sem o hash do objetivo só pode ser retomada se nenhum prompt de agente restante puder usar `{goal}`.
+Os comandos diretos de workflow salvam checkpoints em `runs/<run_id>/`, relativo ao diretório de trabalho atual. A retomada valida o digest do manifesto original. Se o digest do objetivo estiver registrado, informe exatamente o valor original de `-g`, inclusive com `-m`. Você pode omitir `-g` se o objetivo original estava vazio ou se nenhum prompt de agente restante de uma execução antiga puder usar `{goal}`. [manifestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` mostra os conjuntos de testes de cada controle e a última medição completa disponível. [Cobertura dos testes](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
