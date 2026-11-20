@@ -265,8 +265,10 @@ def test_populated_list_resolves_metadata_dir_once_and_sees_later_snapshots(repo
 
         third = SnapshotStore(repo).take(task_id="T-a")
         resolve.reset_mock()  # Exclude the new snapshot's metadata write.
-        assert store.list(task_id="T-a", limit=2) == [third, first]
+        assert store.list() == [third, second, first]
         resolve.assert_called_once_with(repo)
+
+    assert store.list(task_id="T-a", limit=1) == [third]
 
 
 # ---------------------------------------------------------------------------
