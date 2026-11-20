@@ -2866,7 +2866,7 @@ class TaskStore:
         except OSError as exc:
             logger.warning("Contract audit event write failed for %s: %s", for_log(task_id), exc)
 
-    async def reopen(self, task_id: str, reason: str) -> Task:
+    async def reopen(self, task_id: str, reason: str, *, dispatch_tier: DispatchTier | None = None) -> Task:
         """Reopen a done task that failed janitor verification.
 
         Transitions DONE -> OPEN so the SAME task (same id) is re-claimed and
@@ -2877,6 +2877,7 @@ class TaskStore:
         Args:
             task_id: Task identifier.
             reason: Why the task is being reopened (e.g. failed janitor signals).
+            dispatch_tier: Explicit backend tier; omission preserves the current value.
 
         Returns:
             The updated Task.
@@ -2885,6 +2886,8 @@ class TaskStore:
             KeyError: If task_id does not exist.
             IllegalTransitionError: If the task is not in DONE status.
         """
+        if dispatch_tier is not None:
+            dispatch_tier = DispatchTier(dispatch_tier)
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
@@ -2895,6 +2898,13 @@ class TaskStore:
             transition_task(task, TaskStatus.OPEN, actor="task_store", reason=reason)
             reopen_count = int(task.metadata.get("janitor_reopen_count", 0) or 0) + 1
             task.metadata["janitor_reopen_count"] = reopen_count
+            if dispatch_tier is not None:
+                task.metadata["dispatch_tier_transition"] = {
+                    "old": task.dispatch_tier.value,
+                    "new": dispatch_tier.value,
+                    "reason": reason,
+                }
+                task.dispatch_tier = dispatch_tier
             task.claimed_at = None
             task.claimed_by_session = None
             task.assigned_agent = None

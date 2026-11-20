@@ -142,6 +142,22 @@ if TYPE_CHECKING:
     from bernstein.core.volunteer.sandbox_profile import VolunteerSandboxProfile
     from bernstein.core.volunteer.wall_clock import WallClockOutcome
 
+
+_MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+def _read_bounded_response(response: Any) -> bytes:
+    """Read at most 1 MiB, probing one extra byte to detect overflow."""
+    data = bytearray()
+    while True:
+        chunk = response.read(min(65536, _MAX_RESPONSE_BYTES + 1 - len(data)))
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+        if len(data) > _MAX_RESPONSE_BYTES:
+            raise OSError("response exceeds 1 MiB limit")
+
+
 #: Shortest phase worth starting.  Below this the budget is spent and the run
 #: refuses rather than launching something it will kill almost immediately.
 MIN_PHASE_SECONDS = 1
@@ -976,7 +992,7 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
                         req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
                         with urllib.request.urlopen(req, timeout=10) as response:
                             if response.status == 200:
-                                repo_data = json.loads(response.read().decode())
+                                repo_data = json.loads(_read_bounded_response(response).decode())
                                 if repo_data.get("private", True):
                                     return "repository is private; volunteer mode only works with public repositories"
                             elif response.status == 404:
@@ -984,7 +1000,13 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
                             else:
                                 # Unexpected status code
                                 return f"unexpected response from repository host: HTTP {response.status}"
-                    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError) as e:
+                    except (
+                        urllib.error.URLError,
+                        urllib.error.HTTPError,
+                        json.JSONDecodeError,
+                        OSError,
+                        TimeoutError,
+                    ) as e:
                         # If we cannot verify visibility, refuse (fail closed)
                         return f"cannot verify repository visibility: {type(e).__name__}"
                 else:
@@ -1025,7 +1047,7 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
                 req = urllib.request.Request(api_url, headers=headers)
                 with urllib.request.urlopen(req, timeout=10) as response:
                     if response.status == 200:
-                        license_data = json.loads(response.read().decode())
+                        license_data = json.loads(_read_bounded_response(response).decode())
                         detected_license = license_data.get("spdx_id")
                         if detected_license and detected_license != manifest_license:
                             return (
@@ -1036,7 +1058,7 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
                     elif response.status == 404:
                         # No license detected in GitHub API
                         return "no license detected in repository"
-            except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
+            except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError, TimeoutError):
                 # If GitHub API fails, we cannot validate the license match
                 return "cannot verify repository license: network error"
 
