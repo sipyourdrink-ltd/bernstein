@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tomllib
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -81,6 +83,35 @@ def _cli_login(worker: str, binary: str, env: Mapping[str, str]) -> bool:
         return False
 
 
+def _gemini_access_configured(env: Mapping[str, str]) -> bool:
+    """Recognize Gemini sign-in and ADC without opening credential files."""
+    if env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY"):
+        return True
+    home = env.get("HOME") or env.get("USERPROFILE")
+    selected_adc = env.get("GOOGLE_APPLICATION_CREDENTIALS")
+    adc = None
+    if selected_adc:
+        adc = Path(selected_adc)
+    elif os.name == "nt" and (appdata := env.get("APPDATA")):
+        adc = Path(appdata) / "gcloud" / "application_default_credentials.json"
+    elif os.name != "nt" and home:
+        adc = Path(home) / ".config" / "gcloud" / "application_default_credentials.json"
+    if adc is not None:
+        with suppress(OSError):
+            info = adc.stat()
+            if stat.S_ISREG(info.st_mode) and info.st_size > 0:
+                return True
+    if not home:
+        return False
+    accounts = Path(home) / ".gemini" / "google_accounts.json"
+    try:
+        metadata = json.loads(accounts.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    active = metadata.get("active") if isinstance(metadata, dict) else None
+    return isinstance(active, str) and bool(active.strip())
+
+
 def _codex_custom_provider(env: Mapping[str, str]) -> bool | None:
     """Check a selected custom provider offline. None defers to first-party login."""
     home = env.get("HOME") or env.get("USERPROFILE")
@@ -138,9 +169,11 @@ def worker_handoff(worker: str, *, env: Mapping[str, str] | None = None) -> str:
         login = "claude auth login" if worker == "claude" else "codex login"
         return f"Could not confirm the {worker} login. Run {login} or configure {key}."
     if worker == "gemini":
-        if source.get("GEMINI_API_KEY") or source.get("GOOGLE_API_KEY"):
+        if _gemini_access_configured(source):
             return ""
-        return "Could not confirm the Gemini login. Check your Gemini sign-in or configure GEMINI_API_KEY."
+        return (
+            "Could not confirm Gemini access. Check your Gemini sign-in, application default credentials, or API key."
+        )
     if worker == "qwen":
         problem = _check_qwen_auth(env=source)
         return problem[2] if problem else ""

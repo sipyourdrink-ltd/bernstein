@@ -216,6 +216,62 @@ def test_gemini_requires_its_own_setup_for_project_and_installation(
         assert checks["Ready to run"]["ok"] == has_gemini_key
 
 
+@pytest.mark.parametrize(
+    ("mode", "ready"),
+    [
+        ("native active", True),
+        ("native inactive", False),
+        ("native malformed", False),
+        ("explicit ADC", True),
+        ("missing explicit ADC", False),
+        ("empty ADC", False),
+        ("directory instead of ADC", False),
+        ("local ADC", True),
+        ("explicit ADC overrides local", False),
+    ],
+)
+def test_gemini_sign_in_modes(tmp_path: Path, mode: str, ready: bool) -> None:
+    from bernstein.cli.first_run_readiness import operator_installation_checks, project_handoff
+
+    _init_worker_project(tmp_path, "gemini")
+    binary = tmp_path / ("gemini.cmd" if os.name == "nt" else "gemini")
+    binary.touch()
+    binary.chmod(0o755)
+    env = {"PATH": str(tmp_path), "HOME": str(tmp_path), "APPDATA": str(tmp_path / "appdata")}
+    if mode.startswith("native"):
+        metadata = tmp_path / ".gemini" / "google_accounts.json"
+        metadata.parent.mkdir()
+        contents = {"native active": '{"active":"fixture@example.invalid"}', "native inactive": '{"active":""}'}
+        metadata.write_text(contents.get(mode, "{"), encoding="utf-8")
+    else:
+        selected = tmp_path / "selected.json"
+        if mode in {"local ADC", "explicit ADC overrides local"}:
+            config_dir = Path(env["APPDATA"]) if os.name == "nt" else tmp_path / ".config"
+            local = config_dir / "gcloud" / "application_default_credentials.json"
+            local.parent.mkdir(parents=True)
+            local.write_bytes(b"opaque fixture")
+        if mode != "local ADC":
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(selected)
+        if mode == "explicit ADC":
+            selected.write_bytes(b"opaque fixture")
+        elif mode == "empty ADC":
+            selected.touch()
+        elif mode == "directory instead of ADC":
+            selected.mkdir()
+    setup = project_handoff(tmp_path, worker_env=env)
+    assert (not setup.actions) == ready
+    observations = [
+        {"name": "Python version", "ok": True},
+        {"name": "Adapter: gemini", "ok": True},
+        {"name": "Auth: gemini", "ok": False},
+        {"name": "Ready to run", "ok": False},
+    ]
+    checks = {row["name"]: row for row in operator_installation_checks(observations, env=env)}
+    assert checks["Auth: gemini"]["ok"] == ready
+    assert checks["Ready to run"]["ok"] == ready
+    assert "fixture@example.invalid" not in str(checks)
+
+
 def test_codex_custom_provider_without_first_party_login(tmp_path: Path) -> None:
     from bernstein.cli.first_run_readiness import operator_installation_checks, project_handoff
 
