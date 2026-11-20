@@ -648,7 +648,7 @@ def test_template_reference_matches_cli_arguments(subcommand: str) -> None:
         for piece in param.get_usage_pieces(context)
     ]
     body = next(body for commands, body in _reference_sections() if commands == ("templates",))
-    rows = re.findall(rf"^\|\s+`({subcommand} [^`]+)`\s+\|", body, re.MULTILINE)
+    rows = re.findall(rf"^\|[ \t]*`({subcommand} [^`\n]+)`[ \t]*\|", body, re.MULTILINE)
     assert rows == [" ".join([subcommand, *arguments])]
 
 
