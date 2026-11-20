@@ -16,4 +16,7 @@ COPY docker/volunteer-rig/fixtures/ /fixtures/
 RUN useradd --create-home --uid 1000 rig
 USER rig
 
+# This one-shot job reports the seed and fixture assertions through its exit status.
+# Compose checks the long-running Gitea service before starting the seeder.
+HEALTHCHECK NONE
 ENTRYPOINT ["volunteer-rig-seed"]
