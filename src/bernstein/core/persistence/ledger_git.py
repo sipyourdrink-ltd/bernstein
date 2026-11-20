@@ -234,9 +234,14 @@ def _resolve_ref(repo_dir: Path, ref: str) -> str | None:
         # checkout. Only the plain workspace can resume with local history alone.
         ceilings = _git_ceiling_directories()
         start = repo_dir.resolve()
+        # Git reports a mount stop only when cross-filesystem discovery is disabled.
+        stopped_at_mount = "\nStopping at filesystem boundary (" in diagnostic
+        start_device = start.stat().st_dev if stopped_at_mount else None
         for directory in (start, *start.parents):
             name = os.path.normcase(directory)
             if directory != start and (name in ceilings or name + os.sep in ceilings):
+                break
+            if start_device is not None and directory.stat().st_dev != start_device:
                 break
             bare_layout = (
                 (directory / "HEAD").is_file() and (directory / "objects").is_dir() and (directory / "refs").is_dir()

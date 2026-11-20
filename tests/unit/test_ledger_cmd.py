@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.ledger_cmd import ledger_group
+from bernstein.core.git.git_basic import GitResult
 from bernstein.core.persistence.ledger_git import anchor_ledger, fetch_ledger_ref, ledger_ref
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_OPEN,
@@ -418,6 +420,58 @@ class TestFetchAndResume:
         result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(workdir), "--json"])
         assert result.exit_code == exit_code, result.output
         assert json.loads(result.stdout)["dispatch_status"] == dispatch
+
+    @pytest.mark.parametrize(
+        ("stopped_at_mount", "marker_on_mount", "exit_code"),
+        [(True, False, 0), (True, True, 1), (False, False, 1)],
+        ids=["checkout-above-mount", "checkout-on-mount", "cross-device-discovery"],
+    )
+    def test_resume_respects_git_filesystem_boundary(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stopped_at_mount: bool,
+        marker_on_mount: bool,
+        exit_code: int,
+    ) -> None:
+        volume = project.resolve() / "volume"
+        workdir = volume / "workspace"
+        ledger = _seed(workdir)
+        before = ledger.bucket_path.read_bytes()
+        (project / ".git" / "HEAD").write_text("unreadable ref\n", encoding="utf-8")
+        if marker_on_mount:
+            (volume / ".git").mkdir()
+        diagnostic = "fatal: not a git repository (or any of the parent directories): .git"
+        if stopped_at_mount:
+            diagnostic = (
+                f"fatal: not a git repository (or any parent up to mount point {project})\n"
+                "Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)."
+            )
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(project.parent.resolve()))
+        monkeypatch.setenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", "false" if stopped_at_mount else "true")
+        stat_path = Path.stat
+
+        def mounted_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+            result = stat_path(path, follow_symlinks=follow_symlinks)
+            if path not in (volume, workdir):
+                return result
+            fields = list(result)
+            fields[stat.ST_DEV] += 1
+            return os.stat_result(fields)
+
+        monkeypatch.setattr(Path, "stat", mounted_stat)
+        git_failure = GitResult(returncode=128, stdout="", stderr=diagnostic)
+        with patch("bernstein.core.persistence.ledger_git.run_git", return_value=git_failure):
+            result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(workdir), "--json"])
+        assert result.exit_code == exit_code, result.output
+        report = json.loads(result.stdout)
+        if exit_code == 0:
+            assert report["dispatch_status"] == "queued"
+        else:
+            assert report["signal_paths"] == []
+            assert report["dispatch_status"] == "not_dispatched"
+            assert ledger.bucket_path.read_bytes() == before
+            assert not (workdir / ".sdd" / "runtime" / "resume").exists()
 
     @pytest.mark.parametrize("git_read", ["ls-tree", "cat-file"], ids=["tree", "blob"])
     @pytest.mark.parametrize(
