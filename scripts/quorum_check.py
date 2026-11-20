@@ -39,8 +39,10 @@ The rules, in the order they are applied
    it needs the maintainer's approval.
 3. A pull request opened by `github-actions[bot]` needs the maintainer's
    approval whatever it touches: anyone who can push a branch can open one.
-4. The maintainer's own pull requests merge without approvals, and any
-   standing `changes requested` from a committer blocks them (section 6).
+4. The maintainer's own pull requests merge without approvals unless they
+   carry a commit authored outside the roster and built-in workflow account.
+   Co-author credit alone does not change the rule. Any standing `changes requested` from a committer
+   blocks them (section 6).
    Until 2026-10-05 a pull request the maintainer has pushed to and then
    declared adopted in the thread is treated the same way (section 3), if it
    needs only the ordinary two approvals, touches no path a CODEOWNERS line
@@ -59,9 +61,10 @@ The rules, in the order they are applied
    author or by anyone who pushed to the branch.
 
    A protected path (any CODEOWNERS entry that is not `*`) needs its owner.
-   Until 2026-10-05 the maintainer's approval alone satisfies the ordinary
-   two-approval quorum (the backlog window, charter section 3); the third
-   approval on large or sensitive changes is unchanged.
+   Until 2026-11-23 00:00 UTC the maintainer's approval alone satisfies the
+   ordinary two-approval quorum (the sprint window, charter section 3,
+   following the backlog window); the third approval on large or sensitive
+   changes is unchanged.
 
 
 Approvals count only when they were given on the current head commit: a push
@@ -259,6 +262,7 @@ GITHUB_ACTIONS_BOT = "github-actions[bot]"
 # sensitive changes, which keep the third approval. After the date this
 # constant is dead code and the branch below goes with it.
 BACKLOG_WINDOW_ENDS = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+SPRINT_WINDOW_ENDS = datetime(2026, 11, 23, 0, 0, tzinfo=UTC)
 
 
 def gh_json(*args: str) -> Any:
@@ -457,6 +461,10 @@ class PullRequest:
     # except the ones in `update_only`.
     contributors: set[str]
     last_push: datetime
+    # Actual commit authors, separate from committers and co-author credit.
+    # An empty login is an unlinked author, not evidence of roster membership.
+    commit_authors: frozenset[str] = frozenset()
+    commit_authors_complete: bool = False
     # Earlier commits whose net diff is the head's: an approval given on one
     # of them was given on what is about to merge.
     same_diff: frozenset[str] = frozenset()
@@ -840,6 +848,14 @@ def fetch_pull_request(
 
     author = (raw.get("user") or {}).get("login", "")
     head_sha = (raw.get("head") or {}).get("sha", "")
+    reported_commits = raw.get("commits")
+    authors_complete = (
+        isinstance(reported_commits, int)
+        and not isinstance(reported_commits, bool)
+        and reported_commits == len(commits)
+        and 0 < len(commits) < PR_COMMIT_LIMIT
+        and commits[-1].get("sha") == head_sha
+    )
     paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
     reviews = [
         Review(
@@ -885,6 +901,8 @@ def fetch_pull_request(
         reviews=reviews,
         contributors=contributors,
         last_push=pushed_at or datetime.now(UTC),
+        commit_authors=frozenset(((commit.get("author") or {}).get("login")) or "" for commit in commits),
+        commit_authors_complete=authors_complete,
         same_diff=same_diff,
         update_only=update_only,
         diff_changed_at=diff_changed_at,
@@ -986,6 +1004,16 @@ def adoptable(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
     return not any(owners_for(p, owners)[1] or p.startswith(ADOPTION_EXCLUDED_PREFIXES) for p in pr.paths)
 
 
+def outside_commit_authors(pr: PullRequest, roster: Roster) -> frozenset[str]:
+    """Actual authors outside the roster and the built-in workflow account.
+
+    The workflow account writes the project's own generated mirrors. Its
+    commits alone do not turn a maintainer's change into outside work.
+    """
+    members = roster.quorum_holders | roster.triagers | roster.automation | {GITHUB_ACTIONS_BOT}
+    return pr.commit_authors - members
+
+
 def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]], now: datetime) -> Verdict:
     if pr.is_draft:
         return Verdict(True, "draft, nothing to decide yet")
@@ -1030,6 +1058,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             )
         )
 
+    carried_outside = pr.author == roster.maintainer and bool(outside_commit_authors(pr, roster))
     adoption_open = now < ADOPTION_ENDS and adoptable(pr, owners)
     adopted = (
         adoption_open
@@ -1040,6 +1069,17 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         )
     )
 
+    # Required maintainer reviews obey the same known-writer exclusion as
+    # ordinary quorum and CODEOWNERS reviews. Only proven update-only pushes
+    # are exempt; account type never supplies independence.
+    independent_maintainer = roster.maintainer not in pr.writers and roster.maintainer != pr.author
+    maintainer_approved = roster.maintainer in approvals and independent_maintainer
+    maintainer_reviewer = (
+        f"@{roster.maintainer}"
+        if independent_maintainer
+        else "nobody: the required maintainer wrote or pushed this change; independent review is required"
+    )
+
     if pr.author in roster.automation:
         stops = sorted(
             p
@@ -1047,13 +1087,13 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             if any(word in p for word in AUTOMATION_STOP_WORDS) or p.startswith(AUTOMATION_STOP_PREFIXES)
         )
         if stops:
-            met = roster.maintainer in approvals
+            met = maintainer_approved
             verdict.requirements.append(
                 Requirement(
                     f"maintainer approval: automation changing {', '.join(f'`{p}`' for p in stops[:4])}"
                     + (" and others" if len(stops) > 4 else ""),
                     met,
-                    f"@{roster.maintainer}",
+                    maintainer_reviewer,
                 )
             )
         else:
@@ -1062,22 +1102,35 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         verdict.requirements.append(
             Requirement(
                 "maintainer approval: a pull request opened by the workflow account",
-                roster.maintainer in approvals,
-                f"@{roster.maintainer}",
+                maintainer_approved,
+                maintainer_reviewer,
             )
         )
-    elif pr.author == roster.maintainer:
+    elif pr.author == roster.maintainer and not pr.commit_authors_complete:
+        verdict.requirements.append(
+            Requirement(
+                "complete commit-author evidence before selecting the maintainer review rule",
+                False,
+                "complete API history covering the head and reported count, or split the change",
+            )
+        )
+    elif pr.author == roster.maintainer and not carried_outside:
         verdict.notes.append(
             "The maintainer's own change merges without approvals; a committer's "
             "*changes requested* blocks it (charter, section 6)."
         )
-    elif adopted:
+    elif adopted and not carried_outside:
         verdict.notes.append(
             "Adopted by the maintainer, who pushed to the branch and said so in the thread: "
             "it merges as their own change until 2026-10-05, and a committer's "
             "*changes requested* blocks it (charter, section 3)."
         )
     else:
+        if carried_outside:
+            verdict.notes.append(
+                "The maintainer opened this pull request with outside-authored commits; "
+                "the ordinary contribution rules apply (charter, section 3)."
+            )
         eligible = roster.quorum_holders - {pr.author} - pr.writers
         approving = approvals & eligible
         approving_core = approving & roster.core_for(pr.paths)
@@ -1097,8 +1150,9 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             text = "1 approval, no core reviewer required (unprotected docs-only or size/s change)"
         met = len(approving) >= need_total and len(approving_core) >= need_core
         who = _names(eligible - approving)
-        if need_total == 2 and now < BACKLOG_WINDOW_ENDS:
-            text += f", or the maintainer's alone until {BACKLOG_WINDOW_ENDS:%Y-%m-%d}"
+        approval_window_ends = BACKLOG_WINDOW_ENDS if now < BACKLOG_WINDOW_ENDS else SPRINT_WINDOW_ENDS
+        if need_total == 2 and now < approval_window_ends:
+            text += f", or the maintainer's alone until {approval_window_ends:%Y-%m-%d %H:%M UTC}"
             met = met or roster.maintainer in approving
             if roster.maintainer not in approving:
                 who += f", or @{roster.maintainer} alone"
@@ -1109,8 +1163,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
                 Requirement(
                     f"maintainer approval or a split ({pr.changed_lines} changed lines, "
                     f"over {MAINTAINER_OR_SPLIT_LINES})",
-                    roster.maintainer in approvals,
-                    f"@{roster.maintainer}, or split the change",
+                    maintainer_approved,
+                    f"{maintainer_reviewer}, or split the change",
                 )
             )
 

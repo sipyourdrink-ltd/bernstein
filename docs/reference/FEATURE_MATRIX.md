@@ -165,7 +165,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 
 | Capability | Docs status | Maturity | Notes |
 |---|---|---|---|
-| Agent catalog/discovery | Full | 3 | `bernstein agents sync/list/discover/match/showcase` (40+ CLI agent adapters) |
+| Agent catalog/discovery | Full | 3 | `bernstein agents sync/list/discover/match/showcase` (55 selectable CLI agent adapter names) |
 | Browser / computer-use adapter | Full | 3 | Adapter family for autonomous browser and computer-use agents; every action is a content-addressed lineage anchor (`adapters/computer_use.py`) |
 | GitHub App and CI fix flows | Full | 3 | `bernstein ci fix <url>`, `github setup` |
 | [Trigger sources](../operations/trigger-sources.md) | Full | 3 | `github`, `gitlab`, `slack`, `discord`, `file_watch`, `webhook`, `odata`, and `schedule` source adapters (`core/trigger_sources/`) |

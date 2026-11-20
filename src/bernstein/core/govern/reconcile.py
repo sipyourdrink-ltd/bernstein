@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.govern.plan_models import canonical_digest
 from bernstein.core.govern.reconcile_models import (
     DesiredState,
     DiffAction,
@@ -42,9 +44,11 @@ from bernstein.core.govern.reconcile_models import (
     Snapshot,
     SnapshotEntity,
 )
+from bernstein.core.security.change_receipt import ChangeAttempt, ChangeReceipt, change_receipt_payload_errors
 from bernstein.core.security.governance import GovernanceDecision, anchor_decision, read_decisions
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 #: The action every reconcile decision record carries, so a reader can pick
@@ -386,8 +390,135 @@ def propose_reconcile(
 __all__ = [
     "RECONCILE_ACTION",
     "RECONCILE_SUBJECT",
+    "apply_reconcile_diff",
     "baseline_from_decisions",
     "compute_reconcile_diff",
     "propose_reconcile",
     "snapshot_surface",
 ]
+
+
+def _validate_reconcile_receipts(
+    diff: ReconcileDiff, receipt: ChangeReceipt, previous: ChangeReceipt | None
+) -> dict[str, ChangeAttempt]:
+    """Bind in-process receipt data to this exact diff and execution context."""
+    if receipt.changes or receipt.final_status != "complete":
+        raise ValueError("receipt template must have no attempts and complete status")
+    if receipt.plan_id != diff.run_id or receipt.plan_digest != canonical_digest(diff.to_dict()):
+        raise ValueError("receipt template does not identify this reconcile diff")
+    if not all(
+        (receipt.playbook_digest, receipt.environment_digest, receipt.approver_identity.strip(), receipt.timestamp)
+    ):
+        raise ValueError("policy, environment, approver and timestamp are required")
+    entries = {entry.idempotency_key: entry for entry in diff.entries}
+    identities = {(entry.kind, entry.entity_id) for entry in diff.entries}
+    if len(entries) != len(diff.entries) or len(identities) != len(diff.entries):
+        raise ValueError("reconcile diff contains duplicate entity identities")
+    for entry in diff.entries:
+        if entry.action is DiffAction.REMOVE and entry.declared_value is not None:
+            raise ValueError("removal intent must declare absence")
+        if entry.action in (DiffAction.ADD, DiffAction.MUTATE) and entry.declared_value is None:
+            raise ValueError("add and mutate intent must declare a value")
+    if previous is None:
+        return {}
+    if change_receipt_payload_errors(previous.to_dict()):
+        raise ValueError("previous receipt payload is invalid")
+    for field in ("plan_id", "plan_digest", "playbook_digest", "environment_digest", "approver_identity"):
+        if getattr(previous, field) != getattr(receipt, field):
+            raise ValueError(f"previous receipt has a different {field}")
+    attempts: dict[str, ChangeAttempt] = {}
+    for attempt in previous.changes:
+        entry = entries.get(attempt.change_id)
+        if entry is None or attempt.change_id in attempts:
+            raise ValueError("previous receipt contains an unknown or duplicate intent")
+        if attempt.target != f"{entry.kind.value}:{entry.entity_id}":
+            raise ValueError("previous receipt target does not match its intent")
+        if attempt.change_type != _reconcile_change_type(entry):
+            raise ValueError("previous receipt change type does not match its intent")
+        attempts[attempt.change_id] = attempt
+    return attempts
+
+
+def _reconcile_change_type(entry: ReconcileEntry) -> str:
+    return {DiffAction.ADD: "create", DiffAction.REMOVE: "delete"}.get(entry.action, "update")
+
+
+def _attempt_reconcile_entry(
+    entry: ReconcileEntry,
+    timestamp: str,
+    observe: Callable[[ReconcileEntry], tuple[SnapshotEntity | None, bool]],
+    apply_entry: Callable[[ReconcileEntry], None],
+) -> ChangeAttempt:
+    attempt = ChangeAttempt(
+        change_id=entry.idempotency_key,
+        change_type=_reconcile_change_type(entry),
+        target=f"{entry.kind.value}:{entry.entity_id}",
+        attempted_at=timestamp,
+        outcome="failure",
+        written_value=entry.declared_value or "",
+    )
+    try:
+        current, absence_confirmed = observe(entry)
+        if current is None and not absence_confirmed:
+            raise ValueError("entity observation is unavailable")
+        if current is not None and (current.kind, current.entity_id) != (entry.kind, entry.entity_id):
+            raise ValueError("observation identifies a different entity")
+        attempt = replace(attempt, prior_value="" if current is None else current.observed_value)
+        if entry.already_satisfied(current, absence_confirmed=absence_confirmed):
+            return replace(attempt, outcome="skipped")
+        if entry.action not in (DiffAction.ADD, DiffAction.MUTATE, DiffAction.REMOVE):
+            raise ValueError("diff does not authorize a change for this entity")
+        observed_value = None if current is None else current.observed_value
+        if observed_value != entry.observed_value:
+            raise ValueError("entity changed since the reviewed diff")
+        apply_entry(entry)
+        return replace(attempt, outcome="success")
+    except Exception as exc:
+        return replace(attempt, error_message=f"{type(exc).__name__}: {exc}")
+
+
+def apply_reconcile_diff(
+    diff: ReconcileDiff,
+    *,
+    receipt: ChangeReceipt,
+    authorize: Callable[[ReconcileDiff, str], bool],
+    observe: Callable[[ReconcileEntry], tuple[SnapshotEntity | None, bool]],
+    apply_entry: Callable[[ReconcileEntry], None],
+    previous: ChangeReceipt | None = None,
+) -> ChangeReceipt:
+    """Apply a fixture/caller-supplied diff, recording skips and partial resume.
+
+    This library helper has no built-in mutators and is not a CLI admission
+    path. The trusted caller supplies an authorizer for the *whole* reviewed
+    diff and its effective policy digest, including removal approvals. A key
+    identifies intent, never permission. Authorization must return exactly
+    ``True`` before observation or mutation begins.
+
+    ``observe`` reads each current entity and explicitly confirms absence;
+    ``(None, False)`` is unavailable, not a successful removal. Successful
+    callback return means the requested value was written. The first failure
+    ends the sequence; entries never attempted have no ChangeAttempt.
+
+    ``receipt`` supplies the execution context and timestamp. ``previous`` is
+    trusted in-process data from an earlier invocation, never unverified wire
+    input: callers loading a receipt must verify its envelope and signer trust
+    through the shared receipt protocol first. Resume accepts only the same
+    diff/policy/environment/approver, skips prior success or satisfaction, and
+    retries failures and entries never attempted. A fresh diff is required for
+    subsequent drift. Existing serialized diffs and receipt schemas are intact.
+    """
+    prior = _validate_reconcile_receipts(diff, receipt, previous)
+    if authorize(diff, receipt.playbook_digest) is not True:
+        raise PermissionError("reconcile diff is not authorized under the effective policy")
+    changes: list[ChangeAttempt] = []
+    for entry in diff.entries:
+        old = prior.get(entry.idempotency_key)
+        if old is not None and old.outcome in ("success", "skipped"):
+            attempt = replace(old, attempted_at=receipt.timestamp, outcome="skipped", error_message="")
+        else:
+            attempt = _attempt_reconcile_entry(entry, receipt.timestamp, observe, apply_entry)
+        changes.append(attempt)
+        if attempt.outcome == "failure":
+            status = "partial" if any(change.outcome == "success" for change in changes) else "failed"
+            return replace(receipt, changes=tuple(changes), final_status=status)
+    return replace(receipt, changes=tuple(changes), final_status="complete")

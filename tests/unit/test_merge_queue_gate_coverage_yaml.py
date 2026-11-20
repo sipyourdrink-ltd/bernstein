@@ -856,11 +856,15 @@ def test_ci_draft_skips_runner_jobs(ci_jobs: dict[str, Any]) -> None:
     status_overrides = {
         name for name, job in ci_jobs.items() if re.search(r"\b(?:always|cancelled|failure)\(\)", job.get("if", ""))
     }
-    assert status_overrides == {GATE_JOB_KEY, "test", "test-macos"}
+    assert status_overrides == {GATE_JOB_KEY, "test", "test-macos", "coverage-report"}
     for name in ("test", "test-macos"):
         condition = " ".join(ci_jobs[name]["if"].split())
         assert "needs.determine-changes.result == 'success' &&" in condition
         assert "needs.lint.result == 'success' &&" in condition
+
+    # Coverage still requires test, which skips when the draft's root jobs skip.
+    coverage_condition = " ".join(ci_jobs["coverage-report"]["if"].split())
+    assert "needs.test.result == 'success' &&" in coverage_condition
 
     # The roll-up bypasses skipped dependencies with always(), so it needs its own guard.
     gate = ci_jobs[GATE_JOB_KEY]
