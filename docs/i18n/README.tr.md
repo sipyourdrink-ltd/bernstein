@@ -206,7 +206,7 @@ Makine tarafından okunabilir denetim sonuçları için `bernstein govern audit 
 `bernstein delegation verify RUN`, makbuz zincirini çalıştırma manifestinde denetim anahtarıyla HMAC kullanılarak mühürlenmiş son başlık ve atlama sayısıyla karşılaştırır. Böylece kuyruğun silinmesini, değiştirmeyi ve kapanış sonrası zincirin uzatılmasını, bildirimin anahtar olmadan yeniden yazılması dahil, tespit eder. Bildirimin kaldırılması çalıştırmayı eksik bırakır (çıkış kodu `3`); çalıştırma hiçbir zaman geçerli sayılmaz. Bu denetim, eski ve özgün bir anlık görüntünün yeniden kullanılmasını tespit etmez ve denetim anahtarını elinde tutan bir yazara karşı koruma sağlamaz. Bkz. [yetki devri doğrulama iş akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### nasıl çalışır
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Her hedef dört aşamadan geçer:
 
@@ -217,8 +217,10 @@ Her hedef dört aşamadan geçer:
 
 Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: [neden deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+Düzeltilmiş toplam harcama bütçe için belirlenen durdurma eşiğine ulaştığında veya bu eşiği aştığında, yeni token bildirilmemiş olsa bile maliyet izleyicisinin `can_spawn()` denetimi `False` döndürür. Yeniden başlatıldıktan sonra, belirli bir ajan, görev ve model birleşimi için daha önce bildirilen kesin toplam maliyet yalnızca kayıtlı token sayılarından çıkarılamaz.
+
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Bağlantısı terminalden ayrılmış bir SSH çalıştırmasındaki görev sıfırdan farklı bir çıkış koduyla sonlanırsa hem görev hem de çalıştırma başarısız olur. Çıkış kodu görev makbuzuna kaydedilir ve sonraki görevler beklemede kalır.
 
 Operatör arayüzünün tamamı (PR otomasyonu, zamanlamalar, sohbet köprüleri, autofix arka plan programı) [operatör komutları](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md) sayfasındadır.
 
