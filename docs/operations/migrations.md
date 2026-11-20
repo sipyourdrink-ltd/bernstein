@@ -3,6 +3,8 @@
 Audience: operators upgrading Bernstein across versions, and contributors
 who change the shape of anything Bernstein persists under `.sdd/`.
 
+For the 3.24 to 4.0 upgrade, see the [migration guide](migration-3.24-to-4.0.md).
+
 ## Overview
 
 Everything Bernstein writes to disk lives under the project `.sdd/`

@@ -1,4 +1,4 @@
-"""Caller compatibility for reviewdog/action-actionlint v1.83.0."""
+"""Caller compatibility for reviewdog/action-actionlint v1.84.1."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def workflow_lint_step() -> dict:
 
 
 def test_workflow_lint_uses_reviewed_release(workflow_lint_step: dict) -> None:
-    assert workflow_lint_step["uses"] == ACTION + "@a7d35aaf8c309203a4ae861d32b7bd490baa7bf3"
+    assert workflow_lint_step["uses"] == ACTION + "@ae857e78c1b42b3d0a49637181b09d3d56d402b4"
 
 
 def test_workflow_lint_retains_reporter_and_flags(workflow_lint_step: dict) -> None:

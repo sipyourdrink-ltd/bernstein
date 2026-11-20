@@ -5,7 +5,7 @@ adapter: gemini
 binary: gemini
 install:
   method: npm
-  spec: "@google/gemini-cli@latest"
+  spec: "@google/gemini-cli@0.70.0"
 auth:
   required_for_help: false
   required_for_models: false

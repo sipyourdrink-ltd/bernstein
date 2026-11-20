@@ -70,13 +70,12 @@
         "echo \"last-green projection unchanged; nothing to propose\"",
         "exit 0",
         "fi",
-        "git config user.email \"canary@users.noreply.github.com\"",
-        "git config user.name \"Bernstein Canary\"",
         "BRANCH=bot/adapter-canary-last-green",
         "uv run python scripts/canary_propose_branch.py \\",
         "--branch \"$BRANCH\" \\",
         "--base-ref main",
-        "git push --force -u origin \"$BRANCH\"",
+        "git push --force --quiet \"https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git\" \\",
+        "\"HEAD:refs/heads/${BRANCH}\"",
         "EXISTING=$(gh pr list \\",
         "--repo \"${{ github.repository }}\" \\",
         "--head \"$BRANCH\" \\",
@@ -98,7 +97,7 @@
     },
     {
       "anchor": {
-        "line": 214,
+        "line": 215,
         "path": ".github/workflows/adapter-contract-drift.yml",
         "sha": "440781f955ff"
       },
@@ -193,7 +192,7 @@
         "npm install -g \"$SPEC\"",
         ";;",
         "pipx)",
-        "python -m pip install --user pipx",
+        "python -m pip install --user --require-hashes -r .github/requirements/pipx-requirements.txt",
         "python -m pipx install \"$SPEC\"",
         "echo \"$HOME/.local/bin\" >> \"$GITHUB_PATH\"",
         ";;",
@@ -235,6 +234,21 @@
         "esac"
       ],
       "workflow": "Adapter contract drift"
+    },
+    {
+      "anchor": {
+        "line": 34,
+        "path": ".github/workflows/agent-manifest-conformance.yml",
+        "sha": "245abce728e7"
+      },
+      "file": ".github/workflows/agent-manifest-conformance.yml",
+      "job": "pinned-contract",
+      "runs": [
+        "uv sync --locked --group dev --extra manifest",
+        "uv run --locked --extra manifest python -c \"from importlib.metadata import version; assert version('agent-manifest') == '0.12.0'\"",
+        "uv run --locked --extra manifest python scripts/run_tests.py tests/unit/security/test_agent_manifest_export.py tests/unit/test_agent_manifest_spawn_export.py --parallel 1"
+      ],
+      "workflow": "agent-manifest-conformance"
     },
     {
       "anchor": {
@@ -412,8 +426,8 @@
         "uv run python scripts/auto_heal_v2_imports.py blast_radius",
         "set -euo pipefail",
         "BRANCH=\"ci-heal/${SHORT_SHA}\"",
-        "git config user.email \"bernstein-autoheal@users.noreply.github.com\"",
-        "git config user.name \"bernstein-autoheal[bot]\"",
+        "git config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"",
+        "git config user.name \"github-actions[bot]\"",
         "git checkout -b \"$BRANCH\"",
         "git add -A",
         "git commit -m \"fix(ci-heal-v2): apply ${STRATEGY} for ${SHORT_SHA}\"",
@@ -611,7 +625,7 @@
     },
     {
       "anchor": {
-        "line": 317,
+        "line": 350,
         "path": ".github/workflows/auto-release.yml",
         "sha": "6406c7c6973a"
       },
@@ -641,8 +655,7 @@
         "else",
         "echo \"version=${CURRENT_VERSION}\" >> \"$GITHUB_OUTPUT\"",
         "fi",
-        "git tag \"v${FINAL_VERSION}\"",
-        "git push origin \"v${FINAL_VERSION}\"",
+        "set -euo pipefail",
         "gh workflow run publish.yml --ref main -f tag=\"v${FINAL_VERSION}\""
       ],
       "workflow": "Auto-release"
@@ -678,147 +691,6 @@
     },
     {
       "anchor": {
-        "line": 511,
-        "path": ".github/workflows/bernstein-ci-fix.yml",
-        "sha": "cf855d92aa9e"
-      },
-      "file": ".github/workflows/bernstein-ci-fix.yml",
-      "job": "fallback-issue",
-      "runs": [
-        "set -euo pipefail",
-        "RUN_URL=\"${{ github.server_url }}/${REPO}/actions/runs/${RUN_ID}\"",
-        "TITLE=\"[ci-fix] CI failing on main\"",
-        "REASON=\"Bernstein auto-heal could not produce a fix in 3 iterations within \\$5 budget.\"",
-        "if [ \"$OUTCOME\" = \"no_changes\" ]; then",
-        "REASON=\"Bernstein auto-heal ran but produced no diff (likely a transient/infrastructural failure or out-of-scope error).\"",
-        "elif [ \"$OUTCOME\" = \"oversized_diff\" ]; then",
-        "REASON=\"Bernstein auto-heal produced a diff larger than the 50 LOC safety cap. Refusing to auto-PR; human review required (see #1273 for the cap rationale).\"",
-        "fi",
-        "BODY=$(cat <<EOF",
-        "CI failure on commit \\`${HEAD_SHA}\\`. Run: $RUN_URL"
-      ],
-      "workflow": "Bernstein CI Fix"
-    },
-    {
-      "anchor": {
-        "line": 211,
-        "path": ".github/workflows/bernstein-ci-fix.yml",
-        "sha": "b9d880984884"
-      },
-      "file": ".github/workflows/bernstein-ci-fix.yml",
-      "job": "fix",
-      "runs": [
-        "git config user.name \"bernstein[bot]\"",
-        "git config user.email \"bernstein-bot@users.noreply.github.com\"",
-        "git checkout -b \"$AUTO_HEAL_BRANCH\"",
-        "mkdir -p /tmp/ci-failure",
-        "gh run view \"$RUN_ID\" --log-failed > /tmp/ci-failure/logs.txt 2>&1 || true",
-        "tail -n 200 /tmp/ci-failure/logs.txt > /tmp/ci-failure/logs-tail.txt",
-        "{",
-        "echo \"# CI failure on commit ${HEAD_SHA}\"",
-        "echo",
-        "echo \"Run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}\"",
-        "echo",
-        "echo \"## Failing job tail (last 200 lines)\"",
-        "echo",
-        "echo '```'",
-        "cat /tmp/ci-failure/logs-tail.txt",
-        "echo '```'",
-        "} > /tmp/ci-failure/summary.md",
-        "if [ -z \"$(git status --porcelain)\" ]; then",
-        "echo \"has_changes=false\" >> \"$GITHUB_OUTPUT\"",
-        "else",
-        "echo \"has_changes=true\" >> \"$GITHUB_OUTPUT\"",
-        "fi",
-        "MAX_LOC=50",
-        "if git diff HEAD --numstat | awk '{ if ($1 == \"-\" || $2 == \"-\") { exit 2 } added+=$1; removed+=$2 } END { exit (added+removed > '\"$MAX_LOC\"') ? 1 : 0 }'; then",
-        "TOTAL=$(git diff HEAD --numstat | awk '{ added+=$1; removed+=$2 } END { print added+removed }')",
-        "echo \"::notice::Auto-heal diff is ${TOTAL} LOC (cap ${MAX_LOC}) - within cap.\"",
-        "echo \"within_cap=true\" >> \"$GITHUB_OUTPUT\"",
-        "else",
-        "STATUS=$?",
-        "if [ \"$STATUS\" = \"2\" ]; then",
-        "echo \"::warning::Auto-heal diff contains binary changes - refusing to auto-PR.\"",
-        "else",
-        "TOTAL=$(git diff HEAD --numstat | awk '{ added+=$1; removed+=$2 } END { print added+removed }')",
-        "echo \"::warning::Auto-heal diff is ${TOTAL} LOC, exceeds cap ${MAX_LOC} - escalating to fallback issue.\"",
-        "fi",
-        "echo \"within_cap=false\" >> \"$GITHUB_OUTPUT\"",
-        "fi",
-        "git add -A",
-        "git commit -m \"auto-heal: fix CI on ${SHORT_SHA}",
-        "echo \"result=no_changes\" >> \"$GITHUB_OUTPUT\"",
-        "echo \"result=oversized_diff\" >> \"$GITHUB_OUTPUT\""
-      ],
-      "workflow": "Bernstein CI Fix"
-    },
-    {
-      "anchor": {
-        "line": 424,
-        "path": ".github/workflows/bernstein-ci-fix.yml",
-        "sha": "2d205d884c42"
-      },
-      "file": ".github/workflows/bernstein-ci-fix.yml",
-      "job": "tier3-shadow",
-      "runs": [
-        "set -euo pipefail",
-        "if ! echo \"$HEAD_SHA\" | grep -qE '^[0-9a-f]{40}$'; then",
-        "echo \"::error::head_sha '$HEAD_SHA' is not a 40-hex SHA\"",
-        "exit 1",
-        "fi",
-        "if ! git merge-base --is-ancestor \"$HEAD_SHA\" origin/main; then",
-        "echo \"::error::head_sha '$HEAD_SHA' is not reachable from origin/main\"",
-        "exit 1",
-        "fi",
-        "git -c advice.detachedHead=false checkout \"$HEAD_SHA\"",
-        "mkdir -p /tmp/tier3",
-        "gh run view \"$RUN_ID\" --log-failed > /tmp/tier3/logs.txt 2>&1 || true",
-        "tail -n 200 /tmp/tier3/logs.txt > /tmp/tier3/logs-tail.txt",
-        "uv sync --no-progress",
-        "uv run python scripts/run_tier3_shadow.py \\",
-        "--failed-run-id \"$FAILED_RUN_ID\" \\",
-        "--head-sha \"$HEAD_SHA\" \\",
-        "--failure-class \"$(echo \"$FAILED_JOBS\" | head -n1)\" \\",
-        "--log-tail /tmp/tier3/logs-tail.txt \\",
-        "--sdd-dir .sdd"
-      ],
-      "workflow": "Bernstein CI Fix"
-    },
-    {
-      "anchor": {
-        "line": 74,
-        "path": ".github/workflows/bernstein-ci-fix.yml",
-        "sha": "6907ee6c1c91"
-      },
-      "file": ".github/workflows/bernstein-ci-fix.yml",
-      "job": "triage",
-      "runs": [
-        "SHORT_SHA=\"${HEAD_SHA:0:12}\"",
-        "{",
-        "echo \"head_sha=${HEAD_SHA}\"",
-        "echo \"short_sha=${SHORT_SHA}\"",
-        "echo \"run_id=${RUN_ID}\"",
-        "echo \"branch=${BRANCH}\"",
-        "echo \"auto_heal_branch=auto-heal/${SHORT_SHA}\"",
-        "} >> \"$GITHUB_OUTPUT\"",
-        "EXISTING=$(gh pr list \\",
-        "--repo \"${{ github.repository }}\" \\",
-        "--head \"$BRANCH_NAME\" \\",
-        "--state open \\",
-        "--json number \\",
-        "--jq '.[0].number // \"\"' 2>/dev/null || echo \"\")",
-        "if [ -n \"$EXISTING\" ]; then",
-        "echo \"existing_pr=$EXISTING\" >> \"$GITHUB_OUTPUT\"",
-        "echo \"::notice::Auto-heal PR #$EXISTING already exists for $BRANCH_NAME - skipping.\"",
-        "else",
-        "echo \"existing_pr=\" >> \"$GITHUB_OUTPUT\"",
-        "fi",
-        "ALLOWED='^(Lint|Spelling \\(typos\\)|Workflow lint|Repo hygiene|Dead code \\(Vulture\\)|Test \\()'"
-      ],
-      "workflow": "Bernstein CI Fix"
-    },
-    {
-      "anchor": {
         "line": 200,
         "path": ".github/workflows/bernstein-issues-decompose.yml",
         "sha": "8f890af2b9d6"
@@ -841,8 +713,8 @@
         "exit 0",
         "fi",
         "set -euo pipefail",
-        "git config user.name \"bernstein[bot]\"",
-        "git config user.email \"bernstein-bot@users.noreply.github.com\"",
+        "git config user.name \"github-actions[bot]\"",
+        "git config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"",
         "git add -A",
         "git commit -m \"Resolve issue ${ISSUE_NUMBER} with Bernstein\"",
         "set -euo pipefail",
@@ -1049,7 +921,7 @@
     },
     {
       "anchor": {
-        "line": 111,
+        "line": 113,
         "path": ".github/workflows/ci-macos-nightly.yml",
         "sha": "5fe368822210"
       },
@@ -1074,7 +946,7 @@
     },
     {
       "anchor": {
-        "line": 56,
+        "line": 58,
         "path": ".github/workflows/ci-macos-nightly.yml",
         "sha": "92108b94f48a"
       },
@@ -1088,6 +960,19 @@
         "uv run pytest tests/integration/test_adapter_e2e.py -x -q --timeout=60"
       ],
       "workflow": "CI (macOS nightly)"
+    },
+    {
+      "anchor": {
+        "line": 23,
+        "path": ".github/workflows/ci-post-merge-cadence.yml",
+        "sha": "d61ff451b6ef"
+      },
+      "file": ".github/workflows/ci-post-merge-cadence.yml",
+      "job": "dispatch",
+      "runs": [
+        "set -euo pipefail"
+      ],
+      "workflow": "CI post-merge cadence"
     },
     {
       "anchor": {
@@ -1126,7 +1011,7 @@
     },
     {
       "anchor": {
-        "line": 1753,
+        "line": 1936,
         "path": ".github/workflows/ci.yml",
         "sha": "e2b209d22c3e"
       },
@@ -1142,7 +1027,7 @@
     },
     {
       "anchor": {
-        "line": 1667,
+        "line": 1842,
         "path": ".github/workflows/ci.yml",
         "sha": "ec5284af6143"
       },
@@ -1155,7 +1040,7 @@
     },
     {
       "anchor": {
-        "line": 1713,
+        "line": 1888,
         "path": ".github/workflows/ci.yml",
         "sha": "bac446ca2ffe"
       },
@@ -1168,7 +1053,7 @@
     },
     {
       "anchor": {
-        "line": 1310,
+        "line": 1485,
         "path": ".github/workflows/ci.yml",
         "sha": "68c9c47ebd9b"
       },
@@ -1182,7 +1067,7 @@
     },
     {
       "anchor": {
-        "line": 1406,
+        "line": 1581,
         "path": ".github/workflows/ci.yml",
         "sha": "b5d0a00faf32"
       },
@@ -1196,7 +1081,7 @@
     },
     {
       "anchor": {
-        "line": 2329,
+        "line": 2616,
         "path": ".github/workflows/ci.yml",
         "sha": "0ac6b51401d4"
       },
@@ -1209,13 +1094,15 @@
         "import json, os, sys",
         "data = json.load(open(\"results.json\"))",
         "plan = json.load(open(\"plan.json\"))",
-        "event = os.environ.get(\"EVENT_NAME\", \"\")"
+        "event = os.environ.get(\"EVENT_NAME\", \"\")",
+        "ref = os.environ.get(\"REF_NAME\", \"\")",
+        "head_commit_message = os.environ.get(\"HEAD_COMMIT_MESSAGE\", \"\")"
       ],
       "workflow": "CI"
     },
     {
       "anchor": {
-        "line": 2261,
+        "line": 2545,
         "path": ".github/workflows/ci.yml",
         "sha": "c3ac6fa3f21a"
       },
@@ -1233,7 +1120,7 @@
     },
     {
       "anchor": {
-        "line": 2070,
+        "line": 2318,
         "path": ".github/workflows/ci.yml",
         "sha": "a75e245fdabe"
       },
@@ -1254,7 +1141,7 @@
     },
     {
       "anchor": {
-        "line": 778,
+        "line": 912,
         "path": ".github/workflows/ci.yml",
         "sha": "36d04d657d6e"
       },
@@ -1268,7 +1155,7 @@
     },
     {
       "anchor": {
-        "line": 163,
+        "line": 166,
         "path": ".github/workflows/ci.yml",
         "sha": "45f5df4344ab"
       },
@@ -1294,18 +1181,26 @@
         "diff_failed=true",
         "fi",
         "elif [ \"$EVENT_NAME\" = \"merge_group\" ]; then",
-        "if [ -n \"$MERGE_GROUP_BASE_SHA\" ] && ! git cat-file -e \"${MERGE_GROUP_BASE_SHA}^{commit}\" 2>/dev/null; then",
-        "git fetch --no-tags origin \"$MERGE_GROUP_BASE_SHA\" || true",
+        "TRUNK=\"${MERGE_GROUP_BASE_REF#refs/heads/}\"",
+        "ROOT=\"\"",
+        "if [ -n \"$TRUNK\" ]; then",
+        "git fetch --no-tags origin \"+refs/heads/${TRUNK}:refs/remotes/origin/queue-trunk\" || true",
+        "ROOT=\"$(git merge-base refs/remotes/origin/queue-trunk HEAD 2>/dev/null || true)\"",
         "fi",
         "echo \"::group::git diagnostic\"",
-        "echo \"merge_group base -> ${MERGE_GROUP_BASE_SHA:-UNSET}\"",
-        "echo \"HEAD             -> $(git rev-parse HEAD 2>&1 || echo UNRESOLVED)\"",
+        "echo \"merge_group base_ref -> ${MERGE_GROUP_BASE_REF:-UNSET}\"",
+        "echo \"merge_group base_sha -> ${MERGE_GROUP_BASE_SHA:-UNSET}\"",
+        "echo \"batch root           -> ${ROOT:-UNRESOLVED}\"",
+        "echo \"HEAD                 -> $(git rev-parse HEAD 2>&1 || echo UNRESOLVED)\"",
+        "if [ -n \"$ROOT\" ] && [ -n \"$MERGE_GROUP_BASE_SHA\" ] && [ \"$ROOT\" != \"$MERGE_GROUP_BASE_SHA\" ]; then",
+        "echo \"stacked entry: base_sha is an earlier entry's head; classifying from the batch root\"",
+        "fi",
         "echo \"::endgroup::\"",
-        "if [ -z \"$MERGE_GROUP_BASE_SHA\" ]; then",
-        "echo \"::warning::merge_group payload carried no base_sha; falling back to safe over-broad result\"",
+        "if [ -z \"$ROOT\" ]; then",
+        "echo \"::warning::could not resolve the merge_group batch root; falling back to safe over-broad result\"",
         "diff_failed=true",
-        "elif ! CHANGED=$(git diff --name-only \"${MERGE_GROUP_BASE_SHA}...HEAD\" 2>&1); then",
-        "echo \"::warning::git diff failed against the merge_group base; falling back to safe over-broad result\"",
+        "elif ! CHANGED=$(git diff --name-only \"${ROOT}...HEAD\" 2>&1); then",
+        "echo \"::warning::git diff failed against the merge_group batch root; falling back to safe over-broad result\"",
         "echo \"diff stderr: $CHANGED\"",
         "diff_failed=true",
         "fi",
@@ -1325,6 +1220,7 @@
         "echo \"docs_only=false\"",
         "echo \"macos_sensitive=true\"",
         "echo \"rpm_relevant_changed=true\"",
+        "echo \"gate_evasion_relevant=true\"",
         "} | tee -a \"$GITHUB_OUTPUT\"",
         "exit 0",
         "fi",
@@ -1335,7 +1231,7 @@
     },
     {
       "anchor": {
-        "line": 1503,
+        "line": 1678,
         "path": ".github/workflows/ci.yml",
         "sha": "f431a6c610c6"
       },
@@ -1365,7 +1261,7 @@
     },
     {
       "anchor": {
-        "line": 807,
+        "line": 969,
         "path": ".github/workflows/ci.yml",
         "sha": "cb3b60ee7ae0"
       },
@@ -1387,7 +1283,21 @@
     },
     {
       "anchor": {
-        "line": 865,
+        "line": 941,
+        "path": ".github/workflows/ci.yml",
+        "sha": "737be662c41d"
+      },
+      "file": ".github/workflows/ci.yml",
+      "job": "gate-evasion",
+      "runs": [
+        "uv sync --locked --group dev --python 3.13",
+        "uv run --no-sync bernstein bench gate-evasion-baseline --baseline .github/gate-evasion-baseline.json"
+      ],
+      "workflow": "CI"
+    },
+    {
+      "anchor": {
+        "line": 1027,
         "path": ".github/workflows/ci.yml",
         "sha": "9f26501567c3"
       },
@@ -1421,6 +1331,7 @@
         "pipx install --python \"$(which python)\" \"${wheels[0]}\"",
         "bernstein --version",
         "bernstein --help",
+        "verify-audit-receipt --help",
         "set -euo pipefail",
         "BERNSTEIN_PYTHON=\"$(pipx environment --value PIPX_LOCAL_VENVS)/bernstein/bin/python\"",
         "\"$BERNSTEIN_PYTHON\" -c '",
@@ -1431,7 +1342,7 @@
     },
     {
       "anchor": {
-        "line": 1107,
+        "line": 1282,
         "path": ".github/workflows/ci.yml",
         "sha": "7bb770319a03"
       },
@@ -1452,7 +1363,7 @@
     },
     {
       "anchor": {
-        "line": 996,
+        "line": 1165,
         "path": ".github/workflows/ci.yml",
         "sha": "261905759cb8"
       },
@@ -1481,6 +1392,7 @@
         "echo \"$HOME/.local/bin\" >> \"$GITHUB_PATH\"",
         "bernstein --version",
         "bernstein --help",
+        "verify-audit-receipt --help",
         "set -euo pipefail",
         "UV_TOOL_DIR=\"$(uv tool dir)\"",
         "BERNSTEIN_PYTHON=\"$UV_TOOL_DIR/bernstein/bin/python\"",
@@ -1496,7 +1408,7 @@
     },
     {
       "anchor": {
-        "line": 2014,
+        "line": 2262,
         "path": ".github/workflows/ci.yml",
         "sha": "1bfe65ff72aa"
       },
@@ -1511,7 +1423,7 @@
     },
     {
       "anchor": {
-        "line": 624,
+        "line": 754,
         "path": ".github/workflows/ci.yml",
         "sha": "4d037aa10755"
       },
@@ -1531,7 +1443,7 @@
     },
     {
       "anchor": {
-        "line": 555,
+        "line": 675,
         "path": ".github/workflows/ci.yml",
         "sha": "b6609e8b574b"
       },
@@ -1540,6 +1452,8 @@
       "runs": [
         "uv run ruff check src/",
         "uv run ruff format --check src/",
+        "uv run ruff check tests/",
+        "uv run ruff format --check tests/",
         "uv run lint-imports",
         "uv run python scripts/check_routes_broad_except.py"
       ],
@@ -1547,7 +1461,7 @@
     },
     {
       "anchor": {
-        "line": 1444,
+        "line": 1619,
         "path": ".github/workflows/ci.yml",
         "sha": "7e4fc4c189af"
       },
@@ -1582,7 +1496,7 @@
     },
     {
       "anchor": {
-        "line": 1601,
+        "line": 1776,
         "path": ".github/workflows/ci.yml",
         "sha": "c4d1a09f24cb"
       },
@@ -1616,7 +1530,7 @@
     },
     {
       "anchor": {
-        "line": 1346,
+        "line": 1521,
         "path": ".github/workflows/ci.yml",
         "sha": "8ea30305c7f3"
       },
@@ -1630,7 +1544,29 @@
     },
     {
       "anchor": {
-        "line": 1177,
+        "line": 431,
+        "path": ".github/workflows/ci.yml",
+        "sha": "b5abef3a76cf"
+      },
+      "file": ".github/workflows/ci.yml",
+      "job": "plan-affected-tests",
+      "runs": [
+        "git fetch --no-tags --depth=1 origin \\",
+        "\"${BASE_SHA}:refs/remotes/origin/pr-base\"",
+        "uv run python scripts/plan_affected_tests.py plan \\",
+        "--base refs/remotes/origin/pr-base \\",
+        "--output affected-test-plan.json",
+        "echo \"affected_count=$(jq '.affected | length' affected-test-plan.json)\" >> \"$GITHUB_OUTPUT\"",
+        "echo \"base_sha=$(jq -r '.base_sha' affected-test-plan.json)\" >> \"$GITHUB_OUTPUT\"",
+        "echo \"head_sha=$(jq -r '.head_sha' affected-test-plan.json)\" >> \"$GITHUB_OUTPUT\"",
+        "echo \"planned=true\" >> \"$GITHUB_OUTPUT\"",
+        "echo \"No tests affected. Compared ${BASE_SHA}...${HEAD_SHA}.\""
+      ],
+      "workflow": "CI"
+    },
+    {
+      "anchor": {
+        "line": 1352,
         "path": ".github/workflows/ci.yml",
         "sha": "1e3081fa8734"
       },
@@ -1643,7 +1579,7 @@
     },
     {
       "anchor": {
-        "line": 744,
+        "line": 877,
         "path": ".github/workflows/ci.yml",
         "sha": "d3d44faa23bf"
       },
@@ -1668,7 +1604,7 @@
     },
     {
       "anchor": {
-        "line": 1568,
+        "line": 1743,
         "path": ".github/workflows/ci.yml",
         "sha": "efbc93b33f14"
       },
@@ -1681,7 +1617,7 @@
     },
     {
       "anchor": {
-        "line": 395,
+        "line": 503,
         "path": ".github/workflows/ci.yml",
         "sha": "70b747755777"
       },
@@ -1728,23 +1664,26 @@
         "uv run bernstein readme-l10n verify --workdir .",
         "uv run python scripts/check_docs_requirements_pins.py",
         "uv run python scripts/gen_distribution_manifests.py --check",
+        "uv run python scripts/gen_governance_coverage.py --check",
         "uv run pytest tests/unit/test_cli_command_registration.py -q --no-cov --timeout=120",
         "uv run python scripts/render_tui_snapshot.py",
         "uv run python scripts/bind_webui_renders.py",
         "BASE=\"\"",
+        "COMMIT_MESSAGES=\"--commit-messages\"",
         "if [ \"$EVENT_NAME\" = \"pull_request\" ]; then",
         "git fetch --no-tags origin \"refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}\" || true",
         "BASE=\"$(git merge-base \"origin/${BASE_REF}\" HEAD 2>/dev/null || true)\"",
+        "COMMIT_MESSAGES=\"--no-commit-messages\"",
         "elif [ \"$EVENT_NAME\" = \"merge_group\" ]; then",
         "BASE=\"${{ github.event.merge_group.base_sha }}\"",
         "fi",
-        "uv run python scripts/check_test_count_drop.py --base \"${BASE}\""
+        "uv run python scripts/check_test_count_drop.py --base \"${BASE}\" \"${COMMIT_MESSAGES}\""
       ],
       "workflow": "CI"
     },
     {
       "anchor": {
-        "line": 1238,
+        "line": 1413,
         "path": ".github/workflows/ci.yml",
         "sha": "2ae1b3512aa9"
       },
@@ -1757,7 +1696,7 @@
     },
     {
       "anchor": {
-        "line": 1275,
+        "line": 1450,
         "path": ".github/workflows/ci.yml",
         "sha": "e3c212fbb269"
       },
@@ -1771,7 +1710,7 @@
     },
     {
       "anchor": {
-        "line": 1209,
+        "line": 1384,
         "path": ".github/workflows/ci.yml",
         "sha": "05e4d2628e52"
       },
@@ -1784,7 +1723,7 @@
     },
     {
       "anchor": {
-        "line": 1799,
+        "line": 1982,
         "path": ".github/workflows/ci.yml",
         "sha": "5aff61a9e847"
       },
@@ -1795,21 +1734,27 @@
         "\"+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}\"",
         "git remote set-head origin -a",
         "git fetch --no-tags --depth=1 origin \\",
-        "\"${BASE_SHA}:refs/remotes/origin/pr-base\"",
-        "git fetch --no-tags --depth=1 origin \\",
         "\"${HEAD_SHA}:refs/remotes/origin/pr-head\"",
+        "uv run python scripts/plan_affected_tests.py select \\",
+        "--plan .sdd/affected-test-plan/affected-test-plan.json \\",
+        "--shard \"${SHARD}/${SHARD_COUNT}\" \\",
+        "--output .sdd/affected-test-plan/selected.txt",
+        "echo \"No affected tests in shard ${SHARD}/${SHARD_COUNT}. Compared ${BASE_SHA}...${HEAD_SHA}.\"",
         "coverage_args=()",
-        "if [ \"${EVENT_NAME}\" = \"push\" ] && [ \"${RUNNER_OS}\" = \"Linux\" ] && [ \"${PYTHON_VERSION}\" = \"3.13\" ]; then",
+        "if { [ \"${EVENT_NAME}\" = \"push\" ] || { [ \"${EVENT_NAME}\" = \"workflow_dispatch\" ] && [ \"${GITHUB_REF}\" = \"refs/heads/main\" ]; }; } && \\",
+        "[ \"${RUNNER_OS}\" = \"Linux\" ] && [ \"${PYTHON_VERSION}\" = \"3.13\" ]; then",
         "coverage_args=(--coverage)",
         "fi",
-        "if [ \"${EVENT_NAME}\" = \"pull_request\" ] && \\",
-        "git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then",
-        "uv run python scripts/run_tests.py --parallel 6 \\",
+        "if [ \"${PLANNED}\" = \"true\" ]; then",
+        "test_files=()",
+        "while IFS= read -r test_file; do",
+        "test_files+=(\"${test_file}\")",
+        "done < .sdd/affected-test-plan/selected.txt",
+        "uv run python scripts/run_tests.py --parallel 8 \\",
         "\"${coverage_args[@]}\" \\",
-        "--shard \"${SHARD}/${SHARD_COUNT}\" \\",
-        "--affected refs/remotes/origin/pr-base",
+        "\"${test_files[@]}\"",
         "else",
-        "uv run python scripts/run_tests.py --parallel 6 \\",
+        "uv run python scripts/run_tests.py --parallel 8 \\",
         "\"${coverage_args[@]}\" \\",
         "--shard \"${SHARD}/${SHARD_COUNT}\"",
         "fi",
@@ -1831,7 +1776,7 @@
     },
     {
       "anchor": {
-        "line": 2127,
+        "line": 2383,
         "path": ".github/workflows/ci.yml",
         "sha": "9adf8e3640f3"
       },
@@ -1841,13 +1786,18 @@
         "git fetch --no-tags --depth=1 origin \\",
         "\"+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}\"",
         "git remote set-head origin -a",
-        "git fetch --no-tags --depth=1 origin \\",
-        "\"${BASE_SHA}:refs/remotes/origin/pr-base\"",
-        "if [ \"${EVENT_NAME}\" = \"pull_request\" ] && \\",
-        "git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then",
-        "uv run python scripts/run_tests.py --parallel 6 \\",
+        "uv run python scripts/plan_affected_tests.py select \\",
+        "--plan .sdd/affected-test-plan/affected-test-plan.json \\",
         "--shard \"${SHARD}/${SHARD_COUNT}\" \\",
-        "--affected refs/remotes/origin/pr-base",
+        "--output .sdd/affected-test-plan/selected.txt",
+        "echo \"No affected tests in shard ${SHARD}/${SHARD_COUNT}. Compared ${BASE_SHA}...${HEAD_SHA}.\"",
+        "if [ \"${EVENT_NAME}\" = \"pull_request\" ]; then",
+        "test_files=()",
+        "while IFS= read -r test_file; do",
+        "test_files+=(\"${test_file}\")",
+        "done < .sdd/affected-test-plan/selected.txt",
+        "uv run python scripts/run_tests.py --parallel 6 \\",
+        "\"${test_files[@]}\"",
         "else",
         "uv run python scripts/run_tests.py --parallel 6 \\",
         "--shard \"${SHARD}/${SHARD_COUNT}\"",
@@ -1859,7 +1809,7 @@
     },
     {
       "anchor": {
-        "line": 704,
+        "line": 835,
         "path": ".github/workflows/ci.yml",
         "sha": "a0e56901d695"
       },
@@ -2028,6 +1978,40 @@
     },
     {
       "anchor": {
+        "line": 34,
+        "path": ".github/workflows/contributor-recognition.yml",
+        "sha": "3c7b9de3fbc8"
+      },
+      "file": ".github/workflows/contributor-recognition.yml",
+      "job": "render",
+      "runs": [
+        "set -euo pipefail",
+        "mkdir -p out",
+        "python3 scripts/contributor_recognition.py --repo \"${GITHUB_REPOSITORY}\" collect \\",
+        "--out out/state.json",
+        "set -euo pipefail",
+        "python3 scripts/contributor_recognition.py --repo \"${GITHUB_REPOSITORY}\" render \\",
+        "--state out/state.json --gate \"${GATE}\" \\",
+        "--out-comment out/period-comment.md --out-linkedin out/linkedin-draft.md",
+        "{",
+        "echo \"### Contributor recognition drafts\"",
+        "echo \"\"",
+        "echo \"Artifacts: period-comment.md (GitHub), linkedin-draft.md (for the maintainer, never posted by automation).\"",
+        "echo \"\"",
+        "cat out/period-comment.md",
+        "} >> \"${GITHUB_STEP_SUMMARY}\"",
+        "set -euo pipefail",
+        "if [ -z \"${ISSUE}\" ]; then",
+        "echo \"publish=true needs the issue number\" >&2",
+        "exit 2",
+        "fi",
+        "python3 scripts/contributor_recognition.py --repo \"${GITHUB_REPOSITORY}\" publish-comment \\",
+        "--issue \"${ISSUE}\" --file out/period-comment.md --yes"
+      ],
+      "workflow": "Contributor recognition"
+    },
+    {
+      "anchor": {
         "line": 43,
         "path": ".github/workflows/coverage-ratchet-weekly.yml",
         "sha": "23ab8a159efd"
@@ -2063,13 +2047,19 @@
     },
     {
       "anchor": {
-        "line": 95,
+        "line": 93,
         "path": ".github/workflows/coverage-ratchet.yml",
         "sha": "7ad65486c157"
       },
       "file": ".github/workflows/coverage-ratchet.yml",
       "job": "ratchet",
       "runs": [
+        "set -euo pipefail",
+        "if ! git merge-base --is-ancestor \"${TARGET_SHA}\" HEAD; then",
+        "echo \"::error::${TARGET_SHA} is not an ancestor of main; refusing to check it out.\"",
+        "exit 1",
+        "fi",
+        "git checkout \"${TARGET_SHA}\"",
         "set -euo pipefail",
         "has_coverage_artifact() {",
         "gh api \"repos/${REPO}/actions/runs/$1/artifacts\" --jq '.artifacts[].name' 2>/dev/null \\",
@@ -2094,13 +2084,25 @@
     },
     {
       "anchor": {
-        "line": 16,
+        "line": 19,
         "path": ".github/workflows/dependabot-auto-merge.yml",
         "sha": "0af545383b6c"
       },
       "file": ".github/workflows/dependabot-auto-merge.yml",
       "job": "auto-merge",
       "runs": [
+        "case \"$PR_DRAFT\" in",
+        "true)",
+        "echo \"Draft pull request: auto-merge is not armed until it is marked ready for review.\"",
+        "exit 0",
+        ";;",
+        "false)",
+        ";;",
+        "*)",
+        "echo \"::error::pull_request.draft is '${PR_DRAFT:-<unset>}', not true/false; refusing to arm auto-merge.\"",
+        "exit 1",
+        ";;",
+        "esac",
         "gh pr merge --auto \"$PR_URL\""
       ],
       "workflow": "Dependabot Auto-merge"
@@ -2120,7 +2122,21 @@
     },
     {
       "anchor": {
-        "line": 81,
+        "line": 44,
+        "path": ".github/workflows/docs-build.yml",
+        "sha": "3cf4dc5dce2d"
+      },
+      "file": ".github/workflows/docs-build.yml",
+      "job": "build",
+      "runs": [
+        "uv sync --group docs",
+        "uv run --group docs mkdocs build --strict"
+      ],
+      "workflow": "docs-build"
+    },
+    {
+      "anchor": {
+        "line": 101,
         "path": ".github/workflows/docs-drift.yml",
         "sha": "65d726ac663c"
       },
@@ -2210,7 +2226,7 @@
     },
     {
       "anchor": {
-        "line": 302,
+        "line": 322,
         "path": ".github/workflows/docs-drift.yml",
         "sha": "fcf0200b4528"
       },
@@ -2279,8 +2295,8 @@
         "echo \"snapshot=${SNAPSHOT}\" >> \"$GITHUB_OUTPUT\"",
         "uv run bernstein doctor observe --json --no-persist > \"${SNAPSHOT}\"",
         "set -euo pipefail",
-        "python3 -m json.tool \"${{ steps.capture.outputs.snapshot }}\" > /dev/null",
-        "echo \"snapshot ${{ steps.capture.outputs.snapshot }} is valid JSON\"",
+        "python3 -m json.tool \"${SNAPSHOT_PATH}\" > /dev/null",
+        "echo \"snapshot ${SNAPSHOT_PATH} is valid JSON\"",
         "uv run python scripts/observability/render_trends.py \\",
         "--snapshots-dir docs/_internal/observability/snapshots \\",
         "--out docs/observability/trends.md \\",
@@ -2590,15 +2606,13 @@
       "job": "canary",
       "runs": [
         "uv sync --group dev",
-        "git config --global user.email \"canary@users.noreply.github.com\"",
-        "git config --global user.name \"Bernstein Canary\"",
         "uv run python scripts/canary_real_run.py --verbose"
       ],
       "workflow": "Nightly real-run canary"
     },
     {
       "anchor": {
-        "line": 184,
+        "line": 187,
         "path": ".github/workflows/nightly-deep-tests.yml",
         "sha": "733d607aacbb"
       },
@@ -2611,7 +2625,7 @@
     },
     {
       "anchor": {
-        "line": 124,
+        "line": 127,
         "path": ".github/workflows/nightly-deep-tests.yml",
         "sha": "02f65e0d827e"
       },
@@ -2643,7 +2657,7 @@
     },
     {
       "anchor": {
-        "line": 154,
+        "line": 157,
         "path": ".github/workflows/nightly-deep-tests.yml",
         "sha": "8a752762248a"
       },
@@ -2658,7 +2672,7 @@
     },
     {
       "anchor": {
-        "line": 212,
+        "line": 215,
         "path": ".github/workflows/nightly-deep-tests.yml",
         "sha": "563fbdad31de"
       },
@@ -2674,7 +2688,7 @@
     },
     {
       "anchor": {
-        "line": 103,
+        "line": 106,
         "path": ".github/workflows/nightly-deep-tests.yml",
         "sha": "c61448bd8ed0"
       },
@@ -2687,7 +2701,7 @@
     },
     {
       "anchor": {
-        "line": 249,
+        "line": 252,
         "path": ".github/workflows/nightly-deep-tests.yml",
         "sha": "6107ea16721f"
       },
@@ -2747,7 +2761,9 @@
         "git checkout -B \"${BRANCH}\"",
         "git add -A",
         "git commit -m \"chore(auto): nightly mirror + format drift sweep\"",
-        "git push --force-with-lease origin \"${BRANCH}\"",
+        "git push --force --quiet \\",
+        "\"https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git\" \\",
+        "\"HEAD:refs/heads/${BRANCH}\"",
         "gh pr create \\",
         "--base main \\",
         "--head \"${BRANCH}\" \\",
@@ -2817,7 +2833,7 @@
     },
     {
       "anchor": {
-        "line": 70,
+        "line": 75,
         "path": ".github/workflows/post-ci-dispatcher.yml",
         "sha": "0a69fa04a446"
       },
@@ -2834,10 +2850,25 @@
         "echo \"run_id=${RUN_ID}\"",
         "echo \"run_name=${RUN_NAME}\"",
         "echo \"html_url=${HTML_URL}\"",
-        "echo \"display_title=${DISPLAY_TITLE}\"",
+        "printf 'display_title=%s\\n' \"$(printf '%s' \"$DISPLAY_TITLE\" | tr -d '\\r\\n')\"",
         "echo \"actor_login=${ACTOR_LOGIN}\"",
         "echo \"event=${EVENT}\"",
-        "} >> \"$GITHUB_OUTPUT\""
+        "} >> \"$GITHUB_OUTPUT\"",
+        "set -euo pipefail",
+        "[[ \"$HEAD_BRANCH\" =~ ^gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]+$ ]] || exit 0",
+        "number=\"${BASH_REMATCH[1]}\"",
+        "[[ \"$HEAD_SHA\" =~ ^[0-9a-f]{40}$ ]] || exit 0",
+        "source_branch=\"$(gh api \"repos/$REPO/pulls/$number\" --jq '.head.ref // empty')\"",
+        "source_branch=\"$(printf '%s' \"$source_branch\" | tr '[:upper:]' '[:lower:]')\"",
+        "[[ -n \"$source_branch\" && \"$source_branch\" != fleet/carry-* ]] || exit 0",
+        "for ((attempt=1; attempt<=10; attempt++)); do",
+        "status=\"$(gh api \"repos/$REPO/compare/main...$HEAD_SHA\" --jq '.status')\"",
+        "if [[ \"$status\" == behind || \"$status\" == identical ]]; then",
+        "echo \"trusted=true\" >> \"$GITHUB_OUTPUT\"",
+        "exit 0",
+        "fi",
+        "if ((attempt < 10)); then sleep 15; fi",
+        "done"
       ],
       "workflow": "Post-CI dispatcher"
     },
@@ -2883,7 +2914,7 @@
     },
     {
       "anchor": {
-        "line": 55,
+        "line": 58,
         "path": ".github/workflows/pr-policy.yml",
         "sha": "08d8e6622183"
       },
@@ -3099,7 +3130,13 @@
         "fi",
         "git push --quiet \"https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git\" \\",
         "\"HEAD:refs/heads/${DATA_BRANCH}\"",
-        "set -euo pipefail"
+        "set -euo pipefail",
+        "STATE=$(gh issue view \"${PULSE_NUMBER}\" --repo \"${REPO}\" --json state --jq .state)",
+        "if [ \"${STATE}\" != \"OPEN\" ]; then",
+        "echo \"pulse issue #${PULSE_NUMBER} is ${STATE}; refusing to edit a closed issue\"",
+        "exit 1",
+        "fi",
+        "gh issue edit \"${PULSE_NUMBER}\" --repo \"${REPO}\" --body-file out/project-pulse.md"
       ],
       "workflow": "Project pulse"
     },
@@ -3185,12 +3222,19 @@
         "exit 0",
         "fi",
         "echo \"version=$VERSION\" >> \"$GITHUB_OUTPUT\"",
+        "set -euo pipefail",
+        "if [ -n \"${GH_TOKEN:-}\" ]; then",
+        "echo \"HOMEBREW_TAP_TOKEN is defined on ${RELEASE_ENVIRONMENT}\"",
+        "exit 0",
+        "fi",
+        "echo \"::error::HOMEBREW_TAP_TOKEN is not defined on the '${RELEASE_ENVIRONMENT}' environment, which is the one this job reads. A value defined on another environment is not visible here. Define it with: gh secret set HOMEBREW_TAP_TOKEN --env ${RELEASE_ENVIRONMENT} -R ${GITHUB_REPOSITORY}\"",
+        "exit 1",
         "if [ -z \"$META_SHA256\" ]; then",
         "echo \"::error::PyPI sdist digest for ${META_VERSION} never resolved; refusing to publish a formula whose sha256 would be empty.\"",
         "exit 1",
         "fi",
         "if [ -z \"$GH_TOKEN\" ]; then",
-        "echo \"::error::HOMEBREW_TAP_TOKEN secret not set. Add a PAT with repo scope for chernistry/homebrew-tap.\"",
+        "echo \"::error::HOMEBREW_TAP_TOKEN is not defined on the '${RELEASE_ENVIRONMENT}' environment. It needs a PAT with repo scope for chernistry/homebrew-tap.\"",
         "exit 1",
         "fi"
       ],
@@ -3198,7 +3242,7 @@
     },
     {
       "anchor": {
-        "line": 181,
+        "line": 199,
         "path": ".github/workflows/publish.yml",
         "sha": "3cf4dc5dce2d"
       },
@@ -3211,7 +3255,20 @@
     },
     {
       "anchor": {
-        "line": 244,
+        "line": 378,
+        "path": ".github/workflows/publish.yml",
+        "sha": "7ea3800111ae"
+      },
+      "file": ".github/workflows/publish.yml",
+      "job": "dispatch-homebrew",
+      "runs": [
+        "gh workflow run publish-homebrew.yml --ref main -f version=\"${TAG#v}\""
+      ],
+      "workflow": "Publish"
+    },
+    {
+      "anchor": {
+        "line": 262,
         "path": ".github/workflows/publish.yml",
         "sha": "83ab54d3ea39"
       },
@@ -3219,15 +3276,18 @@
       "job": "github-release",
       "runs": [
         "set -euo pipefail",
+        "mkdir -p release-signatures",
+        "cp \"$BUNDLE\" \"release-signatures/bernstein-${RELEASE_TAG#v}.sigstore.json\"",
+        "ls -l release-signatures",
+        "set -euo pipefail",
         "gh workflow run publish-docker.yml --ref main -f tag=\"$TAG\"",
-        "gh workflow run publish-homebrew.yml --ref main -f version=\"${TAG#v}\"",
         "gh workflow run sbom.yml --ref main -f ref=\"$TAG\""
       ],
       "workflow": "Publish"
     },
     {
       "anchor": {
-        "line": 39,
+        "line": 57,
         "path": ".github/workflows/publish.yml",
         "sha": "8e37a415c1ac"
       },
@@ -3247,7 +3307,7 @@
     },
     {
       "anchor": {
-        "line": 495,
+        "line": 558,
         "path": ".github/workflows/publish.yml",
         "sha": "a8871adb0a33"
       },
@@ -3281,7 +3341,7 @@
     },
     {
       "anchor": {
-        "line": 598,
+        "line": 666,
         "path": ".github/workflows/publish.yml",
         "sha": "40736fceaa4a"
       },
@@ -3289,7 +3349,6 @@
       "job": "publish-mcp-registry",
       "runs": [
         "set -euo pipefail",
-        "python3 scripts/gen_distribution_manifests.py --check",
         "VERSION=\"${RELEASE_TAG#v}\"",
         "MANIFEST_VERSION=$(python3 -c \"import json; print(json.load(open('server.json'))['version'])\")",
         "if [ \"$MANIFEST_VERSION\" != \"$VERSION\" ]; then",
@@ -3298,9 +3357,17 @@
         "fi",
         "set -euo pipefail",
         "python3 - <<'PY'",
+        "import os",
         "import re",
         "import subprocess",
         "from pathlib import Path",
+        "set -euo pipefail",
+        "RELEASE_COMMIT=$(git rev-parse HEAD)",
+        "python3 scripts/render_docker_mcp_catalog.py \\",
+        "packaging/docker-mcp/server.yaml \\",
+        "\"$RELEASE_COMMIT\" \\",
+        "> server.yaml.rendered",
+        "echo \"Rendered catalog payload for commit ${RELEASE_COMMIT}\"",
         "set -euo pipefail",
         "OS=$(uname -s | tr '[:upper:]' '[:lower:]')",
         "ARCH=$(uname -m)",
@@ -3368,7 +3435,7 @@
     },
     {
       "anchor": {
-        "line": 337,
+        "line": 399,
         "path": ".github/workflows/publish.yml",
         "sha": "b27b560de1fd"
       },
@@ -3377,13 +3444,31 @@
       "runs": [
         "VERSION=\"${RELEASE_TAG#v}\"",
         "cd packaging/npm",
-        "npm version \"$VERSION\" --no-git-tag-version --allow-same-version"
+        "npm version \"$VERSION\" --no-git-tag-version --allow-same-version",
+        "set -uo pipefail",
+        "npm --version",
+        "cd packaging/npm",
+        "set +e",
+        "out=$(npm publish --access public 2>&1)",
+        "code=$?",
+        "set -e",
+        "printf '%s\\n' \"$out\"",
+        "if [ \"$code\" -eq 0 ]; then",
+        "exit 0",
+        "fi",
+        "if printf '%s' \"$out\" \\",
+        "| grep -qiE 'EPUBLISHCONFLICT|cannot publish over the previously published version'; then",
+        "echo \"::notice::npm wrapper version is already on the registry; treating the conflict as success (idempotent)\"",
+        "exit 0",
+        "fi",
+        "echo \"::error::npm wrapper publish failed (exit ${code}); the registry is now behind this release\"",
+        "exit \"$code\""
       ],
       "workflow": "Publish"
     },
     {
       "anchor": {
-        "line": 430,
+        "line": 493,
         "path": ".github/workflows/publish.yml",
         "sha": "b6b583e3ba47"
       },
@@ -3400,7 +3485,7 @@
     },
     {
       "anchor": {
-        "line": 130,
+        "line": 148,
         "path": ".github/workflows/publish.yml",
         "sha": "5aff61a9e847"
       },
@@ -3414,7 +3499,7 @@
     },
     {
       "anchor": {
-        "line": 154,
+        "line": 172,
         "path": ".github/workflows/publish.yml",
         "sha": "93da9aa029c5"
       },
@@ -3434,20 +3519,21 @@
     },
     {
       "anchor": {
-        "line": 34,
+        "line": 44,
         "path": ".github/workflows/quorum-rerun.yml",
         "sha": "b2927ac078d8"
       },
       "file": ".github/workflows/quorum-rerun.yml",
       "job": "rerun",
       "runs": [
-        "set -euo pipefail"
+        "set -euo pipefail",
+        "python3 scripts/quorum_request_reviews.py"
       ],
       "workflow": "quorum rerun"
     },
     {
       "anchor": {
-        "line": 42,
+        "line": 71,
         "path": ".github/workflows/quorum.yml",
         "sha": "26c2eb36a739"
       },
@@ -3456,11 +3542,13 @@
       "runs": [
         "set -euo pipefail",
         "if [ ! -f scripts/quorum_check.py ]; then",
-        "echo \"The base branch does not carry scripts/quorum_check.py yet; nothing to check.\"",
-        "echo \"### quorum: not applicable\" >> \"$GITHUB_STEP_SUMMARY\"",
-        "echo \"\" >> \"$GITHUB_STEP_SUMMARY\"",
-        "echo \"The base branch does not carry \\`scripts/quorum_check.py\\` yet, so this run has no rules to apply.\" >> \"$GITHUB_STEP_SUMMARY\"",
-        "exit 0",
+        "echo \"scripts/quorum_check.py is not present in the default branch checkout; no rule could be applied.\"",
+        "{",
+        "echo \"### quorum: not evaluated\"",
+        "echo \"\"",
+        "echo \"\\`scripts/quorum_check.py\\` is not present in the default branch checkout, so this run had no rules to apply and fails rather than passing without applying any.\"",
+        "} >> \"$GITHUB_STEP_SUMMARY\"",
+        "exit 1",
         "fi",
         "if [ \"${INPUT_PR:-}\" != \"\" ]; then",
         "python3 scripts/quorum_check.py --pr \"$INPUT_PR\"",
@@ -3587,7 +3675,7 @@
     },
     {
       "anchor": {
-        "line": 54,
+        "line": 57,
         "path": ".github/workflows/required-check-canary.yml",
         "sha": "0aacecd52c89"
       },
@@ -3669,6 +3757,19 @@
         "results.sarif > results.filtered.sarif"
       ],
       "workflow": "OSSF Scorecard"
+    },
+    {
+      "anchor": {
+        "line": 39,
+        "path": ".github/workflows/security-control-reachability.yml",
+        "sha": "486ca0748582"
+      },
+      "file": ".github/workflows/security-control-reachability.yml",
+      "job": "gate",
+      "runs": [
+        "python3 scripts/check_unreachable_controls.py"
+      ],
+      "workflow": "Security control reachability"
     },
     {
       "anchor": {
@@ -3780,26 +3881,31 @@
       "runs": [
         "uv build --wheel --out-dir dist",
         "ls -1 dist/*.whl",
+        "uv export --frozen --no-dev --no-emit-project --format requirements.txt \\",
+        "-o \"$RUNNER_TEMP/requirements-noextra.txt\"",
         "python -m venv .venv-noextra",
         ". .venv-noextra/bin/activate",
-        "pip install --upgrade pip",
-        "pip install dist/*.whl",
+        "pip install --require-hashes -r \"$RUNNER_TEMP/requirements-noextra.txt\"",
+        "pip install --no-deps dist/*.whl",
+        "pip check",
         "python tests/scripts/spiffe_extra_e2e_check.py --mode no-extra",
-        "WHEEL=$(ls dist/*.whl | head -1)",
+        "uv export --frozen --no-dev --no-emit-project --extra spiffe --format requirements.txt \\",
+        "-o \"$RUNNER_TEMP/requirements-spiffe.txt\"",
         "python -m venv .venv-extra",
         ". .venv-extra/bin/activate",
-        "pip install --upgrade pip",
-        "if ! pip install \"${WHEEL}[spiffe]\"; then",
+        "if ! pip install --require-hashes -r \"$RUNNER_TEMP/requirements-spiffe.txt\"; then",
         "echo \"::warning::py-spiffe SDK not installable on this runner; skipping extra-present path\"",
         "exit 0",
         "fi",
+        "pip install --no-deps dist/*.whl",
+        "pip check",
         "python tests/scripts/spiffe_extra_e2e_check.py --mode extra"
       ],
       "workflow": "SPIFFE Extra E2E"
     },
     {
       "anchor": {
-        "line": 455,
+        "line": 373,
         "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "97561d906ef7"
       },
@@ -3816,7 +3922,7 @@
         "--reports=n \\",
         "src/ > perflint.txt || true",
         "wc -l perflint.txt",
-        "python scripts/text_to_sarif.py \\",
+        "python3 scripts/text_to_sarif.py \\",
         "--tool perflint \\",
         "--input perflint.txt \\",
         "--output perflint.sarif",
@@ -3827,7 +3933,7 @@
     },
     {
       "anchor": {
-        "line": 373,
+        "line": 291,
         "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "9424830de7de"
       },
@@ -3837,7 +3943,7 @@
         "uv tool install refurb",
         "uv tool run refurb src/ > refurb.txt || true",
         "wc -l refurb.txt",
-        "python scripts/text_to_sarif.py \\",
+        "python3 scripts/text_to_sarif.py \\",
         "--tool refurb \\",
         "--input refurb.txt \\",
         "--output refurb.sarif",
@@ -3887,20 +3993,6 @@
       "anchor": {
         "line": 160,
         "path": ".github/workflows/static-analysis-extended.yml",
-        "sha": "cf57364b258d"
-      },
-      "file": ".github/workflows/static-analysis-extended.yml",
-      "job": "trivy-fs",
-      "runs": [
-        "python3 scripts/sarif_drop_suppressed.py \\",
-        "trivy-fs.sarif > trivy-fs.filtered.sarif"
-      ],
-      "workflow": "static-analysis (extended)"
-    },
-    {
-      "anchor": {
-        "line": 243,
-        "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "1e2c3094bfdb"
       },
       "file": ".github/workflows/static-analysis-extended.yml",
@@ -3913,7 +4005,7 @@
     },
     {
       "anchor": {
-        "line": 307,
+        "line": 225,
         "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "43f0b895dc68"
       },
@@ -3925,7 +4017,7 @@
         "--min-confidence 70 \\",
         "> vulture.txt || true",
         "wc -l vulture.txt",
-        "python scripts/text_to_sarif.py \\",
+        "python3 scripts/text_to_sarif.py \\",
         "--tool vulture \\",
         "--input vulture.txt \\",
         "--output vulture.sarif",
@@ -3966,7 +4058,21 @@
     },
     {
       "anchor": {
-        "line": 46,
+        "line": 37,
+        "path": ".github/workflows/trivy-fs.yml",
+        "sha": "cf57364b258d"
+      },
+      "file": ".github/workflows/trivy-fs.yml",
+      "job": "trivy-fs",
+      "runs": [
+        "python3 scripts/sarif_drop_suppressed.py \\",
+        "trivy-fs.sarif > trivy-fs.filtered.sarif"
+      ],
+      "workflow": "Trivy (filesystem)"
+    },
+    {
+      "anchor": {
+        "line": 51,
         "path": ".github/workflows/trunk-health-slo.yml",
         "sha": "7398d22e4501"
       },
@@ -4015,6 +4121,24 @@
         "set -euo pipefail"
       ],
       "workflow": "Volunteer receipt verification check run"
+    },
+    {
+      "anchor": {
+        "line": 25,
+        "path": ".github/workflows/webui-regression.yml",
+        "sha": "5aff61a9e847"
+      },
+      "file": ".github/workflows/webui-regression.yml",
+      "job": "test",
+      "runs": [
+        "npm ci",
+        "npm test",
+        "npm run test:components",
+        "uv sync --locked --extra gui",
+        "uv run --locked --extra gui python -m playwright install --with-deps chromium",
+        "uv run --locked --extra gui python scripts/smoke_webui.py"
+      ],
+      "workflow": "Web UI regression"
     },
     {
       "anchor": {
@@ -4075,7 +4199,7 @@
   "commands": [
     {
       "anchor": {
-        "line": 342,
+        "line": 341,
         "path": "pyproject.toml",
         "sha": "cf1f969ec65c"
       },
@@ -4086,7 +4210,7 @@
     },
     {
       "anchor": {
-        "line": 344,
+        "line": 343,
         "path": "pyproject.toml",
         "sha": "a0225e899c0f"
       },
@@ -4097,7 +4221,7 @@
     },
     {
       "anchor": {
-        "line": 343,
+        "line": 342,
         "path": "pyproject.toml",
         "sha": "96ba201c98a0"
       },
@@ -4108,7 +4232,106 @@
     },
     {
       "anchor": {
-        "line": 345,
+        "line": 36,
+        "path": "Makefile",
+        "sha": "60851ac7c33c"
+      },
+      "cmd": "make check",
+      "desc": "",
+      "id": "check",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 30,
+        "path": "Makefile",
+        "sha": "f064be4119e2"
+      },
+      "cmd": "make contracts",
+      "desc": "",
+      "id": "contracts",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 9,
+        "path": "Makefile",
+        "sha": "b99d4a592879"
+      },
+      "cmd": "make help",
+      "desc": "",
+      "id": "help",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 17,
+        "path": "Makefile",
+        "sha": "ca9b2066e32e"
+      },
+      "cmd": "make install",
+      "desc": "",
+      "id": "install",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 26,
+        "path": "Makefile",
+        "sha": "b6609e8b574b"
+      },
+      "cmd": "make lint",
+      "desc": "",
+      "id": "lint",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 38,
+        "path": "Makefile",
+        "sha": "4d2ccad83b43"
+      },
+      "cmd": "make pre-commit",
+      "desc": "",
+      "id": "pre-commit",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 20,
+        "path": "Makefile",
+        "sha": "5aff61a9e847"
+      },
+      "cmd": "make test",
+      "desc": "",
+      "id": "test",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 23,
+        "path": "Makefile",
+        "sha": "6733ddb59f7b"
+      },
+      "cmd": "make test-affected",
+      "desc": "",
+      "id": "test-affected",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 33,
+        "path": "Makefile",
+        "sha": "a0e56901d695"
+      },
+      "cmd": "make typecheck",
+      "desc": "",
+      "id": "typecheck",
+      "kind": "declared"
+    },
+    {
+      "anchor": {
+        "line": 344,
         "path": "pyproject.toml",
         "sha": "12349020c194"
       },
@@ -4119,7 +4342,7 @@
     },
     {
       "anchor": {
-        "line": 552,
+        "line": 568,
         "path": "pyproject.toml",
         "sha": "9edf1bf5bbd7"
       },
@@ -4130,7 +4353,7 @@
     },
     {
       "anchor": {
-        "line": 796,
+        "line": 815,
         "path": "pyproject.toml",
         "sha": "4ac5dd2673a9"
       },
@@ -4141,7 +4364,7 @@
     },
     {
       "anchor": {
-        "line": 672,
+        "line": 691,
         "path": "pyproject.toml",
         "sha": "d8e63fa2d279"
       },
@@ -4154,7 +4377,7 @@
   "entrypoints": [
     {
       "anchor": {
-        "line": 342,
+        "line": 341,
         "path": "pyproject.toml",
         "sha": "cf1f969ec65c"
       },
@@ -4164,7 +4387,7 @@
     },
     {
       "anchor": {
-        "line": 344,
+        "line": 343,
         "path": "pyproject.toml",
         "sha": "a0225e899c0f"
       },
@@ -4174,7 +4397,7 @@
     },
     {
       "anchor": {
-        "line": 343,
+        "line": 342,
         "path": "pyproject.toml",
         "sha": "96ba201c98a0"
       },
@@ -4184,7 +4407,7 @@
     },
     {
       "anchor": {
-        "line": 345,
+        "line": 344,
         "path": "pyproject.toml",
         "sha": "12349020c194"
       },
@@ -4194,7 +4417,7 @@
     },
     {
       "anchor": {
-        "line": 50,
+        "line": 52,
         "path": "Dockerfile",
         "sha": "be663b9a2659"
       },
@@ -4204,7 +4427,7 @@
     },
     {
       "anchor": {
-        "line": 60,
+        "line": 62,
         "path": "Dockerfile",
         "sha": "4e1d4904c493"
       },
@@ -4214,7 +4437,7 @@
     },
     {
       "anchor": {
-        "line": 61,
+        "line": 63,
         "path": "Dockerfile",
         "sha": "60dbec8871fb"
       },
@@ -4224,7 +4447,7 @@
     },
     {
       "anchor": {
-        "line": 51,
+        "line": 53,
         "path": "docker/demo/Dockerfile",
         "sha": "be663b9a2659"
       },
@@ -4234,7 +4457,7 @@
     },
     {
       "anchor": {
-        "line": 56,
+        "line": 58,
         "path": "docker/demo/Dockerfile",
         "sha": "4e1d4904c493"
       },
@@ -4244,7 +4467,7 @@
     },
     {
       "anchor": {
-        "line": 57,
+        "line": 59,
         "path": "docker/demo/Dockerfile",
         "sha": "a88a0de12495"
       },
@@ -4254,7 +4477,7 @@
     },
     {
       "anchor": {
-        "line": 37,
+        "line": 39,
         "path": "docker/volunteer-hub/Dockerfile",
         "sha": "be663b9a2659"
       },
@@ -4264,7 +4487,7 @@
     },
     {
       "anchor": {
-        "line": 42,
+        "line": 44,
         "path": "docker/volunteer-hub/Dockerfile",
         "sha": "4e1d4904c493"
       },
@@ -4274,7 +4497,7 @@
     },
     {
       "anchor": {
-        "line": 43,
+        "line": 45,
         "path": "docker/volunteer-hub/Dockerfile",
         "sha": "a88a0de12495"
       },
@@ -4284,7 +4507,7 @@
     },
     {
       "anchor": {
-        "line": 18,
+        "line": 19,
         "path": "docker/volunteer-rig/Dockerfile",
         "sha": "72b936a49b67"
       },
@@ -4428,27 +4651,40 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 1128,
+          "line": 1136,
           "path": "src/bernstein/adapters/claude.py",
           "sha": "e75cc5878e87"
         },
         {
-          "line": 888,
-          "path": "src/bernstein/cli/commands/status_cmd.py",
-          "sha": "38fa58237242"
-        },
-        {
-          "line": 353,
+          "line": 355,
           "path": "src/bernstein/core/agents/agent_discovery.py",
           "sha": "c1abc87ba659"
         },
         {
-          "line": 272,
-          "path": "src/bernstein/core/orchestration/preflight.py",
-          "sha": "767a20ed123b"
+          "line": 268,
+          "path": "src/bernstein/core/tasks/batch_api.py",
+          "sha": "f677d7b0012c"
+        },
+        {
+          "line": 58,
+          "path": "src/bernstein/core/tokens/token_counter.py",
+          "sha": "e75cc5878e87"
         }
       ],
       "use_count": 4
+    },
+    {
+      "declared_in": null,
+      "key": "API_KEY",
+      "secret_suspect": true,
+      "sites": [
+        {
+          "line": 3,
+          "path": "src/bernstein/eval/cases/gate_evasion/runtime_config_placeholder_secret/config.py",
+          "sha": "a013dcbce18f"
+        }
+      ],
+      "use_count": 1
     },
     {
       "declared_in": null,
@@ -4611,7 +4847,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1460,
+          "line": 1521,
           "path": "src/bernstein/adapters/base.py",
           "sha": "78718315851b"
         }
@@ -4637,7 +4873,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 7348,
+          "line": 7514,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "982f39f7a3d1"
         }
@@ -4663,7 +4899,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 297,
+          "line": 308,
           "path": "src/bernstein/cli/dashboard_app.py",
           "sha": "e2e0418da464"
         }
@@ -4676,24 +4912,24 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 2644,
+          "line": 2829,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "dcb529ecc488"
         },
         {
-          "line": 6650,
+          "line": 6876,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "5a2958408a93"
         },
         {
-          "line": 6682,
-          "path": "src/bernstein/core/orchestration/orchestrator.py",
-          "sha": "3016eb701306"
-        },
-        {
-          "line": 437,
+          "line": 528,
           "path": "src/bernstein/core/orchestration/preflight.py",
           "sha": "b0ffe6473ba8"
+        },
+        {
+          "line": 51,
+          "path": "tests/unit/test_frontend_smoke_bug_sweep.py",
+          "sha": "3b83b1d20108"
         }
       ],
       "use_count": 4
@@ -4704,7 +4940,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 592,
+          "line": 753,
           "path": "tests/conftest.py",
           "sha": "1d6b845addeb"
         },
@@ -4753,7 +4989,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 466,
+          "line": 469,
           "path": "src/bernstein/core/security/key_custody.py",
           "sha": "fb0fc360e465"
         }
@@ -4766,7 +5002,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 593,
+          "line": 754,
           "path": "tests/conftest.py",
           "sha": "dcb040591526"
         },
@@ -4784,18 +5020,28 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1061,
+          "line": 1129,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "d1878a47448c"
+        },
+        {
+          "line": 7140,
+          "path": "src/bernstein/core/orchestration/orchestrator.py",
+          "sha": "e06f1c64a52f"
         }
       ],
-      "use_count": 1
+      "use_count": 2
     },
     {
       "declared_in": null,
       "key": "BERNSTEIN_AUDIT_KEY_PATH",
       "secret_suspect": false,
       "sites": [
+        {
+          "line": 352,
+          "path": "tests/unit/security/test_approval_decision_records.py",
+          "sha": "d5565de92a07"
+        },
         {
           "line": 35,
           "path": "tests/unit/test_replay_verify_cli.py",
@@ -4810,11 +5056,6 @@
           "line": 34,
           "path": "tests/unit/test_seal_cmd.py",
           "sha": "d5565de92a07"
-        },
-        {
-          "line": 703,
-          "path": "tests/unit/test_worktrees_cmd.py",
-          "sha": "d6063f360920"
         }
       ],
       "use_count": 4
@@ -4864,7 +5105,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 3866,
+          "line": 4098,
           "path": "src/bernstein/cli/commands/audit_cmd.py",
           "sha": "e2bd0293966a"
         }
@@ -4877,7 +5118,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 660,
+          "line": 669,
           "path": "src/bernstein/core/server/server_launch.py",
           "sha": "3a8909ef4742"
         },
@@ -4905,7 +5146,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 598,
+          "line": 712,
           "path": "src/bernstein/core/identity/agent_jwt.py",
           "sha": "4fbfbf25105a"
         }
@@ -4940,17 +5181,17 @@
           "sha": "76d557aaf8ae"
         },
         {
-          "line": 388,
+          "line": 389,
           "path": "src/bernstein/cli/commands/fleet_cmd.py",
           "sha": "5120f7eedb90"
         },
         {
-          "line": 551,
+          "line": 659,
           "path": "src/bernstein/cli/commands/worker_cmd.py",
           "sha": "1ec1b1e274f6"
         },
         {
-          "line": 1202,
+          "line": 1294,
           "path": "src/bernstein/cli/dashboard_app.py",
           "sha": "0341468802f7"
         }
@@ -4963,7 +5204,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 5750,
+          "line": 5903,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "fa925d9919a5"
         }
@@ -5002,22 +5243,22 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 3028,
+          "line": 3213,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "431f4c8d718f"
         },
         {
-          "line": 3032,
+          "line": 3217,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "007e94e7e254"
         },
         {
-          "line": 7331,
+          "line": 7495,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "1ad2058b3dcb"
         },
         {
-          "line": 1633,
+          "line": 1746,
           "path": "src/bernstein/core/server/server_app.py",
           "sha": "1ad2058b3dcb"
         }
@@ -5043,7 +5284,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 589,
+          "line": 750,
           "path": "tests/conftest.py",
           "sha": "be627022860f"
         },
@@ -5061,7 +5302,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 1632,
+          "line": 1745,
           "path": "src/bernstein/core/server/server_app.py",
           "sha": "5389280b8944"
         }
@@ -5074,12 +5315,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 7322,
+          "line": 7486,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "4f8f6a1747c2"
         },
         {
-          "line": 1615,
+          "line": 1728,
           "path": "src/bernstein/core/server/server_app.py",
           "sha": "59f510a479fb"
         }
@@ -5092,12 +5333,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 364,
+          "line": 362,
           "path": "src/bernstein/core/orchestration/bootstrap.py",
           "sha": "02e110590e36"
         },
         {
-          "line": 7289,
+          "line": 7112,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "8becdd3ec04a"
         },
@@ -5111,21 +5352,34 @@
     },
     {
       "declared_in": null,
+      "key": "BERNSTEIN_CONFIDENCE_DB",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 366,
+          "path": "tests/unit/test_evolution_rollback_durable.py",
+          "sha": "4d642b14ab33"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
       "key": "BERNSTEIN_CONTAINER",
       "secret_suspect": false,
       "sites": [
         {
-          "line": 407,
+          "line": 496,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "fe3c69f145bf"
         },
         {
-          "line": 421,
+          "line": 510,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "fe3c69f145bf"
         },
         {
-          "line": 7025,
+          "line": 7211,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "c5ae7b37fbc1"
         },
@@ -5143,7 +5397,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 7026,
+          "line": 7212,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "0ea43696e4bd"
         }
@@ -5200,12 +5454,12 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 548,
+          "line": 559,
           "path": "src/bernstein/cli/commands/status_cmd.py",
           "sha": "6af82635896c"
         },
         {
-          "line": 587,
+          "line": 599,
           "path": "src/bernstein/cli/commands/status_cmd.py",
           "sha": "6af82635896c"
         },
@@ -5249,7 +5503,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 611,
+          "line": 637,
           "path": "src/bernstein/cli/commands/chat_cmd.py",
           "sha": "071638db83f6"
         }
@@ -5262,7 +5516,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 6715,
+          "line": 6930,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "27b1e864caf4"
         }
@@ -5275,7 +5529,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 389,
+          "line": 390,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "241a95b9d389"
         }
@@ -5288,7 +5542,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 479,
+          "line": 480,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "2d6afa95606a"
         }
@@ -5301,7 +5555,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 509,
+          "line": 522,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "31c45f1ef05f"
         }
@@ -5314,7 +5568,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 375,
+          "line": 376,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "5b63881620bd"
         }
@@ -5327,7 +5581,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 505,
+          "line": 518,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "77273c2e9dfc"
         }
@@ -5340,7 +5594,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 503,
+          "line": 502,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "b9c564fd62cd"
         }
@@ -5353,7 +5607,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 351,
+          "line": 352,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "0b9985e684d0"
         }
@@ -5366,7 +5620,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 424,
+          "line": 425,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "7a1cabaaf13f"
         }
@@ -5379,7 +5633,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 409,
+          "line": 410,
           "path": "tests/integration/fake_cli/fake_cli.py",
           "sha": "3a9061d87d17"
         }
@@ -5395,9 +5649,14 @@
           "line": 99,
           "path": "src/bernstein/core/fleet/config.py",
           "sha": "83cf67333c8b"
+        },
+        {
+          "line": 729,
+          "path": "src/bernstein/core/server/server_app.py",
+          "sha": "77399df73ecd"
         }
       ],
-      "use_count": 1
+      "use_count": 2
     },
     {
       "declared_in": null,
@@ -5405,7 +5664,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 96,
+          "line": 109,
           "path": "src/bernstein/core/fleet/directory_registry.py",
           "sha": "cddf0f5761d8"
         }
@@ -5444,7 +5703,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 3196,
+          "line": 3410,
           "path": "src/bernstein/core/tasks/task_lifecycle.py",
           "sha": "1bb33361f5d2"
         }
@@ -5514,12 +5773,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 388,
+          "line": 477,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "312aefb5e0f4"
         },
         {
-          "line": 662,
+          "line": 726,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "9e53ad9a92d4"
         }
@@ -5532,7 +5791,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 591,
+          "line": 752,
           "path": "tests/conftest.py",
           "sha": "2b51075cf78d"
         },
@@ -5550,7 +5809,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1874,
+          "line": 1880,
           "path": "src/bernstein/core/quality/janitor.py",
           "sha": "8af0b9c1fc34"
         }
@@ -5563,9 +5822,22 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 5135,
+          "line": 5426,
           "path": "src/bernstein/core/tasks/task_lifecycle.py",
           "sha": "4af2b315ffa1"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "BERNSTEIN_LEAK_MAX_AGE_SECONDS",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 996,
+          "path": "src/bernstein/cli/commands/doctor_cmd.py",
+          "sha": "5666e797f9bb"
         }
       ],
       "use_count": 1
@@ -5576,17 +5848,30 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 3245,
+          "line": 3474,
           "path": "src/bernstein/cli/commands/audit_cmd.py",
           "sha": "fe627da5f447"
         },
         {
-          "line": 4476,
+          "line": 4721,
           "path": "src/bernstein/cli/commands/audit_cmd.py",
           "sha": "4728d23bf4a7"
         }
       ],
       "use_count": 2
+    },
+    {
+      "declared_in": null,
+      "key": "BERNSTEIN_LOG_INPUT_CHARS",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 27,
+          "path": "src/bernstein/adapters/claude_wrapper_script.py",
+          "sha": "2197f32e2baa"
+        }
+      ],
+      "use_count": 1
     },
     {
       "declared_in": null,
@@ -5607,7 +5892,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 395,
+          "line": 484,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "f9a364d13ca4"
         }
@@ -5620,7 +5905,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 590,
+          "line": 751,
           "path": "tests/conftest.py",
           "sha": "f558dbb364ea"
         },
@@ -5644,24 +5929,6 @@
         }
       ],
       "use_count": 1
-    },
-    {
-      "declared_in": null,
-      "key": "BERNSTEIN_MCP_CATALOG_CACHE_PATH",
-      "secret_suspect": false,
-      "sites": [
-        {
-          "line": 78,
-          "path": "src/bernstein/cli/commands/mcp_catalog_cmd.py",
-          "sha": "e58f5e682928"
-        },
-        {
-          "line": 79,
-          "path": "src/bernstein/cli/commands/mcp_catalog_cmd.py",
-          "sha": "138ba7f98144"
-        }
-      ],
-      "use_count": 2
     },
     {
       "declared_in": null,
@@ -5695,12 +5962,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 83,
+          "line": 78,
           "path": "src/bernstein/cli/commands/mcp_catalog_cmd.py",
           "sha": "81874eea8940"
         },
         {
-          "line": 84,
+          "line": 79,
           "path": "src/bernstein/cli/commands/mcp_catalog_cmd.py",
           "sha": "14d7eba9fc4b"
         }
@@ -5709,44 +5976,21 @@
     },
     {
       "declared_in": null,
-      "key": "BERNSTEIN_MCP_VALIDATION",
-      "secret_suspect": false,
-      "sites": [
-        {
-          "line": 51,
-          "path": "tests/unit/test_mcp_input_validation.py",
-          "sha": "6a962331dcbd"
-        },
-        {
-          "line": 386,
-          "path": "tests/unit/test_mcp_input_validation.py",
-          "sha": "5e117149d902"
-        },
-        {
-          "line": 392,
-          "path": "tests/unit/test_mcp_input_validation.py",
-          "sha": "5e117149d902"
-        },
-        {
-          "line": 398,
-          "path": "tests/unit/test_mcp_input_validation.py",
-          "sha": "8e68462a389a"
-        }
-      ],
-      "use_count": 4
-    },
-    {
-      "declared_in": null,
       "key": "BERNSTEIN_MEM_GUARD_GB",
       "secret_suspect": false,
       "sites": [
         {
-          "line": 70,
+          "line": 71,
           "path": "tests/conftest.py",
           "sha": "f5eb14715486"
+        },
+        {
+          "line": 312,
+          "path": "tests/unit/test_memory_guard_scope.py",
+          "sha": "273d0ded822a"
         }
       ],
-      "use_count": 1
+      "use_count": 2
     },
     {
       "declared_in": null,
@@ -5754,7 +5998,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 531,
+          "line": 541,
           "path": "docs/integrations/plugin-sdk.md",
           "sha": "01c44a796de3"
         },
@@ -5790,7 +6034,7 @@
           "sha": "4396ffa5adea"
         },
         {
-          "line": 2634,
+          "line": 2819,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "30b88420f6da"
         }
@@ -5803,17 +6047,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 6659,
+          "line": 6885,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "141cc5e88996"
-        },
-        {
-          "line": 6683,
-          "path": "src/bernstein/core/orchestration/orchestrator.py",
-          "sha": "d02024ed29f4"
         }
       ],
-      "use_count": 2
+      "use_count": 1
     },
     {
       "declared_in": null,
@@ -5824,6 +6063,19 @@
           "line": 163,
           "path": "src/bernstein/core/observability/icons.py",
           "sha": "1823bd30ff6c"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "BERNSTEIN_NODES_PERSIST_PATH",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 1120,
+          "path": "src/bernstein/core/server/server_app.py",
+          "sha": "7b53843394e2"
         }
       ],
       "use_count": 1
@@ -5930,7 +6182,7 @@
           "sha": "f1a0c84da2ac"
         },
         {
-          "line": 7453,
+          "line": 7621,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "977cc2a8c41a"
         }
@@ -5943,7 +6195,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 294,
+          "line": 290,
           "path": "src/bernstein/core/observability/profiler.py",
           "sha": "701aaeb15f98"
         },
@@ -6018,7 +6270,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 526,
+          "line": 561,
           "path": "src/bernstein/core/routes/well_known.py",
           "sha": "01dc26b12a56"
         }
@@ -6031,12 +6283,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 2533,
+          "line": 2622,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "28882782acbc"
         },
         {
-          "line": 2801,
+          "line": 2896,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "28882782acbc"
         }
@@ -6049,7 +6301,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 6043,
+          "line": 6196,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "6340efaf6f1a"
         },
@@ -6098,7 +6350,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1647,
+          "line": 1796,
           "path": "src/bernstein/core/server/server_app.py",
           "sha": "e5223ca9406d"
         }
@@ -6111,7 +6363,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 588,
+          "line": 600,
           "path": "src/bernstein/cli/commands/status_cmd.py",
           "sha": "094e5a821aff"
         },
@@ -6129,7 +6381,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 2564,
+          "line": 2749,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "4feea00d3199"
         }
@@ -6155,12 +6407,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1259,
+          "line": 1357,
           "path": "src/bernstein/cli/commands/status_cmd.py",
           "sha": "45f019c79472"
         },
         {
-          "line": 845,
+          "line": 1005,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "4df7660b36e2"
         }
@@ -6173,7 +6425,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 6727,
+          "line": 6942,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "9fd01e2c274e"
         }
@@ -6199,7 +6451,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 2558,
+          "line": 2743,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "9a67c965d95f"
         }
@@ -6212,7 +6464,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 75,
+          "line": 90,
           "path": "src/bernstein/core/volunteer/review_task.py",
           "sha": "161e2e057556"
         }
@@ -6225,7 +6477,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 50,
+          "line": 65,
           "path": "src/bernstein/core/volunteer/review_task.py",
           "sha": "8a863ad8381c"
         }
@@ -6238,7 +6490,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 612,
+          "line": 676,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "58dff1c21e8e"
         }
@@ -6251,7 +6503,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 2535,
+          "line": 2720,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "5bfc55964969"
         }
@@ -6264,7 +6516,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 648,
+          "line": 640,
           "path": "tests/integration/cluster/conftest.py",
           "sha": "df909ce0c508"
         }
@@ -6277,7 +6529,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 2506,
+          "line": 2691,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "ffd2c81b372a"
         }
@@ -6290,12 +6542,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1828,
+          "line": 1775,
           "path": "src/bernstein/adapters/openai_agents_runner.py",
           "sha": "a71535ee2a73"
         },
         {
-          "line": 1865,
+          "line": 1812,
           "path": "src/bernstein/adapters/openai_agents_runner.py",
           "sha": "301cf70c621d"
         },
@@ -6305,7 +6557,7 @@
           "sha": "85f254163e05"
         },
         {
-          "line": 191,
+          "line": 193,
           "path": "src/bernstein/core/orchestration/multi_cell.py",
           "sha": "8b0b116bd037"
         }
@@ -6390,17 +6642,17 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 408,
+          "line": 497,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "d9d4df29fdf9"
         },
         {
-          "line": 6474,
+          "line": 6823,
           "path": "src/bernstein/core/agents/spawner_core.py",
           "sha": "adb0809e34b1"
         },
         {
-          "line": 7028,
+          "line": 7214,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "d03488e0b35a"
         },
@@ -6418,7 +6670,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 833,
+          "line": 925,
           "path": "src/bernstein/core/routes/task_crud.py",
           "sha": "7155d4fcc48f"
         }
@@ -6454,14 +6706,14 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 631,
+          "line": 741,
           "path": "docs/integrations/plugin-sdk.md",
-          "sha": "ef39bff57ee9"
+          "sha": "06cac41a8446"
         },
         {
-          "line": 56,
+          "line": 57,
           "path": "examples/plugins/quality_gate_plugin.py",
-          "sha": "b556a3e4d9dc"
+          "sha": "06cac41a8446"
         }
       ],
       "use_count": 2
@@ -6477,22 +6729,17 @@
           "sha": "a3b7ba7331e7"
         },
         {
-          "line": 1578,
+          "line": 1622,
           "path": "src/bernstein/core/orchestration/bootstrap.py",
           "sha": "7ca87931fda8"
         },
         {
-          "line": 6669,
+          "line": 6895,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "7ca87931fda8"
-        },
-        {
-          "line": 6676,
-          "path": "src/bernstein/core/orchestration/orchestrator.py",
-          "sha": "b0f4bbc00099"
         }
       ],
-      "use_count": 4
+      "use_count": 3
     },
     {
       "declared_in": null,
@@ -6500,27 +6747,40 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 786,
+          "line": 794,
           "path": "src/bernstein/adapters/claude.py",
           "sha": "a11c669c2968"
         },
         {
-          "line": 549,
+          "line": 657,
           "path": "src/bernstein/cli/commands/worker_cmd.py",
           "sha": "f26fdbcc0aa2"
         },
         {
-          "line": 26,
+          "line": 30,
           "path": "src/bernstein/cli/helpers.py",
           "sha": "c1e295a082cd"
         },
         {
-          "line": 154,
+          "line": 131,
           "path": "src/bernstein/cli/helpers.py",
           "sha": "0c4d8dedfe07"
         }
       ],
       "use_count": 4
+    },
+    {
+      "declared_in": null,
+      "key": "BERNSTEIN_SIGNAL_TIMEOUT_S",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 2278,
+          "path": "src/bernstein/core/quality/janitor.py",
+          "sha": "41d8e9ab7d1c"
+        }
+      ],
+      "use_count": 1
     },
     {
       "declared_in": null,
@@ -6531,19 +6791,6 @@
           "line": 51,
           "path": "src/bernstein/cli/commands/skills_catalog_cmd.py",
           "sha": "112218d2dbc9"
-        }
-      ],
-      "use_count": 1
-    },
-    {
-      "declared_in": null,
-      "key": "BERNSTEIN_SKILLS_CATALOG_CACHE_PATH",
-      "secret_suspect": false,
-      "sites": [
-        {
-          "line": 59,
-          "path": "src/bernstein/cli/commands/skills_catalog_cmd.py",
-          "sha": "6b85f367c602"
         }
       ],
       "use_count": 1
@@ -6580,12 +6827,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 854,
+          "line": 988,
           "path": "src/bernstein/cli/run_preflight.py",
           "sha": "2f202a58cfba"
         },
         {
-          "line": 1307,
+          "line": 1309,
           "path": "src/bernstein/core/quality/quality_gates.py",
           "sha": "7c020a5e4f98"
         }
@@ -6598,12 +6845,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 856,
+          "line": 990,
           "path": "src/bernstein/cli/run_preflight.py",
           "sha": "0d3c9912daf0"
         },
         {
-          "line": 1314,
+          "line": 1316,
           "path": "src/bernstein/core/quality/quality_gates.py",
           "sha": "0c884b07845d"
         }
@@ -6694,7 +6941,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 528,
+          "line": 538,
           "path": "src/bernstein/cli/commands/status_cmd.py",
           "sha": "8867b96aca86"
         },
@@ -6717,17 +6964,17 @@
           "sha": "cf57b0553247"
         },
         {
-          "line": 500,
+          "line": 498,
           "path": "src/bernstein/core/orchestration/bootstrap.py",
           "sha": "cf57b0553247"
         },
         {
-          "line": 1282,
+          "line": 1296,
           "path": "src/bernstein/core/orchestration/bootstrap.py",
           "sha": "cf57b0553247"
         },
         {
-          "line": 5401,
+          "line": 5554,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "cf57b0553247"
         }
@@ -6753,7 +7000,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 377,
+          "line": 378,
           "path": "src/bernstein/cli/main.py",
           "sha": "cb6699f5d589"
         }
@@ -6818,7 +7065,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 7027,
+          "line": 7213,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "7b4718191e76"
         }
@@ -6831,7 +7078,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 781,
+          "line": 785,
           "path": "src/bernstein/cli/main.py",
           "sha": "3784aeeffaba"
         }
@@ -6858,11 +7105,63 @@
     },
     {
       "declared_in": null,
+      "key": "BERNSTEIN_VAULT_ADDR",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 77,
+          "path": "examples/plugins/custom-vault-token-store/src/custom_vault_token_store/__init__.py",
+          "sha": "d4fc805221c3"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "BERNSTEIN_VAULT_LIVE_TEST_ADDR",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 24,
+          "path": "examples/plugins/custom-vault-token-store/tests/test_live_vault.py",
+          "sha": "e2ca74c46785"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "BERNSTEIN_VAULT_LIVE_TEST_TOKEN",
+      "secret_suspect": true,
+      "sites": [
+        {
+          "line": 25,
+          "path": "examples/plugins/custom-vault-token-store/tests/test_live_vault.py",
+          "sha": "45455f741b2f"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "BERNSTEIN_VAULT_TOKEN",
+      "secret_suspect": true,
+      "sites": [
+        {
+          "line": 78,
+          "path": "examples/plugins/custom-vault-token-store/src/custom_vault_token_store/__init__.py",
+          "sha": "3a0d21af49f1"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
       "key": "BERNSTEIN_WORKFLOW",
       "secret_suspect": false,
       "sites": [
         {
-          "line": 7285,
+          "line": 7463,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "aa8d659c580f"
         }
@@ -7070,12 +7369,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 50,
+          "line": 51,
           "path": "docs/cloudflare/cloudflare-browser-rendering.md",
           "sha": "58427b8e9bcf"
         },
         {
-          "line": 261,
+          "line": 262,
           "path": "docs/cloudflare/cloudflare-browser-rendering.md",
           "sha": "58427b8e9bcf"
         }
@@ -7088,12 +7387,12 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 51,
+          "line": 52,
           "path": "docs/cloudflare/cloudflare-browser-rendering.md",
           "sha": "efeb908e0356"
         },
         {
-          "line": 262,
+          "line": 263,
           "path": "docs/cloudflare/cloudflare-browser-rendering.md",
           "sha": "efeb908e0356"
         }
@@ -7106,12 +7405,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1257,
+          "line": 1355,
           "path": "src/bernstein/cli/commands/status_cmd.py",
           "sha": "1bdf71b84232"
         },
         {
-          "line": 843,
+          "line": 1003,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "1bdf71b84232"
         }
@@ -7419,7 +7718,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 416,
+          "line": 426,
           "path": "docs/integrations/plugin-sdk.md",
           "sha": "d0d2d1e4e5a3"
         },
@@ -7450,7 +7749,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 2388,
+          "line": 2681,
           "path": ".github/workflows/ci.yml",
           "sha": "512d1ec7656d"
         }
@@ -7463,17 +7762,12 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 243,
+          "line": 236,
           "path": "src/bernstein/adapters/gemini.py",
           "sha": "99883fcfbc93"
-        },
-        {
-          "line": 142,
-          "path": "src/bernstein/core/orchestration/preflight.py",
-          "sha": "326f5d0a8bc6"
         }
       ],
-      "use_count": 2
+      "use_count": 1
     },
     {
       "declared_in": null,
@@ -7481,7 +7775,12 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 1115,
+          "line": 633,
+          "path": "scripts/contributor_recognition.py",
+          "sha": "3030afeefc3d"
+        },
+        {
+          "line": 1136,
           "path": "scripts/project_pulse.py",
           "sha": "12fd294a89b6"
         },
@@ -7491,12 +7790,12 @@
           "sha": "12fd294a89b6"
         },
         {
-          "line": 130,
+          "line": 131,
           "path": "scripts/trunk_health_slo.py",
           "sha": "542c2edd2217"
         }
       ],
-      "use_count": 3
+      "use_count": 4
     },
     {
       "declared_in": null,
@@ -7504,7 +7803,12 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 740,
+          "line": 114,
+          "path": "scripts/plan_affected_tests.py",
+          "sha": "ab58d896d43a"
+        },
+        {
+          "line": 884,
           "path": "scripts/run_tests.py",
           "sha": "ab58d896d43a"
         },
@@ -7519,7 +7823,7 @@
           "sha": "0f079534182d"
         }
       ],
-      "use_count": 3
+      "use_count": 4
     },
     {
       "declared_in": null,
@@ -7568,7 +7872,7 @@
           "sha": "f44afc4c9bbe"
         },
         {
-          "line": 2459,
+          "line": 2776,
           "path": ".github/workflows/ci.yml",
           "sha": "a9168f9af37d"
         }
@@ -7591,14 +7895,14 @@
           "sha": "c81b1f4358db"
         },
         {
+          "line": 106,
+          "path": "scripts/plan_affected_tests.py",
+          "sha": "55b37c987588"
+        },
+        {
           "line": 96,
           "path": "scripts/trunk_andon_gate_decision.py",
           "sha": "c81b1f4358db"
-        },
-        {
-          "line": 143,
-          "path": "scripts/trunk_health_slo.py",
-          "sha": "55b37c987588"
         }
       ],
       "use_count": 4
@@ -7637,14 +7941,14 @@
           "sha": "966220ae5661"
         },
         {
-          "line": 470,
+          "line": 1204,
           "path": "scripts/quorum_check.py",
           "sha": "f7709b5d7e00"
         },
         {
-          "line": 245,
-          "path": "scripts/toggle_branch_protection_audit_marker.py",
-          "sha": "9ab121d7e5aa"
+          "line": 167,
+          "path": "scripts/quorum_request_reviews.py",
+          "sha": "f7709b5d7e00"
         }
       ],
       "use_count": 4
@@ -7709,7 +8013,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 485,
+          "line": 1234,
           "path": "scripts/quorum_check.py",
           "sha": "b20dfb5e80b3"
         },
@@ -7727,7 +8031,12 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 1115,
+          "line": 633,
+          "path": "scripts/contributor_recognition.py",
+          "sha": "3030afeefc3d"
+        },
+        {
+          "line": 1136,
           "path": "scripts/project_pulse.py",
           "sha": "12fd294a89b6"
         },
@@ -7737,12 +8046,12 @@
           "sha": "12fd294a89b6"
         },
         {
-          "line": 4822,
+          "line": 4964,
           "path": "src/bernstein/core/orchestration/orchestrator.py",
           "sha": "008a8b486f92"
         }
       ],
-      "use_count": 3
+      "use_count": 4
     },
     {
       "declared_in": null,
@@ -7750,7 +8059,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 595,
+          "line": 689,
           "path": "src/bernstein/core/routes/webhooks.py",
           "sha": "446ac0e5674c"
         },
@@ -7830,7 +8139,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 780,
+          "line": 874,
           "path": "src/bernstein/core/routes/webhooks.py",
           "sha": "fb8463fe5fa2"
         },
@@ -7844,11 +8153,24 @@
     },
     {
       "declared_in": null,
+      "key": "GIT_AUTHOR_EMAIL",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 135,
+          "path": "tests/unit/test_commit_identity_workflow_yaml.py",
+          "sha": "cbf5186b22ec"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
       "key": "GIT_CONFIG_COUNT",
       "secret_suspect": false,
       "sites": [
         {
-          "line": 203,
+          "line": 285,
           "path": "tests/conftest.py",
           "sha": "34ce3b719673"
         }
@@ -7891,22 +8213,17 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 243,
+          "line": 236,
           "path": "src/bernstein/adapters/gemini.py",
           "sha": "99883fcfbc93"
         },
         {
-          "line": 324,
+          "line": 318,
           "path": "src/bernstein/adapters/gemini.py",
           "sha": "35684b9f2e64"
-        },
-        {
-          "line": 144,
-          "path": "src/bernstein/core/orchestration/preflight.py",
-          "sha": "4d93b914e7a0"
         }
       ],
-      "use_count": 3
+      "use_count": 2
     },
     {
       "declared_in": null,
@@ -7914,22 +8231,17 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 146,
-          "path": "src/bernstein/core/orchestration/preflight.py",
-          "sha": "0e195d7fe2fe"
-        },
-        {
-          "line": 147,
-          "path": "src/bernstein/core/orchestration/preflight.py",
-          "sha": "38cde5bb477e"
-        },
-        {
           "line": 47,
           "path": "tests/integration/storage/test_gcs_sink.py",
           "sha": "52a276823d9b"
+        },
+        {
+          "line": 286,
+          "path": "tests/integration/test_first_run_documented_path.py",
+          "sha": "8f8c6c997274"
         }
       ],
-      "use_count": 3
+      "use_count": 2
     },
     {
       "declared_in": null,
@@ -7937,7 +8249,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 325,
+          "line": 319,
           "path": "src/bernstein/adapters/gemini.py",
           "sha": "1c05bbbf8416"
         },
@@ -7978,11 +8290,24 @@
     },
     {
       "declared_in": null,
+      "key": "HEAD_COMMIT_MESSAGE",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 2683,
+          "path": ".github/workflows/ci.yml",
+          "sha": "5251092b0c03"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
       "key": "HEAD_SHA",
       "secret_suspect": false,
       "sites": [
         {
-          "line": 133,
+          "line": 134,
           "path": ".github/workflows/volunteer-verify.yml",
           "sha": "d3881b2bb5ac"
         },
@@ -8000,24 +8325,24 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 165,
+          "line": 205,
+          "path": "src/bernstein/adapters/osv_scanner.py",
+          "sha": "b4e424369400"
+        },
+        {
+          "line": 211,
+          "path": "src/bernstein/adapters/osv_scanner.py",
+          "sha": "b4e424369400"
+        },
+        {
+          "line": 166,
           "path": "src/bernstein/adapters/trivy.py",
           "sha": "b4e424369400"
         },
         {
-          "line": 172,
+          "line": 173,
           "path": "src/bernstein/adapters/trivy.py",
           "sha": "b4e424369400"
-        },
-        {
-          "line": 111,
-          "path": "src/bernstein/cli/commands/daemon_cmd.py",
-          "sha": "8d9df324a100"
-        },
-        {
-          "line": 48,
-          "path": "src/bernstein/core/security/redactor.py",
-          "sha": "980438deab9e"
         }
       ],
       "use_count": 4
@@ -8044,7 +8369,7 @@
           "sha": "b13806837d33"
         },
         {
-          "line": 76,
+          "line": 79,
           "path": "tests/unit/conftest.py",
           "sha": "b13806837d33"
         }
@@ -8262,12 +8587,12 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 107,
+          "line": 123,
           "path": "src/bernstein/adapters/kilo.py",
           "sha": "8c2e24535dc7"
         },
         {
-          "line": 489,
+          "line": 491,
           "path": "src/bernstein/core/agents/agent_discovery.py",
           "sha": "a9550016d0b7"
         }
@@ -8303,7 +8628,7 @@
           "sha": "c905292bbe17"
         },
         {
-          "line": 531,
+          "line": 533,
           "path": "src/bernstein/core/agents/agent_discovery.py",
           "sha": "bad261e97e16"
         }
@@ -8386,7 +8711,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 656,
+          "line": 787,
           "path": ".github/workflows/ci.yml",
           "sha": "57e841c4339a"
         }
@@ -8425,17 +8750,22 @@
       "secret_suspect": false,
       "sites": [
         {
+          "line": 208,
+          "path": "src/bernstein/adapters/osv_scanner.py",
+          "sha": "f9411c36db0d"
+        },
+        {
           "line": 254,
           "path": "src/bernstein/adapters/q_dev.py",
           "sha": "95c7e3218fd2"
         },
         {
-          "line": 168,
+          "line": 169,
           "path": "src/bernstein/adapters/trivy.py",
           "sha": "f9411c36db0d"
         }
       ],
-      "use_count": 2
+      "use_count": 3
     },
     {
       "declared_in": null,
@@ -8459,6 +8789,45 @@
           "line": 22,
           "path": "tests/integration/sandbox/test_modal_backend.py",
           "sha": "81d5924fc895"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "MODE_PROBE_OUT",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 496,
+          "path": "tests/unit/test_mcp_input_validation.py",
+          "sha": "02c73321c1c9"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "MUTATION_PROBE_REPO",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 27,
+          "path": "tests/unit/test_mutation_timeout_probe_isolation.py",
+          "sha": "84a6f44577c9"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "MUTATION_PROBE_REPORT",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 64,
+          "path": "tests/unit/test_mutation_timeout_probe_isolation.py",
+          "sha": "97d235f2fb02"
         }
       ],
       "use_count": 1
@@ -8640,27 +9009,45 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 219,
+          "line": 236,
           "path": "src/bernstein/adapters/codex.py",
           "sha": "276a9f6a0f7d"
         },
         {
-          "line": 557,
+          "line": 600,
           "path": "src/bernstein/adapters/codex.py",
           "sha": "0f0c146aa678"
         },
         {
-          "line": 632,
+          "line": 609,
           "path": "src/bernstein/adapters/openai_agents.py",
           "sha": "0f0c146aa678"
         },
         {
-          "line": 250,
-          "path": "src/bernstein/core/agents/agent_discovery.py",
-          "sha": "16e2b00595a0"
+          "line": 110,
+          "path": "src/bernstein/adapters/tongyi_deepresearch_runner.py",
+          "sha": "b6a8165f8fe6"
         }
       ],
       "use_count": 4
+    },
+    {
+      "declared_in": null,
+      "key": "OPENAI_BASE_URL",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 1165,
+          "path": "src/bernstein/adapters/openai_agents_runner.py",
+          "sha": "a7a958f13fed"
+        },
+        {
+          "line": 109,
+          "path": "src/bernstein/adapters/tongyi_deepresearch_runner.py",
+          "sha": "2d16d18c7a65"
+        }
+      ],
+      "use_count": 2
     },
     {
       "declared_in": null,
@@ -8668,7 +9055,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 633,
+          "line": 610,
           "path": "src/bernstein/adapters/openai_agents.py",
           "sha": "5ca9f30fea51"
         }
@@ -8681,7 +9068,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 558,
+          "line": 601,
           "path": "src/bernstein/adapters/codex.py",
           "sha": "f93f56be4a84"
         }
@@ -8746,7 +9133,7 @@
           "sha": "cba234dfa96c"
         },
         {
-          "line": 1076,
+          "line": 1133,
           "path": "src/bernstein/core/config/config_schema.py",
           "sha": "732aa12fe8d7"
         },
@@ -8764,7 +9151,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 1076,
+          "line": 1133,
           "path": "src/bernstein/core/config/config_schema.py",
           "sha": "732aa12fe8d7"
         },
@@ -8808,6 +9195,11 @@
       "secret_suspect": false,
       "sites": [
         {
+          "line": 233,
+          "path": "scripts/capture_webui_renders.py",
+          "sha": "d86df8aa6693"
+        },
+        {
           "line": 110,
           "path": "src/bernstein/cli/commands/daemon_cmd.py",
           "sha": "7ddc44115f5a"
@@ -8820,11 +9212,6 @@
         {
           "line": 73,
           "path": "src/bernstein/core/daemon/launchd.py",
-          "sha": "41e21cb63af5"
-        },
-        {
-          "line": 58,
-          "path": "src/bernstein/core/daemon/systemd.py",
           "sha": "41e21cb63af5"
         }
       ],
@@ -8880,7 +9267,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 413,
+          "line": 430,
           "path": "scripts/check_test_count_drop.py",
           "sha": "94725f62e2f8"
         },
@@ -8929,7 +9316,7 @@
           "sha": "40fdc6ed7989"
         },
         {
-          "line": 131,
+          "line": 132,
           "path": ".github/workflows/volunteer-verify.yml",
           "sha": "63801f52d9a5"
         }
@@ -8942,7 +9329,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1863,
+          "line": 2037,
           "path": "src/bernstein/cli/run_bootstrap.py",
           "sha": "9dd7b384d8cf"
         },
@@ -8960,7 +9347,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 82,
+          "line": 100,
           "path": ".github/workflows/publish.yml",
           "sha": "b1e6494be89c"
         }
@@ -8989,6 +9376,19 @@
           "line": 141,
           "path": "src/bernstein/core/observability/icons.py",
           "sha": "67b831d3c42f"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "QUORUM_REQUEST_REVIEWS",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 174,
+          "path": "scripts/quorum_request_reviews.py",
+          "sha": "688d3bdc132e"
         }
       ],
       "use_count": 1
@@ -9062,11 +9462,24 @@
     },
     {
       "declared_in": null,
+      "key": "REF_NAME",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 2682,
+          "path": ".github/workflows/ci.yml",
+          "sha": "55e9c8c2a83a"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
       "key": "RELEASE_REF",
       "secret_suspect": false,
       "sites": [
         {
-          "line": 95,
+          "line": 113,
           "path": ".github/workflows/publish.yml",
           "sha": "7275cc9be3a1"
         }
@@ -9092,7 +9505,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 132,
+          "line": 133,
           "path": ".github/workflows/volunteer-verify.yml",
           "sha": "6af7df2f1179"
         },
@@ -9110,7 +9523,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 96,
+          "line": 99,
           "path": ".github/workflows/required-check-canary.yml",
           "sha": "d5f870e66fcc"
         }
@@ -9123,9 +9536,22 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 97,
+          "line": 100,
           "path": ".github/workflows/required-check-canary.yml",
           "sha": "79f3ede1279f"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
+      "key": "RLIMIT_PROBE_DIR",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 131,
+          "path": "tests/unit/test_memory_guard_scope.py",
+          "sha": "faaaf0e40860"
         }
       ],
       "use_count": 1
@@ -9219,7 +9645,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 55,
+          "line": 58,
           "path": "tests/contract/test_task_server_schemathesis.py",
           "sha": "bc4d6499198b"
         }
@@ -9325,12 +9751,12 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 1444,
+          "line": 1556,
           "path": "src/bernstein/core/server/server_app.py",
           "sha": "0c95fbb1f6b4"
         },
         {
-          "line": 1648,
+          "line": 1797,
           "path": "src/bernstein/core/server/server_app.py",
           "sha": "88f23f7e275e"
         }
@@ -9343,7 +9769,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 316,
+          "line": 326,
           "path": "docs/integrations/plugin-sdk.md",
           "sha": "edfa09d5fbca"
         },
@@ -9367,6 +9793,19 @@
     },
     {
       "declared_in": null,
+      "key": "SMART_LLM",
+      "secret_suspect": false,
+      "sites": [
+        {
+          "line": 237,
+          "path": "tests/unit/adapters/test_deep_research_adapters.py",
+          "sha": "55c204ce77e3"
+        }
+      ],
+      "use_count": 1
+    },
+    {
+      "declared_in": null,
       "key": "SOC2_EVIDENCE_SINK",
       "secret_suspect": false,
       "sites": [
@@ -9384,7 +9823,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 239,
+          "line": 243,
           "path": "scripts/gen_distribution_manifests.py",
           "sha": "63eba904cb26"
         }
@@ -9397,7 +9836,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 617,
+          "line": 641,
           "path": "src/bernstein/cli/commands/doctor_cmd.py",
           "sha": "ac60c1e2e1f2"
         }
@@ -9436,7 +9875,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 98,
+          "line": 101,
           "path": ".github/workflows/required-check-canary.yml",
           "sha": "8f7e1908bc45"
         }
@@ -9449,7 +9888,7 @@
       "secret_suspect": true,
       "sites": [
         {
-          "line": 266,
+          "line": 274,
           "path": "tests/unit/test_lifecycle_hooks.py",
           "sha": "8a3748748795"
         }
@@ -9537,7 +9976,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 409,
+          "line": 426,
           "path": "scripts/check_test_count_drop.py",
           "sha": "59f1696e79a4"
         }
@@ -9573,22 +10012,22 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1458,
+          "line": 1519,
           "path": "src/bernstein/adapters/base.py",
           "sha": "ae88de4120dd"
         },
         {
-          "line": 405,
+          "line": 414,
           "path": "tests/unit/test_mcp_tasks.py",
           "sha": "803ff7ae5106"
         },
         {
-          "line": 418,
+          "line": 427,
           "path": "tests/unit/test_mcp_tasks.py",
           "sha": "5e359ef14e67"
         },
         {
-          "line": 425,
+          "line": 434,
           "path": "tests/unit/test_mcp_tasks.py",
           "sha": "ef7cfc857775"
         }
@@ -9601,7 +10040,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1459,
+          "line": 1520,
           "path": "src/bernstein/adapters/base.py",
           "sha": "223347291a21"
         }
@@ -9725,12 +10164,17 @@
       "secret_suspect": false,
       "sites": [
         {
+          "line": 163,
+          "path": ".github/workflows/volunteer-verify.yml",
+          "sha": "a4a83048a2b0"
+        },
+        {
           "line": 227,
           "path": ".github/workflows/volunteer-verify.yml",
           "sha": "1acd8175c987"
         }
       ],
-      "use_count": 1
+      "use_count": 2
     },
     {
       "declared_in": null,
@@ -9795,13 +10239,18 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 171,
+          "line": 210,
+          "path": "src/bernstein/adapters/osv_scanner.py",
+          "sha": "d751942b29e6"
+        },
+        {
+          "line": 172,
           "path": "src/bernstein/adapters/trivy.py",
           "sha": "d751942b29e6"
         },
         {
-          "line": 52,
-          "path": "src/bernstein/core/protocols/mcp_catalog/fetcher.py",
+          "line": 59,
+          "path": "src/bernstein/core/protocols/catalog_fetch.py",
           "sha": "103c395641a4"
         },
         {
@@ -9810,7 +10259,7 @@
           "sha": "103c395641a4"
         }
       ],
-      "use_count": 3
+      "use_count": 4
     },
     {
       "declared_in": null,
@@ -9882,7 +10331,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1460,
+          "line": 1521,
           "path": "src/bernstein/adapters/base.py",
           "sha": "78718315851b"
         }
@@ -9895,7 +10344,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1458,
+          "line": 1519,
           "path": "src/bernstein/adapters/base.py",
           "sha": "ae88de4120dd"
         }
@@ -9908,7 +10357,7 @@
       "secret_suspect": false,
       "sites": [
         {
-          "line": 1459,
+          "line": 1520,
           "path": "src/bernstein/adapters/base.py",
           "sha": "223347291a21"
         }
@@ -9925,6 +10374,24 @@
       },
       "evidence": "# AUTO-GENERATED by `bernstein agents-md sync` - managed line: `read:`.",
       "rule": "`.aider.conf.yml` is generated — do not hand-edit"
+    },
+    {
+      "anchor": {
+        "line": 2,
+        "path": ".github/copilot-instructions.md",
+        "sha": "1bd538b93ae8"
+      },
+      "evidence": "<!-- AUTO-GENERATED by `bernstein agents-md sync` - DO NOT edit by hand. Curated content l",
+      "rule": "`.github/copilot-instructions.md` is generated — do not hand-edit"
+    },
+    {
+      "anchor": {
+        "line": 1,
+        "path": ".github/requirements/pipx-requirements.txt",
+        "sha": "a463d3fd97db"
+      },
+      "evidence": "# This file was autogenerated by uv via the following command:",
+      "rule": "`.github/requirements/pipx-requirements.txt` is generated — do not hand-edit"
     },
     {
       "anchor": {
@@ -9955,12 +10422,30 @@
     },
     {
       "anchor": {
+        "line": 1,
+        "path": "docker/requirements-build.txt",
+        "sha": "a463d3fd97db"
+      },
+      "evidence": "# This file was autogenerated by uv via the following command:",
+      "rule": "`docker/requirements-build.txt` is generated — do not hand-edit"
+    },
+    {
+      "anchor": {
         "line": 3,
         "path": "docs/diagrams/inventory_topology.md",
         "sha": "f37e7da9600d"
       },
       "evidence": "<!-- AUTO-GENERATED from tests/fixtures/govern/inventory-store.json. Do not edit by hand. ",
       "rule": "`docs/diagrams/inventory_topology.md` is generated — do not hand-edit"
+    },
+    {
+      "anchor": {
+        "line": 3,
+        "path": "docs/governance/coverage.md",
+        "sha": "a95588bb5d35"
+      },
+      "evidence": "<!-- AUTO-GENERATED from coverage.yaml: run `uv run python scripts/gen_governance_coverage",
+      "rule": "`docs/governance/coverage.md` is generated — do not hand-edit"
     },
     {
       "anchor": {
@@ -9977,7 +10462,7 @@
         "path": "docs/release-notes/v3.8.4.md",
         "sha": "b473d8ec3b9d"
       },
-      "evidence": "- A tokenless or misconfigured worker join now fails fast with an actionable message",
+      "evidence": "- A tokenless or misconfigured worker join now fails fast with an actionable message namin",
       "rule": "`docs/release-notes/v3.8.4.md` is generated — do not hand-edit"
     },
     {
@@ -10159,26 +10644,26 @@
         "path": "tests/AGENTS.md",
         "sha": "8f091cf92336"
       },
-      "files": 3335,
+      "files": 3669,
       "langs": [
         "python",
         "yaml"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "tests"
     },
     {
       "anchor": {
         "line": 1,
         "path": "src/bernstein/__init__.py",
-        "sha": "cba41db26362"
+        "sha": "01604f273596"
       },
-      "files": 2190,
+      "files": 2295,
       "langs": [
         "python",
         "yaml"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "src/bernstein"
     },
     {
@@ -10187,27 +10672,13 @@
         "path": "docs/.nojekyll",
         "sha": "e3b0c44298fc"
       },
-      "files": 751,
+      "files": 791,
       "langs": [
         "md",
         "js"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "docs"
-    },
-    {
-      "anchor": {
-        "line": 1,
-        "path": "templates/adapter_plugin/cookiecutter.json",
-        "sha": "021fb596db81"
-      },
-      "files": 200,
-      "langs": [
-        "md",
-        "yaml"
-      ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
-      "path": "templates"
     },
     {
       "anchor": {
@@ -10215,13 +10686,27 @@
         "path": "examples/README.md",
         "sha": "85a43f9e9f0d"
       },
-      "files": 196,
+      "files": 214,
       "langs": [
         "yaml",
         "python"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "examples"
+    },
+    {
+      "anchor": {
+        "line": 1,
+        "path": "templates/adapter_plugin/cookiecutter.json",
+        "sha": "021fb596db81"
+      },
+      "files": 201,
+      "langs": [
+        "md",
+        "yaml"
+      ],
+      "owner": "",
+      "path": "templates"
     },
     {
       "anchor": {
@@ -10229,13 +10714,27 @@
         "path": "web/.gitignore",
         "sha": "f1a9a09b226c"
       },
-      "files": 107,
+      "files": 115,
       "langs": [
         "ts",
         "js"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "web"
+    },
+    {
+      "anchor": {
+        "line": 1,
+        "path": "scripts/adapter_canary.py",
+        "sha": "381f9bfc69d4"
+      },
+      "files": 105,
+      "langs": [
+        "python",
+        "shell"
+      ],
+      "owner": "",
+      "path": "scripts"
     },
     {
       "anchor": {
@@ -10243,7 +10742,7 @@
         "path": ".github/CODEOWNERS",
         "sha": "2a345362dc2c"
       },
-      "files": 97,
+      "files": 104,
       "langs": [
         "yaml",
         "md"
@@ -10254,29 +10753,15 @@
     {
       "anchor": {
         "line": 1,
-        "path": "scripts/adapter_canary.py",
-        "sha": "381f9bfc69d4"
-      },
-      "files": 95,
-      "langs": [
-        "python",
-        "shell"
-      ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
-      "path": "scripts"
-    },
-    {
-      "anchor": {
-        "line": 1,
         "path": ".aider.conf.yml",
         "sha": "b01a2dddbfc7"
       },
-      "files": 55,
+      "files": 60,
       "langs": [
         "md",
         "yaml"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "<root>"
     },
     {
@@ -10290,7 +10775,7 @@
         "python",
         "ts"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "sdk"
     },
     {
@@ -10304,7 +10789,7 @@
         "yaml",
         "md"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "deploy"
     },
     {
@@ -10318,7 +10803,7 @@
         "ts",
         "md"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "packages/vscode"
     },
     {
@@ -10331,7 +10816,7 @@
       "langs": [
         "yaml"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": ".bernstein"
     },
     {
@@ -10345,7 +10830,7 @@
         "python",
         "yaml"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "benchmarks"
     },
     {
@@ -10359,21 +10844,21 @@
         "python",
         "md"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "verify_cli"
     },
     {
       "anchor": {
         "line": 1,
         "path": "docker/demo/Caddyfile",
-        "sha": "d4e0388d0739"
+        "sha": "1efb64f10a30"
       },
-      "files": 19,
+      "files": 21,
       "langs": [
         "yaml",
         "shell"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "docker"
     },
     {
@@ -10387,8 +10872,21 @@
         "md",
         "shell"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "packages/cursor-plugin"
+    },
+    {
+      "anchor": {
+        "line": 1,
+        "path": "community/awesome-bernstein-plugins.md",
+        "sha": "b2afba4ce893"
+      },
+      "files": 17,
+      "langs": [
+        "md"
+      ],
+      "owner": "",
+      "path": "community"
     },
     {
       "anchor": {
@@ -10406,16 +10904,16 @@
     {
       "anchor": {
         "line": 1,
-        "path": "packaging/deb/control",
-        "sha": "b2b0afb66788"
+        "path": "eval/cases/collusion/B1_uncoupled_weakened_test.yaml",
+        "sha": "16495287d95c"
       },
-      "files": 11,
+      "files": 12,
       "langs": [
-        "md",
-        "js"
+        "yaml",
+        "python"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
-      "path": "packaging"
+      "owner": "",
+      "path": "eval"
     },
     {
       "anchor": {
@@ -10423,10 +10921,24 @@
         "path": ".cursor/rules/architecture.mdc",
         "sha": "cb3f91d54eee"
       },
-      "files": 9,
+      "files": 10,
       "langs": [],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "@chernistry",
       "path": ".cursor"
+    },
+    {
+      "anchor": {
+        "line": 1,
+        "path": "packaging/deb/control",
+        "sha": "b2b0afb66788"
+      },
+      "files": 10,
+      "langs": [
+        "md",
+        "js"
+      ],
+      "owner": "",
+      "path": "packaging"
     },
     {
       "anchor": {
@@ -10439,7 +10951,7 @@
         "python",
         "shell"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": ".clusterfuzzlite"
     },
     {
@@ -10452,8 +10964,19 @@
       "langs": [
         "python"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "integrations"
+    },
+    {
+      "anchor": {
+        "line": 1,
+        "path": "assets/brand/badge-built-with-dark.svg",
+        "sha": "ce81a1bf6355"
+      },
+      "files": 4,
+      "langs": [],
+      "owner": "",
+      "path": "assets"
     },
     {
       "anchor": {
@@ -10465,35 +10988,19 @@
       "langs": [
         "md"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "commands"
     },
     {
       "anchor": {
         "line": 1,
-        "path": ".qwen/.gitignore",
-        "sha": "5f1d2f65c3a2"
+        "path": ".devcontainer/Dockerfile",
+        "sha": "bf07b7702931"
       },
       "files": 2,
-      "langs": [
-        "md"
-      ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
-      "path": ".qwen"
-    },
-    {
-      "anchor": {
-        "line": 1,
-        "path": "eval/metrics/pentest_scorer.py",
-        "sha": "e97e741f39b6"
-      },
-      "files": 2,
-      "langs": [
-        "python",
-        "yaml"
-      ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
-      "path": "eval"
+      "langs": [],
+      "owner": "",
+      "path": ".devcontainer"
     },
     {
       "anchor": {
@@ -10516,7 +11023,7 @@
       "langs": [
         "md"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "skills"
     },
     {
@@ -10529,19 +11036,8 @@
       "langs": [
         "python"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "tools"
-    },
-    {
-      "anchor": {
-        "line": 1,
-        "path": ".devcontainer/devcontainer.json",
-        "sha": "021fb596db81"
-      },
-      "files": 1,
-      "langs": [],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
-      "path": ".devcontainer"
     },
     {
       "anchor": {
@@ -10551,7 +11047,7 @@
       },
       "files": 1,
       "langs": [],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": ".plugin"
     },
     {
@@ -10562,7 +11058,7 @@
       },
       "files": 1,
       "langs": [],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": ".well-known"
     },
     {
@@ -10575,7 +11071,7 @@
       "langs": [
         "md"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "Formula"
     },
     {
@@ -10588,7 +11084,7 @@
       "langs": [
         "shell"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "action"
     },
     {
@@ -10601,21 +11097,8 @@
       "langs": [
         "md"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "agents"
-    },
-    {
-      "anchor": {
-        "line": 1,
-        "path": "community/awesome-bernstein-plugins.md",
-        "sha": "b2afba4ce893"
-      },
-      "files": 1,
-      "langs": [
-        "md"
-      ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
-      "path": "community"
     },
     {
       "anchor": {
@@ -10627,7 +11110,7 @@
       "langs": [
         "yaml"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "config"
     },
     {
@@ -10640,7 +11123,7 @@
       "langs": [
         "python"
       ],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "hooks"
     },
     {
@@ -10651,28 +11134,14 @@
       },
       "files": 1,
       "langs": [],
-      "owner": "@vaibhav8a @thegoodengineer @tenequm @Phoenix1504e",
+      "owner": "",
       "path": "rules"
     }
   ],
   "owners": [
     {
       "anchor": {
-        "line": 9,
-        "path": ".github/CODEOWNERS",
-        "sha": "82c5ad8395fb"
-      },
-      "owners": [
-        "@vaibhav8a",
-        "@thegoodengineer",
-        "@tenequm",
-        "@Phoenix1504e"
-      ],
-      "pattern": "*"
-    },
-    {
-      "anchor": {
-        "line": 13,
+        "line": 16,
         "path": ".github/CODEOWNERS",
         "sha": "0a7fcb10f0d5"
       },
@@ -10683,18 +11152,67 @@
     },
     {
       "anchor": {
-        "line": 14,
+        "line": 21,
         "path": ".github/CODEOWNERS",
-        "sha": "e6614cee703f"
+        "sha": "280d11c8df8a"
       },
       "owners": [
-        "@chernistry"
+        "@chernistry",
+        "@vaibhav8a",
+        "@thegoodengineer",
+        "@tenequm",
+        "@Phoenix1504e",
+        "@Chirag6722"
       ],
       "pattern": "/src/bernstein/core/"
     },
     {
       "anchor": {
-        "line": 15,
+        "line": 22,
+        "path": ".github/CODEOWNERS",
+        "sha": "6dbaac785cec"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/src/bernstein/core/security/"
+    },
+    {
+      "anchor": {
+        "line": 23,
+        "path": ".github/CODEOWNERS",
+        "sha": "d26d5f078700"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/src/bernstein/core/identity/"
+    },
+    {
+      "anchor": {
+        "line": 24,
+        "path": ".github/CODEOWNERS",
+        "sha": "d1ab2e6c9c5f"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/src/bernstein/core/sandbox/"
+    },
+    {
+      "anchor": {
+        "line": 25,
+        "path": ".github/CODEOWNERS",
+        "sha": "62b759b628ce"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/src/bernstein/core/tokens/"
+    },
+    {
+      "anchor": {
+        "line": 26,
         "path": ".github/CODEOWNERS",
         "sha": "43222f65867b"
       },
@@ -10705,18 +11223,23 @@
     },
     {
       "anchor": {
-        "line": 16,
+        "line": 27,
         "path": ".github/CODEOWNERS",
-        "sha": "ac0afbe84d75"
+        "sha": "ec04ac61afad"
       },
       "owners": [
-        "@chernistry"
+        "@chernistry",
+        "@vaibhav8a",
+        "@thegoodengineer",
+        "@tenequm",
+        "@Phoenix1504e",
+        "@Chirag6722"
       ],
       "pattern": "/src/bernstein/adapters/"
     },
     {
       "anchor": {
-        "line": 17,
+        "line": 28,
         "path": ".github/CODEOWNERS",
         "sha": "bc6f6390d3f6"
       },
@@ -10727,7 +11250,7 @@
     },
     {
       "anchor": {
-        "line": 18,
+        "line": 29,
         "path": ".github/CODEOWNERS",
         "sha": "efe2565220a9"
       },
@@ -10738,7 +11261,7 @@
     },
     {
       "anchor": {
-        "line": 19,
+        "line": 30,
         "path": ".github/CODEOWNERS",
         "sha": "7116b12ac542"
       },
@@ -10749,7 +11272,7 @@
     },
     {
       "anchor": {
-        "line": 20,
+        "line": 31,
         "path": ".github/CODEOWNERS",
         "sha": "69b7e9b9181d"
       },
@@ -10760,7 +11283,7 @@
     },
     {
       "anchor": {
-        "line": 21,
+        "line": 32,
         "path": ".github/CODEOWNERS",
         "sha": "f044a1ced06b"
       },
@@ -10771,7 +11294,7 @@
     },
     {
       "anchor": {
-        "line": 22,
+        "line": 33,
         "path": ".github/CODEOWNERS",
         "sha": "6bb4f3a17796"
       },
@@ -10782,7 +11305,7 @@
     },
     {
       "anchor": {
-        "line": 23,
+        "line": 34,
         "path": ".github/CODEOWNERS",
         "sha": "9ecd4b44674f"
       },
@@ -10793,7 +11316,7 @@
     },
     {
       "anchor": {
-        "line": 24,
+        "line": 35,
         "path": ".github/CODEOWNERS",
         "sha": "eb1c53527c14"
       },
@@ -10804,7 +11327,7 @@
     },
     {
       "anchor": {
-        "line": 25,
+        "line": 36,
         "path": ".github/CODEOWNERS",
         "sha": "b5b90d334e1d"
       },
@@ -10815,7 +11338,7 @@
     },
     {
       "anchor": {
-        "line": 26,
+        "line": 37,
         "path": ".github/CODEOWNERS",
         "sha": "9ce91f779c3c"
       },
@@ -10826,7 +11349,194 @@
     },
     {
       "anchor": {
-        "line": 31,
+        "line": 41,
+        "path": ".github/CODEOWNERS",
+        "sha": "24bcf3976dd0"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/sdk/python/pyproject.toml"
+    },
+    {
+      "anchor": {
+        "line": 42,
+        "path": ".github/CODEOWNERS",
+        "sha": "bf16f7e72fc9"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/sdk/python/uv.lock"
+    },
+    {
+      "anchor": {
+        "line": 43,
+        "path": ".github/CODEOWNERS",
+        "sha": "3e2b2d22d240"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/sdk/typescript/package-lock.json"
+    },
+    {
+      "anchor": {
+        "line": 44,
+        "path": ".github/CODEOWNERS",
+        "sha": "ad5b0b4b198a"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/web/package-lock.json"
+    },
+    {
+      "anchor": {
+        "line": 45,
+        "path": ".github/CODEOWNERS",
+        "sha": "72970cfb6777"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/packages/vscode/package-lock.json"
+    },
+    {
+      "anchor": {
+        "line": 57,
+        "path": ".github/CODEOWNERS",
+        "sha": "1566c70619a8"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/CLAUDE.md"
+    },
+    {
+      "anchor": {
+        "line": 58,
+        "path": ".github/CODEOWNERS",
+        "sha": "ce4c23d9cb34"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/CONVENTIONS.md"
+    },
+    {
+      "anchor": {
+        "line": 59,
+        "path": ".github/CODEOWNERS",
+        "sha": "b95447f6f764"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/.aider.conf.yml"
+    },
+    {
+      "anchor": {
+        "line": 60,
+        "path": ".github/CODEOWNERS",
+        "sha": "926333807cce"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/.goosehints"
+    },
+    {
+      "anchor": {
+        "line": 61,
+        "path": ".github/CODEOWNERS",
+        "sha": "be15821aecd9"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/.mcp.json"
+    },
+    {
+      "anchor": {
+        "line": 62,
+        "path": ".github/CODEOWNERS",
+        "sha": "7fb1c2b08daf"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/mcp.json"
+    },
+    {
+      "anchor": {
+        "line": 63,
+        "path": ".github/CODEOWNERS",
+        "sha": "9a449808bc48"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/.cursor/"
+    },
+    {
+      "anchor": {
+        "line": 64,
+        "path": ".github/CODEOWNERS",
+        "sha": "688a0795da1b"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/.qwen/"
+    },
+    {
+      "anchor": {
+        "line": 72,
+        "path": ".github/CODEOWNERS",
+        "sha": "a90384f6b52f"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/Dockerfile"
+    },
+    {
+      "anchor": {
+        "line": 73,
+        "path": ".github/CODEOWNERS",
+        "sha": "8f0f5b53dfa8"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/docker-compose.yaml"
+    },
+    {
+      "anchor": {
+        "line": 74,
+        "path": ".github/CODEOWNERS",
+        "sha": "2d1837d88047"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/docker/sandbox/"
+    },
+    {
+      "anchor": {
+        "line": 75,
+        "path": ".github/CODEOWNERS",
+        "sha": "0c664b2c2097"
+      },
+      "owners": [
+        "@chernistry"
+      ],
+      "pattern": "/scripts/researcher_sandbox.sh"
+    },
+    {
+      "anchor": {
+        "line": 80,
         "path": ".github/CODEOWNERS",
         "sha": "2e9d5257da98"
       },
@@ -10837,7 +11547,7 @@
     },
     {
       "anchor": {
-        "line": 32,
+        "line": 81,
         "path": ".github/CODEOWNERS",
         "sha": "7165b72415c9"
       },
@@ -10848,7 +11558,7 @@
     },
     {
       "anchor": {
-        "line": 33,
+        "line": 82,
         "path": ".github/CODEOWNERS",
         "sha": "75790d8564da"
       },
@@ -10859,9 +11569,9 @@
     }
   ],
   "repo": {
-    "commit": "1567ca0397b6db3e2a0cdbd62e68e03836e54b89",
+    "commit": "9d7021b4613e004bfb9483f93f6221bf25f86faa",
     "name": "bernstein",
-    "tracked_files": 7303
+    "tracked_files": 7862
   },
   "schema": 1,
   "tool_version": "3.0.0"
