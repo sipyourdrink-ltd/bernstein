@@ -218,7 +218,7 @@ Cada objetivo passa por quatro etapas:
 Por que o agendador é Python puro e quais são os trade-offs: [por que determinístico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### comandos do dia a dia
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Se uma tarefa em uma execução SSH desacoplada terminar com um código de saída diferente de zero, a tarefa e a execução falham. O recibo da tarefa registra o código de saída, e as tarefas seguintes ficam pendentes.
 
 A superfície completa de operador (automação de PR, agendamentos, pontes de chat, daemon de autofix) está em [comandos de operador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

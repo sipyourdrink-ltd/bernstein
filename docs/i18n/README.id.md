@@ -218,7 +218,7 @@ Setiap target melalui empat tahapan:
 Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengapa deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### perintah sehari-hari
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Jika tugas dalam proses SSH yang berjalan terpisah berakhir dengan kode keluar selain nol, tugas dan proses tersebut gagal. Bukti pelaksanaan tugas mencatat kode keluar, dan tugas berikutnya tetap menunggu.
 
 Seluruh antarmuka operator (otomatisasi PR, jadwal, jembatan obrolan, daemon autofix) terdapat dalam [perintah operator](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

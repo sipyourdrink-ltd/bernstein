@@ -218,7 +218,7 @@ Jedes Ziel durchläuft vier Phasen:
 Warum der Scheduler in reinem Python geschrieben ist und welche Vor- und Nachteile das bringt: [Warum deterministisch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### alltägliche Befehle
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Endet eine Aufgabe in einem abgekoppelten SSH-Lauf mit einem Exitcode ungleich null, schlagen die Aufgabe und der Lauf fehl. Der Aufgabenbeleg hält den Exitcode fest. Spätere Aufgaben bleiben ausstehend.
 
 Die vollständige Bedienoberfläche (PR-Automatisierung, Zeitpläne, Chat-Bridges, Autofix-Daemon) ist unter [Operator-Befehle](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md) beschrieben.
 

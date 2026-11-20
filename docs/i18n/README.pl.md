@@ -218,7 +218,7 @@ Każdy cel realizowany jest w czterech etapach:
 Dlaczego harmonogram został zaimplementowany w czystym Pythonie i jakie niesie to kompromisy: [dlaczego determinizm](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### codzienne polecenia
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Jeśli zadanie w odłączonym uruchomieniu SSH kończy się kodem różnym od zera, zarówno zadanie, jak i całe uruchomienie kończą się niepowodzeniem. Potwierdzenie wykonania zadania zawiera kod wyjścia, a kolejne zadania pozostają w kolejce.
 
 Pełny zestaw funkcji operatora (automatyzacja PR, harmonogramy, integracje czatu, demon autofix) znajduje się w [poleceniach operatora](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

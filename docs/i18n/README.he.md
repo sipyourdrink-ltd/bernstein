@@ -218,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 מדוע המתזמן נכתב ב-Python טהור ואילו פשרות נובעות מכך: [מדוע דטרמיניסטי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### פקודות יומיומיות
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+אם משימה בהרצת SSH מנותקת מסתיימת בקוד יציאה שאינו אפס, המשימה וההרצה נכשלות. קוד היציאה נשמר באישור הביצוע של המשימה, והמשימות הבאות נשארות בהמתנה.
 
 כל ממשק המפעיל (אוטומציית PR, תזמונים, גשרי צ'אט, תהליך autofix ברקע) מפורט ב[פקודות מפעיל](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

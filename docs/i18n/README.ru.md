@@ -218,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Почему планировщик — обычный Python и чем за это платим: [почему детерминизм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### повседневные команды
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Если задача в отсоединённом SSH-запуске завершается с ненулевым кодом, задача и весь запуск получают статус ошибки. Код выхода сохраняется в квитанции задачи, а следующие задачи остаются в ожидании.
 
 Полная операторская поверхность (автоматизация PR, расписания, чат-мосты, autofix-демон) — в [командах оператора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

@@ -391,15 +391,18 @@ def run_goal_on_ssh(
     close it. Returns the final ledger projection.
     """
     from bernstein.core.run_service.service import RunService
-    from bernstein.core.run_service.supervisor import advance_run
+    from bernstein.core.run_service.supervisor import _finish_run, advance_run
 
     svc = RunService(root)
     handle = svc.submit(goal, task_ids, run_id=run_id)
     write_ssh_spec(root, handle.run_id, spec)
     runner = SSHTaskRunner(spec, root, handle.run_id, backend=backend, vault=vault, command_for=command_for)
-    advance_run(root, handle.run_id, task_runner=runner)
-    svc.complete(handle.run_id)
-    return svc.project(handle.run_id)
+    try:
+        state = advance_run(root, handle.run_id, task_runner=runner)
+    except SSHRunnerError:
+        _finish_run(svc, svc.project(handle.run_id), failed=True)
+        raise
+    return _finish_run(svc, state)
 
 
 __all__ = [

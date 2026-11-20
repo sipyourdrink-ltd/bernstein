@@ -218,7 +218,7 @@ Chaque objectif franchit quatre étapes :
 Pourquoi l'ordonnanceur est en pur Python et quels sont les compromis associés : [pourquoi déterministe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### commandes courantes
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Si une tâche d’une exécution SSH détachée se termine avec un code de sortie non nul, la tâche et l’exécution échouent. Le reçu de la tâche consigne le code de sortie et les tâches suivantes restent en attente.
 
 L'ensemble des commandes opérateur (automatisation de PR, planifications, passerelles de discussion, démon d'autofix) est détaillé dans [commandes opérateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

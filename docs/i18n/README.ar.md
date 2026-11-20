@@ -218,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 لماذا تم بناء المجدول بلغة Python الخالصة، وما المقايضات المترتبة على ذلك: [لماذا الحتمية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### أوامر الاستخدام اليومي
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+إذا انتهت مهمة في تشغيل SSH منفصل برمز خروج غير صفري، تفشل المهمة ويفشل التشغيل. يسجّل إيصال المهمة رمز الخروج وتظل المهام اللاحقة قيد الانتظار.
 
 واجهة المشغل الكاملة (أتمتة طلبات السحب PR، الجداول الزمنية، جسور المحادثة، برنامج الإصلاح التلقائي autofix) مفصلة في [أوامر المشغل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

@@ -218,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 เหตุใดตัวจัดตารางงานจึงเป็น Python ล้วน และสิ่งที่ต้องแลกเปลี่ยน: [ทำไมต้องกำหนดผลลัพธ์แน่นอน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)
 
 ### คำสั่งที่ใช้ประจำวัน
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+หากงานในการรัน SSH แบบแยกจากเทอร์มินัลสิ้นสุดด้วยรหัสออกที่ไม่ใช่ศูนย์ ทั้งงานนั้นและการรันจะล้มเหลว ใบรับรองผลของงานจะบันทึกรหัสออก และงานถัดไปจะยังคงอยู่ในสถานะรอ
 
 ชุดคำสั่งผู้ปฏิบัติงานทั้งหมด (การจัดการ PR อัตโนมัติ, ตารางเวลา, ตัวเชื่อมต่อแชท, เดมอน autofix) อยู่ใน [คำสั่งผู้ปฏิบัติงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)
 

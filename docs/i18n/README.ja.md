@@ -218,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 スケジューラーが素の Python である理由と、それが何を諦めているかは[なぜ決定論的か](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)にある。
 
 ### 日常のコマンド
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+端末から切り離した SSH 実行でタスクが 0 以外の終了コードを返すと、そのタスクと実行全体が失敗します。終了コードはタスクのレシートに記録され、後続のタスクは保留のままです。
 
 オペレーター向けの全機能（PR 自動化、スケジュール、チャットブリッジ、autofix デーモン）は[オペレーターコマンド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)にある。
 

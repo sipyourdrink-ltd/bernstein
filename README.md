@@ -236,6 +236,8 @@ bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute
 bernstein stop                    # graceful shutdown with drain
 ```
 
+If a task in a detached SSH run exits with a nonzero code, the task and the run fail. The task receipt records the exit code, and later tasks stay pending.
+
 The full operator surface (PR automation, schedules, chat bridges, the autofix daemon) is in [operator commands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
 `bernstein workflow` runs declarative YAML DAGs of agent, command, and loop nodes - with resume support for interrupted runs:

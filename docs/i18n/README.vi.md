@@ -218,7 +218,7 @@ Mỗi mục tiêu trải qua bốn giai đoạn:
 Lý do bộ lập lịch được xây dựng bằng Python thuần túy và các đánh đổi đi kèm: [tại sao tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Nếu một tác vụ trong lượt chạy SSH tách khỏi thiết bị đầu cuối kết thúc với mã thoát khác 0, cả tác vụ và lượt chạy đều thất bại. Biên nhận của tác vụ ghi lại mã thoát và các tác vụ tiếp theo vẫn ở trạng thái chờ.
 
 Toàn bộ tập lệnh điều hành (tự động hóa PR, lịch trình, cầu nối trò chuyện, tiến trình nền autofix) có tại [lệnh điều hành](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

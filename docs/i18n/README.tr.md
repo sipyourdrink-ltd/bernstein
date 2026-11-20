@@ -218,7 +218,7 @@ Her hedef dört aşamadan geçer:
 Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: [neden deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Bağlantısı terminalden ayrılmış bir SSH çalıştırmasındaki görev sıfırdan farklı bir çıkış koduyla sonlanırsa hem görev hem de çalıştırma başarısız olur. Çıkış kodu görev makbuzuna kaydedilir ve sonraki görevler beklemede kalır.
 
 Operatör arayüzünün tamamı (PR otomasyonu, zamanlamalar, sohbet köprüleri, autofix arka plan programı) [operatör komutları](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md) sayfasındadır.
 

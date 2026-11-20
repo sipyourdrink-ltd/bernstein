@@ -276,6 +276,98 @@ def test_restart_preserves_remote_failure_after_failure_append(
     assert verify_run(project, run_id).ok
 
 
+@pytest.mark.parametrize("prior_outcome", [None, "cancelled"])
+def test_serve_finishes_the_frontier_seen_by_advance(
+    project: Path, remote_repo: Path, remote_root: Path, monkeypatch: pytest.MonkeyPatch, prior_outcome: str | None
+) -> None:
+    from bernstein.core.run_service import supervisor
+
+    svc = RunService(project)
+    run_id = svc.submit("overlapping supervisors", ["a", "b"]).run_id
+    runner = SSHTaskRunner(
+        _spec(remote_repo, remote_root),
+        project,
+        run_id,
+        backend=_fake_backend(remote_root),
+        command_for=lambda _: ["sh", "-c", "exit 37"],
+    )
+
+    def other_generation_then_advance(*args, **kwargs):
+        # Another generation owns the first task between serve_run's two reads.
+        with pytest.raises(SSHRunnerError, match="37"):
+            advance_run(project, run_id, task_runner=runner)
+        if prior_outcome:
+            svc.close(run_id, prior_outcome)
+        return advance_run(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor, "advance_run", other_generation_then_advance)
+    state = serve_run(project, run_id)
+    assert state.run_closed and state.failed_tasks == ["a"] and state.scheduled_tasks == ["b"]
+    assert [(e.details["task_id"], e.details["exit_code"]) for e in _ssh_events(project, run_id)] == [("a", 37)]
+    chain = AuditChainStore(project / ".sdd" / "audit")
+    assert project_run_closure(chain, run_id).outcome == (prior_outcome or "failed")
+
+
+def test_reopen_restores_one_failed_result(
+    project: Path, remote_repo: Path, remote_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.run_service import service
+
+    svc = RunService(project)
+    run_id = svc.submit("interrupted failure", ["a", "b"]).run_id
+    runner = SSHTaskRunner(
+        _spec(remote_repo, remote_root),
+        project,
+        run_id,
+        backend=_fake_backend(remote_root),
+        command_for=lambda _: ["sh", "-c", "exit 37"],
+    )
+    with pytest.raises(SSHRunnerError, match="37"):
+        advance_run(project, run_id, task_runner=runner)
+
+    def interrupt(**kwargs):
+        raise InterruptedError("before terminal receipt")
+
+    chain = AuditChainStore(project / ".sdd" / "audit")
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "close_run", interrupt)
+        with pytest.raises(InterruptedError):
+            svc.close(run_id, "failed")
+    state = svc.project(run_id)
+    assert state.run_closed and state.failed_tasks == ["a"] and state.scheduled_tasks == ["b"]
+    assert project_run_closure(chain, run_id).outcome is None
+
+    assert serve_run(project, run_id) == state
+    assert project_run_closure(chain, run_id).outcome is RunClosureOutcome.FAILED
+    events = chain.query(include_archived=True)
+    assert serve_run(project, run_id) == state
+    assert chain.query(include_archived=True) == events
+    assert [(e.details["task_id"], e.details["exit_code"]) for e in _ssh_events(project, run_id)] == [("a", 37)]
+    assert verify_run(project, run_id).ok
+
+
+def test_public_ssh_goal_closes_before_returning_nonzero_exit(
+    project: Path, remote_repo: Path, remote_root: Path
+) -> None:
+    run_id = "public-ssh-failure"
+    with pytest.raises(SSHRunnerError) as error:
+        run_goal_on_ssh(
+            project,
+            "nonzero SSH exit",
+            ["a", "b"],
+            _spec(remote_repo, remote_root),
+            run_id=run_id,
+            backend=_fake_backend(remote_root),
+            command_for=lambda _: ["sh", "-c", "exit 37"],
+        )
+    assert error.value.exit_code == 37
+    state = RunService(project).project(run_id)
+    assert state.run_closed and state.failed_tasks == ["a"] and state.scheduled_tasks == ["b"]
+    assert [(e.details["task_id"], e.details["exit_code"]) for e in _ssh_events(project, run_id)] == [("a", 37)]
+    chain = AuditChainStore(project / ".sdd" / "audit")
+    assert project_run_closure(chain, run_id).outcome is RunClosureOutcome.FAILED
+
+
 def test_ssh_backend_kill_after_started_before_completed_resumes(
     project: Path, remote_repo: Path, remote_root: Path
 ) -> None:

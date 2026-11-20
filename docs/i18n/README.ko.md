@@ -218,7 +218,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 스케줄러가 순수 Python인 이유와 그 대가로 포기한 것은 [왜 결정론적인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)에 있다.
 
 ### 일상적인 명령
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+분리된 SSH 실행에서 작업이 0이 아닌 종료 코드로 끝나면 해당 작업과 실행이 모두 실패합니다. 작업 영수증에 종료 코드가 기록되고 후속 작업은 대기 상태로 남습니다.
 
 PR 자동화, 스케줄, 채팅 브리지, autofix 데몬을 포함한 오퍼레이터 기능 전체는 [오퍼레이터 명령](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)에 있다.
 

@@ -218,7 +218,7 @@ Elk doel doorloopt vier fasen:
 Waarom de planner in puur Python is geschreven en welke afwegingen daarbij horen: [waarom deterministisch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### dagelijkse commando's
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +228,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Als een taak in een losgekoppelde SSH-run eindigt met een afsluitcode die niet nul is, mislukken de taak en de run. Het taakbewijs vermeldt de afsluitcode en de volgende taken blijven in de wachtrij.
 
 Het volledige beheerderoppervlak (PR-automatisering, planningen, chat-koppelingen, de autofix-daemon) is te vinden in [beheerderscommando's](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
