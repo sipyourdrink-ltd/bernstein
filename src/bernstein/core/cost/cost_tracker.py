@@ -640,6 +640,9 @@ class CostTracker:
         init=False,
         repr=False,
     )
+    # Explicit cumulative costs have their own high-water mark: token counts
+    # can stay unchanged while a provider corrects its reported cost.
+    _cumulative_costs: dict[tuple[str, str, str], float] = field(default_factory=dict, init=False, repr=False)
     # Per-envelope spend totals + invocation counts (issue #1405). Updated
     # under ``_lock`` so envelope rollups stay consistent with ``record()``.
     _spent_by_envelope: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
@@ -920,8 +923,9 @@ class CostTracker:
     ) -> float:
         """Record cumulative token usage for one agent/task pair.
 
-        This helper is delta-safe: callers provide running token totals and the
-        tracker records only the previously unseen token delta.
+        Explicit costs record only the increase over this tracker's previous
+        cumulative cost for the key. Lower costs never refund spend. Without
+        an explicit cost, only previously unseen tokens are priced.
 
         Args:
             agent_id: Agent session ID.
@@ -934,7 +938,7 @@ class CostTracker:
             total_cache_write_tokens: Total prompt cache write tokens.
 
         Returns:
-            Newly-recorded delta cost in USD (0.0 when no new tokens).
+            Newly-recorded delta cost in USD (0.0 when nothing new is charged).
         """
         key = (agent_id, task_id, model)
         # We need to track more than just input/output now.
@@ -957,18 +961,13 @@ class CostTracker:
         delta_cache_read = max(0, cur_cache_read - prev_cache_read)
         delta_cache_write = max(0, cur_cache_write - prev_cache_write)
 
-        if all(d == 0 for d in (delta_input, delta_output, delta_cache_read, delta_cache_write)):
-            return 0.0
-
         delta_cost: float | None = None
         if total_cost_usd is not None:
-            total_tokens = cur_input + cur_output + cur_cache_read + cur_cache_write
-            prev_tokens = prev_input + prev_output + prev_cache_read + prev_cache_write
-            delta_tokens = total_tokens - prev_tokens
-            if total_tokens > 0 and delta_tokens > 0:
-                delta_cost = float(total_cost_usd) * (delta_tokens / total_tokens)
-            elif prev_tokens == 0:
-                delta_cost = float(total_cost_usd)
+            delta_cost = max(0.0, float(total_cost_usd) - self._cumulative_costs.get(key, 0.0))
+            if delta_cost == 0.0:
+                return 0.0
+        elif all(d == 0 for d in (delta_input, delta_output, delta_cache_read, delta_cache_write)):
+            return 0.0
 
         before = self._spent_usd
         self.record(
@@ -987,6 +986,8 @@ class CostTracker:
             quota_envelope=quota_envelope,
         )
         self._cumulative_tokens[key] = (cur_input, cur_output, cur_cache_read, cur_cache_write)
+        if total_cost_usd is not None:
+            self._cumulative_costs[key] = float(total_cost_usd)
         return self._spent_usd - before
 
     def can_spawn(self, *, quota_envelope: str | None = None) -> bool:
