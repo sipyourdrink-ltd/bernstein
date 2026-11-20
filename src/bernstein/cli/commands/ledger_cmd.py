@@ -38,6 +38,7 @@ from bernstein.core.persistence.ledger_git import (
     materialize_ledger,
     plan_ledger_materialization,
 )
+from bernstein.core.persistence.task_resume import write_resume_signal
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_RESUMED,
     LedgerError,
@@ -279,19 +280,10 @@ def _render_state(run_id: str, ledger_dir: Path, state: LedgerState) -> None:
 
 def _write_resume_signals(root: Path, run_id: str, state: LedgerState) -> Iterator[Path]:
     """Write local resume signals and yield each path once written."""
-    signal_dir = root / ".sdd" / "runtime" / "resume"
-    signal_dir.mkdir(parents=True, exist_ok=True)
     for task_id in state.resume_frontier():
-        target = signal_dir / f"{task_id}.signal"
-        payload = {
-            "task_id": task_id,
-            "run_id": run_id,
-            "source": "work_ledger",
-            "ledger_head": state.head_hash,
-            "resume_count": state.resumes,
-        }
-        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        yield target
+        yield write_resume_signal(
+            root, task_id, run_id=run_id, source="work_ledger", ledger_head=state.head_hash, resume_count=state.resumes
+        )
 
 
 @ledger_group.command("resume")

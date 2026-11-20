@@ -91,7 +91,8 @@ bernstein ledger resume goal-42
 `resume` rebuilds scheduler state by replaying the verified chain --
 completed, in-flight, scheduled, and failed tasks -- then records the
 resume as a new chain entry and writes one signal per frontier task into
-`.sdd/runtime/resume/`. The verified frontier excludes completed tasks.
+`.sdd/runtime/resume/`. Each file is published with an atomic rename.
+The verified frontier excludes completed tasks.
 
 With `--json`, stdout contains one object. `signal_paths` lists the
 files written by this invocation, and `dispatch_status` is `queued` if

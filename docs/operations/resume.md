@@ -27,7 +27,8 @@ bernstein resume TASK_ID
   [--discard]                  discard the agent checkpoint before preparing the resume
 ```
 
-Signals are written under `.sdd/runtime/resume/`. A queued signal
+Each signal is published with an atomic rename under `.sdd/runtime/resume/`.
+Readers see a complete request even if a later write is interrupted. A queued signal
 confirms the file write. Runtime acknowledgement is currently unavailable
 for these signals.
 

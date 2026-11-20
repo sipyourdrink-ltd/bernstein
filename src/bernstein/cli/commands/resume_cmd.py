@@ -40,6 +40,7 @@ from bernstein.core.persistence.task_resume import (
     bump_resume_count,
     checkpoint_path_for,
     load_checkpoint,
+    write_resume_signal,
 )
 
 # Exit codes used by `bernstein resume`. Kept tight so operators (and the
@@ -410,15 +411,11 @@ def _work_ledger_hint(workdir: Path, resume_id: str) -> str | None:
 
 def _write_resume_signal(workdir: Path, plan: ResumePlan) -> Path:
     """Write the local resume signal and return its path."""
-    signal_dir = workdir / ".sdd" / "runtime" / "resume"
-    signal_dir.mkdir(parents=True, exist_ok=True)
-    target = signal_dir / f"{plan.checkpoint.task_id}.signal"
-    payload = {
-        "task_id": plan.checkpoint.task_id,
-        "resume_count": plan.checkpoint.resume_count,
-        "capability": plan.capability,
-        "adapter": plan.checkpoint.adapter,
-        "adapter_session_id": plan.checkpoint.adapter_session_id,
-    }
-    target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return target
+    return write_resume_signal(
+        workdir,
+        plan.checkpoint.task_id,
+        resume_count=plan.checkpoint.resume_count,
+        capability=plan.capability,
+        adapter=plan.checkpoint.adapter,
+        adapter_session_id=plan.checkpoint.adapter_session_id,
+    )

@@ -59,6 +59,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -74,6 +76,7 @@ __all__ = [
     "load_checkpoint",
     "save_checkpoint",
     "scratchpad_sha256",
+    "write_resume_signal",
 ]
 
 
@@ -143,6 +146,18 @@ def checkpoint_path_for(workdir: Path, task_id: str) -> Path:
 # ---------------------------------------------------------------------------
 # Persist / load
 # ---------------------------------------------------------------------------
+
+
+def write_resume_signal(workdir: Path, task_id: str, **fields: object) -> Path:
+    """Publish one complete signal for a task in the existing resume directory."""
+    directory = workdir / ".sdd" / "runtime" / "resume"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{task_id}.signal"
+    # Only the shared signal directory is created by this command.
+    if not target.parent.is_dir():
+        raise FileNotFoundError(f"Resume signal directory does not exist: {target.parent}")
+    write_atomic_json(target, {"task_id": task_id, **fields})
+    return target
 
 
 def save_checkpoint(workdir: Path, checkpoint: TaskResumeCheckpoint) -> Path:
