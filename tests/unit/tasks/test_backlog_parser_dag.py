@@ -136,6 +136,20 @@ def test_parse_task_lines_empty_document_returns_empty_list() -> None:
     assert parse_task_lines("") == []
 
 
+@pytest.mark.parametrize(
+    ("opening", "inside", "closing"),
+    [
+        ("```markdown", "~~~", "```"),
+        ("~~~markdown", "~~~still code", "~~~"),
+        ("  ````markdown", "```", "   `````  "),
+        ("~~~~markdown", "~~~", "~~~~"),
+    ],
+)
+def test_parse_task_lines_skips_fenced_examples(opening: str, inside: str, closing: str) -> None:
+    doc = f"{opening}\n{inside}\n- [ ] [T001] Example\n{closing}\n- [ ] [T002] Ship"
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T002"]
+
+
 # ---------------------------------------------------------------------------
 # _parse_priority - 0-4 ticket scale collapses to 1-3 internal scale
 # ---------------------------------------------------------------------------

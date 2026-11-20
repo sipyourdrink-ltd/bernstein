@@ -327,6 +327,7 @@ _MARKER_TOKEN = re.compile(r"^\[([^\[\]]+)\]\s*")
 _DEPENDS_INLINE = re.compile(r"(?:->|→)\s*([\w,\s-]+?)\s*$", re.ASCII)
 _TASK_ID = re.compile(r"^T\d+[\w-]*$", re.ASCII)
 _STORY_ID = re.compile(r"^US\d+[\w-]*$", re.IGNORECASE | re.ASCII)
+_FENCE_LINE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
 
 
 def parse_task_line(line: str) -> ParsedTaskLine | None:
@@ -394,10 +395,21 @@ def parse_task_line(line: str) -> ParsedTaskLine | None:
 def parse_task_lines(content: str) -> list[ParsedTaskLine]:
     """Parse all task DAG rows from a markdown document.
 
-    Lines that are not task rows (headings, prose, blanks) are skipped.
+    Skip fenced code examples, headings, prose, and blank lines.
     """
     out: list[ParsedTaskLine] = []
+    open_fence = ""
     for line in content.splitlines():
+        if match := _FENCE_LINE.fullmatch(line):
+            marker, suffix = match.groups()
+            if open_fence:
+                if marker.startswith(open_fence) and not suffix.strip(" \t"):
+                    open_fence = ""
+            elif marker[0] == "~" or "`" not in suffix:
+                open_fence = marker
+            continue
+        if open_fence:
+            continue
         parsed = parse_task_line(line)
         if parsed is not None:
             out.append(parsed)
