@@ -147,9 +147,10 @@ See [`docs/security/bug-bounty.md`](docs/security/bug-bounty.md) for the full sa
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 3.24.x  | Yes       |
-| < 3.24  | No        |
+| Version            | Supported           |
+|--------------------|---------------------|
+| 4.0.x              | Yes                 |
+| 3.24.x             | 3.24.2 backport only |
+| All other versions | No                  |
 
-Fixes ship on the current release line. There is no backport branch.
+Regular fixes ship on 4.0.x. The only planned 3.24.x backport is 3.24.2.

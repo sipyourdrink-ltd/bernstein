@@ -17,7 +17,7 @@ adapter: codex
 binary: codex
 install:
   method: npm
-  spec: "@openai/codex@latest"
+  spec: "@openai/codex@0.171.0"
 auth:
   required_for_help: false
   required_for_models: false
