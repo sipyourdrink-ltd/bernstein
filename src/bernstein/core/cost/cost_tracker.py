@@ -643,6 +643,9 @@ class CostTracker:
     # Explicit cumulative costs have their own high-water mark: token counts
     # can stay unchanged while a provider corrects its reported cost.
     _cumulative_costs: dict[tuple[str, str, str], float] = field(default_factory=dict, init=False, repr=False)
+    # Existing snapshots contain token baselines only. Preserve their first
+    # report's legacy accounting until a fresh explicit cost is observed.
+    _restored_cumulative_keys: set[tuple[str, str, str]] = field(default_factory=set, init=False, repr=False)
     # Per-envelope spend totals + invocation counts (issue #1405). Updated
     # under ``_lock`` so envelope rollups stay consistent with ``record()``.
     _spent_by_envelope: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
@@ -927,6 +930,11 @@ class CostTracker:
         cumulative cost for the key. Lower costs never refund spend. Without
         an explicit cost, only previously unseen tokens are priced.
 
+        After loading a snapshot, the first explicit report for a restored
+        key retains legacy token-based proration (or no charge without new
+        tokens), then seeds the monetary baseline. The unchanged snapshot
+        format cannot recover an explicit cost from before the restart.
+
         Args:
             agent_id: Agent session ID.
             task_id: Task ID associated with the cumulative counters.
@@ -960,19 +968,33 @@ class CostTracker:
         delta_output = max(0, cur_output - prev_output)
         delta_cache_read = max(0, cur_cache_read - prev_cache_read)
         delta_cache_write = max(0, cur_cache_write - prev_cache_write)
+        new_tokens = any((delta_input, delta_output, delta_cache_read, delta_cache_write))
 
         delta_cost: float | None = None
         if total_cost_usd is not None:
-            delta_cost = max(0.0, float(total_cost_usd) - self._cumulative_costs.get(key, 0.0))
-            if delta_cost == 0.0:
-                self._cumulative_tokens[key] = (
-                    max(prev_input, cur_input),
-                    max(prev_output, cur_output),
-                    max(prev_cache_read, cur_cache_read),
-                    max(prev_cache_write, cur_cache_write),
-                )
-                return 0.0
-        elif all(d == 0 for d in (delta_input, delta_output, delta_cache_read, delta_cache_write)):
+            if key in self._restored_cumulative_keys:
+                if not new_tokens:
+                    self._cumulative_costs[key] = max(0.0, float(total_cost_usd))
+                    self._restored_cumulative_keys.discard(key)
+                    return 0.0
+                total_tokens = cur_input + cur_output + cur_cache_read + cur_cache_write
+                prev_tokens = prev_input + prev_output + prev_cache_read + prev_cache_write
+                delta_tokens = total_tokens - prev_tokens
+                if total_tokens > 0 and delta_tokens > 0:
+                    delta_cost = float(total_cost_usd) * (delta_tokens / total_tokens)
+                elif prev_tokens == 0:
+                    delta_cost = float(total_cost_usd)
+            else:
+                delta_cost = max(0.0, float(total_cost_usd) - self._cumulative_costs.get(key, 0.0))
+                if delta_cost == 0.0:
+                    self._cumulative_tokens[key] = (
+                        max(prev_input, cur_input),
+                        max(prev_output, cur_output),
+                        max(prev_cache_read, cur_cache_read),
+                        max(prev_cache_write, cur_cache_write),
+                    )
+                    return 0.0
+        elif not new_tokens:
             return 0.0
 
         before = self._spent_usd
@@ -993,7 +1015,8 @@ class CostTracker:
         )
         self._cumulative_tokens[key] = (cur_input, cur_output, cur_cache_read, cur_cache_write)
         if total_cost_usd is not None:
-            self._cumulative_costs[key] = float(total_cost_usd)
+            self._cumulative_costs[key] = max(0.0, float(total_cost_usd))
+            self._restored_cumulative_keys.discard(key)
         return self._spent_usd - before
 
     def can_spawn(self, *, quota_envelope: str | None = None) -> bool:
@@ -1416,6 +1439,7 @@ class CostTracker:
                     key = tuple(k_str.split("|"))
                     if len(key) == 3:
                         tracker._cumulative_tokens[key] = tuple(v_list)  # type: ignore[assignment]
+                        tracker._restored_cumulative_keys.add(key)  # type: ignore[arg-type]
 
             # Restore envelope state (issue #1405). Backwards compatible:
             # older snapshots without envelope blocks load as zero-state.

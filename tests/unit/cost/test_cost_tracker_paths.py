@@ -303,6 +303,45 @@ class TestRecordCumulative:
         assert t.spent_usd == pytest.approx(1.0)
         assert len(t.usages) == 1
 
+    def test_loaded_identical_report_is_free_and_seeds_monetary_baseline(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=1.5)
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        payload = json.loads(t.save(tmp_path).read_text())
+        assert "cumulative_costs" not in payload
+        assert payload["cumulative_tokens"] == {"a|t|sonnet": [1000, 0, 0, 0]}
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0) == 0.0
+        assert loaded.spent_usd == pytest.approx(1.0)
+        assert loaded.can_spawn()
+        assert len(loaded.usages) == 1
+        assert loaded.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=3.0) == pytest.approx(2.0)
+        assert loaded.spent_usd == pytest.approx(3.0)
+        assert not loaded.can_spawn()
+
+    def test_loaded_key_uses_legacy_proration_once_then_monetary_deltas(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0) == pytest.approx(1.5)
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=4.0) == pytest.approx(1.0)
+        assert loaded.spent_usd == pytest.approx(3.5)
+
+    def test_loaded_key_keeps_unknown_baseline_when_admission_rejects(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        loaded.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", hard_budget_usd=2.0)})
+        with pytest.raises(EnvelopeBudgetError):
+            loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0)
+        assert loaded.spent_usd == pytest.approx(1.0)
+        loaded.configure_envelopes({})
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0) == pytest.approx(1.5)
+
     def test_decreasing_totals_clamped_no_negative(self) -> None:
         t = Tracker(run_id="r")
         t.record_cumulative("a", "t", "sonnet", 5000, 2000, total_cost_usd=1.0)
