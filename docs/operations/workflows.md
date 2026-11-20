@@ -161,7 +161,7 @@ The CLI stores checkpoints under `runs/<run_id>/` relative to the directory wher
   `spec_digest`, `node_ids`, and `source` (manifest path or name); no goal text
 - `<node_id>.node.json` - checkpoint for each completed node
 - `<node_id>.loop.json` - progress for a command loop, including the current iteration and its last durable decision
-- `command_loops.json` - binds a new run’s command-loop checkpoint format to its manifest
+- `command_loops.json` - tracks command-loop initialization for the manifest. The runner marks it active before any workflow effect can start.
 - `run_complete.json` - sentinel written when the run finishes
 
 **Spec digest validation**: On resume, the runner computes a digest of the
@@ -174,13 +174,17 @@ step. The original `max_iterations` applies across all starts and resumes.
 A successful stop, a command failure, a predicate timeout or exhaustion retains
 its outcome even if interruption preceded the ordinary terminal node checkpoint.
 
-If the run stopped after a command or condition was marked as started but
-before its outcome was saved, both runner entry points stop before executing
-another node. Review the command’s or condition’s external effects and the
-retained results before starting a new run. An older run with no loop
-checkpoint can start a loop when earlier checkpoints prove it was never entered.
-If the available records cannot establish that, the same review is required.
-A completed node’s ordinary checkpoint remains authoritative.
+If the workspace trust check refuses a predicate before dispatch, the runner
+preserves the previous checkpoint. Once the workflow can dispatch effects,
+a missing command-loop checkpoint or a started effect without a saved outcome
+stops both runner entry points before another node can execute. Review the
+external effects and retained results before starting a new run.
+
+An interrupted initialization can recreate missing loop checkpoints while
+the initialization marker still establishes that dispatch was impossible.
+Older runs with no loop checkpoint require the same review even if an earlier
+node has no checkpoint. A completed node’s ordinary checkpoint remains
+authoritative.
 
 ## Validating and inspecting
 

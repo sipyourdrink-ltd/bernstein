@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果更正后的累计支出达到或超过配置的预算停止阈值，即使没有报告新增的词元，费用跟踪器的 `can_spawn()` 检查也会返回 `False`。重启后，仅凭保存的词元计数无法还原此前针对特定智能体、任务和模型组合报告的确切累计费用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:b1ed81e59b08" -->
 
 ```bash
 cd your-project
@@ -227,6 +227,8 @@ bernstein stop                    # graceful shutdown with drain
 
 完整的操作界面（PR 自动化、定时任务、聊天桥接、autofix 守护进程）见[操作命令](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)。
 
+命令循环从最后一个检查点恢复，并沿用原有的迭代次数上限。如果某条命令可能已经执行或某个条件可能已经求值，但结果没有保存，恢复过程就会停止。如果循环可能已经开始，缺少检查点也会使恢复停止。开始新的运行前，请先检查该操作造成的影响。
+
 `bernstein workflow` 运行智能体/命令/循环节点的声明式 YAML DAG——支持恢复中断的运行：
 
 ```bash
@@ -234,7 +236,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-每个节点上的运行状态都会作为检查点写入 `.sdd/runs/<run_id>/`。恢复在运行起始时校验清单摘要，因此规格变更会被拒绝，而不是静默地按另一份清单执行。清理节点可以设置 `always_run: true`，以便在命令或调度失败后继续执行，同时不会将已中止的运行变为成功（智能体完成门控在 [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) 中跟踪）。见[工作流清单](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 恢复时请再次传入相同的 `-g` 值，以替换未完成节点提示词中的 `{goal}`。
+每个节点上的运行状态都会作为检查点写入 `runs/<run_id>/`。恢复在运行起始时校验清单摘要，因此规格变更会被拒绝，而不是静默地按另一份清单执行。清理节点可以设置 `always_run: true`，以便在命令或调度失败后继续执行，同时不会将已中止的运行变为成功（智能体完成门控在 [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) 中跟踪）。见[工作流清单](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 恢复时请再次传入相同的 `-g` 值，以替换未完成节点提示词中的 `{goal}`。
 
 `bernstein compliance controls` 列出各控制项的基准测试套件，并在有完整测量结果时显示最近一次结果。 [基准测试覆盖范围](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

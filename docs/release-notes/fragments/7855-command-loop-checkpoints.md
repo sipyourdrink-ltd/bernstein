@@ -1,1 +1,1 @@
-Command workflows now checkpoint each loop iteration and keep the original iteration limit on resume. An uncertain command or predicate outcome stops recovery for operator review.
+Command workflows now checkpoint each loop iteration and keep the original iteration limit on resume. A missing checkpoint after dispatch became possible or an uncertain effect stops recovery for operator review. A definite pre-dispatch predicate refusal preserves the last known progress.
