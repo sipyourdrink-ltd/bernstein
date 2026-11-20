@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 ฟังก์ชันตรวจสอบ `can_spawn()` ของตัวติดตามค่าใช้จ่ายจะคืนค่า `False` เมื่อค่าใช้จ่ายสะสมหลังปรับยอดถึงหรือเกินเกณฑ์หยุดที่กำหนดไว้สำหรับงบประมาณ แม้จะไม่มีรายงานการใช้โทเคนเพิ่ม หลังจากเริ่มระบบใหม่ จำนวนโทเคนที่บันทึกไว้เพียงอย่างเดียวไม่เพียงพอที่จะคำนวณย้อนหาค่าใช้จ่ายสะสมที่แน่นอนซึ่งเคยรายงานไว้สำหรับชุดเอเจนต์ งาน และโมเดลนั้น
 
 ### คำสั่งที่ใช้ประจำวัน
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:85f90687f750" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-สถานะการรันจะบันทึกจุดตรวจสอบไปยัง `.sdd/runs/<run_id>/` ทุกโหนด การดำเนินการต่อจะตรวจสอบค่าแฮชของไฟล์ manifest ตอนเริ่มการรัน ทำให้การเปลี่ยนแปลงสเปกถูกปฏิเสธ แทนที่จะรัน manifest อีกฉบับที่ต่างออกไปโดยไม่แจ้งให้ทราบ โหนดทำความสะอาดสามารถตั้งค่า `always_run: true` เพื่อทำงานหลังจากความล้มเหลวของคำสั่งหรือการจัดส่ง โดยไม่เปลี่ยนการรันที่ถูกยกเลิกให้กลายเป็นความสำเร็จ (การควบคุมเกตการเสร็จสิ้นของเอเจนต์ติดตามอยู่ใน [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)) ดูที่ [manifest ของ workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) เมื่อดำเนินการต่อ ให้ระบุค่า `-g` เดิมอีกครั้งเพื่อแทนที่ `{goal}` ในพรอมป์ต์ของโหนดที่ยังไม่เสร็จ
+คำสั่งเวิร์กโฟลว์โดยตรงจะบันทึกจุดตรวจสอบไว้ใน `runs/<run_id>/` ภายใต้ไดเรกทอรีทำงานปัจจุบัน เมื่อทำงานต่อ ระบบจะตรวจสอบค่าแฮชของ manifest เดิม หากบันทึกค่าแฮชของเป้าหมายไว้ ให้ระบุค่า `-g` เดิมทุกประการแม้จะใช้ `-m` คุณละ `-g` ได้เมื่อเป้าหมายเดิมว่าง หรือเมื่อไม่มีพรอมป์ต์ของเอเจนต์ที่เหลือในการรันรุ่นเก่าที่สามารถใช้ `{goal}` ได้ [manifest ของ workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) โหนดทำความสะอาดสามารถตั้งค่า `always_run: true` เพื่อทำงานหลังจากความล้มเหลวของคำสั่งหรือการจัดส่ง โดยไม่เปลี่ยนการรันที่ถูกยกเลิกให้กลายเป็นความสำเร็จ (การควบคุมเกตการเสร็จสิ้นของเอเจนต์ติดตามอยู่ใน [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639))
 
 `bernstein compliance controls` แสดงชุดทดสอบของแต่ละมาตรการควบคุมและผลการวัดที่สมบูรณ์ล่าสุดหากมี [ขอบเขตการทดสอบ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

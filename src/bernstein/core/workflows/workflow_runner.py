@@ -177,7 +177,7 @@ def spec_digest(spec: WorkflowSpec) -> str:
 
 STATE_VERSION = 1
 
-#: Subdirectory for one run's checkpoint state (under .sdd/).
+#: Checkpoint root relative to the runner's working directory.
 STATE_DIR_RELPATH = "runs"
 
 #: File written alongside the state directory recording the spec digest
@@ -188,6 +188,7 @@ SPEC_SNAPSHOT_FILE = "spec_snapshot.json"
 #: terminal state.  ``run``/resume re-derives the full execution record
 #: by reading these files.
 NODE_STATE_SUFFIX = ".node.json"
+RUN_COMPLETE_FILE = "run_complete.json"
 
 
 def _run_state_dir(workdir: Path, run_id: str) -> Path:
@@ -241,8 +242,8 @@ def _check_spec_digest(snapshot: dict[str, Any], current: str, run_id: str) -> N
 
 def _initialize_snapshot(
     workdir: Path, run_id: str, spec: WorkflowSpec, source: str | None, digest: str, goal_digest: str | None
-) -> dict[str, Any]:
-    """Publish the first complete snapshot, or use the winner of a concurrent start."""
+) -> tuple[dict[str, Any], bool]:
+    """Return the original snapshot and whether this caller published it."""
     from bernstein.core.persistence.atomic_write import write_atomic_json
     from bernstein.core.persistence.file_locks import cross_process_lock
 
@@ -256,10 +257,15 @@ def _initialize_snapshot(
         return existing
 
     if path.exists():
-        return read_existing()
+        return read_existing(), False
     with cross_process_lock(path.with_suffix(".lock")):
         if path.exists():
-            return read_existing()
+            return read_existing(), False
+        if _has_run_progress(path.parent):
+            raise WorkflowRunError(
+                f"cannot resume workflow run {run_id}: missing {SPEC_SNAPSHOT_FILE}; "
+                "restore the original snapshot or start a new run with a new run ID"
+            )
         snapshot: dict[str, Any] = {
             "version": STATE_VERSION,
             "spec_name": spec.name,
@@ -271,7 +277,14 @@ def _initialize_snapshot(
         if goal_digest is not None:
             snapshot["goal_digest"] = goal_digest
         write_atomic_json(path, snapshot)
-        return snapshot
+        return snapshot, True
+
+
+def _has_run_progress(state_dir: Path) -> bool:
+    """Look for published checkpoints regardless of the incoming manifest's node IDs."""
+    return any(
+        entry.name.endswith(NODE_STATE_SUFFIX) or entry.name == RUN_COMPLETE_FILE for entry in state_dir.iterdir()
+    )
 
 
 def record_spec_snapshot(workdir: Path, run_id: str, spec: WorkflowSpec, manifest_source: str | None = None) -> str:
@@ -337,12 +350,12 @@ def record_run_complete(workdir: Path, run_id: str, succeeded: bool) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     from bernstein.core.persistence.atomic_write import write_atomic_json
 
-    write_atomic_json(state_dir / "run_complete.json", {"succeeded": succeeded, "completed_at_epoch": time.time()})
+    write_atomic_json(state_dir / RUN_COMPLETE_FILE, {"succeeded": succeeded, "completed_at_epoch": time.time()})
 
 
 def run_complete_marker_exists(workdir: Path, run_id: str) -> dict[str, Any] | None:
     """Return the completion marker if the run finished, else None."""
-    path = _run_state_dir(workdir, run_id) / "run_complete.json"
+    path = _run_state_dir(workdir, run_id) / RUN_COMPLETE_FILE
     if not path.exists():
         return None
     try:
@@ -462,8 +475,9 @@ class WorkflowRunner:
         snapshot = load_spec_snapshot(self._workdir, run_id)
         if snapshot is None:
             raise WorkflowRunError(
-                f"no workflow run state for run {run_id} under {self._workdir / STATE_DIR_RELPATH}; "
-                "start a new run with `bernstein workflow run` instead"
+                f"no workflow run state for run {run_id} under {self._workdir / STATE_DIR_RELPATH}: "
+                f"{SPEC_SNAPSHOT_FILE} is missing or unreadable; "
+                "restore the original snapshot or start a new run with `bernstein workflow run`"
             )
         recorded_digest = spec_digest(spec)
         _check_spec_digest(snapshot, recorded_digest, run_id)
@@ -601,7 +615,8 @@ class WorkflowRunner:
             inspect ``execution.succeeded`` and per-node statuses.
 
         Side effects (for resume support):
-        - Records a spec digest and run id under ``.sdd/runs/<run_id>/``.
+        - Records the spec and goal digests under ``runs/<run_id>/``
+          relative to the configured working directory.
         - Persists a terminal ``NodeExecution`` checkpoint after every node
           transitions, so a later ``bernstein workflow resume`` can re-enter
           at the first non-completed node.
@@ -609,7 +624,7 @@ class WorkflowRunner:
           ``resume`` call refuses with a clear error instead of re-running
           a finished DAG.
 
-        State persisted under ``.sdd/runs/<run_id>/``:
+        State persisted under ``runs/<run_id>/``:
 
         * ``spec_snapshot.json`` - manifest name, version, digest, and
           optional source path; ``resume`` re-validates the digest.
@@ -645,7 +660,9 @@ class WorkflowRunner:
 
         spec_digest_result = spec_digest(spec)
         goal_digest = _goal_digest(goal)
-        snapshot = _initialize_snapshot(self._workdir, rid, spec, spec.name, spec_digest_result, goal_digest)
+        snapshot, snapshot_written = _initialize_snapshot(
+            self._workdir, rid, spec, spec.name, spec_digest_result, goal_digest
+        )
         self._check_goal(snapshot, spec, rid, goal_digest)
 
         self._audit(
@@ -654,11 +671,12 @@ class WorkflowRunner:
             {"run_id": rid, "node_count": len(spec.nodes), "goal": goal},
         )
 
-        self._audit(
-            "workflow.spec_snapshot_recorded",
-            spec.name,
-            {"run_id": rid, "spec_digest": spec_digest_result},
-        )
+        if snapshot_written:
+            self._audit(
+                "workflow.spec_snapshot_recorded",
+                spec.name,
+                {"run_id": rid, "spec_digest": spec_digest_result},
+            )
 
         results: dict[str, NodeExecution] = {}
         layers = spec.topological_order()

@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -15,6 +16,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.workflow_cmd import workflow_group
 from bernstein.core import workflows
+from bernstein.core.persistence import file_locks
 from bernstein.core.workflows import (
     NodeExecution,
     NodeStatus,
@@ -22,7 +24,12 @@ from bernstein.core.workflows import (
     WorkflowRunner,
     load_workflow_spec_from_text,
 )
-from bernstein.core.workflows.workflow_runner import load_spec_snapshot, record_node_state, record_spec_snapshot
+from bernstein.core.workflows.workflow_runner import (
+    load_spec_snapshot,
+    record_node_state,
+    record_spec_snapshot,
+    spec_digest,
+)
 
 _GOAL = " original e\u0301 🪴 "
 _MANIFEST = """name: sample
@@ -179,6 +186,106 @@ def test_original_manifest_and_finished_run_protections(tmp_path: Path, entry: s
     assert _files(tmp_path, "same") == finished
 
 
+@pytest.mark.parametrize("entry", ["resume", "run"])
+@pytest.mark.parametrize("goal", [_GOAL, "changed-goal"])
+@pytest.mark.parametrize("orphaned_node", [False, True])
+def test_missing_snapshot_with_retained_progress(tmp_path: Path, entry: str, goal: str, orphaned_node: bool) -> None:
+    runner, spawner, events = _runner(tmp_path)
+    runner._loop_predicate_passes = Mock(return_value=True)
+    manifest = _MANIFEST.replace("depends_on: [first]", "depends_on: [first], when: synthetic")
+    spec = load_workflow_spec_from_text(manifest)
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(spec, goal=_GOAL, run_id="partial")
+    (tmp_path / "runs/partial/spec_snapshot.json").unlink()
+    surviving = _files(tmp_path, "partial")
+    assert "first.node.json" in surviving and "next.node.json" not in surviving
+
+    events.clear()
+    spawner.reset_mock()
+    runner._loop_predicate_passes.reset_mock()
+    spawner.spawn_for_tasks.side_effect = lambda _tasks: SimpleNamespace(id="unexpected")
+    if orphaned_node:
+        manifest = manifest.replace("id: first", "id: replacement").replace("[first]", "[replacement]")
+        spec = load_workflow_spec_from_text(manifest)
+    with pytest.raises(WorkflowRunError, match=r"spec_snapshot\.json"):
+        getattr(runner, entry)(spec, goal=goal, run_id="partial")
+    assert _files(tmp_path, "partial") == surviving
+    assert events == []
+    spawner.spawn_for_tasks.assert_not_called()
+    runner._loop_predicate_passes.assert_not_called()
+
+
+@pytest.mark.parametrize("progress", ["node", "completion"])
+def test_missing_snapshot_checks_run_progress_inside_initialization_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, progress: str
+) -> None:
+    spec = load_workflow_spec_from_text(_MANIFEST)
+    runner, spawner, events = _runner(tmp_path)
+    spawner.spawn_for_tasks.side_effect = lambda _tasks: SimpleNamespace(id="unexpected")
+    lock = file_locks.cross_process_lock
+    surviving = {}
+
+    @contextmanager
+    def publish_progress_before_lock_is_yielded(lock_path: Path):
+        with lock(lock_path):
+            if progress == "node":
+                record_node_state(tmp_path, "partial", NodeExecution("retained", NodeStatus.SUCCESS), spec_digest(spec))
+            else:
+                (lock_path.parent / "run_complete.json").write_text('{"succeeded": true}', encoding="utf-8")
+            surviving.update(_files(tmp_path, "partial"))
+            yield
+
+    monkeypatch.setattr(file_locks, "cross_process_lock", publish_progress_before_lock_is_yielded)
+    with pytest.raises(WorkflowRunError, match=r"spec_snapshot\.json"):
+        runner.run(spec, goal=_GOAL, run_id="partial")
+    assert _files(tmp_path, "partial") == surviving
+    assert events == []
+    spawner.spawn_for_tasks.assert_not_called()
+
+
+@pytest.mark.parametrize("entry", ["resume", "run"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_snapshot_event_follows_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str, legacy: bool
+) -> None:
+    cwd = tmp_path / "shell"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    workdir = tmp_path / "workflow"
+    state_dir = workdir / "runs/partial"
+    state_dir.mkdir(parents=True)
+    (state_dir / "spec_snapshot.lock").touch()
+    temp_name = "spec_snapshot.json.tmp.1.1234abcd"
+    (state_dir / temp_name).write_bytes(b"discarded initializer")
+    spec = load_workflow_spec_from_text(_MANIFEST.replace("continue {goal}", "independent"))
+    runner, spawner, events = _runner(workdir)
+    goal = "" if legacy else _GOAL
+    if legacy:
+        record_spec_snapshot(workdir, "partial", spec)
+    else:
+        with pytest.raises(KeyboardInterrupt):
+            runner.run(spec, run_id="partial", goal=goal)
+        assert [e for e in events if e[0] == "workflow.spec_snapshot_recorded"] == [
+            ("workflow.spec_snapshot_recorded", spec.name, {"run_id": "partial", "spec_digest": spec_digest(spec)})
+        ]
+        events.clear()
+    before = _files(workdir, "partial")
+    assert "spec_snapshot.json" in before
+    assert not (cwd / "runs").exists() and not (workdir / ".sdd/runs").exists()
+    spawner.spawn_for_tasks.side_effect = lambda _tasks: SimpleNamespace(id="last")
+    assert getattr(runner, entry)(spec, run_id="partial", goal=goal).succeeded
+    assert events[0] == (
+        "workflow.resume" if entry == "resume" else "workflow.start",
+        spec.name,
+        {"run_id": "partial", "node_count": 2, "goal": goal},
+    )
+    assert events[-1][0] == "workflow.finish"
+    assert not any(e[0] == "workflow.spec_snapshot_recorded" for e in events)
+    after = _files(workdir, "partial")
+    assert after["spec_snapshot.json"] == before["spec_snapshot.json"]
+    assert after[temp_name] == before[temp_name]
+
+
 def test_cli_run_and_resume_preserve_original_goal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     runner, spawner, events = _runner(tmp_path)
@@ -203,6 +310,37 @@ def test_cli_run_and_resume_preserve_original_goal(tmp_path: Path, monkeypatch: 
     assert spawner.spawn_for_tasks.call_args.args[0][0].description == "continue " + _GOAL
     finished = cli.invoke(workflow_group, ["resume", rid, "-g", "different-input"])
     assert finished.exit_code == 0 and "already completed" in finished.output
+
+
+@pytest.mark.parametrize("goal", [_GOAL, "changed-goal"])
+def test_cli_reports_missing_snapshot_at_direct_workflow_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goal: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COLUMNS", str(len(str(tmp_path)) + 120))
+    manifest = tmp_path / "sample.yaml"
+    manifest.write_text(_MANIFEST, encoding="utf-8")
+    spec = load_workflow_spec_from_text(_MANIFEST)
+    runner, _, _ = _runner(tmp_path)
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(spec, run_id="partial", goal=_GOAL)
+    (tmp_path / "runs/partial/spec_snapshot.json").unlink()
+    before = _files(tmp_path, "partial")
+    result = CliRunner().invoke(workflow_group, ["resume", "partial", "-m", str(manifest), "-g", goal])
+    assert result.exit_code == 1
+    flattened = " ".join(result.output.split())
+    assert "spec_snapshot.json" in flattened
+    assert f"{tmp_path / 'runs'}" in flattened and ".sdd/runs" not in flattened
+    assert _files(tmp_path, "partial") == before
+
+
+def test_cli_help_describes_checkpoint_and_goal_requirements() -> None:
+    result = CliRunner().invoke(workflow_group, ["resume", "--help"])
+    assert result.exit_code == 0
+    flattened = " ".join(result.output.split())
+    assert "runs/<run_id>/" in flattened and "current working directory" in flattened
+    assert "exact original goal" in flattened.lower()
+    assert "original goal was empty" in flattened and "older goal-independent runs" in flattened
 
 
 def test_different_goal_initializers_publish_one_winner(tmp_path: Path) -> None:

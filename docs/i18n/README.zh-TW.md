@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果修正後的累計支出達到或超過設定的預算停止門檻，即使沒有回報新增的 token，費用追蹤器的 `can_spawn()` 檢查也會傳回 `False`。重新啟動後，單憑已儲存的 token 計數，無法還原先前針對特定代理程式、任務與模型組合所回報的確切累計費用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:85f90687f750" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-執行狀態會在每個節點將檢查點寫入 `.sdd/runs/<run_id>/`。續跑會在執行開始時驗證清單摘要，因此規格變更會被拒絕，而非靜默執行另一份不同的清單。清理節點可以設定 `always_run: true`，以便在命令或派發失敗後執行，同時不會將已中止的執行轉為成功（代理完成閘控於 [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) 中追蹤）。見[工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 續跑時請再次傳入相同的 `-g` 值，以取代未完成節點提示詞中的 `{goal}`。
+直接執行工作流程命令時，檢查點位於目前工作目錄下的 `runs/<run_id>/`。續跑時會驗證原始清單的摘要。若已記錄目標摘要，即使使用 `-m`，也要原樣提供最初的 `-g` 值。若原始目標為空，或舊執行中剩餘的代理提示詞都無法使用 `{goal}`，即可省略 `-g`。 [工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) 清理節點可以設定 `always_run: true`，以便在命令或派發失敗後執行，同時不會將已中止的執行轉為成功（代理完成閘控於 [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) 中追蹤）。
 
 `bernstein compliance controls` 列出各控制項的基準測試套件，並在有完整測量結果時顯示最近一次結果。 [基準測試涵蓋範圍](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

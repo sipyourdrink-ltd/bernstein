@@ -212,7 +212,7 @@ Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja s
 Kustannusseurannan `can_spawn()`-tarkistus palauttaa arvon `False`, kun korjatut kokonaiskulut saavuttavat budjetille asetetun pysäytysrajan tai ylittävät sen, vaikka uusia tokeneita ei olisi raportoitu. Uudelleenkäynnistyksen jälkeen pelkistä tallennetuista tokenimääristä ei voi päätellä tietylle agentin, tehtävän ja mallin yhdistelmälle aiemmin raportoitua tarkkaa kokonaiskustannusta.
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:85f90687f750" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Siivoussolmut voivat asettaa arvon `always_run: true` suoritettavaksi komento- tai jakeluvirheen jälkeen muuttamatta keskeytettyä ajoa onnistuneeksi (agentin valmistumisen portitusta seurataan tiketissä [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
+Suorat workflow-komennot tallentavat tarkistuspisteet nykyisen työhakemiston alle hakemistoon `runs/<run_id>/`. Jatkettaessa tarkistetaan alkuperäisen manifestin tiiviste. Jos tavoitteen tiiviste on tallennettu, anna täsmälleen alkuperäinen `-g`-arvo myös `-m`-valintaa käytettäessä. Voit jättää `-g`-valinnan pois, jos alkuperäinen tavoite oli tyhjä tai jos vanhan ajon jäljellä olevista agentin kehotteista mikään ei voi käyttää merkintää `{goal}`. [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) Siivoussolmut voivat asettaa arvon `always_run: true` suoritettavaksi komento- tai jakeluvirheen jälkeen muuttamatta keskeytettyä ajoa onnistuneeksi (agentin valmistumisen portitusta seurataan tiketissä [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)).
 
 `bernstein compliance controls` näyttää kunkin kontrollin testikokoelmat ja viimeisimmän täydellisen mittauksen, jos sellainen on saatavilla. [Vertailutestien kattavuus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

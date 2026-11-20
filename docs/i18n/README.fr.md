@@ -212,7 +212,7 @@ Pourquoi l'ordonnanceur est en pur Python et quels sont les compromis associés 
 La vérification `can_spawn()` du module de suivi des coûts renvoie `False` lorsque les dépenses cumulées après correction atteignent ou dépassent le seuil d’arrêt budgétaire configuré, même si aucun nouveau jeton n’a été signalé. Après un redémarrage, les compteurs de jetons enregistrés ne suffisent pas à reconstituer le coût cumulé exact précédemment déclaré pour une combinaison donnée d’agent, de tâche et de modèle.
 
 ### commandes courantes
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:85f90687f750" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-L'état d'exécution enregistre un point de contrôle dans `.sdd/runs/<run_id>/` à chaque nœud. La reprise valide l'empreinte du manifeste au démarrage de l'exécution, de sorte qu'une modification de spécification est refusée plutôt que d'exécuter silencieusement un manifeste différent. Les nœuds de nettoyage peuvent définir `always_run: true` pour s'exécuter après un échec de commande ou de répartition sans transformer une exécution abandonnée en succès (le contrôle d'achèvement d'agent est suivi dans [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Consultez [manifestes de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). À la reprise, fournissez à nouveau la même valeur de `-g` pour remplacer `{goal}` dans les prompts des nœuds non terminés.
+Les commandes directes de workflow enregistrent les points de contrôle dans `runs/<run_id>/`, relatif au répertoire de travail courant. La reprise vérifie l’empreinte du manifeste original. Si l’empreinte de l’objectif est enregistrée, redonnez la valeur exacte de `-g`, y compris avec `-m`. Vous pouvez omettre `-g` si l’objectif initial était vide ou si aucune invite d’agent restante d’une ancienne exécution ne peut utiliser `{goal}`. [manifestes de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) Les nœuds de nettoyage peuvent définir `always_run: true` pour s'exécuter après un échec de commande ou de répartition sans transformer une exécution abandonnée en succès (le contrôle d'achèvement d'agent est suivi dans [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)).
 
 `bernstein compliance controls` affiche les suites de tests de chaque contrôle et la dernière mesure complète disponible. [Couverture des tests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
