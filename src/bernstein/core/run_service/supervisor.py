@@ -105,7 +105,7 @@ def advance_run(
     try:
         state = _project(ledger_dir, run_id)
         # Direct callers must not silently resume past a terminal boundary.
-        if state.run_closed:
+        if state.run_closed or state.failed_tasks:
             return state
         already_started = set(state.in_flight_tasks)
         frontier = state.resume_frontier()
@@ -159,6 +159,9 @@ def serve_run(root: Path, run_id: str, *, per_task_delay: float = 0.0) -> Ledger
     state = svc.project(run_id)
     if state.run_closed:
         return state
+    if state.failed_tasks:
+        svc.close(run_id, "failed")
+        return svc.project(run_id)
     if state.completed_tasks or state.in_flight_tasks:
         svc.daemon_restart(run_id)
     spec = read_ssh_spec(root, run_id)

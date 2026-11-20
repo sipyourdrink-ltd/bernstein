@@ -42,6 +42,7 @@ from bernstein.core.run_service import (
 from bernstein.core.run_service.ssh_runner import SSHRunnerError
 from bernstein.core.sandbox.ssh_backend import SSHSandboxBackend
 from bernstein.core.security.audit_chain import EVENT_RUN_SSH_TASK, AuditChainStore
+from bernstein.core.security.run_closure import RunClosureOutcome, project_run_closure
 from tests.support.ssh_fake import InProcessSSHTransport
 from tests.support.vault_fake import FakeVault, make_git_repo
 
@@ -233,6 +234,45 @@ def test_serve_run_closes_failed_remote_task_without_running_next_task(
     assert [event.details["task_id"] for event in _ssh_events(project, run_id)] == ["t0"]
     entries = list(LedgerReader(run_ledger_dir(project / ".sdd", run_id)).entries())
     assert not any(entry.kind == "task.completed" for entry in entries)
+    assert verify_run(project, run_id).ok
+
+
+def test_restart_preserves_remote_failure_after_failure_append(
+    project: Path, remote_repo: Path, remote_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.run_service import supervisor
+
+    class SimulatedCrash(BaseException):
+        pass
+
+    backend = _fake_backend(remote_root)
+    monkeypatch.setattr("bernstein.core.run_service.ssh_runner.build_ssh_backend", lambda spec: backend)
+    monkeypatch.setattr(SSHTaskRunner, "_default_command", lambda self, task_id: ["sh", "-c", "exit 23"])
+    svc = RunService(project)
+    run_id = svc.submit("exit status", ["t0", "t1"], run_id="run-failure-crash").run_id
+    write_ssh_spec(project, run_id, _spec(remote_repo, remote_root))
+    original_heartbeat = supervisor._write_heartbeat
+
+    def crash_after_failure(*args, **kwargs):
+        if kwargs["phase"] == "failed":
+            raise SimulatedCrash
+        original_heartbeat(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor, "_write_heartbeat", crash_after_failure)
+    with pytest.raises(SimulatedCrash):
+        serve_run(project, run_id)
+    assert not svc.project(run_id).run_closed
+
+    monkeypatch.setattr(supervisor, "_write_heartbeat", original_heartbeat)
+    assert advance_run(project, run_id).scheduled_tasks == ["t1"]
+    state = serve_run(project, run_id)
+    assert state.run_closed
+    assert state.failed_tasks == ["t0"]
+    assert state.completed_tasks == []
+    assert state.scheduled_tasks == ["t1"]
+    assert [event.details["task_id"] for event in _ssh_events(project, run_id)] == ["t0"]
+    closure = project_run_closure(AuditChainStore(project / ".sdd" / "audit"), run_id)
+    assert closure.outcome is RunClosureOutcome.FAILED
     assert verify_run(project, run_id).ok
 
 
