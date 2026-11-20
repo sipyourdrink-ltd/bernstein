@@ -116,12 +116,12 @@ def _render_children_group(
     children: list[str],
     by_id: dict[str, dict[str, Any]],
     reverse: dict[str, list[str]],
-    rendered: set[str],
+    rendered_children: set[str],
 ) -> list[str]:
     """Render convergence groups for child tasks that have parents."""
     lines: list[str] = []
     for child_id in children:
-        if child_id in rendered:
+        if child_id in rendered_children:
             continue
         parents = reverse.get(child_id, [])
         if not parents:
@@ -134,24 +134,9 @@ def _render_children_group(
         for pid in parents:
             ptask = by_id[pid]
             parent_entries.append((_status_tag(str(ptask["status"])), str(ptask["title"]), pid))
-            rendered.add(pid)
 
         lines.extend(_render_convergence_group(parent_entries, child_tag, child_task["title"]))
-        rendered.add(child_id)
-    return lines
-
-
-def _render_unrendered(
-    topo_order: list[str],
-    by_id: dict[str, dict[str, Any]],
-    rendered: set[str],
-) -> list[str]:
-    """Render any tasks not yet in the rendered set."""
-    lines: list[str] = []
-    for tid in topo_order:
-        if tid not in rendered:
-            lines.append(_render_task_line(by_id[tid]))
-            rendered.add(tid)
+        rendered_children.add(child_id)
     return lines
 
 
@@ -174,19 +159,16 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
     topo_order = _topological_sort(list(by_id.keys()), forward, reverse)
 
     lines: list[str] = []
-    rendered: set[str] = set()
+    # Each child group shows all of its incoming edges.
+    rendered_children: set[str] = set()
 
     for tid in topo_order:
-        if tid in rendered:
-            continue
         children = forward.get(tid, [])
         if children:
-            lines.extend(_render_children_group(children, by_id, reverse, rendered))
-        if tid not in rendered:
+            lines.extend(_render_children_group(children, by_id, reverse, rendered_children))
+        elif not reverse.get(tid):
             lines.append(_render_task_line(by_id[tid]))
-            rendered.add(tid)
 
-    lines.extend(_render_unrendered(topo_order, by_id, rendered))
     return "\n".join(lines)
 
 
