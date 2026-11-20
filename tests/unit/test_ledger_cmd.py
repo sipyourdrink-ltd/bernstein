@@ -11,6 +11,7 @@ operator message; ``gc`` squashes anchor history.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -363,6 +364,98 @@ class TestFetchAndResume:
         result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout)["dispatch_status"] == "queued"
+
+    def test_git_ceiling_at_current_workdir_does_not_hide_a_broken_checkout(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ledger = _seed(project)
+        anchor_ledger(project, ledger.ledger_dir, run_id="run-a")
+        before = ledger.bucket_path.read_bytes()
+        (project / ".git" / "HEAD").write_text("unreadable ref\n", encoding="utf-8")
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(project))
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 1, result.output
+        report = json.loads(result.stdout)
+        assert "git" in report["error"].lower()
+        assert report["signal_paths"] == []
+        assert report["dispatch_status"] == "not_dispatched"
+        assert ledger.bucket_path.read_bytes() == before
+        assert not (project / ".sdd" / "runtime" / "resume").exists()
+
+    @pytest.mark.parametrize("suffix", [os.sep, f"{os.sep}."], ids=["trailing-separator", "dot"])
+    def test_resume_local_ledger_below_git_ceiling(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+    ) -> None:
+        workdir = project / "workspace"
+        _seed(workdir)
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", f"{project}{suffix}")
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(workdir), "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["dispatch_status"] == "queued"
+
+    @pytest.mark.parametrize(
+        ("separator", "exit_code", "dispatch"),
+        [(os.pathsep, 0, "queued"), (os.pathsep * 2, 1, "not_dispatched")],
+        ids=["resolve-symlink", "literal-after-empty-entry"],
+    )
+    def test_resume_honors_git_ceiling_symlink_rule(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, separator: str, exit_code: int, dispatch: str
+    ) -> None:
+        workdir = project / "workspace"
+        _seed(workdir)
+        (project / ".git" / "HEAD").write_text("unreadable ref\n", encoding="utf-8")
+        alias = project.parent / "ceiling-link"
+        try:
+            alias.symlink_to(project, target_is_directory=True)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                pytest.skip("Directory symlinks require a Windows privilege")
+            raise
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", f"{project.parent.resolve()}{separator}{alias}")
+
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(workdir), "--json"])
+        assert result.exit_code == exit_code, result.output
+        assert json.loads(result.stdout)["dispatch_status"] == dispatch
+
+    @pytest.mark.parametrize("git_read", ["ls-tree", "cat-file"], ids=["tree", "blob"])
+    @pytest.mark.parametrize(
+        ("returncode", "git_stderr", "expected_error"),
+        [
+            (
+                128,
+                "error: unable to open loose object: Permission denied\nfatal: unable to read object\n",
+                "Permission denied",
+            ),
+            (-15, "", "signal 15"),
+        ],
+        ids=["permission-denied", "terminated"],
+    )
+    def test_resume_reports_git_object_read_io_errors(
+        self, project: Path, git_read: str, returncode: int, git_stderr: str, expected_error: str
+    ) -> None:
+        ledger = _seed(project)
+        anchor_ledger(project, ledger.ledger_dir, run_id="run-a")
+        before = ledger.bucket_path.read_bytes()
+        run = subprocess.run
+
+        def fail_read(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+            if args[:2] == ["git", git_read]:
+                if kwargs.get("text"):
+                    return subprocess.CompletedProcess(args, returncode, "", git_stderr)
+                return subprocess.CompletedProcess(args, returncode, b"", git_stderr.encode())
+            return run(args, **kwargs)
+
+        with patch.object(subprocess, "run", side_effect=fail_read):
+            result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 1, result.output
+        report = json.loads(result.stdout)
+        assert expected_error in report["error"]
+        assert report["signal_paths"] == []
+        assert report["dispatch_status"] == "not_dispatched"
+        assert ledger.bucket_path.read_bytes() == before
+        assert not (project / ".sdd" / "runtime" / "resume").exists()
 
     @pytest.mark.parametrize(("field", "value"), [("ts", "yesterday"), ("redactions", []), ("schema_version", None)])
     def test_resume_reports_invalid_row_metadata(self, project: Path, field: str, value: object) -> None:

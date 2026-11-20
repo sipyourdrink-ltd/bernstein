@@ -200,6 +200,26 @@ def ledger_ref(run_id: str) -> str:
     return f"{LEDGER_REF_PREFIX}{run_id}"
 
 
+def _git_ceiling_directories() -> set[str]:
+    """Read the absolute paths Git excludes from repository discovery."""
+    ceilings: set[str] = set()
+    resolve_symlinks = True
+    for entry in os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep):
+        if not entry:
+            # Git takes subsequent entries literally to avoid slow filesystem lookups.
+            resolve_symlinks = False
+            continue
+        if not os.path.isabs(entry):
+            continue
+        if resolve_symlinks:
+            try:
+                entry = os.path.realpath(entry, strict=True)
+            except OSError:
+                continue  # Git ignores entries it cannot canonicalize.
+        ceilings.add(os.path.normcase(entry))
+    return ceilings
+
+
 def _resolve_ref(repo_dir: Path, ref: str) -> str | None:
     """Return the sha *ref* points at, or ``None`` when absent."""
     result = run_git(["rev-parse", "--verify", "--quiet", ref], repo_dir, env={**os.environ, "LC_ALL": "C"})
@@ -212,10 +232,11 @@ def _resolve_ref(repo_dir: Path, ref: str) -> str | None:
     if result.returncode == 128 and diagnostic.startswith("fatal: not a git repository (or any "):
         # Git uses the same discovery error for a plain workspace and a broken
         # checkout. Only the plain workspace can resume with local history alone.
-        ceilings = os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep)
+        ceilings = _git_ceiling_directories()
         start = repo_dir.resolve()
         for directory in (start, *start.parents):
-            if str(directory) in ceilings:
+            name = os.path.normcase(directory)
+            if directory != start and (name in ceilings or name + os.sep in ceilings):
                 break
             bare_layout = (
                 (directory / "HEAD").is_file() and (directory / "objects").is_dir() and (directory / "refs").is_dir()
@@ -260,17 +281,32 @@ def _run_git_bytes(
             capture_output=True,
             check=False,
             timeout=30,
+            env={**os.environ, "LC_ALL": "C"},
         )
     except subprocess.TimeoutExpired as exc:
         raise LedgerGitIOError(f"git {args[0]} timed out after {exc.timeout}s") from exc
 
 
+def _object_read_error(operation: str, returncode: int, stderr: str | bytes) -> LedgerGitError:
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    diagnostic = stderr.strip()
+    if returncode < 0:
+        message = f"{operation} terminated by signal {-returncode}"
+        return LedgerGitIOError(f"{message}: {diagnostic}" if diagnostic else message)
+    message = f"{operation} failed: {diagnostic or f'exit {returncode}'}"
+    # Git's C-locale diagnostics include the OS error on a separate line
+    # from the final object lookup failure. Corrupt objects still fail verification.
+    io_errors = {"Permission denied", "Operation not permitted", "Input/output error"}
+    if any(line.rsplit(": ", 1)[-1].strip() in io_errors for line in stderr.splitlines()):
+        return LedgerGitIOError(message)
+    return LedgerGitError(message)
+
+
 def _read_blob(repo_dir: Path, sha: str) -> bytes:
     result = _run_git_bytes(repo_dir, ["cat-file", "blob", sha])
     if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()
-        msg = f"git cat-file blob {sha[:12]} failed: {stderr}"
-        raise LedgerGitError(msg)
+        raise _object_read_error(f"git cat-file blob {sha[:12]}", result.returncode, result.stderr)
     return result.stdout
 
 
@@ -283,10 +319,9 @@ def _read_blob_text(repo_dir: Path, sha: str, name: str) -> str:
 
 def _read_tree_entries(repo_dir: Path, ref: str) -> dict[str, str]:
     """Return ``{name: blob_sha}`` for the flat tree at *ref*."""
-    result = run_git(["ls-tree", "-z", ref], repo_dir)
+    result = run_git(["ls-tree", "-z", ref], repo_dir, env={**os.environ, "LC_ALL": "C"})
     if result.returncode != 0:
-        msg = f"git ls-tree {ref} failed: {result.stderr.strip()}"
-        raise LedgerGitError(msg)
+        raise _object_read_error(f"git ls-tree {ref}", result.returncode, result.stderr)
     entries: dict[str, str] = {}
     for record in result.stdout.split("\0"):
         if not record.strip():
