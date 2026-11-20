@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### de open-source governancelaag voor AI-agents
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en
 Nieuwe pogingen behouden `dispatch_tier`; bij het heropenen van een taak kan het niveau expliciet worden gekozen. Zie het [contract voor dispatchniveaus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Start de taak vanuit een werkbranch. Bernstein voegt gecontroleerde wijzigingen samen in de huidige branch en stopt uitvoeringen die wijzigingen in de standaardbranch zouden samenvoegen. Controleer de wijzigingen op de werkbranch voordat je een pull request opent.
 
 `bernstein doctor --json` toont ook de bevindingen `findings` van het auditcontract, die bij dezelfde installatieobservaties identiek zijn aan die van `bernstein govern audit --only INS --json`. Het normale doctor-rapport behoudt de bestaande weergave. Zie de [gebruikshandleiding voor doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) voor vaste controle-ID’s.
 
@@ -202,7 +206,7 @@ Gebruik `bernstein govern audit --format json` of `--format sarif` voor machinel
 `bernstein delegation verify RUN` vergelijkt de keten van ontvangstbewijzen met de definitieve ketenkop en het aantal delegatiestappen, die in het uitvoeringsmanifest met een HMAC op basis van de auditsleutel zijn verzegeld. Zo worden het verwijderen van het keteneinde, vervanging en uitbreiding na afsluiting gedetecteerd, inclusief het herschrijven van de declaratie zonder sleutel. Als de declaratie wordt verwijderd, blijft de uitvoering onvolledig (exitcode `3`) en geldt deze nooit als geldig. Dit detecteert geen hergebruik van een oudere authentieke momentopname en biedt geen bescherming tegen een schrijver die de auditsleutel bezit. Zie de [werkwijze voor delegatieverificatie](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### hoe het werkt
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Elk doel doorloopt vier fasen:
 
@@ -213,8 +217,10 @@ Elk doel doorloopt vier fasen:
 
 Waarom de planner in puur Python is geschreven en welke afwegingen daarbij horen: [waarom deterministisch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+De controle `can_spawn()` van de kostenregistratie geeft `False` terug wanneer de gecorrigeerde totale uitgaven de ingestelde stopgrens voor het budget bereiken of overschrijden, ook als er geen nieuwe tokens zijn gemeld. Na een herstart zijn de opgeslagen tokenaantallen alleen niet voldoende om de exacte cumulatieve kosten te reconstrueren die eerder voor een bepaalde combinatie van agent, taak en model zijn gemeld.
+
 ### dagelijkse commando's
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -224,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Als een taak in een losgekoppelde SSH-run eindigt met een afsluitcode die niet nul is, mislukken de taak en de run. Het taakbewijs vermeldt de afsluitcode en de volgende taken blijven in de wachtrij.
 
 Het volledige beheerderoppervlak (PR-automatisering, planningen, chat-koppelingen, de autofix-daemon) is te vinden in [beheerderscommando's](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
