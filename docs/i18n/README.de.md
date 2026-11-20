@@ -49,7 +49,17 @@ Der Taskserver unterstützt eine dauerhafte, vom Betreiber gesteuerte Sperre fü
 Die Adapterrichtlinie für Rollen unterstützt eine optionale Standardliste erlaubter Adapter für nicht einzeln aufgeführte Rollen; siehe [Anleitung](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### wie ein Lauf aussieht
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Mit der globalen Option `--json` lässt sich eine Vorschau der lokalen Aufgabenliste oder eines Ziels abrufen. Jeder Befehl gibt ein JSON-Objekt auf der Standardausgabe aus und endet, bevor Worker starten.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` gibt im Array `tasks` die Aufgaben als Objekte zurück. Bei leerer Aufgabenliste lautet die Ausgabe `{"tasks": []}`. `--plan-only` gibt zwei Zeichenketten zurück. `plan` enthält den Markdown-Text und `saved_plan` den Pfad zur gespeicherten Datei.
 
 Eine einzige YAML-Datei deklariert den Lauf: Phasen, Rollen, Abhängigkeiten und die Bedingungen, unter denen ein Knoten überhaupt läuft. Der Scheduler führt sie als reines Python aus - nichts in der Datei ist ein Prompt, und kein Modell entscheidet, was als Nächstes passiert. Dieser Graph erzeugt ein Audit-Evidence-Pack; die vollständige Datei liegt unter [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

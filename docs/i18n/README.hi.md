@@ -49,7 +49,17 @@ Bernstein AI एजेंटों के लिए ओपन-सोर्स �
 भूमिका-अडैप्टर नीति में सूचीबद्ध न की गई भूमिकाओं के लिए वैकल्पिक डिफ़ॉल्ट अनुमति सूची तय की जा सकती है; [मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) देखें।
 
 ### एक रन कैसा दिखता है
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+स्थानीय लंबित कार्यों या किसी लक्ष्य का पूर्वावलोकन देखने के लिए ग्लोबल `--json` फ़्लैग इस्तेमाल करें। हर कमांड मानक आउटपुट पर एक JSON ऑब्जेक्ट लिखती है और किसी भी वर्कर को शुरू करने से पहले समाप्त हो जाती है।
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` कार्यों के ऑब्जेक्ट का `tasks` ऐरे लौटाता है। सूची खाली हो तो आउटपुट `{"tasks": []}` होता है। `--plan-only` दो स्ट्रिंग लौटाता है। `plan` में Markdown पाठ और `saved_plan` में सहेजी गई फ़ाइल का पथ होता है।
 
 एक ही YAML फ़ाइल पूरे रन को घोषित करती है: फेज़, रोल, निर्भरताएँ और वे शर्तें जिनके तहत कोई नोड चलता ही है। शेड्यूलर इसे शुद्ध Python की तरह चलाता है - फ़ाइल में कुछ भी प्रॉम्प्ट नहीं है, और आगे क्या होगा यह कोई मॉडल तय नहीं करता। यह ग्राफ़ एक ऑडिट एविडेंस पैक बनाता है; पूरी फ़ाइल [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) में है।
 

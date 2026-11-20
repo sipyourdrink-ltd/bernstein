@@ -49,7 +49,17 @@ Serwer zadań obsługuje trwałą kontrolę operatora nad pobieraniem nowych zad
 Polityka adapterów dla ról obsługuje opcjonalną domyślną listę dozwolonych adapterów dla ról niewymienionych osobno; zobacz [poradnik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### jak wygląda przebieg
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Użyj globalnej opcji `--json`, aby wyświetlić podgląd lokalnej listy zadań lub planu dla danego celu. Każde polecenie wypisuje jeden obiekt JSON na standardowe wyjście i kończy działanie przed uruchomieniem procesów roboczych.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` zwraca tablicę `tasks` zawierającą obiekty zadań. Dla pustej listy wynikiem jest `{"tasks": []}`. `--plan-only` zwraca dwa ciągi znaków. `plan` zawiera tekst w formacie Markdown, a `saved_plan` ścieżkę do zapisanego pliku.
 
 Jeden plik YAML deklaruje cały przebieg: fazy, role, zależności i warunki, pod którymi węzeł w ogóle się uruchamia. Scheduler wykonuje go jako czysty Python - nic w pliku nie jest promptem i żaden model nie decyduje, co dalej. Ten graf buduje pakiet dowodów audytowych; pełny plik leży w [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

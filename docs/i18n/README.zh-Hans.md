@@ -49,7 +49,17 @@ Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code
 角色适配器策略支持为未列出的角色设置可选的默认允许列表；请参阅[指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)。
 
 ### 一次运行长什么样
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+使用全局选项 `--json` 可以预览本地待办任务或指定目标的计划。每条命令都向标准输出写入一个 JSON 对象，随后退出，不会启动工作进程。
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` 返回的 `tasks` 数组包含任务对象。待办列表为空时，输出为 `{"tasks": []}`。`--plan-only` 返回两个字符串。`plan` 是 Markdown 正文，`saved_plan` 是已保存文件的路径。
 
 一个 YAML 文件声明整次运行:阶段、角色、依赖,以及节点在什么条件下才会执行。调度器把它当作纯 Python 执行 - 文件里没有任何提示词,也没有模型决定下一步发生什么。这张图生成一份审计证据包;完整文件在 [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)。
 

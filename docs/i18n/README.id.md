@@ -49,7 +49,17 @@ Server tugas mendukung gerbang pengambilan tugas baru yang dikendalikan operator
 Kebijakan adaptor per peran mendukung daftar adaptor yang diizinkan secara default dan bersifat opsional untuk peran yang tidak tercantum; lihat [panduan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### seperti apa sebuah run
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Gunakan opsi global `--json` untuk melihat pratinjau antrean tugas lokal atau sebuah tujuan. Setiap perintah menulis satu objek JSON ke keluaran standar lalu berhenti sebelum menjalankan pekerja.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` mengembalikan larik `tasks` yang berisi objek tugas. Antrean kosong menghasilkan `{"tasks": []}`. `--plan-only` mengembalikan dua string. `plan` berisi teks Markdown dan `saved_plan` berisi jalur berkas yang disimpan.
 
 Satu file YAML mendeklarasikan seluruh run: fase, peran, dependensi, dan kondisi kapan sebuah node dijalankan. Penjadwal mengeksekusinya sebagai Python murni - tidak ada yang berupa prompt di file itu, dan tidak ada model yang memutuskan langkah berikutnya. Graf ini menghasilkan paket bukti audit; file lengkapnya ada di [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
