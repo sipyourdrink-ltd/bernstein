@@ -214,7 +214,7 @@ Varje mål rör sig genom fyra steg:
 Varför schemaläggaren är i ren Python och vilka avvägningar det innebär: [varför deterministisk](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### vardagliga kommandon
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Körningens tillstånd sparas som en checkpoint under `.sdd/runs/<run_id>/` vid varje nod. Återupptagning validerar manifest-digesten vid körningens start, så en ändring av specifikationen avvisas i stället för att tyst köra ett annat manifest. Se [workflow-manifest](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Ange samma `-g`-värde igen vid återupptagning så att `{goal}` ersätts i promptarna för ofärdiga noder.
+
+`bernstein compliance controls` visar testsviterna för varje kontroll och den senaste fullständiga mätningen om den finns. [Testtäckning](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Grindar för kodhygien: `bernstein readme-l10n verify` underkänner en PR vars översatta README-filer avviker från den engelska källan (med angivande av inaktuellt avsnitt), `bernstein readme-l10n sync` uppdaterar kopplingarna efter engelska ändringar. Se [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 

@@ -214,7 +214,7 @@ Her hedef dört aşamadan geçer:
 Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: [neden deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Devam ettirirken aynı `-g` değerini yeniden verin; böylece tamamlanmamış düğümlerin istemlerinde `{goal}` yerine bu değer konur.
+
+`bernstein compliance controls` her kontrol için test takımlarını ve varsa son tam ölçümü gösterir. [Karşılaştırma testlerinin kapsamı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Depo hijyen kapıları: `bernstein readme-l10n verify`, çevrilmiş README'leri İngilizce kaynaktan sapan bir PR'ı başarısız kılar (güncelliğini yitirmiş bölümü adlandırarak); `bernstein readme-l10n sync`, İngilizce düzenlemelerden sonra bunları yeniden bağlar. Bkz. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 

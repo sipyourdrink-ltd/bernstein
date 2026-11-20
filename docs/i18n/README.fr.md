@@ -214,7 +214,7 @@ Chaque objectif franchit quatre étapes :
 Pourquoi l'ordonnanceur est en pur Python et quels sont les compromis associés : [pourquoi déterministe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### commandes courantes
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 L'état d'exécution enregistre un point de contrôle dans `.sdd/runs/<run_id>/` à chaque nœud. La reprise valide l'empreinte du manifeste au démarrage de l'exécution, de sorte qu'une modification de spécification est refusée plutôt que d'exécuter silencieusement un manifeste différent. Consultez [manifestes de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). À la reprise, fournissez à nouveau la même valeur de `-g` pour remplacer `{goal}` dans les prompts des nœuds non terminés.
+
+`bernstein compliance controls` affiche les suites de tests de chaque contrôle et la dernière mesure complète disponible. [Couverture des tests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Contrôles d'hygiène du dépôt : `bernstein readme-l10n verify` invalide une PR dont les READMEs traduits divergent de la source anglaise (en pointant la section obsolète), `bernstein readme-l10n sync` réaligne les liaisons après modification anglaise. Consultez [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 

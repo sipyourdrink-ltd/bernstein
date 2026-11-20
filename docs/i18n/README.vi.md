@@ -214,7 +214,7 @@ Mỗi mục tiêu trải qua bốn giai đoạn:
 Lý do bộ lập lịch được xây dựng bằng Python thuần túy và các đánh đổi đi kèm: [tại sao tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Khi tiếp tục, hãy truyền lại cùng giá trị `-g` để thay thế `{goal}` trong prompt của các nút chưa hoàn tất.
+
+`bernstein compliance controls` hiển thị các bộ kiểm thử cho từng biện pháp kiểm soát và phép đo đầy đủ gần nhất nếu có. [Phạm vi kiểm thử](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Cổng kiểm soát chất lượng kho lưu trữ: `bernstein readme-l10n verify` sẽ báo lỗi PR nếu các bản dịch README lệch khỏi bản gốc tiếng Anh (chỉ rõ phần lỗi thời), `bernstein readme-l10n sync` liên kết lại chúng sau khi chỉnh sửa tiếng Anh. Xem [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
