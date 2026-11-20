@@ -9,7 +9,7 @@ Generated from commit `f5400d757fb0`. Every row below is anchored to `path:line`
 | [30-ci.md](./30-ci.md) | what must be green before merge |
 | [40-env.md](./40-env.md) | which env vars the code reads |
 | [50-invariants.md](./50-invariants.md) | what you must not touch |
-| `.machine/facts.json` | machine-readable snapshot from commit `1567ca0397b6`, with the Git identity commands in the two canary workflow excerpts updated to match their workflow files |
+| `.machine/facts.json` | machine-readable snapshot generated from commit `9d7021b4613e` |
 
 ## Golden commands
 
