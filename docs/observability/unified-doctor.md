@@ -74,10 +74,12 @@ is warn/fail/error.
 
 Two workflows ship alongside the command:
 
-- `.github/workflows/pr-observability-summary.yml`: posts a sticky
-  comment on every pull request with the observe table. Triggered on
-  `pull_request: [opened, synchronize, reopened]` and via
-  `workflow_dispatch` for backfills.
+- `pr-observability-summary.yml` reports on PRs labelled `deep-review` on
+  open, synchronize, reopen and label events. Forks receive the job summary.
+  For same-repository PRs, `pr-publish.yml` renders the observations from the
+  completed run into a sticky comment. Manual backfills for any PR can be
+  dispatched from the default branch. The handoff accepts up to 64 KiB of
+  observation JSON and 48 KiB of rendered Markdown.
 - `.github/workflows/docs-observability-snapshot.yml`: `workflow_dispatch`
   only (manual, see #2856) - writes the dispatch-day snapshot to
   `docs/_internal/observability/snapshots/<YYYY-MM-DD>.json` and

@@ -72,7 +72,6 @@ def test_owned_workflows_do_not_install_uv_with_unpinned_pip(workflow_name: str)
     "workflow_name",
     (
         "docs-observability-snapshot.yml",
-        "pr-observability-summary.yml",
         "nightly-canary.yml",
     ),
 )
@@ -82,6 +81,23 @@ def test_project_install_workflows_use_local_bootstrap_action(workflow_name: str
     steps = _iter_steps(_load_workflow(workflow))
     uses_values = [step.get("uses") for step in steps]
     assert "./.github/actions/bootstrap" in uses_values
+
+
+@pytest.mark.parametrize("workflow_name", ("pr-policy.yml", "pr-observability-summary.yml"))
+def test_pr_setups_inline_the_bootstrap_pins_and_retry(workflow_name: str) -> None:
+    bootstrap = _iter_steps(_load_workflow(BOOTSTRAP_ACTION))
+    expected = next(step for step in bootstrap if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
+    setup, retry = [
+        step
+        for step in _iter_steps(_load_workflow(WORKFLOWS_DIR / workflow_name))
+        if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+    ]
+    assert setup["uses"] == retry["uses"] == expected["uses"]
+    assert setup["with"] == retry["with"]
+    assert setup["with"]["version"] == expected["with"]["version"]
+    assert setup["with"]["enable-cache"] is False
+    assert setup["continue-on-error"] is True
+    assert retry["if"] == f"steps.{setup['id']}.outcome == 'failure'"
 
 
 def test_local_bootstrap_action_pins_setup_uv_version() -> None:

@@ -1,0 +1,106 @@
+name: Publish PR observability and autosync
+
+# workflow_run executes this definition and github.sha from the default branch.
+# A PR can supply observations or a diff, never the publishing steps or destination.
+on:
+  workflow_run:
+    workflows: ["PR observability summary", "PR policy"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  prepare:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.id == github.event.repository.id &&
+      ((github.event.workflow_run.path == '.github/workflows/pr-policy.yml' &&
+        github.event.workflow_run.event == 'pull_request') ||
+       (github.event.workflow_run.path == '.github/workflows/pr-observability-summary.yml' &&
+        (github.event.workflow_run.event == 'pull_request' ||
+         github.event.workflow_run.event == 'workflow_dispatch')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      kind: ${{ steps.prepare.outputs.kind }}
+      number: ${{ steps.prepare.outputs.number }}
+      ref: ${{ steps.prepare.outputs.ref }}
+      sha: ${{ steps.prepare.outputs.sha }}
+      data: ${{ steps.prepare.outputs.data }}
+    steps:
+      - name: Checkout publisher from the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Validate the triggering run, target and bounded artifact
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I trusted/scripts/prepare_pr_publication.py
+
+  comment:
+    needs: prepare
+    if: needs.prepare.outputs.kind == 'comment'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pr-observability-comment-${{ needs.prepare.outputs.number }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check the target again after waiting for the comment runner
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ needs.prepare.outputs.number }}
+          EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$EXPECTED_SHA" ]]; then
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$NUMBER")
+            jq -e --arg sha "$EXPECTED_SHA" '.state == "open" and .head.sha == $sha and any(.labels[]; .name == "deep-review")' <<< "$pr" > /dev/null || exit 0
+          fi
+          echo "current=true" >> "$GITHUB_OUTPUT"
+      - name: Write the validated report as data
+        env:
+          REPORT: ${{ needs.prepare.outputs.data }}
+        run: |
+          test -n "$REPORT"
+          printf '%s' "$REPORT" | base64 --decode > "$RUNNER_TEMP/observability.md"
+      - name: Post sticky comment
+        if: steps.target.outputs.current == 'true'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          number: ${{ needs.prepare.outputs.number }}
+          header: bernstein-observability
+          path: ${{ runner.temp }}/observability.md
+
+  autosync:
+    needs: prepare
+    if: needs.prepare.outputs.kind == 'autosync'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout publisher from the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Commit and push regen to PR head ref
+        env:
+          BERNSTEIN_AUTOSYNC_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
+          PR_HEAD_REF: ${{ needs.prepare.outputs.ref }}
+          PR_HEAD_SHA: ${{ needs.prepare.outputs.sha }}
+          PATCH: ${{ needs.prepare.outputs.data }}
+        run: python3 -I trusted/scripts/publish_autosync.py
