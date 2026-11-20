@@ -7,9 +7,8 @@ expected minor line from ``pyproject.toml`` itself rather than hardcoding a
 version, so a release bump that forgets to touch ``SECURITY.md`` fails here
 instead of shipping a stale policy.
 
-Policy: SECURITY.md states fixes ship on the current release line and there
-is no backport branch, so exactly one minor line - the current one - is
-supported.
+Exactly one minor line receives regular fixes. During 4.0.x, the table
+also identifies the single planned backport to the previous minor.
 """
 
 from __future__ import annotations
@@ -105,73 +104,18 @@ def test_supported_versions_table_has_current_minor_marked_yes() -> None:
     )
 
 
-def test_supported_versions_table_marks_everything_else_unsupported() -> None:
-    """Current-release-only policy: exactly one row is Yes, and it is the
-    current minor. Every other row must be No.
-
-    This is what makes the test catch a *stale* Yes line, not just a missing
-    one -- a table that still says the previous minor is supported alongside
-    the new one would pass a "current minor is present" check but violates
-    the project's stated no-backport-branch policy.
-    """
+def test_supported_versions_names_only_the_planned_3_24_2_backport() -> None:
     minor = _project_minor_version()
-    rows = _supported_versions_table()
-    assert rows, "SECURITY.md's Supported Versions table has no rows to check."
-
-    yes_rows = [version for version, supported in rows if supported == "Yes"]
-    assert yes_rows == [f"{minor}.x"], (
-        f"Exactly one release line should be marked Yes (the current one, "
-        f"{minor}.x) per the no-backport-branch policy; got {yes_rows}."
-    )
-
-    for version, supported in rows:
-        if version != f"{minor}.x":
-            assert supported == "No", f"{version} should be marked No (no backport branch), got {supported!r}."
+    expected = [(f"{minor}.x", "Yes")]
+    if minor == "4.0":
+        expected.append(("3.24.x", "3.24.2 backport only"))
+    expected.append(("All other versions", "No"))
+    assert _supported_versions_table() == expected
 
 
-def test_supported_versions_table_has_no_contradictory_current_row() -> None:
-    """The current release line must appear exactly once, marked ``Yes``.
-
-    ``test_supported_versions_table_marks_everything_else_unsupported`` skips
-    every row whose version equals the current line before checking
-    ``supported == "No"``, so a table listing both ``3.20.x | Yes`` and a
-    stray ``3.20.x | No`` passes every other test here: the Yes-row check
-    finds its row, and the everything-else check never looks at the
-    contradictory one. Require the current line to appear exactly once.
-    """
-    minor = _project_minor_version()
-    rows = _supported_versions_table()
-    current_rows = [row for row in rows if row[0] == f"{minor}.x"]
-    assert current_rows == [(f"{minor}.x", "Yes")], (
-        f"SECURITY.md's Supported Versions table must list the current "
-        f"release line ({minor}.x) exactly once, marked Yes; got {current_rows}."
-    )
-
-
-def test_supported_versions_table_names_the_current_unsupported_bound() -> None:
-    """The ``< X.Y`` row must name the *current* minor, not a stale one.
-
-    ``test_supported_versions_table_marks_everything_else_unsupported`` only
-    requires every non-current row to read ``No`` -- a table with no
-    unsupported row at all, or one whose bound still names an old minor
-    (``< 3.19`` after the project moved to 3.21), passes that check because it
-    never compares the row's *version* against the current line. #6065's own
-    acceptance criteria name both the ``Yes`` row and the ``< X.Y`` row, so
-    pin the second one explicitly too.
-    """
-    minor = _project_minor_version()
-    rows = _supported_versions_table()
-    expected_row = (f"< {minor}", "No")
-    assert expected_row in rows, (
-        f"SECURITY.md's Supported Versions table must mark every release "
-        f"before the current line unsupported with a '< {minor}' row; got "
-        f"{rows}."
-    )
-
-
-def test_no_backport_branch_policy_still_documented() -> None:
-    """Pins the sentence the version-only-support policy is derived from, so
-    a future edit that softens or removes it is a visible diff, not a silent
-    policy change."""
-    text = SECURITY_MD.read_text(encoding="utf-8")
-    assert "Fixes ship on the current release line. There is no backport branch." in text
+def test_backport_policy_matches_the_release_notes() -> None:
+    if _project_minor_version() == "4.0":
+        policy = "Regular fixes ship on 4.0.x. The only planned 3.24.x backport is 3.24.2."
+        assert policy in SECURITY_MD.read_text(encoding="utf-8")
+        page = REPO_ROOT / "docs" / "release-notes" / "v4.0.0.md"
+        assert policy in page.read_text(encoding="utf-8").split("## Known limitations", 1)[1]

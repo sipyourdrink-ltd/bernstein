@@ -768,4 +768,5 @@ exclude_docs: |
   /templates/
   _internal/
   /assets/*.md
+  /release-notes/fragments/7082-landed-group-release.md
   /i18n/

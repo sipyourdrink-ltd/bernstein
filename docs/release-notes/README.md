@@ -33,11 +33,20 @@ either form.
 
 ## Cutting a release
 
-`scripts/rotate_release_notes.py rotate docs/release-notes/vX.Y.Z.md`
-concatenates the fragments in deterministic filename order, appends the
-rendered section to the version page, and deletes the consumed fragments --
-commit both edits together, the same way emptying `unreleased.md` has always
-been a step of the release PR itself (`docs/operations/release.md`).
-Entries still carried in `unreleased.md` continue to move onto the version
-page by hand, exactly as before; `tests/unit/test_unreleased_notes_rotation.py`
-fails the build if one gets left behind.
+For v4.0.0, start from the pre-cut tree and run these commands with the
+project environment active. Set `SOURCE_DATE_EPOCH` to the release date in UTC
+(Unix seconds) before the version bump so the citation date is reproducible.
+
+```sh
+python scripts/rotate_release_notes.py assemble v4.0.0
+python scripts/bump_version.py 4.0.0
+```
+
+The first command reads the unreleased entries and the fragments in filename
+order. Its inputs in `scripts/release_cuts/v4.0.0.toml` identify deferred
+fragments, links to relocate, wording corrections and known limitations.
+It adds the new page to navigation and removes only the fragments it used.
+
+For a manually curated version, `scripts/rotate_release_notes.py rotate
+docs/release-notes/vX.Y.Z.md` deletes consumed fragments once the page
+exists. Move any entries from `unreleased.md` to that page in the same PR.
