@@ -12,5 +12,8 @@
     "@qwen-code/qwen-code": "0.28.0",
     "forgecode": "2.13.21",
     "opencode-ai": "1.19.6"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
   }
 }
