@@ -193,6 +193,26 @@ def test_401_line_docs_change_needs_one_ordinary_approval(qc, roster):
     assert _evaluate(qc, roster, pr).passed
 
 
+@pytest.mark.parametrize(
+    "paths,docs_only",
+    [
+        (["docs/getting-started/first-run.md", "docs/assets/logo-dark.svg", "docs/assets/webui-agents.png"], True),
+        (["docs/script.js"], False),
+        (["docs/overrides/main.html"], False),
+        (["docs/requirements.txt"], False),
+        (["docs/guide.md", "docs/requirements.in"], False),
+        (["docs/script.js", "docs/guide.md"], False),
+        (["docs/reference/openapi.json"], False),
+    ],
+)
+def test_large_docs_site_changes_classify_all_paths_by_role(qc, roster, paths, docs_only):
+    pr = _pr(qc, paths=paths, changed_lines=401, reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = frozenset({"size/s"})
+    assert _evaluate(qc, roster, pr).passed is docs_only
+    pr.reviews.extend([_review(qc, "core1", "APPROVED"), _review(qc, "core2", "APPROVED")])
+    assert _evaluate(qc, roster, pr).passed
+
+
 def test_stale_small_label_cannot_lower_quorum_on_large_code(qc, roster):
     pr = _pr(qc, paths=["web/example.ts"], changed_lines=401, reviews=[_review(qc, "comm1", "APPROVED")])
     pr.labels = frozenset({"size/s"})
@@ -1363,23 +1383,31 @@ def test_fetch_reads_live_size_label_and_file_completeness(qc, roster, counts, c
     assert _evaluate(qc, roster, pr).passed is complete
 
 
-@pytest.mark.parametrize("old,eligible", [("docs/old.md", True), (".github/old.md", False)])
-def test_rename_counts_as_one_file_and_checks_both_paths(qc, roster, old, eligible):
+@pytest.mark.parametrize(
+    "old,new,eligible",
+    [
+        ("docs/old.md", "docs/new.md", True),
+        (".github/old.md", "docs/new.md", False),
+        ("docs/script.js", "docs/new.md", False),
+        ("docs/old.md", "docs/requirements.txt", False),
+    ],
+)
+def test_rename_counts_as_one_file_and_checks_both_paths(qc, roster, old, new, eligible):
     fake = FakeGitHub(
         commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)], compares={}, reviews=[_raw_review("comm1", SHA_A)]
     )
 
     def api(*args):
         if args[1] == f"repos/{REPO}/pulls/1/files":
-            return [{"filename": "docs/new.md", "previous_filename": old, "status": "renamed"}]
+            return [{"filename": new, "previous_filename": old, "status": "renamed"}]
         result = fake(*args)
         if args[1] == f"repos/{REPO}/pulls/1":
-            result["changed_files"] = 1
+            result.update(changed_files=1, additions=401, deletions=0, labels=[{"name": "size/s"}])
         return result
 
     pr = qc.fetch_pull_request(REPO, 1, api=api)
     assert pr.paths_complete
-    assert pr.paths == ["docs/new.md", old]
+    assert pr.paths == [new, old]
     assert _evaluate(qc, roster, pr).passed is eligible
 
 

@@ -945,12 +945,22 @@ class Requirement:
     who: str
 
 
+@dataclass(frozen=True)
+class PendingQuorum:
+    """Remaining roster reviews after evaluating the charter, before open requests."""
+
+    eligible: frozenset[str]
+    total: int
+    core: int
+
+
 @dataclass
 class Verdict:
     passed: bool
     title: str
     requirements: list[Requirement] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    pending_quorum: PendingQuorum | None = None
 
     def summary(self) -> str:
         lines = [f"### `quorum`: {self.title}", ""]
@@ -990,7 +1000,14 @@ def small_change(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
         for path in pr.paths
     ):
         return False
-    docs_only = all(path.endswith(".md") or path.startswith("docs/") for path in pr.paths)
+    # The docs site also ships templates, scripts, styles, schemas and build
+    # dependencies. Directory membership alone cannot identify prose or media.
+    docs_only = all(
+        path.endswith(".md")
+        or path in {"docs/agents.txt", "docs/llms.txt", "docs/llms-full.txt"}
+        or (path.startswith("docs/") and path.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")))
+        for path in pr.paths
+    )
     return docs_only or ("size/s" in pr.labels and pr.changed_lines <= THIRD_APPROVAL_LINES)
 
 
@@ -1160,6 +1177,12 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             if roster.maintainer not in approving:
                 who += f", or @{roster.maintainer} alone"
         verdict.requirements.append(Requirement(text, met, who))
+        if not met and not blocking:
+            verdict.pending_quorum = PendingQuorum(
+                eligible=eligible - approving,
+                total=max(0, need_total - len(approving)),
+                core=max(0, need_core - len(approving_core)),
+            )
 
         if pr.changed_lines > MAINTAINER_OR_SPLIT_LINES:
             verdict.requirements.append(

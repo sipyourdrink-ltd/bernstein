@@ -133,3 +133,33 @@ def test_human_changes_get_the_full_evaluation_before_author_classification(rr, 
     assert rr.needs_a_look({"user": {"login": "owner"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "the-conductor[bot]"}, "draft": False}, roster)
     assert not rr.needs_a_look({"user": {"login": "github-actions[bot]"}, "draft": False}, roster)
+
+
+@pytest.mark.parametrize(
+    "path,owners,requested,expected",
+    [
+        ("docs/guide.md", [], [], "@comm1"),
+        ("docs/guide.md", [], ["comm2"], None),
+        ("docs/guide.md", [("/docs/", ["core1"])], [], "@core1, @core2, @comm1"),
+        ("docs/script.js", [], [], "@core1, @core2, @comm1"),
+    ],
+)
+def test_hourly_sweep_invites_only_the_needed_eligible_reviewers(
+    rr, roster, monkeypatch, capsys, path, owners, requested, expected
+):
+    pr = _pr(rr, paths=[path], changed_lines=401)
+    raw = {"number": pr.number, "user": {"login": pr.author}, "requested_reviewers": [{"login": n} for n in requested]}
+    monkeypatch.setattr(rr, "open_pull_requests", lambda repo: [raw])
+    monkeypatch.setattr(rr.qc, "fetch_pull_request", lambda repo, number: pr)
+    monkeypatch.setattr(rr.qc, "load_roster", lambda root: roster)
+    monkeypatch.setattr(rr.qc, "load_codeowners", lambda root: owners)
+    assert rr.main(["--repo", "example/project", "--dry-run"]) == 0
+    assert capsys.readouterr().out.splitlines() == ([f"#7: would request {expected}"] if expected else [])
+
+
+def test_requester_counts_current_eligible_people_once_and_fills_missing_core(rr, roster):
+    pr = _pr(rr, paths=["web/tool.ts"], changed_lines=401, contributors={"outsider", "core1"})
+    pr.reviews = [_review(rr, "comm1", "APPROVED", sha=OLD), _review(rr, "comm2", "APPROVED")]
+    pr.same_diff = frozenset({OLD})
+    pr.update_only = frozenset({"core1"})
+    assert rr.plan_requests(pr, roster, {"comm1", "core2"}, {}) == ["core1"]
