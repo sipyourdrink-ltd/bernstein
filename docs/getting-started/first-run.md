@@ -13,6 +13,13 @@ my first orchestrated task complete." About 5 minutes.
 
 If `bernstein --version` doesn't work yet, finish the [install page](install.md) first.
 
+On a terminal, the installed CLI prints a preparation message while it
+checks the run. The dashboard becomes available after local preflight and
+server startup. The first agent can take longer. The npm launcher can also
+provision a Python environment on first use, before Bernstein starts.
+Refresh the optional specialist catalog with `bernstein agents sync` before
+a run that needs it. An active run keeps the local catalog it loaded.
+
 ---
 
 ## Step 1: Pick (and authenticate) one CLI agent for this walkthrough

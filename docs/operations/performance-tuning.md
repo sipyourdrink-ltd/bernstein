@@ -22,13 +22,37 @@ PATH=/usr/bin:/bin .venv/bin/python benchmarks/bench_cli_startup.py \
 Use `--entrypoint module` for the installed Python module path and `--runs 50`
 to include a p95. Use `--cache warm` or `--cache cold` to select one mode.
 Import traces are collected separately with empty bytecode directories.
-Cold samples preserve the OS filesystem cache. The adapter count in help
-uses the registry's names and checks installed plugin entry points. The command registry loads the
-selected command modules, including adapters and benchmarks, when Click
-resolves those commands. JSON log setup can run before the task server loads.
+Cold samples preserve the OS filesystem cache. Root help reads declared
+plugin names. Selecting an adapter validates the implementation.
 
-These commands measure CLI startup and exit. Local run readiness requires
-a completed preflight, a healthy task server and a ready control surface.
+For a local run, the harness starts a new Git project with an empty app home
+and the idle adapter. It polls the real readiness endpoint and fetches
+dashboard data on the run's loopback port. It records the first agent
+registration, the first working or idle agent, and the CLI exit separately. It cleans up the processes it started.
+
+```bash
+.venv/bin/python benchmarks/bench_local_readiness.py \
+  --console .venv/bin/bernstein --runs 50 --output readiness.json
+```
+
+On POSIX, measure actual terminal feedback separately. The ordinary run
+fixture sends Ctrl-C after its first preparation message and records the
+real interruption exit code. Omitting `--execute` times a completed plan
+preview. Pass `--warm-home` to either harness to prime and reuse user caches.
+
+```bash
+.venv/bin/python benchmarks/bench_terminal_feedback.py --execute \
+  --console .venv/bin/bernstein --runs 50 --output terminal.json
+```
+
+Use an installed wheel and report first-launch provisioning separately for
+npm, pipx or uv. The first call can need to download and install dependencies.
+The installed reference budgets are 250 ms for a meaningful terminal frame,
+500 ms for help or version to finish, and 2 s for a usable local dashboard.
+
+The spawner refreshes the optional code index in the background. A run
+uses the installed specialist catalog. To update it for a future run, use
+`bernstein agents sync`. A catalog path specified in the seed must exist.
 
 ## Quick reference
 

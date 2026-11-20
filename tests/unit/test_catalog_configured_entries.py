@@ -58,6 +58,20 @@ def _plugin_fixture(root: Path) -> Path:
 
 
 class TestConfiguredCatalogsReachMatch:
+    def test_active_run_keeps_its_loaded_catalog(self, tmp_path: Path) -> None:
+        catalog = _generic_fixture(tmp_path / "catalog")
+        entries = [{"name": "local", "type": "generic", "path": str(catalog)}]
+        active = CatalogRegistry.from_config(entries)
+        active.load_configured_entries()
+        (catalog / "qa" / "SKILL.md").write_text(SKILL_MD.replace("qa-specialist", "new-specialist"))
+
+        current = active.match("qa", "write payments tests")
+        assert current is not None and current.name == "qa-specialist"
+        future = CatalogRegistry.from_config(entries)
+        future.load_configured_entries()
+        updated = future.match("qa", "write payments tests")
+        assert updated is not None and updated.name == "new-specialist"
+
     def test_a_configured_catalog_reaches_the_match_path_not_just_the_cache(self, tmp_path: Path) -> None:
         """The dead-path regression test (issue #3972, defect 2).
 

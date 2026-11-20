@@ -451,7 +451,7 @@ def preflight_checks(
     if unattended is None:
         unattended = not sys.stdin.isatty()
     if unattended and env is None:
-        from bernstein.core.agents.spawner import build_spawner_env
+        from bernstein.core.agents.spawner_env import build_spawner_env
 
         env = build_spawner_env(cli if cli not in ("mock", "auto") else None)
 

@@ -7,6 +7,7 @@ import logging
 from collections.abc import MutableMapping
 from importlib import import_module
 from importlib.metadata import entry_points
+from threading import RLock
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
@@ -169,6 +170,8 @@ _REMOVED_ADAPTERS: dict[str, str] = {
 }
 
 _entrypoints_loaded = False
+_loaded_plugin_names: set[str] = set()
+_entrypoint_lock = RLock()
 
 #: provider-alias (lower-cased) -> adapter registry name. Built lazily from
 #: each adapter's ``provides`` class attribute the first time
@@ -190,29 +193,37 @@ _ALIAS_SUBSTRING_EXCLUSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _load_entrypoint_adapters() -> None:
+def _load_entrypoint_adapters(name: str | None = None) -> None:
     """Discover and register adapters from the ``bernstein.adapters`` entry-point group.
 
-    Called once on first use. Silently skips malformed plugins.
+    A selected name loads every matching declaration in entry-point order.
+    Detailed enumeration loads the remaining names. Malformed plugins leave
+    a previously registered implementation in place.
     """
     global _entrypoints_loaded
-    if _entrypoints_loaded:
-        return
-    _entrypoints_loaded = True
-    for ep in entry_points(group="bernstein.adapters"):
-        try:
-            loaded = ep.load()
-            name = ep.name
-            if (inspect.isclass(loaded) and issubclass(loaded, CLIAdapter)) or isinstance(loaded, CLIAdapter):
-                _ADAPTERS[name] = loaded
-            else:
-                logger.warning(
-                    "Ignoring entry-point adapter %r: expected CLIAdapter subclass or instance, got %r",
-                    name,
-                    loaded,
-                )
-        except Exception as exc:  # pragma: no cover
-            logger.warning("Failed to load entry-point adapter %r: %s", ep.name, exc)
+    with _entrypoint_lock:
+        if _entrypoints_loaded or name in _loaded_plugin_names:
+            return
+        loaded_before = _loaded_plugin_names.copy()
+        if name is None:
+            _entrypoints_loaded = True
+        else:
+            _loaded_plugin_names.add(name)
+        for ep in entry_points(group="bernstein.adapters"):
+            if ep.name in loaded_before or (name is not None and ep.name != name):
+                continue
+            try:
+                loaded = ep.load()
+                if (inspect.isclass(loaded) and issubclass(loaded, CLIAdapter)) or isinstance(loaded, CLIAdapter):
+                    _ADAPTERS[ep.name] = loaded
+                else:
+                    logger.warning(
+                        "Ignoring entry-point adapter %r: expected CLIAdapter subclass or instance, got %r",
+                        ep.name,
+                        loaded,
+                    )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Failed to load entry-point adapter %r: %s", ep.name, exc)
 
 
 def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = None) -> CLIAdapter:
@@ -256,7 +267,7 @@ def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = Non
         instance.registry_name = cli_name
         return instance
 
-    _load_entrypoint_adapters()
+    _load_entrypoint_adapters(cli_name)
 
     adapter_cls = _ADAPTERS.get(cli_name)
     if adapter_cls is None:
@@ -266,6 +277,7 @@ def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = Non
         removed = removed_adapter_message(cli_name)
         if removed is not None:
             raise ValueError(removed)
+        _load_entrypoint_adapters()
         available = ", ".join(sorted([*_ADAPTERS.keys(), "generic"]))
         raise ValueError(f"Unknown adapter '{cli_name}'. Available: {available}")
 
@@ -365,6 +377,24 @@ def iter_adapter_specs() -> Iterator[tuple[str, type[CLIAdapter] | CLIAdapter]]:
 #: pins a run to. Excluded from :func:`selectable_adapter_names` so selection
 #: surfaces reject it while enumeration surfaces still show it.
 _NON_AGENT_STUBS: frozenset[str] = frozenset({"mock"})
+
+
+def advertised_adapter_names() -> tuple[frozenset[str], frozenset[str]]:
+    """Return registered names and additional, unvalidated plugin declarations.
+
+    Root help must work even when importing a third-party entry point is
+    expensive or fails. Selection and the detailed listing still validate
+    installed plugins before treating their names as selectable.
+    """
+    registered = frozenset(_ADAPTERS).difference(_NON_AGENT_STUBS)
+    declared = frozenset(ep.name for ep in entry_points(group="bernstein.adapters"))
+    return registered, declared.difference(registered, _NON_AGENT_STUBS)
+
+
+def is_selectable_adapter_name(name: str) -> bool:
+    """Validate only this adapter's entry points, including overrides of built-in names."""
+    _load_entrypoint_adapters(name)
+    return name not in _NON_AGENT_STUBS and name in _ADAPTERS
 
 
 def selectable_adapter_names() -> frozenset[str]:

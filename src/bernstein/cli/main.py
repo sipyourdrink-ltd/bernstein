@@ -21,150 +21,88 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator, MutableMapping
+from functools import cache
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
-# Import commands from decomposed modules (NEW)
-from bernstein.cli.advanced_cmd import (
-    dashboard,
-    doctor,
-    github_group,
-    help_all,
-    install_hooks,
-    live,
-    mcp_server,
-    plugins_cmd,
-    quarantine_group,
-    recap,
-    replay_cmd,
-    retro,
-    trace_cmd,
-)
-from bernstein.cli.agents_cmd import agents_group
-
-# New CLI commands
-from bernstein.cli.aliases import aliases_cmd, expand_alias
-from bernstein.cli.audit_cmd import audit_group
-from bernstein.cli.auth_cmd import auth_group, auth_login
-from bernstein.cli.changelog_cmd import changelog_group as changelog_cmd
-from bernstein.cli.changelog_cmd import changelog_run_alias
-from bernstein.cli.chaos_cmd import chaos_group
-from bernstein.cli.ci_cmd import ci_group
-from bernstein.cli.cloud_cmd import cloud_group
-from bernstein.cli.commands.best_of_n_rank_cmd import best_of_n_group
-from bernstein.cli.commands.bom_cmd import bom_group
-from bernstein.cli.commands.citation_cmd import quality_group as citation_quality_group
-
-# Aliased to `completions` so `from bernstein.cli.main import completions` keeps
-# working: the name is part of main's backward-compatible surface, and only the
-# implementation behind it moved to the module the docs already named (#5102).
-from bernstein.cli.commands.completions_cmd import completions_cmd as completions
-from bernstein.cli.commands.criterion_profile_cmd import criterion_profile_group
-from bernstein.cli.commands.datasource_cmd import datasource_group
-from bernstein.cli.commands.decisions_cmd import decisions_group
-from bernstein.cli.commands.events_cmd import events_group
-from bernstein.cli.commands.gc_cmd import gc_group
-from bernstein.cli.commands.impact_cmd import (
-    blast_radius_alias_group,
-    dep_impact_alias_cmd,
-    impact_group,
-)
-from bernstein.cli.commands.issue_to_pr_cmd import issue_to_pr_group
-from bernstein.cli.commands.knowledge_cmd import knowledge_group
-from bernstein.cli.commands.model_cmd import model_group
-from bernstein.cli.commands.pool_cmd import pool_group
-from bernstein.cli.commands.receipt_cmd import receipt_group
-from bernstein.cli.commands.role_adapter_policy_cmd import security_group as _role_adapter_security_group
-from bernstein.cli.commands.run_graph_cmd import run_graph_cmd
-from bernstein.cli.commands.run_names_cmd import run_lookup_cmd
-from bernstein.cli.commands.skills_cmd import skills_group
-from bernstein.cli.commands.spec_cmd import spec_group
-from bernstein.cli.config_path_cmd import config_path_cmd
-from bernstein.cli.cost import (
-    cost_cmd,
-    cost_envelopes_alias_cmd,
-    estimate_alias_cmd,
-)
-from bernstein.cli.debug_bundle import debug_group
-from bernstein.cli.debug_cmd import debug_cmd
-from bernstein.cli.diff_cmd import diff_cmd
-from bernstein.cli.disaster_recovery_cmd import dr_group
-from bernstein.cli.dry_run_cmd import dry_run_cmd
-from bernstein.cli.eval_benchmark_cmd import (
-    benchmark_alias_group,
-    benchmark_group,
-    eval_group,
-)
-from bernstein.cli.evolve_cmd import evolve
-from bernstein.cli.explain_help_cmd import explain_help_cmd
-from bernstein.cli.fingerprint_cmd import fingerprint_group
-from bernstein.cli.graph_cmd import graph_group
-from bernstein.cli.incident_cmd import incident_cmd
-from bernstein.cli.init_wizard_cmd import init_wizard_alias_cmd
-from bernstein.cli.logs_group_cmd import logs_group
-from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
-from bernstein.cli.man_page import man_pages_cmd
-from bernstein.cli.manifest_cmd import manifest_group
-from bernstein.cli.memory_cmd import memory_group
-from bernstein.cli.merge_cmd import merge_cmd
-from bernstein.cli.migrate_cmd import migrate_cmd
-from bernstein.cli.plan_archive_cmd import plan_ls, plan_show
-from bernstein.cli.plan_compile_cmd import plan_compile
-from bernstein.cli.plan_dag_cmd import plan_dag
-from bernstein.cli.plan_generate_cmd import plan_generate
-from bernstein.cli.plan_validate_cmd import validate_alias_cmd, validate_plan
-from bernstein.cli.policy_cmd import policy_group
-from bernstein.cli.postmortem_cmd import postmortem_cmd
-from bernstein.cli.profile_cmd import profile_cmd
-from bernstein.cli.prompts_cmd import prompts_group
-from bernstein.cli.quickstart_cmd import quickstart_alias_cmd
-from bernstein.cli.recipes_cmd import recipes_group
-from bernstein.cli.report_cmd import report_cmd
-from bernstein.cli.run_changelog_cmd import (
-    run_changelog_default,  # used by changelog group default and run-changelog alias
-)
-from bernstein.cli.scaffold_cmd import scaffold_cmd
-from bernstein.cli.slo_cmd import slo_cmd
-from bernstein.cli.task_cmd import (
-    add_task,
-    approve,
-    backlog_group,
-    cancel,
-    list_tasks,
-    logs_cmd,
-    pending,
-    plan,
-    reject,
-    review_cmd,
-    sync,
-    task_group,
-)
-from bernstein.cli.templates_cmd import templates_group
-from bernstein.cli.triggers_cmd import triggers_group
-from bernstein.cli.undo_cmd import undo_cmd
+from bernstein.cli.aliases import expand_alias
 from bernstein.cli.verbosity import apply_verbosity
-from bernstein.cli.verify_cmd import verify_cmd
-from bernstein.cli.voice_cmd import listen_cmd
-from bernstein.cli.watch_cmd import watch_cmd
-from bernstein.cli.wiki_cmd import wiki_group
-from bernstein.cli.workflow_cmd import workflow_group
-from bernstein.cli.workspace_cmd import config_group, workspace_group
-from bernstein.cli.worktrees_cmd import worktrees_group
-from bernstein.cli.wrap_up_cmd import wrap_up
 from bernstein.core.observability.json_logging import setup_json_logging
 
 if TYPE_CHECKING:
+    from bernstein.cli.advanced_cmd import dashboard as dashboard
+    from bernstein.cli.advanced_cmd import doctor as doctor
+    from bernstein.cli.advanced_cmd import github_group as github_group
+    from bernstein.cli.advanced_cmd import help_all as help_all
+    from bernstein.cli.advanced_cmd import install_hooks as install_hooks
+    from bernstein.cli.advanced_cmd import live as live
+    from bernstein.cli.advanced_cmd import mcp_server as mcp_server
+    from bernstein.cli.advanced_cmd import plugins_cmd as plugins_cmd
+    from bernstein.cli.advanced_cmd import quarantine_group as quarantine_group
+    from bernstein.cli.advanced_cmd import recap as recap
+    from bernstein.cli.advanced_cmd import replay_cmd as replay_cmd
+    from bernstein.cli.advanced_cmd import retro as retro
+    from bernstein.cli.advanced_cmd import trace_cmd as trace_cmd
+    from bernstein.cli.auth_cmd import auth_group as auth_group
+    from bernstein.cli.auth_cmd import auth_login as auth_login
+    from bernstein.cli.changelog_cmd import changelog_group as changelog_cmd
+    from bernstein.cli.chaos_cmd import chaos_group as chaos_group
+    from bernstein.cli.cloud_cmd import cloud_group as cloud_group
     from bernstein.cli.commands.adapter_cmd import adapters_group, test_adapter
     from bernstein.cli.commands.autofix_cmd import autofix_group as autofix_group
     from bernstein.cli.commands.cache_cmd import cache_group as cache_group
     from bernstein.cli.commands.checkpoint_cmd import checkpoint_cmd as checkpoint_cmd
+    from bernstein.cli.commands.completions_cmd import completions_cmd as completions
     from bernstein.cli.commands.gateway_cmd import gateway_group as gateway_group
     from bernstein.cli.commands.integrations_cmd import integrations_group as integrations_group
     from bernstein.cli.commands.resume_cmd import resume_cmd as resume_cmd
+    from bernstein.cli.commands.security_review_cmd import security_review_cmd as security_review_cmd
     from bernstein.cli.commands.worker_cmd import worker as worker
+    from bernstein.cli.debug_cmd import debug_cmd as debug_cmd
+    from bernstein.cli.diff_cmd import diff_cmd as diff_cmd
+    from bernstein.cli.eval_benchmark_cmd import benchmark_alias_group as benchmark_alias_group
+    from bernstein.cli.eval_benchmark_cmd import benchmark_group as benchmark_group
+    from bernstein.cli.eval_benchmark_cmd import eval_group as eval_group
+    from bernstein.cli.maintenance_cmd import cleanup_cmd as cleanup_cmd
+    from bernstein.cli.maintenance_cmd import history_cmd as history_cmd
+    from bernstein.cli.merge_cmd import merge_cmd as merge_cmd
+    from bernstein.cli.quickstart_cmd import quickstart_alias_cmd as quickstart_alias_cmd
+    from bernstein.cli.run_changelog_cmd import run_changelog_default as run_changelog_cmd
+    from bernstein.cli.run_changelog_cmd import run_changelog_default as run_changelog_default
+    from bernstein.cli.run_cmd import DEMO_TASKS as DEMO_TASKS
+    from bernstein.cli.run_cmd import detect_available_adapter as detect_available_adapter
+    from bernstein.cli.run_cmd import setup_demo_project as setup_demo_project
+    from bernstein.cli.scaffold_cmd import scaffold_cmd as scaffold_cmd
+    from bernstein.cli.stop_cmd import hard_stop as hard_stop
+    from bernstein.cli.stop_cmd import recover_orphaned_claims as recover_orphaned_claims
+    from bernstein.cli.stop_cmd import register_sigint_handler as register_sigint_handler
+    from bernstein.cli.stop_cmd import return_claimed_to_open as return_claimed_to_open
+    from bernstein.cli.stop_cmd import save_session_on_stop as save_session_on_stop
+    from bernstein.cli.stop_cmd import sigint_handler as sigint_handler
+    from bernstein.cli.stop_cmd import soft_stop as soft_stop
+    from bernstein.cli.stop_cmd import write_shutdown_signals as write_shutdown_signals
+    from bernstein.cli.task_cmd import add_task as add_task
+    from bernstein.cli.task_cmd import approve as approve
+    from bernstein.cli.task_cmd import backlog_group as backlog_group
+    from bernstein.cli.task_cmd import cancel as cancel
+    from bernstein.cli.task_cmd import list_tasks as list_tasks
+    from bernstein.cli.task_cmd import logs_cmd as logs_cmd
+    from bernstein.cli.task_cmd import pending as pending
+    from bernstein.cli.task_cmd import plan as plan
+    from bernstein.cli.task_cmd import reject as reject
+    from bernstein.cli.task_cmd import review_cmd as review_cmd
+    from bernstein.cli.task_cmd import sync as sync
+    from bernstein.cli.templates_cmd import templates_group as templates_group
+    from bernstein.cli.voice_cmd import listen_cmd as listen_cmd
+    from bernstein.cli.watch_cmd import watch_cmd as watch_cmd
+    from bernstein.cli.wiki_cmd import wiki_group as wiki_group
+    from bernstein.cli.workspace_cmd import config_group as config_group
+    from bernstein.cli.workspace_cmd import workspace_group as workspace_group
+    from bernstein.cli.worktrees_cmd import worktrees_group as worktrees_group
+    from bernstein.cli.wrap_up_cmd import wrap_up as wrap_up
     from bernstein.eval.bench.bench_cli import bench_group as bench_group
 
 # ---------------------------------------------------------------------------
@@ -273,18 +211,6 @@ __all__ = [
     "write_shutdown_signals",
 ]
 
-# Operator-experience commands (feat/operator-experience)
-from bernstein.cli.commands.creds_cmd import connect_cmd, creds_group
-from bernstein.cli.commands.daemon_cmd import daemon_group
-from bernstein.cli.commands.hooks_cmd import hooks as hooks_group
-from bernstein.cli.commands.pr_cmd import pr_cmd
-from bernstein.cli.commands.remote_cmd import remote_group
-from bernstein.cli.commands.review_responder_cmd import review_responder_group
-from bernstein.cli.commands.sandbox_cmd import sandbox_group
-from bernstein.cli.commands.seal_cmd import seal_group
-from bernstein.cli.commands.security_review_cmd import security_review_cmd
-from bernstein.cli.commands.ticket_cmd import from_ticket, ticket_group
-from bernstein.cli.commands.tunnel_cmd import tunnel_group
 from bernstein.cli.helpers import (
     BANNER,
     SDD_DIRS,
@@ -308,34 +234,6 @@ from bernstein.cli.helpers import (
     server_post,
     write_pid,
 )
-
-# Re-export run_cmd helpers used by tests
-from bernstein.cli.run_cmd import (
-    DEMO_TASKS,
-    cook,
-    demo,
-    detect_available_adapter,
-    init,
-    run,
-    serve,
-    setup_demo_project,
-    start,
-)
-from bernstein.cli.status_cmd import commit_stats_cmd, ps_cmd, status
-
-# Re-export stop_cmd helpers used by tests and other modules
-from bernstein.cli.stop_cmd import (
-    hard_stop,
-    recover_orphaned_claims,
-    register_sigint_handler,
-    return_claimed_to_open,
-    save_session_on_stop,
-    sigint_handler,
-    soft_stop,
-    stop,
-    write_shutdown_signals,
-)
-from bernstein.cli.test_cmd import test_cmd
 
 # ---------------------------------------------------------------------------
 # Error telemetry bootstrap
@@ -401,7 +299,12 @@ def print_rich_help() -> None:
     from rich.panel import Panel
     from rich.table import Table
 
-    from bernstein.adapters.registry import selectable_adapter_names
+    from bernstein.adapters.registry import advertised_adapter_names
+
+    registered, plugins = advertised_adapter_names()
+    adapter_count = f"{len(registered)} selectable adapter names"
+    if plugins:
+        adapter_count += f" and {len(plugins)} additional plugin declarations"
 
     c = console
     c.print()
@@ -409,7 +312,7 @@ def print_rich_help() -> None:
         Panel(
             "[bold]bernstein[/bold]  the open-source governance layer for AI agents.\n"
             "  No model in the coordination loop, so a plan replays to the same task graph.\n"
-            f"  {len(selectable_adapter_names())} selectable adapter names, per-task git worktrees, "
+            f"  {adapter_count}, per-task git worktrees, "
             "opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
@@ -510,9 +413,39 @@ def print_rich_help() -> None:
 type _CommandTarget = tuple[str, str]
 
 
+# Additional subcommands historically registered by the CLI root.
+_CHILDREN: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "plan": (
+        ("generate", "bernstein.cli.plan_generate_cmd", "plan_generate"),
+        ("compile", "bernstein.cli.plan_compile_cmd", "plan_compile"),
+        ("ls", "bernstein.cli.plan_archive_cmd", "plan_ls"),
+        ("show", "bernstein.cli.plan_archive_cmd", "plan_show"),
+        ("dag", "bernstein.cli.plan_dag_cmd", "plan_dag"),
+        ("validate", "bernstein.cli.plan_validate_cmd", "validate_plan"),
+    ),
+    "mcp_server": (("catalog", "bernstein.cli.commands.mcp_catalog_cmd", "catalog_group"),),
+    "skills_group": (
+        ("catalog", "bernstein.cli.commands.skills_catalog_cmd", "catalog_group"),
+        ("package", "bernstein.cli.commands.skills_package_cmd", "package_group"),
+    ),
+    "auth_group": (("dashboard-token", "bernstein.cli.commands.dashboard_token_cmd", "dashboard_token_group"),),
+    "report_cmd": (
+        ("postmortem", "bernstein.cli.postmortem_cmd", "postmortem_cmd"),
+        ("incident", "bernstein.cli.incident_cmd", "incident_cmd"),
+        ("commits", "bernstein.cli.status_cmd", "commit_stats_cmd"),
+    ),
+    "worktrees_group": (("graph", "bernstein.cli.commands.run_graph_cmd", "run_graph_cmd"),),
+}
+
+
+@cache
 def _load_command(target: _CommandTarget) -> click.Command:
     module, attribute = target
-    return cast("click.Command", getattr(import_module(module), attribute))
+    command = cast("click.Command", getattr(import_module(module), attribute))
+    if isinstance(command, click.Group):
+        for name, child_module, child in _CHILDREN.get(attribute, ()):
+            command.add_command(_load_command((child_module, child)), name)
+    return command
 
 
 class _CommandRegistry(MutableMapping[str, click.Command]):
@@ -526,6 +459,15 @@ class _CommandRegistry(MutableMapping[str, click.Command]):
         target = (module, attribute)
         self._entries[name] = target
         self.exports[export_name or attribute] = target
+
+    def short_help(self, name: str) -> str | None:
+        entry = self._entries[name]
+        if isinstance(entry, tuple):
+            metadata = _completion_metadata()
+            if name in metadata:
+                return metadata[name]
+            entry = self[name]
+        return None if entry.hidden else entry.get_short_help_str()
 
     def __getitem__(self, name: str) -> click.Command:
         entry = self._entries[name]
@@ -550,16 +492,45 @@ class _CommandRegistry(MutableMapping[str, click.Command]):
 _commands = _CommandRegistry()
 
 
-def __getattr__(name: str) -> click.Command:
-    """Keep direct imports of deferred command objects from this module working."""
+# Helpers previously imported by this module remain available to callers.
+_EXPORTS = {
+    "DEMO_TASKS": ("bernstein.cli.run_cmd", "DEMO_TASKS"),
+    "benchmark_group": ("bernstein.cli.eval_benchmark_cmd", "benchmark_group"),
+    "detect_available_adapter": ("bernstein.cli.run_cmd", "detect_available_adapter"),
+    "hard_stop": ("bernstein.cli.stop_cmd", "hard_stop"),
+    "logs_cmd": ("bernstein.cli.task_cmd", "logs_cmd"),
+    "recover_orphaned_claims": ("bernstein.cli.stop_cmd", "recover_orphaned_claims"),
+    "register_sigint_handler": ("bernstein.cli.stop_cmd", "register_sigint_handler"),
+    "return_claimed_to_open": ("bernstein.cli.stop_cmd", "return_claimed_to_open"),
+    "run_changelog_cmd": ("bernstein.cli.run_changelog_cmd", "run_changelog_default"),
+    "run_changelog_default": ("bernstein.cli.run_changelog_cmd", "run_changelog_default"),
+    "save_session_on_stop": ("bernstein.cli.stop_cmd", "save_session_on_stop"),
+    "setup_demo_project": ("bernstein.cli.run_cmd", "setup_demo_project"),
+    "sigint_handler": ("bernstein.cli.stop_cmd", "sigint_handler"),
+    "soft_stop": ("bernstein.cli.stop_cmd", "soft_stop"),
+    "write_shutdown_signals": ("bernstein.cli.stop_cmd", "write_shutdown_signals"),
+}
+
+
+def __getattr__(name: str) -> Any:
     target = _commands.exports.get(name)
-    if target is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    return _load_command(target)
+    if target is not None:
+        return _load_command(target)
+    if name in _EXPORTS:
+        module, attribute = _EXPORTS[name]
+        return getattr(import_module(module), attribute)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
-    return sorted(globals().keys() | _commands.exports.keys())
+    return sorted(globals().keys() | _commands.exports.keys() | _EXPORTS.keys())
+
+
+@cache
+def _completion_metadata() -> dict[str, str | None]:
+    import json
+
+    return json.loads(Path(__file__).with_name("completion_metadata.json").read_text(encoding="utf-8"))
 
 
 class _RichGroup(click.Group):
@@ -580,6 +551,21 @@ class _RichGroup(click.Group):
             return super().get_command(ctx, tokens[0])
         return super().get_command(ctx, cmd_name)
 
+    def shell_complete(self, ctx: click.Context, incomplete: str) -> list[Any]:
+        from click.shell_completion import CompletionItem
+
+        results = []
+        for name in self.list_commands(ctx):
+            if name.startswith(incomplete):
+                alias = expand_alias(name)
+                target = alias[0] if alias else name
+                if target in _commands:
+                    help_text = _commands.short_help(target)
+                    if help_text is not None:
+                        results.append(CompletionItem(name, help=help_text))
+        results.extend(click.Command.shell_complete(self, ctx, incomplete))
+        return results
+
     def resolve_command(
         self,
         ctx: click.Context,
@@ -589,38 +575,33 @@ class _RichGroup(click.Group):
             tokens = expand_alias(args[0])
             if tokens is not None:
                 args = [*tokens, *args[1:]]
+        if args and args[0] == "run":
+            self._announce_run(ctx, args[1:])
         return super().resolve_command(ctx, args)
+
+    @staticmethod
+    def _announce_run(ctx: click.Context, args: list[str]) -> None:
+        if ctx.resilient_parsing or not sys.stdout.isatty():
+            return
+        if any(ctx.params.get(flag) for flag in ("quiet", "headless", "output_json")):
+            return
+        if ctx.params.get("output_format") == "json" or {"--help", "--quiet", "--json"}.intersection(args):
+            return
+        ctx.ensure_object(dict)
+        if not ctx.obj.get("_BANNER_PRINTED"):
+            preview = (
+                ctx.params.get("plan_only")
+                or ctx.params.get("dry_run")
+                or {"--plan-only", "--dry-run"}.intersection(args)
+            )
+            click.echo("Bernstein · Preparing run preview" if preview else "Bernstein · Preparing local run")
+            ctx.obj["_BANNER_PRINTED"] = True
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         """Intercept ``--help-all`` so it works as both option and subcommand."""
         if "--help-all" in args:
             args = ["help-all"]
         return super().parse_args(ctx, args)
-
-
-def _background_startup(workdir: Path) -> dict[str, object]:
-    """Run slow startup tasks + pre-import heavy modules in background thread."""
-    result: dict[str, object] = {"agents": [], "task_count": 0, "version": "", "goal": ""}
-    with suppress(Exception):
-        from bernstein.core.agent_discovery import discover_agents_cached
-
-        _disc = discover_agents_cached()
-        result["agents"] = [
-            {"name": a.name, "logged_in": a.logged_in, "default_model": a.default_model} for a in _disc.agents
-        ]
-    with suppress(Exception):
-        _open_dir = workdir / ".sdd" / "backlog" / "open"
-        if _open_dir.exists():
-            result["task_count"] = sum(1 for f in _open_dir.iterdir() if f.suffix in (".yaml", ".yml", ".md"))
-    with suppress(Exception):
-        import bernstein.cli.run_cmd  # pyright: ignore[reportUnusedImport]
-        import bernstein.core.bootstrap  # pyright: ignore[reportUnusedImport]
-        import bernstein.core.seed  # noqa: F401  # pyright: ignore[reportUnusedImport]
-    with suppress(Exception):
-        from importlib.metadata import version as _get_version
-
-        result["version"] = _get_version("bernstein")
-    return result
 
 
 def _validate_evolve_mode(evolve: bool, budget: float, max_cycles: int, yes: bool) -> None:
@@ -837,6 +818,8 @@ def cli(
     # Propagate the verbosity flag so the first-run hint guard can decide
     # whether to render the original traceback below the hint panel.
     ctx.obj["VERBOSE"] = verbose
+    ctx.obj["QUIET"] = quiet
+    ctx.obj["HEADLESS"] = headless
     apply_verbosity(verbose, quiet)
 
     # Parse the iterative-refinement spec (issue #1403). Failing fast on a
@@ -855,20 +838,15 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
-    import concurrent.futures
-
+    _RichGroup._announce_run(ctx, [])
     from bernstein.cli.splash_screen import splash
 
     seed_path = find_seed_file()
     workdir = Path.cwd()
     port = 8052
 
-    # Start background work, then show splash concurrently.
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    executor.submit(_background_startup, workdir)
-
-    # Show splash immediately (gradient + logo) - no agent data needed for visuals.
-    banner_shown = splash(
+    show_splash = not (ctx.obj["JSON"] or quiet or headless or ctx.obj.get("_BANNER_PRINTED"))
+    if show_splash and splash(
         console,
         version="",
         agents=[],
@@ -876,21 +854,9 @@ def cli(
         goal_preview=goal or "",
         budget=budget,
         task_count=0,
-    )
-    # Mark that a startup banner has already been shown so the inner ``run``
-    # callback invoked below does not also print the compact box banner
-    # (double-banner). When the splash is disabled (``visual.splash=false`` /
-    # ``BERNSTEIN_NO_SPLASH``) it renders nothing and returns ``False`` -- in
-    # that case we must leave the flag unset so the durable box banner still
-    # prints. Otherwise the bare ``bernstein`` invocation showed no startup
-    # banner at all while ``bernstein run`` still did (regression).
-    if banner_shown:
+        skip_animation=True,
+    ):
         ctx.obj["_BANNER_PRINTED"] = True
-
-    # Startup results are cosmetic and not read downstream, so do not join the
-    # thread: a slow agent discovery pass would otherwise raise TimeoutError
-    # before the run callback (or --plan-only) ever executes.
-    executor.shutdown(wait=False)
 
     if dry_run:
         # Validate the seed with the same rules the real run uses before
@@ -903,6 +869,8 @@ def cli(
         return
 
     # Recover orphaned claimed tickets from any prior crashed/stopped session
+    from bernstein.cli.stop_cmd import recover_orphaned_claims
+
     recovered = recover_orphaned_claims()
     if recovered:
         console.print(f"[yellow]Recovered {recovered} orphaned ticket(s).[/yellow]")
@@ -910,6 +878,8 @@ def cli(
     _validate_evolve_mode(evolve, budget, max_cycles, yes)
 
     # Main orchestration flow - call run's callback directly with mapped params
+    from bernstein.cli.run_cmd import run
+
     assert run.callback is not None
     run.callback(
         plan_file=None,
@@ -986,7 +956,7 @@ def tips_enabled(ctx: click.Context) -> bool:
     if os.environ.get(TIPS_OPT_OUT_ENV_VAR):
         return False
     obj = ctx.obj or {}
-    if obj.get("JSON"):
+    if obj.get("JSON") or obj.get("QUIET") or obj.get("HEADLESS"):
         return False
     if not sys.stdout.isatty():
         return False
@@ -1019,255 +989,206 @@ def _emit_contextual_tip(ctx: click.Context, _result: object, **_params: object)
 # ---------------------------------------------------------------------------
 
 # From task_cmd module - all registered with @click.command()
-cli.add_command(cancel)
-cli.add_command(task_group, "task")
-cli.add_command(add_task, "add-task")
-cli.add_command(sync)
-cli.add_command(review_cmd, "review")
-cli.add_command(approve)
-cli.add_command(reject)
-cli.add_command(pending)
-plan.add_command(plan_generate)
-plan.add_command(plan_compile)
-plan.add_command(plan_ls)
-plan.add_command(plan_show)
-plan.add_command(plan_dag)
-plan.add_command(validate_plan, "validate")
-cli.add_command(plan)
-cli.add_command(plan, "tasks")
-cli.add_command(spec_group)
-cli.add_command(backlog_group, "backlog")
+_commands.defer("cancel", "bernstein.cli.task_cmd", "cancel")
+_commands.defer("task", "bernstein.cli.task_cmd", "task_group")
+_commands.defer("add-task", "bernstein.cli.task_cmd", "add_task")
+_commands.defer("sync", "bernstein.cli.task_cmd", "sync")
+_commands.defer("review", "bernstein.cli.task_cmd", "review_cmd")
+_commands.defer("approve", "bernstein.cli.task_cmd", "approve")
+_commands.defer("reject", "bernstein.cli.task_cmd", "reject")
+_commands.defer("pending", "bernstein.cli.task_cmd", "pending")
+_commands.defer("plan", "bernstein.cli.task_cmd", "plan")
+_commands.defer("tasks", "bernstein.cli.task_cmd", "plan")
+_commands.defer("spec", "bernstein.cli.commands.spec_cmd", "spec_group")
+_commands.defer("backlog", "bernstein.cli.task_cmd", "backlog_group")
 _commands.defer("bench", "bernstein.eval.bench.bench_cli", "bench_group")
-cli.add_command(logs_group, "logs")
-cli.add_command(decisions_group, "decisions")
-# #3144: consensus is deprecated (relay store has no producer in the shipped
-# runtime). Stays registered through the 3.10 line with a deprecation warning
-# on invocation; unregistered in 4.0.0. Core module stays importable.
-cli.add_command(list_tasks, "list-tasks")
+_commands.defer("logs", "bernstein.cli.logs_group_cmd", "logs_group")
+_commands.defer("decisions", "bernstein.cli.commands.decisions_cmd", "decisions_group")
+_commands.defer("list-tasks", "bernstein.cli.task_cmd", "list_tasks")
 
 # From workspace_cmd module - groups and commands
-cli.add_command(workspace_group)
-cli.add_command(config_group)
+_commands.defer("workspace", "bernstein.cli.workspace_cmd", "workspace_group")
+_commands.defer("config", "bernstein.cli.workspace_cmd", "config_group")
 
 # From advanced_cmd module - groups and commands
-cli.add_command(benchmark_alias_group, "benchmark")
+_commands.defer("benchmark", "bernstein.cli.eval_benchmark_cmd", "benchmark_alias_group")
 _commands.defer("cache", "bernstein.cli.commands.cache_cmd", "cache_group")
-cli.add_command(gc_group, "gc")
-cli.add_command(eval_group)
-cli.add_command(best_of_n_group)
-cli.add_command(dashboard)
-cli.add_command(live)
+_commands.defer("gc", "bernstein.cli.commands.gc_cmd", "gc_group")
+_commands.defer("eval", "bernstein.cli.eval_benchmark_cmd", "eval_group")
+_commands.defer("best-of-n", "bernstein.cli.commands.best_of_n_rank_cmd", "best_of_n_group")
+_commands.defer("dashboard", "bernstein.cli.advanced_cmd", "dashboard")
+_commands.defer("live", "bernstein.cli.advanced_cmd", "live")
 # Web GUI subcommand. The group itself ships with core (so `bernstein gui --help`
 # always works); `bernstein gui serve` performs a runtime check for the [gui]
 # extra and exits with a friendly install hint when missing.
-from bernstein.gui.cli import gui_group as _gui_group  # noqa: E402
 
-cli.add_command(_gui_group)
-cli.add_command(trace_cmd, "trace")
-cli.add_command(replay_cmd, "replay")
-from bernstein.cli.commands.thread_cmd import thread_cmd as _thread_cmd  # noqa: E402
+_commands.defer("gui", "bernstein.gui.cli", "gui_group", export_name="_gui_group")
+_commands.defer("trace", "bernstein.cli.advanced_cmd", "trace_cmd")
+_commands.defer("replay", "bernstein.cli.advanced_cmd", "replay_cmd")
 
-cli.add_command(_thread_cmd, "thread")
-cli.add_command(github_group)
-cli.add_command(graph_group, "graph")
-cli.add_command(policy_group, "policy")
-cli.add_command(pool_group, "pool")
-cli.add_command(datasource_group, "datasource")
-cli.add_command(_role_adapter_security_group, "security")
-cli.add_command(mcp_server, "mcp")
-# Wire the release-1.9 community catalog as a subgroup of `bernstein mcp`.
-from bernstein.cli.commands.mcp_catalog_cmd import catalog_group as _catalog_group  # noqa: E402
-
-mcp_server.add_command(_catalog_group, "catalog")
-cli.add_command(completions)
-cli.add_command(quarantine_group)
-cli.add_command(install_hooks, "install-hooks")
-cli.add_command(plugins_cmd, "plugins")
-cli.add_command(doctor)
-
-# Attach observability doctor subcommands (code-scanning, observe)
-# to the doctor group. See docs/observability/unified-doctor.md.
-from bernstein.cli.commands.doctor.code_scanning import (  # noqa: E402
-    register as _register_doctor_code_scanning,
+_commands.defer("thread", "bernstein.cli.commands.thread_cmd", "thread_cmd", export_name="_thread_cmd")
+_commands.defer("github", "bernstein.cli.advanced_cmd", "github_group")
+_commands.defer("graph", "bernstein.cli.graph_cmd", "graph_group")
+_commands.defer("policy", "bernstein.cli.policy_cmd", "policy_group")
+_commands.defer("pool", "bernstein.cli.commands.pool_cmd", "pool_group")
+_commands.defer("datasource", "bernstein.cli.commands.datasource_cmd", "datasource_group")
+_commands.defer(
+    "security",
+    "bernstein.cli.commands.role_adapter_policy_cmd",
+    "security_group",
+    export_name="_role_adapter_security_group",
 )
-from bernstein.cli.commands.doctor.migrations import (  # noqa: E402
-    register as _register_doctor_migrations,
-)
-from bernstein.cli.commands.doctor.observe import (  # noqa: E402
-    register as _register_doctor_observe,
-)
+_commands.defer("mcp", "bernstein.cli.advanced_cmd", "mcp_server")
 
-_register_doctor_code_scanning(doctor)
-_register_doctor_observe(doctor)
-_register_doctor_migrations(doctor)
+_commands.defer("completions", "bernstein.cli.commands.completions_cmd", "completions_cmd", export_name="completions")
+_commands.defer("quarantine", "bernstein.cli.advanced_cmd", "quarantine_group")
+_commands.defer("install-hooks", "bernstein.cli.advanced_cmd", "install_hooks")
+_commands.defer("plugins", "bernstein.cli.advanced_cmd", "plugins_cmd")
+_commands.defer("doctor", "bernstein.cli.advanced_cmd", "doctor")
 
-cli.add_command(recap)
-cli.add_command(retro)
-cli.add_command(help_all, "help-all")
-cli.add_command(cleanup_cmd, "cleanup")
-cli.add_command(history_cmd, "history")
+
+_commands.defer("recap", "bernstein.cli.advanced_cmd", "recap")
+_commands.defer("retro", "bernstein.cli.advanced_cmd", "retro")
+_commands.defer("help-all", "bernstein.cli.advanced_cmd", "help_all")
+_commands.defer("cleanup", "bernstein.cli.maintenance_cmd", "cleanup_cmd")
+_commands.defer("history", "bernstein.cli.maintenance_cmd", "history_cmd")
 
 # Operator-experience commands (feat/operator-experience)
-cli.add_command(pr_cmd, "pr")
-cli.add_command(from_ticket, "from-ticket")
-cli.add_command(ticket_group, "ticket")
-cli.add_command(remote_group, "remote")
-cli.add_command(hooks_group, "hooks")
-cli.add_command(tunnel_group, "tunnel")
+_commands.defer("pr", "bernstein.cli.commands.pr_cmd", "pr_cmd")
+_commands.defer("from-ticket", "bernstein.cli.commands.ticket_cmd", "from_ticket")
+_commands.defer("ticket", "bernstein.cli.commands.ticket_cmd", "ticket_group")
+_commands.defer("remote", "bernstein.cli.commands.remote_cmd", "remote_group")
+_commands.defer("hooks", "bernstein.cli.commands.hooks_cmd", "hooks", export_name="hooks_group")
+_commands.defer("tunnel", "bernstein.cli.commands.tunnel_cmd", "tunnel_group")
 _commands.defer("preview", "bernstein.cli.commands.preview_cmd", "preview_group")
-cli.add_command(sandbox_group, "sandbox")
-cli.add_command(security_review_cmd, "security-review")
-cli.add_command(seal_group, "seal")
-cli.add_command(daemon_group, "daemon")
+_commands.defer("sandbox", "bernstein.cli.commands.sandbox_cmd", "sandbox_group")
+_commands.defer("security-review", "bernstein.cli.commands.security_review_cmd", "security_review_cmd")
+_commands.defer("seal", "bernstein.cli.commands.seal_cmd", "seal_group")
+_commands.defer("daemon", "bernstein.cli.commands.daemon_cmd", "daemon_group")
 _commands.defer("autofix", "bernstein.cli.commands.autofix_cmd", "autofix_group")
 _commands.defer("pipeline", "bernstein.cli.commands.pipeline_cmd", "pipeline_group")
-cli.add_command(connect_cmd, "connect")
-cli.add_command(creds_group, "creds")
-cli.add_command(criterion_profile_group, "criterion-profile")
-cli.add_command(review_responder_group, "review-responder")
-cli.add_command(issue_to_pr_group, "issue-to-pr")
+_commands.defer("connect", "bernstein.cli.commands.creds_cmd", "connect_cmd")
+_commands.defer("creds", "bernstein.cli.commands.creds_cmd", "creds_group")
+_commands.defer("criterion-profile", "bernstein.cli.commands.criterion_profile_cmd", "criterion_profile_group")
+_commands.defer("review-responder", "bernstein.cli.commands.review_responder_cmd", "review_responder_group")
+_commands.defer("issue-to-pr", "bernstein.cli.commands.issue_to_pr_cmd", "issue_to_pr_group")
 
 # Already registered elsewhere
-cli.add_command(agents_group)
-cli.add_command(skills_group)
-# Wire the issue #1796 skill catalog as a subgroup of `bernstein skills`.
-from bernstein.cli.commands.skills_catalog_cmd import catalog_group as _skills_catalog_group  # noqa: E402
+_commands.defer("agents", "bernstein.cli.agents_cmd", "agents_group")
+_commands.defer("skills", "bernstein.cli.commands.skills_cmd", "skills_group")
 
-skills_group.add_command(_skills_catalog_group, "catalog")
-# Packaged agent-skill installs with chain-anchored receipts (issue #2369).
-from bernstein.cli.commands.skills_package_cmd import package_group as _skills_package_group  # noqa: E402
 
-skills_group.add_command(_skills_package_group, "package")
 # Skill usage provenance (issue #2301): install receipts + provenance graph.
-from bernstein.cli.commands.skill_cmd import skill_group as _skill_group  # noqa: E402
 
-cli.add_command(_skill_group)
+_commands.defer("skill", "bernstein.cli.commands.skill_cmd", "skill_group", export_name="_skill_group")
 # Named team manifests (issue #2248): list/show/drift.
 _commands.defer("team", "bernstein.cli.commands.team_cmd", "team_group", export_name="_team_group")
-cli.add_command(test_cmd, "test")
+_commands.defer("test", "bernstein.cli.test_cmd", "test_cmd")
 # Scoped dashboard tokens (issue #2366): issue/list/revoke under `auth`.
-from bernstein.cli.commands.dashboard_token_cmd import dashboard_token_group as _dashboard_token_group  # noqa: E402
 
-auth_group.add_command(_dashboard_token_group, "dashboard-token")
-cli.add_command(auth_group, "auth")
-cli.add_command(auth_login, "login")
-cli.add_command(evolve)
-cli.add_command(cost_cmd, "cost")
-cli.add_command(cost_envelopes_alias_cmd, "cost-envelopes")
-cli.add_command(estimate_alias_cmd, "estimate")
-cli.add_command(status)
-cli.add_command(ps_cmd, "ps")
-cli.add_command(stop)
+_commands.defer("auth", "bernstein.cli.auth_cmd", "auth_group")
+_commands.defer("login", "bernstein.cli.auth_cmd", "auth_login")
+_commands.defer("evolve", "bernstein.cli.evolve_cmd", "evolve")
+_commands.defer("cost", "bernstein.cli.cost", "cost_cmd")
+_commands.defer("cost-envelopes", "bernstein.cli.cost", "cost_envelopes_alias_cmd")
+_commands.defer("estimate", "bernstein.cli.cost", "estimate_alias_cmd")
+_commands.defer("status", "bernstein.cli.status_cmd", "status")
+_commands.defer("ps", "bernstein.cli.status_cmd", "ps_cmd")
+_commands.defer("stop", "bernstein.cli.stop_cmd", "stop")
 _commands.defer("test-adapter", "bernstein.cli.commands.adapter_cmd", "test_adapter")
 _commands.defer("adapters", "bernstein.cli.commands.adapter_cmd", "adapters_group")
 _commands.defer("integrations", "bernstein.cli.commands.integrations_cmd", "integrations_group")
 _commands.defer("endpoints", "bernstein.cli.commands.endpoints_cmd", "endpoints_group")
 _commands.defer("trackers", "bernstein.cli.commands.trackers_cmd", "trackers_group")
-cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`
-cli.add_command(cook, "cook")
-cli.add_command(init)
-cli.add_command(start)
-cli.add_command(serve)  # foreground task server for containers / central node (#2803)
-cli.add_command(demo)
+_commands.defer("run", "bernstein.cli.run_cmd", "run")
+_commands.defer("cook", "bernstein.cli.run_cmd", "cook")
+_commands.defer("init", "bernstein.cli.run_cmd", "init")
+_commands.defer("start", "bernstein.cli.run_cmd", "start")
+_commands.defer("serve", "bernstein.cli.run_cmd", "serve")
+_commands.defer("demo", "bernstein.cli.run_cmd", "demo")
 _commands.defer("checkpoint", "bernstein.cli.commands.checkpoint_cmd", "checkpoint_cmd")
 _commands.defer("resume", "bernstein.cli.commands.resume_cmd", "resume_cmd")
 _commands.defer("fork", "bernstein.cli.commands.fork_cmd", "fork_cmd")
-cli.add_command(wrap_up, "wrap-up")
-cli.add_command(audit_group, "audit")
-cli.add_command(events_group, "events")
-cli.add_command(bom_group, "bom")
+_commands.defer("wrap-up", "bernstein.cli.wrap_up_cmd", "wrap_up")
+_commands.defer("audit", "bernstein.cli.audit_cmd", "audit_group")
+_commands.defer("events", "bernstein.cli.commands.events_cmd", "events_group")
+_commands.defer("bom", "bernstein.cli.commands.bom_cmd", "bom_group")
 _commands.defer("bundle", "bernstein.cli.commands.bundle_cmd", "bundle_group")
 _commands.defer("compliance", "bernstein.cli.commands.compliance_cmd", "compliance_group")
 _commands.defer("compaction", "bernstein.cli.commands.compaction_cmd", "compaction_group")
-cli.add_command(verify_cmd, "verify")
-cli.add_command(chaos_group, "chaos")
-cli.add_command(manifest_group, "manifest")
-cli.add_command(memory_group, "memory")
-cli.add_command(prompts_group, "prompts")
-cli.add_command(ci_group, "ci")
-cli.add_command(cloud_group, "cloud")
+_commands.defer("verify", "bernstein.cli.verify_cmd", "verify_cmd")
+_commands.defer("chaos", "bernstein.cli.chaos_cmd", "chaos_group")
+_commands.defer("manifest", "bernstein.cli.manifest_cmd", "manifest_group")
+_commands.defer("memory", "bernstein.cli.memory_cmd", "memory_group")
+_commands.defer("prompts", "bernstein.cli.prompts_cmd", "prompts_group")
+_commands.defer("ci", "bernstein.cli.ci_cmd", "ci_group")
+_commands.defer("cloud", "bernstein.cli.cloud_cmd", "cloud_group")
 _commands.defer("gateway", "bernstein.cli.commands.gateway_cmd", "gateway_group")
 _commands.defer("export", "bernstein.cli.commands.export_cmd", "export_cmd")
-cli.add_command(report_cmd, "report")
-report_cmd.add_command(postmortem_cmd, "postmortem")
-report_cmd.add_command(incident_cmd, "incident")
-report_cmd.add_command(commit_stats_cmd, "commits")
-cli.add_command(slo_cmd, "slo")
-cli.add_command(man_pages_cmd, "man-pages")
-cli.add_command(workflow_group, "workflow")
-cli.add_command(recipes_group, "recipes")
-cli.add_command(knowledge_group, "knowledge")
-cli.add_command(quickstart_alias_cmd, "quickstart")
-cli.add_command(scaffold_cmd, "scaffold")
-cli.add_command(watch_cmd, "watch")
-cli.add_command(wiki_group, "wiki")
-cli.add_command(listen_cmd, "listen")
+_commands.defer("report", "bernstein.cli.report_cmd", "report_cmd")
+_commands.defer("slo", "bernstein.cli.slo_cmd", "slo_cmd")
+_commands.defer("man-pages", "bernstein.cli.man_page", "man_pages_cmd")
+_commands.defer("workflow", "bernstein.cli.workflow_cmd", "workflow_group")
+_commands.defer("recipes", "bernstein.cli.recipes_cmd", "recipes_group")
+_commands.defer("knowledge", "bernstein.cli.commands.knowledge_cmd", "knowledge_group")
+_commands.defer("quickstart", "bernstein.cli.quickstart_cmd", "quickstart_alias_cmd")
+_commands.defer("scaffold", "bernstein.cli.scaffold_cmd", "scaffold_cmd")
+_commands.defer("watch", "bernstein.cli.watch_cmd", "watch_cmd")
+_commands.defer("wiki", "bernstein.cli.wiki_cmd", "wiki_group")
+_commands.defer("listen", "bernstein.cli.voice_cmd", "listen_cmd")
 _commands.defer("self-update", "bernstein.cli.commands.self_update_cmd", "self_update_cmd")
 
-# Provenance-verified update lifecycle: check, update, pin, rollback (#2942)
-# Scenario commands
-from bernstein.cli.commands.scenario_cmd import scenario_group  # noqa: E402
-from bernstein.cli.commands.self_update_cmd import self_group  # noqa: E402
+_commands.defer("self", "bernstein.cli.commands.self_update_cmd", "self_group")
+_commands.defer("scenario", "bernstein.cli.commands.scenario_cmd", "scenario_group")
 
-cli.add_command(self_group, "self")
-cli.add_command(scenario_group, "scenario")
-
-cli.add_command(undo_cmd, "undo")
+_commands.defer("undo", "bernstein.cli.undo_cmd", "undo_cmd")
 # `bernstein trust`: the one sanctioned way to write the workspace trust
 # record that script hooks, plugin hooks and workflow command nodes require.
-from bernstein.cli.commands.trust_cmd import trust_cmd  # noqa: E402
 
-cli.add_command(trust_cmd, "trust")
+_commands.defer("trust", "bernstein.cli.commands.trust_cmd", "trust_cmd")
 _commands.defer("worker", "bernstein.cli.commands.worker_cmd", "worker")
-cli.add_command(worktrees_group, "worktrees")
-# `bernstein worktrees graph <fanout-id>`: a fan-out's branches *are*
-# worktrees, and this group already owns the classifier surface they are read
-# through. The alternative reading, `bernstein run graph`, is not available:
-# `run` is a command (`bernstein run plan.yaml`), not a group, and turning it
-# into one would change how every existing invocation parses.
-worktrees_group.add_command(run_graph_cmd, "graph")
-cli.add_command(diff_cmd, "diff")
-cli.add_command(merge_cmd, "merge")
-cli.add_command(migrate_cmd, "migrate")
+_commands.defer("worktrees", "bernstein.cli.worktrees_cmd", "worktrees_group")
+_commands.defer("diff", "bernstein.cli.diff_cmd", "diff_cmd")
+_commands.defer("merge", "bernstein.cli.merge_cmd", "merge_cmd")
+_commands.defer("migrate", "bernstein.cli.migrate_cmd", "migrate_cmd")
 # #3142: ``bernstein changelog`` is now a group (default = run-changelog
 # behaviour). ``bernstein run-changelog`` stays as a top-level deprecated
 # alias — removed in a release after the 4.0 line that introduced it — so
 # existing scripts print a notice on stderr rather than silently changing
 # meaning at the bare name.
-cli.add_command(changelog_cmd, "changelog")
-cli.add_command(changelog_run_alias, "run-changelog")
-cli.add_command(run_lookup_cmd, "run-lookup")
-cli.add_command(dr_group, "dr")
-cli.add_command(profile_cmd, "profile")
-cli.add_command(templates_group, "templates")
-cli.add_command(validate_alias_cmd, "validate")
-cli.add_command(impact_group, "impact")
-cli.add_command(dep_impact_alias_cmd, "dep-impact")
-cli.add_command(fingerprint_group, "fingerprint")
+_commands.defer("changelog", "bernstein.cli.changelog_cmd", "changelog_group", export_name="changelog_cmd")
+_commands.defer("run-changelog", "bernstein.cli.changelog_cmd", "changelog_run_alias")
+_commands.defer("run-lookup", "bernstein.cli.commands.run_names_cmd", "run_lookup_cmd")
+_commands.defer("dr", "bernstein.cli.disaster_recovery_cmd", "dr_group")
+_commands.defer("profile", "bernstein.cli.profile_cmd", "profile_cmd")
+_commands.defer("templates", "bernstein.cli.templates_cmd", "templates_group")
+_commands.defer("validate", "bernstein.cli.plan_validate_cmd", "validate_alias_cmd")
+_commands.defer("impact", "bernstein.cli.commands.impact_cmd", "impact_group")
+_commands.defer("dep-impact", "bernstein.cli.commands.impact_cmd", "dep_impact_alias_cmd")
+_commands.defer("fingerprint", "bernstein.cli.fingerprint_cmd", "fingerprint_group")
 _commands.defer("fleet", "bernstein.cli.commands.fleet_cmd", "fleet_group")
-cli.add_command(triggers_group, "triggers")
+_commands.defer("triggers", "bernstein.cli.triggers_cmd", "triggers_group")
 _commands.defer("schedule", "bernstein.cli.commands.schedule_cmd", "schedule_group")
 
 # Per-goal SLA contracts + signed violation receipts (#2549)
-from bernstein.cli.commands.sla_cmd import sla_group  # noqa: E402
 
-cli.add_command(sla_group, "sla")
+_commands.defer("sla", "bernstein.cli.commands.sla_cmd", "sla_group")
 
 # Operator supervisor surface (#1800)
 
 _commands.defer("supervisor", "bernstein.cli.commands.supervisor_cmd", "supervisor_group")
 
 # Citation/reference existence verifier (closes #1402)
-cli.add_command(citation_quality_group, "quality")
+_commands.defer("quality", "bernstein.cli.commands.citation_cmd", "quality_group", export_name="citation_quality_group")
 
 # New CLI commands
-cli.add_command(dry_run_cmd, "dry-run")
-cli.add_command(explain_help_cmd, "explain")
-cli.add_command(config_path_cmd, "config-path")
+_commands.defer("dry-run", "bernstein.cli.dry_run_cmd", "dry_run_cmd")
+_commands.defer("explain", "bernstein.cli.explain_help_cmd", "explain_help_cmd")
+_commands.defer("config-path", "bernstein.cli.config_path_cmd", "config_path_cmd")
 _commands.defer("desktop-register", "bernstein.cli.commands.desktop_register_cmd", "desktop_register_cmd")
-cli.add_command(init_wizard_alias_cmd, "init-wizard")
-cli.add_command(aliases_cmd, "aliases")
-cli.add_command(debug_cmd, "debug-bundle")
+_commands.defer("init-wizard", "bernstein.cli.init_wizard_cmd", "init_wizard_alias_cmd")
+_commands.defer("aliases", "bernstein.cli.aliases", "aliases_cmd")
+_commands.defer("debug-bundle", "bernstein.cli.debug_cmd", "debug_cmd")
 
 # op-002: interactive tool-call approval (approve-tool / reject-tool).
 # These are the tool-call resolvers; task-level ``approve``/``reject`` live in
@@ -1277,94 +1198,76 @@ _commands.defer("reject-tool", "bernstein.cli.commands.approval_cmd", "reject_to
 # ``bernstein debug`` is the structured diagnostics group; ``debug bundle``
 # exports a redacted ZIP for bug reports. The flat ``debug-bundle`` alias
 # above stays for back-compat with older issue templates.
-cli.add_command(debug_group, "debug")
+_commands.defer("debug", "bernstein.cli.debug_bundle", "debug_group")
 
 # Chat-control bridges (op-001)
-from bernstein.cli.commands.chat_cmd import chat_group  # noqa: E402
 
-cli.add_command(chat_group, "chat")
+_commands.defer("chat", "bernstein.cli.commands.chat_cmd", "chat_group")
 
 # release/1.9: native Agent Client Protocol (ACP) bridge for IDE clients.
-from bernstein.cli.commands.acp_cmd import acp_group  # noqa: E402
 
-cli.add_command(acp_group, "acp")
+_commands.defer("acp", "bernstein.cli.commands.acp_cmd", "acp_group")
 
 # Cross-organisation A2A interop: signed capability cards + lineage interop.
-from bernstein.cli.commands.interop_cmd import interop_group  # noqa: E402
 
-cli.add_command(interop_group, "interop")
+_commands.defer("interop", "bernstein.cli.commands.interop_cmd", "interop_group")
 
 # A2A node surface: publish this node to agent registries, verify the
 # lineage receipts it returns on inbound tasks.
-from bernstein.cli.commands.a2a_cmd import a2a_group  # noqa: E402
 
-cli.add_command(a2a_group, "a2a")
+_commands.defer("a2a", "bernstein.cli.commands.a2a_cmd", "a2a_group")
 
 # release/1.9: outbound notification drivers (Telegram, Slack, Discord, Email, Webhook, Shell).
 
 _commands.defer("notify", "bernstein.cli.commands.notify_cmd", "notify_group")
 
 # Short-lived-token broker: per-task credentials minted from a backing store.
-from bernstein.cli.commands.secrets_cmd import secrets_group  # noqa: E402
 
-cli.add_command(secrets_group, "secrets")
+_commands.defer("secrets", "bernstein.cli.commands.secrets_cmd", "secrets_group")
 
 # Per-artifact lineage trail (output → producer + inputs).
-from bernstein.cli.commands.lineage_cmd import lineage_cmd  # noqa: E402
 
-cli.add_command(lineage_cmd, "lineage")
+_commands.defer("lineage", "bernstein.cli.commands.lineage_cmd", "lineage_cmd")
 
 # C2PA content credentials projected from the lineage spine (#2303).
-from bernstein.cli.commands.credential_cmd import credential_group  # noqa: E402
 
-cli.add_command(credential_group, "credential")
+_commands.defer("credential", "bernstein.cli.commands.credential_cmd", "credential_group")
 
 # Verifiable spending mandates as journal-anchored consent receipts (#2306).
-from bernstein.cli.commands.mandate_cmd import mandate_group  # noqa: E402
 
-cli.add_command(mandate_group, "mandate")
+_commands.defer("mandate", "bernstein.cli.commands.mandate_cmd", "mandate_group")
 
 # Signed payment mandates + chain-anchored transaction receipts (#2612).
-from bernstein.cli.commands.payment_mandate_cmd import payment_mandate_group  # noqa: E402
 
-cli.add_command(payment_mandate_group, "payment-mandate")
+_commands.defer("payment-mandate", "bernstein.cli.commands.payment_mandate_cmd", "payment_mandate_group")
 
 # Attested pull-request review receipts linking issue -> plan -> tool calls -> diff (#2296).
-from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
 
-cli.add_command(review_receipt_group, "review-receipt")
+_commands.defer("review-receipt", "bernstein.cli.commands.review_receipt_cmd", "review_receipt_group")
 
 # Content-addressed anchors for operator review annotations (#3456).
-from bernstein.cli.commands.review_annotation_cmd import review_annotation_group  # noqa: E402
 
-cli.add_command(review_annotation_group, "review-annotation")
+_commands.defer("review-annotation", "bernstein.cli.commands.review_annotation_cmd", "review_annotation_group")
 # Journal-anchored stall escalation receipts (#2299).
-from bernstein.cli.commands.escalation_cmd import escalation_group  # noqa: E402
 
-cli.add_command(escalation_group, "escalation")
+_commands.defer("escalation", "bernstein.cli.commands.escalation_cmd", "escalation_group")
 # Intent capsules with deterministic drift verification (#2514).
-from bernstein.cli.commands.intent_cmd import intent_group  # noqa: E402
 
-cli.add_command(intent_group, "intent")
+_commands.defer("intent", "bernstein.cli.commands.intent_cmd", "intent_group")
 # Chain-anchored worker context capsules (#2545).
-from bernstein.cli.commands.context_cmd import context_group  # noqa: E402
 
-cli.add_command(context_group, "context")
+_commands.defer("context", "bernstein.cli.commands.context_cmd", "context_group")
 # Fleet config plane: audit-chained variables, named connection documents,
 # and switchable operating contexts (#2550). The ``context`` name is taken
 # by the worker context-capsule surface above, so operating contexts are
 # exposed as ``ctx``.
-from bernstein.cli.commands.conn_cmd import conn_group  # noqa: E402
-from bernstein.cli.commands.ctx_cmd import ctx_group  # noqa: E402
-from bernstein.cli.commands.var_cmd import var_group  # noqa: E402
 
-cli.add_command(var_group, "var")
-cli.add_command(conn_group, "conn")
-cli.add_command(ctx_group, "ctx")
+_commands.defer("var", "bernstein.cli.commands.var_cmd", "var_group")
+_commands.defer("conn", "bernstein.cli.commands.conn_cmd", "conn_group")
+_commands.defer("ctx", "bernstein.cli.commands.ctx_cmd", "ctx_group")
 # Signed maker-checker / judge-panel gate adjudications (#2294).
-from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 
-cli.add_command(gate_group, "gate")
+_commands.defer("gate", "bernstein.cli.commands.gate_cmd", "gate_group")
 
 # RBAC + budget decisions as verifiable projections over the audit chain (#2309).
 
@@ -1375,74 +1278,61 @@ _commands.defer("govern", "bernstein.cli.commands.governance_cmd", "govern_group
 _commands.defer("governance", "bernstein.cli.commands.governance_cmd", "governance_alias_cmd")
 
 # Per-tool-call snapshots + stacked agent branches.
-from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 
-cli.add_command(git_cmd, "git")
+_commands.defer("git", "bernstein.cli.commands.git_cmd", "git_cmd")
 
 # Canonical AGENTS.md generator + cross-CLI rewrite (cursor / claude / aider / goose).
-from bernstein.cli.commands.agents_md_cmd import agents_md_cmd  # noqa: E402
-from bernstein.cli.commands.analyze_cmd import analyze_cmd  # noqa: E402
 
-cli.add_command(agents_md_cmd, "agents-md")
+_commands.defer("agents-md", "bernstein.cli.commands.agents_md_cmd", "agents_md_cmd")
 
 # Translated README drift gate (issue #3425): verify / sync bindings.
-from bernstein.cli.commands.readme_l10n_cmd import readme_l10n_cmd  # noqa: E402
 
-cli.add_command(readme_l10n_cmd, "readme-l10n")
+_commands.defer("readme-l10n", "bernstein.cli.commands.readme_l10n_cmd", "readme_l10n_cmd")
 
 # Air-gap distribution: build / verify wheel bundle.
-from bernstein.cli.commands.wheelhouse_cmd import wheelhouse_group  # noqa: E402
 
-cli.add_command(wheelhouse_group, "wheelhouse")
+_commands.defer("wheelhouse", "bernstein.cli.commands.wheelhouse_cmd", "wheelhouse_group")
 
 # rt-003: Claude Code Routine <-> scenario bridge.
-from bernstein.cli.commands.routine_cmd import routine_alias_group  # noqa: E402
 
-cli.add_command(routine_alias_group, "routine")
+_commands.defer("routine", "bernstein.cli.commands.routine_cmd", "routine_alias_group")
 
 # Cluster lifecycle helpers (mTLS bootstrap, etc.)
-from bernstein.cli.commands.cluster_cmd import cluster_group  # noqa: E402
 
-cli.add_command(cluster_group, "cluster")
+_commands.defer("cluster", "bernstein.cli.commands.cluster_cmd", "cluster_group")
 
 # op-005: cross-surface session handoff (terminal <-> chat <-> dashboard).
-from bernstein.cli.commands.handoff_cmd import handoff_group  # noqa: E402
 
-cli.add_command(handoff_group, "handoff")
+_commands.defer("handoff", "bernstein.cli.commands.handoff_cmd", "handoff_group")
 
 # Install-rev fingerprint operator helpers.
 
 _commands.defer("identity", "bernstein.cli.commands.identity_cmd", "identity_group")
 
 # SPIFFE-compatible workload identity helpers (issue #2363).
-from bernstein.cli.commands.spiffe_cmd import spiffe_group  # noqa: E402
 
-cli.add_command(spiffe_group, "spiffe")
+_commands.defer("spiffe", "bernstein.cli.commands.spiffe_cmd", "spiffe_group")
 
 # Delegation-receipt verification for the principal->orchestrator->sub-agent
 # chain (issue #2305).
-from bernstein.cli.commands.delegation_cmd import delegation_group  # noqa: E402
 
-cli.add_command(delegation_group, "delegation")
-cli.add_command(analyze_cmd, "analyze")  # issue #768
+_commands.defer("delegation", "bernstein.cli.commands.delegation_cmd", "delegation_group")
+_commands.defer("analyze", "bernstein.cli.commands.analyze_cmd", "analyze_cmd")
 
 # Blast-radius scorer (issue #1322): inspect + ad-hoc score a change.
-cli.add_command(blast_radius_alias_group, "blast-radius")
+_commands.defer("blast-radius", "bernstein.cli.commands.impact_cmd", "blast_radius_alias_group")
 
 # Recorded run-session inspection + fork (#1222).
-from bernstein.cli.commands.session_cmd import session_group  # noqa: E402
 
-cli.add_command(session_group, "session")
+_commands.defer("session", "bernstein.cli.commands.session_cmd", "session_group")
 
 # Side-by-side adapter comparison (feat-cli-comparison-mode).
-from bernstein.cli.commands.compare_cmd import compare_cmd  # noqa: E402
 
-cli.add_command(compare_cmd, "compare")
+_commands.defer("compare", "bernstein.cli.commands.compare_cmd", "compare_cmd")
 
 # Agent abandonment ledger (#1350).
-from bernstein.cli.commands.abandonments_cmd import abandonments_group  # noqa: E402
 
-cli.add_command(abandonments_group, "abandonments")
+_commands.defer("abandonments", "bernstein.cli.commands.abandonments_cmd", "abandonments_group")
 
 # Digital-twin orchestration simulator (#1374).
 
@@ -1450,39 +1340,31 @@ _commands.defer("simulate", "bernstein.cli.commands.simulate_cmd", "simulate_cmd
 
 # Opt-in operator observability (closes spec 2026-05-17).
 # Default off.  Precedence: DO_NOT_TRACK > BERNSTEIN_TELEMETRY > file > off.
-from contextlib import suppress  # noqa: E402
-
 _commands.defer("telemetry", "bernstein.cli.commands.telemetry_cmd", "telemetry_group")
 
 # Scheduled upstream-signal sweep (operator-reviewable rollup, no auto-filing).
-from bernstein.cli.commands.trend_scan_cmd import trend_scan_group  # noqa: E402
 
-cli.add_command(trend_scan_group, "trend-scan")
+_commands.defer("trend-scan", "bernstein.cli.commands.trend_scan_cmd", "trend_scan_group")
 
 # Audited webhook-node receipts: signed inbound + outbound webhook events (#2310).
-from bernstein.cli.commands.webhook_cmd import webhook_group  # noqa: E402
 
-cli.add_command(webhook_group, "webhook")
+_commands.defer("webhook", "bernstein.cli.commands.webhook_cmd", "webhook_group")
 
 # Typed activity boundary: verify any-modality activity crossings from the journal (#2311).
-from bernstein.cli.commands.activity_cmd import activity_group  # noqa: E402
 
-cli.add_command(activity_group, "activity")
+_commands.defer("activity", "bernstein.cli.commands.activity_cmd", "activity_group")
 
 # Content-addressed verification evidence bundles: signed proof-of-done per task (#2362).
-from bernstein.cli.commands.evidence_cmd import evidence_group  # noqa: E402
 
-cli.add_command(evidence_group, "evidence")
+_commands.defer("evidence", "bernstein.cli.commands.evidence_cmd", "evidence_group")
 
 # Agent-posted, journal-anchored task artifacts: reports, tables, links (#2553).
-from bernstein.cli.commands.artifacts_cmd import artifacts_group  # noqa: E402
 
-cli.add_command(artifacts_group, "artifacts")
+_commands.defer("artifacts", "bernstein.cli.commands.artifacts_cmd", "artifacts_group")
 
 # Verify a non-coding task's signed, content-addressed artifact (#2608).
-from bernstein.cli.commands.artifact_cmd import artifact_group  # noqa: E402
 
-cli.add_command(artifact_group, "artifact")
+_commands.defer("artifact", "bernstein.cli.commands.artifact_cmd", "artifact_group")
 
 # Executor admission policy: which adapters, models, endpoints and sandbox
 # tiers this repository may spawn on, checked without running anything (#4907).
@@ -1491,28 +1373,24 @@ _commands.defer("admission", "bernstein.cli.commands.admission_cmd", "admission_
 
 # In-process verification gate driven by worker hooks: blocks a failing
 # completion or an out-of-scope write in-session, sealing gate receipts (#2360).
-from bernstein.cli.commands.hook_gate_cmd import hook_gate_group  # noqa: E402
 
-cli.add_command(hook_gate_group, "hook-gate")
+_commands.defer("hook-gate", "bernstein.cli.commands.hook_gate_cmd", "hook_gate_group")
 
 # Durable work ledger: resumable task-graph state anchored to a git ref (#2358).
-from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
 
-cli.add_command(ledger_group, "ledger")
+_commands.defer("ledger", "bernstein.cli.commands.ledger_cmd", "ledger_group")
 
 # Finished-run classification projected from the work ledger: which runs
 # opened a PR, which failed the gate, which were killed mid-flight (#4465).
-from bernstein.cli.commands.runs_cmd import runs_group  # noqa: E402
 
-cli.add_command(runs_group, "runs")
+_commands.defer("runs", "bernstein.cli.commands.runs_cmd", "runs_group")
 
 # Ledger-projected missions: multi-day goals with phase gates + envelopes (#2509).
 
 _commands.defer("mission", "bernstein.cli.commands.mission_cmd", "mission_group")
 # Named resource pools with lease-backed admission projected from the ledger (#2544).
-from bernstein.cli.commands.limits_cmd import limits_group  # noqa: E402
 
-cli.add_command(limits_group, "limits")
+_commands.defer("limits", "bernstein.cli.commands.limits_cmd", "limits_group")
 
 # Detached run service: submit a goal, disconnect, reattach later (#2352).
 
@@ -1522,36 +1400,25 @@ _commands.defer("run-service", "bernstein.cli.commands.run_service_cmd", "run_se
 
 _commands.defer("tournament", "bernstein.cli.commands.tournament_cmd", "tournament_group")
 
-# #3142: ``run_changelog_cmd`` was renamed to ``run_changelog_default`` and its
-# click command moved inside the ``changelog`` group. Re-export under the
-# old name here so any out-of-tree import (``from bernstein.cli.main import
-# run_changelog_cmd``) keeps working for as long as the deprecated alias
-# lives; both go away together in a release after the 4.0 line.
-run_changelog_cmd = run_changelog_default  # intentional back-compat alias (#3142)
-
 # Documented-but-unregistered commands (#3139). Both modules shipped complete,
 # were listed in the lazy-import map, and were documented in the CLI reference,
 # but no ``add_command`` call ever made them reachable. ``dep-impact``'s own
 # help text cross-references ``api-check``, so following that pointer produced
 # "No such command" until this registration landed.
-from bernstein.cli.commands.ab_test_cmd import ab_test_cmd  # noqa: E402
-from bernstein.cli.commands.api_check_cmd import api_check_cmd  # noqa: E402
 
-cli.add_command(api_check_cmd, "api-check")
-cli.add_command(ab_test_cmd, "ab-test")
-cli.add_command(receipt_group, "receipt")
-cli.add_command(model_group, "model")
+_commands.defer("api-check", "bernstein.cli.commands.api_check_cmd", "api_check_cmd")
+_commands.defer("ab-test", "bernstein.cli.commands.ab_test_cmd", "ab_test_cmd")
+_commands.defer("receipt", "bernstein.cli.commands.receipt_cmd", "receipt_group")
+_commands.defer("model", "bernstein.cli.commands.model_cmd", "model_group")
 _commands.defer("volunteer", "bernstein.cli.commands.volunteer_cmd", "volunteer_group")
 
 # ``bernstein adopt`` (#5435, slice 1): detect the running agent session to
 # bring under governance. Only ``--dry-run`` is implemented; it writes nothing.
-from bernstein.cli.commands.adopt_cmd import adopt_cmd  # noqa: E402
 
-cli.add_command(adopt_cmd, "adopt")
+_commands.defer("adopt", "bernstein.cli.commands.adopt_cmd", "adopt_cmd")
 
 # Same defect as #3139 above: the skeleton was documented in
 # src/bernstein/cli/AGENTS.md, but no ``add_command`` call ever made it
 # reachable (#5880).
-from bernstein.cli.commands.insights_cmd import insights  # noqa: E402
 
-cli.add_command(insights, "insights")
+_commands.defer("insights", "bernstein.cli.commands.insights_cmd", "insights")

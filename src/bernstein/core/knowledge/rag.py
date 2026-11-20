@@ -615,6 +615,18 @@ def build_or_update_index(project_root: Path) -> CodebaseIndexer:
     return indexer
 
 
+def start_background_index(project_root: Path) -> None:
+    """Refresh the optional index within the lifetime of the spawner process."""
+
+    def refresh() -> None:
+        try:
+            build_or_update_index(project_root)
+        except Exception:
+            logger.warning("Codebase index refresh failed", exc_info=True)
+
+    _threading.Thread(target=refresh, name="codebase-index", daemon=True).start()
+
+
 # ---------------------------------------------------------------------------
 # Query guard concurrency (T587)
 # ---------------------------------------------------------------------------

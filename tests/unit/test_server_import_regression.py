@@ -73,3 +73,10 @@ def test_getattr_tolerates_broken_fallback_module(
 
     with pytest.raises(AttributeError):
         _ = srv.this_attribute_does_not_exist_anywhere
+
+
+def test_bootstrap_does_not_load_web_application_into_parent_process() -> None:
+    proc = _import_in_fresh_interpreter(
+        "from bernstein.core.server import server_launch; assert 'bernstein.core.server.server_app' not in sys.modules"
+    )
+    assert proc.returncode == 0, proc.stderr

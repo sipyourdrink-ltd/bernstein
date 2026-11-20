@@ -28,7 +28,9 @@ from bernstein.cli.helpers import (
     auth_headers,
     console,
     find_seed_file,
+    is_json,
     persist_server_port,
+    plain_run_output,
     print_banner,
     print_startup_banner,
     server_get,
@@ -790,7 +792,9 @@ def _show_dry_run_plan(
     _ = cli  # Part of interface: --cli is validated by its click.Choice
     from rich.table import Table
 
-    console.print("\n[bold]Dry-run mode: no agents will be spawned.[/bold]\n")
+    structured = is_json()
+    if not structured:
+        console.print("\n[bold]Dry-run mode: no agents will be spawned.[/bold]\n")
 
     if plan_file is not None:
         tasks = _load_dry_run_tasks(plan_file)
@@ -805,6 +809,9 @@ def _show_dry_run_plan(
         # No seed/goal/plan: fall back to previewing a running server's backlog.
         tasks = _load_dry_run_tasks(None)
 
+    if structured:
+        click.echo(json.dumps({"tasks": [task.to_dict() for task in tasks]}))
+        return
     if not tasks:
         console.print("[yellow]No tasks to schedule.[/yellow]")
         return
@@ -1095,7 +1102,7 @@ def init(
             badge_variant=badge_variant,
             remote=remote,
         )
-    except (click.UsageError, SystemExit):
+    except (click.UsageError, KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:
         handle_first_run_exception(exc, verbose=_is_verbose())
@@ -2646,10 +2653,14 @@ def _run_impl(
     # Opt-in operator observability (spec 2026-05-17).  Defaults to off.
     # Prints the one-time notice and emits first_run_* events around the
     # body.  Fail-closed: any internal failure is swallowed.
-    with suppress(Exception):
-        from bernstein.core.telemetry.wire import maybe_print_first_run_notice
+    ctx = click.get_current_context(silent=True)
+    output = (ctx.obj or {}) if ctx is not None else {}
+    plain_output = quiet or plain_run_output()
+    if not plain_output:
+        with suppress(Exception):
+            from bernstein.core.telemetry.wire import maybe_print_first_run_notice
 
-        maybe_print_first_run_notice()
+            maybe_print_first_run_notice()
 
     # ``--from-plan`` on a YAML plan: the file carries stages and steps, so run
     # it exactly like the positional plan file instead of reducing it to a goal
@@ -2750,8 +2761,7 @@ def _run_impl(
     # 1e5c13013 ("fix: ... double banner ..."), which mistakenly removed the
     # call assuming cli() always printed it -- cli() actually early-returns
     # for subcommand invocations, so `bernstein run` lost the banner entirely.
-    ctx = click.get_current_context(silent=True)
-    if ctx is None or not (ctx.obj and ctx.obj.get("_BANNER_PRINTED")):
+    if not (plain_output or output.get("_BANNER_PRINTED")):
         print_startup_banner()
 
     # Set process title so orchestrator is visible in Activity Monitor / ps
@@ -2825,10 +2835,11 @@ def _run_impl(
         # backend.  Without this, the orchestrator's argparse default would
         # fall back to ``--adapter claude`` and quietly burn real tokens.
         os.environ["BERNSTEIN_ADAPTER"] = cli
-        click.echo(
-            "Bernstein --idle mode: every agent will be spawned via the mock adapter and sleep "
-            "BERNSTEIN_MOCK_IDLE_MIN_S..MAX_S seconds (default 15-120). Zero LLM spend."
-        )
+        if not plain_output:
+            click.echo(
+                "Bernstein --idle mode: every agent will be spawned via the mock adapter and sleep "
+                "BERNSTEIN_MOCK_IDLE_MIN_S..MAX_S seconds (default 15-120). Zero LLM spend."
+            )
 
     # --dry-run: show scheduling plan without executing
     if dry_run:
@@ -2919,8 +2930,9 @@ def _run_impl(
                 click.echo(f"Failed to load plan file: {exc}", err=True)
                 raise SystemExit(1) from exc
 
-            console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
-            console.print(f"[dim]Plan name:[/dim] {loaded_goal}")
+            if not plain_output:
+                console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
+                console.print(f"[dim]Plan name:[/dim] {loaded_goal}")
             plan_obj = create_plan(loaded_goal, tasks)
             # Not --from-plan: that path reads only the ``**Goal:**`` line out
             # of the saved markdown and re-decomposes from the plan name, which
@@ -2930,8 +2942,9 @@ def _run_impl(
             if from_plan is not None:
                 try:
                     goal = _load_plan_goal(from_plan)
-                    console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
-                    console.print(f"[dim]Goal:[/dim] {goal[:100]}")
+                    if not plain_output:
+                        console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
+                        console.print(f"[dim]Goal:[/dim] {goal[:100]}")
                 except (ValueError, OSError) as exc:
                     click.echo(f"Failed to load plan: {exc}", err=True)
                     raise SystemExit(1) from exc
@@ -2941,11 +2954,17 @@ def _run_impl(
         builder = PlanBuilder(plan_obj, tasks)
         md = builder.render_to_markdown()
 
+        saved_plan = _save_plan_markdown(md, workdir)
+        if output.get("JSON"):
+            click.echo(json.dumps({"plan": md, "saved_plan": str(saved_plan)}))
+            return
+        if plain_output:
+            click.echo(md)
+            return
+
         from rich.markdown import Markdown
 
         console.print(Markdown(md))
-
-        saved_plan = _save_plan_markdown(md, workdir)
         console.print(f"\n[dim]Plan saved to:[/dim] {saved_plan}")
         console.print(f"[dim]Execute with:[/dim] {rerun_hint or f'bernstein run --from-plan {saved_plan}'}")
         return
@@ -2964,8 +2983,9 @@ def _run_impl(
             except Exception:
                 goal = str(plan_file)
 
-            console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
-            console.print(f"[dim]Plan name:[/dim] {goal}")
+            if not plain_output:
+                console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
+                console.print(f"[dim]Plan name:[/dim] {goal}")
             loaded_goal = goal or str(plan_file)
 
             if worker_role:
@@ -2974,7 +2994,7 @@ def _run_impl(
                 # to bypass.
                 raise click.UsageError("--worker requires a seed file; it is not supported with --plan-file.")
 
-            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
+            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(plain_output):
                 bootstrapped = bootstrap_from_goal(
                     goal=loaded_goal,
                     workdir=workdir,
@@ -3003,8 +3023,9 @@ def _run_impl(
     elif from_plan is not None:
         try:
             goal = _load_plan_goal(from_plan)
-            console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
-            console.print(f"[dim]Goal:[/dim] {goal[:100]}")
+            if not plain_output:
+                console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
+                console.print(f"[dim]Goal:[/dim] {goal[:100]}")
         except (ValueError, OSError) as exc:
             click.echo(f"Failed to load plan: {exc}", err=True)
             raise SystemExit(1) from exc
@@ -3021,7 +3042,7 @@ def _run_impl(
             # bypass.
             raise click.UsageError("--worker requires a seed file; it is not supported with an inline goal.")
         try:
-            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
+            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(plain_output):
                 bootstrapped = bootstrap_from_goal(
                     goal=goal,
                     workdir=workdir,
@@ -3053,12 +3074,12 @@ def _run_impl(
             no_seed_or_goal().print()
             raise SystemExit(1)
 
-    if not quiet:
+    if not plain_output:
         console.print(f"[dim]Using seed file:[/dim] {path}")
     try:
         # CLI --cells overrides seed file value when explicitly set (cells > 1)
         cli_cells: int | None = cells if cells > 1 else None
-        with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
+        with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(plain_output):
             bootstrapped = bootstrap_from_seed(
                 seed_path=path,
                 workdir=workdir,

@@ -7,13 +7,11 @@ import signal
 import sys
 import time
 from contextlib import suppress
-from functools import cached_property
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
-import httpx
 
 from bernstein.cli.ui import make_console
 from bernstein.core.defaults import SDD_SERVER_PORT
@@ -23,6 +21,21 @@ from bernstein.core.run_auth_token import ACCESS_CLIENT_ID_ENV as ACCESS_CLIENT_
 from bernstein.core.run_auth_token import ACCESS_CLIENT_SECRET_ENV as ACCESS_CLIENT_SECRET_ENV
 from bernstein.core.run_auth_token import access_proxy_headers as access_proxy_headers
 from bernstein.core.run_auth_token import auth_headers
+
+if TYPE_CHECKING:
+    import httpx as httpx
+    from click.shell_completion import CompletionItem
+
+
+def __getattr__(name: str) -> Any:
+    # Old consumers and test doubles use helpers.httpx. Loading the HTTP
+    # client belongs to the first HTTP operation, not root help/version.
+    if name == "httpx":
+        import httpx
+
+        return httpx
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -85,11 +98,32 @@ class _AdapterCLIChoice(click.Choice[str]):
         # Choice.__init__ freezes its iterable, so supply choices at first use.
         self.case_sensitive = False
 
-    @cached_property
+    @property
     def choices(self) -> tuple[str, ...]:  # pyright: ignore[reportIncompatibleVariableOverride]
         from bernstein.adapters.registry import selectable_adapter_names
 
         return tuple(sorted({*selectable_adapter_names(), "auto"}))
+
+    @staticmethod
+    def _advertised() -> click.Choice[str]:
+        from bernstein.adapters.registry import advertised_adapter_names
+
+        registered, declarations = advertised_adapter_names()
+        return click.Choice(sorted(registered | declarations | {"auto"}), case_sensitive=False)
+
+    def get_metavar(self, param: click.Parameter, ctx: click.Context) -> str | None:
+        return self._advertised().get_metavar(param, ctx)
+
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        return self._advertised().shell_complete(ctx, param, incomplete)
+
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        from bernstein.adapters.registry import is_selectable_adapter_name
+
+        selected = self._advertised().convert(value, param, ctx)
+        if selected == "auto" or (ctx is not None and ctx.resilient_parsing) or is_selectable_adapter_name(selected):
+            return selected
+        self.fail(f"Adapter {selected!r} is declared but its implementation could not be loaded.", param, ctx)
 
 
 def adapter_cli_choice() -> click.Choice[str]:
@@ -190,6 +224,8 @@ def server_get(path: str, *, raise_on_auth_error: bool = False) -> dict[str, Any
             from an unreachable server. Defaults to ``False`` to preserve the
             ``None``-on-any-error contract existing callers rely on.
     """
+    import httpx
+
     try:
         resp = httpx.get(f"{resolve_server_url()}{path}", timeout=5.0, headers=auth_headers())
         resp.raise_for_status()
@@ -231,6 +267,8 @@ def server_post(
             ``--retry-all-errors``). Defaults to ``0`` (no retry).
         retry_delay: Seconds to sleep between connect retries.
     """
+    import httpx
+
     attempts = max(0, connect_retries) + 1
     for attempt in range(attempts):
         try:
@@ -378,12 +416,16 @@ def print_dry_run_table(workdir: Path) -> None:
     Args:
         workdir: Project root directory.
     """
+    import json
+
     from rich.table import Table
 
     from bernstein.core.models import Complexity, Scope, Task
     from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
     from bernstein.core.sync import BacklogTask, parse_backlog_file
 
+    structured = is_json()
+    rows: list[dict[str, Any]] = []
     open_dir = workdir / ".sdd" / "backlog" / "open"
     issues_dir = workdir / ".sdd" / "backlog" / "issues"
     files: list[Path] = []
@@ -407,15 +449,20 @@ def print_dry_run_table(workdir: Path) -> None:
             # format (e.g. plain YAML with no `---` block and no `# ` title)
             # would otherwise be silently skipped (issue #2785). Surface it so
             # the operator can see the ticket will not be picked up.
-            console.print(
+            warning_console = make_console(no_color=True, file=sys.stderr) if structured else console
+            warning_console.print(
                 f"[yellow]Warning:[/yellow] {backlog_file.name} could not be parsed as a backlog ticket "
                 "(expected YAML frontmatter delimited by '---' or a Markdown '# ' title); skipping."
             )
 
-    console.print("\n[bold cyan][DRY RUN] Planned task spawns:[/bold cyan]")
+    if not structured:
+        console.print("\n[bold cyan][DRY RUN] Planned task spawns:[/bold cyan]")
 
     if not tasks:
-        console.print("[dim]No open tasks found in backlog.[/dim]")
+        if structured:
+            click.echo(json.dumps({"tasks": []}))
+        else:
+            console.print("[dim]No open tasks found in backlog.[/dim]")
         return
 
     # Initialize router and load providers
@@ -456,6 +503,18 @@ def print_dry_run_table(workdir: Path) -> None:
             model_display = "auto"
             effort_display = "auto"
 
+        if structured:
+            rows.append(
+                {
+                    "role": bt.role,
+                    "title": bt.title,
+                    "priority": bt.priority,
+                    "provider": provider_display,
+                    "model": model_display,
+                    "effort": effort_display,
+                }
+            )
+            continue
         table.add_row(
             bt.role,
             bt.title,
@@ -465,6 +524,9 @@ def print_dry_run_table(workdir: Path) -> None:
             effort_display,
         )
 
+    if structured:
+        click.echo(json.dumps({"tasks": rows}))
+        return
     console.print(table)
     console.print(f"\n[dim]Total: {len(tasks)} task(s): no agents were spawned.[/dim]")
 
@@ -500,6 +562,15 @@ def find_seed_file() -> Path | None:
 def is_process_alive(pid: int) -> bool:
     """Check if a process with the given PID is alive."""
     return is_alive(pid)
+
+
+def plain_run_output() -> bool:
+    """Choose plain startup output without changing the run's wait or confirmation policy."""
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return False
+    options = ctx.obj or {}
+    return bool(ctx.params.get("quiet") or options.get("JSON") or options.get("QUIET") or options.get("HEADLESS"))
 
 
 def is_json() -> bool:

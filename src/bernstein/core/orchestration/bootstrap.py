@@ -12,7 +12,6 @@ Entry points:
 from __future__ import annotations
 
 import asyncio as _asyncio
-import concurrent.futures
 import contextlib
 import logging
 import os
@@ -60,9 +59,7 @@ from bernstein.core.seed import (
 from bernstein.core.server_launch import (
     _SERVER_READY_TIMEOUT_S,
     BootstrapResult,
-    _build_codebase_index,
     _clean_stale_runtime,
-    _discover_catalog,
     _inject_manager_task,
     _inject_worker_task,
     _is_alive,
@@ -316,15 +313,6 @@ def _run_git_hygiene(workdir: Path) -> None:
             type(exc).__name__,
             exc,
         )
-
-
-def _index_codebase_with_timeout(workdir: Path, timeout: float = 10) -> None:
-    """Build codebase index with a hard timeout to avoid blocking startup."""
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(_build_codebase_index, workdir)
-    with contextlib.suppress(concurrent.futures.TimeoutError):
-        future.result(timeout=timeout)
-    pool.shutdown(wait=False)
 
 
 def _check_safety_invariants(workdir: Path) -> None:
@@ -709,12 +697,10 @@ def bootstrap_from_seed(
     except OSError as exc:
         logger.warning("bootstrap_from_seed: failed to persist seed_location.json: %s", exc)
 
-    # 2. Workspace + catalog + index (silent - errors logged, not printed)
+    # 2. Prepare the workspace before starting the server.
     ensure_sdd(workdir, model=seed.model)
     _reconcile_dead_owner_before_runtime_cleanup(workdir)
     _clean_stale_runtime(workdir)
-    _discover_catalog(workdir)
-    _index_codebase_with_timeout(workdir)
     _check_safety_invariants(workdir)
 
     # Storage + cluster config (env vars, no output)
@@ -1512,24 +1498,6 @@ def _bootstrap_from_goal_impl(
     # before the server and watchdog exist to be left running behind a dead run (#6126).
     check_adapter_configured(cli, workdir)
 
-    with Status("[bold]Loading agent catalog...[/bold]", console=console):
-        _discover_catalog(workdir)
-    console.print(f"[green]{_icons.arrow_right}[/green] Agent catalog loaded")
-
-    # Index codebase with a hard 10s deadline - don't block startup.
-    # We must NOT use ThreadPoolExecutor as a context manager because its
-    # __exit__ calls shutdown(wait=True), which blocks until the thread
-    # finishes even after the timeout fires.
-    _index_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _index_future = _index_pool.submit(_build_codebase_index, workdir)
-    with Status("[bold]Indexing codebase...[/bold]", console=console):
-        try:
-            _index_future.result(timeout=10)
-        except concurrent.futures.TimeoutError:
-            console.print(f"[yellow]{_icons.arrow_right}[/yellow] Indexing taking too long - continuing in background")
-    _index_pool.shutdown(wait=False)
-    console.print(f"[green]{_icons.arrow_right}[/green] Codebase indexed")
-
     with Status("[bold]Checking safety invariants...[/bold]", console=console):
         from bernstein.evolution.invariants import verify_invariants, write_lockfile
 
@@ -1598,7 +1566,7 @@ def _bootstrap_from_goal_impl(
         _start_watchdog(workdir, port, adapter=_resolved_adapter, model=model)
     console.print(f"[green]{_icons.arrow_right}[/green] Spawning agents (PID {spawner_pid})")
 
-    console.print("\n[bold green]Dashboard ready.[/bold green] Use [bold]bernstein stop[/bold] to stop.")
+    console.print("\nUse [bold]bernstein status[/bold] to inspect the run or [bold]bernstein stop[/bold] to stop it.")
 
     return BootstrapResult(
         seed=seed,

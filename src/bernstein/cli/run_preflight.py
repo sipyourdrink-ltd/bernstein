@@ -18,6 +18,8 @@ from bernstein.cli.helpers import (
     SERVER_URL,
     console,
     find_seed_file,
+    is_json,
+    plain_run_output,
 )
 from bernstein.cli.run import render_run_summary_from_dict
 from bernstein.cli.ui import make_console
@@ -104,10 +106,6 @@ def _abort_if_default_branch_merge_target(workdir: Path) -> None:
         SystemExit: When the checked-out branch is a protected default branch
             and ``BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH`` is not set.
     """
-    from bernstein.core.agents.spawner_merge import (
-        ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH,
-        _allow_merge_to_default_branch,
-    )
     from bernstein.core.git_ops import current_branch, protected_default_branches
 
     branch = current_branch(workdir)
@@ -117,6 +115,11 @@ def _abort_if_default_branch_merge_target(workdir: Path) -> None:
         return
     if branch not in protected_default_branches(workdir):
         return
+    from bernstein.core.agents.spawner_merge import (
+        ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH,
+        _allow_merge_to_default_branch,
+    )
+
     if _allow_merge_to_default_branch():
         return
     console.print(
@@ -200,12 +203,17 @@ def _show_run_summary() -> None:
     even then -- a run whose work was discarded must not end with a clean,
     silent summary (gh-2756).
     """
+    import json
+
     from bernstein.cli.helpers import server_get
 
-    force_no_color = not sys.stdout.isatty()
-    con = make_console(no_color=force_no_color)
     data = server_get("/status")
-    if data is not None:
+    if is_json():
+        click.echo(json.dumps(data))
+        con = make_console(no_color=True, file=sys.stderr)
+    else:
+        con = make_console(no_color=plain_run_output() or not sys.stdout.isatty())
+    if data is not None and not is_json():
         render_run_summary_from_dict(data, console=con)
     _surface_merge_refusals(Path.cwd(), since_ts=_CLI_RUN_EPOCH, console=con)
 
@@ -537,7 +545,7 @@ def _emit_preflight_runtime_warnings(
     sdd_dir = workdir / ".sdd"
     disk_usage_gb = directory_size_bytes(sdd_dir) / (1024**3)
     band = estimate.band
-    if not quiet:
+    if not (quiet or plain_run_output()):
         # Only print a count that came from the plan/backlog; when the count
         # is unknown (planning happens after startup) say so explicitly
         # instead of substituting a made-up number.
@@ -632,13 +640,19 @@ def _quiet_bootstrap_console(enabled: bool) -> Any:
     from rich.console import Console
 
     import bernstein.core.bootstrap as bootstrap_module
+    from bernstein.core.orchestration import preflight
 
-    original_console = bootstrap_module.console
-    bootstrap_module.console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+    buffer = io.StringIO()
+    muted = Console(file=buffer, force_terminal=False, color_system=None)
+    original = bootstrap_module.console, preflight.console
+    bootstrap_module.console = preflight.console = muted
     try:
         yield
+    except BaseException:
+        click.echo(buffer.getvalue(), err=True, nl=False)
+        raise
     finally:
-        bootstrap_module.console = original_console
+        bootstrap_module.console, preflight.console = original
 
 
 def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContextManager[Any]:
@@ -877,7 +891,10 @@ def _finalize_run_output(
 
         caps = detect_capabilities()
 
-        if caps.supports_textual:
+        ctx = click.get_current_context(silent=True)
+        output = (ctx.obj or {}) if ctx is not None else {}
+        interactive = not (output.get("JSON") or output.get("HEADLESS") or output.get("QUIET"))
+        if interactive and caps.supports_textual:
             _raise_if_no_plan_after_spawn()
             try:
                 from bernstein.cli.dashboard import BernsteinApp as DashboardApp
@@ -895,7 +912,7 @@ def _finalize_run_output(
             # The operator watched the run to its end in the dashboard, so a
             # finished run is the common case here, not the edge one.
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
-        elif caps.is_tty:
+        elif interactive and caps.is_tty:
             # TTY but Textual not supported -- use Rich fallback (TUI-003)
             _raise_if_no_plan_after_spawn()
             _try_fallback_display()
@@ -909,7 +926,7 @@ def _finalize_run_output(
 
             run_adapter = seed.cli if seed is not None and seed.cli != "auto" else None
             tracker = TaskStateProgressTracker(
-                console=console,
+                console=make_console(no_color=True, file=sys.stderr) if output.get("JSON") else console,
                 default_adapter=run_adapter,
                 default_model=seed.model if seed is not None else None,
             )
@@ -937,7 +954,8 @@ def _finalize_run_output(
             # A run that already reached a terminal state within the detach
             # window must not report success on its way out.
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
-            console.print("Run continues in the background (check: bernstein status).")
+            if not output.get("JSON"):
+                console.print("Run continues in the background (check: bernstein status).")
     finally:
         _drain_completed_backlog_files()
 

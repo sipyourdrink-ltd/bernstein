@@ -25,6 +25,8 @@ CLI agent adapters (claude, codex, gemini, aider, goose and others): a task prom
 
 ## Invariants
 
+- Root help uses registered adapter names and installed entry-point declarations. Loading a plugin implementation belongs to selection or detailed adapter inspection.
+
 - An adapter's YAML contract in `tests/contract/contracts/` names its required flags/subcommands. Capability assertions only, never snapshot `--help` text (`_contract.py` docstring); drift is a hard fail (exit 2). Not every registered adapter has a contract yet; a new adapter should ship one.
 - Artifact writes go through the lineage-spine boundary in `base.py`; do not add adapter-local artifact write paths (`../core/lineage/spine.py`).
 - Keep adapter module import time free of replay-journal imports; `base.py` duplicates capability constants for exactly this reason.

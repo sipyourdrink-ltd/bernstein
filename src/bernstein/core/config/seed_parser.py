@@ -20,8 +20,6 @@ from urllib.parse import urlparse
 import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
-from bernstein.core.compliance import ComplianceConfig, CompliancePreset
-from bernstein.core.config.config_schema import LayerValidationError
 from bernstein.core.config.run_overlay import (
     RunOverlayError,
     resolve_effective_mapping,
@@ -62,12 +60,13 @@ from bernstein.core.sandbox import parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
 from bernstein.core.tenanting import TenantConfig
 from bernstein.core.workspace import Workspace
-from bernstein.core.worktree import WorktreeSetupConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.compliance import ComplianceConfig
     from bernstein.core.security.executor_admission import AdmissionPolicy
+    from bernstein.core.worktree import WorktreeSetupConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1646,6 +1645,8 @@ def _parse_worktree_setup(raw: object) -> WorktreeSetupConfig | None:
     setup_cmd_raw: object = ws_dict.get("setup_command")
     if setup_cmd_raw is not None and not isinstance(setup_cmd_raw, str):
         raise SeedError(f"worktree_setup.setup_command must be a string, got: {type(setup_cmd_raw).__name__}")
+    from bernstein.core.worktree import WorktreeSetupConfig
+
     return WorktreeSetupConfig(
         symlink_dirs=symlink_dirs,
         copy_files=copy_files,
@@ -1803,6 +1804,8 @@ def _parse_compliance(raw: object) -> ComplianceConfig | None:
     """Parse the optional ``compliance`` section."""
     if raw is None:
         return None
+    from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+
     if isinstance(raw, str):
         _valid_presets = tuple(p.value for p in CompliancePreset)
         if raw.lower() not in _valid_presets:
@@ -2271,16 +2274,17 @@ def valid_cli_selections() -> frozenset[str]:
 
 def _parse_cli(data: dict[str, object]) -> str:
     cli_raw: object = data.get("cli", _AUTO_CLI)
-    valid = valid_cli_selections()
-    if not isinstance(cli_raw, str) or cli_raw not in valid:
-        if isinstance(cli_raw, str):
-            from bernstein.adapters.registry import removed_adapter_message
+    if cli_raw == _AUTO_CLI:
+        return _AUTO_CLI
+    if isinstance(cli_raw, str):
+        from bernstein.adapters.registry import is_selectable_adapter_name, removed_adapter_message
 
-            removed = removed_adapter_message(cli_raw)
-            if removed is not None:
-                raise SeedError(f"cli: {removed}")
-        raise SeedError(f"cli must be one of {sorted(valid)}, got: {cli_raw!r}")
-    return cli_raw
+        if is_selectable_adapter_name(cli_raw):
+            return cli_raw
+        removed = removed_adapter_message(cli_raw)
+        if removed is not None:
+            raise SeedError(f"cli: {removed}")
+    raise SeedError(f"cli must be one of {sorted(valid_cli_selections())}, got: {cli_raw!r}")
 
 
 def _parse_max_agents(data: dict[str, object]) -> int:
@@ -2569,6 +2573,8 @@ def _load_seed_mapping(path: Path, *, validate_layers: bool = True) -> dict[str,
     # never written by one, so no commit an agent makes can carry it. With no
     # overlay and no ``$BERNSTEIN_CONFIG_OVERRIDE`` this is the identity, and
     # a setup that edits the committed file directly behaves as it always did.
+    from bernstein.core.config.config_schema import LayerValidationError
+
     try:
         data: dict[str, object] = cast(
             "_StrObjDict", resolve_effective_mapping(committed, config_path=path, validate_layers=validate_layers)

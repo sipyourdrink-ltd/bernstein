@@ -22,28 +22,6 @@ from bernstein.core.orchestration import bootstrap as bootstrap_module
 from bernstein.core.orchestration.bootstrap import _post_plan_tasks, _start_watchdog
 
 
-class _CompletedFuture:
-    """Small future-like object for bootstrap indexing tests."""
-
-    def result(self, timeout: float | None = None) -> None:
-        del timeout
-        return None
-
-
-class _Executor:
-    """Small executor stub that avoids spawning real threads."""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
-
-    def submit(self, fn: object, *args: object, **kwargs: object) -> _CompletedFuture:
-        del fn, args, kwargs
-        return _CompletedFuture()
-
-    def shutdown(self, wait: bool = False) -> None:
-        del wait
-
-
 def _seed(
     *,
     goal: str = "Ship the parser",
@@ -88,15 +66,10 @@ def test_bootstrap_from_seed_returns_bootstrap_result(tmp_path: Path, invariants
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", fake_console))
-        stack.enter_context(
-            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
         stack.enter_context(
             patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
         )
@@ -135,15 +108,10 @@ def test_bootstrap_from_seed_skips_manager_when_backlog_tasks_exist(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-        stack.enter_context(
-            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
         stack.enter_context(
             patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
         )
@@ -189,15 +157,10 @@ def test_bootstrap_from_seed_replans_when_prior_session_has_unfinished_work(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-        stack.enter_context(
-            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
         stack.enter_context(
             patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
         )
@@ -241,15 +204,10 @@ def test_bootstrap_from_seed_resumes_when_prior_session_finished(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-        stack.enter_context(
-            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
         stack.enter_context(
             patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
         )
@@ -279,15 +237,10 @@ def test_bootstrap_from_seed_exits_when_server_never_becomes_ready(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-        stack.enter_context(
-            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
         stack.enter_context(
             patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
         )
@@ -318,15 +271,10 @@ def test_bootstrap_from_seed_timeout_message_derives_from_ready_constant(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-        stack.enter_context(
-            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
         stack.enter_context(
             patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
         )
@@ -369,9 +317,6 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", fake_console))
-        stack.enter_context(
-            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._acquire_pid_lock"))
         stack.enter_context(patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery))
         stack.enter_context(patch("bernstein.core.server_launch._detect_project_type", return_value="python"))
@@ -381,8 +326,6 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
             patch("bernstein.core.orchestration.bootstrap.auto_write_bernstein_yaml", side_effect=_autowrite_seed)
         )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
         stack.enter_context(
             patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
         )
@@ -398,7 +341,9 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
         stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
+        remote_refresh = stack.enter_context(patch("bernstein.agents.agency_provider.AgencyProvider.sync_catalog"))
         result = bootstrap_from_goal("Ship the parser", tmp_path, cli="auto")
+        remote_refresh.assert_not_called()
 
     assert result.manager_task_id == "mgr-1"
     mock_autowrite.assert_called_once_with(tmp_path)
@@ -439,14 +384,9 @@ def _patch_startup_up_to_readiness(stack: ExitStack, invariants_module: types.Mo
     """Stub everything between entry and ``_wait_for_server``, which returns False."""
     stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
     stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-    stack.enter_context(
-        patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
-    )
     stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
     stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
     stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
-    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
-    stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
     stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1"))
     stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value=None))
     stack.enter_context(
