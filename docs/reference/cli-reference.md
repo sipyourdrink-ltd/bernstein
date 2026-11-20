@@ -210,7 +210,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan` | Show the task backlog. | `cli/commands/task_cmd.py:454` |
 | `bernstein plan generate "<goal>"` | Generate a plan YAML. | `cli/plan_generate_cmd.py` |
 | `bernstein plan compile SPEC` | Compile a spec into a gated task graph with requirement-hash lineage. | `cli/plan_compile_cmd.py` |
-| `bernstein plan ls` | List archived plans. | `cli/plan_archive_cmd.py:plan_ls` |
+| `bernstein plan ls` | List managed plans in all states. Use `--state` with `active`, `completed`, or `blocked` to filter the list. | `cli/commands/plan_archive_cmd.py:plan_ls` |
 | `bernstein plan show NAME` | Show a stored plan. | `cli/plan_archive_cmd.py:plan_show` |
 | `bernstein add-task TITLE` | Create a task on the running server. | `cli/commands/task_cmd.py:37` |
 | `bernstein approve TASK_ID` | Approve a pending review. | `cli/commands/task_cmd.py:249` |
