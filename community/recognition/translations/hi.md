@@ -51,7 +51,7 @@ Periodic list में नाम alphabetical order में जाते ह�
 
 ## GitHub Discussions और LinkedIn पेज एक-दूसरे के प्रतिस्पर्धी नहीं हैं
 
-वे अलग-अलग काम करते हैं। तेज़ news के लिए (एक release, एक change, एक community update) LinkedIn पेज ज़्यादा तेज़ channel है। GitHub Discussions वह जगह है जहाँ तुम project में सही मायने में हिस्सा लेते हो: तुम context देखते हो, बहस करते हो, प्रस्ताव रखते हो, जवाब ढूंढते हो, और यह record पर रहता है जहाँ अगला व्यक्ति उसे ढूंढ सके। अगर तुम्हें news और depth दोनों चाहिए, तो दोनों को follow करो। Decisions अभी भी issues और pull requests में होते हैं; यह नहीं बदला है।
+वे अलग-अलग काम करते हैं। तेज़ news के लिए (एक release, एक change, एक community update) LinkedIn पेज ज़्यादा तेज़ channel है। GitHub Discussions वह जगह है जहाँ तुम project में सही मायने में हिस्सा लेते हो: तुम context देखते हो, बहस करते हो, प्रस्ताव रखते हो, जवाब ढूंढते हो, और यह record पर रहता है जहाँ अगला व्यक्ति उसे ढूंढ सके। अगर तुम्हें news और depth दोनों चाहिए, तो दोनों को follow करो। Contributors के प्रस्तावों और pull requests पर फ़ैसले उनके संबंधित public issue या pull request में लिए जाते हैं; maintainer भविष्य के काम की योजना निजी तौर पर बनाता है।
 
 ## मैं यह सब क्यों कर रहा हूँ
 
@@ -88,8 +88,6 @@ Licences के बारे में, सटीक रूप से, क्य
 ## कौन देख रहा है, और यह क्यों matter करता है
 
 हम, ज़ाहिर है, अपनी पूरी analytics pipeline publish नहीं कर सकते, लेकिन सब दिखने में हम अकेले पढ़ने वाले नहीं हैं। बड़ी IT companies और AI labs के लोग site पर काफी नियमित रूप से आते हैं और documentation से काफी specific सवाल पूछते हैं। Competitors भी, मान लो, सोए नहीं हैं।
-
-और, वैसे: हमारे passive analytics के मुताबिक, obvious bot noise हटाकर, Bernstein अब दुनिया भर में कम से कम लगभग 3,000 machines पर नियमित रूप से चलता है। मुझे लगता है यह काफी respectable है। Bernstein default रूप से कोई product telemetry नहीं भेजता और यह संख्या किसी telemetry से नहीं आती; यह एक passive signal है, और method के बारे में मैं इतना ही कहूँगा।
 
 तो situation पहले से ही एक interesting है। हम एक free product बना रहे हैं जिसे लोग असल में use करते हैं, यह engineers, AI labs और large companies का ध्यान खींचता है, और कोई भी user source ले सकता है और उसका मालिक बन सकता है। मेरी opinion, साफ़ तौर पर एक opinion: जब तुम एक serious tool free में पा सको और code के मालिक बन सको, तो यह समझाना मुश्किल हो जाता है कि कोई ऐसी ही किसी चीज़ के लिए महीने के tens of thousands dollars क्यों देगा।
 

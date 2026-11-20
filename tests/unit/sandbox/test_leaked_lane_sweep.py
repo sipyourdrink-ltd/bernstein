@@ -877,6 +877,99 @@ def test_doctor_flags_a_leak_older_than_threshold(
     assert "sweep" in finding["fix"]
 
 
+def test_doctor_both_leak_kinds_include_recorded_status_and_age_evidence(
+    tmp_path: Path, audit_key: bytes, live_worktree: Path
+) -> None:
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+
+    _record_task(tmp_path, "T-2", "failed")
+    _record_create(tmp_path, audit_key, "sbx-old", task_ids=["T-2"])
+    before = _tree(tmp_path)
+    result = check_leaked_lanes(tmp_path, max_age_seconds=60, now=time.time() + 3600)
+    assert result["status"] == "WARN"
+    assert "findings" in result, "doctor must expose structured evidence, not only advisory prose"
+    rows = {row["kind"]: row for row in result["findings"]}
+    assert set(rows) == {"worktree", "sandbox"}
+    assert rows["worktree"]["task_statuses"] == {"T-1": "done"}
+    assert rows["sandbox"]["task_statuses"] == {"T-2": "failed"}
+    assert rows["worktree"]["age_source"] == "directory_birthtime_or_ctime"
+    assert rows["sandbox"]["age_source"] == "audit_session_create"
+    assert all(row["age_seconds"] > 60 and row["reason"] == "age_exceeded" for row in rows.values())
+    assert "T-1=done" in result["detail"] and "T-2=failed" in result["detail"]
+    assert _tree(tmp_path) == before
+
+
+@pytest.mark.parametrize("threshold", [-1, float("nan"), float("inf"), "invalid"])
+def test_doctor_invalid_threshold_is_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threshold) -> None:
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+
+    monkeypatch.setenv("BERNSTEIN_LEAK_MAX_AGE_SECONDS", str(threshold))
+    assert check_leaked_lanes(tmp_path)["status"] == "FAIL"
+
+
+def test_doctor_unreadable_task_evidence_is_an_error_and_writes_nothing(
+    tmp_path: Path, audit_key: bytes, live_worktree: Path
+) -> None:
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+
+    with (tmp_path / ".sdd/runtime/tasks.jsonl").open("a") as stream:
+        stream.write('{"id":"T-1","status":')
+    before = _tree(tmp_path)
+    result = check_leaked_lanes(tmp_path, max_age_seconds=0)
+    assert result["status"] == "FAIL"
+    assert "unavailable" in result["detail"]
+    assert _tree(tmp_path) == before
+
+
+@pytest.mark.parametrize("age", [None, float("nan"), float("inf"), -1])
+def test_doctor_unknown_age_is_not_a_clean_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, age) -> None:
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+    from bernstein.core.sandbox import leak_sweep
+
+    lane = leak_sweep.LeakedLane("sandbox", "sbx-unknown", ("T-1",), age, None)
+    monkeypatch.setattr(leak_sweep, "sweep_leaked_lanes", lambda *_a, **_kw: [lane])
+    result = check_leaked_lanes(tmp_path)
+    assert result["status"] == "WARN"
+    assert result["findings"][0]["age_seconds"] is None
+    assert result["findings"][0]["reason"] == "age_unavailable"
+    assert "unknown" in result["detail"].lower()
+
+
+def test_doctor_threshold_boundary_default_and_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.commands.doctor_cmd import check_leaked_lanes
+    from bernstein.core.sandbox import leak_sweep
+
+    lane = leak_sweep.LeakedLane("worktree", "wt-1", ("T-1",), 86400, None)
+    monkeypatch.setattr(leak_sweep, "sweep_leaked_lanes", lambda *_a, **_kw: [lane])
+    monkeypatch.delenv("BERNSTEIN_LEAK_MAX_AGE_SECONDS", raising=False)
+    assert check_leaked_lanes(tmp_path)["status"] == "PASS"
+    monkeypatch.setenv("BERNSTEIN_LEAK_MAX_AGE_SECONDS", "86399")
+    assert check_leaked_lanes(tmp_path)["status"] == "WARN"
+    assert check_leaked_lanes(tmp_path, max_age_seconds=86400)["status"] == "PASS"
+
+
+def test_combined_sweep_binds_both_kinds_to_one_task_replay(
+    tmp_path: Path, audit_key: bytes, live_worktree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.sandbox import leak_sweep
+
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    original = leak_sweep._load_task_statuses
+    calls = []
+
+    def load(sdd_dir):
+        calls.append(sdd_dir)
+        lookup = original(sdd_dir)
+        _record_task(tmp_path, "T-1", "open")
+        return lookup
+
+    monkeypatch.setattr(leak_sweep, "_load_task_statuses", load)
+    lanes = leak_sweep.sweep_leaked_lanes(tmp_path)
+    assert len(calls) == 1, "both leak kinds and their displayed status must share one replay snapshot"
+    assert {lane.kind for lane in lanes} == {"worktree", "sandbox"}
+    assert all(lane.task_statuses == (("T-1", "done"),) for lane in lanes)
+
+
 def test_worktree_gc_default_writes_nothing(tmp_path: Path, audit_key: bytes, live_worktree: Path) -> None:
     from bernstein.cli.commands.worktrees_cmd import worktrees_group
 

@@ -15,6 +15,7 @@ cloud scheduler.
 
 from __future__ import annotations
 
+import builtins  # noqa: TC003 - keep runtime annotation resolution working despite ScheduleStore.list.
 import hashlib
 import json
 import logging
@@ -502,7 +503,7 @@ class ScheduleStore:
                 return
             self._write(replace(schedule, extra={**schedule.extra, FIRE_CURSOR_KEY: cursor_epoch}))
 
-    def record_catch_up_skip(self, schedule_id: str, skipped_windows: list[int]) -> None:
+    def record_catch_up_skip(self, schedule_id: str, skipped_windows: builtins.list[int]) -> None:
         """Advance the cursor and retain the pending receipt in the same write."""
         with cross_process_lock(self._lock_for(schedule_id), timeout=10):
             schedule = self.get(schedule_id)

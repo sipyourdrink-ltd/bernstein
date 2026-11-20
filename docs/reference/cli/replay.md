@@ -74,7 +74,7 @@ The fingerprint shown after a replay is the Merkle head over the journal's event
 |---|---|---|
 | `RUN_ID_OR_TASK_ID` | required | Run ID, the literal `latest`, the literal `list`, or a task ID. |
 | `--sdd-dir PATH` | `.sdd` | Path to the `.sdd` state directory. |
-| `--as-json` | off | Emit raw JSONL (one event per line) instead of the Rich table. |
+| `--as-json` | off | For recorded-run replay, emit one JSON object with `run_id`, an `events` array, and optional `metadata`, instead of the Rich table. |
 | `--limit N` | none | Show only the first N events. |
 | `--model NAME` | none | Override model for **task-trace replay** (e.g. `opus`, `sonnet`, `o3`). |
 | `--extra-context TEXT` | none | Append extra hint text to the replayed task description. |
@@ -107,6 +107,7 @@ The flag is `--as-json`, and every subcommand emits a payload on success:
 
 | Surface | Emits on success |
 |---|---|
+| `bernstein replay <RUN_ID> --as-json` | `{run_id, events[], metadata?}` for a non-empty recorded run; `--limit` bounds the events array. |
 | `bernstein replay <AGENT_ID>` | `{agent_id, head_hash, steps, entries[]}` |
 | `bernstein replay <RUN_ID> --verify` | chain verdict, head hash, and the divergent step when one exists |
 | `bernstein replay diff-journal A B` | `{diverged, seq, fields_changed[], left_values, right_values, reason}` |
@@ -114,6 +115,12 @@ The flag is `--as-json`, and every subcommand emits a payload on success:
 | `bernstein replay export` | `{agent_id, output, head_hash, steps, signed}` |
 | `bernstein replay publish` | the same, **plus `original_head_hash`** |
 | `bernstein replay verify <RECEIPT>` | `{ok, head_hash, steps, errors, signed}` |
+
+Recorded-run output is a single JSON envelope, not one JSON object per event.
+Use `.events[]` to select its events, as in the examples above. `metadata`
+is included only when recorded session metadata is available. This envelope
+is distinct from the per-agent journal view (`entries[]`) and the
+run-journal verification or receipt-verification results shown in the table.
 
 `publish` reporting both hashes is the machine-readable form of what redaction
 means: it rewrites the payloads, so the published head is *not* the exported

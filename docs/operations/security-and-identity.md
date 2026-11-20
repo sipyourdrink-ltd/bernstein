@@ -844,3 +844,30 @@ Compliance modules in code (`core/security/`):
 | Vault / secrets                    | `src/bernstein/core/security/vault/`, `vault_injector.py`             |
 | Tenant isolation                   | `src/bernstein/core/security/tenant_isolation.py`, `tenanting.py`     |
 | Permission modes (Claude profiles) | `src/bernstein/core/security/{permission_mode,permission_matrix,permission_rules}.py` |
+
+### Conduct scope comparison
+
+The pure `aggregate_conduct` helper accepts optional `scope_projection` and
+`recorded_activities` arguments and adds a `scope_comparison` output section.
+The supplied `DelegationScope` must be the effective scope for that principal
+throughout the requested period. Resolve it from verified authority records
+before calling; split periods at authority changes. This report does not replay
+the registry, verify grant chains, discover journals, remap identities or act on
+its results.
+
+Each `ConductScopeActivity` wraps an existing recorded activity's **exercised**
+scope, source run/principal, activity name and original journal event-index
+range. Supply verified activity records corresponding to the selected source
+projections. Do not substitute an entitlement ceiling for exercised scope or
+infer permissions from activity names/counts. The helper uses the existing
+`DelegationScope.narrowing_violations` rules, including the distinction between
+globs and path prefixes, and reports every divergent axis with the source
+citation and recorded scope.
+
+Missing period scope is `unavailable`. Missing activity records, absent recorded
+scope and unverified source runs remain explicit gaps; known comparisons plus
+gaps produce `partial`, never a clean-period assertion. A comparison without
+divergences describes only the supplied recorded activity scopes, not unobserved
+activity. Input ordering does not change canonical output. Source projections,
+counts, coverage and the existing indivisible window-selection rule remain the
+same; activity citations always use run-local indices.

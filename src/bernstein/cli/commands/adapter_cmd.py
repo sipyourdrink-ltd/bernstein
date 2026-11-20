@@ -298,7 +298,9 @@ def list_adapters(as_json: bool) -> None:
     Pulls the catalogue from ``bernstein.adapters.registry`` (built-ins
     plus any third-party adapters registered through the
     ``bernstein.adapters`` entry-point group). For each adapter we also
-    report whether its upstream CLI binary is on ``$PATH``.
+    report whether its upstream CLI binary is on ``$PATH``. The final count
+    is selectable registry names, including aliases and ``generic``, excluding
+    the ``mock`` stub. It does not imply binaries are installed or admitted.
     """
     rows = _enumerate_adapters()
 
@@ -321,3 +323,7 @@ def list_adapters(as_json: bool) -> None:
         }[row["status"]]
         table.add_row(row["name"], row["source"], row["binary"] or "-", status_style)
     console.print(table)
+
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    click.echo(f"Selectable CLI agent adapter names: {len(selectable_adapter_names())}")

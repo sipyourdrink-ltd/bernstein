@@ -148,3 +148,28 @@ its activity entries were not found.
 
 - [`deterministic-replay.md`](deterministic-replay.md) -- the canonical event journal.
 - [`stall-escalation.md`](stall-escalation.md) -- another journal-anchored receipt.
+
+### Bounded render probes
+
+The optional `RenderProbeDriver` capability is implemented by the existing
+`PlaywrightBrowserDriver`. Call `render_probe(environment=..., elements=...)`
+with a complete `EnvironmentDescriptor` and an explicit mapping of stable
+element paths to selectors. Each selector must match exactly one element;
+this operation does not crawl routes or discover selectors.
+
+The result is raw computed styles under `computed-css-v1`: display, color,
+width, height, font family, font size, visibility and opacity. `available=False`
+names an unavailable engine, incomplete/mismatched environment, unresolved
+font set or incomplete element capture. Unavailable output has no descriptor
+or partial styles. Existing basic browser drivers remain compatible.
+
+The caller owns the frozen capture configuration, the resolved local font
+bundle content hash, and animation/caret control declarations. The driver
+checks actual browser type/version, viewport, pixel ratio, locale, timezone,
+clock and media preferences against that declaration. It checks font loading
+completion but does not infer font bytes from CSS family names or install
+determinism controls. Only a capture owner with that evidence can declare the
+complete environment. Raw probes are not full render receipts or base/head
+comparisons; those use the existing receipt schema and comparison layer.
+
+Render probe payloads require nonempty CSS strings, a measured timezone-aware clock, and boolean control declarations. Failed browser font faces return unavailable even when the overall font set has finished loading.

@@ -3,19 +3,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import anyio
 import pytest
-from mcp.client.experimental.task_handlers import ExperimentalTaskHandlers
-from mcp.client.session import ClientSession
-from mcp.server.fastmcp import FastMCP
-from mcp.shared.memory import create_client_server_memory_streams
+from mcp.server.mcpserver import MCPServer
 from mcp.types import (
     CallToolResult,
     CancelTaskRequest,
@@ -43,8 +37,22 @@ from bernstein.mcp.server import (
     _project_task_helper,  # pyright: ignore[reportPrivateUsage]
     create_mcp_server,
 )
+from tests.support.mcp_wire import legacy_mcp_session
 
 _KEY = b"k" * 32
+
+
+def _handler(mcp: MCPServer[None], request_type: Any) -> Any:
+    from types import SimpleNamespace
+
+    method = request_type.model_fields["method"].default
+    entry = mcp._lowlevel_server.get_request_handler(method)
+    assert entry is not None
+
+    async def invoke(request: Any) -> Any:
+        return SimpleNamespace(root=await entry.handler(None, request.params))
+
+    return invoke
 
 
 @pytest.fixture
@@ -117,15 +125,15 @@ def test_get_journal_head_is_quiet_if_journal_disappears(caplog: pytest.LogCaptu
 async def test_project_task_helper() -> None:
     data = _make_task_dict("t-123", status="done", result_summary="Success summary")
     task_obj = _project_task_helper(data)
-    assert task_obj.taskId == "t-123"
+    assert task_obj.task_id == "t-123"
     assert task_obj.status == "completed"
-    assert task_obj.statusMessage == "Success summary"
+    assert task_obj.status_message == "Success summary"
 
 
 @pytest.mark.asyncio
 async def test_get_task_endpoint(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[GetTaskRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, GetTaskRequest)  # pyright: ignore[reportPrivateUsage]
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -137,15 +145,15 @@ async def test_get_task_endpoint(mock_client: AsyncMock) -> None:
         server_res = await handler(req)
         res = server_res.root
         assert isinstance(res, GetTaskResult)
-        assert res.taskId == "task-abc"
+        assert res.task_id == "task-abc"
         assert res.status == "working"
-        assert res.statusMessage == "Task is running"
+        assert res.status_message == "Task is running"
 
 
 @pytest.mark.asyncio
 async def test_get_task_result_endpoint(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[GetTaskPayloadRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, GetTaskPayloadRequest)  # pyright: ignore[reportPrivateUsage]
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -157,7 +165,7 @@ async def test_get_task_result_endpoint(mock_client: AsyncMock) -> None:
         server_res = await handler(req)
         res = server_res.root
         assert isinstance(res, CallToolResult)
-        assert not res.isError
+        assert not res.is_error
         first_content = res.content[0]
         assert isinstance(first_content, TextContent)
         assert first_content.text == "Done task"
@@ -166,7 +174,7 @@ async def test_get_task_result_endpoint(mock_client: AsyncMock) -> None:
 @pytest.mark.asyncio
 async def test_list_tasks_endpoint(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[ListTasksRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, ListTasksRequest)  # pyright: ignore[reportPrivateUsage]
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -190,16 +198,16 @@ async def test_list_tasks_endpoint(mock_client: AsyncMock) -> None:
         assert isinstance(res, ListTasksResult)
         assert res.tasks is not None
         assert len(res.tasks) == 2
-        assert res.tasks[0].taskId == "task-1"
+        assert res.tasks[0].task_id == "task-1"
         assert res.tasks[0].status == "completed"
-        assert res.tasks[1].taskId == "task-2"
+        assert res.tasks[1].task_id == "task-2"
         assert res.tasks[1].status == "failed"
 
 
 @pytest.mark.asyncio
 async def test_cancel_task_endpoint(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[CancelTaskRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, CancelTaskRequest)  # pyright: ignore[reportPrivateUsage]
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -211,54 +219,32 @@ async def test_cancel_task_endpoint(mock_client: AsyncMock) -> None:
         server_res = await handler(req)
         res = server_res.root
         assert isinstance(res, CancelTaskResult)
-        assert res.taskId == "task-abc"
+        assert res.task_id == "task-abc"
         assert res.status == "cancelled"
 
 
 @pytest.mark.asyncio
 async def test_bernstein_run_task_augmented_forwards_trace_context(mock_client: AsyncMock) -> None:
-    from mcp.types import CallToolRequest, CallToolRequestParams
-
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[CallToolRequest]  # pyright: ignore[reportPrivateUsage]
-
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json = MagicMock(return_value=_make_task_dict("task-tasks-support", status="open"))
     mock_client.post = AsyncMock(return_value=mock_response)
-
-    # This call is task-augmented: the client sent task metadata, which is
-    # what makes a CreateTaskResult the correct response shape.
-    mock_experimental = MagicMock()
-    mock_experimental.is_task = True
-    mock_experimental.client_supports_tasks = True
-
-    mock_meta = MagicMock()
-    mock_meta.model_extra = {
-        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        "tracestate": "state-xyz",
-        "baggage": "baggage-abc",
-    }
-
-    mock_request_context = MagicMock()
-    mock_request_context.experimental = mock_experimental
-    mock_request_context.meta = mock_meta
-
-    # Set request_context on low-level server using contextvar
-    from mcp.server.lowlevel.server import request_ctx
-
-    token = request_ctx.set(mock_request_context)
-
-    try:
-        with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
-            req = CallToolRequest(params=CallToolRequestParams(name="bernstein_run", arguments={"goal": "Task run"}))
-            server_res = await handler(req)
-            res = server_res.root
-    finally:
-        request_ctx.reset(token)
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        async with legacy_mcp_session(mcp) as session:
+            res = await session.call_tool_as_task(
+                "bernstein_run",
+                {"goal": "Task run"},
+                meta={
+                    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                    "tracestate": "state-xyz",
+                    "baggage": "baggage-abc",
+                    "progressToken": "trace-test",
+                },
+            )
 
     assert isinstance(res, CreateTaskResult)
-    assert res.task.taskId == "task-tasks-support"
+    assert res.task.task_id == "task-tasks-support"
     assert res.task.status == "working"
 
     # Assert trace context headers were forwarded
@@ -377,7 +363,7 @@ async def test_get_task_result_signals_error_for_terminal_error_states(
     mock_client: AsyncMock, error_status: str
 ) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[GetTaskPayloadRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, GetTaskPayloadRequest)  # pyright: ignore[reportPrivateUsage]
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json = MagicMock(return_value=_make_task_dict("task-err", status=error_status))
@@ -387,13 +373,13 @@ async def test_get_task_result_signals_error_for_terminal_error_states(
         req = GetTaskPayloadRequest(params=GetTaskPayloadRequestParams(taskId="task-err"))
         res = (await handler(req)).root
         assert isinstance(res, CallToolResult)
-        assert res.isError is True
+        assert res.is_error is True
 
 
 @pytest.mark.asyncio
 async def test_get_task_result_guards_non_terminal_task(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[GetTaskPayloadRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, GetTaskPayloadRequest)  # pyright: ignore[reportPrivateUsage]
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json = MagicMock(return_value=_make_task_dict("task-inflight", status="in_progress"))
@@ -404,7 +390,7 @@ async def test_get_task_result_guards_non_terminal_task(mock_client: AsyncMock) 
         res = (await handler(req)).root
         assert isinstance(res, CallToolResult)
         # An in-flight task has no result: signal error, never fabricate "Task completed".
-        assert res.isError is True
+        assert res.is_error is True
         first_content = res.content[0]
         assert isinstance(first_content, TextContent)
         assert "still" in first_content.text
@@ -469,8 +455,8 @@ def test_project_task_helper_last_updated_derived_from_last_transition() -> None
         closed_at=created + 180,
     )
     task_obj = _project_task_helper(data)
-    assert task_obj.createdAt == datetime.fromtimestamp(created, tz=UTC)
-    assert task_obj.lastUpdatedAt == datetime.fromtimestamp(created + 180, tz=UTC)
+    assert datetime.fromisoformat(task_obj.created_at) == datetime.fromtimestamp(created, tz=UTC)
+    assert datetime.fromisoformat(task_obj.last_updated_at) == datetime.fromtimestamp(created + 180, tz=UTC)
 
 
 def test_project_task_helper_last_updated_is_deterministic() -> None:
@@ -480,19 +466,19 @@ def test_project_task_helper_last_updated_is_deterministic() -> None:
     change-detection clients and breaks the deterministic-substrate contract.
     """
     data = _make_task_dict("t-idem", status="claimed", created_at=1711574400.0, claimed_at=1711574460.0)
-    first = _project_task_helper(data).lastUpdatedAt
-    second = _project_task_helper(data).lastUpdatedAt
+    first = _project_task_helper(data).last_updated_at
+    second = _project_task_helper(data).last_updated_at
     assert first == second
     # The stable value is the newest transition (claimed_at here), not now().
-    assert first == datetime.fromtimestamp(1711574460.0, tz=UTC)
+    assert datetime.fromisoformat(first) == datetime.fromtimestamp(1711574460.0, tz=UTC)
 
 
 def test_project_task_helper_last_updated_falls_back_to_created_at() -> None:
     """A freshly-opened task (no later transitions) reports lastUpdatedAt == createdAt."""
     data = _make_task_dict("t-open", status="open", created_at=1711574400.0)
     task_obj = _project_task_helper(data)
-    assert task_obj.lastUpdatedAt == task_obj.createdAt
-    assert task_obj.lastUpdatedAt == datetime.fromtimestamp(1711574400.0, tz=UTC)
+    assert task_obj.last_updated_at == task_obj.created_at
+    assert datetime.fromisoformat(task_obj.last_updated_at) == datetime.fromtimestamp(1711574400.0, tz=UTC)
 
 
 def test_task_response_exposes_completion_timestamps() -> None:
@@ -529,7 +515,7 @@ def _paginated_envelope(tasks: list[dict[str, Any]], *, total: int, limit: int, 
 @pytest.mark.asyncio
 async def test_list_tasks_requests_pagination_and_sets_next_cursor(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[ListTasksRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, ListTasksRequest)  # pyright: ignore[reportPrivateUsage]
 
     page = [_make_task_dict(f"task-{i}", status="open") for i in range(100)]
     mock_response = MagicMock()
@@ -548,13 +534,13 @@ async def test_list_tasks_requests_pagination_and_sets_next_cursor(mock_client: 
     assert sent_params.get("offset") == 0
     assert len(res.tasks) == 100
     # 250 total, only 100 returned -> the client can page further.
-    assert res.nextCursor is not None
+    assert res.next_cursor is not None
 
 
 @pytest.mark.asyncio
 async def test_list_tasks_no_next_cursor_at_tail(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[ListTasksRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, ListTasksRequest)  # pyright: ignore[reportPrivateUsage]
 
     page = [_make_task_dict("task-only", status="done")]
     mock_response = MagicMock()
@@ -567,13 +553,13 @@ async def test_list_tasks_no_next_cursor_at_tail(mock_client: AsyncMock) -> None
         assert isinstance(res, ListTasksResult)
 
     assert len(res.tasks) == 1
-    assert res.nextCursor is None
+    assert res.next_cursor is None
 
 
 @pytest.mark.asyncio
 async def test_list_tasks_cursor_translates_to_offset(mock_client: AsyncMock) -> None:
     mcp = create_mcp_server()
-    handler = mcp._mcp_server.request_handlers[ListTasksRequest]  # pyright: ignore[reportPrivateUsage]
+    handler = _handler(mcp, ListTasksRequest)  # pyright: ignore[reportPrivateUsage]
 
     # Page 1: 100 of 150 -> yields a cursor pointing past the first page.
     page1 = [_make_task_dict(f"task-{i}") for i in range(100)]
@@ -585,7 +571,7 @@ async def test_list_tasks_cursor_translates_to_offset(mock_client: AsyncMock) ->
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         res1 = (await handler(ListTasksRequest())).root
         assert isinstance(res1, ListTasksResult)
-        cursor = res1.nextCursor
+        cursor = res1.next_cursor
         assert cursor is not None
 
         # Page 2: feed the cursor back; the handler must request offset=100.
@@ -602,7 +588,7 @@ async def test_list_tasks_cursor_translates_to_offset(mock_client: AsyncMock) ->
     assert sent_params.get("offset") == 100
     assert len(res2.tasks) == 50
     # 100 + 100 >= 150 -> tail reached.
-    assert res2.nextCursor is None
+    assert res2.next_cursor is None
 
 
 # ---------------------------------------------------------------------------
@@ -610,49 +596,9 @@ async def test_list_tasks_cursor_translates_to_offset(mock_client: AsyncMock) ->
 # ---------------------------------------------------------------------------
 
 
-async def _stub_list_tasks(context: Any, params: Any) -> ListTasksResult:
-    """Client-side ``tasks/list`` handler used only to declare the capability."""
-    return ListTasksResult(tasks=[])
-
-
-@asynccontextmanager
-async def _tasks_capable_session(mcp: FastMCP[None]) -> AsyncGenerator[ClientSession, None]:
-    """Yield an in-memory client session that declares the tasks capability.
-
-    ``mcp.shared.memory.create_connected_server_and_client_session`` builds a
-    session with no experimental task handlers, so it advertises no ``tasks``
-    capability and cannot distinguish the two predicates under test. The SDK
-    derives ``ClientTasksCapability`` from the configured handlers, so wiring
-    one non-default handler is what makes the server see a tasks-capable
-    client.
-    """
-    low = mcp._mcp_server  # pyright: ignore[reportPrivateUsage]
-    handlers = ExperimentalTaskHandlers(list_tasks=_stub_list_tasks)
-    # Guard the fixture itself: if the SDK stops deriving the capability from
-    # the handlers, the gating tests below would silently stop testing gating.
-    assert handlers.build_capability() is not None
-    async with create_client_server_memory_streams() as (client_streams, server_streams):
-        client_read, client_write = client_streams
-        server_read, server_write = server_streams
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(
-                lambda: low.run(
-                    server_read,
-                    server_write,
-                    low.create_initialization_options(),
-                    raise_exceptions=False,
-                )
-            )
-            try:
-                async with ClientSession(
-                    read_stream=client_read,
-                    write_stream=client_write,
-                    experimental_task_handlers=handlers,
-                ) as session:
-                    await session.initialize()
-                    yield session
-            finally:
-                tg.cancel_scope.cancel()
+# SDK 2 has no experimental Tasks client; retain the same behavior tests
+# through a typed reference client over real JSON-RPC streams.
+_tasks_capable_session = legacy_mcp_session
 
 
 @pytest.mark.asyncio
@@ -677,7 +623,7 @@ async def test_plain_call_from_tasks_capable_client_returns_call_tool_result(
             res = await session.call_tool("bernstein_run", {"goal": "Plain tools/call"})
 
     assert isinstance(res, CallToolResult)
-    assert res.isError is False
+    assert res.is_error is False
     assert res.content, "a CallToolResult must carry the tool's payload"
     block = res.content[0]
     assert isinstance(block, TextContent)
@@ -700,19 +646,19 @@ async def test_task_augmented_call_returns_create_task_result(mock_client: Async
 
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         async with _tasks_capable_session(mcp) as session:
-            res = await session.experimental.call_tool_as_task(
+            res = await session.call_tool_as_task(
                 "bernstein_run",
                 {"goal": "Task augmented tools/call"},
             )
 
     assert isinstance(res, CreateTaskResult)
-    assert res.task.taskId == "task-augmented-call"
+    assert res.task.task_id == "task-augmented-call"
     assert res.task.status == "working"
 
 
 @pytest.mark.asyncio
 async def test_tools_list_advertises_task_support() -> None:
-    """``execution.taskSupport`` must survive the wire into tools/list."""
+    """``execution.task_support`` must survive the wire into tools/list."""
     mcp = create_mcp_server()
 
     async with _tasks_capable_session(mcp) as session:
@@ -722,11 +668,11 @@ async def test_tools_list_advertises_task_support() -> None:
 
     run_tool = by_name["bernstein_run"]
     assert run_tool.execution is not None
-    assert run_tool.execution.taskSupport == "optional"
+    assert run_tool.execution.task_support == "optional"
 
     handle_tool = by_name["bernstein_run_status"]
     assert handle_tool.execution is not None
-    assert handle_tool.execution.taskSupport == "forbidden"
+    assert handle_tool.execution.task_support == "forbidden"
 
     # A tool with no declared mode advertises nothing, which the extension
     # reads as the "forbidden" default.
@@ -751,9 +697,9 @@ async def test_task_row_round_trips_to_a_polling_client(mock_client: AsyncMock) 
 
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         async with _tasks_capable_session(mcp) as session:
-            status = await session.experimental.get_task("task-poll")
+            status = await session.get_task("task-poll")
 
     assert isinstance(status, GetTaskResult)
-    assert status.taskId == "task-poll"
+    assert status.task_id == "task-poll"
     assert status.status == "working"
     assert status.ttl is not None

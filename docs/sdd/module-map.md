@@ -415,6 +415,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `prompts.py`          | Built-in MCP prompts for the Bernstein server |
 | `remote_transport.py` | Streamable HTTP transport for Bernstein MCP server |
 | `routine_tools.py`    | MCP tools for the rt-003 Routine <-> Scenario bridge |
+| `sdk_compat.py`       | Retain the 2025 Tasks wire contract on the MCP 2.3 SDK |
 | `server.py`           | Bernstein MCP server |
 | `signal_paths.py`     | Containment barrier for the MCP shutdown-signal path |
 | `streaming.py`        | In-flight tool-call tracking with cancellation and partial-result preservation |

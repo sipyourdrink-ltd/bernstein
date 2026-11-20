@@ -51,7 +51,7 @@ Nazwiska na okresowej liście idą w kolejności alfabetycznej. Nie według licz
 
 ## GitHub Discussions i strona na LinkedIn nie konkurują ze sobą
 
-Robią różne rzeczy. Dla szybkich wiadomości (wydanie, zmiana, aktualizacja społeczności) strona na LinkedIn jest szybszym kanałem. GitHub Discussions to miejsce, gdzie naprawdę uczestniczysz w projekcie: widzisz kontekst, dyskutujesz, proponujesz, znajdujesz odpowiedź, i zostaje to zapisane tam, gdzie kolejna osoba może to znaleźć. Jeśli chcesz zarówno wiadomości, jak i głębi, śledź oba. Decyzje nadal zapadają w issues i pull requestach; to się nie zmieniło.
+Robią różne rzeczy. Dla szybkich wiadomości (wydanie, zmiana, aktualizacja społeczności) strona na LinkedIn jest szybszym kanałem. GitHub Discussions to miejsce, gdzie naprawdę uczestniczysz w projekcie: widzisz kontekst, dyskutujesz, proponujesz, znajdujesz odpowiedź, i zostaje to zapisane tam, gdzie kolejna osoba może to znaleźć. Jeśli chcesz zarówno wiadomości, jak i głębi, śledź oba. Decyzje dotyczące propozycji współtwórców i pull requestów zapadają w odpowiadających im publicznych issues lub pull requestach; maintainer planuje przyszłe prace prywatnie.
 
 ## Dlaczego w ogóle to robię
 
@@ -88,8 +88,6 @@ I jeszcze jedna ludzka sprawa. Jeśli kiedykolwiek pojawi się prawdziwa płatna
 ## Kto patrzy i dlaczego to ważne
 
 Oczywiście nie możemy opublikować całego naszego pipeline'u analitycznego, ale wszystko wskazuje na to, że nie tylko my czytamy. Ludzie z dużych firm IT i laboratoriów AI pojawiają się na stronie dość regularnie i zadają dość konkretne pytania o dokumentację. Konkurencja, załóżmy, też nie śpi.
-
-I przy okazji: według naszej pasywnej analityki, po usunięciu oczywistego szumu botów, Bernstein działa teraz regularnie na co najmniej około 3000 maszynach na całym świecie. Myślę, że to całkiem szanowany wynik. Bernstein domyślnie nie wysyła żadnej telemetrii produktowej i ta liczba nie pochodzi z żadnej; to sygnał pasywny, i to wszystko, co powiem o metodzie.
 
 Więc sytuacja sama w sobie jest już ciekawa. Budujemy darmowy produkt, którego ludzie naprawdę używają, przyciągający uwagę inżynierów, laboratoriów AI i dużych firm, a każdy użytkownik może wziąć kod źródłowy i być jego właścicielem. Moja opinia, wyraźnie opinia: kiedy można dostać poważne narzędzie za darmo i być właścicielem kodu, trudno wytłumaczyć, dlaczego ktokolwiek miałby płacić dziesiątki tysięcy dolarów miesięcznie za coś podobnego.
 

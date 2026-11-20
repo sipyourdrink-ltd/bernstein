@@ -9,6 +9,16 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import httpx
+import pytest
+
+from bernstein.adapters.base import CLIAdapter
+from bernstein.core.agents.spawner import AgentSpawner
+from bernstein.core.orchestration.orchestrator import Orchestrator
+from bernstein.core.replay.journal import EventJournal
+from bernstein.core.tasks.models import OrchestratorConfig
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
 
@@ -46,7 +56,22 @@ def test_no_second_replay_jsonl_recorder_path() -> None:
     assert hits == [], f"replay.jsonl recorder path should be gone; found: {hits}"
 
 
-def test_orchestrator_uses_event_journal() -> None:
+def test_orchestrator_uses_event_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The orchestrator wires the canonical EventJournal as its recorder."""
-    orchestrator = (_SRC / "core" / "orchestration" / "orchestrator.py").read_text()
-    assert "EventJournal(run_id=run_id" in orchestrator
+    monkeypatch.setenv("BERNSTEIN_RUN_ID", "single-recorder")
+    monkeypatch.setenv("BERNSTEIN_AUDIT", "0")
+    adapter = MagicMock(spec=CLIAdapter)
+    spawner = AgentSpawner(adapter, tmp_path / "templates", tmp_path, default_model="test")
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=[]))) as client:
+        orchestrator = Orchestrator(OrchestratorConfig(evolution_enabled=False), spawner, tmp_path, client=client)
+        try:
+            journal = orchestrator._recorder
+            assert isinstance(journal, EventJournal)
+            assert journal.path == tmp_path / ".sdd" / "runs" / "single-recorder" / "journal.jsonl"
+            journal.record("guard_event")
+            assert journal.verify().chain_consistent
+            assert journal.event_count() == 1
+            assert not list((tmp_path / ".sdd").rglob("replay.jsonl"))
+            adapter.spawn.assert_not_called()
+        finally:
+            orchestrator._executor.shutdown(wait=True, cancel_futures=True)
