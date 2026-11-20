@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import tomllib
 from collections.abc import Iterator
+from io import StringIO
 from itertools import groupby
 from pathlib import Path
 
@@ -18,7 +19,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GIT_EMAIL_KEYS = {"user.email", "author.email", "committer.email"}
 GIT_EMAIL_ENV = {"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"}
 EMAIL_SETTING = re.compile(r"(?:user|author|committer)\.email|GIT_(?:AUTHOR|COMMITTER)_EMAIL|--author\b", re.I)
-PYTHON = re.compile(r"""(?:^|[\s/(])python[\d.]*['"]?(?=\s|$)""")
+PYTHON = re.compile(r"""(?:^|[\s/(;|&])['"]?python[\d.]*['"]?(?=\s|$)""")
+# A shell word can span lines or join quoted and unquoted fragments. Its
+# unquoted closing delimiter (including a substitution's ")") belongs to Bash.
+SHELL_WORD = re.compile(
+    r"""[ \t]+(?P<word>(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s;&|()<>'"\\])+)(?=$|[\s;&|()<>])""", re.S
+)
 HEREDOC = re.compile(r"""(?<!<)<<(?!<)(?P<tabs>-?)[ \t]*(?P<q>['"]?)(?P<end>\w+)(?P=q)""")
 CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--unset", "--unset-all", "get", "unset"}
 ACTION_IDENTITY_INPUTS = {
@@ -66,39 +72,96 @@ def _argument_emails(args: list[str]) -> Iterator[str]:
             yield _author_email(value if equal else args[i + 1])
 
 
-def _python_reads_program_from_stdin(arguments: str) -> bool:
-    """Python's script selector determines whether the heredoc contains code or input data."""
-    words = iter(shlex.split(arguments, comments=True))
+def _python_selector(words: Iterator[str]) -> str | None:
+    """Identify a program supplied on stdin or with -c, consuming only its options."""
     for word in words:
-        if word == "-":
-            return True  # Remaining words are arguments to the program on stdin.
+        if word in {"-", "-c"}:
+            return word
         if word == "--":
-            return next(words, "-") == "-"
+            return "-" if next(words, "-") == "-" else None
         if not word.startswith("-") or word.startswith(("-c", "-m")):
-            return False
+            return None
         if word in {"-W", "-X", "--check-hash-based-pycs"}:
             next(words, None)
-    return True
+    return "-"
+
+
+def _shell_words(script: str, pos: int) -> Iterator[re.Match[str]]:
+    while word := SHELL_WORD.match(script, pos):
+        yield word
+        pos = word.end()
+
+
+def _in_shell_code(prefix: str) -> bool:
+    """A command substitution starts a shell context even inside double quotes."""
+    closers = []
+    chars = enumerate(prefix)
+    for pos, char in chars:
+        context = closers[-1] if closers else None
+        if char == context:
+            closers.pop()
+        elif context == "'":
+            continue
+        elif char == "\\":
+            next(chars, None)
+        elif prefix.startswith("$(", pos):
+            closers.append(")")
+            next(chars, None)
+        elif context != '"':
+            if char in {"'", '"', "("}:
+                closers.append(")" if char == "(" else char)
+            elif char == "#" and (pos == 0 or prefix[pos - 1] in " \t;&|()<>"):
+                return False
+    return not closers or closers[-1] == ")"
+
+
+def _read_python_commands(line: str, lines: StringIO) -> tuple[str, list[str]]:
+    """Return the shell line with each complete -c program extracted as one argument."""
+    script = lines.getvalue()
+    prefix = []
+    programs = []
+    pos = 0
+    while interpreter := PYTHON.search(line, pos):
+        start = lines.tell() - len(line)
+        words = _shell_words(script, start + interpreter.end())
+        if (
+            not _in_shell_code("".join(prefix) + line[: interpreter.end()])
+            or _python_selector(shlex.split(word["word"])[0] for word in words) != "-c"
+            or (program := next(words, None)) is None
+        ):
+            pos = interpreter.end()
+            continue
+        programs.append(shlex.split(program["word"])[0])
+        prefix.append(script[start : program.start("word")] + "''")
+        lines.seek(program.end())
+        line = lines.readline()
+        pos = 0
+    return "".join(prefix) + line, programs
 
 
 def _shell_emails(script: str) -> Iterator[str]:
     if not EMAIL_SETTING.search(script):
         return
-    lines = iter(re.sub(r"\\\r?\n[ \t]*", " ", script).splitlines())
+    lines = StringIO(re.sub(r"\\\r?\n[ \t]*", " ", script), newline=None)
     for line in lines:
         if line.lstrip().startswith("#"):
             continue
+        line, programs = _read_python_commands(line, lines)
+        for program in programs:
+            yield from _python_emails(program)
         heredoc = HEREDOC.search(line)
         if heredoc and (interpreters := list(PYTHON.finditer(line[: heredoc.start()]))):
             body = []
             for raw in lines:
+                raw = raw.removesuffix("\n")
                 source_line = raw.lstrip("\t") if heredoc["tabs"] else raw
                 if source_line == heredoc["end"]:
                     break
                 body.append(source_line)
             else:
                 raise AssertionError(f"Unterminated Python heredoc: {line}")
-            if _python_reads_program_from_stdin(line[interpreters[-1].end() : heredoc.start()]):
+            arguments = shlex.split(line[interpreters[-1].end() : heredoc.start()], comments=True)
+            if _python_selector(iter(arguments)) == "-":
                 yield from _python_emails("\n".join(body))
         if EMAIL_SETTING.search(line):
             # PowerShell exposes process environment variables through its env: drive.
@@ -107,12 +170,7 @@ def _shell_emails(script: str) -> Iterator[str]:
             lexer.whitespace_split = True
             for separator, words in groupby(lexer, lambda word: word in {"&&", "||", ";", "|", "&"}):
                 if not separator:
-                    args = list(words)
-                    yield from _argument_emails(args)
-                    if "-c" in args:
-                        i = args.index("-c")
-                        if i + 1 < len(args) and any(PYTHON.search(arg) for arg in args[:i]):
-                            yield from _python_emails(args[i + 1])
+                    yield from _argument_emails(list(words))
 
 
 def _python_emails(source: str) -> Iterator[str]:
@@ -223,6 +281,30 @@ def test_inline_workflow_python_checks_commit_email(form: str, email: str) -> No
     }[form]
     assert list(_workflow_emails(step)) == [email]
     assert (email in _allowed_emails()) == (email != "other@example.org")
+
+
+@pytest.mark.parametrize("email", ["41898282+github-actions[bot]@users.noreply.github.com", "other@example.org"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        '''uv run python -c "\nenv = {\n    'GIT_AUTHOR_EMAIL': 'ADDRESS',\n}\n"''',
+        """value=$(python3 -c 'env = {"GIT_AUTHOR_EMAIL": "ADDRESS"}')""",
+        '''value="$(printf '%s' input | python3 -c 'import sys\nenv = {"GIT_AUTHOR_EMAIL": "ADDRESS"}' 2>/dev/null || true)"''',
+    ],
+    ids=["airgap-multiline", "project-pulse-substitution", "demo-cycle-piped-substitution"],
+)
+def test_quoted_python_command_keeps_shell_boundaries(template: str, email: str) -> None:
+    script = template.replace("ADDRESS", email)
+    assert list(_workflow_emails({"run": script})) == [email]
+    assert (email in _allowed_emails()) == (email != "other@example.org")
+
+
+def test_python_command_respects_quotes_and_comments() -> None:
+    command = """python -c 'env = {"GIT_AUTHOR_EMAIL": "member@example.org"}'"""
+    assert list(_shell_emails(f"true # {command}")) == []
+    assert list(_shell_emails("printf '%s' " + shlex.quote(command))) == []
+    assert list(_shell_emails(command.replace("python", '"python"'))) == ["member@example.org"]
+    assert list(_shell_emails("printf input|" + command)) == ["member@example.org"]
 
 
 @pytest.mark.parametrize("email", ["41898282+github-actions[bot]@users.noreply.github.com", "other@example.org"])
