@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Почему планировщик — обычный Python и чем за это платим: [почему детерминизм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### повседневные команды
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Контрольные точки прогона попадают в `.sdd/runs/<run_id>/` на каждом узле. Возобновление проверяет хеш манифеста в начале прогона, поэтому изменившаяся спецификация приводит к отказу, а не к молчаливому выполнению другого манифеста. См. [манифесты workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Контрольные точки прогона попадают в `.sdd/runs/<run_id>/` на каждом узле. Возобновление проверяет хеш манифеста в начале прогона, поэтому изменившаяся спецификация приводит к отказу, а не к молчаливому выполнению другого манифеста. См. [манифесты workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). При возобновлении передайте то же значение `-g` ещё раз, чтобы подставить его вместо `{goal}` в промпты незавершённых узлов.
+
+`bernstein compliance controls` показывает наборы тестов для каждого контроля и последний полный результат измерения, если он есть. [Покрытие тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Гейты гигиены репозитория: `bernstein readme-l10n verify` роняет PR, в котором переводы README разошлись с английским источником (называя устаревшую секцию), `bernstein readme-l10n sync` перепривязывает их после правки английского. См. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [Руководство донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описывает запуск воркера и бюджет, который вы задаёте, [руководство проекта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — объявление манифеста, а [модель угроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — что каждая граница защищает, а что нет. Запуск одной командой ещё не выпущен: сегодня работают подкоманды `verify`, `browse`, `budget`, `verify-bundle` и `hub`. `autopilot` зарегистрирован, но отказывается запускаться, пока не реализован `TaskSource`.
 
 ### за пределами первой страницы
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Всё глубокое живёт на [сайте документации](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ bernstein volunteer browse --budget 60
 | [кому это нужно](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | где польза реальна и где Bernstein — неподходящий инструмент |
 | [workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативные YAML-DAG из узлов agent / command / loop |
 | [веб-интерфейс](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерный дашборд на том же API, что и TUI (создание и просмотр задач) |
+| [состояние узлов кластера](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Узел приостанавливает приём новых задач, пока свободное место на диске, использование памяти или задержка сети выходят за заданные пределы. |
 | [облачное исполнение](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | экспериментально: запуск агентов на Cloudflare Workers с синхронизацией workspace в R2 под твоим аккаунтом. Хостинг-сервис `api.bernstein.run` пока недоступен |
 | [источники данных](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | квитанции на read-only запросы плюс драйвер запросов, привязывающий каждый результат к снимку схемы, против которого он получен |
 | [каталоги агентов](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | направь роли на определения агентов вне встроенных шаблонов — обычный каталог YAML/SKILL.md или дерево в раскладке плагина Claude Code |
@@ -277,9 +280,9 @@ bernstein volunteer browse --budget 60
 | [архитектура](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | как оно устроено внутри |
 
 ### почему такое название?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein назван в честь Леонарда Бернстайна, американского дирижёра и композитора. Оркестратор проекта управляет бригадой AI-агентов так же, как Бернстайн дирижировал Нью-Йоркским филармоническим: каждый вступает вовремя, партитура детерминирована, за результат отвечает дирижёр.
+Bernstein назван в честь Леонарда Бернстайна, американского дирижёра и композитора. Оркестратор проекта управляет бригадой AI-агентов так же, как Бернстайн дирижировал Нью-Йоркским филармоническим: каждый вступает вовремя, партитура детерминирована, за результат отвечает дирижёр. Метафора дирижёра описывает возможность Bernstein оркестрировать агентные задачи, результатом которых могут быть код, исследовательские отчёты или датасеты.
 
 я написал bernstein, потому что платил $400 в месяц по счетам claude, гоняя трёх кодовых агентов параллельно, и получал недетерминированные мержи. Apache 2.0, сопровождается одним человеком. Живая статистика: [bernstein.run](https://bernstein.run).
 

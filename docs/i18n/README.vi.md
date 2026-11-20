@@ -214,7 +214,7 @@ Mỗi mục tiêu trải qua bốn giai đoạn:
 Lý do bộ lập lịch được xây dựng bằng Python thuần túy và các đánh đổi đi kèm: [tại sao tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ Toàn bộ tập lệnh điều hành (tự động hóa PR, lịch trình, cầ
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Khi tiếp tục, hãy truyền lại cùng giá trị `-g` để thay thế `{goal}` trong prompt của các nút chưa hoàn tất.
+
+`bernstein compliance controls` hiển thị các bộ kiểm thử cho từng biện pháp kiểm soát và phép đo đầy đủ gần nhất nếu có. [Phạm vi kiểm thử](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Cổng kiểm soát chất lượng kho lưu trữ: `bernstein readme-l10n verify` sẽ báo lỗi PR nếu các bản dịch README lệch khỏi bản gốc tiếng Anh (chỉ rõ phần lỗi thời), `bernstein readme-l10n sync` liên kết lại chúng sau khi chỉnh sửa tiếng Anh. Xem [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse`, `budget`, `verify-bundle` và `hub` là các lệnh con hoạt động. `autopilot` đã được đăng ký nhưng từ chối chạy cho đến khi có triển khai `TaskSource`.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | nơi giá trị được phát huy và trường hợp Bernstein không phải là công cụ phù hợp |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | các DAG YAML khai báo gồm các nút tác tử / lệnh / vòng lặp |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | bảng điều khiển trình duyệt chạy trên cùng API mà TUI sử dụng (tạo và xem xét tác vụ) |
+| [tình trạng nút xử lý](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Nút tạm ngừng nhận tác vụ mới khi dung lượng đĩa trống, mức sử dụng bộ nhớ hoặc độ trễ mạng nằm ngoài ngưỡng đã đặt. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | thử nghiệm: chạy tác tử trên Cloudflare Workers với đồng bộ không gian làm việc R2 trên tài khoản của riêng bạn. Dịch vụ lưu trữ `api.bernstein.run` hiện chưa mở |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | biên lai truy vấn chỉ đọc cùng trình điều khiển truy vấn liên kết từng kết quả với ảnh chụp nhanh lược đồ tương ứng |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | trỏ vai trò tới định nghĩa tác tử ngoài các mẫu dựng sẵn — thư mục YAML/SKILL.md tổng quát hoặc cấu trúc plugin Claude Code |
@@ -277,9 +280,9 @@ Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | nguyên lý hoạt động chi tiết bên trong |
 
 ### nguồn gốc tên gọi?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng và nhà soạn nhạc người Mỹ. Bộ điều phối của dự án quản trị một đội ngũ tác tử AI giống như cách Bernstein chỉ huy Dàn nhạc giao hưởng New York: mỗi nhạc công vào đúng nhịp, bản tổng phổ mang tính tất định, nhạc trưởng chịu trách nhiệm về kết quả cuối cùng.
+Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng và nhà soạn nhạc người Mỹ. Bộ điều phối của dự án quản trị một đội ngũ tác tử AI giống như cách Bernstein chỉ huy Dàn nhạc giao hưởng New York: mỗi nhạc công vào đúng nhịp, bản tổng phổ mang tính tất định, nhạc trưởng chịu trách nhiệm về kết quả cuối cùng. Ẩn dụ nhạc trưởng mô tả khả năng điều phối của Bernstein đối với các tác vụ của tác tử tạo ra mã, báo cáo nghiên cứu hoặc tập dữ liệu.
 
 tôi viết bernstein vì phải trả hóa đơn claude 400 đô la mỗi tháng khi chạy song song ba tác tử lập trình và nhận về các kết quả hợp nhất phi tất định. Giấy phép Apache 2.0, duy trì bởi một cá nhân. Thống kê trực tiếp: [bernstein.run](https://bernstein.run).
 

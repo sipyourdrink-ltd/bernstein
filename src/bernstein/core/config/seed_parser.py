@@ -1541,6 +1541,17 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         ClusterConfig(shards=shards, shard_vnodes=shard_vnodes)
     except ValueError as exc:
         raise SeedError(str(exc)) from exc
+    min_disk_raw = cluster_dict.get("min_disk_free_mb", 512)
+    if isinstance(min_disk_raw, bool) or not isinstance(min_disk_raw, int) or min_disk_raw < 0:
+        raise SeedError("cluster.min_disk_free_mb must be a non-negative integer")
+    health_limits: dict[str, float] = {}
+    for key, default in (("max_mem_used_pct", 95.0), ("max_mesh_rtt_ms", 5000.0)):
+        value = cluster_dict.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value < float("inf"):
+            raise SeedError(f"cluster.{key} must be a finite non-negative number")
+        if key == "max_mem_used_pct" and value > 100:
+            raise SeedError("cluster.max_mem_used_pct must be at most 100")
+        health_limits[key] = float(value)
     return ClusterConfig(
         enabled=bool(cluster_dict.get("enabled", False)),
         topology=topology,
@@ -1555,6 +1566,9 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         gossip_peer_keys=peer_keys,
         shards=shards,
         shard_vnodes=shard_vnodes,
+        min_disk_free_mb=min_disk_raw,
+        max_mem_used_pct=health_limits["max_mem_used_pct"],
+        max_mesh_rtt_ms=health_limits["max_mesh_rtt_ms"],
     )
 
 

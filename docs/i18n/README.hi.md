@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 शेड्यूलर सादा Python क्यों है, और इसके बदले क्या छोड़ा गया: [क्यों डिटर्मिनिस्टिक](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)।
 
 ### रोज़मर्रा के कमांड
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)।
+रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। दोबारा शुरू करते समय वही `-g` मान फिर से दें, ताकि अधूरे नोड्स के प्रॉम्प्ट में `{goal}` की जगह वह मान डाला जाए।
+
+`bernstein compliance controls` हर नियंत्रण के लिए परीक्षण समूह और उपलब्ध होने पर नवीनतम पूर्ण माप दिखाता है। [बेंचमार्क कवरेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 रिपॉज़िटरी हाइजीन गेट: `bernstein readme-l10n verify` उस PR को फ़ेल करता है जिसके अनूदित README अंग्रेज़ी स्रोत से भटक गए हों (और बासी सेक्शन का नाम बताता है), `bernstein readme-l10n sync` अंग्रेज़ी में बदलाव के बाद उन्हें दोबारा बाँध देता है। देखिए [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse`, `budget`, `verify-bundle` और `hub` काम करने वाले सब-कमांड हैं। `autopilot` पंजीकृत है, लेकिन `TaskSource` लागू होने तक चलने से इनकार करता है।
 
 ### पहले पन्ने से आगे
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 गहराई की हर चीज़ [डॉक्स साइट](https://docs.bernstein.run/) पर रहती है:
 
@@ -270,6 +272,7 @@ bernstein volunteer browse --budget 60
 | [यह किसके लिए है](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | कहाँ इसका मूल्य बनता है, और कहाँ Bernstein ग़लत औज़ार है |
 | [वर्कफ़्लो](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | एजेंट / कमांड / लूप नोड्स के घोषणात्मक YAML DAG |
 | [वेब UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | उसी API पर चलने वाला ब्राउज़र डैशबोर्ड जिस पर TUI चलता है (कार्य बनाना और उनकी समीक्षा करना) |
+| [क्लस्टर वर्कर की स्थिति](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | खाली डिस्क स्थान, मेमोरी उपयोग या नेटवर्क विलंब तय सीमा से बाहर होने पर वर्कर नए कार्य लेना रोक देता है। |
 | [क्लाउड एग्ज़ीक्यूशन](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | प्रयोगात्मक: अपने ही अकाउंट पर Cloudflare Workers में एजेंट चलाइए, R2 वर्कस्पेस सिंक के साथ। होस्टेड `api.bernstein.run` सेवा अभी उपलब्ध नहीं है |
 | [डेटासोर्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | केवल-पढ़ने वाली क्वेरी रसीदें, और एक क्वेरी ड्राइवर जो हर नतीजे को उस स्कीमा स्नैपशॉट से बाँधता है जिससे वह निकला |
 | [एजेंट कैटलॉग](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | भूमिकाओं को बिल्ट-इन टेम्पलेट्स के बाहर की एजेंट परिभाषाओं पर लगाइए — एक सामान्य YAML/SKILL.md डायरेक्टरी, या Claude Code प्लगइन-लेआउट ट्री |
@@ -277,9 +280,9 @@ bernstein volunteer browse --budget 60
 | [आर्किटेक्चर](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | अंदर यह कैसे काम करता है |
 
 ### यह नाम क्यों?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein का नाम अमेरिकी कंडक्टर और संगीतकार लियोनार्ड बर्नस्टीन पर रखा गया है। इस प्रोजेक्ट का ऑर्केस्ट्रेटर AI एजेंटों की टोली को ठीक वैसे नियंत्रित करता है जैसे बर्नस्टीन न्यूयॉर्क फ़िलहार्मोनिक को संचालित करते थे: हर वादक अपने संकेत पर, स्कोर डिटर्मिनिस्टिक, और कंडक्टर नतीजे के लिए जवाबदेह।
+Bernstein का नाम अमेरिकी कंडक्टर और संगीतकार लियोनार्ड बर्नस्टीन पर रखा गया है। इस प्रोजेक्ट का ऑर्केस्ट्रेटर AI एजेंटों की टोली को ठीक वैसे नियंत्रित करता है जैसे बर्नस्टीन न्यूयॉर्क फ़िलहार्मोनिक को संचालित करते थे: हर वादक अपने संकेत पर, स्कोर डिटर्मिनिस्टिक, और कंडक्टर नतीजे के लिए जवाबदेह। कंडक्टर का यह रूपक कोड, शोध रिपोर्ट या डेटासेट बनाने वाले एजेंट कार्यों को ऑर्केस्ट्रेट करने की Bernstein की क्षमता बताता है।
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, अकेले मेंटेन किया जाता है। लाइव आँकड़े: [bernstein.run](https://bernstein.run)।
 

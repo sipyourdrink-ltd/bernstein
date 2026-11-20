@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 শিডিউলার কেন সাদামাটা Python, আর তার বিনিময়ে কী ছাড়া হলো: [কেন ডিটারমিনিস্টিক](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)।
 
 ### রোজকার কমান্ড
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-রান অবস্থা প্রতিটি নোডে `.sdd/runs/<run_id>/`-এ চেকপয়েন্ট হয়। রান আবার শুরু করার সময় রানের শুরুতে ম্যানিফেস্ট ডাইজেস্ট যাচাই করা হয়, তাই স্পেসিফিকেশন পরিবর্তন প্রত্যাখ্যান করা হয়, ভিন্ন একটি ম্যানিফেস্ট নীরবে চালানোর বদলে। দেখুন [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)।
+রান অবস্থা প্রতিটি নোডে `.sdd/runs/<run_id>/`-এ চেকপয়েন্ট হয়। রান আবার শুরু করার সময় রানের শুরুতে ম্যানিফেস্ট ডাইজেস্ট যাচাই করা হয়, তাই স্পেসিফিকেশন পরিবর্তন প্রত্যাখ্যান করা হয়, ভিন্ন একটি ম্যানিফেস্ট নীরবে চালানোর বদলে। দেখুন [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। অসম্পূর্ণ নোডের প্রম্পটে `{goal}` প্রতিস্থাপনের জন্য আবার শুরু করার সময় একই `-g` মান আবার দিন।
+
+`bernstein compliance controls` প্রতিটি নিয়ন্ত্রণের পরীক্ষাসমূহ এবং সর্বশেষ সম্পূর্ণ পরিমাপ দেখায়, যদি তা পাওয়া যায়। [বেঞ্চমার্ক কভারেজ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 রিপোজিটরি হাইজিন গেট: `bernstein readme-l10n verify` এমন PR ব্যর্থ করে যার অনূদিত README ইংরেজি উৎস থেকে সরে গেছে (এবং বাসি সেকশনটির নাম বলে দেয়), `bernstein readme-l10n sync` ইংরেজিতে সম্পাদনার পরে সেগুলো আবার বেঁধে দেয়। দেখুন [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড। `autopilot` নিবন্ধিত আছে, কিন্তু `TaskSource` বাস্তবায়িত না হওয়া পর্যন্ত চলতে অস্বীকার করে।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ bernstein volunteer browse --budget 60
 | [এটি কাদের জন্য](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | কোথায় এর মূল্য দাঁড়ায়, আর কোথায় Bernstein ভুল হাতিয়ার |
 | [ওয়ার্কফ্লো](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | এজেন্ট / কমান্ড / লুপ নোডের ডিক্লারেটিভ YAML DAG |
 | [ওয়েব UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI যে API ব্যবহার করে, সেই একই API-র উপর ব্রাউজার ড্যাশবোর্ড (কাজ তৈরি ও পর্যালোচনা) |
+| [কর্মী নোডের স্বাস্থ্য](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | ডিস্কের ফাঁকা স্থান, মেমরি ব্যবহার বা নেটওয়ার্কের বিলম্ব নির্ধারিত সীমার বাইরে গেলে কর্মী নতুন কাজ নেওয়া বন্ধ করে। |
 | [ক্লাউড এক্সিকিউশন](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | পরীক্ষামূলক: নিজের অ্যাকাউন্টে Cloudflare Workers-এ এজেন্ট চালান, R2 ওয়ার্কস্পেস সিংক সহ। হোস্ট করা `api.bernstein.run` সার্ভিসটি এখনও পাওয়া যাচ্ছে না |
 | [ডেটাসোর্স](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | শুধু-পড়ার কোয়েরি রসিদ, সঙ্গে এমন একটি কোয়েরি ড্রাইভার যা প্রতিটি ফলাফলকে যে স্কিমা স্ন্যাপশট থেকে সেটি এসেছে তার সঙ্গে বেঁধে দেয় |
 | [এজেন্ট ক্যাটালগ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | ভূমিকাগুলিকে বিল্ট-ইন টেমপ্লেটের বাইরের এজেন্ট সংজ্ঞার দিকে নির্দেশ করুন — একটি সাধারণ YAML/SKILL.md ডিরেক্টরি, বা Claude Code প্লাগইন-লেআউট ট্রি |
@@ -277,9 +280,9 @@ bernstein volunteer browse --budget 60
 | [আর্কিটেকচার](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | ভিতরে এটি কীভাবে কাজ করে |
 
 ### নামটি কেন?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein নামটি এসেছে মার্কিন কন্ডাক্টর ও সুরকার লিওনার্ড বার্নস্টাইন থেকে। এই প্রকল্পের অর্কেস্ট্রেটর AI এজেন্টদের দলটিকে ঠিক সেভাবেই নিয়ন্ত্রণ করে যেভাবে বার্নস্টাইন নিউ ইয়র্ক ফিলহারমোনিক পরিচালনা করতেন: প্রত্যেক বাদক নিজের সংকেতে, স্কোর ডিটারমিনিস্টিক, আর ফলাফলের দায় কন্ডাক্টরের।
+Bernstein নামটি এসেছে মার্কিন কন্ডাক্টর ও সুরকার লিওনার্ড বার্নস্টাইন থেকে। এই প্রকল্পের অর্কেস্ট্রেটর AI এজেন্টদের দলটিকে ঠিক সেভাবেই নিয়ন্ত্রণ করে যেভাবে বার্নস্টাইন নিউ ইয়র্ক ফিলহারমোনিক পরিচালনা করতেন: প্রত্যেক বাদক নিজের সংকেতে, স্কোর ডিটারমিনিস্টিক, আর ফলাফলের দায় কন্ডাক্টরের। কন্ডাক্টরের এই উপমা কোড, গবেষণা প্রতিবেদন বা ডেটাসেট তৈরি করে এমন এজেন্টের কাজ সমন্বয় করার Bernstein-এর সক্ষমতা বোঝায়।
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, একজনই মেনটেইন করেন। লাইভ পরিসংখ্যান: [bernstein.run](https://bernstein.run)।
 

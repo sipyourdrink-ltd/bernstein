@@ -214,7 +214,7 @@ Jokainen tavoite etenee neljän vaiheen läpi:
 Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja siihen liittyy: [miksi deterministinen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ Koko operaattoripinta (PR-automaatio, aikataulut, chat-sillat, autofix-taustapro
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
+
+`bernstein compliance controls` näyttää kunkin kontrollin testikokoelmat ja viimeisimmän täydellisen mittauksen, jos sellainen on saatavilla. [Vertailutestien kattavuus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Koodihygieniaportit: `bernstein readme-l10n verify` hylkää PR:n, jonka käännetyt README-tiedostot poikkeavat englanninkielisestä lähteestä (nimetten vanhentuneen osion), ja `bernstein readme-l10n sync` päivittää sidokset englanninkielisten muokkausten jälkeen. Katso [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [Lahjoittajan opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) käsittelee workerin ajamisen ja asettamasi budjetin, [projektin opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) manifestin ilmoittamisen, ja [uhkamalli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) kertoo, miltä kukin raja suojaa ja miltä ei. Yhden komennon ajuria ei ole vielä julkaistu: tänään toimivat alikomennot ovat `verify`, `browse`, `budget`, `verify-bundle` ja `hub`. `autopilot` on rekisteröity, mutta se kieltäytyy käynnistymästä, kunnes `TaskSource` on toteutettu.
 
 ### etusivun lisäksi
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.b
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | missä arvo syntyy ja milloin Bernstein ei ole oikea työkalu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratiiviset YAML DAG -rakenteet agentti- / komento- / silmukkasolmuista |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | selainpohjainen hallintapaneeli samalla rajapinnalla kuin TUI (tehtävien luonti ja tarkastelu) |
+| [klusterin työntekijäsolmujen tila](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Solmu ei ota uusia tehtäviä, kun vapaa levytila, muistinkäyttö tai verkon viive ylittää asetetut rajat tai alittaa vähimmäisarvon. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | kokeellinen: aja agentteja Cloudflare Workersissa R2-työtilatasauksella omalla tililläsi. Isännöity `api.bernstein.run` -palvelu ei ole vielä saatavilla |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | vain luku -kyselykuitit sekä kyselyajuri, joka sitoo jokaisen tuloksen vastaavaan skeematilannevedokseen |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | osoita roolit sisäänrakennettujen mallien ulkopuolisiin agenttimäärityksiin — yleiseen YAML/SKILL.md-hakemistoon tai Claude Coden lisäosarakenteeseen |
@@ -277,9 +280,9 @@ Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.b
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | miten järjestelmä toimii konepellin alla |
 
 ### miksi tämä nimi?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein on nimetty yhdysvaltalaisen kapellimestarin ja säveltäjän Leonard Bernsteinin mukaan. Projektin orkestroija hallitsee AI-agenttien ryhmää samaan tapaan kuin Bernstein johti New Yorkin filharmonikkoja: jokainen soittaja ajallaan, partituuri deterministinen, kapellimestari vastuussa lopputuloksesta.
+Bernstein on nimetty yhdysvaltalaisen kapellimestarin ja säveltäjän Leonard Bernsteinin mukaan. Projektin orkestroija hallitsee AI-agenttien ryhmää samaan tapaan kuin Bernstein johti New Yorkin filharmonikkoja: jokainen soittaja ajallaan, partituuri deterministinen, kapellimestari vastuussa lopputuloksesta. Kapellimestarivertaus kuvaa Bernsteinin kykyä orkestroida agenttien tehtäviä, joiden tuloksena syntyy koodia, tutkimusraportteja tai tietoaineistoja.
 
 kirjoitin bernsteinin, koska maksoin 400 dollaria kuukaudessa claude-laskuja ajaessani kolmea koodausagenttia rinnakkain ja sain epädeterministisiä merge-tuloksia. Apache 2.0, yhden kehittäjän ylläpitämä. Reaaliaikaiset tilastot: [bernstein.run](https://bernstein.run).
 

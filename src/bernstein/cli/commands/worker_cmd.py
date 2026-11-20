@@ -446,18 +446,26 @@ class WorkerLoop:
             logger.warning("Failed to push agent work for task %s: %s", task_id, exc)
             return None
 
+    def _capacity_payload(self) -> dict:
+        from dataclasses import asdict
+
+        from bernstein.core.models import NodeCapacity
+        from bernstein.core.protocols.cluster.cluster import local_worker_capacity
+
+        capacity = NodeCapacity(
+            max_agents=self._max_agents,
+            available_slots=self.available_slots,
+            active_agents=len(self._active_tasks),
+            supported_models=self._supported_models,
+        )
+        return asdict(local_worker_capacity(self._workdir, capacity))
+
     def _register(self, client: httpx.Client) -> str | None:
         """Register with the central server. Returns node ID or None."""
         payload = {
             "name": self._name,
             "url": "",
-            "capacity": {
-                "max_agents": self._max_agents,
-                "available_slots": self.available_slots,
-                "active_agents": len(self._active_tasks),
-                "gpu_available": False,
-                "supported_models": self._supported_models,
-            },
+            "capacity": self._capacity_payload(),
             "labels": self._labels,
             "cell_ids": [],
         }
@@ -507,13 +515,7 @@ class WorkerLoop:
     def _heartbeat(self, client: httpx.Client, node_id: str) -> bool:
         """Send heartbeat with updated capacity. Returns True on success."""
         payload = {
-            "capacity": {
-                "max_agents": self._max_agents,
-                "available_slots": self.available_slots,
-                "active_agents": len(self._active_tasks),
-                "gpu_available": False,
-                "supported_models": self._supported_models,
-            },
+            "capacity": self._capacity_payload(),
         }
         try:
             resp = client.post(
