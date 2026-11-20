@@ -20,6 +20,8 @@ portable, offline-verifiable receipts of the chain.
 
 Privacy default is local-only. `publish` is opt-in. For help choosing the correct input and understanding identifier precedence, see the [CLI replay input selection table](../reference/cli/replay.md#choosing-replay-inputs).
 
+To compare UI snapshots captured from two revisions, see [Compare two render receipts](render-pairs.md).
+
 ## Two debugging jobs: exploratory vs forensic
 
 Replay debugging answers two different questions; do not confuse them.
