@@ -13,15 +13,11 @@ count fails here instead of shipping as a claim the code cannot back.
 When the count legitimately changes, update the README sentence and these
 tests will pass again.
 
-Lower bounds elsewhere
-----------------------
-The README header, its at-a-glance bullet and the MkDocs Home page
-(``docs/index.md``: its front-matter ``description`` and the "Any agent, any
-model" feature bullet) restate the adapter count as floors - "50+ more",
-"More than 50" - so adding an adapter never makes them false. They are
-checked only for overreach: a floor raised above what the registry backs
-fails here. ``docs/index.md``'s two floors used to go unchecked entirely
-(#6060, #6167 review).
+Current count claims
+--------------------
+The README and documentation home state the selectable-name total exactly.
+The CLI prints that total from the same registry. Aliases and the generic
+wrapper are selectable names; the mock stub and endpoint listing are not.
 
 Translated pages
 ----------------
@@ -181,50 +177,23 @@ def test_readme_selectable_adapter_count_matches_the_registry() -> None:
     assert _claimed(_SELECTABLE_CLAIM_RE) == len(selectable_adapter_names())
 
 
-def test_readme_lower_bound_claims_do_not_overtake_the_registry() -> None:
-    """The header and at-a-glance bullet state floors, never exact counts.
-
-    Exact counts live in the supported-agents paragraph, where the tests above
-    own them. Elsewhere the README says "and 50+ more" and "More than 50
-    selectable CLI agent adapters", which stay true as adapters are added; this
-    fails only when a floor is raised above what the registry can back.
-    """
+def test_readme_count_matches_the_selection_command() -> None:
+    """The at-a-glance total and documented output match selectable names."""
     from bernstein.adapters.registry import selectable_adapter_names
 
     text = README.read_text(encoding="utf-8")
-    selectable = len(selectable_adapter_names())
-
-    more = re.findall(r"Gemini CLI, and (\d+)\+ more", text)
-    assert len(more) == 1, f"expected exactly one 'and N+ more' header claim, got {more}"
-    # Three agents are named before the floor.
-    assert 3 + int(more[0]) <= selectable
-
-    more_than = re.findall(r"More than (\d+) selectable CLI agent adapters", text)
-    assert len(more_than) == 1, f"expected exactly one 'More than N selectable' claim, got {more_than}"
-    assert int(more_than[0]) < selectable
+    count = len(selectable_adapter_names())
+    assert f"{count} selectable CLI agent adapter names" in text
+    assert f"Selectable CLI agent adapter names: {count}" in text
 
 
-def test_docs_index_lower_bound_claims_do_not_overtake_the_registry() -> None:
-    """The MkDocs Home page states the same floors, checked the same way.
-
-    ``docs/index.md`` restates the README header's "and N+ more" in its
-    front-matter ``description`` and carries its own "N+ CLI adapters" feature
-    bullet. Nothing checked either, so the site's front page could promise
-    more adapters than the registry selects (#6060, #6167 review).
-    """
+def test_docs_index_count_matches_the_selection_command() -> None:
+    """The documentation home uses the same total, without rounding."""
     from bernstein.adapters.registry import selectable_adapter_names
 
     text = DOCS_INDEX.read_text(encoding="utf-8")
-    selectable = len(selectable_adapter_names())
-
-    more = re.findall(r"Gemini CLI, and (\d+)\+ more", text)
-    assert len(more) == 1, f"expected exactly one 'and N+ more' description claim, got {more}"
-    # Three agents are named before the floor.
-    assert 3 + int(more[0]) <= selectable
-
-    adapters = re.findall(r"(\d+)\+ CLI adapters:", text)
-    assert len(adapters) == 1, f"expected exactly one 'N+ CLI adapters:' feature claim, got {adapters}"
-    assert int(adapters[0]) <= selectable
+    count = len(selectable_adapter_names())
+    assert f"{count} selectable CLI adapter names" in text
 
 
 def test_install_matrix_is_a_subset_claim_not_a_full_one() -> None:
@@ -308,3 +277,15 @@ def test_binding_hash_digits_cannot_satisfy_a_claim() -> None:
     assert _integers(_scannable(body)) == []
     for value in (30, 52, 54):
         assert not _claim_appears(_scannable(body), value)
+
+
+@pytest.mark.parametrize("page", TRANSLATED_READMES, ids=lambda page: page.name)
+def test_translated_readme_documents_the_selection_command(page: Path) -> None:
+    """Translations carry the literal CLI command/output and exact total."""
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    section = _find_translated_section(page.read_text(encoding="utf-8"), EN_SECTION_HEADING)
+    assert section is not None
+    count = len(selectable_adapter_names())
+    assert "`bernstein adapters list`" in section.body
+    assert f"`Selectable CLI agent adapter names: {count}`" in section.body

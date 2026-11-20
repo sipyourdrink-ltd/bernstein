@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   merge_group: {}
   push:
-    branches: [main]
+    branches: [main, "release/**"]
     paths-ignore:
       # NOTE: pyproject.toml IS NOT ignored. A bump merged through the
       # queue (auto-release.yml -> opens auto/bump-vX.Y.Z PR with
@@ -2317,7 +2317,11 @@ jobs:
   coverage-report:
     name: Coverage report
     needs: [test]
+    # Full runs skip the PR-only planner upstream of test. Override the
+    # implicit success() check so that skip does not hide a successful matrix.
     if: >-
+      !cancelled() &&
+      needs.test.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'push' &&

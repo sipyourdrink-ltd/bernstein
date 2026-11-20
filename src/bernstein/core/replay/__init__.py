@@ -14,6 +14,8 @@ Public surface:
 * :exc:`ReplayKeySchemeMismatchError` - corpus recorded under another key scheme.
 * :data:`RECORD_ENV_VAR` - env-var that opts the *gateway* into recording.
 * :func:`diff_event_logs` - line-by-line first-divergence locator.
+* :func:`fold_plan_graph` - structural graph projection from journal events.
+* :class:`PlanGraphResult` - availability and validated structural graph data.
 
 The :class:`EventJournal` is the canonical run recorder: it records by
 default into ``.sdd/runs/<run_id>/journal.jsonl`` and its head hash identifies
@@ -70,6 +72,7 @@ from bernstein.core.replay.key_scheme import (
     derive_replay_key,
     parse_stored_key,
 )
+from bernstein.core.replay.plan_graph import PlanGraphResult, fold_plan_graph
 from bernstein.core.replay.provider_state import (
     CAPABILITY_DECLARED_BLIND,
     CAPABILITY_OBSERVED,
@@ -151,6 +154,7 @@ __all__ = [
     "ForkResult",
     "GatewayMode",
     "JournalVerifyResult",
+    "PlanGraphResult",
     "ProviderStateMutation",
     "ProviderStateVerifyResult",
     "ReadPathDerivationError",
@@ -168,6 +172,7 @@ __all__ = [
     "derive_replay_key",
     "derive_task_read_set",
     "diff_event_logs",
+    "fold_plan_graph",
     "fork_run",
     "is_recording_enabled",
     "is_replay_lenient",

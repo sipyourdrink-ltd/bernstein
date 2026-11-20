@@ -4,6 +4,8 @@ Bernstein exposes a pluggy-based hook system that lets you extend the
 orchestrator without modifying core code.  Plugins are plain Python classes
 - no base class required, no registration boilerplate.
 
+See the [plugin list](https://github.com/sipyourdrink-ltd/bernstein/blob/main/community/awesome-bernstein-plugins.md#bernstein-addons) for bernstein-addons and installation instructions.
+
 ## Contents
 
 - [How it works](#how-it-works)

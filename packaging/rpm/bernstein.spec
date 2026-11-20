@@ -72,7 +72,7 @@ Requires:       %{python_pkg}
 
 %description
 The open-source governance layer for AI agents. Runs Claude Code, Codex,
-Gemini CLI and 40+ others in parallel with per-task git worktree isolation
+Gemini CLI and other agents in parallel with per-task git worktree isolation
 and quality gates. No model sits in the coordination loop, so the same plan
 replays to a byte-identical task graph.
 
