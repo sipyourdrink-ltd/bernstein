@@ -118,20 +118,10 @@ manifest cannot fall out of the bump the same way. Note that `.mcp.json` is an
 
 ## Security supported-versions table
 
-`SECURITY.md`'s Supported Versions table names the current minor release line
-as the only supported one (no backport branch), so a **minor or major** bump
-changes it: `pyproject.toml` moves to the new `X.Y`, and the table must move
-with it. `scripts/bump_version.py` does not touch `SECURITY.md`, and
-`release-major-minor.yml`'s `add-paths` does not carry it either, so this is
-a manual edit on the bump PR, the same as writing the version's release-notes
-page is. A **patch** bump (`vX.Y.Z` with the same `X.Y`) needs no edit here.
-
-Update both rows to the new minor:
-
-```
-| X.Y.x | Yes |
-| < X.Y | No  |
-```
+`SECURITY.md` names the minor line that receives regular fixes. For a minor
+or major bump, update the table on the bump PR. Document any agreed backport
+by its exact version. For 4.0.x the single exception is the planned 3.24.2
+backport. A patch bump within the same line needs no table edit.
 
 `tests/unit/test_security_md.py` derives the expected line from
 `pyproject.toml`'s version at test time and fails on a stale table instead of
