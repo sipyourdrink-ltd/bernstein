@@ -3905,7 +3905,7 @@
     },
     {
       "anchor": {
-        "line": 460,
+        "line": 373,
         "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "97561d906ef7"
       },
@@ -3933,7 +3933,7 @@
     },
     {
       "anchor": {
-        "line": 378,
+        "line": 291,
         "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "9424830de7de"
       },
@@ -3993,20 +3993,6 @@
       "anchor": {
         "line": 160,
         "path": ".github/workflows/static-analysis-extended.yml",
-        "sha": "cf57364b258d"
-      },
-      "file": ".github/workflows/static-analysis-extended.yml",
-      "job": "trivy-fs",
-      "runs": [
-        "python3 scripts/sarif_drop_suppressed.py \\",
-        "trivy-fs.sarif > trivy-fs.filtered.sarif"
-      ],
-      "workflow": "static-analysis (extended)"
-    },
-    {
-      "anchor": {
-        "line": 247,
-        "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "1e2c3094bfdb"
       },
       "file": ".github/workflows/static-analysis-extended.yml",
@@ -4019,7 +4005,7 @@
     },
     {
       "anchor": {
-        "line": 312,
+        "line": 225,
         "path": ".github/workflows/static-analysis-extended.yml",
         "sha": "43f0b895dc68"
       },
@@ -4069,6 +4055,20 @@
         "done"
       ],
       "workflow": "trace-conformance"
+    },
+    {
+      "anchor": {
+        "line": 37,
+        "path": ".github/workflows/trivy-fs.yml",
+        "sha": "cf57364b258d"
+      },
+      "file": ".github/workflows/trivy-fs.yml",
+      "job": "trivy-fs",
+      "runs": [
+        "python3 scripts/sarif_drop_suppressed.py \\",
+        "trivy-fs.sarif > trivy-fs.filtered.sarif"
+      ],
+      "workflow": "Trivy (filesystem)"
     },
     {
       "anchor": {
