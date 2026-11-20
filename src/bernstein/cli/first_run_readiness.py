@@ -114,41 +114,71 @@ def _gemini_handoff(env: Mapping[str, str]) -> str:
     return action
 
 
-def _codex_custom_provider(env: Mapping[str, str]) -> bool | None:
-    """Check a selected custom provider offline. None defers to first-party login."""
-    home = env.get("HOME") or env.get("USERPROFILE")
-    codex_home = env.get("CODEX_HOME") or (Path(home) / ".codex" if home else None)
-    if not codex_home:
-        return None
+def _codex_config(path: Path) -> dict[str, Any]:
     try:
-        with (Path(codex_home) / "config.toml").open("rb") as stream:
-            config = tomllib.load(stream)
+        with path.open("rb") as stream:
+            return tomllib.load(stream)
     except FileNotFoundError:
-        return None
-    except (OSError, ValueError):
-        return False
-    name = config.get("model_provider")
+        return {}
+
+
+def _selected_codex_provider(config: Mapping[str, Any]) -> tuple[object, object]:
+    name = config.get("model_provider", "openai")
     providers = config.get("model_providers")
-    if not isinstance(name, str) or name == "openai" or not isinstance(providers, dict):
-        return None
-    provider = providers.get(name)
-    if not isinstance(provider, dict):
-        return False
-    endpoint = provider.get("base_url")
-    if not isinstance(endpoint, str) or not endpoint.startswith(("http://", "https://")):
-        return False
-    if provider.get("wire_api", "responses") != "responses" or "auth" in provider or "gateway_oauth" in provider:
-        return False
-    if provider.get("requires_openai_auth"):
-        return None
-    key = provider.get("env_key")
-    return key is None or (isinstance(key, str) and bool(env.get(key)))
+    provider = providers.get(name) if isinstance(name, str) and isinstance(providers, dict) else None
+    return name, provider
+
+
+def _codex_handoff(binary: str, source: Mapping[str, str]) -> str:
+    """Check the selected provider and the evidence Bernstein uses to start the worker."""
+    from bernstein.core.agents.spawner_env import build_spawner_env
+
+    env = build_spawner_env("codex", base_env=source)
+    home = env.get("HOME") or env.get("USERPROFILE")
+    standard = Path(home) / ".codex" / "config.toml" if home else None
+    invalid = "Could not confirm the Codex custom provider. Check its config.toml settings."
+    try:
+        config = _codex_config(standard) if standard else {}
+        name, provider = _selected_codex_provider(config)
+        override = source.get("CODEX_HOME")
+        alternate = Path(override) / "config.toml" if override else standard
+        if (
+            alternate
+            and alternate != standard
+            and _selected_codex_provider(_codex_config(alternate)) != (name, provider)
+        ):
+            destination = standard or "~/.codex/config.toml"
+            return f"Configure the selected Codex provider and a top-level model in {destination} for Bernstein."
+    except (OSError, ValueError):
+        return invalid
+    action = "Could not confirm the Codex login. Run codex login or configure OPENAI_API_KEY."
+    if name != "openai":
+        if not isinstance(provider, dict):
+            return invalid
+        endpoint = provider.get("base_url")
+        if not isinstance(endpoint, str) or not endpoint.startswith(("http://", "https://")):
+            return invalid
+        if provider.get("wire_api", "responses") != "responses" or "auth" in provider or "gateway_oauth" in provider:
+            return invalid
+        key = provider.get("env_key")
+        if key is not None and (not isinstance(key, str) or not env.get(key)):
+            return "Configure the custom provider's env_key with a key available to the Codex worker."
+        if not provider.get("requires_openai_auth"):
+            model = config.get("model")
+            if isinstance(model, str) and model.strip():
+                return ""
+            action = f"Set a top-level model in {standard} so Bernstein can start the configured Codex provider."
+    if env.get("OPENAI_API_KEY") or _cli_login("codex", binary, env):
+        return ""
+    return action
 
 
 def worker_handoff(worker: str, *, env: Mapping[str, str] | None = None) -> str:
     from bernstein.adapters._contract import AuthBasis, ContractSpec
     from bernstein.core.orchestration.preflight import _check_qwen_auth
 
+    if worker == "mock":
+        return ""
     if worker == "auto":
         return "Set cli in bernstein.yaml to the worker you want to check, or keep auto for runtime routing."
     source = os.environ if env is None else env
@@ -160,17 +190,20 @@ def worker_handoff(worker: str, *, env: Mapping[str, str] | None = None) -> str:
     binary = shutil.which(executable, path=source.get("PATH", ""))
     if binary is None:
         return f"Install {executable} for the {worker} worker and make sure it is on PATH."
+    if executable != worker and shutil.which(worker, path=source.get("PATH", "")) is None:
+        return f"Run preflight also needs the {worker} command on PATH before it can start {executable}."
     if worker == "codex":
-        custom = _codex_custom_provider(source)
-        if custom is not None:
-            return "" if custom else "Could not confirm the Codex custom provider. Check its config.toml settings."
-    if worker in {"claude", "codex"}:
-        key = "ANTHROPIC_API_KEY" if worker == "claude" else "OPENAI_API_KEY"
-        if source.get(key) or _cli_login(worker, binary, source):
+        return _codex_handoff(binary, source)
+    if worker == "claude":
+        if source.get("ANTHROPIC_API_KEY") or _cli_login(worker, binary, source):
             return ""
-        login = "claude auth login" if worker == "claude" else "codex login"
-        return f"Could not confirm the {worker} login. Run {login} or configure {key}."
+        return "Could not confirm the Claude login. Run claude auth login or configure ANTHROPIC_API_KEY."
     if worker == "gemini":
+        from bernstein.adapters.gemini import BINARY_ENV_VAR
+
+        override = source.get(BINARY_ENV_VAR, "").strip()
+        if override and shutil.which(override, path=source.get("PATH", "")) is None:
+            return f"Set {BINARY_ENV_VAR} to an installed Gemini CLI or unset it to use gemini."
         return _gemini_handoff(source)
     if worker == "qwen":
         problem = _check_qwen_auth(env=source)

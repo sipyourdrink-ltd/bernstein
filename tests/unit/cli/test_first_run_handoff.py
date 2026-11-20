@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -203,6 +204,10 @@ def test_gemini_requires_its_own_setup_for_project_and_installation(
         {"name": "Auth: claude", "ok": True},
         {"name": "Ready to run", "ok": True},
     ]
+    missing_override = {**env, "GEMINI_API_KEY": "offline-fixture", "BERNSTEIN_GEMINI_BINARY": "missing"}
+    assert any(
+        "BERNSTEIN_GEMINI_BINARY" in step for step in project_handoff(tmp_path, worker_env=missing_override).actions
+    )
     for has_gemini_key in (False, True):
         if has_gemini_key:
             env["GEMINI_API_KEY"] = "offline-fixture"
@@ -272,38 +277,91 @@ def test_gemini_sign_in_modes(tmp_path: Path, mode: str, ready: bool) -> None:
     assert "fixture@example.invalid" not in str(checks)
 
 
-def test_codex_custom_provider_without_first_party_login(tmp_path: Path) -> None:
+_MODEL = 'model = "fixture"\n'
+_PROVIDER = (
+    'model_provider = "fixture"\n[model_providers.fixture]\nname = "Fixture"\n'
+    'base_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n'
+)
+_CUSTOM = _MODEL + _PROVIDER
+_MATCHING_KEY = 'env_key = "OPENAI_API_KEY"\n'
+
+
+@pytest.mark.parametrize(
+    ("standard", "alternate", "key", "logged_in", "preflight_ok", "advice"),
+    [
+        pytest.param("", "", "", False, False, "codex login", id="first-party-logged-out"),
+        pytest.param("", "", "", True, True, "", id="first-party-logged-in"),
+        pytest.param("", "", "OPENAI_API_KEY", False, True, "", id="first-party-key"),
+        pytest.param(_MODEL, "", "", False, True, "codex login", id="bare-model-does-not-prove-access"),
+        pytest.param(_CUSTOM, "", "", False, True, "", id="custom-provider-and-model"),
+        pytest.param(_PROVIDER, "", "", False, False, "top-level model", id="model-only-in-project"),
+        pytest.param('model = ""\n' + _PROVIDER, "", "", False, False, "top-level model", id="empty-model"),
+        pytest.param("", _CUSTOM, "", False, False, "Configure the selected Codex provider", id="override-only"),
+        pytest.param(_CUSTOM, _CUSTOM, "", False, True, "", id="matching-standard-and-override"),
+        pytest.param(_CUSTOM + _MATCHING_KEY, "", "", False, True, "env_key", id="missing-provider-key"),
+        pytest.param(_CUSTOM + _MATCHING_KEY, "", "OPENAI_API_KEY", False, True, "", id="matching-provider-key"),
+        pytest.param(
+            _CUSTOM + 'env_key = "FIXTURE_KEY"\n',
+            "",
+            "FIXTURE_KEY",
+            False,
+            True,
+            "env_key",
+            id="key-outside-worker-environment",
+        ),
+        pytest.param(
+            _CUSTOM + "requires_openai_auth = true\n", "", "", False, True, "codex login", id="custom-requires-login"
+        ),
+        pytest.param(_CUSTOM + "requires_openai_auth = true\n", "", "", True, True, "", id="custom-with-login"),
+        pytest.param(_PROVIDER, "", "OPENAI_API_KEY", False, True, "", id="no-user-model-with-launch-key"),
+    ],
+)
+def test_codex_provider_handoff_and_launch_preflight(
+    tmp_path: Path, standard: str, alternate: str, key: str, logged_in: bool, preflight_ok: bool, advice: str
+) -> None:
     from bernstein.cli.first_run_readiness import operator_installation_checks, project_handoff
+    from bernstein.core.orchestration.preflight import preflight_checks
 
     _init_worker_project(tmp_path, "codex")
     binary = tmp_path / ("codex.cmd" if os.name == "nt" else "codex")
-    binary.write_text("@exit /b 1" if os.name == "nt" else "#!/bin/sh\nexit 1\n")
+    body = "echo Logged in with ChatGPT" if logged_in else "exit 1"
+    binary.write_text(
+        ("@echo off\n" + body.replace("exit 1", "exit /b 1")) if os.name == "nt" else "#!/bin/sh\n" + body + "\n"
+    )
     binary.chmod(0o755)
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    config = codex_home / "config.toml"
-    env = {"PATH": str(tmp_path), "HOME": str(tmp_path)}
+    env = {name: os.environ[name] for name in ("SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR") if name in os.environ}
+    env.update(PATH=str(tmp_path), HOME=str(tmp_path), USERPROFILE=str(tmp_path))
+    if key:
+        env[key] = "offline-fixture"
+    default = tmp_path / ".codex" / "config.toml"
+    if standard:
+        default.parent.mkdir()
+        default.write_text(standard)
+    if alternate:
+        override = tmp_path / "alternate"
+        override.mkdir()
+        (override / "config.toml").write_text(alternate)
+        env["CODEX_HOME"] = str(override)
     observations = [
         {"name": "Python version", "ok": True},
         {"name": "Adapter: codex", "ok": True},
         {"name": "Auth: codex", "ok": True},
         {"name": "Ready to run", "ok": True},
     ]
-    custom = (
-        'model_provider = "fixture"\n[model_providers.fixture]\nname = "Fixture"\n'
-        'base_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n'
-    )
-    for settings, ready in [
-        ('model = "fixture"\n', False),
-        (custom, True),
-        (custom + 'env_key = "FIXTURE_KEY"\n', False),
-        (custom + "requires_openai_auth = true\n", False),
-    ]:
-        config.write_text(settings)
-        assert (not project_handoff(tmp_path, worker_env=env).actions) == ready
-        checks = {row["name"]: row for row in operator_installation_checks(observations, env=env)}
-        assert checks["Auth: codex"]["ok"] == ready
-        assert checks["Ready to run"]["ok"] == ready
+    setup = project_handoff(tmp_path, worker_env=env)
+    assert (not setup.actions) == (not advice)
+    if advice:
+        assert any(advice in step for step in setup.actions)
+    checks = {row["name"]: row for row in operator_installation_checks(observations, env=env)}
+    assert checks["Auth: codex"]["ok"] == (not advice)
+    assert checks["Ready to run"]["ok"] == (not advice)
+    with patch.dict(os.environ, env, clear=True):
+        if preflight_ok:
+            preflight_checks("codex", 0, unattended=False)
+        else:
+            with pytest.raises(SystemExit) as result:
+                preflight_checks("codex", 0, unattended=False)
+            assert result.value.code == 1
 
 
 def test_other_workers_use_their_declared_binary_and_access(tmp_path: Path) -> None:
@@ -314,7 +372,12 @@ def test_other_workers_use_their_declared_binary_and_access(tmp_path: Path) -> N
     binary = tmp_path / ("aider.cmd" if os.name == "nt" else "aider")
     binary.write_text("")
     binary.chmod(0o755)
+    assert "ollama command" in worker_handoff("ollama", env=env)
+    local = tmp_path / ("ollama.cmd" if os.name == "nt" else "ollama")
+    local.touch()
+    local.chmod(0o755)
     assert worker_handoff("ollama", env=env) == ""
+    assert worker_handoff("mock", env=env) == ""
     assert "Could not confirm" in worker_handoff("aider", env=env)
     assert worker_handoff("aider", env={**env, "OPENAI_API_KEY": "offline-fixture"}) == ""
 
