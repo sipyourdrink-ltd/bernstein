@@ -44,9 +44,9 @@ issue #1482.
 
 The npm rows of `adapter-contract-drift.yml` use `npm ci` with the SHA-512
 integrities in `.github/adapter-clis/package-lock.json`. Each row runs install
-hooks for its selected CLI and dependencies. The pipx rows install the adapter
-version specified by each contract. See the [adapter contract guide](../contributing/adapter-contracts.md)
-when updating a CLI.
+hooks for its selected CLI and dependencies. The pipx bootstrap is hash-pinned.
+Pipx resolves each adapter's contract spec, which may omit a version.
+See the [adapter contract guide](../contributing/adapter-contracts.md) when updating a CLI.
 
 ## CII Best Practices badge (operator pickup)
 

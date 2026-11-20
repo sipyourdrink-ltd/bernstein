@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -121,10 +122,13 @@ def test_workflow_file_exists() -> None:
     assert WORKFLOW.is_file()
 
 
-def test_npm_branch_installs_from_the_committed_lockfile() -> None:
+def _install_script() -> str:
     steps = _doc()["jobs"]["check"]["steps"]
-    install = next(step["run"] for step in steps if step.get("name") == "Install upstream CLI")
-    npm_branch = install.split("npm)", 1)[1].split(";;", 1)[0]
+    return next(step["run"] for step in steps if step.get("name") == "Install upstream CLI")
+
+
+def test_npm_branch_installs_from_the_committed_lockfile() -> None:
+    npm_branch = _install_script().split("npm)", 1)[1].split(";;", 1)[0]
     assert "npm ci --prefix .github/adapter-clis --no-audit --no-fund" in npm_branch
     assert '--script-shell="$GITHUB_WORKSPACE/.github/adapter-clis/lifecycle-shell.sh"' in npm_branch
     assert not re.search(r"\bnpm\s+(?:install|i|add)\b|@latest|--ignore-scripts", npm_branch)
@@ -162,6 +166,61 @@ def test_npm_lifecycle_shell_only_runs_hooks_in_the_selected_tree(tmp_path: Path
         directory.mkdir(exist_ok=True)
         result = subprocess.run([CLI_DIR / "lifecycle-shell.sh", "-c", "exit 23"], cwd=directory, env=env, check=False)
         assert result.returncode == expected_rc, directory.name
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not all(shutil.which(tool) for tool in ("bash", "npm", "jq")),
+    reason="The Linux npm workflow step needs bash, npm and jq",
+)
+@pytest.mark.parametrize("mode", [0o755, 0o644, None], ids=["executable", "not-executable", "missing"])
+def test_npm_step_selects_hooks_and_exports_the_local_binary(tmp_path: Path, mode: int | None) -> None:
+    cli_dir = tmp_path / ".github" / "adapter-clis"
+    bin_dir = cli_dir / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    # sh is also available on the ambient PATH, including when the local binary is missing.
+    binary = bin_dir / "sh"
+    if mode is not None:
+        binary.touch()
+        binary.chmod(mode)
+    manifest = {"name": "fixture", "dependencies": {"@example/cli": "1.0.0", "sibling": "1.0.0"}}
+    packages = {
+        "": manifest,
+        "node_modules/@example/cli": {"version": "1.0.0", "dependencies": {"helper": "1.0.0"}},
+        "node_modules/helper": {"version": "1.0.0", "dependencies": {"leaf": "1.0.0"}},
+        "node_modules/leaf": {"version": "1.0.0"},
+        "node_modules/sibling": {"version": "1.0.0"},
+    }
+    (cli_dir / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (cli_dir / "package-lock.json").write_text(
+        json.dumps({"lockfileVersion": 3, "packages": packages}), encoding="utf-8"
+    )
+    github_path = tmp_path / "github-path"
+    github_path.touch()
+    env = {
+        **os.environ,
+        "METHOD": "npm",
+        "SPEC": "@example/cli@1.0.0",
+        "BINARY": "sh",
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "GITHUB_PATH": str(github_path),
+        "npm_config_cache": str(tmp_path / "npm-cache"),
+    }
+    # Run the real lock-only query. Stand in for the install and record the hook scope it receives.
+    stub = """
+npm() {
+  case "$1" in
+    query) command npm --offline "$@" ;;
+    ci) printf '%s\\n' "$ADAPTER_LIFECYCLE_PATHS" > hooks ;;
+    *) return 99 ;;
+  esac
+}
+"""
+    result = subprocess.run(["bash", "-c", stub + _install_script()], cwd=tmp_path, env=env, capture_output=True)
+    assert result.returncode == (0 if mode == 0o755 else 1), result.stderr
+    assert set((tmp_path / "hooks").read_text(encoding="utf-8").splitlines()) == {
+        str(cli_dir / path) for path in ("node_modules/@example/cli", "node_modules/helper", "node_modules/leaf")
+    }
+    assert github_path.read_text(encoding="utf-8").splitlines() == ([str(bin_dir)] if mode == 0o755 else [])
 
 
 def test_the_trigger_set_is_exactly_the_one_that_was_decided() -> None:
