@@ -220,7 +220,7 @@ Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué
 La comprobación `can_spawn()` del módulo de seguimiento de costes devuelve `False` cuando el gasto acumulado corregido alcanza o supera el umbral de parada configurado para el presupuesto, aunque no se haya informado de nuevos tokens. Tras un reinicio, los contadores de tokens guardados no bastan para reconstruir el coste acumulado exacto que se había comunicado para una combinación concreta de agente, tarea y modelo.
 
 ### comandos cotidianos
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Si una tarea de una ejecución SSH desacoplada termina con un código distinto de cero, fallan tanto la tarea como la ejecución. El comprobante de la tarea registra el código de salida y las tareas posteriores quedan pendientes.
 
 Toda la superficie del operador (automatización de PR, programaciones, puentes de chat, el demonio de autofix) se encuentra en [comandos del operador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

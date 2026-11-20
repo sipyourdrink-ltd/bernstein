@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果修正後的累計支出達到或超過設定的預算停止門檻，即使沒有回報新增的 token，費用追蹤器的 `can_spawn()` 檢查也會傳回 `False`。重新啟動後，單憑已儲存的 token 計數，無法還原先前針對特定代理程式、任務與模型組合所回報的確切累計費用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+在與終端機分離的 SSH 執行中，若某項工作以非零結束碼結束，該工作與整次執行都會失敗。工作的回執會記錄結束碼，後續工作維持待處理狀態。
 
 完整的操作介面（PR 自動化、定時任務、聊天橋接、autofix 守護行程）見[操作命令](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)。
 

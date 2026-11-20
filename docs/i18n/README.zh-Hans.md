@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果更正后的累计支出达到或超过配置的预算停止阈值，即使没有报告新增的词元，费用跟踪器的 `can_spawn()` 检查也会返回 `False`。重启后，仅凭保存的词元计数无法还原此前针对特定智能体、任务和模型组合报告的确切累计费用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+在与终端分离的 SSH 运行中，如果某个任务以非零退出码结束，该任务和整次运行都会失败。任务回执会记录退出码，后续任务保持待处理状态。
 
 完整的操作界面（PR 自动化、定时任务、聊天桥接、autofix 守护进程）见[操作命令](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)。
 

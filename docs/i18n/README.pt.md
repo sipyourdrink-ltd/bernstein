@@ -220,7 +220,7 @@ Por que o agendador é Python puro e quais são os trade-offs: [por que determin
 A verificação `can_spawn()` do módulo de acompanhamento de custos retorna `False` quando o gasto acumulado após a correção atinge ou ultrapassa o limite de parada configurado para o orçamento, mesmo que nenhum novo token tenha sido informado. Após uma reinicialização, as contagens de tokens salvas, por si só, não permitem reconstruir o custo acumulado exato informado anteriormente para uma determinada combinação de agente, tarefa e modelo.
 
 ### comandos do dia a dia
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Se uma tarefa em uma execução SSH desacoplada terminar com um código de saída diferente de zero, a tarefa e a execução falham. O recibo da tarefa registra o código de saída, e as tarefas seguintes ficam pendentes.
 
 A superfície completa de operador (automação de PR, agendamentos, pontes de chat, daemon de autofix) está em [comandos de operador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

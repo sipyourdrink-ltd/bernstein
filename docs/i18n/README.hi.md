@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 अगर सुधार के बाद कुल खर्च बजट के लिए तय रोक सीमा तक पहुँच जाता है या उससे ऊपर चला जाता है, तो खर्च का हिसाब रखने वाले मॉड्यूल की `can_spawn()` जाँच `False` लौटाती है, भले ही किसी नए टोकन की सूचना न मिली हो। रीस्टार्ट के बाद सिर्फ़ सहेजी गई टोकन गिनती से किसी ख़ास एजेंट, कार्य और मॉडल के संयोजन के लिए पहले बताई गई सटीक संचयी लागत का पता नहीं लगाया जा सकता।
 
 ### रोज़मर्रा के कमांड
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+अगर अलग से चल रहे SSH रन में कोई टास्क शून्य के अलावा किसी और एग्ज़िट कोड के साथ समाप्त होता है, तो टास्क और रन दोनों विफल हो जाते हैं। एग्ज़िट कोड टास्क की रसीद में दर्ज होता है और बाद के टास्क लंबित रहते हैं।
 
 पूरा ऑपरेटर सरफ़ेस (PR ऑटोमेशन, शेड्यूल, चैट ब्रिज, autofix डीमन) [ऑपरेटर कमांड](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md) में है।
 

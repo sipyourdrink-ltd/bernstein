@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 ฟังก์ชันตรวจสอบ `can_spawn()` ของตัวติดตามค่าใช้จ่ายจะคืนค่า `False` เมื่อค่าใช้จ่ายสะสมหลังปรับยอดถึงหรือเกินเกณฑ์หยุดที่กำหนดไว้สำหรับงบประมาณ แม้จะไม่มีรายงานการใช้โทเคนเพิ่ม หลังจากเริ่มระบบใหม่ จำนวนโทเคนที่บันทึกไว้เพียงอย่างเดียวไม่เพียงพอที่จะคำนวณย้อนหาค่าใช้จ่ายสะสมที่แน่นอนซึ่งเคยรายงานไว้สำหรับชุดเอเจนต์ งาน และโมเดลนั้น
 
 ### คำสั่งที่ใช้ประจำวัน
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+หากงานในการรัน SSH แบบแยกจากเทอร์มินัลสิ้นสุดด้วยรหัสออกที่ไม่ใช่ศูนย์ ทั้งงานนั้นและการรันจะล้มเหลว ใบรับรองผลของงานจะบันทึกรหัสออก และงานถัดไปจะยังคงอยู่ในสถานะรอ
 
 ชุดคำสั่งผู้ปฏิบัติงานทั้งหมด (การจัดการ PR อัตโนมัติ, ตารางเวลา, ตัวเชื่อมต่อแชท, เดมอน autofix) อยู่ใน [คำสั่งผู้ปฏิบัติงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)
 

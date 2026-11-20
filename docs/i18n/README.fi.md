@@ -220,7 +220,7 @@ Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja s
 Kustannusseurannan `can_spawn()`-tarkistus palauttaa arvon `False`, kun korjatut kokonaiskulut saavuttavat budjetille asetetun pysäytysrajan tai ylittävät sen, vaikka uusia tokeneita ei olisi raportoitu. Uudelleenkäynnistyksen jälkeen pelkistä tallennetuista tokenimääristä ei voi päätellä tietylle agentin, tehtävän ja mallin yhdistelmälle aiemmin raportoitua tarkkaa kokonaiskustannusta.
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Jos irrotetun SSH-ajon tehtävä päättyy nollasta poikkeavaan paluukoodiin, sekä tehtävä että ajo epäonnistuvat. Tehtävän kuittiin kirjataan paluukoodi, ja myöhemmät tehtävät jäävät odottamaan.
 
 Koko operaattoripinta (PR-automaatio, aikataulut, chat-sillat, autofix-taustaprosessi) löytyy sivulta [operaattorin komennot](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

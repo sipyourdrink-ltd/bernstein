@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 সংশোধনের পর মোট ব্যয় বাজেটের নির্ধারিত বন্ধের সীমায় পৌঁছালে বা তা ছাড়িয়ে গেলে খরচের হিসাব রাখার মডিউলের `can_spawn()` পরীক্ষা `False` ফেরত দেয়, নতুন কোনো টোকেনের হিসাব না এলেও। পুনরায় চালু করার পর শুধু সংরক্ষিত টোকেন সংখ্যা থেকে কোনো নির্দিষ্ট এজেন্ট, কাজ ও মডেলের জন্য আগে জানানো সঠিক ক্রমপুঞ্জিত খরচ পুনর্গঠন করা যায় না।
 
 ### রোজকার কমান্ড
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+বিচ্ছিন্ন SSH রানে কোনো টাস্কের এক্সিট কোড শূন্য না হলে টাস্ক ও রান দুটিই ব্যর্থ হয়। টাস্কের রসিদে এক্সিট কোডটি নথিভুক্ত হয় এবং পরবর্তী টাস্কগুলো অপেক্ষমাণ থাকে।
 
 পুরো অপারেটর সারফেস (PR অটোমেশন, শিডিউল, চ্যাট ব্রিজ, autofix ডিমন) আছে [অপারেটর কমান্ডে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)।
 

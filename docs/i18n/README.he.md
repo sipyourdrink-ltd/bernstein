@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 בדיקת `can_spawn()` במנגנון מעקב העלויות מחזירה `False` כאשר ההוצאה המצטברת לאחר התיקון מגיעה לסף העצירה שהוגדר לתקציב או חורגת ממנו, גם אם לא דווח על טוקנים חדשים. לאחר הפעלה מחדש, מוני הטוקנים שנשמרו לבדם אינם מאפשרים לשחזר את העלות המצטברת המדויקת שדווחה קודם לכן עבור שילוב מסוים של סוכן, משימה ומודל.
 
 ### פקודות יומיומיות
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -230,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+אם משימה בהרצת SSH מנותקת מסתיימת בקוד יציאה שאינו אפס, המשימה וההרצה נכשלות. קוד היציאה נשמר באישור הביצוע של המשימה, והמשימות הבאות נשארות בהמתנה.
 
 כל ממשק המפעיל (אוטומציית PR, תזמונים, גשרי צ'אט, תהליך autofix ברקע) מפורט ב[פקודות מפעיל](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
