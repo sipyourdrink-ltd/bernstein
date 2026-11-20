@@ -64,6 +64,7 @@ GapStatus = Literal["new", "duplicate", "recently-closed"]
 
 
 _WORD_RE = re.compile(r"[A-Za-z][\w+-]+", re.ASCII)
+_DOTTED_VERSION_RE = re.compile(r"(?<![\w.])\d+(?:\.\d+)+(?!\w|\.\d)", re.ASCII)
 
 
 def _tokens(text: str) -> list[str]:
@@ -167,7 +168,9 @@ def score_item(item: RawItem, spec: SourceSpec) -> tuple[float, tuple[str, ...]]
       drown the signal
     """
 
-    text_tokens = set(_tokens(f"{item.title}\n{item.body}"))
+    text = f"{item.title}\n{item.body}"
+    text_tokens = set(_tokens(text))
+    text_tokens.update(_DOTTED_VERSION_RE.findall(text))
     if not text_tokens:
         return 0.0, ()
 
