@@ -70,8 +70,8 @@
         "echo \"last-green projection unchanged; nothing to propose\"",
         "exit 0",
         "fi",
-        "git config user.email \"canary@users.noreply.github.com\"",
-        "git config user.name \"Bernstein Canary\"",
+        "git config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"",
+        "git config user.name \"github-actions[bot]\"",
         "BRANCH=bot/adapter-canary-last-green",
         "uv run python scripts/canary_propose_branch.py \\",
         "--branch \"$BRANCH\" \\",
@@ -2590,8 +2590,8 @@
       "job": "canary",
       "runs": [
         "uv sync --group dev",
-        "git config --global user.email \"canary@users.noreply.github.com\"",
-        "git config --global user.name \"Bernstein Canary\"",
+        "git config --global user.email \"41898282+github-actions[bot]@users.noreply.github.com\"",
+        "git config --global user.name \"github-actions[bot]\"",
         "uv run python scripts/canary_real_run.py --verbose"
       ],
       "workflow": "Nightly real-run canary"

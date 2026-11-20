@@ -449,8 +449,12 @@ def _audit_lineage_flow_self_contained() -> None:
 def _git_init(repo: Path) -> None:
     """Initialise a minimal git repo with one commit (worktree precondition)."""
     subprocess.run(["git", "init", "-b", "main"], cwd=str(repo), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "canary@example.com"], cwd=str(repo), check=True)
-    subprocess.run(["git", "config", "user.name", "Bernstein Canary"], cwd=str(repo), check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+        cwd=str(repo),
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.name", "github-actions[bot]"], cwd=str(repo), check=True)
     (repo / "README.md").write_text("# canary\n", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=str(repo), check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "canary init"], cwd=str(repo), check=True, capture_output=True)

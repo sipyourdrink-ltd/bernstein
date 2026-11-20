@@ -528,8 +528,8 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="ci-heal/${SHORT_SHA}"
-          git config user.email "bernstein-autoheal@users.noreply.github.com"
-          git config user.name "bernstein-autoheal[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           git checkout -b "$BRANCH"
           git add -A
           git commit -m "fix(ci-heal-v2): apply ${STRATEGY} for ${SHORT_SHA}"

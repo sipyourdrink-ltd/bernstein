@@ -238,8 +238,8 @@ jobs:
             echo "last-green projection unchanged; nothing to propose"
             exit 0
           fi
-          git config user.email "canary@users.noreply.github.com"
-          git config user.name "Bernstein Canary"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           BRANCH=bot/adapter-canary-last-green
           # Rebuild the branch on origin/main as fetched *now*, not on the
           # workflow checkout: the checkout predates the matrix run, and a

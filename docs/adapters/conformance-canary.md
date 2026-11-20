@@ -74,7 +74,8 @@ has no such limit; it never touches the artifact store.
 ## The proposal carries only what the canary regenerates
 
 The regeneration reaches `main` through a long-lived pull request on
-`bot/adapter-canary-last-green`. That branch is rebuilt each night by
+`bot/adapter-canary-last-green`. Its generated commits use `github-actions[bot]`,
+which the quorum check recognises as a project member. The branch is rebuilt each night by
 `scripts/canary_propose_branch.py` on `origin/main` **as fetched at commit
 time**, not on the workflow checkout.
 
