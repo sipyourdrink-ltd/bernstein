@@ -57,3 +57,17 @@ def test_task_stealing_excludes_unhealthy_receivers() -> None:
     assert policy.find_steal_pairs(reg, {"donor": 10, "sick": 0}) == []
     reg.heartbeat("sick", disk_free_mb=4096)
     assert policy.find_steal_pairs(reg, {"donor": 10, "sick": 0}) == [("donor", "sick", 3)]
+
+
+def test_restart_and_partial_capacity_keep_unhealthy_worker_ineligible(tmp_path: Path) -> None:
+    path = tmp_path / "nodes.json"
+    registry = NodeRegistry(ClusterConfig(), persist_path=path)
+    registry.register(_node(1))
+    unhealthy = registry.heartbeat("n1", disk_free_mb=1)
+    assert unhealthy is not None and not unhealthy.is_schedulable
+    restored = NodeRegistry(ClusterConfig(), persist_path=path)
+    node = restored.heartbeat("n1", NodeCapacity(available_slots=5))
+    assert node is not None and not node.is_schedulable
+    assert node.unhealthy_since == unhealthy.unhealthy_since
+    restored.heartbeat("n1", disk_free_mb=4096)
+    assert node.is_schedulable

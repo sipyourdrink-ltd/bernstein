@@ -90,13 +90,7 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
 
     _verify_cluster_auth(request, SCOPE_NODE_REGISTER)
     node_registry = _get_node_registry(request)
-    capacity = NodeCapacity(
-        max_agents=body.capacity.max_agents,
-        available_slots=body.capacity.available_slots,
-        active_agents=body.capacity.active_agents,
-        gpu_available=body.capacity.gpu_available,
-        supported_models=body.capacity.supported_models,
-    )
+    capacity = NodeCapacity(**body.capacity.model_dump())
     # Re-registration is keyed on the node's operator-visible identity
     # (name + url), not on a per-call id -- the same rule the gRPC
     # RegisterNode handler follows (grpc_server.py). A worker that restarts
@@ -139,17 +133,7 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -
     node_registry = _get_node_registry(request)
     capacity: NodeCapacity | None = None
     if body.capacity is not None:
-        capacity = NodeCapacity(
-            max_agents=body.capacity.max_agents,
-            available_slots=body.capacity.available_slots,
-            active_agents=body.capacity.active_agents,
-            gpu_available=body.capacity.gpu_available,
-            supported_models=body.capacity.supported_models,
-            disk_free_mb=body.capacity.disk_free_mb,
-            mem_used_pct=body.capacity.mem_used_pct,
-            mesh_rtt_ms=body.capacity.mesh_rtt_ms,
-            platform=body.capacity.platform,
-        )
+        capacity = NodeCapacity(**body.capacity.model_dump())
     node = node_registry.heartbeat(node_id, capacity)
     if node is None:
         raise HTTPException(

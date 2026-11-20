@@ -670,5 +670,7 @@ reasons are comma separated; recovery resets `unhealthy_since`.
 
 Cluster seed keys `min_disk_free_mb` (512), `max_mem_used_pct` (95.0) and
 `max_mesh_rtt_ms` (5000.0) set the thresholds. Missing telemetry contributes
-no failure reason. The platform string is informational. Telemetry is not
+no failure reason until the first reading. Omitting a later reading preserves
+the last observed value. Local workers report free disk space for their workspace,
+platform, and memory use when available. Mesh RTT is optional. The platform string is informational. Telemetry is not
 a substitute for authentication, and does not override cordon/drain intent.

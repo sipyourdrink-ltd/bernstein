@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import logging
 import operator
+import shutil
 import socket
+import sys
 import threading
 import time
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path  # noqa: TC003 - used at runtime in _load_persisted/_save
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +44,22 @@ if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
 
 logger = logging.getLogger(__name__)
+
+
+def local_worker_capacity(workdir: Path, capacity: NodeCapacity) -> NodeCapacity:
+    """Attach locally observable readings. A missing reading stays unknown."""
+    disk_mb = None
+    with suppress(OSError):
+        disk_mb = shutil.disk_usage(workdir).free // (1024 * 1024)
+    memory_pct = None
+    try:
+        import psutil
+    except ImportError:
+        pass
+    else:
+        with suppress(OSError, psutil.Error):
+            memory_pct = psutil.virtual_memory().percent
+    return replace(capacity, disk_free_mb=disk_mb, mem_used_pct=memory_pct, platform=sys.platform)
 
 
 class NodeRegistry:
@@ -78,9 +96,15 @@ class NodeRegistry:
                     name=entry.get("name", ""),
                     url=entry.get("url", ""),
                     capacity=NodeCapacity(
+                        disk_free_mb=entry.get("disk_free_mb"),
+                        mem_used_pct=entry.get("mem_used_pct"),
+                        mesh_rtt_ms=entry.get("mesh_rtt_ms"),
+                        platform=entry.get("platform"),
                         max_agents=entry.get("max_agents", 6),
                         supported_models=entry.get("supported_models", ["sonnet", "opus", "haiku"]),
                     ),
+                    health=entry.get("health", "ok"),
+                    unhealthy_since=entry.get("unhealthy_since"),
                     status=NodeStatus.OFFLINE,  # Always start offline
                     last_heartbeat=0.0,
                     registered_at=entry.get("registered_at", 0.0),
@@ -103,6 +127,12 @@ class NodeRegistry:
                     "name": node.name,
                     "url": node.url,
                     "max_agents": node.capacity.max_agents,
+                    "disk_free_mb": node.capacity.disk_free_mb,
+                    "mem_used_pct": node.capacity.mem_used_pct,
+                    "mesh_rtt_ms": node.capacity.mesh_rtt_ms,
+                    "platform": node.capacity.platform,
+                    "health": node.health,
+                    "unhealthy_since": node.unhealthy_since,
                     "supported_models": node.capacity.supported_models,
                     "registered_at": node.registered_at,
                     "labels": node.labels,
@@ -126,7 +156,7 @@ class NodeRegistry:
         if existing is not None:
             existing.name = node.name or existing.name
             existing.url = node.url or existing.url
-            existing.capacity = node.capacity
+            self._update_capacity(existing, node.capacity)
             # Not unconditionally ONLINE: a cordon is an operator's instruction
             # and a restart is not an answer to it. See
             # _status_after_reregistration.
@@ -142,6 +172,7 @@ class NodeRegistry:
         node.registered_at = time.time()
         node.last_heartbeat = time.time()
         node.status = NodeStatus.ONLINE
+        self._update_capacity(node, node.capacity)
         self._nodes[node.id] = node
         logger.info("Registered new node %s (%s) at %s", node.id, node.name, node.url)
         self._save()
@@ -175,37 +206,46 @@ class NodeRegistry:
         if node.status == NodeStatus.OFFLINE:
             node.status = NodeStatus.ONLINE
             status_flipped = True
-        if capacity is not None:
-            node.capacity = capacity
-        cap = node.capacity
-        if disk_free_mb is not None:
-            cap.disk_free_mb = disk_free_mb
-        if mem_used_pct is not None:
-            cap.mem_used_pct = mem_used_pct
-        if mesh_rtt_ms is not None:
-            cap.mesh_rtt_ms = mesh_rtt_ms
-        if platform is not None:
-            cap.platform = platform
-        verdict = health_verdict(
-            disk_free_mb=cap.disk_free_mb,
-            mem_used_pct=cap.mem_used_pct,
-            mesh_rtt_ms=cap.mesh_rtt_ms,
-            thresholds=HealthThresholds(
-                self._config.min_disk_free_mb, self._config.max_mem_used_pct, self._config.max_mesh_rtt_ms
-            ),
-        )
-        health_changed = verdict != node.health
-        if verdict != "ok" and node.health == "ok":
-            node.unhealthy_since = node.last_heartbeat
-        elif verdict == "ok":
-            node.unhealthy_since = None
-        node.health = verdict
+        cap = replace(capacity or node.capacity)
+        cap.disk_free_mb = disk_free_mb if disk_free_mb is not None else cap.disk_free_mb
+        cap.mem_used_pct = mem_used_pct if mem_used_pct is not None else cap.mem_used_pct
+        cap.mesh_rtt_ms = mesh_rtt_ms if mesh_rtt_ms is not None else cap.mesh_rtt_ms
+        cap.platform = platform if platform is not None else cap.platform
+        health_changed = self._update_capacity(node, cap)
         if status_flipped or health_changed:
             self._save()
         if status_flipped:
             self._sync_node_count_metrics()
         _metrics.record_heartbeat("accepted")
         return node
+
+    def _update_capacity(self, node: NodeInfo, capacity: NodeCapacity) -> bool:
+        """An omitted reading leaves the last observation in force until a fresh one arrives."""
+        previous = node.capacity
+        if capacity.disk_free_mb is None:
+            capacity.disk_free_mb = previous.disk_free_mb
+        if capacity.mem_used_pct is None:
+            capacity.mem_used_pct = previous.mem_used_pct
+        if capacity.mesh_rtt_ms is None:
+            capacity.mesh_rtt_ms = previous.mesh_rtt_ms
+        if capacity.platform is None:
+            capacity.platform = previous.platform
+        node.capacity = capacity
+        verdict = health_verdict(
+            disk_free_mb=capacity.disk_free_mb,
+            mem_used_pct=capacity.mem_used_pct,
+            mesh_rtt_ms=capacity.mesh_rtt_ms,
+            thresholds=HealthThresholds(
+                self._config.min_disk_free_mb, self._config.max_mem_used_pct, self._config.max_mesh_rtt_ms
+            ),
+        )
+        changed = verdict != node.health
+        if changed and node.health == "ok":
+            node.unhealthy_since = time.time()
+        elif verdict == "ok":
+            node.unhealthy_since = None
+        node.health = verdict
+        return changed
 
     def unregister(self, node_id: str) -> bool:
         """Remove a node from the registry."""
@@ -422,17 +462,9 @@ def _node_to_dict(node: NodeInfo) -> dict[str, Any]:
         "name": node.name,
         "url": node.url,
         "status": node.status.value,
-        "capacity": {
-            "max_agents": node.capacity.max_agents,
-            "available_slots": node.capacity.available_slots,
-            "active_agents": node.capacity.active_agents,
-            "gpu_available": node.capacity.gpu_available,
-            "supported_models": node.capacity.supported_models,
-            "disk_free_mb": node.capacity.disk_free_mb,
-            "mem_used_pct": node.capacity.mem_used_pct,
-            "mesh_rtt_ms": node.capacity.mesh_rtt_ms,
-            "platform": node.capacity.platform,
-        },
+        "capacity": asdict(node.capacity),
+        "health": node.health,
+        "unhealthy_since": node.unhealthy_since,
         "last_heartbeat": node.last_heartbeat,
         "registered_at": node.registered_at,
         "labels": node.labels,
@@ -444,6 +476,10 @@ def node_from_dict(raw: dict[str, Any]) -> NodeInfo:
     """Deserialize a dict to a NodeInfo."""
     cap_raw = raw.get("capacity", {})
     capacity = NodeCapacity(
+        disk_free_mb=cap_raw.get("disk_free_mb"),
+        mem_used_pct=cap_raw.get("mem_used_pct"),
+        mesh_rtt_ms=cap_raw.get("mesh_rtt_ms"),
+        platform=cap_raw.get("platform"),
         max_agents=cap_raw.get("max_agents", 6),
         available_slots=cap_raw.get("available_slots", 6),
         active_agents=cap_raw.get("active_agents", 0),
@@ -455,6 +491,8 @@ def node_from_dict(raw: dict[str, Any]) -> NodeInfo:
         name=raw.get("name", ""),
         url=raw.get("url", ""),
         capacity=capacity,
+        health=raw.get("health", "ok"),
+        unhealthy_since=raw.get("unhealthy_since"),
         status=NodeStatus(raw.get("status", "online")),
         last_heartbeat=raw.get("last_heartbeat", time.time()),
         registered_at=raw.get("registered_at", time.time()),

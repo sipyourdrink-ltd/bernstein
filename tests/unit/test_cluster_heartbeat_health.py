@@ -132,3 +132,25 @@ def test_heartbeat_client_serializes_telemetry_inside_capacity():
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         assert heartbeat._send_heartbeat(client)
+
+
+def test_worker_waits_for_recovery_before_claiming_through_task_server(cluster_app, tmp_path):
+    from bernstein.cli.commands.worker_cmd import WorkerLoop
+
+    worker = WorkerLoop(server_url="http://testserver", name="health-worker", adapter="claude", workdir=tmp_path)
+    with TestClient(cluster_app) as client:
+        node_id = worker._register(client)
+        assert node_id is not None
+        worker._heartbeat(client, node_id)
+        node = cluster_app.state.node_registry.get(node_id)
+        assert node.capacity.disk_free_mb is not None
+        assert node.capacity.platform
+        created = client.post("/tasks", json={"title": "check health", "description": "fixture", "role": "backend"})
+        assert created.status_code in (200, 201), created.text
+        path = f"/cluster/nodes/{node_id}/heartbeat"
+        assert client.post(path, json={"capacity": {"disk_free_mb": 1}}).status_code == 200
+        assert worker._claim_task(client, "backend", node_id) is None
+        assert client.post(path, json={"capacity": {"active_agents": 0}}).status_code == 200
+        assert worker._claim_task(client, "backend", node_id) is None
+        assert client.post(path, json={"capacity": {"disk_free_mb": 4096}}).status_code == 200
+        assert worker._claim_task(client, "backend", node_id)["id"] == created.json()["id"]
