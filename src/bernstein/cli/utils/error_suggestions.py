@@ -85,7 +85,7 @@ _SUGGESTIONS: list[ErrorSuggestion] = [
         ],
     ),
     ErrorSuggestion(
-        pattern=r"(?i)no.*seed.*file|no.*bernstein\.yaml|no goal.*seed",
+        pattern=r"(?i)\bno\b.*(?:seed.*file|bernstein\.yaml)|\bno goal.*seed",
         title="No project configuration found",
         steps=[
             "Create a bernstein.yaml: bernstein init",

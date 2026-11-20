@@ -1,1 +1,0 @@
-Add an optional bounded render-probe capability to the pinned Playwright driver, with engine-computed styles, checked environment signals, and explicit unavailable results for missing evidence or incomplete captures.

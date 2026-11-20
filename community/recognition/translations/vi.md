@@ -51,7 +51,7 @@ Tên trong danh sách định kỳ được xếp theo thứ tự chữ cái (al
 
 ## GitHub Discussions và trang LinkedIn không cạnh tranh với nhau
 
-Chúng làm những việc khác nhau. Với tin tức nhanh (một bản release, một thay đổi, một cập nhật cộng đồng), trang LinkedIn là kênh nhanh hơn. GitHub Discussions là nơi bạn tham gia vào dự án một cách thực sự: bạn thấy được bối cảnh (context), bạn tranh luận, bạn đề xuất, bạn tìm ra câu trả lời, và nó được lưu lại để người tiếp theo có thể tìm thấy. Nếu bạn muốn cả tin tức và chiều sâu, hãy theo dõi cả hai. Các quyết định vẫn diễn ra trong issue và pull request; điều đó không thay đổi.
+Chúng làm những việc khác nhau. Với tin tức nhanh (một bản release, một thay đổi, một cập nhật cộng đồng), trang LinkedIn là kênh nhanh hơn. GitHub Discussions là nơi bạn tham gia vào dự án một cách thực sự: bạn thấy được bối cảnh (context), bạn tranh luận, bạn đề xuất, bạn tìm ra câu trả lời, và nó được lưu lại để người tiếp theo có thể tìm thấy. Nếu bạn muốn cả tin tức và chiều sâu, hãy theo dõi cả hai. Các quyết định về đề xuất và pull request của người đóng góp được đưa ra trong issue hoặc pull request công khai tương ứng; người bảo trì lên kế hoạch cho công việc tương lai một cách riêng tư.
 
 ## Vì sao tôi làm tất cả những điều này
 
@@ -88,8 +88,6 @@ Và một điều mang tính con người nữa. Nếu một cơ hội trả lư
 ## Ai đang theo dõi, và vì sao điều đó quan trọng
 
 Tất nhiên chúng ta không thể công khai toàn bộ hệ thống phân tích của mình, nhưng theo mọi dấu hiệu, chúng ta không phải là những người duy nhất đang đọc. Người từ các công ty IT lớn và các AI lab xuất hiện trên trang web khá thường xuyên và đặt những câu hỏi khá cụ thể về tài liệu. Các đối thủ cạnh tranh, cứ giả định vậy, cũng không ngủ.
-
-Và, nhân tiện: theo phân tích thụ động (passive analytics) của chúng tôi, sau khi loại bỏ nhiễu bot rõ ràng, Bernstein hiện đang chạy đều đặn trên ít nhất khoảng 3.000 máy trên toàn thế giới. Tôi nghĩ đó là một con số khá đáng nể. Bernstein theo mặc định không gửi bất kỳ dữ liệu đo từ xa (telemetry) nào về sản phẩm, và con số này không đến từ bất kỳ dữ liệu đó; đó là một tín hiệu thụ động, và đó là tất cả những gì tôi sẽ nói về phương pháp này.
 
 Vậy nên tình hình đã khá thú vị rồi. Chúng ta đang xây dựng một sản phẩm miễn phí mà người ta thực sự sử dụng, nó thu hút sự chú ý của các kỹ sư, các AI lab và các công ty lớn, và bất kỳ người dùng nào cũng có thể lấy mã nguồn và làm chủ nó. Ý kiến của tôi, rõ ràng là một ý kiến: khi bạn có thể có được một công cụ nghiêm túc miễn phí và làm chủ mã nguồn, sẽ khó giải thích tại sao ai đó lại trả hàng chục nghìn đô la mỗi tháng cho một thứ tương tự.
 

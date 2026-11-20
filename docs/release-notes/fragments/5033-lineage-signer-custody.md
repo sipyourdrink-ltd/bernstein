@@ -1,1 +1,0 @@
-- Allow reusable lineage detached-JWS signers to use an existing custody signer without exporting private key material. Existing PEM callers and signature bytes remain compatible.
