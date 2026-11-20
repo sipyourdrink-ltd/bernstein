@@ -499,30 +499,18 @@ class OpenAIAgentsAdapter(PluginAdapter):
         api_key_env_override = manifest.get("api_key_env")
         if api_key_env_override is not None:
             validate_api_key_env_name(str(api_key_env_override))
-        # ``key_env_name`` holds only the NAME of the environment variable that
-        # carries the credential (e.g. "OPENAI_API_KEY"), never the secret
-        # value itself.  It is safe to log.
         key_env_name = str(api_key_env_override or "OPENAI_API_KEY")
         if not os.environ.get(key_env_name):
-            logger.warning(
-                "OpenAIAgentsAdapter: %s is not set - spawn will fail",
-                key_env_name,
-            )
+            logger.warning("OpenAIAgentsAdapter: configured API credential is not set - spawn will fail")
 
-        # One-line spawn-manifest summary: model/base_url/api_key_env NAME
-        # (never the secret value)/max_tokens/tool_source/tool count, all in
-        # one place so a spawn can be fully characterized from a single log
-        # line without cross-referencing the (worktree-local, cleanup-prone)
-        # manifest JSON file.
         _max_tokens_val = manifest.get("max_tokens")
         _max_tokens_str = "default:200000" if _max_tokens_val is None else str(_max_tokens_val)
         logger.info(
             "openai_agents spawn_manifest_summary session=%s: model=%s, custom_endpoint=%s, "
-            "credential env var=%s, max_tokens=%s, tool_source=%s, tool_count=%d",
+            "max_tokens=%s, tool_source=%s, tool_count=%d",
             session_id,
             manifest.get("model"),
             bool(manifest.get("base_url")),
-            key_env_name,
             _max_tokens_str,
             manifest["tool_source"],
             len(manifest["tools"]),
