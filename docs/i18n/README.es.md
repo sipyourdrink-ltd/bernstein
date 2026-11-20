@@ -206,7 +206,7 @@ Usa `bernstein govern audit --format json` o `--format sarif` para obtener resul
 `bernstein delegation verify RUN` compara la cadena de recibos con la cabecera final y el número de saltos sellados en el manifiesto de ejecución mediante un HMAC con la clave de auditoría, y detecta la eliminación del tramo final, la sustitución y la ampliación después del cierre, incluida la reescritura de la declaración sin la clave. Eliminar la declaración deja la ejecución incompleta (código de salida `3`), nunca válida. Esto no detecta la reutilización de una instantánea auténtica anterior ni protege frente a quien escribe teniendo la clave de auditoría. Consulta el [flujo de verificación de delegaciones](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cómo funciona
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Cada objetivo avanza a través de cuatro etapas:
 
@@ -217,8 +217,10 @@ Cada objetivo avanza a través de cuatro etapas:
 
 Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué determinista](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+La comprobación `can_spawn()` del módulo de seguimiento de costes devuelve `False` cuando el gasto acumulado corregido alcanza o supera el umbral de parada configurado para el presupuesto, aunque no se haya informado de nuevos tokens. Tras un reinicio, los contadores de tokens guardados no bastan para reconstruir el coste acumulado exacto que se había comunicado para una combinación concreta de agente, tarea y modelo.
+
 ### comandos cotidianos
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Si una tarea de una ejecución SSH desacoplada termina con un código distinto de cero, fallan tanto la tarea como la ejecución. El comprobante de la tarea registra el código de salida y las tareas posteriores quedan pendientes.
 
 Toda la superficie del operador (automatización de PR, programaciones, puentes de chat, el demonio de autofix) se encuentra en [comandos del operador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
