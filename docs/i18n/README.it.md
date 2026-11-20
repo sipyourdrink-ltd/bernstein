@@ -132,14 +132,18 @@ Ogni nodo viene preso da un agente il cui ruolo è ammesso dalla fase; i recinti
 I nuovi tentativi mantengono `dispatch_tier`; alla riapertura di un’attività è possibile scegliere esplicitamente il livello. Vedi il [contratto dei livelli di esecuzione](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installazione in 30 secondi
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Esegui il lavoro da un ramo di lavoro. Bernstein integra le modifiche verificate nel ramo corrente e blocca le esecuzioni che potrebbero integrare modifiche nel ramo predefinito. Controlla le modifiche sul ramo di lavoro prima di aprire una pull request.
 
 `bernstein doctor --json` espone anche i risultati del contratto di audit `findings`, identici a quelli di `bernstein govern audit --only INS --json` per le stesse osservazioni sull’installazione. Il normale rapporto doctor mantiene la visualizzazione attuale. Consulta la [guida operativa di doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) per gli identificatori stabili dei controlli.
 

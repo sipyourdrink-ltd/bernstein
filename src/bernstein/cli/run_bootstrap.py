@@ -978,7 +978,8 @@ def plan_init_writes(root: Path) -> tuple[PlannedWrite, ...]:
     from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
 
     planned = [PlannedWrite(rel, PLAN_EXISTS if (root / rel).is_dir() else PLAN_CREATE) for rel in SDD_DIRS]
-    for rel in (INIT_WORKSPACE_CONFIG, INIT_RUNTIME_GITIGNORE, INIT_PROJECT_CONFIG):
+    selected = find_seed_file(root) or (root / INIT_PROJECT_CONFIG)
+    for rel in (INIT_WORKSPACE_CONFIG, INIT_RUNTIME_GITIGNORE, selected.relative_to(root).as_posix()):
         planned.append(PlannedWrite(rel, PLAN_EXISTS if (root / rel).exists() else PLAN_CREATE))
     if (root / INIT_TEMPLATES_DIR).exists():
         planned.append(PlannedWrite(INIT_TEMPLATES_DIR, PLAN_EXISTS))
@@ -1169,7 +1170,7 @@ def _init_impl(
         gi_path.write_text("*.pid\n*.log\n")
 
     # Create bernstein.yaml in project root if not present
-    yaml_path = root / INIT_PROJECT_CONFIG
+    yaml_path = find_seed_file(root) or (root / INIT_PROJECT_CONFIG)
     if not yaml_path.exists():
         yaml_path.write_text(_generate_default_yaml(project_type))
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
@@ -1219,8 +1220,9 @@ def _init_impl(
     # Print clear next steps
     console.print("")
     console.print("[green]Done.[/green] Next steps:")
-    console.print("  1. Edit [bold]bernstein.yaml[/bold]: set a goal")
-    console.print("  2. Run [bold]bernstein[/bold] to start the orchestra")
+    from bernstein.cli.first_run_readiness import project_handoff
+
+    project_handoff(root, remote=remote).render(console)
     console.print("")
     # ``examples/`` is a repo directory and is not part of the wheel, so an
     # operator who installed from PyPI has no such path to look at. The
