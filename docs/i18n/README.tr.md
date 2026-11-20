@@ -258,7 +258,7 @@ bernstein volunteer browse --budget 60
 [Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse`, `budget`, `verify-bundle` ve `hub`. `autopilot` kayıtlıdır ancak bir `TaskSource` uygulanana kadar çalışmayı reddeder.
 
 ### ön sayfanın ötesinde
-<!-- l10n: en="beyond the front page" hash="sha256:538fb5704bc4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein.run/) yer alır:
 
@@ -270,7 +270,7 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | değerin nerede oluştuğu ve Bernstein'ın nerede yanlış araç olduğu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | ajan / komut / döngü düğümlerinden oluşan bildirimsel YAML DAG'ları |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI'nin kullandığı API üzerinde çalışan tarayıcı kontrol paneli (görev oluşturma ve inceleme) |
-| [küme çalışanlarının durumu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) | Boş disk alanı, bellek kullanımı veya ağ gecikmesi belirlenen sınırların dışındayken çalışanlar yeni görev almaz. |
+| [küme çalışanlarının durumu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Boş disk alanı, bellek kullanımı veya ağ gecikmesi belirlenen sınırların dışındayken çalışanlar yeni görev almaz. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | deneysel: kendi hesabınızda R2 çalışma alanı senkronizasyonu ile Cloudflare Workers üzerinde ajanları çalıştırın. Barındırılan `api.bernstein.run` hizmeti henüz kullanılamıyor |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | salt okunur sorgu makbuzları ve her sonucu türetildiği şema anlık görüntüsüne bağlayan sorgu sürücüsü |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | rolleri yerleşik şablonların dışındaki ajan tanımlarına yönlendirin — genel bir YAML/SKILL.md dizini veya Claude Code eklenti düzeni |

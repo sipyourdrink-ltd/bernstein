@@ -258,7 +258,7 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse`, `budget`, `verify-bundle` và `hub` là các lệnh con hoạt động. `autopilot` đã được đăng ký nhưng từ chối chạy cho đến khi có triển khai `TaskSource`.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:538fb5704bc4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
@@ -270,7 +270,7 @@ Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | nơi giá trị được phát huy và trường hợp Bernstein không phải là công cụ phù hợp |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | các DAG YAML khai báo gồm các nút tác tử / lệnh / vòng lặp |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | bảng điều khiển trình duyệt chạy trên cùng API mà TUI sử dụng (tạo và xem xét tác vụ) |
-| [tình trạng nút xử lý](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) | Nút tạm ngừng nhận tác vụ mới khi dung lượng đĩa trống, mức sử dụng bộ nhớ hoặc độ trễ mạng nằm ngoài ngưỡng đã đặt. |
+| [tình trạng nút xử lý](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Nút tạm ngừng nhận tác vụ mới khi dung lượng đĩa trống, mức sử dụng bộ nhớ hoặc độ trễ mạng nằm ngoài ngưỡng đã đặt. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | thử nghiệm: chạy tác tử trên Cloudflare Workers với đồng bộ không gian làm việc R2 trên tài khoản của riêng bạn. Dịch vụ lưu trữ `api.bernstein.run` hiện chưa mở |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | biên lai truy vấn chỉ đọc cùng trình điều khiển truy vấn liên kết từng kết quả với ảnh chụp nhanh lược đồ tương ứng |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | trỏ vai trò tới định nghĩa tác tử ngoài các mẫu dựng sẵn — thư mục YAML/SKILL.md tổng quát hoặc cấu trúc plugin Claude Code |

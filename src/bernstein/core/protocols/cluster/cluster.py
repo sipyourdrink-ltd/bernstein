@@ -33,6 +33,7 @@ from bernstein.core.models import (
     NodeStatus,
 )
 from bernstein.core.observability import prometheus as _metrics
+from bernstein.core.persistence.atomic_write import write_atomic_json
 from bernstein.core.protocols.cluster import cluster_audit as _audit
 from bernstein.core.protocols.cluster.cluster_tls import (
     TLSConfig,
@@ -65,8 +66,8 @@ def local_worker_capacity(workdir: Path, capacity: NodeCapacity) -> NodeCapacity
 class NodeRegistry:
     """Registry of cluster nodes with optional disk persistence.
 
-    Thread-safe via the caller holding the FastAPI request lifecycle
-    (single async event loop). When ``persist_path`` is provided, the
+    Concurrent request handlers serialize node mutations and publication of
+    their registry snapshots. When ``persist_path`` is provided, the
     registry survives server restarts (nodes are loaded as OFFLINE and
     transition to ONLINE on first heartbeat).
     """
@@ -77,6 +78,7 @@ class NodeRegistry:
         )
         self._config = config
         self._persist_path = persist_path
+        self._mutation_lock = threading.RLock()
         if persist_path is not None:
             self._load_persisted()
 
@@ -117,7 +119,7 @@ class NodeRegistry:
             logger.warning("Failed to load persisted nodes: %s", exc)
 
     def _save(self) -> None:
-        """Persist current node registry to disk."""
+        """Publish a full registry snapshot while the caller holds the mutation lock."""
         if self._persist_path is None:
             return
         try:
@@ -140,8 +142,7 @@ class NodeRegistry:
                 }
                 for node in self._nodes.values()
             ]
-            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-            self._persist_path.write_text(json.dumps(data, indent=2))
+            write_atomic_json(self._persist_path, data)
         except Exception as exc:
             logger.warning("Failed to persist node registry: %s", exc)
 
@@ -152,38 +153,39 @@ class NodeRegistry:
         registered_at, and any status the operator set). Otherwise create a new
         entry, which starts ``ONLINE``.
         """
-        existing = self._nodes.get(node.id)
-        if existing is not None:
-            existing.name = node.name or existing.name
-            existing.url = node.url or existing.url
-            self._update_capacity(existing, node.capacity)
-            # Not unconditionally ONLINE: a cordon is an operator's instruction
-            # and a restart is not an answer to it. See
-            # _status_after_reregistration.
-            existing.status = _status_after_reregistration(existing.status, existing)
-            existing.last_heartbeat = time.time()
-            existing.labels = node.labels or existing.labels
-            existing.cell_ids = node.cell_ids or existing.cell_ids
-            logger.info("Re-registered node %s (%s)", node.id, node.name)
+        with self._mutation_lock:
+            existing = self._nodes.get(node.id)
+            if existing is not None:
+                existing.name = node.name or existing.name
+                existing.url = node.url or existing.url
+                self._update_capacity(existing, node.capacity)
+                # Not unconditionally ONLINE: a cordon is an operator's instruction
+                # and a restart is not an answer to it. See
+                # _status_after_reregistration.
+                existing.status = _status_after_reregistration(existing.status, existing)
+                existing.last_heartbeat = time.time()
+                existing.labels = node.labels or existing.labels
+                existing.cell_ids = node.cell_ids or existing.cell_ids
+                logger.info("Re-registered node %s (%s)", node.id, node.name)
+                self._save()
+                self._sync_node_count_metrics()
+                return existing
+
+            node.registered_at = time.time()
+            node.last_heartbeat = time.time()
+            node.status = NodeStatus.ONLINE
+            self._update_capacity(node, node.capacity)
+            self._nodes[node.id] = node
+            logger.info("Registered new node %s (%s) at %s", node.id, node.name, node.url)
             self._save()
             self._sync_node_count_metrics()
-            return existing
-
-        node.registered_at = time.time()
-        node.last_heartbeat = time.time()
-        node.status = NodeStatus.ONLINE
-        self._update_capacity(node, node.capacity)
-        self._nodes[node.id] = node
-        logger.info("Registered new node %s (%s) at %s", node.id, node.name, node.url)
-        self._save()
-        self._sync_node_count_metrics()
-        _audit.record_node_registered(
-            node.id,
-            role=node.labels.get("role", "worker"),
-            registered_at=node.registered_at,
-            initial_capacity=node.capacity.max_agents,
-        )
-        return node
+            _audit.record_node_registered(
+                node.id,
+                role=node.labels.get("role", "worker"),
+                registered_at=node.registered_at,
+                initial_capacity=node.capacity.max_agents,
+            )
+            return node
 
     def heartbeat(
         self,
@@ -196,28 +198,29 @@ class NodeRegistry:
         platform: str | None = None,
     ) -> NodeInfo | None:
         """Record worker telemetry and evaluate scheduling health."""
-        node = self._nodes.get(node_id)
-        if node is None:
-            _metrics.record_heartbeat("rejected_unknown_node")
-            return None
-        node.last_heartbeat = time.time()
-        status_flipped = False
-        # Don't override CORDONED/DRAINING status
-        if node.status == NodeStatus.OFFLINE:
-            node.status = NodeStatus.ONLINE
-            status_flipped = True
-        cap = replace(capacity or node.capacity)
-        cap.disk_free_mb = disk_free_mb if disk_free_mb is not None else cap.disk_free_mb
-        cap.mem_used_pct = mem_used_pct if mem_used_pct is not None else cap.mem_used_pct
-        cap.mesh_rtt_ms = mesh_rtt_ms if mesh_rtt_ms is not None else cap.mesh_rtt_ms
-        cap.platform = platform if platform is not None else cap.platform
-        readings_changed = self._update_capacity(node, cap)
-        if status_flipped or readings_changed:
-            self._save()
-        if status_flipped:
-            self._sync_node_count_metrics()
-        _metrics.record_heartbeat("accepted")
-        return node
+        with self._mutation_lock:
+            node = self._nodes.get(node_id)
+            if node is None:
+                _metrics.record_heartbeat("rejected_unknown_node")
+                return None
+            node.last_heartbeat = time.time()
+            status_flipped = False
+            # Don't override CORDONED/DRAINING status
+            if node.status == NodeStatus.OFFLINE:
+                node.status = NodeStatus.ONLINE
+                status_flipped = True
+            cap = replace(capacity or node.capacity)
+            cap.disk_free_mb = disk_free_mb if disk_free_mb is not None else cap.disk_free_mb
+            cap.mem_used_pct = mem_used_pct if mem_used_pct is not None else cap.mem_used_pct
+            cap.mesh_rtt_ms = mesh_rtt_ms if mesh_rtt_ms is not None else cap.mesh_rtt_ms
+            cap.platform = platform if platform is not None else cap.platform
+            readings_changed = self._update_capacity(node, cap)
+            if status_flipped or readings_changed:
+                self._save()
+            if status_flipped:
+                self._sync_node_count_metrics()
+            _metrics.record_heartbeat("accepted")
+            return node
 
     def _update_capacity(self, node: NodeInfo, capacity: NodeCapacity) -> bool:
         """An omitted reading leaves the last observation in force until a fresh one arrives."""
@@ -255,47 +258,51 @@ class NodeRegistry:
 
     def unregister(self, node_id: str) -> bool:
         """Remove a node from the registry."""
-        removed = self._nodes.pop(node_id, None) is not None
-        if removed:
-            self._save()
-            self._sync_node_count_metrics()
-            _audit.record_node_left(node_id, reason="unregistered")
-        return removed
+        with self._mutation_lock:
+            removed = self._nodes.pop(node_id, None) is not None
+            if removed:
+                self._save()
+                self._sync_node_count_metrics()
+                _audit.record_node_left(node_id, reason="unregistered")
+            return removed
 
     def cordon(self, node_id: str) -> NodeInfo | None:
         """Cordon a node -- exclude from scheduling but keep accepting heartbeats."""
-        node = self._nodes.get(node_id)
-        if node is None:
-            return None
-        node.status = NodeStatus.CORDONED
-        logger.info("Cordoned node %s (%s)", node.id, node.name)
-        self._save()
-        self._sync_node_count_metrics()
-        _audit.record_node_cordoned(node.id)
-        return node
+        with self._mutation_lock:
+            node = self._nodes.get(node_id)
+            if node is None:
+                return None
+            node.status = NodeStatus.CORDONED
+            logger.info("Cordoned node %s (%s)", node.id, node.name)
+            self._save()
+            self._sync_node_count_metrics()
+            _audit.record_node_cordoned(node.id)
+            return node
 
     def uncordon(self, node_id: str) -> NodeInfo | None:
         """Uncordon a node -- resume accepting tasks."""
-        node = self._nodes.get(node_id)
-        if node is None:
-            return None
-        if node.status in (NodeStatus.CORDONED, NodeStatus.DRAINING):
-            node.status = NodeStatus.ONLINE
-            logger.info("Uncordoned node %s (%s)", node.id, node.name)
-            self._save()
-        return node
+        with self._mutation_lock:
+            node = self._nodes.get(node_id)
+            if node is None:
+                return None
+            if node.status in (NodeStatus.CORDONED, NodeStatus.DRAINING):
+                node.status = NodeStatus.ONLINE
+                logger.info("Uncordoned node %s (%s)", node.id, node.name)
+                self._save()
+            return node
 
     def start_drain(self, node_id: str) -> NodeInfo | None:
         """Start draining a node -- cordon + mark as draining."""
-        node = self._nodes.get(node_id)
-        if node is None:
-            return None
-        node.status = NodeStatus.DRAINING
-        logger.info("Started draining node %s (%s)", node.id, node.name)
-        self._save()
-        self._sync_node_count_metrics()
-        _audit.record_node_drained(node.id)
-        return node
+        with self._mutation_lock:
+            node = self._nodes.get(node_id)
+            if node is None:
+                return None
+            node.status = NodeStatus.DRAINING
+            logger.info("Started draining node %s (%s)", node.id, node.name)
+            self._save()
+            self._sync_node_count_metrics()
+            _audit.record_node_drained(node.id)
+            return node
 
     def get(self, node_id: str) -> NodeInfo | None:
         """Look up a node by ID."""
@@ -328,18 +335,19 @@ class NodeRegistry:
 
         Returns the list of nodes that were marked offline.
         """
-        time.time()
-        timeout = self._config.node_timeout_s
-        stale: list[NodeInfo] = []
-        for node in self._nodes.values():
-            if node.status == NodeStatus.ONLINE and not node.is_alive(timeout):
-                node.status = NodeStatus.OFFLINE
-                stale.append(node)
-                logger.warning("Node %s (%s) marked offline - no heartbeat for %ds", node.id, node.name, timeout)
-                _audit.record_node_left(node.id, reason="timeout")
-        if stale:
-            self._sync_node_count_metrics()
-        return stale
+        with self._mutation_lock:
+            time.time()
+            timeout = self._config.node_timeout_s
+            stale: list[NodeInfo] = []
+            for node in self._nodes.values():
+                if node.status == NodeStatus.ONLINE and not node.is_alive(timeout):
+                    node.status = NodeStatus.OFFLINE
+                    stale.append(node)
+                    logger.warning("Node %s (%s) marked offline - no heartbeat for %ds", node.id, node.name, timeout)
+                    _audit.record_node_left(node.id, reason="timeout")
+            if stale:
+                self._sync_node_count_metrics()
+            return stale
 
     # ------------------------------------------------------------------
     # Observability - keep the cluster_nodes_total gauge in sync with the

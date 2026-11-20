@@ -258,7 +258,7 @@ bernstein volunteer browse --budget 60
 [提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。 `autopilot` は登録されていますが、`TaskSource` が実装されるまで実行を拒否します。
 
 ### 表紙の先へ
-<!-- l10n: en="beyond the front page" hash="sha256:538fb5704bc4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 踏み込んだ内容はすべて[ドキュメントサイト](https://docs.bernstein.run/)にある:
 
@@ -270,7 +270,7 @@ bernstein volunteer browse --budget 60
 | [誰のためのものか](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 価値が出る場所と、Bernstein が不適切な場面 |
 | [ワークフロー](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | エージェント / コマンド / ループのノードから成る宣言的 YAML DAG |
 | [Web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI と同じ API 上で動くブラウザダッシュボード (タスクの作成と確認) |
-| [クラスターワーカーの状態](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) | ディスクの空き容量、メモリ使用率、ネットワーク遅延が設定範囲外にある間、ワーカーは新しいタスクを取得しません。 |
+| [クラスターワーカーの状態](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | ディスクの空き容量、メモリ使用率、ネットワーク遅延が設定範囲外にある間、ワーカーは新しいタスクを取得しません。 |
 | [クラウド実行](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 実験的: 自分のアカウントで Cloudflare Workers 上のエージェントを R2 ワークスペース同期とともに走らせる。ホステッドの `api.bernstein.run` サービスはまだ提供されていない |
 | [データソース](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 読み取り専用のクエリレシート、および各結果を導出元のスキーマスナップショットに結び付けるクエリドライバ |
 | [エージェントカタログ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 組み込みテンプレート以外のエージェント定義をロールから参照する。汎用の YAML/SKILL.md ディレクトリ、または Claude Code のプラグインレイアウトのツリー |

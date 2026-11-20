@@ -1,12 +1,16 @@
 """Tests for cluster node heartbeat health telemetry endpoints."""
 
+import json
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
+from threading import Event
 
 import pytest
-from bernstein.core.models import ClusterConfig
+from bernstein.core.models import ClusterConfig, NodeInfo
 from fastapi.testclient import TestClient
 
+from bernstein.core.protocols.cluster.cluster import NodeRegistry
 from bernstein.core.server.server import create_app
 
 
@@ -105,6 +109,78 @@ def test_backward_compat_heartbeat_without_health_fields(cluster_app):
     capacity = heartbeat_resp.json()["capacity"]
     for field in ("disk_free_mb", "mem_used_pct", "mesh_rtt_ms", "platform"):
         assert capacity[field] is None
+
+
+@pytest.mark.parametrize("same_worker", [False, True], ids=["two-workers", "one-worker-partial-reports"])
+def test_concurrent_heartbeats_survive_restart(tmp_path, monkeypatch, same_worker):
+    cluster_app = create_app(
+        jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl", cluster_config=ClusterConfig(enabled=True)
+    )
+    registry = cluster_app.state.node_registry
+    with TestClient(cluster_app) as client:
+
+        def register(name):
+            response = client.post("/cluster/nodes", json={"name": name, "url": f"http://{name}:9000"})
+            assert response.status_code == 201
+            return response.json()["id"]
+
+        first = register("first")
+        second = first if same_worker else register("second")
+        paused, release, second_entered = Event(), Event(), Event()
+        heartbeat = registry.heartbeat
+
+        def observe_entry(node_id, capacity):
+            if capacity.mem_used_pct is not None:
+                second_entered.set()
+            return heartbeat(node_id, capacity)
+
+        monkeypatch.setattr(registry, "heartbeat", observe_entry)
+
+        def pause_first():
+            paused.set()
+            assert release.wait(10)
+
+        if same_worker:
+            # Pause the read/modify/write after missing fields were filled from the previous reading.
+            assign = NodeInfo.__setattr__
+
+            def assign_capacity(node, name, value):
+                if name == "capacity" and value.disk_free_mb == 4096 and not paused.is_set():
+                    pause_first()
+                assign(node, name, value)
+
+            monkeypatch.setattr(NodeInfo, "__setattr__", assign_capacity)
+        else:
+            # Pause after snapshot creation and before publication to disk.
+            encode = json.dumps
+
+            def encode_snapshot(value, **kwargs):
+                if isinstance(value, list) and value and value[0].get("disk_free_mb") == 4096 and not paused.is_set():
+                    pause_first()
+                return encode(value, **kwargs)
+
+            monkeypatch.setattr(json, "dumps", encode_snapshot)
+
+        def report(node, reading):
+            response = client.post(f"/cluster/nodes/{node}/heartbeat", json={"capacity": reading})
+            assert response.status_code == 200, response.text
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            older = pool.submit(report, first, {"disk_free_mb": 4096})
+            try:
+                assert paused.wait(10)
+                newer = pool.submit(report, second, {"mem_used_pct": 91})
+                assert second_entered.wait(10)
+                # An unprotected second writer can finish while the older writer is paused.
+                wait([newer], timeout=0.5)
+            finally:
+                release.set()
+            older.result(timeout=10)
+            newer.result(timeout=10)
+
+    restored = NodeRegistry(registry.config, persist_path=tmp_path / ".sdd" / "runtime" / "nodes.json")
+    assert restored.get(first).capacity.disk_free_mb == 4096
+    assert restored.get(second).capacity.mem_used_pct == 91
 
 
 def test_heartbeat_client_serializes_telemetry_inside_capacity():

@@ -258,7 +258,7 @@ bernstein volunteer browse --budget 60
 [Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi. `autopilot` sudah terdaftar, tetapi menolak berjalan sampai `TaskSource` diimplementasikan.
 
 ### di luar halaman utama
-<!-- l10n: en="beyond the front page" hash="sha256:538fb5704bc4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstein.run/):
 
@@ -270,7 +270,7 @@ Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstei
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | di mana nilai gunanya dan kapan Bernstein bukan alat yang tepat |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAG YAML deklaratif dari node agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | dasbor peramban berbasis API yang sama dengan TUI (membuat dan meninjau tugas) |
-| [kondisi pekerja klaster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) | Pekerja berhenti mengambil tugas baru selama ruang disk kosong, penggunaan memori, atau latensi jaringan berada di luar batas yang ditetapkan. |
+| [kondisi pekerja klaster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Pekerja berhenti mengambil tugas baru selama ruang disk kosong, penggunaan memori, atau latensi jaringan berada di luar batas yang ditetapkan. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | eksperimental: jalankan agen di Cloudflare Workers dengan sinkronisasi workspace R2 pada akun Anda sendiri. Layanan terkelola `api.bernstein.run` belum tersedia |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | tanda terima kueri hanya-baca, ditambah driver kueri yang mengaitkan setiap hasil dengan snapshot skema terkait |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | arahkan peran ke definisi agen di luar templat bawaan — direktori YAML/SKILL.md generik atau tata letak plugin Claude Code |

@@ -258,7 +258,7 @@ bernstein volunteer browse --budget 60
 Der [Spenderleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt den Betrieb eines Workers und das Budget, das Sie setzen, der [Projektleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) das Deklarieren eines Manifests, und das [Bedrohungsmodell](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschreibt, wovor jede Grenze schützt und wovor nicht. Der Runner mit einem einzigen Befehl ist noch nicht veröffentlicht: Heute sind `verify`, `browse`, `budget`, `verify-bundle` und `hub` die funktionierenden Unterbefehle. `autopilot` ist registriert, verweigert aber die Ausführung, bis eine `TaskSource` implementiert ist.
 
 ### hinter den Kulissen
-<!-- l10n: en="beyond the front page" hash="sha256:538fb5704bc4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Alle weiterführenden Details finden sich auf der [Dokumentations-Website](https://docs.bernstein.run/):
 
@@ -270,7 +270,7 @@ Alle weiterführenden Details finden sich auf der [Dokumentations-Website](https
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | wo der konkrete Nutzen liegt und wann Bernstein das falsche Werkzeug ist |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklarative YAML-DAGs aus Agenten-, Befehls- und Schleifenknoten |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | Browser-Dashboard auf Basis derselben API wie das TUI (Aufgaben erstellen und prüfen) |
-| [Zustand der Cluster-Worker](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) | Worker übernehmen keine neuen Aufgaben, solange freier Speicherplatz, Speicherauslastung oder Netzlatenz außerhalb der Grenzwerte liegen. |
+| [Zustand der Cluster-Worker](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Worker übernehmen keine neuen Aufgaben, solange freier Speicherplatz, Speicherauslastung oder Netzlatenz außerhalb der Grenzwerte liegen. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimentell: Agenten auf Cloudflare Workers mit R2-Workspace-Synchronisation über das eigene Konto ausführen. Der gehostete Dienst `api.bernstein.run` ist noch nicht verfügbar |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | Nur-Lese-Abfragebelege plus ein Abfragetreiber, der Ergebnisse an den jeweiligen Schema-Snapshot bindet |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | Rollen auf externe Agentendefinitionen verweisen lassen – generische YAML/SKILL.md-Verzeichnisse oder Claude Code Plugin-Layouts |

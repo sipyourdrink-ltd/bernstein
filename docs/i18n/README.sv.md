@@ -258,7 +258,7 @@ bernstein volunteer browse --budget 60
 [Givarguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) täcker hur du kör en worker och budgeten du sätter, [projektguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) täcker att deklarera ett manifest, och [hotmodellen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) anger vad varje gräns skyddar mot och inte. Körning med ett enda kommando är ännu inte släppt: i dag är `verify`, `browse`, `budget`, `verify-bundle` och `hub` de underkommandon som fungerar. `autopilot` är registrerat men vägrar att köras tills en `TaskSource` har implementerats.
 
 ### bortom förstasidan
-<!-- l10n: en="beyond the front page" hash="sha256:538fb5704bc4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 All fördjupad information finns på [dokumentationswebbplatsen](https://docs.bernstein.run/):
 
@@ -270,7 +270,7 @@ All fördjupad information finns på [dokumentationswebbplatsen](https://docs.be
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | var värdet finns och när Bernstein är fel verktyg |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklarativa YAML-DAG:ar av agent- / kommando- / loop-noder |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | webbläsardashboard baserad på samma API som TUI använder (skapa och granska uppgifter) |
-| [klusterarbetarnas status](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) | Arbetarna hämtar inga nya uppgifter så länge ledigt diskutrymme, minnesanvändning eller nätverksfördröjning ligger utanför de konfigurerade gränserna. |
+| [klusterarbetarnas status](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Arbetarna hämtar inga nya uppgifter så länge ledigt diskutrymme, minnesanvändning eller nätverksfördröjning ligger utanför de konfigurerade gränserna. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimentellt: kör agenter på Cloudflare Workers med R2-synkronisering av arbetsytan mot ditt eget konto. Den hostade tjänsten `api.bernstein.run` är ännu inte tillgänglig |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | skrivskyddade frågekvitton plus en frågedrivrutin som binder varje resultat till den schemaögonblicksbild det härleddes mot |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | peka roller mot agentdefinitioner utanför de inbyggda mallarna — en generisk YAML/SKILL.md-katalog eller Claude Code-plugin-struktur |

@@ -665,8 +665,11 @@ Heartbeat responses, `GET /cluster/nodes` and `GET /cluster/status` return
 the recorded telemetry in each node's `capacity`, with `null` for missing values.
 The registry marks a worker `unhealthy:disk`, `unhealthy:memory` or
 `unhealthy:mesh-rtt` when its reported telemetry exceeds the configured
-thresholds and excludes unhealthy workers from task selection. Multiple
-reasons are comma separated; recovery resets `unhealthy_since`.
+thresholds. The registry skips unhealthy workers when selecting a node for a
+task or choosing a recipient for task stealing. A `bernstein worker` pull
+waits for recovery before claiming more work. The separate orchestrator path
+for claiming a task by ID is tracked in [#7853](https://github.com/sipyourdrink-ltd/bernstein/issues/7853).
+Multiple reasons are comma separated. Recovery resets `unhealthy_since`.
 
 Cluster seed keys `min_disk_free_mb` (512), `max_mem_used_pct` (95.0) and
 `max_mesh_rtt_ms` (5000.0) set the thresholds. Missing telemetry contributes
