@@ -56,6 +56,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -498,9 +499,21 @@ def main(argv: list[str] | None = None) -> int:
 
     _maybe_dump_argv(argv)
     _maybe_dump_env()
-    _validate_argv(profile, argv)
-
     mode = os.environ.get("BERNSTEIN_FAKE_CLI_MODE", "success").strip() or "success"
+    if mode == "first_run_greeting" and profile == "codex":
+        if "exec" not in argv:
+            print("codex-cli 0.120.0")
+            return 0
+        _validate_argv(profile, argv)
+        target = Path("src/greeting.py")
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("def hello():\n    return 'Hello, world!'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "--", str(target)], check=True)
+        subprocess.run(["git", "commit", "-m", "feat: add greeting"], check=True)
+        print(f"Modified: {target.as_posix()}")
+        print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 40, "output_tokens": 12}}))
+        return 0
+    _validate_argv(profile, argv)
     try:
         exit_code = int(os.environ.get("BERNSTEIN_FAKE_CLI_EXIT_CODE", "2") or "2")
     except ValueError:
