@@ -43,7 +43,6 @@ from bernstein.core.config.seed_config import (
 )
 from bernstein.core.config.visual_config import parse_visual_config
 from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
-from bernstein.core.gate_runner import VALID_GATE_NAMES, GatePipelineStep, normalize_gate_condition
 from bernstein.core.key_rotation import KeyRotationConfig, _parse_interval
 from bernstein.core.models import (
     BatchConfig,
@@ -55,6 +54,7 @@ from bernstein.core.models import (
     SmtpConfig,
     TestAgentConfig,
 )
+from bernstein.core.quality.gate_pipeline import VALID_GATE_NAMES, GatePipelineStep, normalize_gate_condition
 from bernstein.core.quality_gates import BenchmarkConfig, IntentVerificationConfig, QualityGatesConfig
 from bernstein.core.sandbox import parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig

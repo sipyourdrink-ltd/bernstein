@@ -116,3 +116,41 @@ def test_registering_mission_routes_defers_digest_formatting() -> None:
         "assert 'bernstein.core.orchestration.mission_digest' not in sys.modules"
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_app_factory_defers_optional_worktree_and_hook_implementations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for key in ("HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(key, str(tmp_path))
+    result = _import_in_fresh_interpreter("""
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from bernstein.core.server.server_app import get_app
+from bernstein.core.config.hook_protocol import validate_hook_payload
+from bernstein.core.config.seed_parser import _parse_quality_gate_pipeline
+from bernstein.core.routes.status_dashboard import _active_worktree_count
+
+get_app()
+assert _parse_quality_gate_pipeline([{"name": "lint"}])[0].name == "lint"
+validate_hook_payload("undocumented", {})
+project = Path.cwd()
+sdd = project / ".sdd"
+request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(sdd_dir=sdd, workdir=project)))
+assert _active_worktree_count(request) == 0
+assert "bernstein.core.quality.gate_runner" not in sys.modules
+assert "bernstein.core.git.worktree" not in sys.modules
+assert "jsonschema" not in sys.modules
+
+validate_hook_payload("on_task_created", {"task_id": "a", "role": "backend", "title": "task"})
+assert "jsonschema" in sys.modules
+(sdd / "worktrees").mkdir(exist_ok=True, parents=True)
+(project / ".git").mkdir(exist_ok=True)
+with patch("bernstein.core.worktree.WorktreeManager.list_active", return_value=["one", "two"]):
+    assert _active_worktree_count(request) == 2
+""")
+    assert result.returncode == 0, result.stderr
