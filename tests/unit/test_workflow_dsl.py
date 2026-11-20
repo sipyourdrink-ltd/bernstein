@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import textwrap
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 from bernstein.core.models import Task, TaskStatus
 from bernstein.core.workflow import WorkflowDefinition, WorkflowPhase
 from bernstein.core.workflow_dsl import (
@@ -32,10 +28,13 @@ from bernstein.core.workflow_dsl import (
 
 from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.orchestration.activity import ActivityKind
+from bernstein.core.tasks.artifacts import ArtifactCriterion, ArtifactKind, ArtifactSpec
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_EXAMPLE_WORKFLOWS = Path(__file__).resolve().parents[2] / ".bernstein/workflows"
 
 
 def _task(
@@ -420,6 +419,48 @@ class TestParseWorkflowYaml:
             """,
         )
         with pytest.raises(DSLError, match="unknown phase"):
+            parse_workflow_yaml(path)
+
+    def test_role_outside_declared_phase_raises(self, tmp_path: Path) -> None:
+        path = _write_yaml(
+            tmp_path,
+            """\
+            name: phase-mismatch
+            phases:
+              - collect
+              - name: review
+                allowed_roles: [qa]
+            nodes:
+              assemble:
+                phase: review
+                role: docs
+            """,
+        )
+        with pytest.raises(DSLError, match="Node 'assemble'.*role 'docs'.*phase 'review'"):
+            parse_workflow_yaml(path)
+
+    @pytest.mark.parametrize(
+        ("declaration", "field"),
+        [
+            ("{kind: reprot, output_path: out/report.md}", "kind"),
+            ("{kind: report}", "output_path"),
+            ("{kind: report, output_path: out/report.md, criteria: invalid}", "criteria"),
+        ],
+    )
+    def test_invalid_artifact_spec_raises(self, tmp_path: Path, declaration: str, field: str) -> None:
+        path = _write_yaml(
+            tmp_path,
+            f"""\
+            name: invalid-artifact
+            phases: [collect]
+            nodes:
+              produce:
+                phase: collect
+                role: docs
+                artifact_spec: {declaration}
+            """,
+        )
+        with pytest.raises(DSLError, match=rf"nodes\.produce\.artifact_spec\.{field}:"):
             parse_workflow_yaml(path)
 
     def test_unknown_edge_source_raises(self, tmp_path: Path) -> None:
@@ -961,6 +1002,7 @@ class TestCreateTask:
         assert task.role == "manager"
         assert task.status == TaskStatus.OPEN
         assert task.id.startswith("a-")
+        assert task.artifact_spec == ArtifactSpec.default()
 
     def test_created_task_has_dependencies(self) -> None:
         dag = _simple_dag()
@@ -1135,6 +1177,23 @@ class TestWorkflowDAG:
         )
         assert dag1.definition_hash() != dag2.definition_hash()
 
+    def test_definition_hash_includes_artifact_contract(self, tmp_path: Path) -> None:
+        template = """\
+            name: artifact-workflow
+            phases: [collect]
+            nodes:
+              produce:
+                phase: collect
+                role: docs
+                artifact_spec:
+                  kind: report
+                  output_path: {output_path}
+            """
+        original = parse_workflow_yaml(_write_yaml(tmp_path, template.format(output_path="out/original.md")))
+        revised = parse_workflow_yaml(_write_yaml(tmp_path, template.format(output_path="out/revised.md")))
+
+        assert original.definition_hash() != revised.definition_hash()
+
 
 # ===========================================================================
 # End-to-end YAML file test
@@ -1142,6 +1201,66 @@ class TestWorkflowDAG:
 
 
 class TestEndToEnd:
+    @pytest.mark.parametrize(
+        "name", ["audit-evidence-pack", "ci-pipeline", "parallel-review-merge", "sequential-deprecation-rollout"]
+    )
+    def test_example_roles_match_declared_phases(self, name: str) -> None:
+        dag = parse_workflow_yaml(_EXAMPLE_WORKFLOWS / f"{name}.yaml")
+        phase_roles = {phase.name: phase.allowed_roles for phase in dag.definition.phases}
+
+        for node in dag.nodes:
+            assert not phase_roles[node.phase] or node.role in phase_roles[node.phase], node.id
+
+    def test_flagship_materializes_declared_artifact_contracts(self) -> None:
+        dag = parse_workflow_yaml(_EXAMPLE_WORKFLOWS / "audit-evidence-pack.yaml")
+        executor = DAGExecutor(dag)
+        expected = {
+            "define-control-inventory": ArtifactSpec(kind=ArtifactKind.REPORT, output_path="out/control-inventory.md"),
+            "collect-audit-logs": ArtifactSpec(kind=ArtifactKind.DATASET, output_path="out/audit-logs.jsonl"),
+            "collect-sboms-and-attestations": ArtifactSpec(kind=ArtifactKind.BLOB, output_path="out/supply-chain.zip"),
+            "collect-runbooks-and-policies": ArtifactSpec(
+                kind=ArtifactKind.REPORT, output_path="out/runbooks-and-policies.md"
+            ),
+            "collect-eval-results": ArtifactSpec(kind=ArtifactKind.DATASET, output_path="out/eval-results.jsonl"),
+            "assemble-pack": ArtifactSpec(kind=ArtifactKind.BLOB, output_path="out/evidence-pack.zip"),
+            "mock-auditor-pass": ArtifactSpec(kind=ArtifactKind.REPORT, output_path="out/review.md"),
+            "remediate-findings": ArtifactSpec(kind=ArtifactKind.REPORT, output_path="out/remediation.md"),
+            "sign-and-deliver": ArtifactSpec(kind=ArtifactKind.BLOB, output_path="out/signed-evidence-pack.zip"),
+        }
+
+        tasks = {node.id: executor.create_task(node.id) for node in dag.nodes}
+        assert {node_id: task.artifact_spec for node_id, task in tasks.items()} == expected
+
+    def test_artifact_criteria_survive_materialization_and_serialization(self, tmp_path: Path) -> None:
+        path = _write_yaml(
+            tmp_path,
+            """\
+            name: dataset-workflow
+            phases: [collect]
+            nodes:
+              produce:
+                phase: collect
+                role: docs
+                artifact_spec:
+                  kind: dataset
+                  output_path: out/rows.jsonl
+                  canonicalisation: dataset
+                  criteria:
+                    - type: schema_valid
+                      value: '{"type":"object"}'
+            """,
+        )
+        task = DAGExecutor(parse_workflow_yaml(path)).create_task("produce")
+        expected = ArtifactSpec(
+            kind=ArtifactKind.DATASET,
+            output_path="out/rows.jsonl",
+            canonicalisation="dataset",
+            criteria=(ArtifactCriterion(type="schema_valid", value='{"type":"object"}'),),
+        )
+
+        assert task.artifact_spec == expected
+        assert Task.from_dict(task.to_dict()).artifact_spec == expected
+
     def test_ci_pipeline_yaml(self, tmp_path: Path) -> None:
         """Parse the example ci-pipeline and execute a simulated run."""
         path = _write_yaml(
@@ -1311,13 +1430,19 @@ class TestUnreachableNodes:
             definition=_simple_definition(),
             nodes=(
                 DAGNode(id="test", phase="plan", role="qa"),
-                DAGNode(id="deploy", phase="verify", role="manager"),
+                DAGNode(
+                    id="deploy",
+                    phase="verify",
+                    role="manager",
+                    artifact_spec=ArtifactSpec(kind=ArtifactKind.REPORT, output_path="out/deployment.md"),
+                ),
             ),
             edges=(DAGEdge(source="test", target="deploy", condition=ConditionExpr(raw=guard)),),
         )
 
     def test_sole_inbound_edge_skipped_materializes_the_node(self) -> None:
-        executor = DAGExecutor(self._guarded_dag("status == 'done'"))
+        dag = self._guarded_dag("status == 'done'")
+        executor = DAGExecutor(dag)
         tasks = {"test": _task("test", role="qa", status=TaskStatus.FAILED)}
 
         # The guard is false against a failed source, so deploy is not ready.
@@ -1327,6 +1452,7 @@ class TestUnreachableNodes:
 
         blocked = tasks["deploy"]
         assert blocked.status == TaskStatus.BLOCKED_BY_FAILED_DEP
+        assert blocked.artifact_spec == dag.node_map["deploy"].artifact_spec
         assert blocked.metadata[BLOCKING_NODE_METADATA_KEY] == "test"
         assert blocked.metadata[SKIPPED_EDGES_METADATA_KEY] == ["test -> deploy"]
         assert blocked.terminal_reason == "blocked_by_failed_dependency"

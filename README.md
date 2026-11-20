@@ -95,7 +95,7 @@ Role-adapter policy supports an optional default allow-list for unlisted roles; 
 
 ### what a run looks like
 
-One YAML file declares the run: phases, roles, dependencies, and the conditions under which a node runs at all. The scheduler executes it as plain Python - nothing in the file is a prompt, and no model decides what happens next. This graph produces an audit evidence pack; the full file ships at [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
+One YAML file declares the phases, roles, dependencies, conditions, and outputs for an audit evidence pack. The full file ships at [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
 ```yaml
 name: audit-evidence-pack
@@ -114,10 +114,16 @@ nodes:
   define-control-inventory:
     phase: scope
     role: architect
+    artifact_spec:
+      kind: report
+      output_path: out/control-inventory.md
 
   collect-audit-logs:
     phase: collect
     role: security
+    artifact_spec:
+      kind: dataset
+      output_path: out/audit-logs.jsonl
     depends_on: [define-control-inventory]
 
   # three more evidence streams collect in parallel:
@@ -125,8 +131,11 @@ nodes:
   # collect-eval-results
 
   assemble-pack:
-    phase: validate
+    phase: collect
     role: docs
+    artifact_spec:
+      kind: blob
+      output_path: out/evidence-pack.zip
     depends_on:
       - collect-audit-logs
       - collect-sboms-and-attestations
@@ -136,11 +145,17 @@ nodes:
   mock-auditor-pass:
     phase: validate
     role: qa
+    artifact_spec:
+      kind: report
+      output_path: out/review.md
     depends_on: [assemble-pack]
 
   remediate-findings:
     phase: collect
     role: docs
+    artifact_spec:
+      kind: report
+      output_path: out/remediation.md
     depends_on:
       - source: mock-auditor-pass
         condition: "status == 'failed'"
@@ -151,6 +166,9 @@ nodes:
   sign-and-deliver:
     phase: deliver
     role: security
+    artifact_spec:
+      kind: blob
+      output_path: out/signed-evidence-pack.zip
     depends_on:
       - source: mock-auditor-pass
         condition: "status == 'done'"
@@ -171,7 +189,7 @@ flowchart LR
     gate -->|done| sign[sign-and-deliver]
 ```
 
-Each node is claimed by an agent whose role the phase allows; role fences and approval gates hold no matter what the agent does inside the task. A coding node completes behind merge gates in its own git worktree. The nodes above complete differently: an [artifact contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) names the deliverable (report, dataset, scan, action log), and the node finishes on a signed lineage receipt instead of a commit. Same scheduler, same journal, same offline verification - whether the graph ships code, research, an ops change, or a mix of all three. Ready-made graphs for software, research, docs, enterprise, and contributor workflows live in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
+Workflow validation checks that each node's role is allowed in its phase. Each materialized task inherits its node's [artifact contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md), which gives the deliverable's kind and output path. Preview the graph with `bernstein workflow run .bernstein/workflows/audit-evidence-pack.yaml --dry-run`. Ready-made graphs for software, research, docs, enterprise, and contributor workflows live in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 Retries preserve `dispatch_tier`; reopening a task can explicitly select a tier. See the [dispatch-tier contract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 

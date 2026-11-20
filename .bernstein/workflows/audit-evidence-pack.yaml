@@ -24,12 +24,18 @@ nodes:
     role: architect
     description: "Define the control inventory and the evidence map"
     estimated_minutes: 60
+    artifact_spec:
+      kind: report
+      output_path: out/control-inventory.md
 
   collect-audit-logs:
     phase: collect
     role: security
     description: "Verify HMAC chain integrity across the audit window"
     estimated_minutes: 45
+    artifact_spec:
+      kind: dataset
+      output_path: out/audit-logs.jsonl
     depends_on:
       - define-control-inventory
 
@@ -38,6 +44,9 @@ nodes:
     role: security
     description: "Generate SBOMs and verify SLSA provenance for every artifact"
     estimated_minutes: 45
+    artifact_spec:
+      kind: blob
+      output_path: out/supply-chain.zip
     depends_on:
       - define-control-inventory
 
@@ -46,6 +55,9 @@ nodes:
     role: docs
     description: "Capture incident runbooks, threat models, and data-governance docs"
     estimated_minutes: 60
+    artifact_spec:
+      kind: report
+      output_path: out/runbooks-and-policies.md
     depends_on:
       - define-control-inventory
 
@@ -54,14 +66,20 @@ nodes:
     role: qa
     description: "Run the agent-evaluation harness and capture accuracy plus robustness evidence"
     estimated_minutes: 60
+    artifact_spec:
+      kind: dataset
+      output_path: out/eval-results.jsonl
     depends_on:
       - define-control-inventory
 
   assemble-pack:
-    phase: validate
+    phase: collect
     role: docs
     description: "Build the auditor-navigable index and the zip"
     estimated_minutes: 45
+    artifact_spec:
+      kind: blob
+      output_path: out/evidence-pack.zip
     depends_on:
       - collect-audit-logs
       - collect-sboms-and-attestations
@@ -73,6 +91,9 @@ nodes:
     role: qa
     description: "Hand the pack to an internal reviewer who has not worked on the pipeline"
     estimated_minutes: 60
+    artifact_spec:
+      kind: report
+      output_path: out/review.md
     depends_on:
       - assemble-pack
 
@@ -80,6 +101,9 @@ nodes:
     phase: collect
     role: docs
     description: "Address mock-auditor findings"
+    artifact_spec:
+      kind: report
+      output_path: out/remediation.md
     depends_on:
       - source: mock-auditor-pass
         condition: "status == 'failed'"
@@ -92,6 +116,9 @@ nodes:
     role: security
     description: "Sign the pack with cosign and deliver via the contracted channel"
     estimated_minutes: 20
+    artifact_spec:
+      kind: blob
+      output_path: out/signed-evidence-pack.zip
     depends_on:
       - source: mock-auditor-pass
         condition: "status == 'done'"

@@ -172,6 +172,12 @@ files from the same project directory as a best-effort secondary scan;
 directly. New manifests should use the YAML schema above - the DSL path
 exists for files written before the YAML manifest schema landed.
 
+Each node's role must be in its phase's `allowed_roles` list when the list
+is nonempty. A node can also declare an [artifact contract](artifacts.md)
+under `artifact_spec`. The loader validates the block, and the materialized
+task inherits the kind, workdir-relative output path, and any criteria.
+Omitting the block uses the default `code_diff` contract.
+
 ## Limitations
 
 - **`interactive: true` is not implemented.** A node with `interactive`

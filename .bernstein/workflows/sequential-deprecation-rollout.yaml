@@ -11,12 +11,12 @@ version: "1.0.0"
 
 phases:
   - name: announce
-    allowed_roles: [manager, docs]
+    allowed_roles: [manager, docs, architect]
   - name: ship-new
   - name: warn
   - name: migrate
   - name: remove
-    allowed_roles: [manager]
+    allowed_roles: [manager, backend]
 
 nodes:
   publish-rfc:
