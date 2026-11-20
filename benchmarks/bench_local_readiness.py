@@ -138,7 +138,7 @@ def sample(console: Path, *, app_home: Path | None = None, auto_routing: bool = 
                 'case " $* " in\n'
                 '  *" say ok "*) echo ok; exit 0 ;;\n'
                 f'  *" --strict-mcp-config "*) touch {shlex.quote(str(marker))}; exec sleep 25 ;;\n'
-                '  *) exit 0 ;;\n'
+                "  *) exit 0 ;;\n"
                 "esac\n"
             )
             binary.chmod(0o755)
