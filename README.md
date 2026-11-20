@@ -225,6 +225,8 @@ Each goal moves through four stages:
 
 Why the scheduler is plain Python, and what that trades away: [why deterministic](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+Bernstein stops launching new workers when a correction raises cumulative spending to or above the configured budget stop threshold, even if no new tokens are reported. After a restart, saved token counts alone cannot reconstruct the exact cumulative cost previously reported for a given agent, task and model.
+
 ### everyday commands
 
 ```bash

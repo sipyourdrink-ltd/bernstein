@@ -206,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` は、監査キーを使った HMAC によって実行マニフェストに封印された最終ヘッドとホップ数をレシートチェーンと比較し、末尾の削除、置き換え、終了後のチェーンの延長を検出します。キーを持たずに宣言を書き換える行為も検出対象です。宣言を削除すると、実行は未完了（終了コード `3`）となり、有効とは判定されません。古い真正なスナップショットの再利用は検出できず、監査キーを持つ書き手からの保護も提供しません。詳しくは[委任の検証手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)を参照してください。
 
 ### 仕組み
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
 
 ゴールは 4 つの段階を通る:
 
@@ -216,6 +216,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 4. **マージする**。検証を通った成果が main に入る。落ちたタスクはリトライされるか、別のモデルに回される。
 
 スケジューラーが素の Python である理由と、それが何を諦めているかは[なぜ決定論的か](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)にある。
+
+費用の訂正で累計支出が予算に設定した停止しきい値に達するか、それを上回ると、新しいトークンの報告がなくても、Bernstein は新規ワーカーの起動を停止します。再起動後、保存されたトークン数だけでは、特定のエージェント、タスク、モデルの組み合わせについて以前報告された正確な累計費用を復元できません。
 
 ### 日常のコマンド
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

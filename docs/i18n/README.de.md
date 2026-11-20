@@ -206,7 +206,7 @@ Verwenden Sie `bernstein govern audit --format json` oder `--format sarif` für 
 `bernstein delegation verify RUN` vergleicht die Belegkette mit dem endgültigen Kettenkopf und der Anzahl der Delegationsschritte, die im Laufmanifest per HMAC mit dem Auditschlüssel versiegelt sind. Dadurch werden das Löschen des Kettenendes, Ersetzungen und Erweiterungen nach Abschluss erkannt, einschließlich eines Umschreibens der Deklaration ohne Schlüssel. Wird die Deklaration entfernt, bleibt der Lauf unvollständig (Exitcode `3`) und gilt niemals als gültig. Dies erkennt weder das Wiedereinspielen eines älteren authentischen Snapshots noch schützt es vor einem Schreiber, der den Auditschlüssel besitzt. Siehe [Ablauf der Delegationsprüfung](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### wie es funktioniert
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
 
 Jedes Ziel durchläuft vier Phasen:
 
@@ -216,6 +216,8 @@ Jedes Ziel durchläuft vier Phasen:
 4. **Zusammenführen (Merge)**. Verifizierte Änderungen gelangen in den Main-Branch. Fehlgeschlagene Tasks werden wiederholt oder an ein anderes Modell übergeben.
 
 Warum der Scheduler in reinem Python geschrieben ist und welche Vor- und Nachteile das bringt: [Warum deterministisch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+Wenn die kumulierten Ausgaben nach einer Korrektur die konfigurierte Budgetgrenze für den Start neuer Worker erreichen oder überschreiten, startet Bernstein keine weiteren Worker, auch wenn keine neuen Tokens gemeldet wurden. Nach einem Neustart lässt sich der zuvor gemeldete genaue Gesamtbetrag für eine bestimmte Kombination aus Agent, Aufgabe und Modell allein aus den gespeicherten Tokenzählern nicht rekonstruieren.
 
 ### alltägliche Befehle
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

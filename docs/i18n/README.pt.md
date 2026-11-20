@@ -206,7 +206,7 @@ Use `bernstein govern audit --format json` ou `--format sarif` para obter result
 `bernstein delegation verify RUN` compara a cadeia de recibos com a cabeça final e o número de saltos selados no manifesto da execução por um HMAC com a chave de auditoria, detectando a exclusão do trecho final, a substituição e a extensão após o encerramento, incluindo a reescrita da declaração sem a chave. Remover a declaração deixa a execução incompleta (código de saída `3`), nunca válida. Isso não detecta a reutilização de um snapshot autêntico mais antigo nem protege contra quem escreve possuindo a chave de auditoria. Consulte o [fluxo de verificação de delegação](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### como funciona
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
 
 Cada objetivo passa por quatro etapas:
 
@@ -216,6 +216,8 @@ Cada objetivo passa por quatro etapas:
 4. **Mesclagem (Merge)**. Trabalho verificado entra na main. Tarefas que falharam são repetidas ou roteadas para outro modelo.
 
 Por que o agendador é Python puro e quais são os trade-offs: [por que determinístico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+O Bernstein deixa de iniciar novos workers quando uma correção eleva o gasto acumulado até o limite de parada configurado para o orçamento ou acima dele, mesmo que nenhum novo token tenha sido informado. Após uma reinicialização, as contagens de tokens salvas, por si só, não permitem reconstruir o custo acumulado exato informado anteriormente para uma determinada combinação de agente, tarefa e modelo.
 
 ### comandos do dia a dia
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

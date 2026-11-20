@@ -206,7 +206,7 @@ Dùng `bernstein govern audit --format json` hoặc `--format sarif` để xuấ
 `bernstein delegation verify RUN` so sánh chuỗi biên nhận với đầu chuỗi cuối cùng và số bước chuyển đã được niêm phong trong bản kê khai lần chạy bằng HMAC với khóa kiểm toán, qua đó phát hiện việc xóa phần đuôi, thay thế và nối dài chuỗi sau khi đóng, kể cả việc viết lại khai báo mà không có khóa. Xóa khai báo sẽ khiến lần chạy ở trạng thái chưa hoàn tất (mã thoát `3`), không bao giờ được coi là hợp lệ. Cơ chế này không phát hiện việc sử dụng lại một bản chụp xác thực cũ hơn và không bảo vệ trước người ghi nắm giữ khóa kiểm toán. Xem [quy trình xác minh ủy quyền](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cơ chế hoạt động
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
 
 Mỗi mục tiêu trải qua bốn giai đoạn:
 
@@ -216,6 +216,8 @@ Mỗi mục tiêu trải qua bốn giai đoạn:
 4. **Hợp nhất (Merge)**. Công việc đã kiểm định được hợp nhất vào main. Các nhiệm vụ thất bại được thử lại hoặc chuyển hướng sang mô hình khác.
 
 Lý do bộ lập lịch được xây dựng bằng Python thuần túy và các đánh đổi đi kèm: [tại sao tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+Bernstein ngừng khởi chạy worker mới khi một lần điều chỉnh làm tổng chi phí chạm hoặc vượt ngưỡng dừng đã đặt cho ngân sách, ngay cả khi không có token mới nào được báo cáo. Sau khi khởi động lại, chỉ dựa vào số token đã lưu thì không thể khôi phục chính xác chi phí lũy kế đã được báo cáo trước đó cho một tổ hợp tác nhân, tác vụ và mô hình cụ thể.
 
 ### lệnh thông dụng
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

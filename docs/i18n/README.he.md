@@ -206,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 הפקודה `bernstein delegation verify RUN` משווה את שרשרת הקבלות לערך הראש הסופי ולמספר שלבי ההאצלה, שנחתמו במניפסט הריצה באמצעות HMAC עם מפתח הביקורת. כך היא מזהה מחיקה של סוף השרשרת, החלפה והארכת השרשרת לאחר סגירת הריצה, לרבות שכתוב ההצהרה ללא המפתח. הסרת ההצהרה משאירה את הריצה לא שלמה (קוד יציאה `3`), והיא לעולם אינה נחשבת תקינה. הבדיקה אינה מזהה שימוש חוזר בתמונת מצב אותנטית ישנה יותר ואינה מגינה מפני גורם כותב המחזיק במפתח הביקורת. ראו את [תהליך אימות ההאצלה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### איך זה עובד
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:0f3f3998a2c0" -->
 
 כל יעד מתקדם דרך ארבעה שלבים:
 
@@ -216,6 +216,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 4. **מיזוג (Merge)**. עבודה מאומתת מתמזגת ל-main. משימות שנכשלו מנוסות שוב או מנותבות למודל אחר.
 
 מדוע המתזמן נכתב ב-Python טהור ואילו פשרות נובעות מכך: [מדוע דטרמיניסטי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+כאשר תיקון מעלה את ההוצאה המצטברת עד לסף העצירה שהוגדר לתקציב או מעבר לו, Bernstein מפסיק להפעיל וורקרים חדשים, גם אם לא דווח על טוקנים חדשים. לאחר הפעלה מחדש, מוני הטוקנים שנשמרו לבדם אינם מאפשרים לשחזר את העלות המצטברת המדויקת שדווחה קודם לכן עבור שילוב מסוים של סוכן, משימה ומודל.
 
 ### פקודות יומיומיות
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
