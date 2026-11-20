@@ -6,7 +6,7 @@ adapter: continue
 binary: cn
 install:
   method: npm
-  spec: "@continuedev/cli@latest"
+  spec: "@continuedev/cli@1.5.47"
 auth:
   required_for_help: false
   required_for_models: false

@@ -10,10 +10,13 @@ import json
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from click.testing import CliRunner
 
+from bernstein.cli.commands import compare_cmd as compare_cli
 from bernstein.cli.main import cli
 from bernstein.core.orchestration.compare_runner import (
     MAX_ADAPTERS,
@@ -330,6 +333,39 @@ def test_cli_compare_help() -> None:
     assert result.exit_code == 0, result.output
     assert "--adapters" in result.output
     assert "--keep-worktrees" in result.output
+
+
+def test_cli_compare_explicit_traces_dir_overrides_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = tmp_path / "task.md"
+    spec.write_text("Describe a garden.", encoding="utf-8")
+    traces_dir = tmp_path / "explicit"
+    monkeypatch.setenv("BERNSTEIN_TRACES_DIR", str(tmp_path / "environment"))
+
+    run = SimpleNamespace(compare_run_id="fixture-run", runs=[SimpleNamespace(exit_code=0)])
+    executor = Mock(side_effect=AssertionError("This test must not execute an adapter"))
+    monkeypatch.setattr(compare_cli, "_parallel_executor_factory", Mock(return_value=(executor, Mock())))
+    monkeypatch.setattr(compare_cli, "run_compare", Mock(return_value=run))
+    monkeypatch.setattr(compare_cli, "render_markdown", Mock(return_value="Fixture comparison summary"))
+    writer = Mock(return_value=traces_dir / f"compare-{run.compare_run_id}.json")
+    monkeypatch.setattr(compare_cli, "write_sidecar", writer)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "compare",
+            str(spec),
+            "--adapters",
+            "mock",
+            "--workspace",
+            str(tmp_path),
+            "--traces-dir",
+            str(traces_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Fixture comparison summary" in result.stdout
+    writer.assert_called_once_with(run, traces_dir)
 
 
 def test_cli_compare_rejects_more_than_cap(workspace: Path, tmp_path: Path) -> None:
