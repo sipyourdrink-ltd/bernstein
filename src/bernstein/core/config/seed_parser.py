@@ -2579,9 +2579,9 @@ def _load_seed_mapping(path: Path, *, validate_layers: bool = True) -> dict[str,
     return data
 
 
-def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
+def _parse_seed(path: Path, *, apply_tuning: bool, mapping: dict[str, object] | None = None) -> SeedConfig:
     """Share parsing with launch validation without rebinding parent tuning."""
-    data = _load_seed_mapping(path)
+    data = _load_seed_mapping(path) if mapping is None else mapping
     _warn_unknown_top_level_keys(data)
 
     # --- Required fields ---

@@ -102,7 +102,7 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
     From your Git repository on the host, switch to a working branch before
     starting the container. If you're on the default branch, run
     `git switch -c bernstein/first-run`. See the [first-run walkthrough](first-run.md)
-    for how Bernstein merges changes back into that branch.
+    for how to select a worker and model, check setup, and review the changes on that branch before opening a pull request.
 
     ```bash
     docker run -v "$(pwd)":/workspace -v "$(pwd)/.sdd":/workspace/.sdd \

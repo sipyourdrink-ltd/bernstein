@@ -19,14 +19,14 @@ If `bernstein --version` doesn't work yet, finish the [install page](install.md)
 
 This walkthrough uses a CLI coding agent; Bernstein also supports other adapter types. See the [adapter catalog](../adapters/index.md) for the other options.
 
-For this CLI walkthrough, Bernstein orchestrates **other** CLI coding agents - it doesn't talk to LLM APIs directly. You need at least one agent installed and logged in. Most people start with Claude Code:
+Install and sign in to one worker. For example, if your Claude account includes Claude Code access, run:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
 claude login
 ```
 
-Other one-line installs (pick whichever you have an API key for):
+Other worker installs:
 
 ```bash
 npm install -g @openai/codex          # Codex CLI (OpenAI)
@@ -34,8 +34,7 @@ npm install -g @google/gemini-cli     # Gemini CLI (Google)
 pip install aider-chat                # Aider (any provider)
 ```
 
-Don't have an API key on hand? Skip ahead to **Try the demo first** below - it works
-without one.
+For Codex, run `codex login` to use your eligible account. API billing is a separate option: configure the provider key for the worker you selected. To try a local fixture without a provider account, see **Try the demo first** below.
 
 ---
 
@@ -68,23 +67,28 @@ Created templates/ (default roles & prompts)
 Created .gitignore (added .sdd/runtime/)
 
 Done. Next steps:
-  1. Edit bernstein.yaml: set a goal
-  2. If on the default branch, run git switch -c bernstein/first-run
-  3. Run bernstein to start the orchestra
+Project setup: action needed
+Working branch: main
+Worker: auto  |  Internal planner: openrouter_free
+  Create a working branch with git switch -c bernstein/first-run.
+  Edit bernstein.yaml: set a goal for bernstein run.
 ```
 
-Four things happened:
+This excerpt shows a new repository on `main`. The branch, worker, planner and remaining steps depend on the checkout and configuration. Four things happened:
 
 - **`.sdd/`** - your file-based state directory (backlog, logs, metrics, signals). This is
   the single source of truth. Inspect it, back it up, recover from it.
-- **`bernstein.yaml`** - your project config. The defaults are fine for a first run.
+- **`bernstein.yaml`** - your project config. Set the goal and worker before starting.
 - **`templates/`** - the default role prompts, copied in so you can edit them per project.
 - **`.gitignore`** - created or appended to, so `.sdd/runtime/` stays out of git.
 
 A minimal `bernstein.yaml` looks like:
 
 ```yaml
-cli: claude                    # or codex / gemini / aider - whatever you set up
+goal: "Add a hello() function to src/greeting.py that returns Hello, world!"
+cli: codex                      # choose the worker you installed and signed in to
+model: gpt-5.4                  # use a model supported by the chosen worker
+internal_llm_provider: none     # leave optional internal LLM calls disabled
 budget: "$5"                    # spending cap for the run (accepts "$5", 5, or 5.0)
 ```
 
@@ -97,23 +101,23 @@ These internal settings do not select the worker adapter or replace `cli`.
 
 ## Step 4: Run your first goal
 
-Run `bernstein doctor` to check your agent setup. If you're on the project's
+Run `bernstein doctor` to check your agent setup. Its `Project setup` section reports the current checkout and selected configuration. In `doctor --json`, the optional `project_setup` object has `version` (1), `ready` (boolean), `branch`, `worker`, and `planner` (strings or null), and `next_steps` (a list of actions). Installation checks have their own results. If you're on the project's
 default branch, create and switch to a working branch before running the goal.
 Bernstein merges verified changes into the branch you start from and refuses
 merge-capable runs from the default branch.
 
 ```bash
 git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein -g "Add a hello() function to src/greeting.py that returns 'Hello, world!'"
+bernstein run --worker backend
 ```
 
 What happens:
 
 1. Bernstein starts the task server on port 8052.
-2. The manager breaks the goal into one or more tasks.
+2. The configured goal becomes one task for the backend worker.
 3. An agent spawns in an isolated git worktree.
 4. The janitor runs quality gates (lint, type-check, tests) on the agent's output.
-5. Verified work merges back to your branch.
+5. Verified work merges back to your branch. Review it with `git diff <default-branch>...HEAD` and open a pull request when you want to merge it.
 
 You'll see a live TUI in your terminal. Wait for it to finish - usually under 3 minutes
 for a simple goal.
@@ -137,10 +141,10 @@ skills, worker PID, agent PID and runtime — followed by the spend so far. Use
 
 ## Step 6: See what happened
 
-Once it finishes:
+While the server is running, use `bernstein recap` for its current totals. After it exits, read the local completion journal:
 
 ```bash
-bernstein recap
+bernstein recap --archive .sdd/runtime/tasks.jsonl
 ```
 
 ```
@@ -151,8 +155,7 @@ bernstein recap
   Success rate  100.0%
 ```
 
-`bernstein recap` prints that recap table, then a git diff summary, quality
-scores, and a per-model cost breakdown. The exact numbers depend on the run.
+The local journal supplies the task totals. With a running server, `bernstein recap` also reports the git diff, quality scores and cost breakdown.
 
 The summary card also reports a **Model routing savings** number when the
 cascade router downgraded any task off Opus - see
@@ -195,6 +198,12 @@ configuring anything.
 ---
 
 ## Common first-run errors
+
+- **Installation**. If `bernstein --version` fails, complete the [install guide](install.md).
+- **Worker**. If the worker is missing, install the CLI named by `cli`. If it is installed but the login check fails, sign in to that worker and rerun `bernstein doctor`.
+- **Planner**. If you enabled an internal planner, check its own provider configuration. For the single-worker example above, leave it disabled.
+- **Branch**. Create a working branch from a committed checkout. A fresh repository needs an initial commit. With a detached HEAD, create a branch for the resulting changes.
+- **Run failure**. If setup passes but a task fails, inspect its status with `bernstein recap --archive .sdd/runtime/tasks.jsonl` and read the session output with `bernstein logs tail -a <session-id>`.
 
 ### `No agents available`
 

@@ -1216,9 +1216,9 @@ def _init_impl(
     # Print clear next steps
     console.print("")
     console.print("[green]Done.[/green] Next steps:")
-    console.print("  1. Edit [bold]bernstein.yaml[/bold]: set a goal")
-    console.print("  2. If on the default branch, run [bold]git switch -c bernstein/first-run[/bold]")
-    console.print("  3. Run [bold]bernstein[/bold] to start the orchestra")
+    from bernstein.cli.first_run_readiness import project_handoff
+
+    project_handoff(root, remote=remote).render(console)
     console.print("")
     # ``examples/`` is a repo directory and is not part of the wheel, so an
     # operator who installed from PyPI has no such path to look at. The

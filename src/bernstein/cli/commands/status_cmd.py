@@ -1312,8 +1312,19 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
 
+    from bernstein.cli.first_run_readiness import project_handoff
+
+    setup = project_handoff(workdir, worker_env=spawner_env)
     if as_json or is_json():
         result_dict: dict[str, Any] = {"checks": checks, "findings": [finding.to_dict() for finding in findings]}
+        result_dict["project_setup"] = {
+            "version": 1,
+            "ready": not setup.actions,
+            "branch": setup.checkout.branch,
+            "worker": setup.worker,
+            "planner": setup.planner,
+            "next_steps": list(setup.actions),
+        }
         # Surface the execution surface so machine-readable consumers can
         # branch on it (e.g. tooling that ignores brew-adapter failures
         # inside a fresh container).
@@ -1327,6 +1338,7 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
             raise SystemExit(1)
         return
 
+    setup.render(console)
     _doctor_render_table(checks, auto_fix, fixed, manual_needed)
 
 

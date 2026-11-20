@@ -104,18 +104,15 @@ def _abort_if_default_branch_merge_target(workdir: Path) -> None:
         SystemExit: When the checked-out branch is a protected default branch
             and ``BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH`` is not set.
     """
+    from bernstein.cli.first_run_readiness import checkout_handoff
     from bernstein.core.agents.spawner_merge import (
         ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH,
         _allow_merge_to_default_branch,
     )
-    from bernstein.core.git_ops import current_branch, protected_default_branches
 
-    branch = current_branch(workdir)
-    if branch is None:
-        # Detached HEAD or not a git repo: mirror the merge guard, which only
-        # refuses when a named protected branch is checked out.
-        return
-    if branch not in protected_default_branches(workdir):
+    checkout = checkout_handoff(workdir)
+    branch = checkout.branch
+    if not checkout.default_target:
         return
     if _allow_merge_to_default_branch():
         return
