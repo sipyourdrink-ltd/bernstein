@@ -69,7 +69,8 @@ Created .gitignore (added .sdd/runtime/)
 
 Done. Next steps:
   1. Edit bernstein.yaml: set a goal
-  2. Run bernstein to start the orchestra
+  2. If on the default branch, run git switch -c bernstein/first-run
+  3. Run bernstein to start the orchestra
 ```
 
 Four things happened:
@@ -96,7 +97,13 @@ These internal settings do not select the worker adapter or replace `cli`.
 
 ## Step 4: Run your first goal
 
+Run `bernstein doctor` to check your agent setup. If you're on the project's
+default branch, create and switch to a working branch before running the goal.
+Bernstein merges verified changes into the branch you start from and refuses
+merge-capable runs from the default branch.
+
 ```bash
+git switch -c bernstein/first-run  # skip if already on a working branch
 bernstein -g "Add a hello() function to src/greeting.py that returns 'Hello, world!'"
 ```
 

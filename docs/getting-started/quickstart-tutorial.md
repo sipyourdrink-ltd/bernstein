@@ -122,7 +122,8 @@ Created .gitignore (added .sdd/runtime/)
 
 Done. Next steps:
   1. Edit bernstein.yaml: set a goal
-  2. Run bernstein to start the orchestra
+  2. If on the default branch, run git switch -c bernstein/first-run
+  3. Run bernstein to start the orchestra
 ```
 
 This creates:
@@ -136,9 +137,11 @@ This creates:
 
 ## Step 5: Run your first orchestration
 
-Give Bernstein a goal:
+If you're on the project's default branch, create a working branch before
+running the goal. Bernstein merges verified changes back into that branch.
 
 ```bash
+git switch -c bernstein/first-run  # skip if already on a working branch
 bernstein -g "Add a hello() function to src/utils.py that returns 'Hello, world!'"
 ```
 

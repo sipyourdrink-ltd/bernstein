@@ -36,8 +36,12 @@ Bernstein is the open-source governance layer for AI agents. It runs on policy a
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
+git switch -c bernstein/first-run  # skip if already on a working branch
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+Run the goal from a working branch. Bernstein merges verified changes back into
+the checked-out branch and refuses merge-capable runs from the default branch.
 
 `bernstein doctor --json` also exposes audit-contract `findings`, identical to
 `bernstein govern audit --only INS --json` for the same installation observations.
