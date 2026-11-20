@@ -1,4 +1,4 @@
-"""Trigger and header assertions for the adapter contract drift workflow.
+"""Trigger, header and npm install checks for the adapter contract drift workflow.
 
 Covers ``.github/workflows/adapter-contract-drift.yml``.
 
@@ -20,7 +20,10 @@ the header makes about them.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,6 +33,7 @@ yaml = pytest.importorskip("yaml")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "adapter-contract-drift.yml"
+CLI_DIR = REPO_ROOT / ".github" / "adapter-clis"
 
 #: Every trigger this workflow may declare, and nothing else.
 #:
@@ -115,6 +119,49 @@ def _normalise(text: str) -> str:
 
 def test_workflow_file_exists() -> None:
     assert WORKFLOW.is_file()
+
+
+def test_npm_branch_installs_from_the_committed_lockfile() -> None:
+    steps = _doc()["jobs"]["check"]["steps"]
+    install = next(step["run"] for step in steps if step.get("name") == "Install upstream CLI")
+    npm_branch = install.split("npm)", 1)[1].split(";;", 1)[0]
+    assert "npm ci --prefix .github/adapter-clis --no-audit --no-fund" in npm_branch
+    assert '--script-shell="$GITHUB_WORKSPACE/.github/adapter-clis/lifecycle-shell.sh"' in npm_branch
+    assert not re.search(r"\bnpm\s+(?:install|i|add)\b|@latest|--ignore-scripts", npm_branch)
+    assert (CLI_DIR / "package-lock.json").is_file()
+
+
+def test_npm_matrix_contracts_match_the_locked_packages() -> None:
+    packages = json.loads((CLI_DIR / "package-lock.json").read_text(encoding="utf-8"))["packages"]
+    dependencies = packages[""]["dependencies"]
+    assert json.loads((CLI_DIR / "package.json").read_text(encoding="utf-8"))["dependencies"] == dependencies
+
+    contracted = set()
+    for adapter in _doc()["jobs"]["check"]["strategy"]["matrix"]["adapter"]:
+        path = REPO_ROOT / "tests" / "contract" / "contracts" / f"{adapter}.yaml"
+        contract = yaml.safe_load(path.read_text(encoding="utf-8"))
+        install = contract["install"]
+        if install["method"] != "npm":
+            continue
+        package, _, version = install["spec"].rpartition("@")
+        assert package in dependencies, f"{adapter}: {install['spec']} is missing from the CLI lock"
+        locked = packages[f"node_modules/{package}"]
+        assert version == dependencies[package] == locked["version"], adapter
+        assert contract["binary"] in locked["bin"], adapter
+        contracted.add(package)
+    assert contracted == set(dependencies)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="The adapter contract job runs on Linux")
+def test_npm_lifecycle_shell_only_runs_hooks_in_the_selected_tree(tmp_path: Path) -> None:
+    cli = tmp_path / "cli"
+    dependency = tmp_path / "optional dependency"
+    unrelated = tmp_path / "cli-other"
+    env = {**os.environ, "ADAPTER_LIFECYCLE_PATHS": f"{cli}\n{dependency}"}
+    for directory, expected_rc in [(cli, 23), (dependency, 23), (unrelated, 0), (tmp_path, 0)]:
+        directory.mkdir(exist_ok=True)
+        result = subprocess.run([CLI_DIR / "lifecycle-shell.sh", "-c", "exit 23"], cwd=directory, env=env, check=False)
+        assert result.returncode == expected_rc, directory.name
 
 
 def test_the_trigger_set_is_exactly_the_one_that_was_decided() -> None:

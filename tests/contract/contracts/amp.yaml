@@ -11,7 +11,7 @@ adapter: amp
 binary: amp
 install:
   method: npm
-  spec: "@ampcode/cli@latest"
+  spec: "@ampcode/cli@0.0.1795089646-g8be92a"
 auth:
   required_for_help: false
   required_for_models: false
