@@ -214,7 +214,7 @@ Każdy cel realizowany jest w czterech etapach:
 Dlaczego harmonogram został zaimplementowany w czystym Pythonie i jakie niesie to kompromisy: [dlaczego determinizm](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### codzienne polecenia
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ Pełny zestaw funkcji operatora (automatyzacja PR, harmonogramy, integracje czat
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym węźle. Wznowienie weryfikuje skrót manifestu na starcie przebiegu, więc zmieniona specyfikacja zostaje odrzucona, zamiast po cichu wykonać inny manifest. Zobacz [manifesty workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym węźle. Wznowienie weryfikuje skrót manifestu na starcie przebiegu, więc zmieniona specyfikacja zostaje odrzucona, zamiast po cichu wykonać inny manifest. Zobacz [manifesty workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Przy wznawianiu ponownie podaj tę samą wartość `-g`, aby zastąpić `{goal}` w promptach niedokończonych węzłów.
+
+`bernstein compliance controls` pokazuje zestawy testów dla poszczególnych mechanizmów kontroli oraz ostatni pełny pomiar, jeśli jest dostępny. [Pokrycie testami](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Bramki jakości repozytorium: `bernstein readme-l10n verify` odrzuca PR, w którym przetłumaczone pliki README odbiegają od wersji angielskiej (wskazując zdezaktualizowaną sekcję), natomiast `bernstein readme-l10n sync` aktualizuje powiązania po zmianach w tekście źródłowym. Zobacz [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [Przewodnik darczyńcy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) opisuje uruchamianie workera i budżet, który ustawiasz, [przewodnik projektu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) - deklarowanie manifestu, a [model zagrożeń](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) mówi, przed czym każda granica chroni, a przed czym nie. Uruchamianie jedną komendą nie zostało jeszcze wydane: dziś działają podkomendy `verify`, `browse`, `budget`, `verify-bundle` i `hub`. `autopilot` jest zarejestrowany, ale odmawia uruchomienia, dopóki nie zostanie zaimplementowane `TaskSource`.
 
 ### poza stroną główną
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | gdzie tkwi wartość i w jakich sytuacjach Bernstein nie jest odpowiednim narzędziem |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratywne grafy DAG w formacie YAML złożone z węzłów agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel przeglądarkowy korzystający z tego samego API co TUI (tworzenie i przeglądanie zadań) |
+| [stan węzłów roboczych](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Węzły wstrzymują pobieranie nowych zadań, gdy ilość wolnego miejsca, użycie pamięci lub opóźnienie sieci wykraczają poza ustawione progi. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | funkcja eksperymentalna: uruchamianie agentów w Cloudflare Workers z synchronizacją przestrzeni roboczej w R2 na własnym koncie. Usługa hostowana `api.bernstein.run` nie jest jeszcze publicznie dostępna |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | pokwitowania zapytań tylko do odczytu oraz sterownik wiążący każdy wynik ze zrzutem schematu |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | przypisywanie ról do zewnętrznych definicji agentów — uniwersalne katalogi YAML/SKILL.md lub struktury wtyczek Claude Code |
@@ -277,9 +280,9 @@ Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | zasada działania od strony technicznej |
 
 ### skąd taka nazwa?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Projekt nazwano na cześć Leonarda Bernsteina, amerykańskiego dyrygenta i kompozytora. Orkiestrator projektu koordynuje zespół agentów AI niczym Bernstein orkiestrę New York Philharmonic: każdy muzyk wchodzi we właściwym momencie, partytura jest deterministyczna, a dyrygent odpowiada za efekt końcowy.
+Projekt nazwano na cześć Leonarda Bernsteina, amerykańskiego dyrygenta i kompozytora. Orkiestrator projektu koordynuje zespół agentów AI niczym Bernstein orkiestrę New York Philharmonic: każdy muzyk wchodzi we właściwym momencie, partytura jest deterministyczna, a dyrygent odpowiada za efekt końcowy. Metafora dyrygenta opisuje zdolność Bernsteina do orkiestracji zadań agentów, których wynikiem jest kod, raport badawczy lub zbiór danych.
 
 stworzyłem bernsteina, ponieważ płaciłem 400 dolarów miesięcznie za rachunki w claude, uruchamiając trzy agenty równolegle i uzyskując niedeterministyczne scalenia. Licencja Apache 2.0, projekt rozwijany jednoosobowo. Statystyki na żywo: [bernstein.run](https://bernstein.run).
 

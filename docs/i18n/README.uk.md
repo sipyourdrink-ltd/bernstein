@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Чому планувальник написаний чистою мовою Python і на які компроміси це спирається: [чому детермінізм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### повсякденні команди
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Під час відновлення знову передайте те саме значення `-g`, щоб підставити його замість `{goal}` у промпти незавершених вузлів.
+
+`bernstein compliance controls` показує набори тестів для кожного контролю та останній повний результат вимірювання, якщо він є. [Покриття тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Гейти гігієни репозиторію: `bernstein readme-l10n verify` блокує PR, перекладені README якого відстали від англійського оригіналу (називаючи застарілий розділ), а `bernstein readme-l10n sync` оновлює зв'язки після змін в англійському тексті. Дивіться [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`. `autopilot` зареєстровано, але він відмовляється запускатися, доки не реалізовано `TaskSource`.
 
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ bernstein volunteer browse --budget 60
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | де виникає цінність і коли Bernstein не є потрібним інструментом |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативні YAML DAG із вузлів agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI (створення й перегляд завдань) |
+| [стан робочих вузлів кластера](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Вузол припиняє брати нові завдання, доки обсяг вільного місця на диску, використання пам’яті чи затримка мережі виходять за встановлені межі. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | експериментально: запуск агентів на Cloudflare Workers із синхронізацією робочого простору в R2 під власним акаунтом. Хостинг-сервіс `api.bernstein.run` ще не доступний |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | квитанції запитів тільки для читання, а також драйвер запитів, який зв'язує кожен результат зі знімком схеми |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | спрямовуйте ролі на визначення агентів за межами вбудованих шаблонів — загальний каталог YAML/SKILL.md або дерево плагінів Claude Code |
@@ -277,9 +280,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | як система влаштована зсередини |
 
 ### чому саме така назва?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein названо на честь Леонарда Бернстайна, американського диригента та композитора. Оркестратор проєкту керує командою AI-агентів так само, як Бернстайн керував Нью-Йоркським філармонічним: кожен виконавець вступає вчасно, партитура детермінована, диригент відповідає за підсумковий результат.
+Bernstein названо на честь Леонарда Бернстайна, американського диригента та композитора. Оркестратор проєкту керує командою AI-агентів так само, як Бернстайн керував Нью-Йоркським філармонічним: кожен виконавець вступає вчасно, партитура детермінована, диригент відповідає за підсумковий результат. Метафора диригента описує здатність Bernstein оркеструвати агентні завдання, результатом яких можуть бути код, дослідницькі звіти або набори даних.
 
 я написав bernstein, тому що платив по $400 на місяць за рахунками claude, запускаючи три агенти кодування паралельно й отримуючи недетерміновані злиття. Ліцензія Apache 2.0, підтримується однією людиною. Статистика наживо: [bernstein.run](https://bernstein.run).
 

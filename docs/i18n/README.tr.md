@@ -214,7 +214,7 @@ Her hedef dört aşamadan geçer:
 Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: [neden deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ Operatör arayüzünün tamamı (PR otomasyonu, zamanlamalar, sohbet köprüleri
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Devam ettirirken aynı `-g` değerini yeniden verin; böylece tamamlanmamış düğümlerin istemlerinde `{goal}` yerine bu değer konur.
+
+`bernstein compliance controls` her kontrol için test takımlarını ve varsa son tam ölçümü gösterir. [Karşılaştırma testlerinin kapsamı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Depo hijyen kapıları: `bernstein readme-l10n verify`, çevrilmiş README'leri İngilizce kaynaktan sapan bir PR'ı başarısız kılar (güncelliğini yitirmiş bölümü adlandırarak); `bernstein readme-l10n sync`, İngilizce düzenlemelerden sonra bunları yeniden bağlar. Bkz. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 [Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse`, `budget`, `verify-bundle` ve `hub`. `autopilot` kayıtlıdır ancak bir `TaskSource` uygulanana kadar çalışmayı reddeder.
 
 ### ön sayfanın ötesinde
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein.run/) yer alır:
 
@@ -270,6 +272,7 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | değerin nerede oluştuğu ve Bernstein'ın nerede yanlış araç olduğu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | ajan / komut / döngü düğümlerinden oluşan bildirimsel YAML DAG'ları |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI'nin kullandığı API üzerinde çalışan tarayıcı kontrol paneli (görev oluşturma ve inceleme) |
+| [küme çalışanlarının durumu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Boş disk alanı, bellek kullanımı veya ağ gecikmesi belirlenen sınırların dışındayken çalışanlar yeni görev almaz. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | deneysel: kendi hesabınızda R2 çalışma alanı senkronizasyonu ile Cloudflare Workers üzerinde ajanları çalıştırın. Barındırılan `api.bernstein.run` hizmeti henüz kullanılamıyor |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | salt okunur sorgu makbuzları ve her sonucu türetildiği şema anlık görüntüsüne bağlayan sorgu sürücüsü |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | rolleri yerleşik şablonların dışındaki ajan tanımlarına yönlendirin — genel bir YAML/SKILL.md dizini veya Claude Code eklenti düzeni |
@@ -277,9 +280,9 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | sistemin iç mekanizması ve çalışma prensibi |
 
 ### neden bu isim?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Projenin orkestratörü, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur.
+Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Projenin orkestratörü, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur. Orkestra şefi benzetmesi, Bernstein’ın kod, araştırma raporları veya veri kümeleri üreten ajan görevlerini orkestre etme yeteneğini anlatır.
 
 bernstein'ı yazdım çünkü üç kodlama ajanını paralel çalıştırıp deterministik olmayan birleştirmeler alırken ayda 400 dolar claude faturası ödüyordum. Apache 2.0, tek kişi tarafından sürdürülmektedir. Canlı istatistikler: [bernstein.run](https://bernstein.run).
 

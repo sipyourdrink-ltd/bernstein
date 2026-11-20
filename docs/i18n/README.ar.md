@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 لماذا تم بناء المجدول بلغة Python الخالصة، وما المقايضات المترتبة على ذلك: [لماذا الحتمية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### أوامر الاستخدام اليومي
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ bernstein stop                    # graceful shutdown with drain
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-يتم تسجيل نقطة تحقق لحالة التشغيل في `.sdd/runs/<run_id>/` عند كل عقدة. يتحقق الاستئناف من تجزئة البيان عند بدء التشغيل، لذا يتم رفض أي تغيير في المواصفة بدلاً من تنفيذ بيان مختلف بصمت. انظر [بيانات سير العمل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+يتم تسجيل نقطة تحقق لحالة التشغيل في `.sdd/runs/<run_id>/` عند كل عقدة. يتحقق الاستئناف من تجزئة البيان عند بدء التشغيل، لذا يتم رفض أي تغيير في المواصفة بدلاً من تنفيذ بيان مختلف بصمت. انظر [بيانات سير العمل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). مرّر قيمة `-g` نفسها مجددًا عند الاستئناف لاستبدال `{goal}` في مطالبات العقد غير المكتملة.
+
+`bernstein compliance controls` تعرض مجموعات الاختبار لكل ضابط وآخر قياس مكتمل إن وُجد. [تغطية الاختبارات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 بوابات سلامة المستودع: يفشل `bernstein readme-l10n verify` أي طلب سحب تباعدت ملفات README المترجمة فيه عن الأصل الإنجليزي (مع تسمية القسم القديم)، بينما يعيد `bernstein readme-l10n sync` ربطها بعد التعديل الإنجليزي. انظر [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`budget` و`verify-bundle` و`hub`. الأمر `autopilot` مسجّل، لكنه يرفض التشغيل إلى أن يُنفّذ `TaskSource`.
 
 ### ما وراء الصفحة الرئيسية
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 كل التفاصيل المعمقة متوفرة على [موقع التوثيق](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ bernstein volunteer browse --budget 60
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | أين تكمن القيمة ومتى يكون Bernstein أداة غير مناسبة |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | مخططات DAG تعريفية بصيغة YAML من عقد الوكيل / الأمر / الحلقة |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | لوحة تحكم في المتصفح تعتمد على نفس API المستخدم في TUI (إنشاء المهام ومراجعتها) |
+| [صحة العُقد العاملة](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | تتوقف العقدة عن طلب مهام جديدة إذا تجاوز استخدام الذاكرة أو زمن استجابة الشبكة الحد المسموح أو انخفضت مساحة القرص عن الحد الأدنى. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | تجريبي: تشغيل الوكلاء على Cloudflare Workers مع مزامنة R2 لمساحة العمل على حسابك الخاص. الخدمة المستضافة `api.bernstein.run` ليست متاحة بعد |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | إيصالات استعلام للقراءة فقط، ومشغل استعلام يربط كل نتيجة بلقطة المخطط المقابلة |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | توجيه الأدوار إلى تعريفات وكلاء خارج القوالب المضمنة — دليل YAML/SKILL.md عام أو هيكل إضافات Claude Code |
@@ -277,9 +280,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | كيف يعمل النظام من الداخل |
 
 ### لماذا هذا الاسم؟
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-سمي Bernstein تيمناً بـ Leonard Bernstein، قائد الأوركسترا والملحن الأمريكي. ينسّق مُنسِّق المشروع فريقاً من وكلاء الذكاء الاصطناعي بنفس الطريقة التي قاد بها برنشتاين أوركسترا نيويورك الفيلهارمونية: كل عازف يدخل في وقته المحدد، النوتة الموسيقية حتمية، وقائد الأوركسترا مسؤول عن النتيجة.
+سمي Bernstein تيمناً بـ Leonard Bernstein، قائد الأوركسترا والملحن الأمريكي. ينسّق مُنسِّق المشروع فريقاً من وكلاء الذكاء الاصطناعي بنفس الطريقة التي قاد بها برنشتاين أوركسترا نيويورك الفيلهارمونية: كل عازف يدخل في وقته المحدد، النوتة الموسيقية حتمية، وقائد الأوركسترا مسؤول عن النتيجة. تصف استعارة قائد الأوركسترا قدرة Bernstein على تنسيق مهام الوكلاء التي تنتج شيفرة أو تقارير بحثية أو مجموعات بيانات.
 
 كتبت bernstein لأنني كنت أدفع 400 دولار شهرياً في فواتير claude لتشغيل ثلاثة وكلاء برمجة بالتوازي والحصول على عمليات دمج غير حتمية. مرخص تحت Apache 2.0، وتتم صيانته فردياً. إحصائيات مباشرة: [bernstein.run](https://bernstein.run).
 

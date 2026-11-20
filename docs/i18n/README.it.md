@@ -214,7 +214,7 @@ Ogni obiettivo attraversa quattro fasi:
 Perché lo scheduler è in puro Python e quali sono i compromessi adottati: [perché deterministico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### comandi quotidiani
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -231,10 +231,12 @@ L'intera interfaccia operatore (automazione PR, pianificazioni, bridge di chat, 
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Lo stato di esecuzione salva un checkpoint in `.sdd/runs/<run_id>/` a ogni nodo. La ripresa convalida il digest del manifesto all'avvio dell'esecuzione, quindi una modifica alla specifica viene rifiutata invece di eseguire silenziosamente un manifesto diverso. Consulta [manifesti dei workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Lo stato di esecuzione salva un checkpoint in `.sdd/runs/<run_id>/` a ogni nodo. La ripresa convalida il digest del manifesto all'avvio dell'esecuzione, quindi una modifica alla specifica viene rifiutata invece di eseguire silenziosamente un manifesto diverso. Consulta [manifesti dei workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Alla ripresa, fornisci di nuovo lo stesso valore di `-g` per sostituire `{goal}` nei prompt dei nodi non completati.
+
+`bernstein compliance controls` mostra le suite di test per ciascun controllo e l’ultima misurazione completa disponibile. [Copertura dei benchmark](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Gate di igiene del repository: `bernstein readme-l10n verify` blocca le PR i cui README tradotti divergono dalla versione inglese (indicando la sezione obsoleta), mentre `bernstein readme-l10n sync` aggiorna i collegamenti dopo modifiche al testo inglese. Consulta [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +260,7 @@ bernstein volunteer browse --budget 60
 La [guida del donatore](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) copre l'esecuzione di un worker e il budget che imposti, la [guida del progetto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) copre la dichiarazione di un manifesto, e il [modello delle minacce](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica cosa ciascun confine protegge e cosa no. L'esecutore a comando singolo non è ancora rilasciato: oggi `verify`, `browse`, `budget`, `verify-bundle` e `hub` sono i sottocomandi funzionanti. `autopilot` è registrato, ma rifiuta l’esecuzione finché non viene implementato un `TaskSource`.
 
 ### oltre la pagina principale
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Tutte le informazioni approfondite sono disponibili sul [sito della documentazione](https://docs.bernstein.run/):
 
@@ -270,6 +272,7 @@ Tutte le informazioni approfondite sono disponibili sul [sito della documentazio
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | in quali contesti porta valore e quando Bernstein non è lo strumento appropriato |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAG dichiarativi in YAML composti da nodi agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | dashboard web basata sulla stessa API impiegata dalla TUI (creare ed esaminare le attività) |
+| [stato dei nodi del cluster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | I nodi sospendono l’acquisizione di nuovi compiti quando lo spazio libero su disco, l’uso della memoria o la latenza di rete escono dai limiti configurati. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | sperimentale: esegui agenti su Cloudflare Workers con sincronizzazione workspace su R2 tramite il tuo account. Il servizio gestito `api.bernstein.run` non è ancora disponibile |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | ricevute di query in sola lettura e driver che collega ciascun risultato allo snapshot dello schema corrispondente |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | indirizza i ruoli a definizioni di agenti esterne ai template inclusi: directory generiche YAML/SKILL.md o alberature di plugin Claude Code |
@@ -277,9 +280,9 @@ Tutte le informazioni approfondite sono disponibili sul [sito della documentazio
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | funzionamento interno del sistema |
 
 ### perché questo nome?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein prende il nome da Leonard Bernstein, celebre direttore d'orchestra e compositore statunitense. L’orchestratore del progetto coordina un team di agenti IA nello stesso modo in cui Bernstein guidava la Filarmonica di New York: ogni esecutore al momento giusto, la partitura deterministica, il direttore responsabile del risultato complessivo.
+Bernstein prende il nome da Leonard Bernstein, celebre direttore d'orchestra e compositore statunitense. L’orchestratore del progetto coordina un team di agenti IA nello stesso modo in cui Bernstein guidava la Filarmonica di New York: ogni esecutore al momento giusto, la partitura deterministica, il direttore responsabile del risultato complessivo. La metafora del direttore descrive la capacità di orchestrazione di Bernstein per attività di agenti che producono codice, rapporti di ricerca o set di dati.
 
 ho creato bernstein perché spendevo 400 $/mese in fatture claude eseguendo tre agenti di codifica in parallelo e ottenendo merge non deterministici. Apache 2.0, mantenuto da una sola persona. Statistiche in tempo reale: [bernstein.run](https://bernstein.run).
 
