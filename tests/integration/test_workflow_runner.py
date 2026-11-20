@@ -20,6 +20,7 @@ from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.core.persistence.workspace import grant_workspace_trust
+from bernstein.core.tasks.models import TaskStatus
 from bernstein.core.workflows import (
     NodeStatus,
     WorkflowExecution,
@@ -28,6 +29,16 @@ from bernstein.core.workflows import (
     load_workflow_spec_from_text,
 )
 from bernstein.core.workflows.workflow_runner import load_node_state, record_spec_snapshot
+from tests.support.workflow_completion import (
+    BOUND_S,
+    OBSERVE_S,
+    _Env,
+    _known_contract_gap,
+    _observe_dispatched_attempt,
+    _proposed_gap,
+    _spec,
+)
+from tests.support.workflow_completion import env as env
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -732,6 +743,42 @@ nodes:
     assert adapter.calls, "expected the adapter to be invoked"
     rendered = adapter.calls[0]["prompt"]
     assert "JWT auth" in rendered, "goal substitution must happen before the spawn"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group child fixtures")
+@_proposed_gap
+def test_dependency_waits_for_accepted_agent_result(env: _Env) -> None:
+    """[PROPOSED #1] Only an accepted result releases the dependent command."""
+    spawner = env.spawner()
+    runner = env.runner(spawner)
+    spec = _spec(env, timeout=10)
+    run = env.start(lambda: runner.run(spec, run_id="acceptance-release"))
+
+    task = _observe_dispatched_attempt(env, spawner, run)
+    assert task.status is TaskStatus.CLAIMED
+    assert task.claimed_by_session == spawner.sessions[0].id
+    assert spawner.procs[0].poll() is None
+    writes_while_running = env.sentinel_writes()
+
+    spawner.release_path.touch()
+    assert spawner.procs[0].wait(timeout=BOUND_S) == 0
+    reported = env.driver.call(lambda store: store.complete(task.id, "Produced the result"))
+    assert reported.status is TaskStatus.DONE
+    assert reported.closed_at is None
+    run.wait(OBSERVE_S)
+    run.raise_unexpected()
+    writes_while_unaccepted = env.sentinel_writes()
+
+    # The test driver stands in for the authority that closes a verified task.
+    accepted = env.driver.call(lambda store: store.close(task.id))
+    assert accepted.status is TaskStatus.CLOSED
+    assert run.wait(BOUND_S)
+    run.raise_unexpected()
+    with _known_contract_gap():
+        assert writes_while_running == 0, f"dependent ran on dispatch: {run.statuses()}"
+        assert writes_while_unaccepted == 0, f"dependent ran on an unaccepted report: {run.statuses()}"
+    assert run.result is not None and run.result.succeeded, run.statuses()
+    assert env.sentinel_writes() == 1
 
 
 def test_agent_node_without_spawner_fails_node(runner_workdir: Path) -> None:
