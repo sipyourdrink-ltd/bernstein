@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect, sync_playwright
 
 if TYPE_CHECKING:
@@ -91,8 +92,32 @@ def check_dashboard(client: httpx.Client, token: str, channel: str | None) -> No
             entry = page.goto(str(client.base_url.join("/ui/")), wait_until="domcontentloaded")
             assert entry is not None and entry.ok, f"GUI entry returned {entry and entry.status}"
             page.get_by_label("Access token", exact=True).fill(token)
-            page.get_by_role("button", name="Save", exact=True).click()
             row = page.get_by_role("row").filter(has_text=title)
+            # An anonymous Tasks request can finish after the operator signs in.
+            # The task panel then offers its own Retry action.
+            retry = (
+                page.get_by_role("alert")
+                .filter(has_text="Access token missing or rejected")
+                .get_by_role("button", name="Retry", exact=True)
+            )
+            list_url = str(client.base_url.join("/api/v1/tasks"))
+            with page.expect_response(
+                lambda response: (
+                    response.ok
+                    and response.url.split("?", 1)[0] == list_url
+                    and "authorization" in response.request.headers
+                )
+            ):
+                page.get_by_role("button", name="Save", exact=True).click()
+                expect(row.or_(retry).first).to_be_visible()
+                if retry.is_visible():
+                    try:
+                        retry.click(timeout=1_000)
+                    except PlaywrightTimeoutError:
+                        # The automatic refetch can replace Retry with the task row during the click.
+                        expect(row).to_be_visible()
+                    else:
+                        print("The operator used Retry to load the task list after signing in.")
             expect(row).to_be_visible()
             detail_url = str(client.base_url.join(f"/api/v1/tasks/{task_id}"))
             with page.expect_response(detail_url) as detail:
