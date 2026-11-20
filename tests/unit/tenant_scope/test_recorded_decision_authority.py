@@ -21,9 +21,13 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.anyio, pytest.mark.auth_enabled]
 
 
+@pytest.mark.parametrize("disable_anchored_reads", [False, True], ids=["native", "unsupported"])
 async def test_project_records_require_operator_authority(
-    fx: Fixture, client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fx: Fixture, client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disable_anchored_reads: bool
 ) -> None:
+    if disable_anchored_reads:
+        monkeypatch.setattr(routes, "ANCHORED_OPEN_SUPPORTED", False)
+    expected_status = 200 if routes.ANCHORED_OPEN_SUPPORTED else 409
     fx.app.state.workdir = tmp_path
     directory = tmp_path / ".sdd" / "lineage" / "shared-run" / "governance_decisions"
     directory.mkdir(parents=True)
@@ -44,13 +48,20 @@ async def test_project_records_require_operator_authority(
     for prefix in ("", "/api/v1"):
         listing = prefix + "/governance/decisions"
         response = await client.get(listing, params=query, headers=admin.headers)
-        assert response.status_code == 200
-        (row,) = response.json()["decisions"]
-        assert row["subject"] == "private-seat"
-        for url in (listing, f"{listing}/{row['decision_id']}"):
-            assert (
-                await client.get(url, params=query, headers=fx.credentials["legacy_bearer"].headers)
-            ).status_code == 200
+        assert response.status_code == expected_status
+        if routes.ANCHORED_OPEN_SUPPORTED:
+            (row,) = response.json()["decisions"]
+            assert row["subject"] == "private-seat"
+            digest = row["decision_id"]
+        else:
+            assert "unavailable on this platform" in response.json()["detail"]
+            digest = "a" * 64
+        for url in (listing, f"{listing}/{digest}"):
+            for operator in (admin, fx.credentials["legacy_bearer"]):
+                response = await client.get(url, params=query, headers=operator.headers)
+                assert response.status_code == expected_status
+                if expected_status == 409:
+                    assert "unavailable on this platform" in response.json()["detail"]
             with monkeypatch.context() as denied_storage:
                 denied_storage.setattr(
                     routes, "_read_recorded_decisions", lambda *_: pytest.fail("unauthorized storage read")
