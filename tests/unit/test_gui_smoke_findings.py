@@ -16,11 +16,11 @@ Findings exercised here:
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from pathlib import Path
 
+import click
 import pytest
 
 from bernstein.adapters.mock import MockAgentAdapter
@@ -122,14 +122,15 @@ class TestIdleHelpText:
     """
 
     def test_idle_help_documents_internal_mock_pinning(self) -> None:
-        # Read the option declaration directly so we do not require Click
-        # to render help (which depends on terminal width).
-        path = REPO_ROOT / "src" / "bernstein" / "cli" / "run_bootstrap.py"
-        text = path.read_text(encoding="utf-8")
-        # Find the --idle option block.
-        m = re.search(r'"--idle".*?\)\n', text, flags=re.DOTALL)
-        assert m is not None, "did not find --idle option declaration"
-        block = m.group(0)
+        from bernstein.cli.run_cmd import run
+
+        ctx = click.Context(run)
+        option = next(
+            param for param in run.get_params(ctx) if isinstance(param, click.Option) and "--idle" in param.opts
+        )
+        record = option.get_help_record(ctx)
+        assert record is not None, "--idle must appear in the run command's help"
+        _, block = record
         assert "BERNSTEIN_ADAPTER=mock" in block, (
             "--idle help must document that the mock backend is forced internally via BERNSTEIN_ADAPTER=mock"
         )
