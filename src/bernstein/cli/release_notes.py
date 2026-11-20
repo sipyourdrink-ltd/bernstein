@@ -198,7 +198,7 @@ def format_for_terminal(raw: str, max_lines: int = 100) -> str:
 
     Args:
         raw: Raw release-notes markdown text.
-        max_lines: Maximum lines to return.
+        max_lines: Maximum content lines to display before a truncation marker.
 
     Returns:
         Formatted string suitable for console printing.
@@ -206,10 +206,11 @@ def format_for_terminal(raw: str, max_lines: int = 100) -> str:
     lines: list[str] = []
     for line in raw.splitlines():
         # Strip markdown heading markers, keep the text
-        stripped = re.sub(r"^#+\s*", "", line)
-        if stripped.strip():
-            lines.append(stripped.rstrip())
+        stripped = re.sub(r"^#+\s*", "", line).rstrip()
+        if not stripped:
+            continue
         if len(lines) >= max_lines:
             lines.append("... (truncated)")
             break
+        lines.append(stripped)
     return "\n".join(lines)
