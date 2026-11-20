@@ -220,7 +220,7 @@ Dlaczego harmonogram został zaimplementowany w czystym Pythonie i jakie niesie 
 Funkcja `can_spawn()` w module śledzenia kosztów zwraca `False`, gdy łączne wydatki po korekcie osiągną lub przekroczą ustawiony próg zatrzymania dla budżetu, nawet jeśli nie zgłoszono nowych tokenów. Po ponownym uruchomieniu same zapisane liczniki tokenów nie pozwalają odtworzyć dokładnego łącznego kosztu zgłoszonego wcześniej dla danej kombinacji agenta, zadania i modelu.
 
 ### codzienne polecenia
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:e7d08c06ac05" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym węźle. Wznowienie weryfikuje skrót manifestu na starcie przebiegu, więc zmieniona specyfikacja zostaje odrzucona, zamiast po cichu wykonać inny manifest. Zobacz [manifesty workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Przy wznawianiu ponownie podaj tę samą wartość `-g`, aby zastąpić `{goal}` w promptach niedokończonych węzłów.
+Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym węźle. Wznowienie weryfikuje skrót manifestu na starcie przebiegu, więc zmieniona specyfikacja zostaje odrzucona, zamiast po cichu wykonać inny manifest. Zobacz [manifesty workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Przy wznawianiu podaj dokładnie pierwotną wartość `-g`, również gdy używasz `-m`. Starsze uruchomienie bez zapisanego skrótu celu można wznowić tylko wtedy, gdy żaden z pozostałych promptów agenta nie może użyć `{goal}`.
 
 `bernstein compliance controls` pokazuje zestawy testów dla poszczególnych mechanizmów kontroli oraz ostatni pełny pomiar, jeśli jest dostępny. [Pokrycie testami](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

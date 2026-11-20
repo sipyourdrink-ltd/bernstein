@@ -409,7 +409,9 @@ def _run_dsl_cmd(path: Path, *, dry_run: bool, console: Any) -> None:
 
 @workflow_group.command("resume")
 @click.argument("run_id")
-@click.option("-g", "--goal", default="", help="Goal text substituted into {goal} placeholders.")
+@click.option(
+    "-g", "--goal", default="", help="Exact original goal for this run; omit only for an originally empty goal."
+)
 @click.option(
     "-m",
     "--manifest",
@@ -429,7 +431,7 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
     Example:
       bernstein workflow run idea-to-pr -g "Add JWT auth"  # prints run_id
       bernstein workflow resume <run_id> -g "Add JWT auth"
-      bernstein workflow resume <run_id> -m ./my-flow.yaml
+      bernstein workflow resume <run_id> -m ./my-flow.yaml -g "Add JWT auth"
     """
     from rich.console import Console
     from rich.table import Table

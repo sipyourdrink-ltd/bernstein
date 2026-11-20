@@ -220,7 +220,7 @@ Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: 
 Düzeltilmiş toplam harcama bütçe için belirlenen durdurma eşiğine ulaştığında veya bu eşiği aştığında, yeni token bildirilmemiş olsa bile maliyet izleyicisinin `can_spawn()` denetimi `False` döndürür. Yeniden başlatıldıktan sonra, belirli bir ajan, görev ve model birleşimi için daha önce bildirilen kesin toplam maliyet yalnızca kayıtlı token sayılarından çıkarılamaz.
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:e7d08c06ac05" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Devam ettirirken aynı `-g` değerini yeniden verin; böylece tamamlanmamış düğümlerin istemlerinde `{goal}` yerine bu değer konur.
+Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Sürdürürken `-m` kullansanız bile ilk `-g` değerini aynen verin. Hedef özeti olmayan eski bir çalıştırma, yalnızca kalan ajan istemlerinden hiçbiri `{goal}` kullanamayacaksa sürdürülebilir.
 
 `bernstein compliance controls` her kontrol için test takımlarını ve varsa son tam ölçümü gösterir. [Karşılaştırma testlerinin kapsamı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 訂正後の累計支出が予算に設定した停止しきい値に達するか、それを上回ると、新しいトークンの報告がなくても、コスト追跡モジュールの `can_spawn()` は `False` を返します。再起動後、保存されたトークン数だけでは、特定のエージェント、タスク、モデルの組み合わせについて以前報告された正確な累計費用を復元できません。
 
 ### 日常のコマンド
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:e7d08c06ac05" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-実行状態はノードごとに `.sdd/runs/<run_id>/` にチェックポイントされる。再開は実行開始時にマニフェストのダイジェストを検証するので、仕様が変わっていれば、別のマニフェストを黙って実行するのではなく拒否される。[ワークフローマニフェスト](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) を参照。 再開時にも同じ `-g` の値を指定し、未完了ノードのプロンプト内の `{goal}` を置換する。
+実行状態はノードごとに `.sdd/runs/<run_id>/` にチェックポイントされる。再開は実行開始時にマニフェストのダイジェストを検証するので、仕様が変わっていれば、別のマニフェストを黙って実行するのではなく拒否される。[ワークフローマニフェスト](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) を参照。 再開時には、`-m` を使う場合も、最初に指定した `-g` の値を正確に指定してください。目標のハッシュがない古い実行を再開できるのは、残りのエージェントのプロンプトが `{goal}` を使う可能性がない場合だけです。
 
 `bernstein compliance controls` は、各統制項目のベンチマークスイートと、利用可能な場合は最新の完全な測定結果を表示します。 [ベンチマークのカバレッジ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
