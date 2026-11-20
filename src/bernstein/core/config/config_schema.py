@@ -543,6 +543,9 @@ class ClusterSchema(BaseModel):
     gossip_peer_keys: dict[str, Any] = Field(default_factory=dict)
     shards: dict[StrictStr, StrictStr] = Field(default_factory=dict, max_length=256, strict=True)
     shard_vnodes: int = Field(default=128, ge=1, le=1024, strict=True)
+    min_disk_free_mb: int = Field(default=512, ge=0, strict=True)
+    max_mem_used_pct: float = Field(default=95.0, ge=0, le=100, strict=True, allow_inf_nan=False)
+    max_mesh_rtt_ms: float = Field(default=5000.0, ge=0, strict=True, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_registry_shards(self) -> ClusterSchema:

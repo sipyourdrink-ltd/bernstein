@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### опенсорсний governance-шар для AI-агентів
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ flowchart LR
 Повторні спроби зберігають `dispatch_tier`; під час повторного відкриття завдання можна явно вибрати рівень. Див. [контракт рівнів виконання](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Запускайте завдання з робочої гілки. Bernstein зливає перевірені зміни з поточною гілкою. У гілці за замовчуванням він зупиняє запуски, які можуть призвести до злиття. Перегляньте зміни в робочій гілці перед створенням pull request.
 
 `bernstein doctor --json` також виводить результати контракту аудиту `findings`, які збігаються з результатами `bernstein govern audit --only INS --json` за однакових спостережень за станом встановлення. Звичайний звіт doctor зберігає попередній вигляд. Стабільні ідентифікатори перевірок описано в [посібнику з експлуатації doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
@@ -202,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` порівнює ланцюжок квитанцій із кінцевим хешем і кількістю переходів, запечатаними в маніфесті запуску за допомогою HMAC із ключем аудиту. Перевірка виявляє видалення хвоста, підміну й нарощування ланцюжка після закриття, зокрема переписування оголошення без ключа. Видалення оголошення залишає запуск незавершеним (код виходу `3`), і він ніколи не вважається дійсним. Це не виявляє повторного пред’явлення старішого справжнього знімка й не захищає від автора запису, який володіє ключем аудиту. Див. [порядок перевірки делегування](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### як це працює
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Кожна мета проходить чотири етапи:
 
@@ -213,8 +217,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 Чому планувальник написаний чистою мовою Python і на які компроміси це спирається: [чому детермінізм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+Перевірка `can_spawn()` у модулі обліку витрат повертає `False`, коли сукупні витрати після коригування досягають заданого порога зупинки за бюджетом або перевищують його, навіть якщо про нові токени не повідомляли. Після перезапуску самих лише збережених лічильників токенів недостатньо, щоб відновити точну суму витрат, раніше зазначену для конкретної комбінації агента, завдання й моделі.
+
 ### повсякденні команди
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -225,16 +231,20 @@ bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute
 bernstein stop                    # graceful shutdown with drain
 ```
 
+Якщо завдання у від’єднаному запуску SSH завершується з ненульовим кодом виходу, і завдання, і весь запуск позначаються як невдалі. Код виходу зберігається у квитанції завдання, а наступні завдання залишаються в очікуванні.
+
 Повний набір інструментів оператора (автоматизація PR, розклади, чат-мости, демон автофіксу) описано в [командах оператора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
 `bernstein workflow` виконує декларативні YAML DAG із вузлів agent / command / loop — з підтримкою відновлення перерваних запусків:
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Під час відновлення знову передайте те саме значення `-g`, щоб підставити його замість `{goal}` у промпти незавершених вузлів.
+
+`bernstein compliance controls` показує набори тестів для кожного контролю та останній повний результат вимірювання, якщо він є. [Покриття тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Гейти гігієни репозиторію: `bernstein readme-l10n verify` блокує PR, перекладені README якого відстали від англійського оригіналу (називаючи застарілий розділ), а `bernstein readme-l10n sync` оновлює зв'язки після змін в англійському тексті. Дивіться [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
@@ -258,7 +268,7 @@ bernstein volunteer browse --budget 60
 [Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`. `autopilot` зареєстровано, але він відмовляється запускатися, доки не реалізовано `TaskSource`.
 
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
@@ -270,6 +280,7 @@ bernstein volunteer browse --budget 60
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | де виникає цінність і коли Bernstein не є потрібним інструментом |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативні YAML DAG із вузлів agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI (створення й перегляд завдань) |
+| [стан робочих вузлів кластера](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Вузол припиняє брати нові завдання, доки обсяг вільного місця на диску, використання пам’яті чи затримка мережі виходять за встановлені межі. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | експериментально: запуск агентів на Cloudflare Workers із синхронізацією робочого простору в R2 під власним акаунтом. Хостинг-сервіс `api.bernstein.run` ще не доступний |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | квитанції запитів тільки для читання, а також драйвер запитів, який зв'язує кожен результат зі знімком схеми |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | спрямовуйте ролі на визначення агентів за межами вбудованих шаблонів — загальний каталог YAML/SKILL.md або дерево плагінів Claude Code |
@@ -277,9 +288,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | як система влаштована зсередини |
 
 ### чому саме така назва?
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein названо на честь Леонарда Бернстайна, американського диригента та композитора. Оркестратор проєкту керує командою AI-агентів так само, як Бернстайн керував Нью-Йоркським філармонічним: кожен виконавець вступає вчасно, партитура детермінована, диригент відповідає за підсумковий результат.
+Bernstein названо на честь Леонарда Бернстайна, американського диригента та композитора. Оркестратор проєкту керує командою AI-агентів так само, як Бернстайн керував Нью-Йоркським філармонічним: кожен виконавець вступає вчасно, партитура детермінована, диригент відповідає за підсумковий результат. Метафора диригента описує здатність Bernstein оркеструвати агентні завдання, результатом яких можуть бути код, дослідницькі звіти або набори даних.
 
 я написав bernstein, тому що платив по $400 на місяць за рахунками claude, запускаючи три агенти кодування паралельно й отримуючи недетерміновані злиття. Ліцензія Apache 2.0, підтримується однією людиною. Статистика наживо: [bernstein.run](https://bernstein.run).
 

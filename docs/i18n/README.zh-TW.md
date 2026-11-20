@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 代理的開源治理層
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ flowchart LR
 重試會保留 `dispatch_tier`；重新開啟任務時可以明確選擇層級。請參閱[調度層級契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+請在工作分支上執行任務。Bernstein 會將通過驗證的變更合併到目前的分支。如果目前是預設分支，它會停止可能合併變更的執行作業。請先在工作分支上檢查變更，再建立提取要求。
 
 `bernstein doctor --json` 也會輸出稽核契約的 `findings`；對於相同的安裝觀測結果，它們與 `bernstein govern audit --only INS --json` 的結果完全相同。一般 doctor 報告的顯示方式維持不變。如需穩定的檢查 ID，請參閱 [doctor 維運指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)。
 
@@ -202,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` 將收據鏈與執行資訊清單中使用稽核金鑰的 HMAC 封存的最終鏈頭及跳數進行比較，從而偵測尾端刪除、替換及關閉後的鏈增長，包括在沒有金鑰的情況下改寫宣告。刪除宣告會使執行處於未完成狀態（結束碼 `3`），絕不會被判定為有效。這無法偵測重放較早的真實快照，也無法防範持有稽核金鑰的寫入者。請參閱[委派驗證流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
 
 ### 運作原理
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 每個目標經歷四個階段：
 
@@ -213,8 +217,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 排程器為什麼是純 Python，以及這換來什麼代價：[為什麼確定性](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)。
 
+如果修正後的累計支出達到或超過設定的預算停止門檻，即使沒有回報新增的 token，費用追蹤器的 `can_spawn()` 檢查也會傳回 `False`。重新啟動後，單憑已儲存的 token 計數，無法還原先前針對特定代理程式、任務與模型組合所回報的確切累計費用。
+
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -225,16 +231,20 @@ bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute
 bernstein stop                    # graceful shutdown with drain
 ```
 
+在與終端機分離的 SSH 執行中，若某項工作以非零結束碼結束，該工作與整次執行都會失敗。工作的回執會記錄結束碼，後續工作維持待處理狀態。
+
 完整的操作介面（PR 自動化、定時任務、聊天橋接、autofix 守護行程）見[操作命令](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)。
 
 `bernstein workflow` 執行由代理、命令和迴圈節點組成的宣告式 YAML DAG——支援在執行中斷後續跑：
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-執行狀態會在每個節點將檢查點寫入 `.sdd/runs/<run_id>/`。續跑會在執行開始時驗證清單摘要，因此規格變更會被拒絕，而非靜默執行另一份不同的清單。見[工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。
+執行狀態會在每個節點將檢查點寫入 `.sdd/runs/<run_id>/`。續跑會在執行開始時驗證清單摘要，因此規格變更會被拒絕，而非靜默執行另一份不同的清單。見[工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 續跑時請再次傳入相同的 `-g` 值，以取代未完成節點提示詞中的 `{goal}`。
+
+`bernstein compliance controls` 列出各控制項的基準測試套件，並在有完整測量結果時顯示最近一次結果。 [基準測試涵蓋範圍](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
@@ -258,7 +268,7 @@ bernstein volunteer browse --budget 60
 [捐助者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 講執行 worker 以及你設定的預算，[專案指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 講宣告清單，[威脅模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 說明每一層邊界防護什麼、不防護什麼。單一指令的執行器尚未發布：目前可用的子指令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。 `autopilot` 已註冊，但在實作 `TaskSource` 之前會拒絕執行。
 
 ### 首頁之外
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 所有深入內容都在[文件網站](https://docs.bernstein.run/)上：
 
@@ -270,6 +280,7 @@ bernstein volunteer browse --budget 60
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 價值落在哪裡，以及 Bernstein 何時是錯誤工具 |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 代理/命令/迴圈節點的宣告式 YAML DAG |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | 與 TUI 使用同一 API 的瀏覽器儀表板 (建立和檢視任務) |
+| [叢集工作節點健康狀態](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | 可用磁碟空間、記憶體使用率或網路延遲超出設定範圍時，工作節點會暫停領取新任務。 |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 實驗性：在你的帳戶上透過 R2 workspace 同步在 Cloudflare Workers 上執行代理。託管的 `api.bernstein.run` 服務尚不可用 |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 唯讀查詢收據，外加把每個結果綁定到其推導時所依據的 schema 快照的查詢驅動 |
 | [代理目錄](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 讓角色指向內建範本以外的代理定義：通用的 YAML/SKILL.md 目錄，或 Claude Code 外掛佈局的目錄樹 |
@@ -277,9 +288,9 @@ bernstein volunteer browse --budget 60
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 底層運作原理 |
 
 ### 為什麼叫這個名字？
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案的編排器像 Bernstein 指揮紐約愛樂樂團那樣治理一支 AI 代理隊伍：每個樂手準時到位，樂譜確定，指揮對結果負責。
+Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案的編排器像 Bernstein 指揮紐約愛樂樂團那樣治理一支 AI 代理隊伍：每個樂手準時到位，樂譜確定，指揮對結果負責。指揮家的比喻描述了 Bernstein 對產生程式碼、研究報告或資料集的代理任務進行編排的能力。
 
 我寫 bernstein 是因為我每月為並行執行三個編碼代理支付 400 美元的 claude 帳單，卻得到不確定性的合併。Apache 2.0，單人維護。即時資料：[bernstein.run](https://bernstein.run)。
 

@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI 에이전트를 위한 오픈소스 거버넌스 레이어
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ flowchart LR
 재시도는 `dispatch_tier`를 유지하며, 작업을 다시 열 때 계층을 명시적으로 선택할 수 있습니다. [디스패치 계층 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)을 참조하세요.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+작업 브랜치에서 실행하세요. Bernstein은 검증을 마친 변경 사항을 현재 브랜치에 병합합니다. 기본 브랜치에서는 변경 사항을 병합하는 실행을 시작할 수 없습니다. 풀 리퀘스트를 열기 전에 작업 브랜치에서 변경 사항을 검토하세요.
 
 `bernstein doctor --json`은 감사 계약의 `findings`도 출력하며, 동일한 설치 관측 결과에 대해 `bernstein govern audit --only INS --json`의 결과와 일치합니다. 일반 doctor 보고서의 표시는 그대로 유지됩니다. 안정적인 검사 ID는 [doctor 운영 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)를 참조하세요.
 
@@ -202,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN`은 감사 키를 사용한 HMAC으로 실행 매니페스트에 봉인된 최종 헤드 및 홉 수와 영수증 체인을 비교하여 꼬리 삭제, 대체, 종료 후 체인 확장을 탐지합니다. 키 없이 선언을 다시 쓰는 행위도 탐지합니다. 선언을 제거하면 실행은 미완료 상태(종료 코드 `3`)로 남으며, 유효한 것으로 판정되지 않습니다. 이전의 진본 스냅샷을 재사용하는 것은 탐지하지 못하며, 감사 키를 가진 작성자로부터 보호하지도 못합니다. [위임 검증 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)를 참조하세요.
 
 ### 동작 방식
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 목표는 네 단계를 거친다:
 
@@ -213,8 +217,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 스케줄러가 순수 Python인 이유와 그 대가로 포기한 것은 [왜 결정론적인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)에 있다.
 
+정정된 누적 지출이 설정된 예산 중단 임계값에 도달하거나 이를 초과하면 새 토큰 사용량이 보고되지 않았더라도 비용 추적기의 `can_spawn()` 검사는 `False`를 반환합니다. 재시작 후에는 저장된 토큰 수만으로 특정 에이전트, 작업, 모델 조합에 대해 이전에 보고된 정확한 누적 비용을 복원할 수 없습니다.
+
 ### 일상적인 명령
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -225,16 +231,20 @@ bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute
 bernstein stop                    # graceful shutdown with drain
 ```
 
+분리된 SSH 실행에서 작업이 0이 아닌 종료 코드로 끝나면 해당 작업과 실행이 모두 실패합니다. 작업 영수증에 종료 코드가 기록되고 후속 작업은 대기 상태로 남습니다.
+
 PR 자동화, 스케줄, 채팅 브리지, autofix 데몬을 포함한 오퍼레이터 기능 전체는 [오퍼레이터 명령](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)에 있다.
 
 `bernstein workflow`는 에이전트 / 커맨드 / 루프 노드로 이루어진 선언적 YAML DAG를 실행하며, 중단된 실행의 재개도 지원한다:
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-실행 상태는 노드마다 `.sdd/runs/<run_id>/`에 체크포인트된다. 재개는 실행 시작 시 매니페스트 다이제스트를 검증하므로, 명세가 바뀌었다면 다른 매니페스트를 조용히 실행하는 대신 거부된다. [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)를 보라.
+실행 상태는 노드마다 `.sdd/runs/<run_id>/`에 체크포인트된다. 재개는 실행 시작 시 매니페스트 다이제스트를 검증하므로, 명세가 바뀌었다면 다른 매니페스트를 조용히 실행하는 대신 거부된다. [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)를 보라. 재개할 때 같은 `-g` 값을 다시 지정해야 미완료 노드의 프롬프트에서 `{goal}`이 치환된다.
+
+`bernstein compliance controls` 명령은 각 통제 항목의 벤치마크 모음과 가장 최근에 완료된 측정 결과가 있으면 그 결과를 표시합니다. [벤치마크 범위](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 리포지터리 위생 게이트: `bernstein readme-l10n verify`는 번역된 README가 영어 원문에서 벗어난 PR을 오래된 섹션 이름과 함께 실패시킨다. `bernstein readme-l10n sync`는 영어를 편집한 뒤 다시 묶는다. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)을 보라.
 
@@ -258,7 +268,7 @@ bernstein volunteer browse --budget 60
 [기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `budget`, `verify-bundle`, `hub` 입니다. `autopilot`은 등록되어 있지만 `TaskSource`가 구현될 때까지 실행을 거부합니다.
 
 ### 표지 너머
-<!-- l10n: en="beyond the front page" hash="sha256:6ab887e728da" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 깊이 들어가는 내용은 모두 [문서 사이트](https://docs.bernstein.run/)에 있다:
 
@@ -270,6 +280,7 @@ bernstein volunteer browse --budget 60
 | [누구를 위한 것인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 가치가 나오는 지점과 Bernstein이 맞지 않는 경우 |
 | [워크플로](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 에이전트 / 커맨드 / 루프 노드로 이루어진 선언적 YAML DAG |
 | [웹 UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI와 같은 API 위에서 도는 브라우저 대시보드 (작업 생성 및 검토) |
+| [클러스터 워커 상태](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | 디스크 여유 공간, 메모리 사용률 또는 네트워크 지연 시간이 설정 범위를 벗어나면 워커는 새 작업을 가져오지 않습니다. |
 | [클라우드 실행](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 실험적: 자기 계정의 Cloudflare Workers에서 R2 워크스페이스 동기화와 함께 에이전트를 실행한다. 호스팅되는 `api.bernstein.run` 서비스는 아직 제공되지 않는다 |
 | [데이터 소스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 읽기 전용 쿼리 영수증, 그리고 각 결과를 유도된 스키마 스냅숏에 묶는 쿼리 드라이버 |
 | [에이전트 카탈로그](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 내장 템플릿 밖의 에이전트 정의를 역할이 가리키게 한다. 범용 YAML/SKILL.md 디렉터리, 또는 Claude Code 플러그인 레이아웃 트리 |
@@ -277,9 +288,9 @@ bernstein volunteer browse --budget 60
 | [아키텍처](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 내부 동작 |
 
 ### 이름의 유래
-<!-- l10n: en="why the name?" hash="sha256:2d4016dd478c" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트의 오케스트레이터가 AI 에이전트 무리를 통제하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다.
+Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트의 오케스트레이터가 AI 에이전트 무리를 통제하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다. 지휘자 비유는 코드, 연구 보고서 또는 데이터셋을 생성하는 에이전트 작업을 오케스트레이션하는 Bernstein의 기능을 설명한다.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, 단독 메인테이너. 가동 통계: [bernstein.run](https://bernstein.run).
 
