@@ -8599,18 +8599,6 @@
         "summary": "List Recorded Decisions",
         "description": "Read persisted decisions without creating directories, keys or records.",
         "operationId": "list_recorded_decisions_governance_decisions_get",
-        "parameters": [
-          {
-            "name": "run_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "",
-              "title": "Run Id"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -8622,17 +8610,30 @@
               }
             }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
+          "400": {
+            "description": "Missing or invalid run ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Installation operator authority required"
+          },
+          "409": {
+            "description": "Unreadable evidence or descriptor-relative reads unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": true,
+            "description": "Run whose recorded decisions to read.",
+            "schema": {
+              "type": "string"
             }
           }
-        }
+        ]
       }
     },
     "/governance/decisions/{decision_id}": {
@@ -8656,11 +8657,10 @@
           {
             "name": "run_id",
             "in": "query",
-            "required": false,
+            "required": true,
+            "description": "Run whose recorded decisions to read.",
             "schema": {
-              "type": "string",
-              "default": "",
-              "title": "Run Id"
+              "type": "string"
             }
           }
         ],
@@ -8674,6 +8674,21 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Missing or invalid run ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Installation operator authority required"
+          },
+          "409": {
+            "description": "Unreadable evidence or descriptor-relative reads unavailable"
+          },
+          "404": {
+            "description": "Invalid digest or unknown decision"
           },
           "422": {
             "description": "Validation Error",
@@ -18235,18 +18250,6 @@
         "summary": "List Recorded Decisions",
         "description": "Read persisted decisions without creating directories, keys or records.",
         "operationId": "list_recorded_decisions_api_v1_governance_decisions_get",
-        "parameters": [
-          {
-            "name": "run_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "",
-              "title": "Run Id"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -18258,17 +18261,30 @@
               }
             }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
+          "400": {
+            "description": "Missing or invalid run ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Installation operator authority required"
+          },
+          "409": {
+            "description": "Unreadable evidence or descriptor-relative reads unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": true,
+            "description": "Run whose recorded decisions to read.",
+            "schema": {
+              "type": "string"
             }
           }
-        }
+        ]
       }
     },
     "/api/v1/governance/decisions/{decision_id}": {
@@ -18292,11 +18308,10 @@
           {
             "name": "run_id",
             "in": "query",
-            "required": false,
+            "required": true,
+            "description": "Run whose recorded decisions to read.",
             "schema": {
-              "type": "string",
-              "default": "",
-              "title": "Run Id"
+              "type": "string"
             }
           }
         ],
@@ -18310,6 +18325,21 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Missing or invalid run ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Installation operator authority required"
+          },
+          "409": {
+            "description": "Unreadable evidence or descriptor-relative reads unavailable"
+          },
+          "404": {
+            "description": "Invalid digest or unknown decision"
           },
           "422": {
             "description": "Validation Error",

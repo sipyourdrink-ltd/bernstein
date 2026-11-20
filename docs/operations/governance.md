@@ -38,8 +38,10 @@ This view displays the stored anchor without verifying the journal or signer.
 The browser displays the recorded verdict. The separate coverage panel remains
 an explicitly labelled checked-in sample.
 
-The authenticated server exposes two additive read endpoints, also mounted
-under `/api/v1`:
+These records and the project ledger span the installation. The two read
+endpoints require an SSO administrator with `admin:manage` or the installation
+operator bearer token. Tenant viewers, agent identities and cluster workers
+receive 403. Both endpoints are also mounted under `/api/v1`.
 
 - `GET /governance/decisions?run_id=<id>` returns `run_id` and `decisions`.
 - `GET /governance/decisions/<decision_id>?run_id=<id>` returns one decision,
@@ -53,8 +55,8 @@ its `RecordedDecision` definition is also the detail response. Empty runs
 return an empty list. Run IDs accept 1-200 ASCII letters, digits, underscores,
 dots, colons or hyphens, subject to the spine's parent-path restrictions;
 missing or invalid run IDs return 400. Unreadable records or records naming a
-different run return 409. The reader retains the existing malformed-JSON
-skipping behavior. These endpoints create no keys, files or
+different run return 409. Invalid field types also return 409. A file containing
+an unfinished JSON document is skipped. These endpoints create no keys, files or
 directories and accept no client-selected ledger path.
 
 The server resolves the decision directory under its configured project root
@@ -63,17 +65,18 @@ including the path to the budget ledger. Decision files are enumerated and
 opened relative to the same directory descriptor, refusing links during the
 open even if the directory contents change. The endpoints require descriptor
 relative no-follow support; on platforms without it (including Windows),
-they return 409 rather than fall back to unanchored pathname reads. Ledger
-projection reuses a read-only anchored descriptor through `/dev/fd`; if that
-descriptor view is unavailable, budget evidence is `unavailable`.
+they return 409. The server reads the ledger directly from one pinned descriptor.
+It compares the bytes before and after computing the selected budgets. A read
+failure or change makes the projected spend unavailable.
 
 Budget rows additionally carry `budget.cap_usd` and `budget.prior_spend_usd`.
 Each has `value` (USD or null), `state`, `provenance` and `reason`. The cap
 comes from recorded `context.cap_usd`. Prior spend comes from the project's
-`.sdd/cost/ledger.jsonl` through `seat_spend`, checked against the recorded
-input hash and verdict by the existing budget verifier. The hash check
-recognizes whole-dollar amounts recorded as JSON integers. Both values
-carry the resulting budget-input evidence state.
+`.sdd/cost/ledger.jsonl`. The list projects all requested subjects and dimensions
+from one parsed snapshot. Detail selects its record before projecting spend.
+The shared verifier checks the hash and verdict and returns the prior spend
+rounded to the six decimal places bound by the hash. It accepts whole-dollar
+amounts recorded as JSON integers. Both values carry the resulting evidence state.
 
 | State | Meaning |
 |---|---|
