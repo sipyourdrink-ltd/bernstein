@@ -286,7 +286,7 @@ class ACPHandlerRegistry:
             "clientRequestedVersion": requested,
             "serverInfo": {
                 "name": "bernstein",
-                "description": "The open-source governance layer for AI agents, one git worktree per task",
+                "description": "An open-source governance layer for AI agents, one git worktree per task",
             },
             "capabilities": {
                 "prompts": True,

@@ -1,4 +1,4 @@
-"""Bernstein - the open-source governance layer for AI agents.
+"""Bernstein - an open-source governance layer for AI agents.
 
 Bernstein runs a crew of CLI coding agents (Claude Code, Codex, Gemini CLI and
 others) against a single goal in per-task git worktrees. There is no model in

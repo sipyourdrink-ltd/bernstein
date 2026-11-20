@@ -1,6 +1,6 @@
 # Bernstein
 
-> Bernstein is the open-source governance layer for AI agents, with a deterministic
+> Bernstein is an open-source governance layer for AI agents, with a deterministic
 > scheduler driving CLI coding agents (Claude Code, Codex,
 > Gemini CLI and others). Scheduling is plain Python - no LLM in the coordination
 > loop - so runs are reproducible end to end.

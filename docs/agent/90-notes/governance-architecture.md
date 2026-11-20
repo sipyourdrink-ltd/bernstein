@@ -1,6 +1,6 @@
 # Governance Layer Architecture
 
-Bernstein is the open-source governance layer for AI agents.
+Bernstein is an open-source governance layer for AI agents.
 
 ## Core Architectural Invariants
 1. **Deterministic Scheduling**: No model in the coordination loop (`src/bernstein/core/orchestration/orchestrator.py:400`). Workflows execute deterministically across per-task queues.

@@ -120,6 +120,42 @@ async def test_invalid_task_payload_cannot_become_success():
 
 
 @pytest.mark.asyncio
+async def test_cancellation_restores_context_in_the_cancelled_request():
+    bridge = legacy_tasks_middleware(frozenset({"bernstein_run"}))
+
+    async def waiting_pipeline(ctx):
+        assert task_augmentation_requested()
+        await asyncio.Future()
+
+    # A zero timeout cancels this task at its next suspension. The assertion
+    # after the bridge unwinds observes the same task's ContextVar.
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0):
+            await bridge(_context(), waiting_pipeline)
+    assert not task_augmentation_requested()
+
+
+@pytest.mark.asyncio
+async def test_nested_plain_call_restores_outer_augmented_context():
+    bridge = legacy_tasks_middleware(frozenset({"bernstein_run"}))
+    payload = {"content": [], "structuredContent": _task_payload(), "isError": False}
+
+    async def inner_pipeline(ctx):
+        assert not task_augmentation_requested()
+        return payload
+
+    async def outer_pipeline(ctx):
+        assert task_augmentation_requested()
+        plain = _context(params={"name": "bernstein_run", "arguments": {}})
+        assert await bridge(plain, inner_pipeline) is payload
+        assert task_augmentation_requested()
+        return payload
+
+    assert isinstance(await bridge(_context(), outer_pipeline), CreateTaskResult)
+    assert not task_augmentation_requested()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
 async def test_only_negotiated_legacy_revision_advertises_legacy_tasks(protocol):
     async def normal_pipeline(ctx):

@@ -197,6 +197,58 @@ to `agency` and `priority` to `50`. The Pydantic `CatalogEntry` default for
 `priority` is `100`. The `60` in the example sets an explicit priority.
 `agent_catalog` is a legacy optional path to a single Agency catalog.
 
+### Quality gates in a run seed
+
+In `bernstein.yaml`, the run seed parser reads these `quality_gates` settings
+into `QualityGatesConfig`. The defaults apply when a
+`quality_gates` mapping omits the corresponding key.
+
+| Key | YAML type | Runtime default |
+| --- | --- | --- |
+| `mutation_testing` | Boolean | `false` |
+| `mutation_command` | String | `"uv run mutmut run"` |
+| `mutation_threshold` | Number (minimum mutation score as a fraction) | `0.50` |
+| `mutation_timeout_s` | Integer (seconds) | `600` |
+| `large_file_check` | Boolean | `false` |
+| `large_file_threshold` | Integer (lines) | `500` |
+| `migration_reversibility_check` | Boolean | `false` |
+| `test_expansion` | Boolean | `false` |
+
+For example, this seed enables the large-file and mutation gates, warns on
+changed files longer than 400 lines, and sets the minimum mutation score to 75%.
+
+```yaml
+goal: Check changed files
+quality_gates:
+  large_file_check: true
+  large_file_threshold: 400
+  mutation_testing: true
+  mutation_threshold: 0.75
+```
+
+`intent_verification` is a nested mapping. Its defaults are shown below.
+Set `enabled: true` inside this mapping to enable the intent check.
+
+```yaml
+goal: Configure intent verification
+quality_gates:
+  intent_verification:
+    enabled: false
+    model: "google/gemini-flash-1.5"
+    provider: "openrouter"
+    max_diff_chars: 8000
+    max_tokens: 256
+    block_on_no: true
+    block_on_partial: false
+    fork_from_context: null
+```
+
+The seed parser checks the types before a run starts. For example, each of
+`mutation_timeout_s: true`, `test_expansion: 1` and `intent_verification: true`
+under `quality_gates` raises a `SeedError` naming the field. See the
+[quality pipeline](../architecture/quality-pipeline.md) for the conditions
+under which each gate runs.
+
 ---
 
 ### 1.1) Run overrides: the untracked overlay
