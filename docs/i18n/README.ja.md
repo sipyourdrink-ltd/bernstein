@@ -132,7 +132,7 @@ flowchart LR
 再試行では `dispatch_tier` が維持され、タスクを再オープンする際には階層を明示的に選択できます。[ディスパッチ階層の仕様](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)を参照してください。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor は長時間残っている実行レーンを JSON で報告します。�
 pipx、pip、brew、dnf、npm、Docker については[インストールガイド](https://docs.bernstein.run/en/latest/getting-started/install/)を参照。エアギャップ環境向けの wheelhouse には専用の[エアギャップガイド](https://docs.bernstein.run/en/latest/installation/air-gap/)がある。
 
 `bernstein worktrees sweep` は、完了したタスクが残したワークツリーとサンドボックスセッションを、経過時間とディスク使用量とともにプレビューします。削除できるのはワークツリーのみで、`--apply` と別途の削除承認が必要です。サンドボックスはレポートへの記載のみです（削除については #6571）。`doctor` は長く残っているリソースについて警告します。[クリーンアップ手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)を参照してください。
+`bernstein worktrees gc` は、ディレクトリの削除が成功したかどうかを、ベストエフォートで配信する[`worktree.gc` フック](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event)で通知します。
 
 スキルの初期化に失敗すると、理由と監査イベントを永続化して[隔離](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)します。`bernstein status` は件数を表示し、`doctor` と `govern audit` は無効化された宣言を報告します。原因を修正した後、`bernstein quarantine re-enable DECLARATION_ID` でマーカーを明示的に解除してください。
 

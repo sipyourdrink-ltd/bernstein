@@ -132,7 +132,7 @@ flowchart LR
 การลองใหม่จะคงค่า `dispatch_tier` ไว้ และสามารถเลือกระดับอย่างชัดเจนเมื่อเปิดงานอีกครั้ง ดู[ข้อกำหนดระดับการส่งงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor รายงานเส้นทางการทำงานที่�
 pipx, pip, brew, dnf, npm และ Docker มีเนื้อหาอยู่ใน [คู่มือการติดตั้ง](https://docs.bernstein.run/en/latest/getting-started/install/) ส่วนแพ็กเกจสำหรับระบบแยกเครือข่ายมี [คู่มือ air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) โดยเฉพาะ
 
 `bernstein worktrees sweep` แสดงตัวอย่างเวิร์กทรีและเซสชัน sandbox ที่งานซึ่งเสร็จแล้วทิ้งไว้ พร้อมอายุและพื้นที่ดิสก์ที่ใช้ ลบได้เฉพาะเวิร์กทรี โดยใช้ `--apply` และต้องได้รับการอนุมัติการลบแยกต่างหาก ส่วน sandbox จะแสดงในรายงานเท่านั้น (การลบ: #6571) โดย `doctor` จะเตือนเกี่ยวกับทรัพยากรที่ตกค้างมานาน ดู[ขั้นตอนการล้างทรัพยากร](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)
+`bernstein worktrees gc` รายงานว่าลบไดเรกทอรีสำเร็จหรือไม่ผ่าน [ฮุก `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) ซึ่งส่งแบบพยายามให้ดีที่สุด
 
 ทักษะที่เริ่มต้นทำงานไม่สำเร็จจะถูก[กักกัน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) โดยบันทึกสาเหตุและเหตุการณ์ตรวจสอบไว้อย่างถาวร `bernstein status` แสดงจำนวน ส่วน `doctor` และ `govern audit` รายงานรายการประกาศที่ถูกปิดใช้งาน หลังแก้ไขสาเหตุแล้ว ให้ล้างเครื่องหมายอย่างชัดเจนด้วย `bernstein quarantine re-enable DECLARATION_ID`.
 

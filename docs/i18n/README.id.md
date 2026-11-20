@@ -132,7 +132,7 @@ Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate
 Percobaan ulang mempertahankan `dispatch_tier`; saat tugas dibuka kembali, tingkat dapat dipilih secara eksplisit. Lihat [kontrak tingkat dispatch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor melaporkan jalur eksekusi yang tertinggal melebihi batas usia dalam JSON.
 pipx, pip, brew, dnf, npm, dan Docker dibahas dalam [panduan instalasi](https://docs.bernstein.run/en/latest/getting-started/install/); paket terisolasi memiliki [panduan air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) tersendiri.
 
 `bernstein worktrees sweep` menampilkan pratinjau worktree dan sesi sandbox yang ditinggalkan tugas yang selesai, beserta umur dan penggunaan disknya. Hanya worktree yang dapat dihapus, dengan `--apply` dan persetujuan penghapusan terpisah. Sandbox hanya dicantumkan dalam laporan (penghapusan: #6571); `doctor` memperingatkan tentang sumber daya yang sudah lama tertinggal. Lihat [alur pembersihan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` melaporkan apakah direktori berhasil dihapus melalui [hook `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) yang pengirimannya tidak dijamin.
 
 Kegagalan inisialisasi keterampilan masuk ke [karantina](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), dengan alasan dan peristiwa audit yang disimpan secara persisten. `bernstein status` menampilkan jumlahnya; `doctor` dan `govern audit` melaporkan deklarasi yang dinonaktifkan. Setelah memperbaiki penyebabnya, hapus penanda secara eksplisit dengan `bernstein quarantine re-enable DECLARATION_ID`.
 

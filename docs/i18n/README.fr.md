@@ -132,7 +132,7 @@ Chaque nœud est pris par un agent dont le rôle est autorisé par la phase ; le
 Les nouvelles tentatives conservent `dispatch_tier` ; la réouverture d’une tâche permet de choisir explicitement le niveau. Voir le [contrat des niveaux d’exécution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installation en 30 secondes
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor signale en JSON les voies d’exécution abandonnées qui dépassent la l
 pipx, pip, brew, dnf, npm et Docker sont abordés dans le [guide d'installation](https://docs.bernstein.run/en/latest/getting-started/install/) ; le wheelhouse air-gap dispose de son propre [guide air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` affiche un aperçu des arbres de travail et des sessions sandbox laissés par les tâches terminées, avec leur ancienneté et leur occupation disque. Seuls les arbres de travail peuvent être supprimés, avec `--apply` et une approbation de suppression distincte. Les sandbox figurent uniquement dans le rapport (suppression : #6571) ; `doctor` signale les ressources abandonnées anciennes. Voir la [procédure de nettoyage](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` indique si la suppression du répertoire a réussi via son [hook `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event), dont la livraison se fait au mieux.
 
 Les échecs d’initialisation des compétences entraînent leur mise en [quarantaine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), avec conservation du motif et d’un événement d’audit. `bernstein status` affiche le nombre ; `doctor` et `govern audit` signalent les déclarations désactivées. Après avoir corrigé la cause, retirez explicitement le marqueur avec `bernstein quarantine re-enable DECLARATION_ID`.
 

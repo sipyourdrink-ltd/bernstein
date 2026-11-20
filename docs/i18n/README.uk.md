@@ -132,7 +132,7 @@ flowchart LR
 Повторні спроби зберігають `dispatch_tier`; під час повторного відкриття завдання можна явно вибрати рівень. Див. [контракт рівнів виконання](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor повідомляє про давно залишені ресурси в
 pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://docs.bernstein.run/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` показує попередній список робочих дерев і sandbox-сесій, що залишилися після завершених завдань, із віком та обсягом на диску. Видалити можна лише робочі дерева, використовуючи `--apply` і окреме схвалення видалення. Sandbox-сесії лише включаються до звіту (видалення: #6571); `doctor` попереджає про давні витоки. Див. [порядок очищення](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` повідомляє, чи вдалося видалити каталог, через [хук `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event), доставка якого не гарантується.
 
 У разі збою ініціалізації навичка потрапляє до [карантину](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) зі збереженням причини та події аудиту. `bernstein status` показує кількість; `doctor` і `govern audit` повідомляють про вимкнені оголошення. Після усунення причини явно зніміть позначку командою `bernstein quarantine re-enable DECLARATION_ID`.
 

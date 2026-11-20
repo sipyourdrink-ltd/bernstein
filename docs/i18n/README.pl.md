@@ -132,7 +132,7 @@ Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i
 Ponowne próby zachowują `dispatch_tier`; przy ponownym otwieraniu zadania można jawnie wybrać poziom. Zobacz [kontrakt poziomów wykonania](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor zgłasza w JSON pozostawione tory wykonania, które przekroczyły limit w
 pipx, pip, brew, dnf, npm oraz Docker zostały opisane w [przewodniku instalacji](https://docs.bernstein.run/en/latest/getting-started/install/); izolowany pakiet instalacyjny posiada dedykowany [przewodnik air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` wyświetla podgląd drzew roboczych i sesji sandbox pozostawionych przez zakończone zadania, wraz z ich wiekiem i zużyciem dysku. Usuwać można tylko drzewa robocze, z użyciem `--apply` i osobnej zgody na usunięcie. Sandboxy są jedynie uwzględniane w raporcie (usuwanie: #6571); `doctor` ostrzega o zasobach pozostawionych od dawna. Zobacz [procedurę sprzątania](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` informuje, czy udało się usunąć katalog, za pośrednictwem [hooka `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event), bez gwarancji dostarczenia powiadomienia.
 
 Błędy inicjalizacji umiejętności powodują objęcie ich [kwarantanną](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), z trwałym zapisem przyczyny i zdarzenia audytu. `bernstein status` pokazuje liczbę; `doctor` i `govern audit` informują o wyłączonych deklaracjach. Po usunięciu przyczyny jawnie usuń znacznik poleceniem `bernstein quarantine re-enable DECLARATION_ID`.
 

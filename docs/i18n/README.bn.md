@@ -132,7 +132,7 @@ flowchart LR
 পুনঃচেষ্টায় `dispatch_tier` অক্ষুণ্ণ থাকে; কাজটি আবার খোলার সময় স্পষ্টভাবে স্তর বেছে নেওয়া যায়। দেখুন [ডিসপ্যাচ স্তরের চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor দীর্ঘদিন পড়ে থাকা এক্সিকি�
 pipx, pip, brew, dnf, npm এবং Docker আছে [ইনস্টল গাইডে](https://docs.bernstein.run/en/latest/getting-started/install/); এয়ার-গ্যাপড wheelhouse-এর জন্য আলাদা [এয়ার-গ্যাপ গাইড](https://docs.bernstein.run/en/latest/installation/air-gap/) আছে।
 
 `bernstein worktrees sweep` শেষ হওয়া কাজের রেখে যাওয়া ওয়ার্কট্রি ও স্যান্ডবক্স সেশনগুলোর বয়স এবং ডিস্ক ব্যবহারসহ পূর্বরূপ দেখায়। শুধু ওয়ার্কট্রি মুছে ফেলা যায়, যার জন্য `--apply` ও আলাদা মুছে ফেলার অনুমোদন দরকার। স্যান্ডবক্সের ক্ষেত্রে শুধু রিপোর্ট দেখানো হয় (মুছে ফেলা: #6571); `doctor` দীর্ঘদিন পড়ে থাকা রিসোর্স সম্পর্কে সতর্ক করে। [পরিষ্কারের প্রক্রিয়া](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep) দেখুন।
+`bernstein worktrees gc` [`worktree.gc` হুক](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) ব্যবহার করে যথাসাধ্য জানায় যে ডিরেক্টরি মুছে ফেলা সফল হয়েছে কি না।
 
 স্কিল চালু করতে ব্যর্থ হলে কারণ ও অডিট ইভেন্ট স্থায়ীভাবে সংরক্ষণ করে সেটিকে [কোয়ারান্টিনে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) রাখা হয়। `bernstein status` সংখ্যা দেখায়; `doctor` ও `govern audit` নিষ্ক্রিয় ঘোষণাগুলির প্রতিবেদন দেয়। কারণ ঠিক করার পরে `bernstein quarantine re-enable DECLARATION_ID` দিয়ে স্পষ্টভাবে চিহ্নটি সরান।
 

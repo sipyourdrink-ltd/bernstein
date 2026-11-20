@@ -132,7 +132,7 @@ flowchart LR
 重试会保留 `dispatch_tier`；重新打开任务时可以显式选择层级。参见[调度层级契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)。
 
 ### 30 秒安装
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor 会以 JSON 报告超龄的泄漏执行通道；无法验证泄漏证据�
 pipx、pip、brew、dnf、npm 和 Docker 都涵盖在[安装指南](https://docs.bernstein.run/en/latest/getting-started/install/)中；离线 wheelhouse 有单独的 [air-gap 指南](https://docs.bernstein.run/en/latest/installation/air-gap/)。
 
 `bernstein worktrees sweep` 预览已完成任务遗留的工作树和沙箱会话，并显示存续时间和磁盘用量。只有工作树可以删除，且需要使用 `--apply` 并获得单独的删除批准。沙箱仅列入报告（删除功能：#6571）；`doctor` 会对长期遗留的资源发出警告。参见[清理流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)。
+`bernstein worktrees gc` 通过尽力发送的[`worktree.gc` 钩子](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event)报告目录是否删除成功。
 
 技能初始化失败时会被[隔离](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)，并持久保存原因和审计事件。`bernstein status` 显示数量；`doctor` 和 `govern audit` 报告被禁用的声明。修复原因后，使用 `bernstein quarantine re-enable DECLARATION_ID` 显式解除标记。
 

@@ -132,7 +132,7 @@ Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de pape
 As novas tentativas preservam `dispatch_tier`; ao reabrir uma tarefa, é possível selecionar explicitamente o nível. Consulte o [contrato dos níveis de execução](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor informa em JSON as linhas de execução abandonadas que excedem o limite 
 pipx, pip, brew, dnf, npm e Docker estão documentados no [guia de instalação](https://docs.bernstein.run/en/latest/getting-started/install/); o wheelhouse isolado tem seu próprio [guia air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` apresenta uma prévia das árvores de trabalho e sessões sandbox deixadas por tarefas concluídas, com idade e uso de disco. Só é possível remover árvores de trabalho, com `--apply` e uma aprovação de remoção separada. Os ambientes sandbox são apenas incluídos no relatório (remoção: #6571); `doctor` alerta sobre recursos abandonados antigos. Consulte o [procedimento de limpeza](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` informa se a remoção do diretório foi bem-sucedida por meio do [gancho `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event), cuja entrega não é garantida.
 
 Falhas na inicialização de habilidades são colocadas em [quarentena](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), com o motivo e um evento de auditoria persistidos. `bernstein status` mostra a contagem; `doctor` e `govern audit` relatam as declarações desativadas. Após corrigir a causa, remova explicitamente a marca com `bernstein quarantine re-enable DECLARATION_ID`.
 

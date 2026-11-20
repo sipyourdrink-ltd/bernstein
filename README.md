@@ -58,6 +58,8 @@ by finished tasks, with age and disk usage. Only worktrees can be removed, using
 `--apply` and a separate removal approval. Sandboxes are report-only (removal:
 #6571); `doctor` warns about aged leaks. See the
 [lane cleanup workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` reports whether directory removal succeeded in its
+best-effort [`worktree.gc` hook](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event).
 
 Skill initialization failures are [quarantined](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) with a persisted reason and audit event. `bernstein status` shows the count; `doctor` and `govern audit` report the disabled declarations. After fixing the cause, explicitly release the marker with `bernstein quarantine re-enable DECLARATION_ID`.
 

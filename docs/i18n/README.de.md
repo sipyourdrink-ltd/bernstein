@@ -132,7 +132,7 @@ Jeden Knoten übernimmt ein Agent, dessen Rolle die Phase zulässt; Rollenzäune
 Wiederholungsversuche behalten `dispatch_tier` bei; beim erneuten Öffnen einer Aufgabe kann die Stufe ausdrücklich gewählt werden. Siehe [Vertrag für Dispatch-Stufen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### in 30 Sekunden installieren
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor meldet überalterte zurückgelassene Ausführungsspuren als JSON. Lassen 
 pipx, pip, brew, dnf, npm und Docker werden in der [Installationsanleitung](https://docs.bernstein.run/en/latest/getting-started/install/) behandelt; das Air-Gap-Wheelhouse verfügt über einen eigenen [Air-Gap-Leitfaden](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` zeigt eine Vorschau der von abgeschlossenen Aufgaben zurückgelassenen Worktrees und Sandbox-Sitzungen mit Alter und Speicherplatzverbrauch. Nur Worktrees können entfernt werden, mit `--apply` und einer separaten Löschfreigabe. Sandboxes werden nur im Bericht aufgeführt (Entfernung: #6571); `doctor` warnt vor älteren zurückgelassenen Ressourcen. Siehe den [Bereinigungsablauf](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` meldet über den nach Möglichkeit ausgelösten [`worktree.gc`-Hook](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event), ob das Verzeichnis erfolgreich entfernt wurde.
 
 Fehler bei der Skill-Initialisierung führen zur [Quarantäne](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md); Grund und Audit-Ereignis werden dauerhaft gespeichert. `bernstein status` zeigt die Anzahl an; `doctor` und `govern audit` melden die deaktivierten Deklarationen. Nach Behebung der Ursache lässt sich die Markierung explizit mit `bernstein quarantine re-enable DECLARATION_ID` aufheben.
 

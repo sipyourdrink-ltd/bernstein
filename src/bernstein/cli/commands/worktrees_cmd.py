@@ -223,14 +223,13 @@ def lock_gc(repo_root: Path):  # type: ignore[no-untyped-def]
 
 
 def _emit_worktree_gc(repo_root: Path, row: ClassifiedWorktree, dry_run: bool, *, reaped: bool = True) -> None:
-    """Notify plugins that ``row`` was reaped (or preserved for safety).
+    """Notify plugins of the directory removal outcome for ``row``.
 
     We import lazily so importing this CLI module never drags in pluggy
     when the operator only ran ``--help``.
 
     Args:
-        reaped: ``True`` for an actual reap, ``False`` for a safety-skip so
-            subscribers can distinguish a deletion from a preserved worktree.
+        reaped: Whether the remover reported success during apply.
     """
     try:
         from bernstein.core.lifecycle.hooks import HookRegistry, LifecycleContext, LifecycleEvent
@@ -490,12 +489,11 @@ def run_gc(
     on_progress: Callable[[ClassifiedWorktree, bool], None] | None = None,
     audit_log: AuditLog | None = None,
 ) -> int:
-    """Reap ``rows`` under the GC lock, anchoring each reap to the audit chain.
+    """Reap ``rows`` under the GC lock, recording each decision before removal.
 
     For every row, in order, *inside the GC lock*:
 
-    1. Capture a pre-deletion fingerprint (git HEAD sha + dirty flag) while
-       the worktree still exists.
+    1. Capture the available Git HEAD and worktree status before removal.
     2. Append one ``worktree.reap`` event to the HMAC-chained audit log
        (issue #1833). This is **fail-closed**: if the append raises (e.g.
        audit key permission error, full disk) the exception propagates and
@@ -503,8 +501,8 @@ def run_gc(
        not record. The audit write does not depend on any plugin
        ``HookRegistry``; the lifecycle notification below is separate and
        best-effort.
-    3. Reap the directory (skipped in ``--dry`` mode).
-    4. Fire the best-effort lifecycle event for plugins.
+    3. Call the remover and report its result to the progress callback.
+    4. Count actual removals and emit the best-effort lifecycle event.
 
     Worktrees in ``skipped`` are NOT deleted; instead each gets one
     ``worktree.reap`` event flagged ``reaped=false`` with the unsaved-work
@@ -515,21 +513,20 @@ def run_gc(
         repo_root: Absolute repository root.
         rows: Reapable classifier rows to process. When ``force_unsaved`` is
             set this may include rows whose ``has_unsaved_work`` is ``True``.
-        dry_run: When ``True``, record the event flagged ``dry_run=true``
-            and perform no filesystem mutation.
+        dry_run: Simulate directory removal in a direct helper call. The
+            lock and audit append still run, and the hook reports
+            ``REAPED=0``. CLI previews return before calling this helper.
         force_unsaved: When ``True``, the operator explicitly opted in to
-            destroying unsaved work; recorded as ``forced=true`` on any
-            reaped row that held unsaved work.
+            destroying unsaved work. Recorded as ``forced=true`` for
+            selected targets.
         skipped: Worktrees preserved for safety (unsaved work, no force).
             Recorded as ``reaped=false`` and never deleted.
         on_progress: Optional per-row progress callback ``(row, removed)``.
-        audit_log: Optional pre-opened :class:`AuditLog` (used by tests to
-            inject a fixed key). When ``None`` a project log rooted at
-            ``<repo_root>/.sdd/audit`` is opened once for the whole sweep.
+        audit_log: Optional pre-opened :class:`AuditLog`. When ``None``,
+            open the project log at ``<repo_root>/.sdd/audit`` once.
 
     Returns:
-        The number of worktrees actually removed (always 0 in ``--dry``
-        mode after the lock work completes).
+        The number of worktrees actually removed, zero for a simulation.
     """
     removed_count = 0
     with lock_gc(repo_root):
@@ -547,10 +544,11 @@ def run_gc(
             removed = reap_worktree(repo_root, row, dry_run=dry_run)
             if on_progress is not None:
                 on_progress(row, removed)
-            if removed and not dry_run:
+            removed_on_apply = removed and not dry_run
+            if removed_on_apply:
                 removed_count += 1
             # 4: best-effort plugin notification (independent of the audit).
-            _emit_worktree_gc(repo_root, row, dry_run, reaped=True)
+            _emit_worktree_gc(repo_root, row, dry_run, reaped=removed_on_apply)
     return removed_count
 
 
@@ -573,7 +571,7 @@ def _append_reap_event(
     reaped: bool,
     forced: bool,
 ) -> None:
-    """Append one ``worktree.reap`` event capturing the pre-deletion state.
+    """Append one ``worktree.reap`` event recording the decision and fingerprint.
 
     The fingerprint (git HEAD sha + dirty flag) is captured here, before
     the caller reaps the directory. The ``details`` payload is restricted
@@ -582,11 +580,11 @@ def _append_reap_event(
     Args:
         log: Open HMAC-chained audit log.
         row: Classifier row being reaped or preserved.
-        dry_run: Whether this is a ``--dry`` sweep (no filesystem mutation).
-        reaped: ``True`` when the directory is being deleted; ``False`` for
-            a safety-skip (unsaved work preserved without ``--force-unsaved``).
-        forced: ``True`` when ``--force-unsaved`` overrode the unsaved-work
-            veto for this reap.
+        dry_run: Whether the caller is simulating directory removal.
+        reaped: ``True`` for a target selected for removal, ``False`` for
+            an unsaved-work skip.
+        forced: Whether the selected target was processed with
+            ``--force-unsaved``.
 
     Fail-closed: any exception raised by :meth:`AuditLog.log` propagates to
     the caller, which then skips the reap.
