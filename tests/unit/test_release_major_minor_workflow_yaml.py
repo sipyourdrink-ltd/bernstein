@@ -17,7 +17,10 @@ already go through.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, cast
 
@@ -161,11 +164,9 @@ def test_no_inline_publish_reimplementation(release_job: dict[str, Any]) -> None
         )
 
 
-def test_release_job_has_no_pypi_environment(release_job: dict[str, Any]) -> None:
+def test_release_job_uses_the_restricted_automation_environment(release_job: dict[str, Any]) -> None:
     """The job no longer publishes, so it does not need the pypi OIDC environment."""
-    assert "environment" not in release_job, (
-        "release-major-minor.yml no longer publishes to PyPI directly; drop the pypi environment binding"
-    )
+    assert release_job["environment"] == "automation"
 
 
 def test_release_job_permissions_match_its_narrowed_scope(release_job: dict[str, Any]) -> None:
@@ -174,7 +175,8 @@ def test_release_job_permissions_match_its_narrowed_scope(release_job: dict[str,
     assert isinstance(permissions, dict)
     assert permissions.get("contents") == "write"
     assert permissions.get("pull-requests") == "write"
-    for stale in ("id-token", "attestations", "actions"):
+    assert permissions["actions"] == permissions["checks"] == "read"
+    for stale in ("id-token", "attestations"):
         assert stale not in permissions, (
             f"release-major-minor.yml no longer needs `{stale}`; it stopped publishing directly"
         )
@@ -242,3 +244,32 @@ def test_the_release_job_declares_a_timeout(release_job: dict[str, Any]) -> None
     assert isinstance(release_job.get("timeout-minutes"), int), (
         "release-major-minor.yml's release job must set timeout-minutes"
     )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the release step requires Bash")
+@pytest.mark.parametrize(
+    ("gate", "failed_suite", "expected_exit"),
+    [("success", 42, 0), ("success", 43, 1), ("failure", 42, 1)],
+)
+def test_release_filters_only_service_identified_pr_publications(
+    release_job: dict[str, Any],
+    gate: str,
+    failed_suite: int,
+    expected_exit: int,
+) -> None:
+    verify = next(step["run"] for step in _steps(release_job) if step.get("name") == "Verify CI green")
+    # Two check suites emit the same job name. Only 42 belongs to the
+    # trusted publisher. Model the --jq output from each GitHub API call.
+    stub = r"""gh() {
+      case "$2" in
+        "repos/example/project/commits/$SHA/check-runs") printf '%s\n' "$CHECK_RUNS" ;;
+        "repos/example/project/actions/workflows/pr-publish.yml/runs?check_suite_id=42&event=workflow_run&per_page=1") echo 42 ;;
+        "repos/example/project/actions/workflows/pr-publish.yml/runs?check_suite_id=43&event=workflow_run&per_page=1") echo 0 ;;
+        *) return 90 ;;
+      esac
+    }
+    """
+    rows = f"CI gate\tcompleted\t{gate}\t41\nautosync\tcompleted\tfailure\t{failed_suite}"
+    env = {**os.environ, "REPO": "example/project", "SHA": "a" * 40, "CHECK_RUNS": rows}
+    result = subprocess.run(["bash", "-c", stub + verify], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == expected_exit, result.stdout + result.stderr

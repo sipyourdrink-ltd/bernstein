@@ -342,7 +342,8 @@ workflows so the shared runner pool serves the test matrix first:
 
 | Lane | Workflow | Jobs | Contains |
 |------|----------|------|----------|
-| Policy | `pr-policy.yml` | 1 | text hygiene, main-red-guard (advisory), trunk andon gate, pre-merge autosync |
+| Policy | `pr-policy.yml` | 2 | text hygiene, main-red-guard (advisory), trunk andon gate, read-only autosync computation |
+| PR publishing | `pr-publish.yml` | 4 conditional | validates the originating run, verifies autosync drift and publishes an observability comment or an autosync commit |
 | Labels | `pr-labels.yml` (`pull_request_target`) | 1 | area labels (`actions/labeler`), size label (`pr-size-labeler`) |
 | Docs | `docs-drift.yml` | 1 | drift check + data-freshness check (folded into one job) |
 

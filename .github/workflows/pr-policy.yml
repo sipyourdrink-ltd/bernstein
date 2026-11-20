@@ -1,20 +1,10 @@
 name: PR policy
+run-name: PR policy for ${{ github.event.pull_request.number }} (${{ github.event.action }})
 
-# Consolidated per-PR policy lane. One runner job replaces four
-# single-job workflows that each spent most of their wall time on
-# checkout + bootstrap overhead while holding a runner slot:
-#
-#   * text-hygiene       (was pr-text-hygiene.yml)
-#   * main-red-guard     (was main-red-guard.yml)
-#   * trunk andon gate   (was trunk-andon-gate.yml)
-#   * pre-merge autosync (was pre-merge-autosync.yml)
-#
-# Consolidating them into sequential steps cuts three runner slots per
-# PR event and reduces queue wait on the shared runner pool. None of
-# these checks is in the required-status-check list ("CI gate" is the
-# only required context), so the check-name
-# change is safe for branch protection.
-#
+# Text hygiene, the main-red advisory and the trunk gate share one runner.
+# Eligible PRs compute autosync drift on a separate read-only runner. A
+# default-branch workflow publishes the result of a successful run.
+
 # Step gating preserves the original per-workflow semantics:
 #
 #   * text-hygiene: skipped for bot authors and the `skip-text-hygiene`
@@ -60,13 +50,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      # Autosync checkout and push use BERNSTEIN_AUTOSYNC_TOKEN.
       contents: read
       pull-requests: read
       actions: read
       # The andon gate reads the open/closed state of the trunk-unstable
       # marker issue maintained by trunk-health-slo.yml.
       issues: read
+    outputs:
+      autosync: ${{ steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true' }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -352,95 +343,66 @@ jobs:
 
           echo "skip=${skip}" >> "$GITHUB_OUTPUT"
 
-      - name: Require named autosync token
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
-        env:
-          BERNSTEIN_AUTOSYNC_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${BERNSTEIN_AUTOSYNC_TOKEN}" ]; then
-            echo "::error::BERNSTEIN_AUTOSYNC_TOKEN is required for autosync pushes; refusing to push with GITHUB_TOKEN."
-            exit 1
-          fi
-
-      # Persist credentials so the post-step push lands on the PR head ref.
-      # Use the named PAT/App token so the amend commit triggers downstream
-      # workflows on the PR.
-      - name: Checkout PR head
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
+  autosync:
+    name: Compute autosync drift
+    needs: pr-policy
+    if: needs.pr-policy.outputs.autosync == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-          token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
+          egress-policy: audit
 
-      - uses: ./.github/actions/bootstrap
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Inline the pinned bootstrap inputs so no local action is resolved from the PR.
+      - name: Set up uv
+        id: setup_uv
+        continue-on-error: true
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: &uv-inputs
+          version: '0.13.7'
+          enable-cache: false
+
+      - name: Retry uv setup after a transient failure
+        if: steps.setup_uv.outcome == 'failure'
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with: *uv-inputs
 
       - name: Install project (for the bernstein CLI)
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
         run: uv sync --no-dev --frozen
 
       - name: Regenerate AGENTS.md mirrors
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
         run: uv run bernstein agents-md sync --workdir .
 
       - name: Run ruff fix and format
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
         run: |
           set -euo pipefail
           uv run ruff check . --fix --unsafe-fixes
           uv run ruff format .
 
-      - name: Detect drift
-        id: drift
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
-        run: |
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No drift; nothing to amend."
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            git status --short
-          fi
-
-      - name: Commit and push regen to PR head ref
-        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true' && steps.drift.outputs.changed == 'true'
+      - name: Collect autosync changes
         env:
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "chore(auto): regenerate AGENTS.md mirrors + ruff format"
-          # Regular push (not force). The PR head ref only ever fast-forwards
-          # from autosync because we just rebuilt mirrors from the current
-          # tree. If a concurrent push from the PR author moved the tip,
-          # let the push fail and the next pull_request.synchronize event
-          # will re-run the job.
-          set +e
-          push_output=$(git push origin "HEAD:${PR_HEAD_REF}" 2>&1)
-          push_rc=$?
-          set -e
-          if [ "${push_rc}" -ne 0 ]; then
-            printf '%s\n' "${push_output}"
-            # A branch that entered the merge queue mid-run rejects every
-            # push (GH006) until it leaves the queue. The PR merges with
-            # exactly the tree it was enqueued with, so a missed autosync
-            # amend is moot; if the queue kicks the PR back out, the next
-            # synchronize event re-runs this job anyway.
-            if printf '%s' "${push_output}" | grep -qiE "GH006|merge queue"; then
-              echo "::notice::push to ${PR_HEAD_REF} rejected because the branch is locked by the merge queue; skipping autosync for this run."
-            # Fail open ONLY on positive evidence the branch is gone: a merge
-            # that deleted the head ref mid-run is benign. A real conflict
-            # (author pushed) leaves the ref present, so the failure stays
-            # red and the next synchronize event re-runs the job.
-            elif git ls-remote --exit-code --heads origin "${PR_HEAD_REF}" >/dev/null 2>&1; then
-              echo "::error::push to ${PR_HEAD_REF} failed and the ref still exists; leaving job red."
-              exit "${push_rc}"
-            else
-              echo "::notice::push failed but ${PR_HEAD_REF} no longer exists (branch deleted / PR merged mid-run); treating as benign."
-            fi
-          fi
+          git diff --cached --no-ext-diff --no-textconv --no-renames --full-index --binary "$HEAD_SHA" > "$RUNNER_TEMP/autosync.patch"
+          test "$(wc -c < "$RUNNER_TEMP/autosync.patch")" -le 65536
+
+      - name: Hand drift to the branch publisher
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-autosync-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/autosync.patch
+          if-no-files-found: error
+          retention-days: 1

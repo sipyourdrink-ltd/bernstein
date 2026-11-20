@@ -12,6 +12,7 @@ WorkflowStep = TypedDict(
     {
         "name": object,
         "run": object,
+        "env": dict[str, str],
         "continue-on-error": object,
         "with": object,
     },
@@ -62,7 +63,7 @@ def _run(step: WorkflowStep) -> str:
 
 
 def test_pre_merge_setup_and_format_fail_before_commit() -> None:
-    steps = _steps(PRE_MERGE, "pr-policy")
+    steps = _steps(PRE_MERGE, "autosync")
     install = _step(steps, "Install project (for the bernstein CLI)")
     formatter = _step(steps, "Run ruff fix and format")
 
@@ -74,26 +75,10 @@ def test_pre_merge_setup_and_format_fail_before_commit() -> None:
 
 
 def test_pre_merge_push_requires_named_autosync_token() -> None:
-    steps = _steps(PRE_MERGE, "pr-policy")
-    checkout = _step(steps, "Checkout PR head")
-    require_token = _step(steps, "Require named autosync token")
-    push = _step(steps, "Commit and push regen to PR head ref")
-
-    with_block = checkout.get("with", {})
-    assert isinstance(with_block, dict)
-    with_values = cast("dict[str, object]", with_block)
-    token = with_values.get("token", "")
-    assert isinstance(token, str)
-    assert "BERNSTEIN_AUTOSYNC_TOKEN" in token
-    assert "GITHUB_TOKEN" not in token
-
-    require_run = _run(require_token)
-    assert "BERNSTEIN_AUTOSYNC_TOKEN is required" in require_run
-    assert "exit 1" in require_run
-
-    push_run = _run(push)
-    assert "USING_NAMED_TOKEN" not in push_run
-    assert "GITHUB_TOKEN" not in push_run
+    publisher = PRE_MERGE.with_name("pr-publish.yml")
+    push = _step(_steps(publisher, "autosync"), "Commit and push regen to PR head ref")
+    assert push["env"]["BERNSTEIN_AUTOSYNC_TOKEN"] == "${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}"
+    assert _run(push).strip() == "python3 -I trusted/scripts/publish_autosync.py"
 
 
 def test_nightly_setup_and_format_fail_before_opening_pr() -> None:
