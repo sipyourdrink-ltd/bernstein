@@ -71,7 +71,7 @@ def config_path_cmd(as_json: bool) -> None:
     sdd_path = resolve_sdd_config_path()
 
     if as_json:
-        console.print_json(
+        click.echo(
             json.dumps(
                 {
                     "config_file": str(seed_path) if seed_path else None,

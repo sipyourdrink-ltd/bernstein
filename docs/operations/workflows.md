@@ -114,8 +114,12 @@ Workflow runs can be resumed after interruption (Ctrl+C, crash, kill) using:
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"  # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth"
-bernstein workflow resume <run_id> -m ./my-flow.yaml
+bernstein workflow resume <run_id> -m ./my-flow.yaml -g "Add JWT auth"
 ```
+
+Pass the original goal again when unfinished nodes use `{goal}`, including
+when supplying `-m`. The resume command defaults `--goal` to an empty string;
+it does not restore the goal from `spec_snapshot.json`.
 
 The resume command:
 - Validates that the provided manifest matches the one used at run start via spec digest
@@ -125,7 +129,8 @@ The resume command:
 - Preserves loop iteration counts when resuming loop nodes
 
 State persistence location: `.sdd/runs/<run_id>/` contains:
-- `spec_snapshot.json` - manifest name, version, digest, and source
+- `spec_snapshot.json` - state format `version`, `spec_name`, `spec_version`,
+  `spec_digest`, `node_ids`, and `source` (manifest path or name); no goal text
 - `<node_id>.node.json` - checkpoint for each completed node
 - `run_complete.json` - sentinel written when run finishes
 

@@ -278,6 +278,10 @@ def node_to_response(node: NodeInfo) -> NodeResponse:
             active_agents=node.capacity.active_agents,
             gpu_available=node.capacity.gpu_available,
             supported_models=node.capacity.supported_models,
+            disk_free_mb=node.capacity.disk_free_mb,
+            mem_used_pct=node.capacity.mem_used_pct,
+            mesh_rtt_ms=node.capacity.mesh_rtt_ms,
+            platform=node.capacity.platform,
         ),
         last_heartbeat=node.last_heartbeat,
         registered_at=node.registered_at,
@@ -1271,7 +1275,7 @@ def create_app(
         title="Bernstein Task Server",
         version="1.0.0",
         description=(
-            "Bernstein REST API - the open-source governance layer for AI agents, "
+            "Bernstein REST API - an open-source governance layer for AI agents, "
             "one git worktree per task.\n\n"
             "## Authentication\n\n"
             "Authentication is ENABLED by default.  Include a Bearer token in "
@@ -1750,9 +1754,45 @@ _default_cluster_config = (
 
 def get_app() -> FastAPI:
     """Get or create the default FastAPI app (lazy singleton)."""
+    from dataclasses import replace
+
+    from bernstein.core.config.seed_parser import SeedError, _load_seed_mapping, _parse_cluster
+    from bernstein.core.seed import resolve_seed_path
+
+    cluster_config = _default_cluster_config
+    seed_path = resolve_seed_path(Path.cwd())
+    if seed_path.exists():
+        # The server child receives the selected seed path, not a serialized
+        # ClusterConfig. Load startup-only partition settings before serving
+        # requests; reloading metadata later must not replace a live ring.
+        try:
+            # Full metadata loads retain layer validation. Here only effective
+            # registry settings are validated, below, outside this read-error path.
+            seed_data = _load_seed_mapping(seed_path, validate_layers=False)
+        except SeedError:
+            # Metadata loading already handles unreadable or malformed seeds.
+            # Shard opt-in must not turn those errors into a new boot failure.
+            seed_data = {}
+        raw_cluster = seed_data.get("cluster")
+        registry_fields = ("shards", "shard_vnodes", "min_disk_free_mb", "max_mem_used_pct", "max_mesh_rtt_ms")
+        registry_settings = (
+            {key: raw_cluster[key] for key in registry_fields if key in raw_cluster}
+            if isinstance(raw_cluster, dict)
+            else {}
+        )
+        seed_cluster = _parse_cluster(registry_settings) if registry_settings else None
+        if seed_cluster is not None:
+            cluster_config = replace(
+                cluster_config or ClusterConfig(),
+                shards=seed_cluster.shards,
+                shard_vnodes=seed_cluster.shard_vnodes,
+                min_disk_free_mb=seed_cluster.min_disk_free_mb,
+                max_mem_used_pct=seed_cluster.max_mem_used_pct,
+                max_mesh_rtt_ms=seed_cluster.max_mesh_rtt_ms,
+            )
     return create_app(
         auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
-        cluster_config=_default_cluster_config,
+        cluster_config=cluster_config,
         readonly=os.environ.get("BERNSTEIN_READONLY", "").lower() in ("1", "true", "yes"),
         slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
     )

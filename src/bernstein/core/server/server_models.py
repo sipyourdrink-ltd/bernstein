@@ -493,6 +493,14 @@ class TaskReopenRequest(BaseModel):
     """Body for POST /tasks/{task_id}/reopen."""
 
     reason: str = ""
+    dispatch_tier: DispatchTier | None = None
+
+    @field_validator("dispatch_tier", mode="before", json_schema_input_type=DispatchTier)
+    @classmethod
+    def _reject_null_tier(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("dispatch_tier cannot be null; omit it to preserve the current tier")
+        return value
 
     @field_validator("reason")
     @classmethod
@@ -940,6 +948,10 @@ class NodeCapacitySchema(BaseModel):
     active_agents: int = 0
     gpu_available: bool = False
     supported_models: list[str] = Field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+    disk_free_mb: int | None = Field(default=None, ge=0)
+    mem_used_pct: float | None = Field(default=None, ge=0, le=100)
+    mesh_rtt_ms: float | None = Field(default=None, ge=0)
+    platform: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class NodeRegisterRequest(BaseModel):

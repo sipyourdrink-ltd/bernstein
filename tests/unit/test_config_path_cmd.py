@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
+import sys
 import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.cli.config_path_cmd import (
     config_path_cmd,
@@ -13,6 +18,9 @@ from bernstein.cli.config_path_cmd import (
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
+
+if TYPE_CHECKING:
+    import pytest
 
 
 class TestConfigPathCmd:
@@ -30,12 +38,33 @@ class TestConfigPathCmd:
         assert result.exit_code == 0
         assert "Config" in result.output or "config" in result.output.lower()
 
-    def test_config_path_json_flag(self) -> None:
+    def test_config_path_json_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        seed = tmp_path / "bernstein.yaml"
+        seed.write_text("name: local plan\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
         runner = CliRunner()
-        result = runner.invoke(config_path_cmd, ["--json"])
-        assert result.exit_code == 0
-        # Should output JSON
-        assert "cwd" in result.output
+        result = runner.invoke(cli, ["config-path", "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {
+            "config_file": str(seed.resolve()),
+            "sdd_config": None,
+            "cwd": str(tmp_path.resolve()),
+        }
+
+    def test_config_path_json_with_forced_color(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
+        source_root = Path(__file__).resolve().parents[2] / "src"
+        monkeypatch.setenv("PYTHONPATH", str(source_root), prepend=os.pathsep)
+        result = subprocess.run(
+            [sys.executable, "-m", "bernstein", "config-path", "--json"],
+            cwd=tmp_path,
+            env={**os.environ, "TERM": "xterm-256color", "FORCE_COLOR": "1"},
+            capture_output=True,
+            check=True,
+        )
+        assert json.loads(result.stdout) == {"config_file": None, "sdd_config": None, "cwd": str(tmp_path.resolve())}
 
     def test_resolve_config_path_no_file(self) -> None:
         old_cwd = os.getcwd()
@@ -47,8 +76,6 @@ class TestConfigPathCmd:
             os.chdir(old_cwd)
 
     def test_resolve_config_path_with_file(self) -> None:
-        from pathlib import Path
-
         old_cwd = os.getcwd()
         try:
             with tempfile.TemporaryDirectory() as td:

@@ -62,8 +62,8 @@ cp /fixtures/README.md .
 mkdir -p .bernstein
 cp /fixtures/volunteer.json .bernstein/volunteer.json
 
-git config user.email "rig@bernstein.test"
-git config user.name "Volunteer Rig"
+git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+git config user.name "github-actions[bot]"
 git add -A
 git commit -m "Seed fixture project with volunteer manifest" 2>/dev/null || true
 git branch -M main

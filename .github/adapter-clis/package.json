@@ -1,0 +1,19 @@
+{
+  "name": "bernstein-adapter-contract-clis",
+  "private": true,
+  "description": "Pinned upstream CLIs installed by adapter-contract-drift.yml with npm ci.",
+  "dependencies": {
+    "@ampcode/cli": "0.0.1795089646-g8be92a",
+    "@anthropic-ai/claude-code": "2.1.328",
+    "@charmland/crush": "0.101.0",
+    "@continuedev/cli": "1.5.47",
+    "@google/gemini-cli": "0.70.0",
+    "@openai/codex": "0.171.0",
+    "@qwen-code/qwen-code": "0.28.0",
+    "forgecode": "2.13.21",
+    "opencode-ai": "1.19.6"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
+  }
+}

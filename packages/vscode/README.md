@@ -1,6 +1,6 @@
 # Bernstein - Governance Layer for AI Agents in VS Code
 
-VS Code extension for monitoring and controlling [Bernstein](https://github.com/sipyourdrink-ltd/bernstein), the open-source governance layer for AI agents that runs them in parallel, one git worktree per task. Gives you real-time visibility into tasks, agents, and costs without leaving your editor.
+VS Code extension for monitoring and controlling [Bernstein](https://github.com/sipyourdrink-ltd/bernstein), an open-source governance layer for AI agents that runs them in parallel, one git worktree per task. Gives you real-time visibility into tasks, agents, and costs without leaving your editor.
 
 ## Features
 
@@ -33,16 +33,19 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `bernstein.apiUrl` | string | `http://127.0.0.1:8052` | Bernstein orchestrator API URL |
+| `bernstein.apiUrl` | string | `http://127.0.0.1:8052` | Bernstein API URL |
 | `bernstein.apiToken` | string | `""` | Bearer token for API authentication (optional) |
 | `bernstein.refreshInterval` | number | `5` | Tree view polling interval in seconds |
-| `bernstein.showNotifications` | boolean | `true` | Show notification toasts for task completions and failures |
-| `bernstein.costWarningThreshold` | number | `80` | Show a cost warning when budget usage exceeds this percentage |
+
+Budget notices follow the server's `live_costs.should_warn` and
+`live_costs.should_stop` flags: the extension shows a warning or an error
+message respectively. Each notice appears once while its condition remains
+active and can appear again after the flag clears and becomes active again.
 
 ## Requirements
 
 - VS Code 1.100+ (or compatible forks: Cursor, VSCodium)
-- Bernstein orchestrator running locally - install from [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein)
+- Bernstein running locally - install from [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein)
 
 ## Quick Start
 
