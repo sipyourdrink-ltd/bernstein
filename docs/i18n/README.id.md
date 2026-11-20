@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### lapisan governance open source untuk agen AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate
 Percobaan ulang mempertahankan `dispatch_tier`; saat tugas dibuka kembali, tingkat dapat dipilih secara eksplisit. Lihat [kontrak tingkat dispatch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Jalankan tugas dari cabang kerja. Bernstein menggabungkan perubahan yang telah diperiksa ke cabang aktif dan menghentikan proses yang dapat menggabungkan perubahan ke cabang bawaan. Tinjau perubahan di cabang kerja sebelum membuka pull request.
 
 `bernstein doctor --json` juga menampilkan temuan kontrak audit `findings`, yang identik dengan hasil `bernstein govern audit --only INS --json` untuk pengamatan instalasi yang sama. Tampilan laporan doctor biasa tetap sama. Lihat [panduan operasional doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) untuk ID pemeriksaan yang stabil.
 
@@ -202,7 +206,7 @@ Gunakan `bernstein govern audit --format json` atau `--format sarif` untuk hasil
 `bernstein delegation verify RUN` membandingkan rantai tanda terima dengan kepala akhir dan jumlah hop yang disegel dalam manifes proses menggunakan HMAC dengan kunci audit, sehingga mendeteksi penghapusan ujung rantai, penggantian, dan penambahan setelah penutupan, termasuk penulisan ulang deklarasi tanpa kunci. Menghapus deklarasi membuat proses tetap tidak lengkap (kode keluar `3`), tidak pernah dinyatakan valid. Pemeriksaan ini tidak mendeteksi penggunaan ulang snapshot autentik yang lebih lama dan tidak melindungi dari penulis yang memegang kunci audit. Lihat [alur verifikasi delegasi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cara kerja
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Setiap target melalui empat tahapan:
 
@@ -213,8 +217,10 @@ Setiap target melalui empat tahapan:
 
 Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengapa deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+Pemeriksaan `can_spawn()` pada pelacak biaya mengembalikan `False` ketika pengeluaran kumulatif setelah koreksi mencapai atau melampaui ambang penghentian anggaran yang ditetapkan, meskipun tidak ada token baru yang dilaporkan. Setelah sistem dimulai ulang, jumlah token yang tersimpan saja tidak cukup untuk mengetahui kembali biaya kumulatif persis yang sebelumnya dilaporkan untuk kombinasi agen, tugas, dan model tertentu.
+
 ### perintah sehari-hari
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -224,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Jika tugas dalam proses SSH yang berjalan terpisah berakhir dengan kode keluar selain nol, tugas dan proses tersebut gagal. Bukti pelaksanaan tugas mencatat kode keluar, dan tugas berikutnya tetap menunggu.
 
 Seluruh antarmuka operator (otomatisasi PR, jadwal, jembatan obrolan, daemon autofix) terdapat dalam [perintah operator](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

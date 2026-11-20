@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### שכבת הגברנס בקוד פתוח לסוכני AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ flowchart LR
 ניסיונות חוזרים שומרים על `dispatch_tier`; בפתיחה מחדש של משימה אפשר לבחור את הרמה במפורש. ראו את [חוזה רמות השיגור](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+הריצו את המשימה מענף עבודה. Bernstein ממזג שינויים שעברו בדיקה לענף הנוכחי ועוצר הרצות שעשויות למזג שינויים לענף ברירת המחדל. בדקו את השינויים בענף העבודה לפני פתיחת בקשת משיכה.
 
 `bernstein doctor --json` מציג גם את ממצאי חוזה הביקורת, `findings`, הזהים לממצאי `bernstein govern audit --only INS --json` עבור אותן תצפיות התקנה. התצוגה הרגילה של דוח doctor נשארת ללא שינוי. למזהי הבדיקות היציבים, ראו את [מדריך התפעול של doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
@@ -202,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 הפקודה `bernstein delegation verify RUN` משווה את שרשרת הקבלות לערך הראש הסופי ולמספר שלבי ההאצלה, שנחתמו במניפסט הריצה באמצעות HMAC עם מפתח הביקורת. כך היא מזהה מחיקה של סוף השרשרת, החלפה והארכת השרשרת לאחר סגירת הריצה, לרבות שכתוב ההצהרה ללא המפתח. הסרת ההצהרה משאירה את הריצה לא שלמה (קוד יציאה `3`), והיא לעולם אינה נחשבת תקינה. הבדיקה אינה מזהה שימוש חוזר בתמונת מצב אותנטית ישנה יותר ואינה מגינה מפני גורם כותב המחזיק במפתח הביקורת. ראו את [תהליך אימות ההאצלה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### איך זה עובד
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 כל יעד מתקדם דרך ארבעה שלבים:
 
@@ -213,8 +217,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 מדוע המתזמן נכתב ב-Python טהור ואילו פשרות נובעות מכך: [מדוע דטרמיניסטי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+בדיקת `can_spawn()` במנגנון מעקב העלויות מחזירה `False` כאשר ההוצאה המצטברת לאחר התיקון מגיעה לסף העצירה שהוגדר לתקציב או חורגת ממנו, גם אם לא דווח על טוקנים חדשים. לאחר הפעלה מחדש, מוני הטוקנים שנשמרו לבדם אינם מאפשרים לשחזר את העלות המצטברת המדויקת שדווחה קודם לכן עבור שילוב מסוים של סוכן, משימה ומודל.
+
 ### פקודות יומיומיות
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -224,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+אם משימה בהרצת SSH מנותקת מסתיימת בקוד יציאה שאינו אפס, המשימה וההרצה נכשלות. קוד היציאה נשמר באישור הביצוע של המשימה, והמשימות הבאות נשארות בהמתנה.
 
 כל ממשק המפעיל (אוטומציית PR, תזמונים, גשרי צ'אט, תהליך autofix ברקע) מפורט ב[פקודות מפעיל](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

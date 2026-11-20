@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### tầng governance mã nguồn mở cho AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -132,14 +132,18 @@ Mỗi node được nhận bởi một agent có vai trò được phase cho ph�
 Các lần thử lại giữ nguyên `dispatch_tier`; khi mở lại tác vụ, có thể chọn cấp một cách tường minh. Xem [hợp đồng cấp điều phối](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Chạy tác vụ từ một nhánh làm việc. Bernstein hợp nhất các thay đổi đã được kiểm tra vào nhánh hiện tại và dừng những lượt chạy có thể hợp nhất thay đổi vào nhánh mặc định. Hãy xem lại thay đổi trên nhánh làm việc trước khi mở yêu cầu hợp nhất.
 
 `bernstein doctor --json` cũng hiển thị các kết quả `findings` của hợp đồng kiểm toán, giống hệt kết quả của `bernstein govern audit --only INS --json` khi dùng cùng các quan sát về cài đặt. Báo cáo doctor thông thường giữ nguyên cách hiển thị. Xem [hướng dẫn vận hành doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) để biết các mã kiểm tra ổn định.
 
@@ -202,7 +206,7 @@ Dùng `bernstein govern audit --format json` hoặc `--format sarif` để xuấ
 `bernstein delegation verify RUN` so sánh chuỗi biên nhận với đầu chuỗi cuối cùng và số bước chuyển đã được niêm phong trong bản kê khai lần chạy bằng HMAC với khóa kiểm toán, qua đó phát hiện việc xóa phần đuôi, thay thế và nối dài chuỗi sau khi đóng, kể cả việc viết lại khai báo mà không có khóa. Xóa khai báo sẽ khiến lần chạy ở trạng thái chưa hoàn tất (mã thoát `3`), không bao giờ được coi là hợp lệ. Cơ chế này không phát hiện việc sử dụng lại một bản chụp xác thực cũ hơn và không bảo vệ trước người ghi nắm giữ khóa kiểm toán. Xem [quy trình xác minh ủy quyền](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cơ chế hoạt động
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Mỗi mục tiêu trải qua bốn giai đoạn:
 
@@ -213,8 +217,10 @@ Mỗi mục tiêu trải qua bốn giai đoạn:
 
 Lý do bộ lập lịch được xây dựng bằng Python thuần túy và các đánh đổi đi kèm: [tại sao tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+Phép kiểm tra `can_spawn()` của bộ theo dõi chi phí trả về `False` khi tổng chi phí lũy kế sau điều chỉnh đạt hoặc vượt ngưỡng dừng đã đặt cho ngân sách, ngay cả khi không có token mới nào được báo cáo. Sau khi khởi động lại, chỉ dựa vào số token đã lưu thì không thể khôi phục chính xác chi phí lũy kế đã được báo cáo trước đó cho một tổ hợp tác nhân, tác vụ và mô hình cụ thể.
+
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -224,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+Nếu một tác vụ trong lượt chạy SSH tách khỏi thiết bị đầu cuối kết thúc với mã thoát khác 0, cả tác vụ và lượt chạy đều thất bại. Biên nhận của tác vụ ghi lại mã thoát và các tác vụ tiếp theo vẫn ở trạng thái chờ.
 
 Toàn bộ tập lệnh điều hành (tự động hóa PR, lịch trình, cầu nối trò chuyện, tiến trình nền autofix) có tại [lệnh điều hành](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
