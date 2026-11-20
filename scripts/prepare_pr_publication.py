@@ -87,6 +87,10 @@ def prepare(event: dict) -> dict[str, str]:
     elif run["event"] == "pull_request" and len(run["pull_requests"]) == 1:
         (association,) = run["pull_requests"]
         number = int(association["number"])
+        if not summary and run["display_title"] not in {
+            f"PR policy for {number} ({action})" for action in ("opened", "synchronize", "ready_for_review")
+        }:
+            return {}
         pr = api(f"repos/{repository}/pulls/{number}")
         head = pr["head"]
         if (
@@ -112,7 +116,7 @@ def prepare(event: dict) -> dict[str, str]:
         "pr-observations" if summary else "pr-autosync",
         "observe.json" if summary else "autosync.patch",
     )
-    if data is None:
+    if data is None or (not summary and not data):
         return {}
     if branch and pr["head"]["sha"] != sha:
         if summary:
@@ -131,7 +135,13 @@ def prepare(event: dict) -> dict[str, str]:
     subprocess.run(["git", "check-ref-format", f"refs/heads/{branch}"], check=True)
     if api(f"repos/{repository}/branches/{quote(branch, safe='')}")["protected"]:
         raise ValueError("Autosync cannot update a protected branch")
-    return {"kind": "autosync", "ref": branch, "sha": sha, "data": base64.b64encode(data).decode("ascii")}
+    return {
+        "kind": "autosync",
+        "number": str(number),
+        "ref": branch,
+        "sha": sha,
+        "data": base64.b64encode(data).decode("ascii"),
+    }
 
 
 if __name__ == "__main__":

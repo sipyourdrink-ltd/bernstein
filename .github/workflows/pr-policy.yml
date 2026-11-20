@@ -1,4 +1,5 @@
 name: PR policy
+run-name: PR policy for ${{ github.event.pull_request.number }} (${{ github.event.action }})
 
 # Text hygiene, the main-red advisory and the trunk gate share one runner.
 # Eligible PRs compute autosync drift on a separate read-only runner. A
@@ -395,7 +396,7 @@ jobs:
         run: |
           set -euo pipefail
           git add -A
-          git diff --cached --no-ext-diff --no-textconv --no-renames --binary "$HEAD_SHA" > "$RUNNER_TEMP/autosync.patch"
+          git diff --cached --no-ext-diff --no-textconv --no-renames --full-index --binary "$HEAD_SHA" > "$RUNNER_TEMP/autosync.patch"
           test "$(wc -c < "$RUNNER_TEMP/autosync.patch")" -le 65536
 
       - name: Hand drift to the branch publisher

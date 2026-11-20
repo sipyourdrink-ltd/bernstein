@@ -24,13 +24,17 @@ A single rapid burst of auto-merges flipped `main` red because:
 
 Each layer fixes one of those four holes.
 
-## Required setup (post-merge, operator steps)
+## Operator setup
 
 ### 1. Provision `BERNSTEIN_AUTOSYNC_TOKEN` for autosync
 
-The read-only `Compute autosync drift` job regenerates mirrors and runs Ruff on the PR head. The default-branch `pr-publish.yml` workflow requires `BERNSTEIN_AUTOSYNC_TOKEN` to update the same PR branch. This makes downstream checks run on the new commit. The writer uses a bare Git index and accepts the update only while the branch still points at the measured SHA.
+The read-only `Compute autosync drift` job regenerates mirrors and runs Ruff on the PR head. The default-branch `pr-publish.yml` workflow requires `BERNSTEIN_AUTOSYNC_TOKEN` to update the same PR branch. This makes downstream checks run on the new commit. The writer uses a bare Git index and accepts the update only while the branch still points at the measured SHA. An independent read-only job reproduces the entire patch with the default branch's locked generator, Ruff and Ruff configuration. The publisher checks the live PR and branch again immediately before the update. A clean run needs no writer.
 
-Autosync accepts text patches up to 64 KiB for generated mirrors and existing Python, stub and notebook files in visible directories. For larger changes, other paths, or protected head branches, run `bernstein agents-md sync --workdir .`, `ruff check . --fix --unsafe-fixes` and `ruff format .` locally and commit the result.
+Autosync accepts text patches up to 64 KiB for generated mirrors and existing Python, stub and notebook files in visible directories. For larger changes, trees containing symlinks or submodules, changes that the trusted tools cannot reproduce, other paths, or protected head branches, run `bernstein agents-md sync --workdir .`, `ruff check . --fix --unsafe-fixes` and `ruff format .` locally and commit the result.
+
+Before enabling the publisher, restrict the `automation` environment to the default **branch** using selected deployment branches and tags. Allow only that branch and leave the tag list empty. Store the named credential only in this environment. Remove any repository-level copy and any organization-secret grant to this repository. The release workflow also uses this environment for its named token.
+
+Restrict pushes that change `.github/workflows/**` on same-repository branches to trusted workflow maintainers, or require untrusted contributors to use forks with read-only tokens. Repository default token permissions and review at merge time alone allow same-repository workflow authors to request broader permissions during a PR run. Verify these host settings before rollout.
 
 Choose one of the following:
 
@@ -40,7 +44,7 @@ Choose one of the following:
    - `contents: write`
    - `pull-requests: write`
    - `metadata: read` (default)
-2. Store under repo secrets as `BERNSTEIN_AUTOSYNC_TOKEN`.
+2. Store in the restricted `automation` environment as `BERNSTEIN_AUTOSYNC_TOKEN`.
 3. Set a 90-day expiry and a reminder to rotate.
 
 **Option B: GitHub App (production-grade).**
@@ -49,7 +53,7 @@ Choose one of the following:
    - `contents: write`
    - `pull-requests: write`
 2. Install the App on this repo.
-3. Store the App's installation token under repo secrets as `BERNSTEIN_AUTOSYNC_TOKEN`. Provision an installation-token rotator workflow (Action Marketplace has community options) since installation tokens expire hourly.
+3. Store the App's installation token in the restricted `automation` environment as `BERNSTEIN_AUTOSYNC_TOKEN`. Provision an installation-token rotator workflow (Action Marketplace has community options) since installation tokens expire hourly.
 
 ### 2. Enable the merge queue on `main`
 

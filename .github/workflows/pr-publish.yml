@@ -83,13 +83,50 @@ jobs:
           header: bernstein-observability
           path: ${{ runner.temp }}/observability.md
 
-  autosync:
+  verify-autosync:
     needs: prepare
     if: needs.prepare.outputs.kind == 'autosync'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
+    steps:
+      - name: Checkout trusted verification tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.7'
+          enable-cache: false
+      - name: Install the default branch's locked tools
+        working-directory: trusted
+        run: uv sync --locked --no-editable --group dev
+      - name: Checkout the exact PR tree as input data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - name: Independently regenerate and compare the exact diff
+        env:
+          PR_HEAD_SHA: ${{ needs.prepare.outputs.sha }}
+          PATCH: ${{ needs.prepare.outputs.data }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: trusted/.venv/bin/python -I trusted/scripts/verify_autosync.py
+
+  autosync:
+    needs: [prepare, verify-autosync]
+    if: needs.prepare.outputs.kind == 'autosync'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: automation
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout publisher from the default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -100,6 +137,8 @@ jobs:
       - name: Commit and push regen to PR head ref
         env:
           BERNSTEIN_AUTOSYNC_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.prepare.outputs.number }}
           PR_HEAD_REF: ${{ needs.prepare.outputs.ref }}
           PR_HEAD_SHA: ${{ needs.prepare.outputs.sha }}
           PATCH: ${{ needs.prepare.outputs.data }}

@@ -62,7 +62,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-observability-summary.yml | PR observability summary | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "pr-observability-${{ github.event.pull_request.number \|\| github.event.inputs.pr_number }}"} | 1 |
 | .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 2 |
-| .github/workflows/pr-publish.yml | Publish PR observability and autosync | workflow_run | - | 3 |
+| .github/workflows/pr-publish.yml | Publish PR observability and autosync | workflow_run | - | 4 |
 | .github/workflows/pr-queue-hygiene.yml | PR queue hygiene | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "pr-queue-hygiene"} | 1 |
 | .github/workflows/project-pulse.yml | Project pulse | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "project-pulse"} | 1 |
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
@@ -148,7 +148,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | label |
 | .github/workflows/pr-observability-summary.yml | summary: Build observability summary |
 | .github/workflows/pr-policy.yml | autosync: Compute autosync drift<br>pr-policy: PR policy |
-| .github/workflows/pr-publish.yml | autosync<br>comment<br>prepare |
+| .github/workflows/pr-publish.yml | autosync<br>comment<br>prepare<br>verify-autosync |
 | .github/workflows/pr-queue-hygiene.yml | hygiene |
 | .github/workflows/project-pulse.yml | pulse: Collect and publish the project pulse |
 | .github/workflows/publish-docker.yml | publish: Build and push image to GHCR |
@@ -234,7 +234,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "read", "security-events": "read"} | - |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>autosync: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read"} | - |
-| .github/workflows/pr-publish.yml | autosync: {"contents": "read"}<br>comment: {"pull-requests": "write"}<br>prepare: {"actions": "read", "contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
+| .github/workflows/pr-publish.yml | autosync: {"contents": "read", "pull-requests": "read"}<br>comment: {"pull-requests": "write"}<br>prepare: {"actions": "read", "contents": "read", "pull-requests": "read"}<br>verify-autosync: {"contents": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
 | .github/workflows/pr-queue-hygiene.yml | workflow: {"contents": "read"}<br>hygiene: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/project-pulse.yml | pulse: {"contents": "write", "issues": "write", "pull-requests": "read"} | - |
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |

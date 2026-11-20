@@ -35,6 +35,7 @@ jobs:
     name: "${{ inputs.bump }} release"
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 60
+    environment: automation
     permissions:
       contents: write
       pull-requests: write

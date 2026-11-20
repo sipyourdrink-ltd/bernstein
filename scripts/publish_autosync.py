@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import subprocess
 import tempfile
 from pathlib import PurePosixPath
+from urllib.parse import quote
 
 MIRRORS = {
     "AGENTS.md",
@@ -35,6 +37,39 @@ def validate_changes(raw_diff: bytes) -> None:
             continue
         if status != b"M" or old_mode != new_mode or new_mode not in (b"100644", b"100755"):
             raise ValueError("Autosync may only modify regular files or add generated mirrors")
+
+
+def current_target(remote: str, sha: str, ref: str) -> bool:
+    """Recheck eligibility immediately before using the write credential."""
+    repository = os.environ["GITHUB_REPOSITORY"]
+    number = int(os.environ["PR_NUMBER"])
+    pr = json.loads(subprocess.check_output(["gh", "api", f"repos/{repository}/pulls/{number}"]))
+    head, base = pr["head"], pr["base"]
+    if pr["state"] != "open" or any(label["name"] == "skip-autosync" for label in pr["labels"]):
+        return False
+    branch = ref.removeprefix("refs/heads/")
+    if (
+        head["repo"] is None
+        or head["repo"]["full_name"] != repository
+        or base["repo"]["full_name"] != repository
+        or head["ref"] != branch
+        or branch in {base["ref"], base["repo"]["default_branch"]}
+        or head["sha"] != sha
+    ):
+        raise ValueError("PR head or target changed before publication")
+    branch_url = f"repos/{repository}/branches/{quote(branch, safe='')}"
+    try:
+        info = json.loads(subprocess.check_output(["gh", "api", branch_url]))
+    except subprocess.CalledProcessError:
+        absent = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "--refs", remote, ref], stdout=subprocess.DEVNULL, check=False
+        )
+        if absent.returncode == 2:
+            return False
+        raise
+    if info["protected"] or info["commit"]["sha"] != sha:
+        raise ValueError("PR head advanced or became protected before publication")
+    return True
 
 
 def publish(directory: str) -> None:
@@ -92,6 +127,9 @@ def publish(directory: str) -> None:
         "GIT_CONFIG_KEY_0": "http.extraHeader",
         "GIT_CONFIG_VALUE_0": f"Authorization: Basic {auth}",
     }
+    if not current_target(remote, sha, ref):
+        print("::notice::PR closed, opted out or branch deleted; skipping autosync.")
+        return
     push = subprocess.run(
         [*git, "push", f"--force-with-lease={ref}:{sha}", remote, f"{commit}:{ref}"],
         env=env,
