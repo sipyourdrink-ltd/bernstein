@@ -23,7 +23,7 @@ Install and sign in to one worker. For example, if your Claude account includes 
 
 ```bash
 npm install -g @anthropic-ai/claude-code
-claude login
+claude auth login
 ```
 
 Other worker installs:

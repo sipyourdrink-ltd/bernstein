@@ -84,7 +84,7 @@ npm install -g @google/gemini-cli
 
 ## Step 3: Sign in to your worker
 
-For account access, use the login for your installed worker, such as `codex login` or `claude login`. For API billing, set the key for your chosen worker:
+For account access, use the login for your installed worker, such as `codex login` or `claude auth login`. For API billing, set the key for your chosen worker:
 
 ```bash
 # Claude Code

@@ -186,6 +186,11 @@ def test_configured_first_run_completes_and_recaps(
     run(["git", "init", "--initial-branch=main"])
     run(["git", "commit", "--allow-empty", "-m", "init"])
     assert "git switch -c" in run(["bernstein", "init"])
+    # Doctor still reports all installation checks when a preserved seed is malformed.
+    (project / "bernstein.yaml").write_text("goal: Test\nbudget: []\n", encoding="utf-8")
+    malformed = json.loads(run(["bernstein", "doctor", "--json"], check=False))
+    assert malformed["checks"] and not malformed["project_setup"]["ready"]
+    assert any("config validate" in step for step in malformed["project_setup"]["next_steps"])
     config = guide.split("A minimal `bernstein.yaml` looks like:", 1)[1].split("```yaml\n", 1)[1].split("\n```", 1)[0]
     (project / "bernstein.yaml").write_text(config, encoding="utf-8")
     steps = (

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from bernstein.cli.helpers import SDD_DIRS, console
+from bernstein.cli.helpers import SDD_DIRS, console, find_seed_file
 from bernstein.core.identity import install_rev as _identity
 from bernstein.core.identity.install_rev import (
     DISABLED_SENTINEL,
@@ -194,7 +194,7 @@ def init_wizard_cmd(target_dir: str, non_interactive: bool) -> None:
 
     # Write config
     yaml_content = generate_yaml(goal, project_type, max_agents, budget, adapter, approval)
-    yaml_path = root / "bernstein.yaml"
+    yaml_path = find_seed_file(root) or (root / "bernstein.yaml")
     if yaml_path.exists():
         overwrite = not non_interactive and click.confirm(
             f"  {yaml_path.name} already exists. Overwrite?", default=False

@@ -54,11 +54,12 @@ def test_checkout_advice_tracks_the_actual_default(tmp_path: Path, branch: str) 
     assert result.default_target
     assert "git switch -c" in result.next_action
     _git(tmp_path, "branch", "bernstein/first-run")
-    assert "git switch bernstein/first-run" in checkout_handoff(tmp_path).next_action
+    assert "git switch -c bernstein/first-run-2." in checkout_handoff(tmp_path).next_action
     _git(tmp_path, "switch", "-c", "work")
     assert checkout_handoff(tmp_path).next_action == ""
     _git(tmp_path, "switch", "--detach")
     assert "detached" in checkout_handoff(tmp_path).next_action.lower()
+    assert "git switch -c bernstein/first-run-2." in checkout_handoff(tmp_path).next_action
 
 
 def test_unborn_and_non_git_have_different_repairs(tmp_path: Path) -> None:
@@ -75,12 +76,11 @@ def test_setup_declares_missing_worker_before_its_login(tmp_path: Path, monkeypa
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setenv("GEMINI_API_KEY", "fixture-only")
     assert "install" in worker_handoff("claude").lower()
-    binary = tmp_path / "claude"
+    binary = tmp_path / ("claude.cmd" if os.name == "nt" else "claude")
     binary.write_text("")
     binary.chmod(0o755)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr("bernstein.core.orchestration.preflight._claude_has_oauth_session", lambda **kw: False)
-    assert "claude login" in worker_handoff("claude")
+    assert "claude auth login" in worker_handoff("claude")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture-only")
     assert worker_handoff("claude") == ""
 
@@ -122,3 +122,83 @@ def test_repeat_init_preserves_selected_branch_budget_and_local_settings(tmp_pat
     assert state.read_bytes() == b"unchanged fixture"
     branch = subprocess.check_output(["git", "symbolic-ref", "--short", "HEAD"], cwd=tmp_path, text=True)
     assert branch.strip() == "dev"
+
+
+def test_version_output_does_not_establish_worker_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.first_run_readiness import worker_handoff
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake = tmp_path / ("claude.cmd" if os.name == "nt" else "claude")
+    for authenticated in (False, True):
+        status = '{"loggedIn":' + str(authenticated).lower() + "}"
+        if os.name == "nt":
+            script = f'@echo off\nif "%1"=="--version" (echo 2.0.0) else (echo {status})\n'
+        else:
+            script = f"""#!/bin/sh\ncase "$1" in --version) echo 2.0.0;; auth) echo '{status}';; esac\n"""
+        fake.write_text(script)
+        fake.chmod(0o755)
+        action = worker_handoff("claude")
+        if authenticated:
+            assert action == ""
+        else:
+            assert "claude auth login" in action
+
+
+def test_installation_readiness_requires_matching_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.first_run_readiness import operator_installation_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env = {"PATH": str(tmp_path), "HOME": str(tmp_path), "OPENAI_API_KEY": "offline-fixture"}
+    legacy = [
+        {"name": "Python version", "ok": True},
+        {"name": "Adapter: claude", "ok": True},
+        {"name": "Auth: claude", "ok": True},
+        {"name": "Adapter: codex", "ok": False},
+        {"name": "Auth: codex", "ok": True},
+        {"name": "Ready to run", "ok": True},
+    ]
+    rows = operator_installation_checks(legacy, env=env)
+    assert not next(r for r in rows if r["name"] == "Ready to run")["ok"]
+    assert legacy[-1]["ok"]
+
+
+def test_preflight_never_needs_to_probe_for_example_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.run_preflight import _abort_if_default_branch_merge_target
+
+    monkeypatch.setattr("bernstein.core.git_ops.current_branch", lambda root: "main")
+    monkeypatch.setattr("bernstein.core.git_ops.protected_default_branches", lambda root: {"main"})
+    monkeypatch.delenv("BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH", raising=False)
+
+    def timed_out(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired("git", 5)
+
+    monkeypatch.setattr("bernstein.core.git_ops.run_git", timed_out)
+    with pytest.raises(SystemExit) as result:
+        _abort_if_default_branch_merge_target(tmp_path)
+    assert result.value.code == 1
+
+
+@pytest.mark.parametrize("filename", ["bernstein.yml", ".bernstein/bernstein.yml", ".bernstein/bernstein.yaml"])
+def test_init_and_setup_respect_seed_selection(tmp_path: Path, filename: str) -> None:
+    from bernstein.cli.first_run_readiness import project_handoff
+    from bernstein.cli.main import cli
+
+    selected = tmp_path / filename
+    selected.parent.mkdir(exist_ok=True)
+    selected.write_text("goal: existing\ncli: codex\nmodel: preserved\ninternal_llm_provider: none\n")
+    if filename.startswith(".bernstein"):
+        (tmp_path / "bernstein.yaml").write_text("goal: fallback\ncli: gemini\n")
+    result = CliRunner().invoke(cli, ["init", "--dir", str(tmp_path), "--remote"])
+    assert result.exit_code == 0, result.output
+    assert project_handoff(tmp_path, remote=True).worker == "codex"
+    if filename == "bernstein.yml":
+        assert not (tmp_path / "bernstein.yaml").exists()
+
+
+def test_malformed_budget_still_emits_setup_advice(tmp_path: Path) -> None:
+    from bernstein.cli.first_run_readiness import project_handoff
+
+    (tmp_path / "bernstein.yaml").write_text("goal: test\nbudget: []\n")
+    assert any("config validate" in step for step in project_handoff(tmp_path).actions)

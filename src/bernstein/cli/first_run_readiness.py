@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -21,31 +23,61 @@ class CheckoutHandoff:
     next_action: str
 
 
-def checkout_handoff(root: Path) -> CheckoutHandoff:
-    from bernstein.core.git_ops import current_branch, protected_default_branches, run_git
+def merge_target(root: Path) -> tuple[str | None, bool]:
+    from bernstein.core.git_ops import current_branch, protected_default_branches
 
     branch = current_branch(root)
-    if branch:
-        protected = branch in protected_default_branches(root)
-        if not protected:
-            return CheckoutHandoff(branch, False, "")
-        existing = run_git(["show-ref", "--verify", "--quiet", "refs/heads/bernstein/first-run"], root, timeout=5)
-        if existing.ok:
-            action = "Switch to an existing working branch, for example git switch bernstein/first-run."
-        else:
-            action = "Create a working branch with git switch -c bernstein/first-run."
-        return CheckoutHandoff(branch, True, action)
+    return branch, branch is not None and branch in protected_default_branches(root)
+
+
+def _working_branch_action(root: Path) -> str:
+    from bernstein.core.git_ops import run_git
+
+    refs = run_git(["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"], root, timeout=5)
+    if not refs.ok:
+        return "Check git branch and create a new working branch from the current commit."
+    names = set(refs.stdout.splitlines())
+    base = "bernstein-first-run" if "bernstein" in names else "bernstein/first-run"
+    candidate = base
+    suffix = 1
+    while candidate in names or any(name.startswith(candidate + "/") for name in names):
+        suffix += 1
+        candidate = f"{base}-{suffix}"
+    return f"Create a working branch with git switch -c {candidate}."
+
+
+def checkout_handoff(root: Path) -> CheckoutHandoff:
+    from bernstein.core.git_ops import run_git
+
+    branch, protected = merge_target(root)
     try:
+        if branch:
+            return CheckoutHandoff(branch, protected, _working_branch_action(root) if protected else "")
         inside = run_git(["rev-parse", "--is-inside-work-tree"], root, timeout=5)
         if inside.stdout.strip() != "true":
             action = "Open an existing Git checkout, or run git init and make an initial commit."
         elif run_git(["rev-parse", "--verify", "HEAD"], root, timeout=5).ok:
-            action = "HEAD is detached. Create a working branch with git switch -c bernstein/first-run."
+            action = f"HEAD is detached. {_working_branch_action(root)}"
         else:
             action = "Make an initial commit before creating a working branch."
     except (OSError, subprocess.SubprocessError):
-        action = "Install Git and check that git status works in the project."
-    return CheckoutHandoff(None, False, action)
+        action = "Check that git status works and select a working branch before starting."
+    return CheckoutHandoff(branch, protected, action)
+
+
+def _cli_login(worker: str, binary: str, env: Mapping[str, str]) -> bool:
+    args = ["auth", "status", "--json"] if worker == "claude" else ["login", "status"]
+    try:
+        result = subprocess.run([binary, *args], capture_output=True, text=True, timeout=5, env=dict(env))
+        if result.returncode:
+            return False
+        if worker == "claude":
+            status = json.loads(result.stdout)
+            return isinstance(status, dict) and status.get("loggedIn") is True
+        lines = (result.stdout + "\n" + result.stderr).splitlines()
+        return any(line.strip().lower().startswith("logged in") for line in lines)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
 
 
 def worker_handoff(worker: str, *, env: Mapping[str, str] | None = None) -> str:
@@ -53,10 +85,49 @@ def worker_handoff(worker: str, *, env: Mapping[str, str] | None = None) -> str:
 
     if worker == "auto":
         return "Set cli in bernstein.yaml to the worker you want to check, or keep auto for runtime routing."
-    if shutil.which(worker, path=env.get("PATH", "") if env is not None else None) is None:
+    source = os.environ if env is None else env
+    binary = shutil.which(worker, path=source.get("PATH", ""))
+    if binary is None:
         return f"Install the {worker} worker and make sure it is on PATH."
+    if worker in {"claude", "codex"}:
+        key = "ANTHROPIC_API_KEY" if worker == "claude" else "OPENAI_API_KEY"
+        if source.get(key) or _cli_login(worker, binary, source):
+            return ""
+        login = "claude auth login" if worker == "claude" else "codex login"
+        return f"Could not confirm the {worker} login. Run {login} or configure {key}."
     problem = _get_api_key_error(worker, env=env)
     return problem[2] if problem else ""
+
+
+def operator_installation_checks(
+    checks: list[dict[str, Any]], *, env: Mapping[str, str] | None
+) -> list[dict[str, Any]]:
+    """Present a matched installation and login without mutating the recorded observations."""
+    result = [row.copy() for row in checks]
+    rows = {row["name"]: row for row in result}
+    installed = {
+        name.removeprefix("Adapter: ") for name, row in rows.items() if name.startswith("Adapter: ") and row["ok"]
+    }
+    for worker in installed.intersection({"claude", "codex"}):
+        row = rows.get(f"Auth: {worker}")
+        if row is not None:
+            problem = worker_handoff(worker, env=env)
+            row.update(
+                ok=not problem,
+                detail="Login or API key configured" if not problem else "Login unconfirmed",
+                fix=problem,
+            )
+    matching = any(rows.get(f"Auth: {worker}", {}).get("ok") for worker in installed)
+    if "Ready to run" in rows:
+        ok = bool(rows.get("Python version", {}).get("ok") and matching)
+        rows["Ready to run"].update(
+            ok=ok,
+            detail="Python and a matching worker login are configured"
+            if ok
+            else "Python or a matching worker login is missing",
+            fix="" if ok else "Check the Python version and configure the login for an installed worker.",
+        )
+    return result
 
 
 def planner_handoff(provider: str, *, root: Path | None = None) -> str:
@@ -94,17 +165,21 @@ class ProjectHandoff:
 
 
 def project_handoff(root: Path, *, remote: bool = False, worker_env: Mapping[str, str] | None = None) -> ProjectHandoff:
+    from bernstein.cli.helpers import find_seed_file
     from bernstein.core.config.seed_config import SeedError
     from bernstein.core.config.seed_parser import _load_seed_mapping, _parse_seed
 
     checkout = checkout_handoff(root)
     actions = [checkout.next_action] if checkout.next_action else []
-    config_path = root / "bernstein.yaml"
-    if not config_path.is_file():
+    config_path = find_seed_file(root)
+    if config_path is None:
         actions.append("Run bernstein init to create bernstein.yaml.")
         return ProjectHandoff(checkout, None, None, tuple(actions))
     try:
         data = _load_seed_mapping(config_path)
+        budget = data.get("budget")
+        if budget is not None and not isinstance(budget, (str, int, float)):
+            raise SeedError("The budget must be a dollar amount or number.")
         has_goal = "goal" in data
         seed = _parse_seed(config_path, apply_tuning=False, mapping=data if has_goal else {**data, "goal": "First run"})
     except (OSError, ValueError, SeedError):
