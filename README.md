@@ -243,6 +243,8 @@ Each goal moves through four stages:
 
 Why the scheduler is plain Python, and what that trades away: [why deterministic](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+The cost tracker’s `can_spawn()` check returns `False` when corrected cumulative spending reaches or exceeds the configured budget stop threshold, even if no new tokens were reported. After a restart, saved token counts alone cannot reconstruct the exact cumulative cost previously reported for a given agent, task and model.
+
 ### everyday commands
 
 ```bash
@@ -253,6 +255,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+If a task in a detached SSH run exits with a nonzero code, the task and the run fail. The task receipt records the exit code, and later tasks stay pending.
 
 The full operator surface (PR automation, schedules, chat bridges, the autofix daemon) is in [operator commands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
