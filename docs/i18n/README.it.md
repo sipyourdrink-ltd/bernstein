@@ -206,7 +206,7 @@ Usa `bernstein govern audit --format json` o `--format sarif` per risultati legg
 `bernstein delegation verify RUN` confronta la catena di ricevute con la testa finale e il numero di passaggi sigillati nel manifesto dell’esecuzione tramite HMAC con la chiave di audit, rilevando la cancellazione della coda, la sostituzione e l’estensione dopo la chiusura, inclusa la riscrittura della dichiarazione senza la chiave. Rimuovere la dichiarazione lascia l’esecuzione incompleta (codice di uscita `3`), mai valida. Questo non rileva il riutilizzo di un’istantanea autentica precedente e non protegge da chi scrive possedendo la chiave di audit. Vedi il [flusso di verifica delle deleghe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### come funziona
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Ogni obiettivo attraversa quattro fasi:
 
@@ -216,6 +216,8 @@ Ogni obiettivo attraversa quattro fasi:
 4. **Unione (Merge)**. Il lavoro verificato entra in main. I task non riusciti vengono ritentati o reindirizzati a un modello differente.
 
 Perché lo scheduler è in puro Python e quali sono i compromessi adottati: [perché deterministico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+Il controllo `can_spawn()` del modulo di monitoraggio dei costi restituisce `False` quando la spesa cumulativa dopo la rettifica raggiunge o supera la soglia di arresto configurata per il budget, anche se non sono stati segnalati nuovi token. Dopo un riavvio, i soli conteggi dei token salvati non consentono di ricostruire il costo cumulativo esatto comunicato in precedenza per una determinata combinazione di agente, attività e modello.
 
 ### comandi quotidiani
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

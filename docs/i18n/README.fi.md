@@ -206,7 +206,7 @@ Käytä `bernstein govern audit --format json`- tai `--format sarif`-valintaa ko
 `bernstein delegation verify RUN` vertaa kuittiketjua lopulliseen ketjun päähän ja hyppyjen määrään, jotka on sinetöity ajon manifestiin auditointiavaimella lasketulla HMAC-tunnisteella. Se havaitsee ketjun loppuosan poistamisen, korvaamisen ja ketjun kasvattamisen sulkemisen jälkeen sekä ilmoituksen uudelleenkirjoittamisen ilman avainta. Ilmoituksen poistaminen jättää ajon keskeneräiseksi (paluukoodi `3`), eikä ajoa koskaan pidetä kelvollisena. Tämä ei havaitse vanhemman aidon tilannekuvan uudelleenkäyttöä eikä suojaa kirjoittajalta, jolla on auditointiavain. Katso [delegoinnin tarkistuksen työnkulku](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### miten se toimii
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Jokainen tavoite etenee neljän vaiheen läpi:
 
@@ -216,6 +216,8 @@ Jokainen tavoite etenee neljän vaiheen läpi:
 4. **Yhdistäminen (Merge)**. Vahvistettu työ yhdistetään main-haaraan. Epäonnistuneet tehtävät yritetään uudelleen tai reititetään toiselle mallille.
 
 Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja siihen liittyy: [miksi deterministinen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+Kustannusseurannan `can_spawn()`-tarkistus palauttaa arvon `False`, kun korjatut kokonaiskulut saavuttavat budjetille asetetun pysäytysrajan tai ylittävät sen, vaikka uusia tokeneita ei olisi raportoitu. Uudelleenkäynnistyksen jälkeen pelkistä tallennetuista tokenimääristä ei voi päätellä tietylle agentin, tehtävän ja mallin yhdistelmälle aiemmin raportoitua tarkkaa kokonaiskustannusta.
 
 ### arkipäiväiset komennot
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

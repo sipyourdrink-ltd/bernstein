@@ -206,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` 將收據鏈與執行資訊清單中使用稽核金鑰的 HMAC 封存的最終鏈頭及跳數進行比較，從而偵測尾端刪除、替換及關閉後的鏈增長，包括在沒有金鑰的情況下改寫宣告。刪除宣告會使執行處於未完成狀態（結束碼 `3`），絕不會被判定為有效。這無法偵測重放較早的真實快照，也無法防範持有稽核金鑰的寫入者。請參閱[委派驗證流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)。
 
 ### 運作原理
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 每個目標經歷四個階段：
 
@@ -216,6 +216,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 4. **合併（Merge）**。驗證過的工作落入 main。失敗的任務被重試或路由到不同模型。
 
 排程器為什麼是純 Python，以及這換來什麼代價：[為什麼確定性](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)。
+
+如果修正後的累計支出達到或超過設定的預算停止門檻，即使沒有回報新增的 token，費用追蹤器的 `can_spawn()` 檢查也會傳回 `False`。重新啟動後，單憑已儲存的 token 計數，無法還原先前針對特定代理程式、任務與模型組合所回報的確切累計費用。
 
 ### 日常命令
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

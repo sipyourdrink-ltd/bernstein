@@ -8,7 +8,7 @@ Targets the per-run budget tracker's observable contracts:
 * ``EnvelopeConfig`` normalisation, allowlist matching, (de)serialisation.
 * ``CostTracker.record`` aggregation into ``spent_by_model`` /
   ``spent_for_agent`` / envelope rollups; explicit-cost vs estimated.
-* ``record_cumulative`` delta-safe accounting + cost proration.
+* ``record_cumulative`` delta-safe token and explicit-cost accounting.
 * Envelope hard caps (``EnvelopeBudgetError``), allowlist refusal, and
   the threshold hook firing exactly once.
 * ``status`` soft thresholds, hard-cap kill switch, unlimited budget.
@@ -241,6 +241,157 @@ class TestRecordAggregation:
 
 
 class TestRecordCumulative:
+    @pytest.mark.parametrize(("reported", "expected_charge"), [(1.0, 0.0), (2.0, 0.5)])
+    def test_first_restored_explicit_caps_split_bucket_pricing_by_known_estimates(
+        self, tmp_path: Path, reported: float, expected_charge: float
+    ) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=2.75)
+        t.record_cumulative("a", "t", "sonnet", 500_000, 0, total_cost_usd=0.1)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 1_000_000, 0) == pytest.approx(1.5)
+        assert loaded.record_cumulative("a", "t", "sonnet", 900_000, 100_000, reported) == pytest.approx(
+            expected_charge
+        )
+        assert loaded.spent_usd == pytest.approx(1.6 + expected_charge)
+        assert loaded.can_spawn()
+        model = loaded.model_breakdowns()[0]
+        assert (model.input_tokens, model.output_tokens) == (1_000_000, 100_000)
+        assert loaded.record_cumulative("a", "t", "sonnet", 1_000_000, 100_000, reported) == 0
+
+    def test_restored_split_buckets_without_an_estimate_keep_legacy_pricing(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 500_000, 0, total_cost_usd=0.1)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 400_000, 100_000, 1.0) == pytest.approx(1.5)
+        assert loaded.spent_usd == pytest.approx(1.6)
+        assert loaded.record_cumulative("a", "t", "sonnet", 500_000, 100_000, 1.5) == 0
+
+    @pytest.mark.parametrize("callback_thread", [False, True], ids=["reentrant", "other-thread"])
+    def test_threshold_callback_observes_committed_cumulative_progress(
+        self, callback_thread: bool, tmp_path: Path
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        t = Tracker(run_id="r", hard_budget_usd=1.5)
+        t.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", budget_usd=1.0, threshold_pct=1.0)})
+        seen: list[tuple[float, int, bool]] = []
+
+        def observe() -> tuple[float, int, bool]:
+            snapshot = json.loads(t.save(tmp_path).read_text())
+            assert snapshot["spent_usd"] == 1.0
+            assert snapshot["cumulative_tokens"]["a|t|sonnet"] == [1000, 0, 0, 0]
+            duplicate = t.record_cumulative("a", "t", "sonnet", 1000, 0, 1.0)
+            return duplicate, t.model_breakdowns()[0].input_tokens, t.can_spawn()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+
+            def hook(_report: object) -> None:
+                seen.append(pool.submit(observe).result(timeout=3) if callback_thread else observe())
+
+            t.set_envelope_threshold_hook(hook)
+            assert t.record_cumulative("a", "t", "sonnet", 1000, 0, 1.0) == 1.0
+        assert seen == [(0.0, 1000, True)]
+        assert t.spent_usd == 1.0 and len(t.usages) == 1
+
+    def test_threshold_callback_can_advance_the_same_key(self) -> None:
+        t = Tracker(run_id="r")
+        t.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", budget_usd=1.0, threshold_pct=1.0)})
+        nested: list[float] = []
+        t.set_envelope_threshold_hook(
+            lambda _report: nested.append(t.record_cumulative("a", "t", "sonnet", 2000, 0, 3.0))
+        )
+        assert t.record_cumulative("a", "t", "sonnet", 1000, 0, 1.0) == 1.0
+        assert nested == [2.0]
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0, 3.0) == 0.0
+        assert t.spent_usd == 3.0 and t.model_breakdowns()[0].input_tokens == 2000
+
+    def test_concurrent_direct_and_cumulative_admission_respect_one_envelope(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        t = Tracker(run_id="r")
+        t.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", hard_budget_usd=1.5)})
+        start = Barrier(12)
+
+        def admit(i: int) -> bool:
+            start.wait(timeout=5)
+            try:
+                if i % 2:
+                    t.record("a", str(i), "sonnet", 1000, 0, cost_usd=1.0)
+                else:
+                    t.record_cumulative("a", str(i), "sonnet", 1000, 0, total_cost_usd=1.0)
+            except EnvelopeBudgetError:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            accepted = list(pool.map(admit, range(12)))
+        assert sum(accepted) == 1
+        assert t.spent_usd == 1.0 and t.model_breakdowns()[0].input_tokens == 1000
+        t.configure_envelopes({})
+        for i in range(0, 12, 2):
+            assert t.record_cumulative("a", str(i), "sonnet", 1000, 0, 1.0) == (0.0 if accepted[i] else 1.0)
+
+    @pytest.mark.parametrize("initial", [0.0, 1.0])
+    def test_estimate_already_counts_toward_next_explicit_total(self, initial: float) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=5.0)
+        if initial:
+            assert t.record_cumulative("a", "t", "sonnet", 0, 0, total_cost_usd=initial) == initial
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0) == pytest.approx(3.0)
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0, total_cost_usd=4.0) == pytest.approx(1.0 - initial)
+        assert t.spent_usd == pytest.approx(4.0)
+        assert t.can_spawn()
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0, total_cost_usd=5.0) == pytest.approx(1.0)
+        assert not t.can_spawn()
+
+    def test_negative_restored_report_has_no_refund(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=-1.0) == 0
+        assert loaded.spent_usd == pytest.approx(1.0)
+        assert loaded.model_breakdowns()[0].input_tokens == 2000
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0) == 0
+
+    @pytest.mark.parametrize("stale_bucket", range(4), ids=["input", "output", "cache-read", "cache-write"])
+    def test_token_only_partial_rewind_cannot_recharge_the_old_counter(self, stale_bucket: int) -> None:
+        t = Tracker(run_id="r")
+
+        def report(buckets: list[int]) -> float:
+            return t.record_cumulative(
+                "a",
+                "t",
+                "sonnet",
+                buckets[0],
+                buckets[1],
+                total_cache_read_tokens=buckets[2],
+                total_cache_write_tokens=buckets[3],
+            )
+
+        first = [1000] * 4
+        report(first)
+        mixed = first.copy()
+        mixed[stale_bucket] -= 100
+        mixed[(stale_bucket + 1) % 4] += 100
+        assert report(mixed) > 0
+        mixed[stale_bucket] = 1000
+        assert report(mixed) == 0
+        assert len(t.usages) == 2
+
+    @pytest.mark.parametrize("other", [("b", "t", "sonnet"), ("a", "u", "sonnet"), ("a", "t", "opus")])
+    def test_mixed_amounts_are_isolated_per_agent_task_and_model(self, other: tuple[str, str, str]) -> None:
+        t = Tracker(run_id="r")
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0) == pytest.approx(3.0)
+        assert t.record_cumulative(*other, 1_000_000, 0, total_cost_usd=4.0) == 4.0
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0, total_cost_usd=4.0) == pytest.approx(1.0)
+        assert t.spent_usd == pytest.approx(8.0)
+
     def test_first_call_records_full_total(self) -> None:
         t = Tracker(run_id="r")
         delta = t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cost_usd=0.3)
@@ -250,17 +401,121 @@ class TestRecordCumulative:
     def test_second_call_records_only_delta(self) -> None:
         t = Tracker(run_id="r")
         t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
-        # cumulative grows to 2000 input tokens; prorated cost.
-        delta = t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=2.0)
-        # second call prorates total_cost over the delta tokens fraction.
-        assert delta > 0.0
-        assert t.spent_usd == pytest.approx(1.0 + delta)
+        delta = t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0)
+        assert delta == pytest.approx(2.0)
+        assert t.spent_usd == pytest.approx(3.0)
 
-    def test_no_new_tokens_returns_zero(self) -> None:
+    def test_identical_report_counts_once(self) -> None:
         t = Tracker(run_id="r")
         t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cost_usd=1.0)
         delta = t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cost_usd=1.0)
         assert delta == 0.0
+        assert t.spent_usd == pytest.approx(1.0)
+        assert len(t.usages) == 1
+
+    def test_cost_correction_without_new_tokens_stops_spawning(self) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=2.75)
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0)
+        delta = t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=4.0)
+        assert delta == pytest.approx(1.0)
+        assert t.spent_usd == pytest.approx(4.0)
+        assert not t.can_spawn()
+        assert t.usages[-1].input_tokens == 0
+
+    def test_explicit_cost_without_any_tokens(self) -> None:
+        t = Tracker(run_id="r")
+        assert t.record_cumulative("a", "t", "sonnet", 0, 0, total_cost_usd=1.0) == pytest.approx(1.0)
+
+    def test_lower_cost_with_more_tokens_does_not_refund_or_reset_baseline(self) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=3.0)
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=2.0) == 0.0
+        assert t.spent_usd == pytest.approx(3.0)
+        assert t.model_breakdowns()[0].input_tokens == 2000
+        assert len(t.usages) == 2
+        assert t.record_cumulative("a", "t", "sonnet", 3000, 0, total_cost_usd=4.0) == pytest.approx(1.0)
+        assert t.spent_usd == pytest.approx(4.0)
+
+    def test_token_only_reports_keep_delta_pricing(self) -> None:
+        t = Tracker(run_id="r")
+        first = t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cache_read_tokens=100)
+        second = t.record_cumulative("a", "t", "sonnet", 2000, 700, total_cache_read_tokens=150)
+        assert first == pytest.approx(estimate_cost("sonnet", 1000, 500, 100))
+        assert second == pytest.approx(estimate_cost("sonnet", 1000, 200, 50))
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 700, total_cache_read_tokens=150) == 0.0
+        assert len(t.usages) == 2
+
+    @pytest.mark.parametrize("reported_cost", [1.0, 0.5])
+    def test_uncharged_report_advances_token_watermark(self, reported_cost: float) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=reported_cost) == 0.0
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0) == 0.0
+        assert t.spent_usd == pytest.approx(1.0)
+        assert t.model_breakdowns()[0].input_tokens == 2000
+        assert [(u.input_tokens, u.cost_usd) for u in t.usages] == [(1000, 1.0), (1000, 0.0)]
+
+    @pytest.mark.parametrize("counter", ["input", "output", "cache_read", "cache_write"])
+    def test_charged_correction_does_not_rewind_token_watermark(self, counter: str) -> None:
+        t = Tracker(run_id="r")
+
+        def report(tokens: int, cost: float | None = None) -> float:
+            return t.record_cumulative(
+                "a",
+                "t",
+                "sonnet",
+                tokens if counter == "input" else 0,
+                tokens if counter == "output" else 0,
+                total_cache_read_tokens=tokens if counter == "cache_read" else 0,
+                total_cache_write_tokens=tokens if counter == "cache_write" else 0,
+                total_cost_usd=cost,
+            )
+
+        assert report(1000, 1.0) == pytest.approx(1.0)
+        assert report(500, 2.0) == pytest.approx(1.0)
+        assert report(1000) == 0.0
+        assert t.spent_usd == pytest.approx(2.0)
+        assert len(t.usages) == 2
+
+    def test_loaded_identical_report_is_free_and_seeds_monetary_baseline(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=1.5)
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        payload = json.loads(t.save(tmp_path).read_text())
+        assert "cumulative_costs" not in payload
+        assert payload["cumulative_tokens"] == {"a|t|sonnet": [1000, 0, 0, 0]}
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0) == 0.0
+        assert loaded.spent_usd == pytest.approx(1.0)
+        assert loaded.can_spawn()
+        assert len(loaded.usages) == 1
+        assert loaded.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=3.0) == pytest.approx(2.0)
+        assert loaded.spent_usd == pytest.approx(3.0)
+        assert not loaded.can_spawn()
+
+    def test_loaded_key_uses_legacy_proration_once_then_monetary_deltas(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0) == pytest.approx(1.5)
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=4.0) == pytest.approx(1.0)
+        assert loaded.spent_usd == pytest.approx(3.5)
+
+    def test_loaded_key_keeps_unknown_baseline_when_admission_rejects(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        loaded.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", hard_budget_usd=2.0)})
+        with pytest.raises(EnvelopeBudgetError):
+            loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0)
+        assert loaded.spent_usd == pytest.approx(1.0)
+        loaded.configure_envelopes({})
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0) == pytest.approx(1.5)
 
     def test_decreasing_totals_clamped_no_negative(self) -> None:
         t = Tracker(run_id="r")

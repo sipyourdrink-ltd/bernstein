@@ -206,7 +206,7 @@ Utilisez `bernstein govern audit --format json` ou `--format sarif` pour des ré
 `bernstein delegation verify RUN` compare la chaîne de reçus à la tête finale et au nombre de sauts scellés dans le manifeste d’exécution par un HMAC utilisant la clé d’audit. La vérification détecte la suppression de la fin de la chaîne, la substitution et l’allongement après clôture, y compris la réécriture de la déclaration sans la clé. Supprimer la déclaration laisse l’exécution incomplète (code de sortie `3`), jamais valide. Cela ne détecte pas la réutilisation d’un ancien instantané authentique et ne protège pas contre un auteur qui détient la clé d’audit. Voir le [processus de vérification des délégations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### comment ça marche
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Chaque objectif franchit quatre étapes :
 
@@ -216,6 +216,8 @@ Chaque objectif franchit quatre étapes :
 4. **Fusionner (Merge)**. Les réalisations validées intègrent main. Les tâches en échec sont réessayées ou redirigées vers un autre modèle.
 
 Pourquoi l'ordonnanceur est en pur Python et quels sont les compromis associés : [pourquoi déterministe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+La vérification `can_spawn()` du module de suivi des coûts renvoie `False` lorsque les dépenses cumulées après correction atteignent ou dépassent le seuil d’arrêt budgétaire configuré, même si aucun nouveau jeton n’a été signalé. Après un redémarrage, les compteurs de jetons enregistrés ne suffisent pas à reconstituer le coût cumulé exact précédemment déclaré pour une combinaison donnée d’agent, de tâche et de modèle.
 
 ### commandes courantes
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->

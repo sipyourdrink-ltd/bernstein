@@ -206,7 +206,7 @@ Gunakan `bernstein govern audit --format json` atau `--format sarif` untuk hasil
 `bernstein delegation verify RUN` membandingkan rantai tanda terima dengan kepala akhir dan jumlah hop yang disegel dalam manifes proses menggunakan HMAC dengan kunci audit, sehingga mendeteksi penghapusan ujung rantai, penggantian, dan penambahan setelah penutupan, termasuk penulisan ulang deklarasi tanpa kunci. Menghapus deklarasi membuat proses tetap tidak lengkap (kode keluar `3`), tidak pernah dinyatakan valid. Pemeriksaan ini tidak mendeteksi penggunaan ulang snapshot autentik yang lebih lama dan tidak melindungi dari penulis yang memegang kunci audit. Lihat [alur verifikasi delegasi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### cara kerja
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 Setiap target melalui empat tahapan:
 
@@ -216,6 +216,8 @@ Setiap target melalui empat tahapan:
 4. **Penggabungan (Merge)**. Pekerjaan yang terverifikasi digabungkan ke main. Tugas yang gagal dicoba ulang atau dialihkan ke model lain.
 
 Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengapa deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
+
+Pemeriksaan `can_spawn()` pada pelacak biaya mengembalikan `False` ketika pengeluaran kumulatif setelah koreksi mencapai atau melampaui ambang penghentian anggaran yang ditetapkan, meskipun tidak ada token baru yang dilaporkan. Setelah sistem dimulai ulang, jumlah token yang tersimpan saja tidak cukup untuk mengetahui kembali biaya kumulatif persis yang sebelumnya dilaporkan untuk kombinasi agen, tugas, dan model tertentu.
 
 ### perintah sehari-hari
 <!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
