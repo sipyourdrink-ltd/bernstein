@@ -152,7 +152,7 @@ Doctor raportoi ikärajan ylittäneet jäljelle jääneet suorituskaistat JSON-m
 pipx, pip, brew, dnf, npm ja Docker käsitellään [asennusoppaassa](https://docs.bernstein.run/en/latest/getting-started/install/); eristetyllä paketilla on oma [air-gap-oppaansa](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` näyttää esikatselun valmistuneiden tehtävien jättämistä työpuista ja sandbox-istunnoista sekä niiden iän ja levytilan käytön. Vain työpuita voi poistaa, ja siihen tarvitaan `--apply`-valitsin ja erillinen poistohyväksyntä. Sandboxit sisällytetään vain raporttiin (poistaminen: #6571); `doctor` varoittaa pitkään jäljelle jääneistä resursseista. Katso [siivousohje](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
-`bernstein worktrees gc` ilmoittaa hakemiston poistamisen onnistumisesta [`worktree.gc`-koukulla](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) ilman toimitustakuuta.
+`bernstein worktrees gc` ilmoittaa [`worktree.gc`-koukulla](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) ilman toimitustakuuta, onnistuiko hakemiston poistaminen.
 
 Taidon alustuksen epäonnistuessa se siirretään [karanteeniin](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), ja syy sekä auditointitapahtuma tallennetaan pysyvästi. `bernstein status` näyttää määrän; `doctor` ja `govern audit` raportoivat käytöstä poistetut määrittelyt. Korjaa syy ja poista sitten merkintä nimenomaisesti komennolla `bernstein quarantine re-enable DECLARATION_ID`.
 
