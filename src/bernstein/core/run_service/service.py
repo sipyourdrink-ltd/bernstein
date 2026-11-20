@@ -50,7 +50,7 @@ from bernstein.core.security.audit_chain import (
     AuditChainStore,
     record_run_lifecycle,
 )
-from bernstein.core.security.run_closure import RunClosureOutcome, close_run
+from bernstein.core.security.run_closure import RunClosureError, RunClosureOutcome, close_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -251,80 +251,74 @@ class RunService:
             )
 
     def complete(self, run_id: str) -> AuditEvent:
-        """Close the run in the ledger and record a completion receipt."""
+        """Complete the run, honoring a terminal outcome already decided in the ledger."""
+        return self._finalize(run_id, RunClosureOutcome.COMPLETED, return_lifecycle=True)
+
+    def close(self, run_id: str, outcome: RunClosureOutcome | str) -> AuditEvent:
+        """Close the run and return its terminal receipt."""
+        return self._finalize(run_id, outcome)
+
+    def _finalize(
+        self, run_id: str, requested_outcome: RunClosureOutcome | str, *, return_lifecycle: bool = False
+    ) -> AuditEvent:
         self._require(run_id)
-        reader = self._reader(run_id)
-        state = replay_state(reader.entries(), run_id=run_id)
-        if not state.run_closed:
-            ledger = WorkLedger.open(self._ledger_dir(run_id))
-            try:
-                ledger.append(
-                    kind=KIND_RUN_CLOSED,
-                    payload={"run_id": run_id, "state": RunJournalState.CLOSED.value},
-                )
-            finally:
-                ledger.close()
-        head, count = self._head_and_count(run_id)
+        requested = RunClosureOutcome(requested_outcome)
         chain = self._chain()
+        # Both process generations must observe the journal under the same
+        # transaction that appends the winning marker and signs its result.
         with chain.chain_transaction():
-            existing_lifecycle = [
-                event
-                for event in chain.query(event_type=EVENT_RUN_LIFECYCLE, resource_id=run_id)
-                if event.details.get("run_id") == run_id and event.details.get("transition") == TRANSITION_COMPLETED
-            ]
-            lifecycle = (
-                existing_lifecycle[-1]
-                if existing_lifecycle
-                else record_run_lifecycle(
-                    chain=chain,
-                    run_id=run_id,
-                    transition=TRANSITION_COMPLETED,
-                    ledger_head=head,
-                    entry_count=count,
-                )
+            reader = self._reader(run_id)
+            state = replay_state(reader.entries(), run_id=run_id)
+            outcome = requested
+            # Match the finalizer's witnessed run ID, including retained archive segments.
+            has_receipt = any(
+                str(event.details.get("run_id", event.resource_id)).strip() == run_id
+                for event in chain.query(event_type=EVENT_RUN_CLOSURE, include_archived=True)
             )
-            close_run(
+            if state.run_closed:
+                marker = next(entry for entry in reader.entries() if entry.kind == KIND_RUN_CLOSED)
+                # Legacy successful closes omit the outcome field.
+                outcome = RunClosureOutcome(marker.payload.get("outcome", RunClosureOutcome.COMPLETED))
+            elif requested is RunClosureOutcome.COMPLETED and state.failed_tasks:
+                outcome = RunClosureOutcome.FAILED
+            if not state.run_closed and not has_receipt:
+                payload = {"run_id": run_id, "state": RunJournalState.CLOSED.value}
+                if outcome is not RunClosureOutcome.COMPLETED:
+                    payload["outcome"] = outcome.value
+                ledger = WorkLedger.open(self._ledger_dir(run_id))
+                try:
+                    ledger.append(kind=KIND_RUN_CLOSED, payload=payload)
+                finally:
+                    ledger.close()
+
+            head, count = self._head_and_count(run_id)
+            lifecycle = None
+            if outcome is RunClosureOutcome.COMPLETED:
+                completed = [
+                    event
+                    for event in chain.query(event_type=EVENT_RUN_LIFECYCLE, resource_id=run_id, include_archived=True)
+                    if event.details.get("run_id") == run_id and event.details.get("transition") == TRANSITION_COMPLETED
+                ]
+                if completed:
+                    lifecycle = completed[-1]
+                elif not has_receipt:
+                    lifecycle = record_run_lifecycle(
+                        chain=chain, run_id=run_id, transition=TRANSITION_COMPLETED, ledger_head=head, entry_count=count
+                    )
+            closure = close_run(
                 chain=chain,
                 run_id=run_id,
-                outcome=RunClosureOutcome.COMPLETED,
+                outcome=outcome,
                 actor="run_service",
                 work_ledger_head=head,
                 work_ledger_entry_count=count,
             )
-            return lifecycle
-
-    def close(self, run_id: str, outcome: RunClosureOutcome | str) -> AuditEvent:
-        """Close an unfinished detached run with a non-success outcome."""
-        self._require(run_id)
-        resolved = outcome if isinstance(outcome, RunClosureOutcome) else RunClosureOutcome(outcome)
-        if resolved is RunClosureOutcome.COMPLETED:
-            self.complete(run_id)
-            closures = self._chain().query(event_type=EVENT_RUN_CLOSURE, resource_id=run_id)
-            return closures[-1]
-        reader = self._reader(run_id)
-        state = replay_state(reader.entries(), run_id=run_id)
-        if not state.run_closed:
-            ledger = WorkLedger.open(self._ledger_dir(run_id))
-            try:
-                ledger.append(
-                    kind=KIND_RUN_CLOSED,
-                    payload={
-                        "run_id": run_id,
-                        "outcome": resolved.value,
-                        "state": RunJournalState.CLOSED.value,
-                    },
+            if requested is not RunClosureOutcome.COMPLETED and outcome is not requested:
+                raise RunClosureError(
+                    f"run {run_id!r} already has a conflicting journal outcome {outcome.value!r} "
+                    f"(requested {requested.value!r})"
                 )
-            finally:
-                ledger.close()
-        head, count = self._head_and_count(run_id)
-        return close_run(
-            chain=self._chain(),
-            run_id=run_id,
-            outcome=resolved,
-            actor="run_service",
-            work_ledger_head=head,
-            work_ledger_entry_count=count,
-        )
+            return lifecycle if return_lifecycle and lifecycle is not None else closure
 
     # -- projection ---------------------------------------------------------
 
