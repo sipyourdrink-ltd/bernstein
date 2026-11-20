@@ -155,21 +155,34 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
+          import subprocess
           from pathlib import Path
 
           def read_json(name):
               return json.loads(Path(name).read_text(encoding="utf-8"))
 
+          def checked_sha(value):
+              if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value) or value == "0" * 40:
+                  raise SystemExit("Missing or invalid commit SHA")
+              return value
+
+          event_base = checked_sha(os.environ["EXPECTED_BASE"])
+          event_head = checked_sha(os.environ["EXPECTED_HEAD"])
+
           def snapshot(name):
               pr = read_json(name)
-              for ref in ("base", "head"):
-                  expected = os.environ["EXPECTED_" + ref.upper()]
-                  if not expected or pr[ref]["sha"] != expected:
-                      raise SystemExit(f"PR {ref} differs from this event")
+              if pr["head"]["sha"] != event_head:
+                  raise SystemExit("PR head differs from this event")
               count = pr["changed_files"]
               if type(count) is not int or count <= 0:
                   raise SystemExit("Missing or empty PR file count")
-              return count
+              return checked_sha(pr["base"]["sha"]), count
+
+          def merge_base(base):
+              endpoint = f"repos/{os.environ['REPO']}/compare/{base}...{event_head}?per_page=1"
+              output = subprocess.check_output(["gh", "api", endpoint, "--jq", ".merge_base_commit.sha"], text=True)
+              return checked_sha(output.removesuffix("\n"))
 
           def checked_path(path):
               # The base classifier reads one path per line with splitlines() and strip().
@@ -178,8 +191,13 @@ jobs:
                   raise SystemExit("Filename cannot be passed intact to the classifier")
               return path
 
-          before = snapshot("stub-before.json")
-          after = snapshot("stub-after.json")
+          observed_base, count = snapshot("stub-before.json")
+          if snapshot("stub-after.json") != (observed_base, count):
+              raise SystemExit("PR changed during pagination")
+          # An unrelated push can advance main before listing. With a fixed head,
+          # both three-dot diffs are identical if they start at the same commit.
+          if observed_base != event_base and merge_base(observed_base) != merge_base(event_base):
+              raise SystemExit("PR merge base differs from this event")
           pages = read_json("stub-pages.json")
           if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
               raise SystemExit("Invalid paginated PR file list")
@@ -200,7 +218,7 @@ jobs:
                       if previous == current:
                           raise SystemExit("Indistinguishable old and new filenames")
                       paths.append(previous)
-          if len(filenames) != before or len(filenames) != after:
+          if len(filenames) != count:
               raise SystemExit("Incomplete or changing PR file list")
           Path("stub-paths.txt").write_text("\n".join(paths) + "\n", encoding="utf-8")
           PY

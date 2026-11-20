@@ -119,7 +119,9 @@ def test_coverage_report_job_merges_shard_data(ci_doc: dict[str, object]) -> Non
     assert upload_with.get("if-no-files-found") == "error"
 
 
-@pytest.mark.parametrize("fault", [None, "half", "wrong-id", "misfiled", "extra", "empty", "corrupt"])
+@pytest.mark.parametrize(
+    "fault", [None, "half", "wrong-id", "misfiled", "extra", "empty", "corrupt", "no-files", "no-lines"]
+)
 def test_only_complete_shards_produce_coverage_xml(ci_doc: dict, tmp_path: Path, fault: str | None) -> None:
     jobs = ci_doc["jobs"]
     shard_ids = jobs["test"]["strategy"]["matrix"]["shard"]
@@ -143,7 +145,12 @@ def test_only_complete_shards_produce_coverage_xml(ci_doc: dict, tmp_path: Path,
             shard.write_bytes(b"" if fault == "empty" else b"invalid database")
         else:
             data = CoverageData(basename=str(shard))
-            data.add_lines({str(source): {1}})
+            if shard_id == 8 and fault == "no-files":
+                data.add_arcs({})
+            elif shard_id == 8 and fault == "no-lines":
+                data.add_arcs({str(source): {(-1, -1)}})
+            else:
+                data.add_arcs({str(source): {(-1, 1), (1, -1)}})
             data.write()
         if fault == "extra" and shard_id == 8:
             (directory / ".coverage.9").write_bytes(shard.read_bytes())
@@ -152,7 +159,7 @@ def test_only_complete_shards_produce_coverage_xml(ci_doc: dict, tmp_path: Path,
     result = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", merge.replace("uv run python", '"$TEST_PYTHON"')],
         cwd=tmp_path,
-        env={**os.environ, "RUNNER_TEMP": ".", "TEST_PYTHON": Path(sys.executable).as_posix()},
+        env={**os.environ, "RUNNER_TEMP": tmp_path.as_posix(), "TEST_PYTHON": Path(sys.executable).as_posix()},
         capture_output=True,
         text=True,
         timeout=30,
@@ -162,6 +169,8 @@ def test_only_complete_shards_produce_coverage_xml(ci_doc: dict, tmp_path: Path,
     if fault:
         assert result.returncode != 0
         assert not report.exists()
+        if fault in ("no-files", "no-lines"):
+            assert "contains no executed lines" in result.stderr
     else:
         assert result.returncode == 0, result.stdout + result.stderr
         assert {item.attrib["filename"] for item in ET.parse(report).iter("class")} == expected_sources

@@ -39,10 +39,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import re
+import runpy
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -259,6 +258,7 @@ def _collect_paths(
     *,
     before_fields: dict | None = None,
     after_fields: dict | None = None,
+    merge_bases: dict[str, str] | None = None,
 ) -> tuple[int, list[str]]:
     base, head = "a" * 40, "b" * 40
     snapshot = {"base": {"sha": base}, "head": {"sha": head}, "changed_files": count}
@@ -271,14 +271,31 @@ def _collect_paths(
     step = next(step for step in stub_doc["jobs"]["classify"]["steps"] if step.get("name") == "Collect changed paths")
     program = re.search(r"^python3 - <<'PY'\n(.+?)^PY$", step["run"], re.MULTILINE | re.DOTALL)
     assert program
-    result = subprocess.run(
-        [sys.executable, "-c", program[1]],
-        cwd=tmp_path,
-        env={**os.environ, "EXPECTED_BASE": base, "EXPECTED_HEAD": head},
-        check=False,
-    )
-    paths = tmp_path / "stub-paths.txt"
-    return result.returncode, _MOD.read_changed_paths(paths) if paths.exists() else []
+    script = tmp_path / "collect.py"
+    script.write_text(program[1], encoding="utf-8")
+    endpoints = {
+        f"repos/test/repo/compare/{ref}...{head}?per_page=1": value for ref, value in (merge_bases or {}).items()
+    }
+
+    def compare(args: list[str], *, text: bool) -> str:
+        assert text and args == ["gh", "api", args[2], "--jq", ".merge_base_commit.sha"]
+        assert args[2] in endpoints, f"Unexpected or repeated compare request {args[2]}"
+        return endpoints.pop(args[2]) + "\n"
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.chdir(tmp_path)
+        patch.setenv("EXPECTED_BASE", base)
+        patch.setenv("EXPECTED_HEAD", head)
+        patch.setenv("REPO", "test/repo")
+        patch.setattr(subprocess, "check_output", compare)
+        try:
+            runpy.run_path(str(script), run_name="__main__")
+        except SystemExit as error:
+            assert error.code
+            assert not (tmp_path / "stub-paths.txt").exists()
+            return 1, []
+    assert not endpoints
+    return 0, _MOD.read_changed_paths(tmp_path / "stub-paths.txt")
 
 
 def test_complete_docs_only_pages_can_emit(stub_doc: dict, tmp_path: Path, patterns: list[str]) -> None:
@@ -304,6 +321,30 @@ def test_changed_snapshot_has_no_verdict(stub_doc: dict, tmp_path: Path, when: s
     status, paths = _collect_paths(stub_doc, tmp_path, files, 1, **{f"{when}_fields": fields})
     assert status != 0
     assert not paths
+
+
+@pytest.mark.parametrize(
+    ("event_fork", "observed_fork", "valid"),
+    [("c" * 40, "c" * 40, True), ("d" * 40, "c" * 40, False), ("", "", False), ("z" * 40, "z" * 40, False)],
+    ids=["same-three-dot-diff", "changed-diff", "missing-fork", "invalid-sha"],
+)
+def test_stable_advanced_base_needs_equivalent_diff(
+    stub_doc: dict, tmp_path: Path, patterns: list[str], event_fork: str, observed_fork: str, valid: bool
+) -> None:
+    advanced = "e" * 40
+    snapshot = {"base": {"sha": advanced}}
+    files = [[{"filename": "docs/a.md", "status": "modified"}]]
+    status, paths = _collect_paths(
+        stub_doc,
+        tmp_path,
+        files,
+        1,
+        before_fields=snapshot,
+        after_fields=snapshot,
+        merge_bases={"a" * 40: event_fork, advanced: observed_fork},
+    )
+    assert (status == 0) is valid
+    assert all_paths_ignored(paths, patterns) is valid
 
 
 @pytest.mark.parametrize(

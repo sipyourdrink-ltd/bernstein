@@ -59,6 +59,27 @@ def test_proto_drift_requires_matching_shipped_files(tmp_path: Path, drift: str)
     def run(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run([generator, *args], env=env, capture_output=True, text=True, timeout=10, check=False)
 
+    # The old generator passed the flat package as protoc's output root.
+    # Check and repair must still work in that existing developer checkout.
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "grpc_tools.protoc",
+            f"--python_out={package}",
+            f"--pyi_out={package}",
+            f"--grpc_python_out={package}",
+            str(schema),
+        ],
+        env=env,
+        check=True,
+        timeout=10,
+    )
+    legacy = package / "bernstein/v1/tasks_pb2.py"
+    original = legacy.read_bytes()
+    handwritten = legacy.with_name("local_notes.py")
+    handwritten.write_text("# local notes\n")
+
     # The normal developer command must write the flat files consumed by CI.
     run().check_returncode()
     stub = package / "tasks_pb2.pyi"
@@ -75,3 +96,5 @@ def test_proto_drift_requires_matching_shipped_files(tmp_path: Path, drift: str)
     run().check_returncode()
     run("--check").check_returncode()
     assert init.read_text() == "# hand-written exports\n"
+    assert legacy.read_bytes() == original
+    assert handwritten.read_text() == "# local notes\n"

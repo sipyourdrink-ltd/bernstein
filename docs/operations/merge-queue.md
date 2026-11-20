@@ -82,8 +82,10 @@ required-context name on the queue for no benefit.
 
 On a PR, the stub uses the classifier and ignore patterns from the event's
 base commit. It checks the base, head and file count around pagination and
-classifies both paths of a rename. An incomplete or changing list cannot
-produce a synthetic success. On a merge group, the real gate requires
+classifies both paths of a rename. If the target branch advanced before
+listing started, both bases must have the same merge base with the event
+head. An incomplete or changing list cannot produce a synthetic success.
+On a merge group, the real gate requires
 the proto drift check and explicit planner flags. Only a docs-only group
 can use the docs-only exemption for the heavy jobs.
 

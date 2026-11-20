@@ -31,17 +31,25 @@ for f in "$generated"/*.py "$generated"/*.pyi; do
     rm -f "$f.bak"
 done
 
+# Only the flat *_pb2 modules belong to the generator. Older runs left
+# untracked files in bernstein/v1/ inside OUT_DIR.
+for f in "$OUT_DIR"/*_pb2.py "$OUT_DIR"/*_pb2.pyi "$OUT_DIR"/*_pb2_grpc.py; do
+    if [[ -f "$f" && ! -e "$generated/${f##*/}" ]]; then
+        if [[ ${1:-} == "--check" ]]; then
+            echo "Unexpected generated module: $f" >&2
+            exit 1
+        fi
+        rm "$f"
+    fi
+done
 if [[ ${1:-} == "--check" ]]; then
-    diff -ru -x '__init__.py' -x '__pycache__' "$OUT_DIR" "$generated"
+    for f in "$generated"/*.py "$generated"/*.pyi; do
+        diff -u "$OUT_DIR/${f##*/}" "$f" || exit 1
+    done
     exit 0
 fi
 
 mkdir -p "$OUT_DIR"
-for f in "$OUT_DIR"/*_pb2.py "$OUT_DIR"/*_pb2.pyi "$OUT_DIR"/*_pb2_grpc.py; do
-    if [[ -f "$f" && ! -e "$generated/${f##*/}" ]]; then
-        rm "$f"
-    fi
-done
 cp "$generated"/*.py "$generated"/*.pyi "$OUT_DIR/"
 touch "$OUT_DIR/__init__.py"
 
