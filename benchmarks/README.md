@@ -55,6 +55,15 @@ Public v1 scenarios:
 - `bernstein-sonnet`
 - `bernstein-mixed`
 
+### Local operator dashboard
+
+With the Bernstein wheel, Playwright and Chromium installed in the test environment, run
+`python benchmarks/check_local_operator_dashboard.py`. Use `--channel chrome` for an installed
+Google Chrome. The check launches a local task server in a temporary project, signs into
+the GUI and opens a task from the list. It verifies that the detail shown matches the
+server response while there are zero registered agents. Use `bench_local_readiness.py`
+for timings of CLI launch, dashboard data and the first agent.
+
 ## Reproducing
 
 ```bash
