@@ -244,7 +244,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/quorum-rerun.yml | workflow: {"contents": "read"}<br>rerun: {"actions": "write", "contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/quorum.yml | workflow: {"contents": "read"}<br>quorum: {"contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
-| .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
+| .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"actions": "read", "checks": "read", "contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/rendering-lane.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
 | .github/workflows/runner-canary.yml | - | - |

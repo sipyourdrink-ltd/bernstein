@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -177,10 +178,15 @@ def test_recheck_honors_pr_eligibility_at_push_time(
 def test_trusted_regeneration_rejects_semantic_edit_to_python_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    trusted = Path(__file__).resolve().parents[3]
+    trusted = tmp_path / "trusted"
     source = tmp_path / "project"
     subprocess.run(["git", "init", "-q", str(source)], check=True)
     (source / "pyproject.toml").write_text('[project]\nname = "fixture"\nversion = "1.0"\n')
+    nested = source / "sdk"
+    nested.mkdir()
+    nested_settings = nested / "pyproject.toml"
+    nested_settings.write_text('[tool.ruff.format]\nquote-style = "single"\n')
+    (nested / "example.py").write_text('message="nested"\n')
     target = source / "module.py"
     target.write_text("answer = 42\n")
     git = ["git", "-C", str(source)]
@@ -188,6 +194,7 @@ def test_trusted_regeneration_rejects_semantic_edit_to_python_file(
     subprocess.run(
         [*git, "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "Initial"], check=True
     )
+    subprocess.run(["git", "clone", "-q", str(source), str(trusted)], check=True)
     sha = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
     monkeypatch.setenv("DEFAULT_BRANCH", "main")
     target.write_text("answer = 43\n")
@@ -196,7 +203,35 @@ def test_trusted_regeneration_rejects_semantic_edit_to_python_file(
     with pytest.raises(ValueError, match="differ from the independently regenerated"):
         verify(trusted, source, sha, proposed)
     assert target.read_text() == "answer = 42\n"
-    expected = subprocess.check_output([*git, "diff", "--cached", "--no-renames", "--full-index", "--binary", sha])
+    assert (nested / "example.py").read_text() == "message = 'nested'\n"
+
+    # Produce the expected patch using the normal CLI and native nested Ruff
+    # discovery on a separate copy, independent of the verifier implementation.
+    producer = tmp_path / "producer"
+    subprocess.run(["git", "clone", "-q", str(source), str(producer)], check=True)
+    tools = Path(sys.executable).parent
+    cli = shutil.which("bernstein", path=str(tools))
+    ruff = shutil.which("ruff", path=str(tools))
+    assert cli and ruff
+    subprocess.run([cli, "agents-md", "sync", "--workdir", ".", "--default-branch", "main"], cwd=producer, check=True)
+    subprocess.run([ruff, "check", ".", "--fix", "--unsafe-fixes", "--no-cache"], cwd=producer, check=True)
+    subprocess.run([ruff, "format", ".", "--no-cache"], cwd=producer, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=producer, check=True)
+    expected = subprocess.check_output(
+        ["git", "diff", "--cached", "--no-renames", "--full-index", "--binary", sha], cwd=producer
+    )
     clean = tmp_path / "clean"
     subprocess.run(["git", "clone", "-q", str(source), str(clean)], check=True)
     verify(trusted, clean, sha, expected)
+
+    changed = tmp_path / "changed-config"
+    subprocess.run(["git", "clone", "-q", str(source), str(changed)], check=True)
+    (changed / "sdk" / "pyproject.toml").write_text('[tool.ruff.format]\nquote-style = "double"\n')
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qam", "Change Ruff config"],
+        cwd=changed,
+        check=True,
+    )
+    changed_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=changed, text=True).strip()
+    with pytest.raises(ValueError, match="trusted configuration hierarchy"):
+        verify(trusted, changed, changed_sha, expected)
