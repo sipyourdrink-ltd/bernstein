@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import call, patch
+
 from bernstein.cli.diff_cmd import (
     FileDiffStat,
     ResolvedDiff,
@@ -47,6 +50,33 @@ class TestDiffCmd:
         runner = CliRunner()
         result = runner.invoke(cli, ["diff", "--help"])
         assert "--base" in result.output
+
+    def test_diff_compare_uses_requested_base_and_prints_stats(self, tmp_path: Path) -> None:
+        left = ResolvedDiff(
+            diff_text="diff --git a/left.txt b/left.txt\n--- /dev/null\n+++ b/left.txt\n@@ -0,0 +1 @@\n+left change\n",
+            source_label="",
+            stat_text="left.txt | 1 +",
+        )
+        right = ResolvedDiff(
+            diff_text="diff --git a/right.txt b/right.txt\n--- /dev/null\n+++ b/right.txt\n@@ -0,0 +1 @@\n+right change\n",
+            source_label="",
+            stat_text="right.txt | 1 +",
+        )
+
+        with patch("bernstein.cli.commands.diff_cmd.resolve_diff", side_effect=[left, right]) as resolve:
+            result = CliRunner().invoke(
+                cli, ["diff", "--compare", "left", "right", "--base", "example", "--stat", "--workdir", str(tmp_path)]
+            )
+
+        assert result.exit_code == 0, result.output
+        assert resolve.call_args_list == [
+            call("left", tmp_path.resolve(), [], "example"),
+            call("right", tmp_path.resolve(), [], "example"),
+        ]
+        assert "left.txt | 1 +" in result.stdout
+        assert "right.txt | 1 +" in result.stdout
+        assert "left change" not in result.stdout
+        assert "right change" not in result.stdout
 
 
 class TestResolvedDiff:

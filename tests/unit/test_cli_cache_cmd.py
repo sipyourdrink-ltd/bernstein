@@ -45,6 +45,21 @@ def test_cache_list_json(tmp_path: Path) -> None:
     assert payload["entries"][0]["source_task_id"] in {"T-verified", "T-ghost"}
 
 
+def test_cache_list_limit_returns_the_first_entry(tmp_path: Path) -> None:
+    _seed_cache(tmp_path)
+    runner = CliRunner()
+    command = ["cache", "list", "--json", "--workdir", str(tmp_path)]
+
+    all_entries = runner.invoke(cli, command)
+    limited = runner.invoke(cli, [*command, "--limit", "1"])
+
+    assert all_entries.exit_code == 0, all_entries.output
+    assert limited.exit_code == 0, limited.output
+    entries = json.loads(all_entries.output)["entries"]
+    assert len(entries) == 2
+    assert json.loads(limited.output) == {"entries": entries[:1]}
+
+
 def test_cache_inspect_json(tmp_path: Path) -> None:
     _seed_cache(tmp_path)
     runner = CliRunner()

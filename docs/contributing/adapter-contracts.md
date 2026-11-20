@@ -34,7 +34,7 @@ binary:  claude              # name of the executable on $PATH
 install:
   method: npm                # npm | pipx | curl | cargo (CI auto-installs only npm and pipx;
                              # contracts also use pip, uv, brew, shell, manual, none, ...)
-  spec:   "@anthropic-ai/claude-code@latest"
+  spec:   "@anthropic-ai/claude-code@2.1.328"
 auth:
   # ``<binary> --help`` is expected to work without auth. Set
   # required_for_help: true only when the CLI prompts for credentials
@@ -86,6 +86,11 @@ expected_models:
 
 3. **Pick the install method.** Free-tier, no auth required for `--help`.
    * `npm` and `pipx` packages auto-install in CI.
+   * For an npm adapter in the drift matrix, use an exact `package@version`
+     in the contract. Pin the same version in `.github/adapter-clis/package.json`
+     and refresh its lockfile with `npm install --package-lock-only --ignore-scripts
+     --prefix .github/adapter-clis`. Commit all three files together. The daily
+     check picks up a new npm release when its pin changes.
    * `curl` and `cargo` adapters fall back to "help-only" coverage in
      CI (the workflow notes this; the local binary check still runs
      when an operator pre-installs the CLI).
