@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 בדיקת `can_spawn()` במנגנון מעקב העלויות מחזירה `False` כאשר ההוצאה המצטברת לאחר התיקון מגיעה לסף העצירה שהוגדר לתקציב או חורגת ממנו, גם אם לא דווח על טוקנים חדשים. לאחר הפעלה מחדש, מוני הטוקנים שנשמרו לבדם אינם מאפשרים לשחזר את העלות המצטברת המדויקת שדווחה קודם לכן עבור שילוב מסוים של סוכן, משימה ומודל.
 
 ### פקודות יומיומיות
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein stop                    # graceful shutdown with drain
 
 כל ממשק המפעיל (אוטומציית PR, תזמונים, גשרי צ'אט, תהליך autofix ברקע) מפורט ב[פקודות מפעיל](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
+לולאת פקודות מתחדשת מנקודת הביקורת האחרונה במסגרת מגבלת האיטרציות המקורית. אם ייתכן שפקודה או בדיקת תנאי כבר בוצעה בלי שתוצאתה נשמרה, החידוש נעצר. לפני התחלת ריצה חדשה, בדקו את השפעות הפעולה.
+
 `bernstein workflow` מריץ גרפי DAG הצהרתיים ב-YAML המורכבים מצומתי סוכן / פקודה / לולאה - עם תמיכה בחידוש עבור ריצות שהופסקו:
 
 ```bash
@@ -242,7 +244,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-מצב הריצה נשמר כנקודת שמירה תחת `.sdd/runs/<run_id>/` בכל צומת. החידוש מאמת את גיבוב המניפסט בתחילת הריצה, כך ששינוי במפרט נדחה במקום להריץ בשקט מניפסט אחר. ראה [מניפסטים של זרימת עבודה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). בעת החידוש יש לספק שוב את אותו ערך `-g` כדי להחליף את `{goal}` בפרומפטים של הצמתים שטרם הושלמו.
+מצב הריצה נשמר כנקודת שמירה תחת `runs/<run_id>/` בכל צומת. החידוש מאמת את גיבוב המניפסט בתחילת הריצה, כך ששינוי במפרט נדחה במקום להריץ בשקט מניפסט אחר. ראה [מניפסטים של זרימת עבודה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). בעת החידוש יש לספק שוב את אותו ערך `-g` כדי להחליף את `{goal}` בפרומפטים של הצמתים שטרם הושלמו.
 
 `bernstein compliance controls` מציגה את ערכות הבדיקות לכל בקרה ואת המדידה המלאה האחרונה, אם קיימת. [כיסוי הבדיקות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

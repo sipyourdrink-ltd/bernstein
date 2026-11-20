@@ -220,7 +220,7 @@ Pourquoi l'ordonnanceur est en pur Python et quels sont les compromis associés 
 La vérification `can_spawn()` du module de suivi des coûts renvoie `False` lorsque les dépenses cumulées après correction atteignent ou dépassent le seuil d’arrêt budgétaire configuré, même si aucun nouveau jeton n’a été signalé. Après un redémarrage, les compteurs de jetons enregistrés ne suffisent pas à reconstituer le coût cumulé exact précédemment déclaré pour une combinaison donnée d’agent, de tâche et de modèle.
 
 ### commandes courantes
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ Si une tâche d’une exécution SSH détachée se termine avec un code de sorti
 
 L'ensemble des commandes opérateur (automatisation de PR, planifications, passerelles de discussion, démon d'autofix) est détaillé dans [commandes opérateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
+Une boucle de commandes reprend à son dernier point de contrôle en conservant la limite d’itérations initiale. Si une commande a pu être exécutée ou une condition évaluée sans que le résultat soit enregistré, la reprise s’arrête. Vérifiez les effets avant de lancer une nouvelle exécution.
+
 `bernstein workflow` exécute des DAGs déclaratifs en YAML composés de nœuds agent, command et loop - avec prise en charge de la reprise pour les exécutions interrompues :
 
 ```bash
@@ -242,7 +244,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-L'état d'exécution enregistre un point de contrôle dans `.sdd/runs/<run_id>/` à chaque nœud. La reprise valide l'empreinte du manifeste au démarrage de l'exécution, de sorte qu'une modification de spécification est refusée plutôt que d'exécuter silencieusement un manifeste différent. Consultez [manifestes de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). À la reprise, fournissez à nouveau la même valeur de `-g` pour remplacer `{goal}` dans les prompts des nœuds non terminés.
+L'état d'exécution enregistre un point de contrôle dans `runs/<run_id>/` à chaque nœud. La reprise valide l'empreinte du manifeste au démarrage de l'exécution, de sorte qu'une modification de spécification est refusée plutôt que d'exécuter silencieusement un manifeste différent. Consultez [manifestes de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). À la reprise, fournissez à nouveau la même valeur de `-g` pour remplacer `{goal}` dans les prompts des nœuds non terminés.
 
 `bernstein compliance controls` affiche les suites de tests de chaque contrôle et la dernière mesure complète disponible. [Couverture des tests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

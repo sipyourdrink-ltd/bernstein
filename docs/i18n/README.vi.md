@@ -220,7 +220,7 @@ Lý do bộ lập lịch được xây dựng bằng Python thuần túy và cá
 Phép kiểm tra `can_spawn()` của bộ theo dõi chi phí trả về `False` khi tổng chi phí lũy kế sau điều chỉnh đạt hoặc vượt ngưỡng dừng đã đặt cho ngân sách, ngay cả khi không có token mới nào được báo cáo. Sau khi khởi động lại, chỉ dựa vào số token đã lưu thì không thể khôi phục chính xác chi phí lũy kế đã được báo cáo trước đó cho một tổ hợp tác nhân, tác vụ và mô hình cụ thể.
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ Nếu một tác vụ trong lượt chạy SSH tách khỏi thiết bị đầu 
 
 Toàn bộ tập lệnh điều hành (tự động hóa PR, lịch trình, cầu nối trò chuyện, tiến trình nền autofix) có tại [lệnh điều hành](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
+Vòng lặp lệnh tiếp tục từ điểm kiểm tra cuối cùng và giữ nguyên giới hạn số lần lặp ban đầu. Nếu một lệnh có thể đã chạy hoặc một điều kiện có thể đã được kiểm tra mà kết quả chưa được lưu, quá trình tiếp tục sẽ dừng lại. Hãy kiểm tra tác động trước khi bắt đầu lượt chạy mới.
+
 `bernstein workflow` chạy các DAG YAML khai báo gồm các nút tác tử, lệnh và vòng lặp — với khả năng tiếp tục cho các phiên chạy bị gián đoạn:
 
 ```bash
@@ -242,7 +244,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Khi tiếp tục, hãy truyền lại cùng giá trị `-g` để thay thế `{goal}` trong prompt của các nút chưa hoàn tất.
+Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Khi tiếp tục, hãy truyền lại cùng giá trị `-g` để thay thế `{goal}` trong prompt của các nút chưa hoàn tất.
 
 `bernstein compliance controls` hiển thị các bộ kiểm thử cho từng biện pháp kiểm soát và phép đo đầy đủ gần nhất nếu có. [Phạm vi kiểm thử](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

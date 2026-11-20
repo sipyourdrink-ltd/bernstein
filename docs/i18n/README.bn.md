@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 সংশোধনের পর মোট ব্যয় বাজেটের নির্ধারিত বন্ধের সীমায় পৌঁছালে বা তা ছাড়িয়ে গেলে খরচের হিসাব রাখার মডিউলের `can_spawn()` পরীক্ষা `False` ফেরত দেয়, নতুন কোনো টোকেনের হিসাব না এলেও। পুনরায় চালু করার পর শুধু সংরক্ষিত টোকেন সংখ্যা থেকে কোনো নির্দিষ্ট এজেন্ট, কাজ ও মডেলের জন্য আগে জানানো সঠিক ক্রমপুঞ্জিত খরচ পুনর্গঠন করা যায় না।
 
 ### রোজকার কমান্ড
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:716c3b1950b7" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein stop                    # graceful shutdown with drain
 
 পুরো অপারেটর সারফেস (PR অটোমেশন, শিডিউল, চ্যাট ব্রিজ, autofix ডিমন) আছে [অপারেটর কমান্ডে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)।
 
+কমান্ড লুপ শেষ চেকপয়েন্ট থেকে আবার শুরু হয় এবং পুনরাবৃত্তির মূল সীমা বহাল থাকে। কোনো কমান্ড বা শর্তের পরীক্ষা চলে থাকতে পারে অথচ ফল সংরক্ষিত নেই, এমন হলে পুনরায় চালানো থেমে যায়। নতুন করে চালানোর আগে কী প্রভাব পড়েছে তা যাচাই করুন।
+
 `bernstein workflow` এজেন্ট, কমান্ড ও লুপ নোডের ডিক্লারেটিভ YAML DAG চালায় - অসম্পূর্ণ রান আবার শুরু করার সমর্থন সহ:
 
 ```bash
@@ -242,7 +244,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-রান অবস্থা প্রতিটি নোডে `.sdd/runs/<run_id>/`-এ চেকপয়েন্ট হয়। রান আবার শুরু করার সময় রানের শুরুতে ম্যানিফেস্ট ডাইজেস্ট যাচাই করা হয়, তাই স্পেসিফিকেশন পরিবর্তন প্রত্যাখ্যান করা হয়, ভিন্ন একটি ম্যানিফেস্ট নীরবে চালানোর বদলে। দেখুন [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। অসম্পূর্ণ নোডের প্রম্পটে `{goal}` প্রতিস্থাপনের জন্য আবার শুরু করার সময় একই `-g` মান আবার দিন।
+রান অবস্থা প্রতিটি নোডে `runs/<run_id>/`-এ চেকপয়েন্ট হয়। রান আবার শুরু করার সময় রানের শুরুতে ম্যানিফেস্ট ডাইজেস্ট যাচাই করা হয়, তাই স্পেসিফিকেশন পরিবর্তন প্রত্যাখ্যান করা হয়, ভিন্ন একটি ম্যানিফেস্ট নীরবে চালানোর বদলে। দেখুন [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। অসম্পূর্ণ নোডের প্রম্পটে `{goal}` প্রতিস্থাপনের জন্য আবার শুরু করার সময় একই `-g` মান আবার দিন।
 
 `bernstein compliance controls` প্রতিটি নিয়ন্ত্রণের পরীক্ষাসমূহ এবং সর্বশেষ সম্পূর্ণ পরিমাপ দেখায়, যদি তা পাওয়া যায়। [বেঞ্চমার্ক কভারেজ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
