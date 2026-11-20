@@ -436,8 +436,8 @@ registration set.
 
 ## Driving long-running runs from an MCP host (Tasks extension)
 
-A run started over MCP can outlive a single call. Rather than hold a session
-open for the whole run, a host drives it with a **verifiable run handle** it
+A run started over stdio or SSE can outlive a single MCP call. A host
+follows the run with a **verifiable run handle** it
 polls (MCP Tasks extension, pinned revision `2026-07-28`). The handle is not
 free-standing server state: its status is a pure projection of the run
 journal, and it embeds the run's audit-chain head so the host can later prove
@@ -482,8 +482,8 @@ the task it watched corresponds to the audited run.
    ```
 
    `status` is one of `working`, `input_required`, `completed`, `failed`,
-   `cancelled`. A host without Tasks support polls on an interval (the polling
-   fallback); a host with Tasks support reads the same fields from the task.
+   `cancelled`. Poll `bernstein_run_status` on an interval to read the run
+   handle. A host using native tasks can also read the task row with `tasks/get`.
 
 3. When the run reaches a terminal status, the handle's embedded `chainHead`
    verifies against the completed run's audit chain with `bernstein audit
@@ -495,27 +495,44 @@ the task it watched corresponds to the audited run.
 
 ### Task-augmented calls (native task handles)
 
-A host that implements the Tasks extension can skip the polling fallback and
-ask for a native task row instead.
+On the SDK-based stdio and SSE transports, check the `initialize` result
+before requesting a native task. Three version values serve different purposes.
 
-- `bernstein_run` advertises `execution.taskSupport: "optional"` in its
-  `tools/list` entry, so a host may invoke it either way. A **plain**
-  `tools/call` returns the usual `CallToolResult` with the run JSON. A
-  **task-augmented** `tools/call` (one that carries `task` in the request
-  params) returns a `CreateTaskResult` whose `task.taskId` the host then
-  drives with `tasks/get`, `tasks/result`, `tasks/list`, and `tasks/cancel`.
-  The response shape follows the call, not the host's declared capability: a
-  tasks-capable host that sends a plain call still gets a `CallToolResult`.
-- `bernstein_run_status` advertises `execution.taskSupport: "forbidden"`. It
-  is the stateless polling fallback and always answers immediately, so it must
-  not be invoked as a task.
+| Where to look | Value | Meaning |
+| --- | --- | --- |
+| `pyproject.toml` | `mcp>=2.3.0,<2.4` | Python SDK dependency used by the server. |
+| `initialize` result, `protocolVersion` | `2025-11-25` | Negotiated revision for which Bernstein advertises the legacy `tasks` capability. |
+| `bernstein_run_status` run handle, `specRevision` | `2026-07-28` | Revision pinned by the run-handle implementation. The field keeps this value across protocol negotiations. |
+
+When `initialize` advertises `capabilities.tasks`, inspect `tools/list`.
+`bernstein_run` declares `execution.taskSupport: "optional"`. To ask for a
+native task, include a `task` object in the `tools/call` parameters.
+
+```json
+{"name": "bernstein_run", "arguments": {"goal": "Update project notes"}, "task": {}}
+```
+
+On success, the SDK compatibility middleware returns a `CreateTaskResult`.
+Use its `task.taskId` with `tasks/get`, `tasks/result` or `tasks/cancel`.
+`tasks/list` lists task rows. Omitting `task` returns a `CallToolResult`
+with the run JSON on the same connection. With metering enabled, the run
+payload is under `result` in the [cost-meter envelope](#per-call-cost-meter-envelope).
+
+- `bernstein_run_status` declares `execution.taskSupport: "forbidden"`.
+  Invoke it as a plain tool. Tools without an `execution` hint also default
+  to `forbidden`.
 - Every task row carries a finite `ttl` (24h) rather than the `null` that
   spells "unlimited". A `null` ttl is dropped from the serialised response and
   the receiving host rejects the row, so the retention window is stated
   explicitly. It under-claims: nothing evicts the run.
 
-Hosts with no Tasks support are unaffected and keep using
-`bernstein_run_status`.
+On stdio or SSE, a host can poll `bernstein_run_status` without negotiating
+native tasks. The separate streamable HTTP transport
+(`bernstein.mcp.remote_transport`) supports handshake-era protocol revisions
+and defaults an absent `MCP-Protocol-Version` header to `2025-03-26`.
+It advertises plain tools and returns the created task in the
+`bernstein_run` tool response. To follow an individual task on that
+transport, use its `id` with the task server's `GET /tasks/{task_id}`.
 
 ### Connecting a host trace to the run's artefacts
 
