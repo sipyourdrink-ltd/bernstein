@@ -1,4 +1,4 @@
-"""Caller compatibility for peter-evans/create-pull-request v8.1.2."""
+"""Caller compatibility for peter-evans/create-pull-request v8.1.3."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = "peter-evans/create-pull-request"
-PIN = "15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8"
+PIN = "3ffccacd46053766916f087ce41d627c0b8cf2d1"
 WORKFLOWS = (
     "ci-topology-heal.yml",
     "coverage-ratchet-weekly.yml",
@@ -41,7 +41,7 @@ def test_pull_request_callers_keep_explicit_branch_and_token(name: str) -> None:
     inputs = _calls(name)[0]["with"]
     assert inputs["branch"]
     assert "BERNSTEIN_AUTOSYNC_TOKEN" in inputs["token"]
-    # v8.1.2 defaults branch-token to token. A separate fallback would
+    # v8.1.3 defaults branch-token to token. A separate fallback would
     # suppress synchronize events when only the Actions token pushes.
     assert inputs.get("branch-token", inputs["token"]) == inputs["token"]
     assert inputs.get("signoff", False) is False
