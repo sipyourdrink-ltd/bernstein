@@ -18,11 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GIT_EMAIL_KEYS = {"user.email", "author.email", "committer.email"}
 GIT_EMAIL_ENV = {"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"}
 EMAIL_SETTING = re.compile(r"(?:user|author|committer)\.email|GIT_(?:AUTHOR|COMMITTER)_EMAIL|--author\b", re.I)
-PYTHON = re.compile(r"(?:^|[\s/(])python[\d.]*(?=\s|$)")
-# A script argument before << makes the heredoc input data, rather than Python.
-PYTHON_STDIN = re.compile(
-    r"""\bpython[\d.]*(?:[ \t]+-[^\s<]*)*[ \t]*<<(?P<tabs>-?)[ \t]*(?P<q>['"]?)(?P<end>\w+)(?P=q)"""
-)
+PYTHON = re.compile(r"""(?:^|[\s/(])python[\d.]*['"]?(?=\s|$)""")
+HEREDOC = re.compile(r"""(?<!<)<<(?!<)(?P<tabs>-?)[ \t]*(?P<q>['"]?)(?P<end>\w+)(?P=q)""")
 CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--unset", "--unset-all", "get", "unset"}
 ACTION_IDENTITY_INPUTS = {
     "author",
@@ -69,6 +66,21 @@ def _argument_emails(args: list[str]) -> Iterator[str]:
             yield _author_email(value if equal else args[i + 1])
 
 
+def _python_reads_program_from_stdin(arguments: str) -> bool:
+    """Python's script selector determines whether the heredoc contains code or input data."""
+    words = iter(shlex.split(arguments, comments=True))
+    for word in words:
+        if word == "-":
+            return True  # Remaining words are arguments to the program on stdin.
+        if word == "--":
+            return next(words, "-") == "-"
+        if not word.startswith("-") or word.startswith(("-c", "-m")):
+            return False
+        if word in {"-W", "-X", "--check-hash-based-pycs"}:
+            next(words, None)
+    return True
+
+
 def _shell_emails(script: str) -> Iterator[str]:
     if not EMAIL_SETTING.search(script):
         return
@@ -76,7 +88,8 @@ def _shell_emails(script: str) -> Iterator[str]:
     for line in lines:
         if line.lstrip().startswith("#"):
             continue
-        if heredoc := PYTHON_STDIN.search(line):
+        heredoc = HEREDOC.search(line)
+        if heredoc and (interpreters := list(PYTHON.finditer(line[: heredoc.start()]))):
             body = []
             for raw in lines:
                 source_line = raw.lstrip("\t") if heredoc["tabs"] else raw
@@ -85,7 +98,8 @@ def _shell_emails(script: str) -> Iterator[str]:
                 body.append(source_line)
             else:
                 raise AssertionError(f"Unterminated Python heredoc: {line}")
-            yield from _python_emails("\n".join(body))
+            if _python_reads_program_from_stdin(line[interpreters[-1].end() : heredoc.start()]):
+                yield from _python_emails("\n".join(body))
         if EMAIL_SETTING.search(line):
             # PowerShell exposes process environment variables through its env: drive.
             line = re.sub(r"\$env:(GIT_(?:AUTHOR|COMMITTER)_EMAIL)\s*=\s*", r"\1=", line, flags=re.I)
@@ -209,6 +223,29 @@ def test_inline_workflow_python_checks_commit_email(form: str, email: str) -> No
     }[form]
     assert list(_workflow_emails(step)) == [email]
     assert (email in _allowed_emails()) == (email != "other@example.org")
+
+
+@pytest.mark.parametrize("email", ["41898282+github-actions[bot]@users.noreply.github.com", "other@example.org"])
+@pytest.mark.parametrize(
+    "opener",
+    [
+        """python3 - "$WORK/seg1.cast" "$WORK/seg2.cast" "$WORK/demo.cast" <<'PY'""",
+        """value="$(python3 - "$WORK/demo.cast" <<'PY'""",
+        '"${VENV_BIN}/python" - "${SMOKE_VERSION}" <<"PY"',
+    ],
+)
+def test_python_stdin_program_with_arguments(opener: str, email: str) -> None:
+    body = f'env = {{"GIT_AUTHOR_EMAIL": "{email}", "GIT_COMMITTER_EMAIL": "{email}"}}'
+    script = f"{opener}\n{body}\nPY\n"
+    if "$(" in opener:
+        script += ')"'
+    assert list(_shell_emails(script)) == [email, email]
+    assert (email in _allowed_emails()) == (email != "other@example.org")
+
+
+def test_named_python_program_receives_heredoc_as_data() -> None:
+    script = """python3 render.py - <<'DATA'\ngit config user.email other@example.org\nDATA"""
+    assert list(_shell_emails(script)) == []
 
 
 @pytest.mark.parametrize(
