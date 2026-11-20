@@ -132,14 +132,18 @@ flowchart LR
 重試會保留 `dispatch_tier`；重新開啟任務時可以明確選擇層級。請參閱[調度層級契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+請在工作分支上執行任務。Bernstein 會將通過驗證的變更合併到目前的分支。如果目前是預設分支，它會停止可能合併變更的執行作業。請先在工作分支上檢查變更，再建立提取要求。
 
 `bernstein doctor --json` 也會輸出稽核契約的 `findings`；對於相同的安裝觀測結果，它們與 `bernstein govern audit --only INS --json` 的結果完全相同。一般 doctor 報告的顯示方式維持不變。如需穩定的檢查 ID，請參閱 [doctor 維運指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)。
 

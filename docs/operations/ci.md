@@ -725,6 +725,12 @@ Docker image, rather than assuming that every action tag has a published image.
 barrier as well as equality of the scanner and wrapper versions. A pending
 companion update must be resolved before a scanner bump can land.
 
+## crate-ci/typos version
+
+The spelling job and deterministic auto-heal installation use the same typos v1.52.0 commit. The spelling scan keeps its default read-only mode, and auto-heal retains its strategy condition and explicit `write_changes: false` input.
+
+The action is pinned to `4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85`. Its upstream `v1.52.0` tag resolves to that commit.
+
 ## peter-evans/create-pull-request version
 
 The topology healer, weekly and continuous coverage ratchets, observability snapshot and major/minor release bump use create-pull-request v8.1.2. Their branch names, token selection, inputs and permissions stay as configured. This action uses Node.js 24 on the existing Ubuntu runners.
