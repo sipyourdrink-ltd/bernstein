@@ -872,6 +872,8 @@ class TaskStore:
                     if "requires" in record:
                         task.requires = list(record["requires"])
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
+                    task.claimed_at = record.get("claimed_at", task.claimed_at)
+                    task.claimed_by_session = record.get("claimed_by_session", task.claimed_by_session)
                     task.result_summary = record.get("result_summary", task.result_summary)
                     if isinstance(version := record.get("version"), int):
                         task.version = version
