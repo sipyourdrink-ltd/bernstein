@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -18,7 +19,37 @@ from bernstein.core.git_basic import (
     stage_all_except,
     stage_files,
     stage_task_files,
+    version_from_commits,
 )
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("Migration notes.\n\nBREAKING CHANGE: remove the old format", "2.0.0"),
+        (None, "1.2.4"),
+        ("feat: illustrate a BREAKING CHANGE: marker in prose", "1.2.4"),
+    ],
+    ids=["breaking-footer", "plain-fix", "ordinary-body"],
+)
+def test_version_bump_from_breaking_footer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str | None, expected: str
+) -> None:
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def git(*args: str) -> None:
+        run_git(list(args), tmp_path, check=True)
+
+    git("init", "-q")
+    git("config", "user.name", "Fixture")
+    git("config", "user.email", "fixture@example.invalid")
+    git("commit", "--allow-empty", "-qm", "chore: baseline", "-m", "BREAKING CHANGE: already released")
+    git("tag", "v1.2.3")
+    git("commit", "--allow-empty", "-qm", "fix: change format", *(("-m", body) if body else ()))
+    git("commit", "--allow-empty", "-qm", "fix: follow up")
+
+    assert version_from_commits(tmp_path) == expected
 
 
 def test_run_git_raises_called_process_error_when_check_is_true(tmp_path: Path) -> None:
