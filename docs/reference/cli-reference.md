@@ -1706,7 +1706,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Command | Purpose | Source |
 |---|---|---|
-| `bernstein explain CONCEPT` | Concept explainer. | `cli/explain_help_cmd.py:171` |
+| `bernstein explain` | Detailed help and examples for CLI commands. | `cli/commands/explain_help_cmd.py:171` |
 | `bernstein help-all` | Comprehensive help screen. | `cli/commands/advanced_cmd.py:378` |
 | `bernstein aliases` | Show CLI aliases. | `cli/aliases.py` |
 | `bernstein fingerprint` | Replay verification (group). | `cli/fingerprint_cmd.py:37` |
@@ -1815,9 +1815,11 @@ Experimental voice control (see [`operations/voice-control.md`](../operations/vo
 
 #### `bernstein explain`
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `CONCEPT` | required | Concept name (e.g. `cascade-router`, `wal`, `janitor`). |
+Use `bernstein explain [COMMAND_NAME]` to see examples, tips, and related
+commands. For example, `bernstein explain run` shows ways to start a run.
+
+Run `bernstein explain` to list the commands with detailed help, or
+`bernstein explain --help` for usage.
 
 #### `bernstein test`
 
