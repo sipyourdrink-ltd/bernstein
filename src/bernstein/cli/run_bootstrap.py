@@ -2570,10 +2570,10 @@ def run(
             refresh_cache=refresh_cache,
             force_fresh=force_fresh,
         )
-    except (click.UsageError, SystemExit):
+    except (click.UsageError, KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:
-        handle_first_run_exception(exc, verbose=_is_verbose())
+        handle_first_run_exception(exc, verbose=_is_verbose(), plain=plain_run_output())
 
 
 def _run_impl(

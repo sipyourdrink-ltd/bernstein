@@ -96,6 +96,7 @@ def _hint_body(category: ErrorCategory, context: HintContext | None) -> tuple[st
     Args:
         category: The error category.
         context: Optional hint context (adapter name, env var, etc.).
+        plain: Print the diagnostic and command without terminal formatting.
 
     Returns:
         Tuple of (one-line prose, optional command-line snippet).
@@ -189,6 +190,7 @@ def hint_for(category: ErrorCategory, context: HintContext | None = None) -> Pan
     Args:
         category: The error category.
         context: Optional hint context (adapter name, env var, etc.).
+        plain: Print the diagnostic and command without terminal formatting.
 
     Returns:
         A Rich :class:`Panel`.
@@ -214,6 +216,7 @@ def render_hint(
     exc: BaseException | None = None,
     context: HintContext | None = None,
     verbose: bool = False,
+    plain: bool = False,
 ) -> None:
     """Render a hint panel to ``console``; show the traceback when verbose.
 
@@ -223,9 +226,20 @@ def render_hint(
         exc: Optional exception. When provided and ``verbose`` is True,
             the formatted traceback is printed below the hint.
         context: Optional hint context (adapter name, env var, etc.).
+        plain: Print the diagnostic and command without terminal formatting.
         verbose: When True, also render the traceback for ``exc`` below
             the hint.  When False (the default), the traceback is hidden.
     """
+    if plain:
+        prose, command = _hint_body(category, context)
+        console.print(prose, markup=False, highlight=False)
+        if command:
+            console.print(command, markup=False, highlight=False)
+        if verbose and exc is not None:
+            import traceback
+
+            console.print("".join(traceback.format_exception(exc)).rstrip(), markup=False, highlight=False)
+        return
     panel = hint_for(category, context)
     if verbose and exc is not None:
         tb = Traceback.from_exception(

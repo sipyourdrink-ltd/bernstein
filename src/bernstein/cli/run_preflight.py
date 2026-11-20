@@ -257,9 +257,11 @@ def _exit_nonzero_on_unhealthy_run(status_payload: object) -> None:
             break
     if run_healthy_from_status_counts(counts):  # type: ignore[arg-type]
         return
-    console.print(
-        "[red]Run did not meet its goal[/red] -- a declared task never completed or a task "
-        "failed. See .sdd/runtime/retrospective.md for the run-health breakdown."
+    click.echo(
+        "Run did not meet its goal -- a declared task never completed or a task "
+        "failed. See .sdd/runtime/retrospective.md for the run-health breakdown.",
+        err=True,
+        color=False,
     )
     raise SystemExit(run_health_exit_code(healthy=False))
 
@@ -671,7 +673,13 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
-def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
+def _raise_first_spawn_refusal(reason: str | None) -> None:
+    click.echo(f"Run failed before any work started: {reason}", err=True, color=False)
+    click.echo("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md", err=True, color=False)
+    raise SystemExit(1)
+
+
+def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True, fail_on_refusal: bool = False) -> None:
     """Diagnose a spawned-then-dead agent before a display branch's own wait.
 
     The non-interactive detach path (issue #3528, #4246) briefly confirms the
@@ -701,12 +709,18 @@ def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
             status ("waiting for the first agent") while it polls, so a slow
             start reads as progress instead of a hang. ``--quiet`` passes
             False to keep its promise of no progress chatter.
+        fail_on_refusal: Report a confirmed refusal before entering a terminal-state wait.
     """
     from bernstein.cli.run_bootstrap import _await_first_spawn_outcome, _poll_no_plan_after_spawn
     from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
 
-    outcome, _reason = _await_first_spawn_outcome(narrate_wait=narrate_wait)
+    outcome, reason = _await_first_spawn_outcome(narrate_wait=narrate_wait)
+    if fail_on_refusal and outcome == "refused":
+        _show_run_summary()
+        _raise_first_spawn_refusal(reason)
     if outcome == "spawned" and _poll_no_plan_after_spawn() is not None:
+        if is_json():
+            _show_run_summary()
         raise BernsteinFirstRunError(
             "Spawned agent exited before producing a work plan",
             category=ErrorCategory.NO_PLAN_PRODUCED,
@@ -881,7 +895,7 @@ def _finalize_run_output(
             # the progress output, and takes this branch even on a TTY: a
             # caller that wants an exit code wants the run's outcome, not a
             # dashboard it has to close.
-            _raise_if_no_plan_after_spawn(narrate_wait=not quiet)
+            _raise_if_no_plan_after_spawn(narrate_wait=not (quiet or plain_run_output()), fail_on_refusal=True)
             final_status = _wait_for_run_completion(timeout_s=_RUN_WAIT_DEFAULT_S if wait is None else wait)
             _show_run_summary()
             _exit_nonzero_on_unhealthy_run(final_status)
@@ -926,7 +940,7 @@ def _finalize_run_output(
 
             run_adapter = seed.cli if seed is not None and seed.cli != "auto" else None
             tracker = TaskStateProgressTracker(
-                console=make_console(no_color=True, file=sys.stderr) if output.get("JSON") else console,
+                console=make_console(no_color=True, file=sys.stderr) if plain_run_output() else console,
                 default_adapter=run_adapter,
                 default_model=seed.model if seed is not None else None,
             )
@@ -935,9 +949,7 @@ def _finalize_run_output(
             tracker.poll()
             _show_run_summary()
             if outcome == "refused":
-                console.print(f"[red]Run failed before any work started:[/red] {reason}")
-                console.print("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md")
-                raise SystemExit(1)
+                _raise_first_spawn_refusal(reason)
             if outcome == "spawned":
                 # An agent was confirmed alive at least once, so an empty
                 # agent count now is a death, not "hasn't spawned yet". A run

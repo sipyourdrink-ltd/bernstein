@@ -877,7 +877,7 @@ def cli(
 
     recovered = recover_orphaned_claims()
     if recovered:
-        console.print(f"[yellow]Recovered {recovered} orphaned ticket(s).[/yellow]")
+        click.echo(f"Recovered {recovered} orphaned ticket(s).", err=True, color=False)
 
     _validate_evolve_mode(evolve, budget, max_cycles, yes)
 
