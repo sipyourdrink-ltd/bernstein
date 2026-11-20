@@ -60,6 +60,28 @@ The spawner refreshes the optional code index in the background. A run
 uses the installed specialist catalog. To update it for a future run, use
 `bernstein agents sync`. A catalog path specified in the seed must exist.
 
+### Installed reference results for issue #7845
+
+Each cell gives the nearest-rank p95 from 50 fresh processes on an Apple M1 Pro running macOS 27.2.1 and CPython 3.14.3. All four revisions used installed wheels from the same dependency lock. Every primary process started with empty application state. The terminal and dashboard fixtures each used a fresh Git project. Python bytecode was primed and the OS filesystem cache was retained.
+
+| Installed scenario | Issue baseline p95 | Frozen candidate p95 | Integrated candidate p95 | Final runtime p95 | Target |
+|---|---:|---:|---:|---:|---:|
+| Ordinary run, first preparation line | 1.632 s | 0.132 s | 0.109 s | 0.096 s | 0.250 s |
+| Completed `--help` | 2.193 s | 0.236 s | 0.207 s | 0.176 s | 0.500 s |
+| Completed `--version` | 2.105 s | 0.158 s | 0.134 s | 0.113 s | 0.500 s |
+| Usable dashboard data over HTTP | 4.038 s | 2.732 s | 1.914 s | 1.995 s | 2.000 s |
+| First working or idle agent | 6.405 s | 5.454 s | 3.979 s | 4.109 s | Recorded separately |
+
+The issue baseline (`19672b264`) and frozen candidate (`bf4424843`) ran in alternating order. The integrated candidate (`91098468b`) and final runtime (`4c087d7b3`) ran in subsequent windows on the same shared development machine. Each reference suite launched one benchmark at a time. Three separate dashboard checks on main (`6b00726cc`) took 3.357–4.119 s, with a median of 3.669 s. The receipt retains earlier observations, including series with overlapping host activity.
+
+The preceding runtime (`9655c3ee3`) recorded a dashboard p95 of 2.051049 s. The final runtime defers optional hook validators and worktree reporting and reads built-in configuration defaults without loading their validators. Its dashboard p95 was **1.994581 s** against the 2.000 s target. Two of 50 samples exceeded 2.000 s. The range was 1.545657–2.099329 s. On the p95 run, required preflight finished at 0.712 s and the HTTP readiness probe succeeded at 1.964 s. All 50 runs reached a working or idle agent and exited successfully.
+
+The dashboard timer stops after required preflight, a healthy server and an authenticated `/dashboard/data` response containing tasks, agent state and summary data. A separate Playwright check on the final wheel signed into the web GUI, opened the seeded task's details and closed them with zero agents, without using Retry. A forced early sign-in on `9655c3ee3` verified that clicking Retry recovered an anonymous task request that finished after sign-in. The browser check records behavior separately from HTTP latency.
+
+The npm launcher test started at Node process launch, used uvx and supplied a local Bernstein wheel. With downloaded dependencies already cached, creating its tool environment took 1.133 s and reusing it took 0.300 s. Starting with an empty package cache and downloading dependencies from public PyPI took 3.895 s on first use and 0.333 s on reuse.
+
+The receipt includes individual durations and exit codes, phase timestamps, wheel and dependency versions, module invocation, real adapter selection, bare plan previews, primed application homes and separate empty-bytecode checks. [Read the measured samples](measurements/cli-startup-7845.json).
+
 ## Quick reference
 
 | Workload size | Recommended `max_agents` | RAM needed | Typical cost/run |
