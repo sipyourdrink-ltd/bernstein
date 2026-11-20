@@ -534,8 +534,7 @@ def adapter_name_for_provider(provider_name: str | None, model: str) -> str | No
        :func:`_register_provider_alias` refuses ambiguous aliases at
        build time, an exact hit here is guaranteed unambiguous.
     2. **Exact registry-name match.** ``provides`` is optional and most
-       adapters declare none: only 7 of the ~49 selectable adapters carry
-       aliases. An operator selecting one of the other 42 by its registry
+       adapters declare none. An operator selecting an adapter by its registry
        name -- which is what ``cli:`` accepts, and what
        :func:`selectable_adapter_names` enumerates -- must resolve, or the
        selection is silently dropped and the spawn lands on some other

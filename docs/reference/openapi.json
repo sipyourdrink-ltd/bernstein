@@ -21455,6 +21455,56 @@
             },
             "type": "array",
             "title": "Supported Models"
+          },
+          "disk_free_mb": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disk Free Mb"
+          },
+          "mem_used_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mem Used Pct"
+          },
+          "mesh_rtt_ms": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Rtt Ms"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
           }
         },
         "type": "object",
@@ -23600,6 +23650,9 @@
             "type": "string",
             "title": "Reason",
             "default": ""
+          },
+          "dispatch_tier": {
+            "$ref": "#/components/schemas/DispatchTier"
           }
         },
         "type": "object",
