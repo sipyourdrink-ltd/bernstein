@@ -87,3 +87,19 @@ def test_machine_preview_is_one_json_document(tmp_path: Path, args: list[str], f
     assert field in json.loads(result.stdout)
     assert b"\x1b" not in result.stdout + result.stderr
     assert b"collects no telemetry" not in result.stderr
+
+
+def test_opt_in_phase_trace_preserves_structured_stdout(tmp_path: Path) -> None:
+    env = dict(os.environ, HOME=str(tmp_path), BERNSTEIN_STARTUP_TIMINGS="1")
+    result = subprocess.run(
+        [sys.executable, "-m", "bernstein", "config-path", "--json"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert isinstance(json.loads(result.stdout), dict)
+    entries = [line.split() for line in result.stderr.splitlines() if line.startswith("bernstein-startup ")]
+    assert [name for _, name, _ in entries] == ["argument_parsing", "command_dispatch"]
+    assert int(entries[0][2]) <= int(entries[1][2])

@@ -31,6 +31,7 @@ import click
 from bernstein.cli.aliases import expand_alias
 from bernstein.cli.verbosity import apply_verbosity
 from bernstein.core.observability.json_logging import setup_json_logging
+from bernstein.core.startup_timing import mark_startup_phase
 
 if TYPE_CHECKING:
     from bernstein.cli.advanced_cmd import dashboard as dashboard
@@ -575,6 +576,7 @@ class _RichGroup(click.Group):
             tokens = expand_alias(args[0])
             if tokens is not None:
                 args = [*tokens, *args[1:]]
+        mark_startup_phase("command_dispatch")
         if args and args[0] == "run":
             self._announce_run(ctx, args[1:])
         return super().resolve_command(ctx, args)
@@ -599,6 +601,7 @@ class _RichGroup(click.Group):
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         """Intercept ``--help-all`` so it works as both option and subcommand."""
+        mark_startup_phase("argument_parsing")
         if "--help-all" in args:
             args = ["help-all"]
         return super().parse_args(ctx, args)
@@ -838,6 +841,7 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
+    mark_startup_phase("command_dispatch")
     _RichGroup._announce_run(ctx, [])
     from bernstein.cli.splash_screen import splash
 

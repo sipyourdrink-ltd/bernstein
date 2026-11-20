@@ -80,3 +80,31 @@ def test_bootstrap_does_not_load_web_application_into_parent_process() -> None:
         "from bernstein.core.server import server_launch; assert 'bernstein.core.server.server_app' not in sys.modules"
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_task_server_handler_defers_editor_client_until_requested() -> None:
+    script = """
+import sys
+from bernstein.core.acp import ACPHandler
+from bernstein.core.protocols import acp
+assert "bernstein.core.protocols.acp.client" not in sys.modules
+assert "ACPEvent" in dir(acp)
+from bernstein.core.protocols.acp import ACPEvent
+from bernstein.core.protocols.acp.client import ACPEvent as concrete_event
+assert ACPEvent is concrete_event
+"""
+    result = _import_in_fresh_interpreter(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_reading_current_branch_does_not_load_pull_request_helpers() -> None:
+    script = """
+import sys
+from bernstein.core.git_ops import current_branch
+assert "bernstein.core.git.git_pr" not in sys.modules
+from bernstein.core.git_ops import create_github_pr
+from bernstein.core.git.git_pr import create_github_pr as implementation
+assert create_github_pr is implementation
+"""
+    result = _import_in_fresh_interpreter(script)
+    assert result.returncode == 0, result.stderr

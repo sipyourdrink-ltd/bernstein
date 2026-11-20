@@ -43,6 +43,7 @@ def _run(
     args: list[str],
     cache: Path | None,
     timeout: float,
+    app_home: Path | None = None,
 ) -> tuple[Sample, bytes, bytes]:
     with tempfile.TemporaryDirectory(prefix="bernstein-startup-") as location:
         fixture = Path(location)
@@ -52,16 +53,18 @@ def _run(
             "XDG_CACHE_HOME": "cache",
             "XDG_DATA_HOME": "data",
         }
-        for name in [*paths.values(), "project"]:
-            (fixture / name).mkdir()
+        user = app_home or fixture
+        for name in paths.values():
+            (user / name).mkdir(exist_ok=True)
+        (fixture / "project").mkdir()
         env = {
             "PATH": os.environ.get("PATH", os.defpath),
             "LANG": "en_US.UTF-8",
             "TERM": "dumb",
             "COLUMNS": "80",
-            "USERPROFILE": str(fixture / "home"),
+            "USERPROFILE": str(user / "home"),
             "PYTHONPYCACHEPREFIX": str(cache if cache is not None else fixture / "bytecode"),
-            **{name: str(fixture / directory) for name, directory in paths.items()},
+            **{name: str(user / directory) for name, directory in paths.items()},
         }
         if "SYSTEMROOT" in os.environ:
             env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
@@ -78,6 +81,9 @@ def _run(
         elapsed = time.perf_counter() - start
         stdout = result.stdout.replace(os.fsencode(fixture), b"/FIXTURE")
         stderr = result.stderr.replace(os.fsencode(fixture), b"/FIXTURE")
+        if app_home is not None:
+            stdout = stdout.replace(os.fsencode(app_home), b"/APP_HOME")
+            stderr = stderr.replace(os.fsencode(app_home), b"/APP_HOME")
         sample: Sample = {
             "seconds": elapsed,
             "exit": result.returncode,
@@ -95,6 +101,7 @@ def main() -> int:
     parser.add_argument("--command", choices=_COMMANDS, action="append", help="Defaults to help and config-path.")
     parser.add_argument("--runs", type=int, default=5, help="Number of samples per command and cache mode.")
     parser.add_argument("--cache", choices=["both", "cold", "warm"], default="both")
+    parser.add_argument("--warm-home", action="store_true", help="Prime and reuse an isolated application home.")
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--importtime-dir", type=Path, help="Write separate cold import traces after the timed runs.")
     options = parser.parse_args()
@@ -115,23 +122,37 @@ def main() -> int:
     modes = ("cold", "warm") if options.cache == "both" else (options.cache,)
     results: dict[str, Summary] = {}
     with tempfile.TemporaryDirectory(prefix="bernstein-startup-warm-") as location:
+        app_home = Path(location) / "app" if options.warm_home else None
+        if app_home is not None:
+            app_home.mkdir()
         for mode in modes:
-            cache = Path(location) if mode == "warm" else None
+            cache = Path(location) / "bytecode" if mode == "warm" else None
             for command in commands:
                 args = _COMMANDS[command]
-                if cache is not None:
-                    primer, _, _ = _run(entry, args, cache, options.timeout)
+                if cache is not None or app_home is not None:
+                    primer, _, _ = _run(entry, args, cache, options.timeout, app_home)
                     if primer["exit"]:
                         print(f"{command} warm-up returned {primer['exit']}", file=sys.stderr)
                         return 1
-                samples = [_run(entry, args, cache, options.timeout)[0] for _ in range(options.runs)]
+                samples = [_run(entry, args, cache, options.timeout, app_home)[0] for _ in range(options.runs)]
                 seconds = sorted(sample["seconds"] for sample in samples)
                 summary: Summary = {"median": statistics.median(seconds), "samples": samples}
                 if len(seconds) >= 50:
                     summary["p95"] = seconds[math.ceil(len(seconds) * 0.95) - 1]
                 results[f"{command} {mode}"] = summary
 
-    print(json.dumps({"platform": platform.platform(), "entrypoint": options.entrypoint, "results": results}, indent=2))
+    print(
+        json.dumps(
+            {
+                "platform": platform.platform(),
+                "entrypoint": options.entrypoint,
+                "app_home": "primed" if options.warm_home else "empty",
+                "cache_dimension": "Python bytecode prefix",
+                "results": results,
+            },
+            indent=2,
+        )
+    )
     if options.importtime_dir is not None:
         options.importtime_dir.mkdir(parents=True, exist_ok=True)
         for command in commands:

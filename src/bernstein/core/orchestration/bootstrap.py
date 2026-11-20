@@ -75,6 +75,7 @@ from bernstein.core.server_launch import (
     ensure_sdd,
 )
 from bernstein.core.server_supervisor import supervised_server
+from bernstein.core.startup_timing import mark_startup_phase
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +305,9 @@ def _run_git_hygiene(workdir: Path) -> None:
     try:
         from bernstein.core.git_hygiene import run_hygiene
 
+        mark_startup_phase("git_hygiene_start")
         run_hygiene(workdir, full=True)
+        mark_startup_phase("git_hygiene_complete")
     except ImportError as exc:
         logger.warning("Git hygiene module unavailable - skipping: %s", exc)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -720,6 +723,7 @@ def bootstrap_from_seed(
     _load_secrets_provider(seed)
 
     # 4. Start server (compact output - single line)
+    mark_startup_phase("required_preflight_complete")
     server_pid = supervised_server(
         workdir,
         port,
@@ -738,6 +742,7 @@ def bootstrap_from_seed(
             fix="Check .sdd/runtime/server.log for details",
         ).print()
         raise SystemExit(1)
+    mark_startup_phase("server_ready")
     console.print(f"  [dim]server[/dim]  :{port} [green]ready[/green]")
 
     # Register Bernstein as a discoverable MCP server for Claude Code sessions
@@ -1515,6 +1520,7 @@ def _bootstrap_from_goal_impl(
     auth_token = _resolve_auth_token(workdir)
     server_url = _resolve_server_url(port)
 
+    mark_startup_phase("required_preflight_complete")
     with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
         server_pid = supervised_server(workdir, port, bind_host=bind_host)
         if not _wait_for_server(port, server_url=server_url):
@@ -1526,6 +1532,7 @@ def _bootstrap_from_goal_impl(
                 fix="Check .sdd/runtime/server.log for details",
             ).print()
             raise SystemExit(1)
+    mark_startup_phase("server_ready")
     console.print(f"[green]{_icons.arrow_right}[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
 
     # Register Bernstein as a discoverable MCP server for Claude Code sessions

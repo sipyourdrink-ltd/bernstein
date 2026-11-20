@@ -66,7 +66,9 @@ def _stop(project: Path, owner: psutil.Process) -> None:
     psutil.wait_procs(running, timeout=3)
 
 
-def sample(console: Path, *, app_home: Path | None = None, auto_routing: bool = False) -> dict[str, Any]:
+def sample(
+    console: Path, *, app_home: Path | None = None, auto_routing: bool = False, trace: bool = False
+) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="bernstein-bench-") as location:
         fixture = Path(location)
         project = fixture / "project"
@@ -147,6 +149,8 @@ def sample(console: Path, *, app_home: Path | None = None, auto_routing: bool = 
             (project / "bernstein.yaml").write_text("goal: Local fixture\ncli: auto\nmodel: fixture\n")
             cmd.remove("--idle")
             cmd.extend(["--cli", "auto"])
+        if trace:
+            env["BERNSTEIN_STARTUP_TIMINGS"] = "1"
         env["BERNSTEIN_SERVER_URL"] = f"http://127.0.0.1:{port}"
         timings: dict[str, Any] = {}
         with (fixture / "console.log").open("w+b") as output:
@@ -176,6 +180,14 @@ def sample(console: Path, *, app_home: Path | None = None, auto_routing: bool = 
                     time.sleep(0.05)
                 if auto_routing:
                     timings["local_adapter_invoked"] = marker.exists()
+                if trace:
+                    output.seek(0)
+                    phases = {}
+                    for line in output.read().decode(errors="replace").splitlines():
+                        fields = line.split()
+                        if len(fields) == 3 and fields[0] == "bernstein-startup":
+                            phases[fields[1]] = int(fields[2]) / 1_000_000_000 - start
+                    timings["phases"] = phases
                 timings["exit"] = proc.poll()
                 timings["elapsed"] = time.perf_counter() - start
                 if timings["exit"] != 0 or "first_agent_ready" not in timings:
@@ -190,6 +202,9 @@ def sample(console: Path, *, app_home: Path | None = None, auto_routing: bool = 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--console", type=Path, required=True)
+    parser.add_argument(
+        "--phases", action="store_true", help="Collect optional argument, dispatch, Git and preflight timestamps."
+    )
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
@@ -213,11 +228,11 @@ def main() -> int:
         app_home = Path(location) if args.warm_home else None
         console = args.console.resolve()
         if app_home is not None:
-            prime = sample(console, app_home=app_home, auto_routing=args.auto_routing)
+            prime = sample(console, app_home=app_home, auto_routing=args.auto_routing, trace=args.phases)
             if prime["exit"] != 0 or "first_agent_ready" not in prime:
                 raise RuntimeError(f"Could not prime application home: {prime}")
         for _ in range(args.runs):
-            measurement = sample(console, app_home=app_home, auto_routing=args.auto_routing)
+            measurement = sample(console, app_home=app_home, auto_routing=args.auto_routing, trace=args.phases)
             results.append(measurement)
             args.output.write_text(json.dumps(report, indent=2) + "\n")
             if (

@@ -40,7 +40,9 @@ from __future__ import annotations
 # ----------------------------------------------------------------------
 import importlib.util as _ilu
 import sys as _sys
+from importlib import import_module as _import_module
 from pathlib import Path as _Path
+from typing import TYPE_CHECKING, Any
 
 _legacy_path = _Path(__file__).resolve().parent.parent / "acp.py"
 if _legacy_path.exists():
@@ -56,20 +58,22 @@ if _legacy_path.exists():
         ACPRun = _legacy_module.ACPRun
         ACPRunStatus = _legacy_module.ACPRunStatus
 
-from bernstein.core.protocols.acp.client import (  # noqa: E402 - legacy shim runs first
-    ACP_EVENT_TYPE,
-    AcpDivergence,
-    ACPEvent,
-    ACPEventJournalSink,
-    AcpLifecycleResult,
-    canonical_frame_bytes,
-    compare_acp_journals,
-    drive_acp_lifecycle,
-    frame_content_hash,
-    is_terminal_frame,
-    parse_inbound_frame,
-    replay_acp_content_hashes,
-)
+if TYPE_CHECKING:
+    from bernstein.core.protocols.acp.client import (
+        ACP_EVENT_TYPE,
+        AcpDivergence,
+        ACPEvent,
+        ACPEventJournalSink,
+        AcpLifecycleResult,
+        canonical_frame_bytes,
+        compare_acp_journals,
+        drive_acp_lifecycle,
+        frame_content_hash,
+        is_terminal_frame,
+        parse_inbound_frame,
+        replay_acp_content_hashes,
+    )
+
 from bernstein.core.protocols.acp.handlers import (  # noqa: E402 - legacy shim runs first
     ACPHandlerRegistry,
     ACPRequestContext,
@@ -140,3 +144,17 @@ __all__ = [
     "validate_request",
     "validate_response",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # The task server uses the BeeAI handler. Load the editor protocol client
+    # and its replay dependencies only when a caller asks for that surface.
+    if name in __all__:
+        value = getattr(_import_module("bernstein.core.protocols.acp.client"), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

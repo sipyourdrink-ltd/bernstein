@@ -20,7 +20,8 @@ PATH=/usr/bin:/bin .venv/bin/python benchmarks/bench_cli_startup.py \
 ```
 
 Use `--entrypoint module` for the installed Python module path and `--runs 50`
-to include a p95. Use `--cache warm` or `--cache cold` to select one mode.
+to include a p95. Use `--cache warm` or `--cache cold` for the Python bytecode
+cache. Add `--warm-home` for a separate series with a primed application home.
 Import traces are collected separately with empty bytecode directories.
 Cold samples preserve the OS filesystem cache. Root help reads declared
 plugin names. Selecting an adapter validates the implementation.
@@ -28,7 +29,12 @@ plugin names. Selecting an adapter validates the implementation.
 For a local run, the harness starts a new Git project with an empty app home
 and the idle adapter. It polls the real readiness endpoint and fetches
 dashboard data on the run's loopback port. It records the first agent
-registration, the first working or idle agent, and the CLI exit separately. It cleans up the processes it started.
+registration, the first working or idle agent, and the CLI exit separately.
+It cleans up the processes it started. Add `--auto-routing` to exercise
+discovery and launch of a local adapter fixture. Add `--phases` for separate
+argument parsing, command dispatch, Git hygiene, local preflight and server
+readiness timestamps. Setting `BERNSTEIN_STARTUP_TIMINGS=1` on a CLI command
+writes the same phase names and monotonic nanoseconds to stderr.
 
 ```bash
 .venv/bin/python benchmarks/bench_local_readiness.py \
