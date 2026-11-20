@@ -48,8 +48,9 @@ The rules, in the order they are applied
    needs only the ordinary two approvals, touches no path a CODEOWNERS line
    of its own covers, and touches nothing under `.github/`, `schemas/` or
    `proto/`. Anywhere else the notice is ignored and rule 5 applies.
-5. Unprotected docs-only or `size/s` changes need one eligible approval,
-   without a core reviewer. Reserved and sensitive paths keep the normal rules.
+5. Unprotected docs-only changes need one eligible approval, without a core
+   reviewer. The same applies to unprotected `size/s` changes up to 400 lines.
+   Reserved and sensitive paths keep the normal rules.
    Everyone else needs the quorum: two approvals, at least one from a core
    reviewer, none of them from anyone who wrote or pushed the change. Over
    400 changed lines, or on a path containing `sandbox`, `security` or
@@ -236,10 +237,8 @@ query($owner: String!, $name: String!, $number: Int!) {
 GOVERNANCE_WINDOW = timedelta(hours=72)
 # Literal paths rather than a `.github/workflows/` prefix rule: a prefix would
 # put every unrelated CI edit behind a three-day window, which is a cost the
-# gate does not need to pay to protect itself. Both quorum workflows are here
-# because both are invocation surface -- `quorum.yml` decides whether the check
-# runs at all, and `quorum-rerun.yml` is the only thing that closes the window
-# below, so a change silencing either one is a change to the gate.
+# quorum gate does not need. Include the workflows that invoke the check,
+# reevaluate it after the window, or assign the label that selects its quorum.
 GOVERNANCE_PATHS = (
     "docs/governance/review-charter.md",
     "GOVERNANCE.md",
@@ -248,6 +247,7 @@ GOVERNANCE_PATHS = (
     ".github/quorum-roster.toml",
     ".github/workflows/quorum.yml",
     ".github/workflows/quorum-rerun.yml",
+    ".github/workflows/pr-labels.yml",
     "scripts/quorum_check.py",
     "scripts/queue_hygiene.py",
 )
@@ -856,6 +856,7 @@ def fetch_pull_request(
         and 0 < len(commits) < PR_COMMIT_LIMIT
         and commits[-1].get("sha") == head_sha
     )
+    reported_files = raw.get("changed_files")
     paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
     reviews = [
         Review(
@@ -908,7 +909,9 @@ def fetch_pull_request(
         diff_changed_at=diff_changed_at,
         uncompared=tuple(diffs.uncompared),
         labels=frozenset(label["name"] for label in raw.get("labels", [])),
-        paths_complete=len(files) == int(raw.get("changed_files", len(files))),
+        paths_complete=(
+            isinstance(reported_files, int) and not isinstance(reported_files, bool) and reported_files == len(files)
+        ),
     )
 
 
@@ -988,7 +991,7 @@ def small_change(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
     ):
         return False
     docs_only = all(path.endswith(".md") or path.startswith("docs/") for path in pr.paths)
-    return docs_only or "size/s" in pr.labels
+    return docs_only or ("size/s" in pr.labels and pr.changed_lines <= THIRD_APPROVAL_LINES)
 
 
 def adoptable(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:

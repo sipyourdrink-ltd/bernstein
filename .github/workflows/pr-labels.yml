@@ -97,16 +97,20 @@ jobs:
               if (waitsLeft-- <= 0) throw new Error('Quorum reconciliation timed out');
               await new Promise(resolve => setTimeout(resolve, 4000));
             };
-            // Wait for earlier evaluations so an old-label result cannot
-            // finish after the recomputed result and overwrite it.
-            for (let attempt = 0; attempt < 60; attempt++) {
+            const isCurrentPR = async () => {
               const {data: pr} = await github.rest.pulls.get({
                 ...repo, pull_number: eventPR.number,
               });
               if (pr.state !== 'open' || pr.head.sha !== head) {
                 core.info('PR closed or head changed; the newer event owns reconciliation.');
-                return;
+                return false;
               }
+              return true;
+            };
+            // Wait for earlier evaluations so an old-label result cannot
+            // finish after the recomputed result and overwrite it.
+            for (let attempt = 0; attempt < 60; attempt++) {
+              if (!await isCurrentPR()) return;
               const checks = (await github.paginate(github.rest.checks.listForRef, {
                 ...repo, ref: head, check_name: 'quorum', filter: 'all', per_page: 100,
               })).filter(check => check.app?.slug === 'github-actions');
@@ -124,12 +128,24 @@ jobs:
                 // Fail before any POST if reconciliation exceeds the shared
                 // sweep budget; never claim a partial repair as success.
                 if (runs.length > 12) throw new Error('Too many quorum runs; explicit recovery required');
+                let reconciled = false;
+                let unidentified = false;
                 for (const run_id of runs) {
                   const {data: previous} = await github.rest.actions.getWorkflowRun({...repo, run_id});
+                  const associations = previous.pull_requests;
+                  if (!Array.isArray(associations) || associations.length !== 1 ||
+                      !Number.isInteger(associations[0]?.number)) {
+                    unidentified = true;
+                    continue;
+                  }
+                  const [association] = associations;
+                  if (association.number !== eventPR.number) continue;
                   if (previous.path !== '.github/workflows/quorum.yml' || previous.head_sha !== head ||
-                      previous.status !== 'completed' || !Number.isInteger(previous.run_attempt)) {
+                      association.head?.sha !== head || previous.status !== 'completed' ||
+                      !Number.isInteger(previous.run_attempt)) {
                     throw new Error('Quorum run changed before reconciliation');
                   }
+                  if (!await isCurrentPR()) return;
                   core.info(`Re-running quorum run ${run_id} for #${eventPR.number} at ${head}`);
                   await github.rest.actions.reRunWorkflow({...repo, run_id});
                   // Same-PR quorum runs share cancel-in-progress concurrency.
@@ -141,11 +157,14 @@ jobs:
                       if (!['success', 'failure'].includes(current.conclusion)) {
                         throw new Error('Quorum rerun did not produce an evaluation');
                       }
+                      reconciled = true;
                       break;
                     }
                     await pause();
                   }
                 }
+                if (unidentified) throw new Error('Quorum run has no unique pull request association');
+                if (!reconciled) throw new Error('No quorum run belongs to this pull request');
                 return;
               }
               await pause();

@@ -52,6 +52,14 @@ def test_reconciliation_uses_existing_trusted_label_event_and_actions_token() ->
         "rerun-wait",
         "run-read-error",
         "wrong-workflow",
+        "foreign-pr",
+        "foreign-and-current",
+        "missing-association",
+        "missing-and-current",
+        "multiple-associations",
+        "stale-association-head",
+        "head-changed-between-runs",
+        "closed-between-runs",
     ],
 )
 def test_label_reconciliation_fails_closed_and_reruns_successes(case: str) -> None:
@@ -64,6 +72,7 @@ const scenario = JSON.parse(process.argv[1]);
 const script = JSON.parse(process.argv[2]);
 const calls = [];
 let queries = 0;
+let started = 0;
 let active = null;
 const polls = {};
 const context = {repo: {owner: 'owner', repo: 'repo'}, payload: {pull_request: {number: 42, head: {sha: 'a'.repeat(40)}}}};
@@ -75,8 +84,9 @@ const github = {
     pulls: {get: async args => {
       calls.push(['get', args]);
       if (scenario === 'read-error') throw Error('HTTP 503');
-      return {data: {state: scenario === 'closed' ? 'closed' : 'open',
-        head: {sha: (scenario === 'new-head' ? 'b' : 'a').repeat(40)}}};
+      const closed = scenario === 'closed' || (scenario === 'closed-between-runs' && started === 1);
+      const moved = scenario === 'new-head' || (scenario === 'head-changed-between-runs' && started === 1);
+      return {data: {state: closed ? 'closed' : 'open', head: {sha: (moved ? 'b' : 'a').repeat(40)}}};
     }},
     checks: {listForRef: 'listForRef'},
     actions: {
@@ -85,6 +95,12 @@ const github = {
         if (scenario === 'run-read-error') throw Error('HTTP 503');
         const data = {path: scenario === 'wrong-workflow' ? '.github/workflows/other.yml' : '.github/workflows/quorum.yml',
           head_sha: 'a'.repeat(40), status: 'completed', run_attempt: 1, conclusion: 'success'};
+        const foreign = scenario === 'foreign-pr' || (scenario === 'foreign-and-current' && args.run_id === 987);
+        data.pull_requests = [{number: foreign ? 43 : 42,
+          head: {sha: (scenario === 'stale-association-head' ? 'b' : 'a').repeat(40)}}];
+        if (scenario === 'missing-association') delete data.pull_requests;
+        if (scenario === 'missing-and-current' && args.run_id === 987) data.pull_requests = [];
+        if (scenario === 'multiple-associations') data.pull_requests.push({number: 43, head: {sha: data.head_sha}});
         if (active === args.run_id) {
           polls[args.run_id] = (polls[args.run_id] || 0) + 1;
           if (scenario === 'stale-attempt' || (scenario === 'rerun-wait' && polls[args.run_id] === 1)) return {data};
@@ -103,6 +119,7 @@ const github = {
         calls.push(['rerun', args]);
         if (scenario === 'post-error') throw Error('HTTP 403');
         if (active !== null) throw Error('Same-PR reruns overlap and cancel each other');
+        started++;
         active = args.run_id;
       },
     },
@@ -112,7 +129,9 @@ const github = {
     queries++;
     if (method !== 'listForRef' || args.filter !== 'all' || args.ref !== 'a'.repeat(40)) throw Error('wrong lookup');
     if (scenario === 'absent') return [];
-    return Array.from({length: scenario === 'many-runs' ? 13 : ['duplicate', 'multi'].includes(scenario) ? 2 : 1}, (_, i) => ({
+    const two = ['duplicate', 'multi', 'foreign-and-current', 'missing-and-current', 'head-changed-between-runs',
+      'closed-between-runs'].includes(scenario);
+    return Array.from({length: scenario === 'many-runs' ? 13 : two ? 2 : 1}, (_, i) => ({
       app: {slug: scenario === 'foreign-app' ? 'untrusted' : 'github-actions'},
       status: scenario === 'timeout' || (scenario === 'wait' && queries === 1) ? 'in_progress' : 'completed',
       conclusion: scenario === 'failure' ? 'failure' : 'success',
@@ -148,6 +167,11 @@ const github = {
         "rerun-cancelled",
         "run-read-error",
         "wrong-workflow",
+        "foreign-pr",
+        "missing-association",
+        "missing-and-current",
+        "multiple-associations",
+        "stale-association-head",
     }
     assert bool(result["error"]) == (case in failures), result
     posts = [args for name, args in result["calls"] if name == "rerun"]
@@ -156,7 +180,11 @@ const github = {
             {"owner": "owner", "repo": "repo", "run_id": 987},
             {"owner": "owner", "repo": "repo", "run_id": 988},
         ]
+    elif case in {"foreign-and-current", "missing-and-current"}:
+        assert posts == [{"owner": "owner", "repo": "repo", "run_id": 988}]
     elif case in {
+        "head-changed-between-runs",
+        "closed-between-runs",
         "success",
         "failure",
         "wait",
@@ -170,6 +198,12 @@ const github = {
         assert posts == [{"owner": "owner", "repo": "repo", "run_id": 987}]
     else:
         assert not posts
+    for i, (name, args) in enumerate(result["calls"]):
+        if name == "rerun":
+            assert result["calls"][i - 2 : i] == [
+                ["run", args],
+                ["get", {"owner": "owner", "repo": "repo", "pull_number": 42}],
+            ]
     if case in {"timeout", "absent", "foreign-app"}:
         assert result["queries"] == 60
     if case == "wait":

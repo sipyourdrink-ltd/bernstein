@@ -188,6 +188,22 @@ def test_small_change_preserves_approval_integrity(qc, roster, case):
     assert not _evaluate(qc, roster, pr).passed
 
 
+def test_401_line_docs_change_needs_one_ordinary_approval(qc, roster):
+    pr = _pr(qc, paths=["README.md"], changed_lines=401, reviews=[_review(qc, "comm1", "APPROVED")])
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_stale_small_label_cannot_lower_quorum_on_large_code(qc, roster):
+    pr = _pr(qc, paths=["web/example.ts"], changed_lines=401, reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = frozenset({"size/s"})
+    pr.reviews.append(_review(qc, "core1", "APPROVED"))
+    assert not _evaluate(qc, roster, pr).passed
+    pr.reviews.append(_review(qc, "comm2", "APPROVED"))
+    assert not _evaluate(qc, roster, pr).passed
+    pr.reviews[-1] = _review(qc, "core2", "APPROVED")
+    assert _evaluate(qc, roster, pr).passed
+
+
 def test_docs_only_does_not_erase_maintainer_or_split_requirement(qc, roster):
     pr = _pr(qc, paths=["docs/example.md"], changed_lines=1001, reviews=[_review(qc, "comm1", "APPROVED")])
     verdict = _evaluate(qc, roster, pr)
@@ -847,7 +863,7 @@ def test_sprint_window_ends_at_midnight_utc(qc: ModuleType, roster, at: datetime
 
 @pytest.mark.parametrize(
     ("changed_lines", "paths"),
-    [(401, ["README.md"]), (12, ["src/bernstein/core/security/auth.py"])],
+    [(401, ["web/example.ts"]), (12, ["src/bernstein/core/security/auth.py"])],
     ids=["large", "sensitive"],
 )
 def test_sprint_window_keeps_three_approvals_and_two_core(
@@ -917,11 +933,17 @@ def test_the_window_applies_to_the_workflows_that_invoke_the_check(qc: ModuleTyp
     used to merge under ordinary rules. Editing the script's *contents* needed
     three days; editing whether the script ran at all needed none.
     """
-    for path in (".github/workflows/quorum.yml", ".github/workflows/quorum-rerun.yml"):
+    for path in (
+        ".github/workflows/quorum.yml",
+        ".github/workflows/quorum-rerun.yml",
+        ".github/workflows/pr-labels.yml",
+    ):
         pr = _pr(qc, author="owner", contributors={"owner"}, paths=[path], pushed_hours_ago=2)
         verdict = _evaluate(qc, roster, pr)
         assert not verdict.passed, path
         assert path in verdict.requirements[0].text, path
+        assert not qc.evaluate(pr, roster, OWNERS, pr.last_push + timedelta(hours=72, microseconds=-1)).passed
+        assert qc.evaluate(pr, roster, OWNERS, pr.last_push + timedelta(hours=72)).passed
 
 
 def test_an_unrelated_workflow_edit_is_not_held_for_three_days(qc: ModuleType, roster) -> None:
@@ -1307,20 +1329,58 @@ def _fetch(qc: ModuleType, fake: FakeGitHub):
     return qc.fetch_pull_request(REPO, 1, api=fake)
 
 
-@pytest.mark.parametrize("changed_files,complete", [(1, True), (2, False)])
-def test_fetch_reads_live_size_label_and_file_completeness(qc, changed_files, complete):
-    fake = FakeGitHub(commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)], compares={})
+@pytest.mark.parametrize(
+    "counts,complete",
+    [
+        ({"changed_files": 1}, True),
+        ({"changed_files": 2}, False),
+        ({}, False),
+        ({"changed_files": None}, False),
+        ({"changed_files": "1"}, False),
+        ({"changed_files": 1.0}, False),
+        ({"changed_files": True}, False),
+        ({"changed_files": -1}, False),
+    ],
+)
+def test_fetch_reads_live_size_label_and_file_completeness(qc, roster, counts, complete):
+    fake = FakeGitHub(
+        commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)],
+        compares={},
+        paths=["web/example.ts"],
+        reviews=[_raw_review("comm1", SHA_A)],
+    )
 
     def api(*args):
         result = fake(*args)
         if args[1] == f"repos/{REPO}/pulls/1":
             result["labels"] = [{"name": "size/s"}, {"name": "area/cli"}]
-            result["changed_files"] = changed_files
+            result.update(counts)
         return result
 
     pr = qc.fetch_pull_request(REPO, 1, api=api)
     assert pr.labels == frozenset({"size/s", "area/cli"})
     assert pr.paths_complete is complete
+    assert _evaluate(qc, roster, pr).passed is complete
+
+
+@pytest.mark.parametrize("old,eligible", [("docs/old.md", True), (".github/old.md", False)])
+def test_rename_counts_as_one_file_and_checks_both_paths(qc, roster, old, eligible):
+    fake = FakeGitHub(
+        commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)], compares={}, reviews=[_raw_review("comm1", SHA_A)]
+    )
+
+    def api(*args):
+        if args[1] == f"repos/{REPO}/pulls/1/files":
+            return [{"filename": "docs/new.md", "previous_filename": old, "status": "renamed"}]
+        result = fake(*args)
+        if args[1] == f"repos/{REPO}/pulls/1":
+            result["changed_files"] = 1
+        return result
+
+    pr = qc.fetch_pull_request(REPO, 1, api=api)
+    assert pr.paths_complete
+    assert pr.paths == ["docs/new.md", old]
+    assert _evaluate(qc, roster, pr).passed is eligible
 
 
 def test_removing_size_label_restores_ordinary_quorum(qc, roster):
