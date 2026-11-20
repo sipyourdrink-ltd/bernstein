@@ -2939,7 +2939,9 @@ def _run_impl(
             # Not --from-plan: that path reads only the ``**Goal:**`` line out
             # of the saved markdown and re-decomposes from the plan name, which
             # silently drops every task just previewed.
-            rerun_hint = f"bernstein run {plan_file}"
+            from bernstein.core.config.platform_compat import shell_quote
+
+            rerun_hint = f"bernstein run {shell_quote(str(plan_file))}"
         else:
             if from_plan is not None:
                 try:
@@ -2954,7 +2956,7 @@ def _run_impl(
             plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
 
         builder = PlanBuilder(plan_obj, tasks)
-        md = builder.render_to_markdown()
+        md = builder.render_to_markdown(rerun_command=rerun_hint)
 
         saved_plan = _save_plan_markdown(md, workdir)
         if output.get("JSON"):
