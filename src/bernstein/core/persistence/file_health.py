@@ -256,12 +256,17 @@ def _compute_coverage_score(file_path: Path, metrics_dir: Path) -> int:
 
 
 def _find_file_coverage(files: dict[str, object], rel: str) -> int:
-    """Look up coverage percentage for a file path by suffix matching."""
-    for cov_path_raw, info in files.items():
-        cov_path = cov_path_raw
-        if not (cov_path.endswith(rel) or rel.endswith(cov_path)):
+    """Prefer the exact coverage path, then the longest matching path suffix."""
+    target = Path(rel).parts
+    best_match = (False, 0)
+    coverage = 70
+    for cov_path, info in files.items():
+        parts = Path(cov_path).parts
+        depth = min(len(parts), len(target))
+        if not depth or parts[-depth:] != target[-depth:]:
             continue
-        if not isinstance(info, dict):
+        match = (parts == target, depth)
+        if match <= best_match or not isinstance(info, dict):
             continue
         info_typed = cast(_CAST_DICT_STR_OBJ, info)
         summary_raw = info_typed.get("summary", {})
@@ -270,8 +275,9 @@ def _find_file_coverage(files: dict[str, object], rel: str) -> int:
         summary = cast(_CAST_DICT_STR_OBJ, summary_raw)
         pct_raw = summary.get("percent_covered", 70)
         if isinstance(pct_raw, (int, float)):
-            return min(100, max(0, int(pct_raw)))
-    return 70
+            coverage = min(100, max(0, int(pct_raw)))
+            best_match = match
+    return coverage
 
 
 # ---------------------------------------------------------------------------
