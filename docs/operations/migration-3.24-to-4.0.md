@@ -88,10 +88,14 @@ contract backed by Bernstein's persistent TaskStore
 ([release note][mcp-note]).
 
 The [SDK compatibility middleware][mcp-bridge] runs the normal dispatcher
-and only rewrites a successful tool result into a legacy `CreateTaskResult`
-when a `tools/call` at `2025-11-25` includes a `task` object and names an
-optional task tool. [`bernstein_run`][mcp-tools] is the optional task tool.
-Plain calls retain ordinary tool results. The middleware adds the legacy
+and rewrites a successful tool result into a legacy `CreateTaskResult` only
+when a `tools/call` at `2025-11-25` includes a `task` object, names an optional
+task tool, and returns structured content containing only `task`.
+[`bernstein_run`][mcp-tools] is the optional task tool. Successful
+task-augmented orchestration calls return the legacy result. Successful calls
+with `template="administrative"` retain the ordinary result even when
+task-augmented ([run routing][mcp-run-routing]). Plain calls also retain
+ordinary tool results. The middleware adds the legacy
 `tasks` capability block only when the `initialize` response negotiates
 `2025-11-25`.
 
@@ -109,7 +113,8 @@ Client upgrade check
 | Request or result | Expected after the SDK upgrade |
 | --- | --- |
 | Plain `tools/call` without a `task` object | Ordinary tool result |
-| Successful `bernstein_run` with a `task` object at `2025-11-25` | Legacy `CreateTaskResult` with a `task` |
+| Successful orchestration `bernstein_run` with a `task` object at `2025-11-25` | Legacy `CreateTaskResult` with a `task` |
+| Successful `bernstein_run` with `template="administrative"` and a `task` object at `2025-11-25` | Ordinary tool result with the administrative run ID |
 | `initialize` negotiating `2025-11-25` on the SDK server | Legacy `tasks` capability advertised |
 | `initialize` negotiating another revision on the SDK server | Legacy `tasks` capability absent |
 | Unsupported `MCP-Protocol-Version` header on custom HTTP with default checks | HTTP 400 |
@@ -254,6 +259,7 @@ result does not make the receipts comparable
 [mcp-dependency]: https://github.com/sipyourdrink-ltd/bernstein/blob/6b02d787bf24f648e2829beecec87e913d37ff17/pyproject.toml#L73-L80
 [mcp-bridge]: https://github.com/sipyourdrink-ltd/bernstein/blob/6b02d787bf24f648e2829beecec87e913d37ff17/src/bernstein/mcp/sdk_compat.py#L20-L62
 [mcp-tools]: https://github.com/sipyourdrink-ltd/bernstein/blob/6b02d787bf24f648e2829beecec87e913d37ff17/src/bernstein/mcp/server.py#L2393-L2403
+[mcp-run-routing]: https://github.com/sipyourdrink-ltd/bernstein/blob/6b02d787bf24f648e2829beecec87e913d37ff17/src/bernstein/mcp/server.py#L713-L743
 [mcp-http-versions]: https://github.com/sipyourdrink-ltd/bernstein/blob/6b02d787bf24f648e2829beecec87e913d37ff17/src/bernstein/mcp/remote_transport.py#L93-L102
 [mcp-http-header]: https://github.com/sipyourdrink-ltd/bernstein/blob/6b02d787bf24f648e2829beecec87e913d37ff17/src/bernstein/mcp/remote_transport.py#L650-L672
 [mcp-http-init]: https://github.com/sipyourdrink-ltd/bernstein/blob/6b02d787bf24f648e2829beecec87e913d37ff17/src/bernstein/mcp/remote_transport.py#L883-L914
