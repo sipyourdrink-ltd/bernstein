@@ -673,13 +673,13 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
-def _raise_first_spawn_refusal(reason: str | None) -> None:
-    click.echo(f"Run failed before any work started: {reason}", err=True, color=False)
+def _report_first_spawn_refusal(reason: str | None, *, waiting: bool = False) -> None:
+    message = "First spawn attempt failed" if waiting else "Run failed before any work started"
+    click.echo(f"{message}: {reason}", err=True, color=False)
     click.echo("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md", err=True, color=False)
-    raise SystemExit(1)
 
 
-def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True, fail_on_refusal: bool = False) -> None:
+def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True, report_refusal: bool = False) -> None:
     """Diagnose a spawned-then-dead agent before a display branch's own wait.
 
     The non-interactive detach path (issue #3528, #4246) briefly confirms the
@@ -709,15 +709,14 @@ def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True, fail_on_refusal:
             status ("waiting for the first agent") while it polls, so a slow
             start reads as progress instead of a hang. ``--quiet`` passes
             False to keep its promise of no progress chatter.
-        fail_on_refusal: Report a confirmed refusal before entering a terminal-state wait.
+        report_refusal: Show a first-spawn refusal while continuing to wait for the run outcome.
     """
     from bernstein.cli.run_bootstrap import _await_first_spawn_outcome, _poll_no_plan_after_spawn
     from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
 
     outcome, reason = _await_first_spawn_outcome(narrate_wait=narrate_wait)
-    if fail_on_refusal and outcome == "refused":
-        _show_run_summary()
-        _raise_first_spawn_refusal(reason)
+    if report_refusal and outcome == "refused":
+        _report_first_spawn_refusal(reason, waiting=True)
     if outcome == "spawned" and _poll_no_plan_after_spawn() is not None:
         if is_json():
             _show_run_summary()
@@ -895,7 +894,7 @@ def _finalize_run_output(
             # the progress output, and takes this branch even on a TTY: a
             # caller that wants an exit code wants the run's outcome, not a
             # dashboard it has to close.
-            _raise_if_no_plan_after_spawn(narrate_wait=not (quiet or plain_run_output()), fail_on_refusal=True)
+            _raise_if_no_plan_after_spawn(narrate_wait=not (quiet or plain_run_output()), report_refusal=True)
             final_status = _wait_for_run_completion(timeout_s=_RUN_WAIT_DEFAULT_S if wait is None else wait)
             _show_run_summary()
             _exit_nonzero_on_unhealthy_run(final_status)
@@ -949,7 +948,8 @@ def _finalize_run_output(
             tracker.poll()
             _show_run_summary()
             if outcome == "refused":
-                _raise_first_spawn_refusal(reason)
+                _report_first_spawn_refusal(reason)
+                raise SystemExit(1)
             if outcome == "spawned":
                 # An agent was confirmed alive at least once, so an empty
                 # agent count now is a death, not "hasn't spawned yet". A run
