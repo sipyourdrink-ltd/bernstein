@@ -132,14 +132,18 @@ flowchart LR
 再試行では `dispatch_tier` が維持され、タスクを再オープンする際には階層を明示的に選択できます。[ディスパッチ階層の仕様](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)を参照してください。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+作業用ブランチから実行してください。Bernstein は検証済みの変更を現在のブランチにマージします。デフォルトブランチでは、変更をマージする実行は開始できません。プルリクエストを開く前に、作業用ブランチで変更を確認してください。
 
 `bernstein doctor --json` は監査契約に基づく `findings` も出力します。同じインストール観測結果に対して、これらは `bernstein govern audit --only INS --json` の結果と同一です。通常の doctor レポートの表示は変わりません。安定したチェック ID については、[doctor 運用ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)を参照してください。
 

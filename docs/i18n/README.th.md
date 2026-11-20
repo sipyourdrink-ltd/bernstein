@@ -132,14 +132,18 @@ flowchart LR
 การลองใหม่จะคงค่า `dispatch_tier` ไว้ และสามารถเลือกระดับอย่างชัดเจนเมื่อเปิดงานอีกครั้ง ดู[ข้อกำหนดระดับการส่งงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+เริ่มงานจากบรานช์สำหรับทำงาน Bernstein จะรวมการเปลี่ยนแปลงที่ผ่านการตรวจสอบเข้ากับบรานช์ปัจจุบัน หากอยู่บนบรานช์เริ่มต้น ระบบจะหยุดงานที่อาจรวมการเปลี่ยนแปลง ตรวจสอบการเปลี่ยนแปลงบนบรานช์ทำงานก่อนเปิด pull request
 
 `bernstein doctor --json` แสดง `findings` ตามสัญญาการตรวจสอบด้วย ซึ่งเหมือนกับผลของ `bernstein govern audit --only INS --json` เมื่อใช้ข้อมูลสังเกตการติดตั้งชุดเดียวกัน รูปแบบการแสดงผลของรายงาน doctor ปกติยังคงเดิม ดูรหัสการตรวจสอบที่คงที่ได้ใน[คู่มือการใช้งาน doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)
 

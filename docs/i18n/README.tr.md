@@ -132,14 +132,18 @@ Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri
 Yeniden denemeler `dispatch_tier` değerini korur; görev yeniden açılırken seviye açıkça seçilebilir. [Dağıtım seviyesi sözleşmesine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) bakın.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Görevi bir çalışma dalından başlatın. Bernstein doğrulanan değişiklikleri geçerli dalla birleştirir. Varsayılan daldayken değişiklikleri birleştirebilecek çalıştırmaları durdurur. Bir çekme isteği açmadan önce değişiklikleri çalışma dalında inceleyin.
 
 `bernstein doctor --json`, denetim sözleşmesinin `findings` bulgularını da sunar; aynı kurulum gözlemleri için bunlar `bernstein govern audit --only INS --json` sonuçlarıyla aynıdır. Normal doctor raporunun mevcut görünümü korunur. Kararlı kontrol kimlikleri için [doctor işletim kılavuzuna](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) bakın.
 

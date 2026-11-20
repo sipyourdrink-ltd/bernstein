@@ -132,14 +132,18 @@ Mỗi node được nhận bởi một agent có vai trò được phase cho ph�
 Các lần thử lại giữ nguyên `dispatch_tier`; khi mở lại tác vụ, có thể chọn cấp một cách tường minh. Xem [hợp đồng cấp điều phối](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:306ba10ae3ef" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Chạy tác vụ từ một nhánh làm việc. Bernstein hợp nhất các thay đổi đã được kiểm tra vào nhánh hiện tại và dừng những lượt chạy có thể hợp nhất thay đổi vào nhánh mặc định. Hãy xem lại thay đổi trên nhánh làm việc trước khi mở yêu cầu hợp nhất.
 
 `bernstein doctor --json` cũng hiển thị các kết quả `findings` của hợp đồng kiểm toán, giống hệt kết quả của `bernstein govern audit --only INS --json` khi dùng cùng các quan sát về cài đặt. Báo cáo doctor thông thường giữ nguyên cách hiển thị. Xem [hướng dẫn vận hành doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) để biết các mã kiểm tra ổn định.
 
