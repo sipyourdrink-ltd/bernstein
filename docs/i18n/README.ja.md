@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: The open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AIエージェントのためのオープンソース・ガバナンスレイヤー
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -206,7 +206,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` は、監査キーを使った HMAC によって実行マニフェストに封印された最終ヘッドとホップ数をレシートチェーンと比較し、末尾の削除、置き換え、終了後のチェーンの延長を検出します。キーを持たずに宣言を書き換える行為も検出対象です。宣言を削除すると、実行は未完了（終了コード `3`）となり、有効とは判定されません。古い真正なスナップショットの再利用は検出できず、監査キーを持つ書き手からの保護も提供しません。詳しくは[委任の検証手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)を参照してください。
 
 ### 仕組み
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 ゴールは 4 つの段階を通る:
 
@@ -217,8 +217,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 スケジューラーが素の Python である理由と、それが何を諦めているかは[なぜ決定論的か](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)にある。
 
+訂正後の累計支出が予算に設定した停止しきい値に達するか、それを上回ると、新しいトークンの報告がなくても、コスト追跡モジュールの `can_spawn()` は `False` を返します。再起動後、保存されたトークン数だけでは、特定のエージェント、タスク、モデルの組み合わせについて以前報告された正確な累計費用を復元できません。
+
 ### 日常のコマンド
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -228,6 +230,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+端末から切り離した SSH 実行でタスクが 0 以外の終了コードを返すと、そのタスクと実行全体が失敗します。終了コードはタスクのレシートに記録され、後続のタスクは保留のままです。
 
 オペレーター向けの全機能（PR 自動化、スケジュール、チャットブリッジ、autofix デーモン）は[オペレーターコマンド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)にある。
 

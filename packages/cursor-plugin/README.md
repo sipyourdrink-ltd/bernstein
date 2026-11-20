@@ -1,6 +1,6 @@
 # Bernstein Plugin for Cursor
 
-Drive Bernstein, the open-source governance layer for AI agents, from Cursor. Monitor tasks, agents, costs, approve plans - all from the chat.
+Drive Bernstein, an open-source governance layer for AI agents, from Cursor. Monitor tasks, agents, costs, approve plans - all from the chat.
 
 ## Skills
 
