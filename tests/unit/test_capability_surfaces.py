@@ -10,9 +10,11 @@ it is *connected*.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from bernstein.core.models import Task
 from bernstein.core.spawner import _render_prompt as render_spawn_prompt
 from click.testing import CliRunner
@@ -262,27 +264,30 @@ def test_plugins_listing_does_not_warn_on_a_well_signalled_plugin() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_recap_since_reports_workspace_events_without_a_server() -> None:
+@pytest.mark.parametrize(
+    ("cwd", "workdir_args"),
+    [("project", ()), (".", ("--workdir", "project"))],
+    ids=["current-directory", "explicit-workdir"],
+)
+def test_recap_since_reports_workspace_events_without_a_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cwd: str, workdir_args: tuple[str, ...]
+) -> None:
     """``recap --since`` reads the workspace journal and needs no task server."""
-    from bernstein.cli.commands.advanced_cmd import recap
+    journal = tmp_path / "project" / ".sdd" / "runtime" / "tasks.jsonl"
+    journal.parent.mkdir(parents=True)
+    now = time.time()
+    journal.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": "T1", "title": "ship it", "status": "done", "timestamp": now}),
+                json.dumps({"id": "T2", "title": "broke it", "status": "failed", "timestamp": now}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path / cwd)
 
-    runner = CliRunner()
-    with runner.isolated_filesystem():
-        journal = Path(".sdd/runtime/tasks.jsonl")
-        journal.parent.mkdir(parents=True)
-        import time as _time
-
-        now = _time.time()
-        journal.write_text(
-            "\n".join(
-                [
-                    json.dumps({"id": "T1", "title": "ship it", "status": "done", "timestamp": now}),
-                    json.dumps({"id": "T2", "title": "broke it", "status": "failed", "timestamp": now}),
-                ]
-            ),
-            encoding="utf-8",
-        )
-        result = runner.invoke(recap, ["--since", "2h", "--as-json"])
+    result = CliRunner().invoke(cli, ["recap", "--since", "2h", "--as-json", *workdir_args])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
