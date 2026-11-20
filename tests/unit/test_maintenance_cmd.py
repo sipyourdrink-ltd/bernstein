@@ -180,12 +180,12 @@ def test_cleanup_removes_only_inactive_worktrees(tmp_path: Path) -> None:
     runner = CliRunner()
     with (
         patch(
-            "bernstein.cli.maintenance_cmd.WorktreeManager.list_active",
+            "bernstein.core.git.worktree.WorktreeManager.list_active",
             return_value=["sess-live", "sess-done"],
         ),
-        patch("bernstein.cli.maintenance_cmd.WorktreeManager.cleanup") as cleanup,
+        patch("bernstein.core.git.worktree.WorktreeManager.cleanup") as cleanup,
         patch(
-            "bernstein.cli.maintenance_cmd.run_hygiene",
+            "bernstein.core.git.git_hygiene.run_hygiene",
             return_value={"worktrees_cleaned": 1, "branches_deleted": 2, "stash_dropped": 0},
         ),
     ):

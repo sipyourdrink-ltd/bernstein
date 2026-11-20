@@ -4,6 +4,24 @@ This guide covers the key parameters that affect Bernstein's throughput, latency
 
 All configurable constants (timeouts, thresholds, budget caps, tick intervals, etc.) are centralized in `src/bernstein/core/defaults.py`. Override them via the `tuning:` section in `bernstein.yaml`.
 
+## Measure CLI startup
+
+Time the installed `bernstein --help` and `bernstein config-path --json`
+in fresh processes with an empty workspace and isolated user configuration.
+Use the same lockfile, Python version and fixture for both revisions.
+Measure the installed console script directly so dependency setup stays
+outside the timer. For a cold-bytecode diagnostic, give each process a
+fresh `PYTHONPYCACHEPREFIX`. For warm runs, prime and reuse that directory.
+Record the elapsed time to exit and the exit code for each process.
+
+Run `python -X importtime -m bernstein --help` with the installed Python to
+inspect imports. The adapter count in help uses the registry's names and
+still checks installed plugin entry points. Built-in implementations load
+when a command looks them up.
+
+These commands measure CLI startup and exit. Local run readiness requires
+a completed preflight, a healthy task server and a ready control surface.
+
 ## Quick reference
 
 | Workload size | Recommended `max_agents` | RAM needed | Typical cost/run |

@@ -7,6 +7,7 @@ import signal
 import sys
 import time
 from contextlib import suppress
+from functools import cached_property
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -79,23 +80,21 @@ console = make_console()
 # ---------------------------------------------------------------------------
 
 
+class _AdapterCLIChoice(click.Choice[str]):
+    def __init__(self) -> None:
+        # Choice.__init__ freezes its iterable, so supply choices at first use.
+        self.case_sensitive = False
+
+    @cached_property
+    def choices(self) -> tuple[str, ...]:  # pyright: ignore[reportIncompatibleVariableOverride]
+        from bernstein.adapters.registry import selectable_adapter_names
+
+        return tuple(sorted({*selectable_adapter_names(), "auto"}))
+
+
 def adapter_cli_choice() -> click.Choice[str]:
-    """Build the ``--cli`` option type from the live adapter registry.
-
-    Returns a :class:`click.Choice` whose options are every selectable
-    adapter (:func:`bernstein.adapters.registry.selectable_adapter_names`)
-    plus the ``auto`` auto-detection sentinel, so ``--cli`` accepts any
-    registered adapter instead of a stale hardcoded subset (issue #2781).
-    The adapters package is imported lazily here so importing this helper
-    module does not pull it in.
-
-    Returns:
-        A case-insensitive ``click.Choice`` over the selectable adapter
-        names plus ``"auto"``.
-    """
-    from bernstein.adapters.registry import selectable_adapter_names
-
-    return click.Choice(sorted({*selectable_adapter_names(), "auto"}), case_sensitive=False)
+    """Accept every selectable adapter and the case-insensitive `auto` sentinel."""
+    return _AdapterCLIChoice()
 
 
 def print_banner() -> None:

@@ -9,7 +9,6 @@ import click
 import httpx
 
 from bernstein.cli.helpers import SERVER_URL, auth_headers, console
-from bernstein.core.knowledge.knowledge_graph import query_impact
 
 # Shared cast-type aliases to avoid string duplication (Sonar S1192).
 type _CAST_LIST_DICT_STR_ANY = list[dict[str, Any]]
@@ -25,6 +24,8 @@ def graph_group() -> None:
 @click.argument("file_query")
 def graph_impact(file_query: str) -> None:
     """Print downstream files impacted by changing FILE_QUERY."""
+    from bernstein.core.knowledge.knowledge_graph import query_impact
+
     result = query_impact(Path(), file_query)
     if not result.matched_files:
         console.print(f"[yellow]No file matched:[/yellow] {file_query}")
