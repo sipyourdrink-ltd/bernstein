@@ -212,6 +212,59 @@ def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
     return config
 
 
+def _yaml_rerun_instruction(plan: Path, *, from_plan: bool, ctx: click.Context | None) -> str:
+    """Keep explicit execution settings with the YAML they were previewed against."""
+    from click.core import ParameterSource
+
+    from bernstein.core.config.platform_compat import shell_quote
+
+    commands = ["bernstein"]
+    contexts = [ctx.parent, ctx] if ctx is not None and ctx.parent is not None else [ctx]
+    for context in contexts:
+        if context is None or not isinstance(context.command, click.Group):
+            commands.append("run")
+        if context is None:
+            continue
+        for option in context.command.params:
+            if not isinstance(option, click.Option) or option.name is None:
+                continue
+            if context.get_parameter_source(option.name) is not ParameterSource.COMMANDLINE:
+                continue
+            flag = option.opts[0]
+            if flag in {"--from-plan", "--plan-only", "--json", "--auto-approve", "--yes"}:
+                continue
+            if flag not in {
+                "--budget",
+                "--budget-cap",
+                "--cells",
+                "--cli",
+                "--fresh",
+                "--hard-budget",
+                "--headless",
+                "--idle",
+                "--max-cost-usd",
+                "--model",
+                "--port",
+                "--quiet",
+                "--retry-budget",
+                "--routing",
+                "--task",
+                "--wait",
+                "--workflow",
+            }:
+                # Do not offer a partial command or save arbitrary option values.
+                return "To run this plan, repeat your original command without `--plan-only` or automatic approval."
+            commands.append(flag)
+            if not option.is_flag:
+                commands.append(str(context.params[option.name]))
+    if from_plan:
+        commands.append("--from-plan")
+    elif str(plan).startswith("-"):
+        commands.append("--")
+    commands.append(str(plan))
+    return "Re-run with `" + " ".join(shell_quote(arg) for arg in commands) + "`"
+
+
 def _load_plan_goal(plan_path: Path) -> str:
     """Extract the goal from a saved plan file (YAML, JSON or markdown).
 
@@ -2688,11 +2741,11 @@ def _run_impl(
     # ``--from-plan`` on a YAML plan: the file carries stages and steps, so run
     # it exactly like the positional plan file instead of reducing it to a goal
     # and re-decomposing (which dropped every step, model pin and dependency).
-    yaml_plan_option = ""
+    yaml_from_option = False
     if plan_file is None and from_plan is not None and from_plan.suffix.lower() in _YAML_PLAN_SUFFIXES:
         _staged_config = _stage_yaml_from_plan(from_plan)
         plan_file, from_plan = from_plan, None
-        yaml_plan_option = "--from-plan "
+        yaml_from_option = True
         if cli is None:
             cli = _staged_config.cli
         if budget_spec is None and max_cost_usd is None:
@@ -2934,7 +2987,7 @@ def _run_impl(
             default_cli=cli,
         )
 
-        rerun_hint: str | None = None
+        rerun_instruction: str | None = None
 
         if plan_file is not None:
             if worker_role:
@@ -2961,11 +3014,7 @@ def _run_impl(
             plan_obj = create_plan(loaded_goal, tasks)
             # Reuse the original YAML and its invocation mode. --from-plan
             # applies top-level adapter and budget settings from that file.
-            from bernstein.core.config.platform_compat import shell_quote
-
-            if not yaml_plan_option and str(plan_file).startswith("-"):
-                yaml_plan_option = "-- "
-            rerun_hint = f"bernstein run {yaml_plan_option}{shell_quote(str(plan_file))}"
+            rerun_instruction = _yaml_rerun_instruction(plan_file, from_plan=yaml_from_option, ctx=ctx)
         else:
             if from_plan is not None:
                 try:
@@ -2980,7 +3029,7 @@ def _run_impl(
             plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
 
         builder = PlanBuilder(plan_obj, tasks)
-        md = builder.render_to_markdown(rerun_command=rerun_hint)
+        md = builder.render_to_markdown(rerun_instruction=rerun_instruction)
 
         saved_plan = _save_plan_markdown(md, workdir)
         if output.get("JSON"):
@@ -2994,7 +3043,10 @@ def _run_impl(
 
         console.print(Markdown(md))
         console.print(f"\n[dim]Plan saved to:[/dim] {saved_plan}")
-        console.print(f"[dim]Execute with:[/dim] {rerun_hint or f'bernstein run --from-plan {saved_plan}'}")
+        if rerun_instruction:
+            console.print(rerun_instruction, markup=False, style="dim")
+        else:
+            console.print(f"[dim]Execute with:[/dim] bernstein run --from-plan {saved_plan}")
         return
 
     # --plan_file: loadable YAML plan (stages + steps)

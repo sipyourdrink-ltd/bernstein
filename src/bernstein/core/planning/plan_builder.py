@@ -119,7 +119,7 @@ class PlanBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    def render_to_markdown(self, *, rerun_command: str | None = None) -> str:
+    def render_to_markdown(self, *, rerun_instruction: str | None = None) -> str:
         """Render the plan as a complete, editable markdown document.
 
         The returned string is ready for display in a terminal or writing to
@@ -136,7 +136,7 @@ class PlanBuilder:
             self._cost_breakdown(),
             self._dependency_order(),
             self._agent_assignments(),
-            self._footer(rerun_command),
+            self._footer(rerun_instruction),
         ]
         return "\n".join(p for p in parts if p) + "\n"
 
@@ -286,12 +286,12 @@ class PlanBuilder:
 
         return "\n".join(lines)
 
-    def _footer(self, rerun_command: str | None) -> str:
+    def _footer(self, rerun_instruction: str | None) -> str:
         plan_id = self._plan.id
-        command = rerun_command or "bernstein run --from-plan <path>"
+        instruction = rerun_instruction or "Re-run with `bernstein run --from-plan <path>`"
         return (
             "---\n"
             f"<!-- Approve via `POST /plans/{plan_id}/approve` -->\n"
             f"<!-- Reject via `POST /plans/{plan_id}/reject` -->\n"
-            f"<!-- Re-run with `{command}` -->"
+            f"<!-- {instruction} -->"
         )
