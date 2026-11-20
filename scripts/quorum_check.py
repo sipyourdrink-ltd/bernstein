@@ -857,7 +857,22 @@ def fetch_pull_request(
         and commits[-1].get("sha") == head_sha
     )
     reported_files = raw.get("changed_files")
-    paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
+    paths_complete = (
+        isinstance(reported_files, int) and not isinstance(reported_files, bool) and reported_files == len(files)
+    )
+    paths = []
+    for entry in files:
+        if entry.get("status") == "renamed":
+            names = (entry.get("filename"), entry.get("previous_filename"))
+        else:
+            names = (entry["filename"],)
+            if entry.get("previous_filename"):
+                names += (entry["previous_filename"],)
+        for name in names:
+            if isinstance(name, str) and name:
+                paths.append(name)
+            else:
+                paths_complete = False
     reviews = [
         Review(
             login=(r.get("user") or {}).get("login", ""),
@@ -909,9 +924,7 @@ def fetch_pull_request(
         diff_changed_at=diff_changed_at,
         uncompared=tuple(diffs.uncompared),
         labels=frozenset(label["name"] for label in raw.get("labels", [])),
-        paths_complete=(
-            isinstance(reported_files, int) and not isinstance(reported_files, bool) and reported_files == len(files)
-        ),
+        paths_complete=paths_complete,
     )
 
 

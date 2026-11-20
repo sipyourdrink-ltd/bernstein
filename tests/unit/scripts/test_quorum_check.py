@@ -1383,6 +1383,20 @@ def test_fetch_reads_live_size_label_and_file_completeness(qc, roster, counts, c
     assert _evaluate(qc, roster, pr).passed is complete
 
 
+def _fetch_labeled_file(qc, record, lines):
+    fake = FakeGitHub(commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)], compares={})
+
+    def api(*args):
+        if args[1] == f"repos/{REPO}/pulls/1/files":
+            return [record]
+        result = fake(*args)
+        if args[1] == f"repos/{REPO}/pulls/1":
+            result.update(changed_files=1, additions=lines, deletions=0, labels=[{"name": "size/s"}])
+        return result
+
+    return qc.fetch_pull_request(REPO, 1, api=api)
+
+
 @pytest.mark.parametrize(
     "old,new,eligible",
     [
@@ -1393,22 +1407,73 @@ def test_fetch_reads_live_size_label_and_file_completeness(qc, roster, counts, c
     ],
 )
 def test_rename_counts_as_one_file_and_checks_both_paths(qc, roster, old, new, eligible):
-    fake = FakeGitHub(
-        commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)], compares={}, reviews=[_raw_review("comm1", SHA_A)]
-    )
-
-    def api(*args):
-        if args[1] == f"repos/{REPO}/pulls/1/files":
-            return [{"filename": new, "previous_filename": old, "status": "renamed"}]
-        result = fake(*args)
-        if args[1] == f"repos/{REPO}/pulls/1":
-            result.update(changed_files=1, additions=401, deletions=0, labels=[{"name": "size/s"}])
-        return result
-
-    pr = qc.fetch_pull_request(REPO, 1, api=api)
+    pr = _fetch_labeled_file(qc, {"filename": new, "previous_filename": old, "status": "renamed"}, 401)
+    pr.reviews = [_review(qc, "comm1", "APPROVED", sha=SHA_A)]
     assert pr.paths_complete
     assert pr.paths == [new, old]
     assert _evaluate(qc, roster, pr).passed is eligible
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        {"filename": "docs/guide.md"},
+        {"filename": "docs/guide.md", "previous_filename": ""},
+        {"filename": "docs/guide.md", "previous_filename": None},
+        {"previous_filename": "docs/guide.md"},
+        {"filename": "", "previous_filename": "docs/guide.md"},
+    ],
+)
+@pytest.mark.parametrize("lines,needed", [(10, (2, 1)), (401, (3, 2))])
+def test_missing_rename_endpoint_withholds_relief(qc, roster, names, lines, needed):
+    pr = _fetch_labeled_file(qc, {"status": "renamed", **names}, lines)
+    assert not pr.paths_complete
+    assert pr.paths == ["docs/guide.md"]
+    demand = _evaluate(qc, roster, pr).pending_quorum
+    assert (demand.total, demand.core) == needed
+    pr.reviews = [_review(qc, "comm1", "APPROVED", sha=SHA_A)]
+    assert not _evaluate(qc, roster, pr).passed
+
+
+@pytest.mark.parametrize("path", ["docs/requirements.in", "docs/requirements.txt"])
+@pytest.mark.parametrize("change", ["modified", "renamed-from", "renamed-to"])
+@pytest.mark.parametrize("lines", [10, 401])
+def test_docs_build_dependencies_require_ordinary_quorum_and_their_owner(qc, path, change, lines):
+    after_sprint = datetime(2026, 11, 24, tzinfo=UTC)
+    roster = qc.load_roster(str(REPO_ROOT), after_sprint.date())
+    owners = qc.load_codeowners(str(REPO_ROOT))
+    assert qc.owners_for(path, owners) == (["chernistry"], True)
+    record = {"status": "modified", "filename": path}
+    if change != "modified":
+        old, new = (path, "docs/guide.md") if change == "renamed-from" else ("docs/guide.md", path)
+        record = {"status": "renamed", "filename": new, "previous_filename": old}
+    pr = _fetch_labeled_file(qc, record, lines)
+    assert pr.paths_complete
+    ordinary = min(roster.committers)
+    core1, core2 = sorted(roster.core_reviewers)[:2]
+    demand = qc.evaluate(pr, roster, owners, after_sprint).pending_quorum
+    assert (demand.total, demand.core) == ((2, 1) if lines == 10 else (3, 2))
+    reviewers = [ordinary, core1] if lines == 10 else [ordinary, core1, core2]
+    pr.reviews = [_review(qc, login, "APPROVED", sha=SHA_A) for login in reviewers]
+    verdict = qc.evaluate(pr, roster, owners, after_sprint)
+    assert not verdict.passed and verdict.pending_quorum is None
+    assert any(path in req.text and not req.met for req in verdict.requirements)
+    pr.reviews[-1] = _review(qc, roster.maintainer, "APPROVED", sha=SHA_A)
+    assert qc.evaluate(pr, roster, owners, after_sprint).passed
+    pr.contributors.add(roster.maintainer)
+    assert not qc.evaluate(pr, roster, owners, after_sprint).passed
+
+
+def test_incomplete_rename_keeps_known_dependency_owner_requirement(qc):
+    as_of = datetime(2026, 11, 24, tzinfo=UTC)
+    roster = qc.load_roster(str(REPO_ROOT), as_of.date())
+    owners = qc.load_codeowners(str(REPO_ROOT))
+    pr = _fetch_labeled_file(qc, {"status": "renamed", "filename": "docs/requirements.in"}, 10)
+    pr.reviews = [_review(qc, login, "APPROVED", sha=SHA_A) for login in sorted(roster.core_reviewers)[:2]]
+    verdict = qc.evaluate(pr, roster, owners, as_of)
+    assert not pr.paths_complete
+    assert not verdict.passed and verdict.pending_quorum is None
+    assert any("docs/requirements.in" in req.text and not req.met for req in verdict.requirements)
 
 
 def test_removing_size_label_restores_ordinary_quorum(qc, roster):

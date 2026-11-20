@@ -163,3 +163,11 @@ def test_requester_counts_current_eligible_people_once_and_fills_missing_core(rr
     pr.same_diff = frozenset({OLD})
     pr.update_only = frozenset({"core1"})
     assert rr.plan_requests(pr, roster, {"comm1", "core2"}, {}) == ["core1"]
+
+
+@pytest.mark.parametrize("lines,expected", [(10, ["core1", "comm1"]), (401, ["core1", "core2", "comm1"])])
+def test_incomplete_file_evidence_requests_the_ordinary_quorum(rr, roster, lines, expected):
+    pr = _pr(rr, paths=["docs/guide.md"], changed_lines=lines)
+    pr.paths_complete = False
+    pr.labels = frozenset({"size/s"})
+    assert rr.plan_requests(pr, roster, set(), {}) == expected
