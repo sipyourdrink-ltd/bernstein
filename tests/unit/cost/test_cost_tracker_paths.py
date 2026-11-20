@@ -241,6 +241,62 @@ class TestRecordAggregation:
 
 
 class TestRecordCumulative:
+    @pytest.mark.parametrize("initial", [0.0, 1.0])
+    def test_estimate_already_counts_toward_next_explicit_total(self, initial: float) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=5.0)
+        if initial:
+            assert t.record_cumulative("a", "t", "sonnet", 0, 0, total_cost_usd=initial) == initial
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0) == pytest.approx(3.0)
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0, total_cost_usd=4.0) == pytest.approx(1.0 - initial)
+        assert t.spent_usd == pytest.approx(4.0)
+        assert t.can_spawn()
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0, total_cost_usd=5.0) == pytest.approx(1.0)
+        assert not t.can_spawn()
+
+    def test_negative_restored_report_has_no_refund(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=-1.0) == 0
+        assert loaded.spent_usd == pytest.approx(1.0)
+        assert loaded.model_breakdowns()[0].input_tokens == 2000
+        assert loaded.record_cumulative("a", "t", "sonnet", 2000, 0) == 0
+
+    @pytest.mark.parametrize("stale_bucket", range(4), ids=["input", "output", "cache-read", "cache-write"])
+    def test_token_only_partial_rewind_cannot_recharge_the_old_counter(self, stale_bucket: int) -> None:
+        t = Tracker(run_id="r")
+
+        def report(buckets: list[int]) -> float:
+            return t.record_cumulative(
+                "a",
+                "t",
+                "sonnet",
+                buckets[0],
+                buckets[1],
+                total_cache_read_tokens=buckets[2],
+                total_cache_write_tokens=buckets[3],
+            )
+
+        first = [1000] * 4
+        report(first)
+        mixed = first.copy()
+        mixed[stale_bucket] -= 100
+        mixed[(stale_bucket + 1) % 4] += 100
+        assert report(mixed) > 0
+        mixed[stale_bucket] = 1000
+        assert report(mixed) == 0
+        assert len(t.usages) == 2
+
+    @pytest.mark.parametrize("other", [("b", "t", "sonnet"), ("a", "u", "sonnet"), ("a", "t", "opus")])
+    def test_mixed_amounts_are_isolated_per_agent_task_and_model(self, other: tuple[str, str, str]) -> None:
+        t = Tracker(run_id="r")
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0) == pytest.approx(3.0)
+        assert t.record_cumulative(*other, 1_000_000, 0, total_cost_usd=4.0) == 4.0
+        assert t.record_cumulative("a", "t", "sonnet", 1_000_000, 0, total_cost_usd=4.0) == pytest.approx(1.0)
+        assert t.spent_usd == pytest.approx(8.0)
+
     def test_first_call_records_full_total(self) -> None:
         t = Tracker(run_id="r")
         delta = t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cost_usd=0.3)
@@ -281,7 +337,8 @@ class TestRecordCumulative:
         t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=3.0)
         assert t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=2.0) == 0.0
         assert t.spent_usd == pytest.approx(3.0)
-        assert len(t.usages) == 1
+        assert t.model_breakdowns()[0].input_tokens == 2000
+        assert len(t.usages) == 2
         assert t.record_cumulative("a", "t", "sonnet", 3000, 0, total_cost_usd=4.0) == pytest.approx(1.0)
         assert t.spent_usd == pytest.approx(4.0)
 
@@ -301,7 +358,8 @@ class TestRecordCumulative:
         assert t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=reported_cost) == 0.0
         assert t.record_cumulative("a", "t", "sonnet", 2000, 0) == 0.0
         assert t.spent_usd == pytest.approx(1.0)
-        assert len(t.usages) == 1
+        assert t.model_breakdowns()[0].input_tokens == 2000
+        assert [(u.input_tokens, u.cost_usd) for u in t.usages] == [(1000, 1.0), (1000, 0.0)]
 
     @pytest.mark.parametrize("counter", ["input", "output", "cache_read", "cache_write"])
     def test_charged_correction_does_not_rewind_token_watermark(self, counter: str) -> None:

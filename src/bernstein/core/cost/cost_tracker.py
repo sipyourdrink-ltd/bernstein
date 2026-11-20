@@ -640,8 +640,9 @@ class CostTracker:
         init=False,
         repr=False,
     )
-    # Explicit cumulative costs have their own high-water mark: token counts
-    # can stay unchanged while a provider corrects its reported cost.
+    # The monetary floor includes accepted estimates for this key as well as
+    # explicit cumulative amounts. Its scope matches the token counters.
+    _cumulative_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _cumulative_costs: dict[tuple[str, str, str], float] = field(default_factory=dict, init=False, repr=False)
     # Existing snapshots contain token baselines only. Preserve their first
     # report's legacy accounting until a fresh explicit cost is observed.
@@ -926,9 +927,10 @@ class CostTracker:
     ) -> float:
         """Record cumulative token usage for one agent/task pair.
 
-        Explicit costs record only the increase over this tracker's previous
-        cumulative cost for the key. Lower costs never refund spend. Without
-        an explicit cost, only previously unseen tokens are priced.
+        An explicit cost charges only the increase over the amount already
+        accounted for on this key, including token estimates. Lower costs
+        never refund spend. Each token bucket advances independently, even
+        when a report adds tokens without increasing the monetary total.
 
         After loading a snapshot, the first explicit report for a restored
         key retains legacy token-based proration (or no charge without new
@@ -949,81 +951,62 @@ class CostTracker:
             Newly-recorded delta cost in USD (0.0 when nothing new is charged).
         """
         key = (agent_id, task_id, model)
-        # We need to track more than just input/output now.
-        # Format in _cumulative_tokens: (input, output, cache_read, cache_write)
-        # Backward compat: handle 2-tuple from old persisted state.
-        prev = self._cumulative_tokens.get(key, (0, 0, 0, 0))
-        if len(prev) == 2:
-            prev_input, prev_output = prev
-            prev_cache_read, prev_cache_write = 0, 0
-        else:
-            prev_input, prev_output, prev_cache_read, prev_cache_write = prev
-
-        cur_input = max(0, total_input_tokens)
-        cur_output = max(0, total_output_tokens)
-        cur_cache_read = max(0, total_cache_read_tokens)
-        cur_cache_write = max(0, total_cache_write_tokens)
-
-        delta_input = max(0, cur_input - prev_input)
-        delta_output = max(0, cur_output - prev_output)
-        delta_cache_read = max(0, cur_cache_read - prev_cache_read)
-        delta_cache_write = max(0, cur_cache_write - prev_cache_write)
-        new_tokens = any((delta_input, delta_output, delta_cache_read, delta_cache_write))
-
-        delta_cost: float | None = None
-        if total_cost_usd is not None:
-            if key in self._restored_cumulative_keys:
-                if not new_tokens:
-                    self._cumulative_costs[key] = max(0.0, float(total_cost_usd))
-                    self._restored_cumulative_keys.discard(key)
-                    return 0.0
-                total_tokens = cur_input + cur_output + cur_cache_read + cur_cache_write
-                prev_tokens = prev_input + prev_output + prev_cache_read + prev_cache_write
-                delta_tokens = total_tokens - prev_tokens
-                if total_tokens > 0 and delta_tokens > 0:
-                    delta_cost = float(total_cost_usd) * (delta_tokens / total_tokens)
-                elif prev_tokens == 0:
-                    delta_cost = float(total_cost_usd)
-            else:
-                delta_cost = max(0.0, float(total_cost_usd) - self._cumulative_costs.get(key, 0.0))
-                if delta_cost == 0.0:
-                    self._cumulative_tokens[key] = (
-                        max(prev_input, cur_input),
-                        max(prev_output, cur_output),
-                        max(prev_cache_read, cur_cache_read),
-                        max(prev_cache_write, cur_cache_write),
-                    )
-                    return 0.0
-        elif not new_tokens:
-            return 0.0
-
-        before = self._spent_usd
-        self.record(
-            agent_id=agent_id,
-            task_id=task_id,
-            model=model,
-            input_tokens=delta_input,
-            output_tokens=delta_output,
-            cost_usd=delta_cost,
-            tenant_id=normalize_tenant_id(tenant_id),
-            cache_read_tokens=delta_cache_read,
-            cache_write_tokens=delta_cache_write,
-            role=role,
-            feature_label=feature_label,
-            cost_tags=cost_tags,
-            quota_envelope=quota_envelope,
-        )
-        self._cumulative_tokens[key] = (cur_input, cur_output, cur_cache_read, cur_cache_write)
-        if total_cost_usd is not None:
-            self._cumulative_tokens[key] = (
-                max(prev_input, cur_input),
-                max(prev_output, cur_output),
-                max(prev_cache_read, cur_cache_read),
-                max(prev_cache_write, cur_cache_write),
+        with self._cumulative_lock:
+            previous = self._cumulative_tokens.get(key, (0, 0, 0, 0))
+            if len(previous) == 2:
+                previous = (*previous, 0, 0)  # Older snapshots omit the cache buckets.
+            current = (
+                max(0, total_input_tokens),
+                max(0, total_output_tokens),
+                max(0, total_cache_read_tokens),
+                max(0, total_cache_write_tokens),
             )
-            self._cumulative_costs[key] = max(0.0, float(total_cost_usd))
-            self._restored_cumulative_keys.discard(key)
-        return self._spent_usd - before
+            deltas = tuple(max(0, seen - old) for seen, old in zip(current, previous, strict=True))
+            delta_input, delta_output, delta_read, delta_write = deltas
+            accounted = self._cumulative_costs.get(key, 0.0)
+            restored = key in self._restored_cumulative_keys
+            if total_cost_usd is None:
+                charge = estimate_cost(model, delta_input, delta_output, delta_read, delta_write)
+            elif restored and total_cost_usd >= 0 and any(deltas):
+                # Legacy snapshots lack the earlier monetary total. Use the old
+                # first-report proration (or token pricing if the net count fell).
+                net_tokens = sum(current) - sum(previous)
+                if net_tokens > 0:
+                    prorated = total_cost_usd * (net_tokens / sum(current))
+                    charge = min(prorated, max(0.0, total_cost_usd - accounted))
+                else:
+                    charge = estimate_cost(model, delta_input, delta_output, delta_read, delta_write)
+            elif restored:
+                charge = 0.0
+            else:
+                charge = max(0.0, total_cost_usd - accounted)
+
+            if charge or any(deltas):
+                self.record(
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    model=model,
+                    input_tokens=delta_input,
+                    output_tokens=delta_output,
+                    cost_usd=charge,
+                    tenant_id=tenant_id,
+                    cache_read_tokens=delta_read,
+                    cache_write_tokens=delta_write,
+                    role=role,
+                    feature_label=feature_label,
+                    cost_tags=cost_tags,
+                    quota_envelope=quota_envelope,
+                )
+            elif not restored:
+                return 0.0
+
+            # Publish only accepted progress. An envelope rejection leaves both
+            # sets of counters available for a later permitted replay.
+            self._cumulative_tokens[key] = tuple(old + delta for old, delta in zip(previous, deltas, strict=True))
+            self._cumulative_costs[key] = max(accounted + charge, total_cost_usd or 0.0)
+            if total_cost_usd is not None and total_cost_usd >= 0:
+                self._restored_cumulative_keys.discard(key)
+            return charge
 
     def can_spawn(self, *, quota_envelope: str | None = None) -> bool:
         """Atomically check whether the budget permits spawning another agent.
