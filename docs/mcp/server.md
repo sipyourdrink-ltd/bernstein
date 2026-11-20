@@ -512,11 +512,19 @@ native task, include a `task` object in the `tools/call` parameters.
 {"name": "bernstein_run", "arguments": {"goal": "Update project notes"}, "task": {}}
 ```
 
-On success, the SDK compatibility middleware returns a `CreateTaskResult`.
-Use its `task.taskId` with `tasks/get`, `tasks/result` or `tasks/cancel`.
+The example uses the default `orchestration` template. On success, the
+SDK compatibility middleware returns a `CreateTaskResult`. Use its
+`task.taskId` with `tasks/get`, `tasks/result` or `tasks/cancel`.
 `tasks/list` lists task rows. Omitting `task` returns a `CallToolResult`
-with the run JSON on the same connection. With metering enabled, the run
-payload is under `result` in the [cost-meter envelope](#per-call-cost-meter-envelope).
+with the orchestration run payload.
+
+With `arguments.template` set to `"administrative"`, both plain and
+task-augmented calls return an ordinary `CallToolResult`. Pass its
+payload's `runId` as `run_id` to `bernstein_run_status` to follow the
+administrative run. With metering enabled, both templates place their
+`CallToolResult` payload under `result`. The administrative identifier
+is then at `result.runId`.
+See the [cost-meter envelope](#per-call-cost-meter-envelope).
 
 - `bernstein_run_status` declares `execution.taskSupport: "forbidden"`.
   Invoke it as a plain tool. Tools without an `execution` hint also default
