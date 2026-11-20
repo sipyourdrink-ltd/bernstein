@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -279,6 +281,156 @@ class TestFetchAndResume:
         assert "write failed" in payload["error"]
         assert "Failed to record the resume entry: write failed" in result.stderr
 
+    @pytest.mark.parametrize("denied_mode", ["r+b", "a"], ids=["recovery", "append"])
+    def test_resume_writer_io_error_exits_one(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, denied_mode: str
+    ) -> None:
+        ledger = _seed(project)
+        bucket = ledger.bucket_path
+        ledger.close()
+        before = bucket.read_bytes()
+        path_open = Path.open
+
+        def deny_write(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            if path == bucket and mode == denied_mode:
+                raise PermissionError("ledger write denied")
+            return path_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", deny_write)
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 1, result.output
+        report = json.loads(result.stdout)
+        assert "ledger write denied" in report["error"]
+        assert report["dispatch_status"] == "not_dispatched"
+        assert report["signal_paths"] == []
+        assert bucket.read_bytes() == before
+        assert not (project / ".sdd" / "runtime" / "resume").exists()
+
+    def test_resume_invalid_run_id_returns_json(self, project: Path) -> None:
+        result = CliRunner().invoke(ledger_group, ["resume", "bad id", "--workdir", str(project), "--json"])
+        assert result.exit_code == 2, result.exception
+        report = json.loads(result.stdout)
+        assert report["run_id"] == "bad id"
+        assert "run id" in report["error"]
+        assert report["dispatch_status"] == "not_dispatched"
+        assert report["signal_paths"] == []
+
+    @pytest.mark.parametrize("timed_out", ["rev-parse", "cat-file"])
+    def test_resume_anchor_lookup_timeout_reports_io_error(self, project: Path, timed_out: str) -> None:
+        ledger = _seed(project)
+        anchor_ledger(project, ledger.ledger_dir, run_id="run-a")
+        before = ledger.bucket_path.read_bytes()
+        run = subprocess.run
+
+        def timeout_on_read(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+            if args[:2] == ["git", timed_out]:
+                raise subprocess.TimeoutExpired(args, 30)
+            return run(args, **kwargs)
+
+        with patch.object(subprocess, "run", side_effect=timeout_on_read):
+            result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 1, result.output
+        report = json.loads(result.stdout)
+        assert "timed out" in report["error"]
+        assert report["dispatch_status"] == "not_dispatched"
+        assert ledger.bucket_path.read_bytes() == before
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["queue", "dry-run"])
+    @pytest.mark.parametrize("damaged", ["config", "HEAD"])
+    def test_resume_stops_on_fatal_git_lookup(self, project: Path, dry_run: bool, damaged: str) -> None:
+        ledger = _seed(project)
+        anchor_ledger(project, ledger.ledger_dir, run_id="run-a")
+        before = ledger.bucket_path.read_bytes()
+        (project / ".git" / damaged).write_text("incomplete fixture\n", encoding="utf-8")
+        args = ["resume", "run-a", "--workdir", str(project), "--json"]
+        if dry_run:
+            args.append("--dry-run")
+        result = CliRunner().invoke(ledger_group, args)
+        assert result.exit_code == 1, result.output
+        report = json.loads(result.stdout)
+        assert "git" in report["error"].lower()
+        assert report["dispatch_status"] == "not_dispatched"
+        assert report["signal_paths"] == []
+        assert ledger.bucket_path.read_bytes() == before
+        assert not (project / ".sdd" / "runtime" / "resume").exists()
+
+    def test_resume_local_ledger_outside_git(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        project = tmp_path / "ordinary-workspace"
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        _seed(project)
+        (project / "objects").mkdir()
+        (project / "refs").mkdir()
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["dispatch_status"] == "queued"
+
+    @pytest.mark.parametrize(("field", "value"), [("ts", "yesterday"), ("redactions", []), ("schema_version", None)])
+    def test_resume_reports_invalid_row_metadata(self, project: Path, field: str, value: object) -> None:
+        ledger = _seed(project)
+        bucket = ledger.bucket_path
+        ledger.close()
+        rows = bucket.read_text(encoding="utf-8").splitlines()
+        row = json.loads(rows[2])
+        row[field] = value
+        rows[2] = json.dumps(row)
+        bucket.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        before = bucket.read_bytes()
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 2, result.exception
+        report = json.loads(result.stdout)
+        assert any("entry 2" in error and field in error for error in report["errors"])
+        assert report["signal_paths"] == []
+        assert bucket.read_bytes() == before
+        assert not (project / ".sdd" / "runtime" / "resume").exists()
+
+    @pytest.mark.parametrize("run_id", ["run-a", "r" * 65], ids=["local-ahead", "local-only-id"])
+    def test_resume_verified_local_history_without_an_anchor_update(self, project: Path, run_id: str) -> None:
+        ledger = _seed(project, run_id)
+        if run_id == "run-a":
+            anchor_ledger(project, ledger.ledger_dir, run_id=run_id)
+            ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t3")
+        result = CliRunner().invoke(ledger_group, ["resume", run_id, "--workdir", str(project), "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["dispatch_status"] == "queued"
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["queue", "dry-run"])
+    @pytest.mark.parametrize("local_copy", [False, True], ids=["anchor-only", "with-local"])
+    @pytest.mark.parametrize("name", ["LEDGER.json", "chunk-000000.jsonl"])
+    def test_resume_rejects_invalid_utf8_in_anchor(
+        self, project: Path, name: str, local_copy: bool, dry_run: bool
+    ) -> None:
+        ledger = _seed(project)
+        ref = anchor_ledger(project, ledger.ledger_dir, run_id="run-a").ref
+        bucket = ledger.bucket_path
+        ledger.close()
+        before = bucket.read_bytes()
+        if not local_copy:
+            bucket.unlink()
+
+        # Keep the entry hashes valid so the only fault is the blob's encoding.
+        original = _git(project, "show", f"{ref}:{name}").encode("utf-8")
+        _git(project, "read-tree", ref)
+        (project / name).write_bytes(original.replace(b"{", b'{"note":"\xff",', 1))
+        _git(project, "add", "--", name)
+        tree = _git(project, "write-tree")
+        commit = _git(project, "commit-tree", tree, "-p", ref, "-m", "invalid UTF-8 fixture")
+        _git(project, "update-ref", ref, commit)
+
+        args = ["resume", "run-a", "--workdir", str(project), "--json"]
+        if dry_run:
+            args.append("--dry-run")
+        result = CliRunner().invoke(ledger_group, args)
+        assert result.exit_code == 2, result.output
+        report = json.loads(result.stdout)
+        assert "UTF-8" in report["error"]
+        assert report["dispatch_status"] == "not_dispatched"
+        assert report["signal_paths"] == []
+        assert not (project / ".sdd" / "runtime" / "resume").exists()
+        if local_copy:
+            assert bucket.read_bytes() == before
+        else:
+            assert not bucket.exists()
+
     def test_resume_missing_ledger(self, project: Path) -> None:
         result = CliRunner().invoke(ledger_group, ["resume", "run-x", "--workdir", str(project)])
         assert result.exit_code == 1, result.output
@@ -354,7 +506,7 @@ class TestFetchAndResume:
         _git(clone, "config", "user.email", "b@example.com")
         _git(clone, "config", "user.name", "B")
         anchor_ledger(clone, run_ledger_dir(clone / ".sdd", "run-a"), run_id="run-a")
-        _git(clone, "push", "origin", f"{ledger_ref('run-a')}:{ledger_ref('run-a')}", "--force")
+        _git(project, "fetch", str(clone), f"+{ledger_ref('run-a')}:{ledger_ref('run-a')}")
 
         # The two chains now extend the same parent entry: A's next resume
         # must refuse, naming the exact fork position.

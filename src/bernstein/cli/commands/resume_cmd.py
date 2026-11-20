@@ -15,6 +15,7 @@ and resuming across role-definition changes are explicitly out of scope.
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
@@ -27,6 +28,7 @@ from bernstein.adapters._contract import resume_capability, strategy_for
 from bernstein.cli.helpers import console
 from bernstein.core.lifecycle.hooks import HookRegistry, LifecycleContext, LifecycleEvent
 from bernstein.core.persistence.agent_checkpoint import (
+    AmbiguousAgentCheckpointError,
     discard_checkpoint,
     evaluate_observations,
     find_checkpoint_for_task,
@@ -78,11 +80,11 @@ def discard_agent_checkpoint(workdir: Path, task_id: str) -> bool:
     """Drop the agent checkpoint for ``task_id``; return whether one existed.
 
     Exposed so the dashboard and the API can take the discard path without
-    parsing CLI output. After the drop the next run of the task carries no
-    continuation entry, so the chain reads it as a new run.
+    parsing CLI output. The separate task checkpoint retains the saved
+    step and adapter session. Lookup or deletion I/O errors propagate.
     """
     runtime_dir = workdir / ".sdd" / "runtime"
-    checkpoint = find_checkpoint_for_task(task_id, runtime_dir)
+    checkpoint = find_checkpoint_for_task(task_id, runtime_dir, for_discard=True)
     if checkpoint is None:
         return False
     return discard_checkpoint(checkpoint.agent_id, runtime_dir)
@@ -279,10 +281,10 @@ def resume_cmd(
         0  resume prepared (and, when --dry-run is off, signal queued)
         1  resume preparation or signal write failed with an I/O error
         2  no checkpoint on disk
-        3  checkpoint corrupt / failed schema validation
+        3  invalid checkpoint data or ambiguous agent checkpoint for --discard
         4  task.resume lifecycle hook failed
         5  grant mismatch — role narrowed, task reassigned, or parent cancelled
-        6  observations moved — discard and respawn, or --override-observations
+        6  observations moved — see the hint for resume and fresh-run options
     """
     project_root = workdir or Path.cwd()
     report: dict[str, object] = {
@@ -307,6 +309,7 @@ def resume_cmd(
 
     try:
         if discard:
+            report["checkpoint_discarded"] = False
             dropped = discard_agent_checkpoint(project_root, task_id)
             report["checkpoint_discarded"] = dropped
             if not output_json:
@@ -323,6 +326,12 @@ def resume_cmd(
         )
     except CheckpointMissingError as exc:
         fail(EXIT_NO_CHECKPOINT, f"No checkpoint: {exc}", _work_ledger_hint(project_root, task_id))
+    except AmbiguousAgentCheckpointError as exc:
+        fail(
+            EXIT_CORRUPT,
+            str(exc),
+            "Inspect the checkpoints under .sdd/runtime/agents/ or start a new session with 'bernstein run --fresh'.",
+        )
     except CheckpointCorruptError as exc:
         fail(
             EXIT_CORRUPT,
@@ -340,8 +349,9 @@ def resume_cmd(
         fail(
             EXIT_OBSERVATIONS_MOVED,
             f"Observations moved — resume refused: {exc}",
-            f"Respawn the task from scratch with 'bernstein resume {task_id} --discard', "
-            "or resume onto the changed bytes with --override-observations.",
+            "Start a new session with 'bernstein run --fresh'. "
+            "To resume from the task checkpoint, --discard removes the agent checkpoint, "
+            "or --override-observations keeps it and accepts the changed bytes.",
         )
     except OSError as exc:
         fail(EXIT_IO_ERROR, f"Could not prepare resume: {exc}")
@@ -389,6 +399,7 @@ def _work_ledger_hint(workdir: Path, resume_id: str) -> str | None:
     """
     from bernstein.core.persistence.ledger_git import LedgerGitError, ledger_ref, list_ledger_runs
     from bernstein.core.persistence.work_ledger import LedgerReader, run_ledger_dir
+    from bernstein.core.security.path_containment import PathContainmentError
 
     try:
         ledger_ref(resume_id)
@@ -396,13 +407,13 @@ def _work_ledger_hint(workdir: Path, resume_id: str) -> str | None:
         return None
     try:
         has_local = LedgerReader(run_ledger_dir(workdir / ".sdd", resume_id)).exists()
-    except OSError:
+    except (OSError, PathContainmentError):
         has_local = False
     has_anchor = False
     if not has_local:
         try:
             has_anchor = resume_id in list_ledger_runs(workdir)
-        except (OSError, LedgerGitError):
+        except (OSError, subprocess.TimeoutExpired, LedgerGitError):
             has_anchor = False
     if has_local or has_anchor:
         return (

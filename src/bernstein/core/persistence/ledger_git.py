@@ -94,6 +94,18 @@ class LedgerGitError(RuntimeError):
     """Raised when a ledger anchor/fetch/materialize step cannot proceed."""
 
 
+class LedgerAnchorMissingError(LedgerGitError):
+    """No anchor exists for this run identifier."""
+
+
+class LedgerGitIOError(LedgerGitError):
+    """Git could not complete an operation needed to inspect the ledger."""
+
+
+class LedgerLocalAheadError(LedgerGitError):
+    """The local ledger already extends the verified anchor."""
+
+
 class LedgerDivergenceError(LedgerGitError):
     """Two chains extend the same parent entry (divergent resumes).
 
@@ -184,17 +196,34 @@ def ledger_ref(run_id: str) -> str:
     """
     if not _RUN_ID_RE.match(run_id):
         msg = f"invalid run id {run_id!r}: must match {_RUN_ID_RE.pattern}"
-        raise LedgerGitError(msg)
+        raise LedgerAnchorMissingError(msg)
     return f"{LEDGER_REF_PREFIX}{run_id}"
 
 
 def _resolve_ref(repo_dir: Path, ref: str) -> str | None:
     """Return the sha *ref* points at, or ``None`` when absent."""
-    result = run_git(["rev-parse", "--verify", "--quiet", ref], repo_dir)
+    result = run_git(["rev-parse", "--verify", "--quiet", ref], repo_dir, env={**os.environ, "LC_ALL": "C"})
     sha = result.stdout.strip()
-    if result.returncode != 0 or not sha:
+    if result.returncode == 0 and sha:
+        return sha
+    diagnostic = result.stderr.strip()
+    if result.returncode == 1 and not diagnostic:
         return None
-    return sha
+    if result.returncode == 128 and diagnostic.startswith("fatal: not a git repository (or any "):
+        # Git uses the same discovery error for a plain workspace and a broken
+        # checkout. Only the plain workspace can resume with local history alone.
+        ceilings = os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep)
+        start = repo_dir.resolve()
+        for directory in (start, *start.parents):
+            if str(directory) in ceilings:
+                break
+            bare_layout = (
+                (directory / "HEAD").is_file() and (directory / "objects").is_dir() and (directory / "refs").is_dir()
+            )
+            if os.path.lexists(directory / ".git") or bare_layout:
+                raise LedgerGitIOError(f"git could not inspect the repository at {directory}: {diagnostic}")
+        return None
+    raise LedgerGitIOError(f"git rev-parse failed for {ref}: {diagnostic or f'exit {result.returncode}'}")
 
 
 def list_ledger_runs(repo_dir: Path) -> list[str]:
@@ -233,7 +262,7 @@ def _run_git_bytes(
             timeout=30,
         )
     except subprocess.TimeoutExpired as exc:
-        raise LedgerGitError(f"git {args[0]} timed out after {exc.timeout}s") from exc
+        raise LedgerGitIOError(f"git {args[0]} timed out after {exc.timeout}s") from exc
 
 
 def _read_blob(repo_dir: Path, sha: str) -> bytes:
@@ -243,6 +272,13 @@ def _read_blob(repo_dir: Path, sha: str) -> bytes:
         msg = f"git cat-file blob {sha[:12]} failed: {stderr}"
         raise LedgerGitError(msg)
     return result.stdout
+
+
+def _read_blob_text(repo_dir: Path, sha: str, name: str) -> str:
+    try:
+        return _read_blob(repo_dir, sha).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LedgerGitError(f"Invalid UTF-8 in anchored ledger {name}: {exc}") from exc
 
 
 def _read_tree_entries(repo_dir: Path, ref: str) -> dict[str, str]:
@@ -273,7 +309,7 @@ def read_anchored_rows(repo_dir: Path, run_id: str) -> tuple[list[dict[str, Any]
     ref = ledger_ref(run_id)
     if _resolve_ref(repo_dir, ref) is None:
         msg = f"no anchored ledger for run {run_id!r} (ref {ref} not found)"
-        raise LedgerGitError(msg)
+        raise LedgerAnchorMissingError(msg)
 
     entries = _read_tree_entries(repo_dir, ref)
     meta_sha = entries.get(LEDGER_META_NAME)
@@ -281,16 +317,17 @@ def read_anchored_rows(repo_dir: Path, run_id: str) -> tuple[list[dict[str, Any]
         msg = f"anchored ledger for run {run_id!r} is missing {LEDGER_META_NAME}"
         raise LedgerGitError(msg)
     try:
-        meta_raw: Any = json.loads(_read_blob(repo_dir, meta_sha).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        meta_raw: Any = json.loads(_read_blob_text(repo_dir, meta_sha, LEDGER_META_NAME))
+    except json.JSONDecodeError as exc:
         msg = f"anchored ledger metadata for run {run_id!r} is not valid JSON"
         raise LedgerGitError(msg) from exc
-    meta: dict[str, Any] = meta_raw if isinstance(meta_raw, dict) else {}
+    if not isinstance(meta_raw, dict):
+        raise LedgerGitError(f"anchored ledger metadata for run {run_id!r} is not a JSON object")
 
     rows: list[dict[str, Any]] = []
     chunk_names = sorted(name for name in entries if name != LEDGER_META_NAME)
     for name in chunk_names:
-        payload = _read_blob(repo_dir, entries[name]).decode("utf-8", errors="replace")
+        payload = _read_blob_text(repo_dir, entries[name], name)
         for offset, raw in enumerate(payload.splitlines(), start=1):
             stripped = raw.strip()
             if not stripped:
@@ -304,7 +341,7 @@ def read_anchored_rows(repo_dir: Path, run_id: str) -> tuple[list[dict[str, Any]
                 msg = f"anchored ledger chunk {name} line {offset} is not a JSON object"
                 raise LedgerGitError(msg)
             rows.append(row)
-    return rows, meta
+    return rows, meta_raw
 
 
 def _anchored_entries(rows: list[dict[str, Any]]) -> list[LedgerEntry]:
@@ -568,7 +605,7 @@ def plan_ledger_materialization(
                 f"({relation.local_entries} > {relation.remote_entries} entries); "
                 f"run 'bernstein ledger anchor {run_id}' instead."
             )
-            raise LedgerGitError(msg)
+            raise LedgerLocalAheadError(msg)
         action = "unchanged" if relation.relation == "identical" else "fast-forwarded"
 
     return MaterializeResult(action=action, head_hash=head_hash, entry_count=len(anchored)), anchored

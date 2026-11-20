@@ -173,9 +173,10 @@ a normal `git gc` reclaims them.
 | Interior row edited after the fact | fail-closed refusal naming the position |
 | Two divergent resumes | refusal naming the fork entry and both heads |
 
-The command exits with `0` on success, `1` for a missing ledger or local I/O
-error, `2` when verification fails or the ledger rejects the resume entry,
-and `3` when the histories diverge. A ledger with invalid UTF-8 fails
-verification. Human-readable diagnostics for missing ledgers,
+`ledger resume` exits with `0` on success, `1` for a missing ledger or an
+I/O error, `2` for an invalid run ID, failed verification or a rejected
+resume entry, and `3` when the histories diverge. Invalid UTF-8 in a local
+bucket, anchored metadata or an anchored chunk stops the resume before
+it records an entry or queues a signal. Human-readable diagnostics for missing ledgers,
 verification failures, and divergence go to stderr. When `verify --json` can read a ledger,
 it prints the structured result to stdout even if verification fails.

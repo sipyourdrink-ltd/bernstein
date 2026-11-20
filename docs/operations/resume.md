@@ -39,10 +39,10 @@ for these signals.
 | 0 | Resume prepared (and, unless `--dry-run`, signal queued) |
 | 1 | I/O error while preparing the resume or writing the signal |
 | 2 | No checkpoint on disk for `task_id` |
-| 3 | Checkpoint corrupt or failed schema validation |
+| 3 | Invalid checkpoint data, or multiple agent checkpoints match an explicit `--discard` |
 | 4 | `task.resume` lifecycle hook failed |
 | 5 | Grant mismatch — role narrowed, task reassigned, or parent cancelled |
-| 6 | Observations moved — discard and respawn, or `--override-observations` |
+| 6 | Observations moved since the agent checkpoint was written |
 
 ## Checkpoint layout
 
@@ -102,6 +102,10 @@ writing a signal and `not_dispatched` if no signal was written.
 `runtime_acknowledged` is currently `false`. A refusal or write failure
 includes an `error` field and a nonzero exit status. With `--discard`,
 `checkpoint_discarded` reports whether the agent checkpoint was removed.
+A deletion or lookup I/O error stops the command before it increments
+`resume_count` or queues a signal. A missing agent checkpoint allows
+the task resume to proceed. If multiple agents have checkpoints for the
+same task, `--discard` exits with code 3 and preserves them all.
 
 ## Troubleshooting
 
@@ -112,6 +116,11 @@ was wiped. The only recovery is a fresh run.
 **`Corrupt checkpoint` (exit 3).** Schema validation failed; remove
 `.sdd/runtime/checkpoints/<task-id>/checkpoint.json` and run the task
 fresh, or fix the file by hand if you know what drifted.
+
+**Observations moved (exit 6).** Use `bernstein run --fresh` to start a
+new session. To continue from the saved task step and adapter session,
+`bernstein resume <task-id> --discard` removes the agent checkpoint.
+`--override-observations` keeps it and accepts the changed bytes.
 
 **Resume signal queued.** Check `signal_paths` for the file written by
 the command. The runtime currently provides no receipt for that signal.

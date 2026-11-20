@@ -19,6 +19,7 @@ the repository. This command group is the operator surface over it:
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -29,8 +30,11 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.persistence.ledger_git import (
+    LedgerAnchorMissingError,
     LedgerDivergenceError,
     LedgerGitError,
+    LedgerGitIOError,
+    LedgerLocalAheadError,
     anchor_ledger,
     fetch_ledger_ref,
     gc_ledger_ref,
@@ -50,6 +54,7 @@ from bernstein.core.persistence.work_ledger import (
     run_ledger_dir,
 )
 from bernstein.core.security.audit_chain import AuditChainStore, record_work_ledger_anchor
+from bernstein.core.security.path_containment import PathContainmentError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -308,7 +313,7 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
     Exit codes:
         0  resume prepared (state rebuilt from the verified chain)
         1  no ledger on disk (and none anchored), or an I/O operation failed
-        2  chain verification failed or the ledger rejected the resume entry
+        2  invalid run ID, chain verification failed or the ledger rejected the resume entry
         3  local and anchored chains diverge (two divergent resumes)
     """
     signal_paths: list[str] = []
@@ -367,19 +372,26 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
                 materialized_action = materialize_ledger(root, run_id, ledger_dir).action
         except LedgerDivergenceError as exc:
             fail(EXIT_DIVERGED, f"Divergence detected: {exc}")
-        except LedgerGitError as exc:
+        except LedgerAnchorMissingError as exc:
             if not has_local:
                 fail(
                     EXIT_NO_LEDGER,
                     f"No work ledger for run {run_id!r}: {exc}",
                     hint="After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.",
                 )
-            # No anchored ref, or local ahead of the anchor: both fine to resume.
+        except LedgerLocalAheadError:
+            pass  # The verified local history already extends the anchor.
+        except LedgerGitIOError as exc:
+            fail(EXIT_IO_ERROR, f"Could not read the anchor for run {run_id!r}: {exc}")
+        except LedgerGitError as exc:
+            fail(EXIT_VERIFY_FAILED, f"Could not verify the anchor for run {run_id!r}: {exc}")
 
         state = replay_state(entries, run_id=run_id)
     except UnicodeDecodeError as exc:
         fail(EXIT_VERIFY_FAILED, f"Invalid UTF-8 in work ledger for run {run_id!r}: {exc}")
-    except OSError as exc:
+    except PathContainmentError as exc:
+        fail(EXIT_VERIFY_FAILED, f"Invalid ledger path for run {run_id!r}: {exc}")
+    except (OSError, subprocess.TimeoutExpired) as exc:
         fail(EXIT_IO_ERROR, f"Could not prepare work ledger for run {run_id!r}: {exc}")
 
     report.update(state.to_dict(), materialized=materialized_action)
@@ -404,7 +416,9 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
                 "state": RunJournalState.RESUMED.value,
             },
         )
-    except (LedgerError, UnicodeDecodeError) as exc:
+    except (LedgerError, UnicodeDecodeError, PathContainmentError) as exc:
+        if isinstance(exc.__cause__, OSError):
+            fail(EXIT_IO_ERROR, f"Could not write the resume entry: {exc}")
         fail(EXIT_VERIFY_FAILED, f"Failed to record the resume entry: {exc}")
     except OSError as exc:
         fail(EXIT_IO_ERROR, f"Could not write the resume entry: {exc}")

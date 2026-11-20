@@ -218,20 +218,21 @@ def load_checkpoint(workdir: Path, task_id: str) -> TaskResumeCheckpoint:
 
     Raises:
         CheckpointMissingError: No checkpoint file on disk.
-        CheckpointCorruptError: File exists but is unreadable or invalid.
+        CheckpointCorruptError: The contents have invalid encoding, JSON or schema.
+        OSError: The checkpoint could not be read.
     """
     path = checkpoint_path_for(workdir, task_id)
-    if not path.is_file():
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
         raise CheckpointMissingError(
             f"No resume checkpoint for task {task_id!r} at {path}. "
             "Either the task has not produced a checkpoint yet or the "
             "directory was cleaned up. Run the task fresh with "
             f"`bernstein run` instead."
-        )
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise CheckpointCorruptError(f"Checkpoint for task {task_id!r} is unreadable at {path}: {exc}") from exc
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise CheckpointCorruptError(f"Checkpoint for task {task_id!r} at {path} is not valid UTF-8: {exc}") from exc
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
