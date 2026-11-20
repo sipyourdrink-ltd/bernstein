@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import Mock
 
 import httpx
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands import cluster_cmd
+from bernstein.cli.main import cli
 
 
 class _FakeResponse:
@@ -159,6 +162,25 @@ class TestClusterStatusCommand:
         result = CliRunner().invoke(cluster_cmd.cluster_group, ["status"])
         assert result.exit_code == 1
         assert "Cannot connect" in result.output
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "expected"),
+    [("status", _STATUS_PAYLOAD), ("nodes", _STATUS_PAYLOAD["nodes"])],
+    ids=["status", "nodes"],
+)
+def test_cluster_json_output_uses_explicit_server_url(
+    monkeypatch: pytest.MonkeyPatch, subcommand: str, expected: dict[str, Any] | list[dict[str, Any]]
+) -> None:
+    fetch_status = Mock(return_value=_STATUS_PAYLOAD)
+    monkeypatch.setattr(cluster_cmd, "_fetch_cluster_status", fetch_status)
+    server_url = "http://cluster-status.test:8052"
+
+    result = CliRunner().invoke(cli, ["cluster", subcommand, "--server-url", server_url, "--json-output"])
+
+    assert result.exit_code == 0, result.output
+    fetch_status.assert_called_once_with(server_url)
+    assert json.loads(result.output) == expected
 
 
 class TestWorkerAdvertisesAdapterLabel:
