@@ -7,7 +7,7 @@ CLI agent adapters (claude, codex, gemini, aider, goose and others): a task prom
 | File | Purpose |
 |---|---|
 | `base.py` | Base adapter: spawn, timeout, and kill discipline; lineage write boundary |
-| `registry.py` | `_ADAPTERS` name -> class map, plus adapters built from capability profiles |
+| `registry.py` | `_ADAPTERS` maps names to lazy class targets and profile-built adapters. Root help reads names and installed plugin declarations. Selection or detailed inspection loads plugin implementations. |
 | `_contract.py` | Loads the per-adapter YAML capability contracts and asserts them |
 | `capability_profile.py`, `draft.py` | Declarative capability profiles; `draft.py` drafts one from probe evidence during onboarding |
 | `admission.py`, `env_isolation.py` | Receipt-gated adapter admission; spawned-agent environment allowlisting and credential filtering |
@@ -24,8 +24,6 @@ CLI agent adapters (claude, codex, gemini, aider, goose and others): a task prom
 | `crew_ingest.py`, `directory/`, `digest/` | Ingest of role-and-crew traces as delegation receipts; SCIM directory provisioning; deterministic tool-output digesters |
 
 ## Invariants
-
-- Root help uses registered adapter names and installed entry-point declarations. Loading a plugin implementation belongs to selection or detailed adapter inspection.
 
 - An adapter's YAML contract in `tests/contract/contracts/` names its required flags/subcommands. Capability assertions only, never snapshot `--help` text (`_contract.py` docstring); drift is a hard fail (exit 2). Not every registered adapter has a contract yet; a new adapter should ship one.
 - Artifact writes go through the lineage-spine boundary in `base.py`; do not add adapter-local artifact write paths (`../core/lineage/spine.py`).
