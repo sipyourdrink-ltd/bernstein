@@ -28,6 +28,7 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.run_service_cmd import EXIT_NO_RUN, run_service_group
+from bernstein.core.persistence.work_ledger import LedgerReader, run_ledger_dir
 from bernstein.core.run_service import (
     RunService,
     SSHBackendSpec,
@@ -39,6 +40,7 @@ from bernstein.core.run_service import (
     write_ssh_spec,
 )
 from bernstein.core.sandbox.ssh_backend import SSHSandboxBackend
+from bernstein.core.run_service.ssh_runner import SSHRunnerError
 from bernstein.core.security.audit_chain import EVENT_RUN_SSH_TASK, AuditChainStore
 from tests.support.ssh_fake import InProcessSSHTransport
 from tests.support.vault_fake import FakeVault, make_git_repo
@@ -173,6 +175,41 @@ def test_ssh_backend_kill_mid_run_then_restart_loses_zero_completed(
     events = _ssh_events(project, run_id)
     assert sorted(e.details["task_id"] for e in events) == sorted(tasks)
     assert len({e.details["worktree"] for e in events}) == len(tasks)
+    assert verify_run(project, run_id).ok
+
+
+@pytest.mark.parametrize("exit_code", [0, 23])
+def test_remote_exit_controls_task_outcome(
+    project: Path, remote_repo: Path, remote_root: Path, exit_code: int
+) -> None:
+    svc = RunService(project)
+    run_id = svc.submit("exit status", ["t0"], run_id="run-exit").run_id
+    runner = SSHTaskRunner(
+        _spec(remote_repo, remote_root),
+        project,
+        run_id,
+        backend=_fake_backend(remote_root),
+        command_for=lambda _: ["sh", "-c", f"exit {exit_code}"],
+    )
+    if exit_code:
+        with pytest.raises(SSHRunnerError, match="23"):
+            advance_run(project, run_id, task_runner=runner)
+    else:
+        advance_run(project, run_id, task_runner=runner)
+
+    state = svc.project(run_id)
+    assert state.completed_tasks == ([] if exit_code else ["t0"])
+    assert state.failed_tasks == (["t0"] if exit_code else [])
+    assert state.in_flight_tasks == []
+    entries = list(LedgerReader(run_ledger_dir(project / ".sdd", run_id)).entries())
+    terminal = [e for e in entries if e.kind in {"task.completed", "task.failed"}]
+    assert len(terminal) == 1
+    assert terminal[0].kind == ("task.failed" if exit_code else "task.completed")
+    if exit_code:
+        assert terminal[0].payload["exit_code"] == exit_code
+    events = _ssh_events(project, run_id)
+    assert len(events) == 1
+    assert events[0].details["exit_code"] == exit_code
     assert verify_run(project, run_id).ok
 
 
