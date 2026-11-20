@@ -8,7 +8,7 @@ Targets the per-run budget tracker's observable contracts:
 * ``EnvelopeConfig`` normalisation, allowlist matching, (de)serialisation.
 * ``CostTracker.record`` aggregation into ``spent_by_model`` /
   ``spent_for_agent`` / envelope rollups; explicit-cost vs estimated.
-* ``record_cumulative`` delta-safe accounting + cost proration.
+* ``record_cumulative`` delta-safe token and explicit-cost accounting.
 * Envelope hard caps (``EnvelopeBudgetError``), allowlist refusal, and
   the threshold hook firing exactly once.
 * ``status`` soft thresholds, hard-cap kill switch, unlimited budget.
@@ -250,17 +250,49 @@ class TestRecordCumulative:
     def test_second_call_records_only_delta(self) -> None:
         t = Tracker(run_id="r")
         t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
-        # cumulative grows to 2000 input tokens; prorated cost.
-        delta = t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=2.0)
-        # second call prorates total_cost over the delta tokens fraction.
-        assert delta > 0.0
-        assert t.spent_usd == pytest.approx(1.0 + delta)
+        delta = t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0)
+        assert delta == pytest.approx(2.0)
+        assert t.spent_usd == pytest.approx(3.0)
 
-    def test_no_new_tokens_returns_zero(self) -> None:
+    def test_identical_report_counts_once(self) -> None:
         t = Tracker(run_id="r")
         t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cost_usd=1.0)
         delta = t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cost_usd=1.0)
         assert delta == 0.0
+        assert t.spent_usd == pytest.approx(1.0)
+        assert len(t.usages) == 1
+
+    def test_cost_correction_without_new_tokens_stops_spawning(self) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=2.75)
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=3.0)
+        delta = t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=4.0)
+        assert delta == pytest.approx(1.0)
+        assert t.spent_usd == pytest.approx(4.0)
+        assert not t.can_spawn()
+        assert t.usages[-1].input_tokens == 0
+
+    def test_explicit_cost_without_any_tokens(self) -> None:
+        t = Tracker(run_id="r")
+        assert t.record_cumulative("a", "t", "sonnet", 0, 0, total_cost_usd=1.0) == pytest.approx(1.0)
+
+    def test_lower_cost_with_more_tokens_does_not_refund_or_reset_baseline(self) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=3.0)
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=2.0) == 0.0
+        assert t.spent_usd == pytest.approx(3.0)
+        assert len(t.usages) == 1
+        assert t.record_cumulative("a", "t", "sonnet", 3000, 0, total_cost_usd=4.0) == pytest.approx(1.0)
+        assert t.spent_usd == pytest.approx(4.0)
+
+    def test_token_only_reports_keep_delta_pricing(self) -> None:
+        t = Tracker(run_id="r")
+        first = t.record_cumulative("a", "t", "sonnet", 1000, 500, total_cache_read_tokens=100)
+        second = t.record_cumulative("a", "t", "sonnet", 2000, 700, total_cache_read_tokens=150)
+        assert first == pytest.approx(estimate_cost("sonnet", 1000, 500, 100))
+        assert second == pytest.approx(estimate_cost("sonnet", 1000, 200, 50))
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 700, total_cache_read_tokens=150) == 0.0
+        assert len(t.usages) == 2
 
     def test_decreasing_totals_clamped_no_negative(self) -> None:
         t = Tracker(run_id="r")
