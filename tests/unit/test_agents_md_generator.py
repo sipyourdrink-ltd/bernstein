@@ -151,6 +151,45 @@ class TestRenderCanonical:
         assert out.endswith("\n")
         assert not out.endswith("\n\n")
 
+    def test_review_guidelines_render_once_and_match_approved_text(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path)
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        out = render_canonical(sections, repo_name="demo")
+        expected = (
+            "## Review guidelines\n"
+            "\n"
+            "Bernstein's job is a record of agent work that can be verified later, so review first for changes "
+            "that would make the scheduler or the record report something that did not happen.\n"
+            "\n"
+            "- Completion: a task or workflow node is done only on an accepted attempt. Flag code that releases "
+            "dependents, marks a task completed or reports success on a session ID, a spawn, a queued signal or a"
+            " non-zero exit.\n"
+            "- Cost and budgets: cumulative cost adds, never overwrites; the budget check runs before the next "
+            "spawn; a late adjustment cannot lower a total already counted.\n"
+            "- Determinism: the scheduler has no model in the loop. Flag unordered iteration, wall-clock or "
+            "random values in planning, replay or audit output.\n"
+            "- Audit chain and lineage: flag any change that weakens an existing check, skips a write without an "
+            "error, or describes a receipt as signed when no signing key is configured.\n"
+            "- Back-compat: legacy import paths go through `_REDIRECT_MAP` in `src/bernstein/core/__init__.py`; "
+            "flag new shim modules at old paths.\n"
+            "- Tests: a behaviour change has a test under `tests/` that fails without it and passes with `uv run "
+            "python scripts/run_tests.py`.\n"
+            "- Docs: a user-visible or operator change updates its docs in the same PR (see Documentation duty). "
+            "Claims in README, docs and release notes match the code: no superlatives, no counts the code does "
+            'not produce, and "test vectors" rather than "conformance vectors".\n'
+            "- Secrets: no keys, tokens or personal data in code, fixtures or logs.\n"
+            "\n"
+            "Severity: P0 a false record, data loss, a security or money defect; P1 a wrong result or broken "
+            "contract; P2 a missing test or doc. Style is ruff's job.\n"
+            "\n"
+            "Output: one comment per finding with severity, file:line, the failing scenario in one sentence and a"
+            " suggested fix. Done when every changed file was read; with no P0-P2 finding, say so and name the "
+            "checks above that you ran.\n"
+        )
+        assert sum(section.key == "review-guidelines" for section in sections) == 1
+        assert out.count("## Review guidelines\n") == 1
+        assert out[out.index("## Review guidelines\n") :] == expected
+
     def test_repo_name_default_is_neutral(self, tmp_path: Path) -> None:
         _make_repo(tmp_path)
         sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))

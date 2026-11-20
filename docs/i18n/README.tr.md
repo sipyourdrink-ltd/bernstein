@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI ajanları için açık kaynak governance katmanı
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:84e7f64086f5" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -29,10 +29,10 @@
 
 > **Durum: beta.** Tek bir kişi tarafından sürdürülmekte olup aktif geliştirme aşamasındadır. Sürüm numarası olgunluğu değil yayınları sayar — ara sürümler (minor) arayüzleri değiştirebilir. Bağımlı olduğunuz her şey için sürümü sabitleyin; gerilemeler (regressions) hızla düzeltilir, [bildirin](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 50+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
+Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
 
 ### bir bakışta
-<!-- l10n: en="at a glance" hash="sha256:88399365cb50" -->
+<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
 
 Beş şey onu farklı kılar; gerisi ayrıntıdır.
 
@@ -40,7 +40,7 @@ Beş şey onu farklı kılar; gerisi ayrıntıdır.
 - **Donanım anahtarı kanıtları.** Çevrimdışı PIV muhafaza ve FIDO2 onay doğrulayıcıları, sabitlenmiş güven ve açık zaman ile aynı makbuz protokolünü kullanır. Token muhafazası TRACE güven seviyelerini yükseltmez. [Donanım anahtarı kanıtları](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Sonradan doğrulanabilir.** Yeniden oynatma günlüğü (replay journal) her çalıştırmayı kaydeder ve her zaman açık olan soy kütüğü omurgası (lineage spine) soy kütüğü oluşturan her adımı kaydeder; isteğe bağlı HMAC zincirli denetim günlüğü (`BERNSTEIN_AUDIT=1`) çevrimdışı doğrulayabileceğiniz makbuzlar (receipts) ekler. Deterministik olmama durumu, kararsız bir yeniden çalıştırma yerine tam adımda bir karma (hash) uyuşmazlığı olarak ortaya çıkar. Kod dışı çıktılar da aynı muameleyi görür: bir görev bir yapıt sözleşmesi (rapor, veri seti, eylem günlüğü, operasyon sonucu) bildirebilir ve bir git işlemesi (commit) yerine imzalı bir soy kütüğü makbuzu ile tamamlanır.
 - **Tasarım gereği yalıtılmış.** Her kodlama görevi, birleştirme kapılarının arkasında kendi git worktree'sini alır; yapıt modundaki görevler `.sdd/workspaces/` altında bir çalışma dizini alır. Ajanlar varsayılan olarak değiştirilebilir çalışma alanını paylaşmaz; tek paylaşılan durum, atomik olarak talep edilen görev birikimidir. Daha katı dosya sistemi denetimi [sandbox arka uçlarından](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) isteğe bağlıdır. Worktree'leri devre dışı bırakırsanız her görev paylaşılan çalışma kopyasında çalışır.
-- **Geniş ve yerel.** 53'ten fazla CLI ajan adaptörü artı genel bir `--prompt` sarmalayıcısı, dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.
+- **Geniş ve yerel.** Genel `--prompt` sarmalayıcısı dahil, seçilebilir 55 CLI ajan adaptörü adı. dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.
 
 Tam liste [yetenekler sayfasında](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) yer alır; [özellik matrisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) kapsamlı dizindir.
 
@@ -49,7 +49,7 @@ Görev sunucusu, yeni görevlerin alınması için durumu kalıcı olarak saklan
 Rol bağdaştırıcısı ilkesi, ayrı ayrı belirtilmeyen roller için isteğe bağlı bir varsayılan izin listesi destekler; [kılavuza](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) bakın.
 
 ### bir çalıştırma nasıl görünür
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
 
 Tek bir YAML dosyası çalıştırmayı bildirir: fazlar, roller, bağımlılıklar ve bir düğümün hangi koşullarda çalışacağı. Zamanlayıcı bunu saf Python olarak yürütür - dosyada hiçbir şey prompt değildir ve bundan sonra ne olacağına hiçbir model karar vermez. Bu graf bir denetim kanıt paketi üretir; dosyanın tamamı [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) içindedir.
 
@@ -129,15 +129,21 @@ flowchart LR
 
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
+Yeniden denemeler `dispatch_tier` değerini korur; görev yeniden açılırken seviye açıkça seçilebilir. [Dağıtım seviyesi sözleşmesine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) bakın.
+
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:b74a88129372" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
 bernstein init
-bernstein doctor             # checks a CLI agent is installed and authenticated
-bernstein -g "fix the failing test in tests/test_foo.py"
+# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein doctor             # shows setup steps for the current project
+bernstein run --worker backend
 ```
+
+Görevi bir çalışma dalından başlatın. Bernstein doğrulanan değişiklikleri geçerli dalla birleştirir. Varsayılan daldayken değişiklikleri birleştirebilecek çalıştırmaları durdurur. Bir çekme isteği açmadan önce değişiklikleri çalışma dalında inceleyin.
 
 `bernstein doctor --json`, denetim sözleşmesinin `findings` bulgularını da sunar; aynı kurulum gözlemleri için bunlar `bernstein govern audit --only INS --json` sonuçlarıyla aynıdır. Normal doctor raporunun mevcut görünümü korunur. Kararlı kontrol kimlikleri için [doctor işletim kılavuzuna](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) bakın.
 
@@ -166,7 +172,9 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 
 | ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — terminal kontrol paneli (uzak çalışan düğümleri) | `bernstein gui serve` — tarayıcı kontrol paneli |
+| `BERNSTEIN_SERVER_URL="<task-server-url>"` `bernstein live` — terminal kontrol paneli (uzak çalışan düğümleri) | `<task-server-url>/ui/` — GUI dosyaları kuruluysa çalışan görev sunucusunun tarayıcı kontrol paneli. `bernstein gui serve` geçerli çalışma alanında bağımsız bir sunucu başlatır. |
+
+Sunucu kimlik doğrulaması gerektiriyorsa terminal için `BERNSTEIN_AUTH_TOKEN` ayarlayın ve tarayıcının giriş ekranına yetkili bir token girin. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### bir çalıştırmayı kanıtlayın
 <!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
@@ -210,7 +218,7 @@ Her hedef dört aşamadan geçer:
 Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: [neden deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:7d149b09b9bc" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -227,17 +235,19 @@ Operatör arayüzünün tamamı (PR otomasyonu, zamanlamalar, sohbet köprüleri
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
-bernstein workflow resume <run_id>                    # picks up at the first non-completed node
+bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md).
+Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Devam ettirirken aynı `-g` değerini yeniden verin; böylece tamamlanmamış düğümlerin istemlerinde `{goal}` yerine bu değer konur.
+
+`bernstein compliance controls` her kontrol için test takımlarını ve varsa son tam ölçümü gösterir. [Karşılaştırma testlerinin kapsamı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Depo hijyen kapıları: `bernstein readme-l10n verify`, çevrilmiş README'leri İngilizce kaynaktan sapan bir PR'ı başarısız kılar (güncelliğini yitirmiş bölümü adlandırarak); `bernstein readme-l10n sync`, İngilizce düzenlemelerden sonra bunları yeniden bağlar. Bkz. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### desteklenen ajanlar
-<!-- l10n: en="supported agents" hash="sha256:45abeaa3624d" -->
+<!-- l10n: en="supported agents" hash="sha256:d674cd57d15a" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ve daha fazlası. [Adaptör dizini](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bunlardan 30'u için kurulum komutlarını içerir. `bernstein integrations list`, neyin çözümlendiğine dair tek doğruluk kaynağı olan `src/bernstein/adapters/registry.py` dosyasındaki 57 bağlı entegrasyonun tamamını listeler. Bunların 55'u seçilebilir ajan adaptörleridir; diğer iki satır ise test taslağı `mock` ve uç nokta profili `self-hosted-endpoints`tir. `--prompt` bayrağına sahip diğer her şey genel sarmalayıcı aracılığıyla çalışır.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ve daha fazlası. [Adaptör dizini](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bunlardan 30'u için kurulum komutlarını içerir. `bernstein integrations list`, neyin çözümlendiğine dair tek doğruluk kaynağı olan `src/bernstein/adapters/registry.py` dosyasındaki 57 bağlı entegrasyonun tamamını listeler. Bunların 55'u seçilebilir ajan adaptörleridir; diğer iki satır ise test taslağı `mock` ve uç nokta profili `self-hosted-endpoints`tir. `--prompt` bayrağına sahip diğer her şey genel sarmalayıcı aracılığıyla çalışır. `bernstein adapters list` → `Selectable CLI agent adapter names: 55` (`generic`; `agy` = `antigravity`).
 
 Aynı çalıştırmada ajanları birleştirin: standart şablon kodlar için ucuz yerel modeller, mimari için daha güçlü bulut modelleri. `bernstein integrations list --installed` makinenizde nelerin mevcut olduğunu gösterir.
 
@@ -254,7 +264,7 @@ bernstein volunteer browse --budget 60
 [Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse`, `budget`, `verify-bundle` ve `hub`. `autopilot` kayıtlıdır ancak bir `TaskSource` uygulanana kadar çalışmayı reddeder.
 
 ### ön sayfanın ötesinde
-<!-- l10n: en="beyond the front page" hash="sha256:801093c5eaf6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
 
 Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein.run/) yer alır:
 
@@ -266,6 +276,7 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | değerin nerede oluştuğu ve Bernstein'ın nerede yanlış araç olduğu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | ajan / komut / döngü düğümlerinden oluşan bildirimsel YAML DAG'ları |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI'nin kullandığı API üzerinde çalışan tarayıcı kontrol paneli (görev oluşturma ve inceleme) |
+| [küme çalışanlarının durumu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Boş disk alanı, bellek kullanımı veya ağ gecikmesi belirlenen sınırların dışındayken çalışanlar yeni görev almaz. |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | deneysel: kendi hesabınızda R2 çalışma alanı senkronizasyonu ile Cloudflare Workers üzerinde ajanları çalıştırın. Barındırılan `api.bernstein.run` hizmeti henüz kullanılamıyor |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | salt okunur sorgu makbuzları ve her sonucu türetildiği şema anlık görüntüsüne bağlayan sorgu sürücüsü |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | rolleri yerleşik şablonların dışındaki ajan tanımlarına yönlendirin — genel bir YAML/SKILL.md dizini veya Claude Code eklenti düzeni |
@@ -273,16 +284,16 @@ Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | sistemin iç mekanizması ve çalışma prensibi |
 
 ### neden bu isim?
-<!-- l10n: en="why the name?" hash="sha256:6770d1e03d45" -->
+<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
 
-Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Proje, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur.
+Bernstein, adını Amerikalı orkestra şefi ve besteci Leonard Bernstein'dan almıştır. Projenin orkestratörü, AI ajanlarından oluşan bir ekibi, Bernstein'ın New York Filarmoni Orkestrası'nı yönettiği gibi yönetir: her müzisyen tam zamanında girer, partisyon deterministiktir, sonuçtan orkestra şefi sorumludur. Orkestra şefi benzetmesi, Bernstein’ın kod, araştırma raporları veya veri kümeleri üreten ajan görevlerini orkestre etme yeteneğini anlatır.
 
 bernstein'ı yazdım çünkü üç kodlama ajanını paralel çalıştırıp deterministik olmayan birleştirmeler alırken ayda 400 dolar claude faturası ödüyordum. Apache 2.0, tek kişi tarafından sürdürülmektedir. Canlı istatistikler: [bernstein.run](https://bernstein.run).
 
 ### bahsedilen yerler
-<!-- l10n: en="mentioned in" hash="sha256:e1dfaf62cb5d" -->
+<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
 
-[vinta/awesome-python](https://github.com/vinta/awesome-python) listesinde yer aldı, Augment Code'un [açık kaynaklı ajan orkestratörleri](https://www.augmentcode.com/tools/open-source-agent-orchestrators) incelemesinde ele alındı ve [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) bülteninde listelendi. Yaklaşımı ayrıca awesome-agentic-patterns içinde [deterministik sıfır-LLM orkestrasyonu](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) deseni olarak belgeledik.
+Augment Code'un [açık kaynaklı ajan orkestratörleri](https://www.augmentcode.com/tools/open-source-agent-orchestrators) incelemesinde ele alındı ve [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) bülteninde listelendi. Yaklaşımı ayrıca awesome-agentic-patterns içinde [deterministik sıfır-LLM orkestrasyonu](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) deseni olarak belgeledik.
 
 <details>
 <summary>Tüm kapsam: 20'den fazla awesome listesi, dizin, bülten ve atıf</summary>
@@ -293,9 +304,9 @@ Her awesome listesi girdisi, katalog kaydı, önceki çalışma atıfı ve bült
 </details>
 
 ### Yönetim çalıştırmaları
-<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
 
-`bernstein_run(template="administrative", goal="Weekly sprint")` ile planlayıcı veya ajan süreçleri başlatmadan denetlenebilir boş bir kapsayıcı oluşturun. `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ile elle görev ekleyin ve `bernstein_run_status(run_id="admin-...")` ile durumu sorgulayın. Görevler normal sahiplenme API’si ile alınabilir ancak otomatik orkestrasyona dahil edilmez. Boş olmayan bir çalıştırma, her görevin durumu `done`, `closed` veya `cancelled` olduğunda biter; boş çalıştırma açık kalır. [İşletim akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bu çağrılar MCP köprüsünü kullanır. Sonraki çağrılarda dönen `runId` değerini `run_id` olarak kullanın. `bernstein_run(template="administrative", goal="Weekly sprint")` ile planlayıcı veya ajan süreçleri başlatmadan denetlenebilir boş bir kapsayıcı oluşturun. `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` ile elle görev ekleyin ve `bernstein_run_status(run_id="<returned runId>")` ile durumu sorgulayın. Görevler normal sahiplenme API’si ile alınabilir ancak otomatik orkestrasyona dahil edilmez. Boş olmayan bir çalıştırma, her görevin durumu `done`, `closed` veya `cancelled` olduğunda biter; boş çalıştırma açık kalır. [İşletim akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### katkıda bulunma, destek, lisans
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

@@ -105,7 +105,7 @@ type _CAST_DICT_STR_ANY = dict[str, Any]
 type _CAST_STR_INT_FLOAT_NONE = str | int | float | None
 
 
-def _parse_budget(raw: str | int | float | None) -> float | None:
+def _parse_budget(raw: object) -> float | None:
     """Extract a numeric dollar amount from a budget value.
 
     Args:
@@ -121,7 +121,8 @@ def _parse_budget(raw: str | int | float | None) -> float | None:
         return None
     if isinstance(raw, (int, float)):
         return float(raw)
-    # At this point raw must be str (the only remaining type).
+    if not isinstance(raw, str):
+        raise SeedError("Invalid budget format. Expected '$N' or a number.")
     m = _BUDGET_RE.match(raw.strip())
     if m:
         return float(m.group(1))
@@ -1532,6 +1533,26 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
             "no one. Pin each peer as 'gossip_peer_keys: {<node_id>: <ed25519 public key>}' "
             "(the peer's .sdd/cluster/identity/claim_signing.pub).",
         )
+    shards_raw = cluster_dict.get("shards", {})
+    if not isinstance(shards_raw, dict):
+        raise SeedError("cluster.shards must be a mapping of shard IDs to URLs")
+    shards = tuple(cast("dict[str, str]", shards_raw).items())
+    shard_vnodes = cast("int", cluster_dict.get("shard_vnodes", 128))
+    try:
+        ClusterConfig(shards=shards, shard_vnodes=shard_vnodes)
+    except ValueError as exc:
+        raise SeedError(str(exc)) from exc
+    min_disk_raw = cluster_dict.get("min_disk_free_mb", 512)
+    if isinstance(min_disk_raw, bool) or not isinstance(min_disk_raw, int) or min_disk_raw < 0:
+        raise SeedError("cluster.min_disk_free_mb must be a non-negative integer")
+    health_limits: dict[str, float] = {}
+    for key, default in (("max_mem_used_pct", 95.0), ("max_mesh_rtt_ms", 5000.0)):
+        value = cluster_dict.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value < float("inf"):
+            raise SeedError(f"cluster.{key} must be a finite non-negative number")
+        if key == "max_mem_used_pct" and value > 100:
+            raise SeedError("cluster.max_mem_used_pct must be at most 100")
+        health_limits[key] = float(value)
     return ClusterConfig(
         enabled=bool(cluster_dict.get("enabled", False)),
         topology=topology,
@@ -1544,6 +1565,11 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         claim_lease_ttl_s=lease_raw,
         claim_journal_path=journal_path,
         gossip_peer_keys=peer_keys,
+        shards=shards,
+        shard_vnodes=shard_vnodes,
+        min_disk_free_mb=min_disk_raw,
+        max_mem_used_pct=health_limits["max_mem_used_pct"],
+        max_mesh_rtt_ms=health_limits["max_mesh_rtt_ms"],
     )
 
 
@@ -2531,8 +2557,8 @@ def parse_seed(path: Path) -> SeedConfig:
     return _parse_seed(path, apply_tuning=True)
 
 
-def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
-    """Share parsing with launch validation without rebinding parent tuning."""
+def _load_seed_mapping(path: Path, *, validate_layers: bool = True) -> dict[str, object]:
+    """Read the effective seed mapping without validating unrelated sections."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
 
@@ -2559,10 +2585,18 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
     # overlay and no ``$BERNSTEIN_CONFIG_OVERRIDE`` this is the identity, and
     # a setup that edits the committed file directly behaves as it always did.
     try:
-        data: dict[str, object] = cast("_StrObjDict", resolve_effective_mapping(committed, config_path=path))
+        data: dict[str, object] = cast(
+            "_StrObjDict", resolve_effective_mapping(committed, config_path=path, validate_layers=validate_layers)
+        )
     except (RunOverlayError, LayerValidationError) as exc:
         raise SeedError(str(exc)) from exc
 
+    return data
+
+
+def _parse_seed(path: Path, *, apply_tuning: bool, mapping: dict[str, object] | None = None) -> SeedConfig:
+    """Share parsing with launch validation without rebinding parent tuning."""
+    data = _load_seed_mapping(path) if mapping is None else mapping
     _warn_unknown_top_level_keys(data)
 
     # --- Required fields ---
@@ -2571,7 +2605,7 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
         raise SeedError("Seed file must contain a non-empty 'goal' string.")
 
     # --- Optional fields ---
-    budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
+    budget_usd = _parse_budget(data.get("budget"))
     team = _parse_team(data.get("team"))
 
     # ``team_manifest: <name>[@sha256]`` expands deterministically into the

@@ -7,31 +7,25 @@ from pathlib import Path
 import pytest
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
 ACTION = "reviewdog/action-actionlint"
-PIN = "a7d35aaf8c309203a4ae861d32b7bd490baa7bf3"
-WORKFLOWS = ("ci.yml",)
 
 
-def _calls(name: str) -> list[dict]:
-    workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
-    return [
-        step
-        for job in workflow["jobs"].values()
-        for step in job.get("steps", [])
-        if str(step.get("uses", "")).startswith(ACTION + "@")
-    ]
-
-
-@pytest.mark.parametrize("name", WORKFLOWS)
-def test_all_callers_use_reviewed_release(name: str) -> None:
-    calls = _calls(name)
+@pytest.fixture(scope="module")
+def workflow_lint_step() -> dict:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["actionlint"]["steps"]
+    calls = [step for step in steps if step.get("uses", "").startswith(ACTION + "@")]
     assert len(calls) == 1
-    assert calls[0]["uses"] == ACTION + "@" + PIN
+    return calls[0]
 
 
-def test_actionlint_retains_blocking_reporter_and_flags() -> None:
-    inputs = _calls("ci.yml")[0]["with"]
+def test_workflow_lint_uses_reviewed_release(workflow_lint_step: dict) -> None:
+    assert workflow_lint_step["uses"] == ACTION + "@a7d35aaf8c309203a4ae861d32b7bd490baa7bf3"
+
+
+def test_workflow_lint_retains_reporter_and_flags(workflow_lint_step: dict) -> None:
+    inputs = workflow_lint_step["with"]
     assert inputs["reporter"] == "github-check"
     assert inputs["level"] == "error"
     assert inputs["fail_level"] == "error"
