@@ -736,3 +736,14 @@ The action is pinned to `4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85`. Its upstream
 The topology healer, weekly and continuous coverage ratchets, observability snapshot and major/minor release bump use create-pull-request v8.1.2. Their branch names, token selection, inputs and permissions stay as configured. This action uses Node.js 24 on the existing Ubuntu runners.
 
 The action is pinned to `15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8`. Its upstream `v8.1.2` tag resolves to that commit.
+
+## reviewdog/action-actionlint version
+
+The Workflow lint job runs `reviewdog/action-actionlint` v1.83.0 on Ubuntu.
+The [release tag](https://github.com/reviewdog/action-actionlint/releases/tag/v1.83.0)
+resolves to commit `a7d35aaf8c309203a4ae861d32b7bd490baa7bf3`.
+Its [action metadata](https://github.com/reviewdog/action-actionlint/blob/a7d35aaf8c309203a4ae861d32b7bd490baa7bf3/action.yml)
+pins the Docker image by digest. To reproduce the workflow lint locally, use
+[kjanat/actionlint v1.17.0](https://github.com/kjanat/actionlint/releases/tag/v1.17.0)
+and pass `-shellcheck=` to disable embedded ShellCheck. The job reports findings
+through reviewdog's `github-check` reporter with `level` and `fail_level` set to `error`.
