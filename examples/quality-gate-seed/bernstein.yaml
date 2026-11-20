@@ -1,0 +1,16 @@
+goal: Inspect the quality gate settings for a project.
+internal_llm_provider: none
+quality_gates:
+  mutation_testing: true
+  mutation_threshold: 0.75
+  large_file_check: true
+  large_file_threshold: 800
+  test_expansion: true
+  intent_verification:
+    enabled: true
+    model: google/gemini-flash-1.5
+    provider: openrouter
+    max_diff_chars: 4000
+    max_tokens: 128
+    block_on_no: true
+    block_on_partial: true
