@@ -9,5 +9,6 @@ their monetary delta is zero. Recorded spend drives the existing budget stop.
 
 The persisted format is unchanged. For a key restored from a snapshot, its
 first explicit report keeps the previous token-based proration or duplicate
-suppression and seeds the monetary baseline for later reports. Exact cost
+suppression and seeds the monetary baseline for later reports. Estimates
+already recorded since the restart count toward that first explicit amount. Exact cost
 corrections spanning a restart cannot be recovered from those snapshots.

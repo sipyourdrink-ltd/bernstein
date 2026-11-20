@@ -241,6 +241,101 @@ class TestRecordAggregation:
 
 
 class TestRecordCumulative:
+    @pytest.mark.parametrize(("reported", "expected_charge"), [(1.0, 0.0), (2.0, 0.5)])
+    def test_first_restored_explicit_caps_split_bucket_pricing_by_known_estimates(
+        self, tmp_path: Path, reported: float, expected_charge: float
+    ) -> None:
+        t = Tracker(run_id="r", hard_budget_usd=2.75)
+        t.record_cumulative("a", "t", "sonnet", 500_000, 0, total_cost_usd=0.1)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 1_000_000, 0) == pytest.approx(1.5)
+        assert loaded.record_cumulative("a", "t", "sonnet", 900_000, 100_000, reported) == pytest.approx(
+            expected_charge
+        )
+        assert loaded.spent_usd == pytest.approx(1.6 + expected_charge)
+        assert loaded.can_spawn()
+        model = loaded.model_breakdowns()[0]
+        assert (model.input_tokens, model.output_tokens) == (1_000_000, 100_000)
+        assert loaded.record_cumulative("a", "t", "sonnet", 1_000_000, 100_000, reported) == 0
+
+    def test_restored_split_buckets_without_an_estimate_keep_legacy_pricing(self, tmp_path: Path) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 500_000, 0, total_cost_usd=0.1)
+        t.save(tmp_path)
+        loaded = Tracker.load(tmp_path, "r")
+        assert loaded is not None
+        assert loaded.record_cumulative("a", "t", "sonnet", 400_000, 100_000, 1.0) == pytest.approx(1.5)
+        assert loaded.spent_usd == pytest.approx(1.6)
+        assert loaded.record_cumulative("a", "t", "sonnet", 500_000, 100_000, 1.5) == 0
+
+    @pytest.mark.parametrize("callback_thread", [False, True], ids=["reentrant", "other-thread"])
+    def test_threshold_callback_observes_committed_cumulative_progress(
+        self, callback_thread: bool, tmp_path: Path
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        t = Tracker(run_id="r", hard_budget_usd=1.5)
+        t.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", budget_usd=1.0, threshold_pct=1.0)})
+        seen: list[tuple[float, int, bool]] = []
+
+        def observe() -> tuple[float, int, bool]:
+            snapshot = json.loads(t.save(tmp_path).read_text())
+            assert snapshot["spent_usd"] == 1.0
+            assert snapshot["cumulative_tokens"]["a|t|sonnet"] == [1000, 0, 0, 0]
+            duplicate = t.record_cumulative("a", "t", "sonnet", 1000, 0, 1.0)
+            return duplicate, t.model_breakdowns()[0].input_tokens, t.can_spawn()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+
+            def hook(_report: object) -> None:
+                seen.append(pool.submit(observe).result(timeout=3) if callback_thread else observe())
+
+            t.set_envelope_threshold_hook(hook)
+            assert t.record_cumulative("a", "t", "sonnet", 1000, 0, 1.0) == 1.0
+        assert seen == [(0.0, 1000, True)]
+        assert t.spent_usd == 1.0 and len(t.usages) == 1
+
+    def test_threshold_callback_can_advance_the_same_key(self) -> None:
+        t = Tracker(run_id="r")
+        t.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", budget_usd=1.0, threshold_pct=1.0)})
+        nested: list[float] = []
+        t.set_envelope_threshold_hook(
+            lambda _report: nested.append(t.record_cumulative("a", "t", "sonnet", 2000, 0, 3.0))
+        )
+        assert t.record_cumulative("a", "t", "sonnet", 1000, 0, 1.0) == 1.0
+        assert nested == [2.0]
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0, 3.0) == 0.0
+        assert t.spent_usd == 3.0 and t.model_breakdowns()[0].input_tokens == 2000
+
+    def test_concurrent_direct_and_cumulative_admission_respect_one_envelope(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        t = Tracker(run_id="r")
+        t.configure_envelopes({"subscription": EnvelopeConfig(name="subscription", hard_budget_usd=1.5)})
+        start = Barrier(12)
+
+        def admit(i: int) -> bool:
+            start.wait(timeout=5)
+            try:
+                if i % 2:
+                    t.record("a", str(i), "sonnet", 1000, 0, cost_usd=1.0)
+                else:
+                    t.record_cumulative("a", str(i), "sonnet", 1000, 0, total_cost_usd=1.0)
+            except EnvelopeBudgetError:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            accepted = list(pool.map(admit, range(12)))
+        assert sum(accepted) == 1
+        assert t.spent_usd == 1.0 and t.model_breakdowns()[0].input_tokens == 1000
+        t.configure_envelopes({})
+        for i in range(0, 12, 2):
+            assert t.record_cumulative("a", str(i), "sonnet", 1000, 0, 1.0) == (0.0 if accepted[i] else 1.0)
+
     @pytest.mark.parametrize("initial", [0.0, 1.0])
     def test_estimate_already_counts_toward_next_explicit_total(self, initial: float) -> None:
         t = Tracker(run_id="r", hard_budget_usd=5.0)
