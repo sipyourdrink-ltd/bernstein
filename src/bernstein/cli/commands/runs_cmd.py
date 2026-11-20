@@ -67,7 +67,10 @@ def runs_group() -> None:
     help="Emit stable machine-readable rows instead of a table.",
 )
 def runs_report_cmd(since: str | None, workdir: Path | None, output_json: bool) -> None:
-    """List finished runs with a classified outcome and one-line evidence.
+    """List all recorded runs with an outcome and one-line evidence.
+
+    This includes runs that are still running. Until a run records a wrap-up,
+    it can appear as infra-error.
 
     \b
     Outcome classes:
@@ -91,7 +94,7 @@ def runs_report_cmd(since: str | None, workdir: Path | None, output_json: bool) 
         return
 
     if not runs:
-        console.print("[dim]No finished runs in this repository's ledger.[/dim]")
+        console.print("[dim]No matching runs in this repository's ledger.[/dim]")
         return
 
     table = Table(show_header=True, header_style="bold")

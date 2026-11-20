@@ -8,7 +8,7 @@ adapter: forge
 binary: forge
 install:
   method: npm
-  spec: "forgecode@latest"
+  spec: "forgecode@2.13.21"
 auth:
   required_for_help: false
   required_for_models: false
