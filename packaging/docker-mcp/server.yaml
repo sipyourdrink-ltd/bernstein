@@ -18,14 +18,14 @@ meta:
 about:
   title: Bernstein
   description: >-
-    The open-source governance layer for AI agents. Submit a goal and
+    An open-source governance layer for AI agents. Submit a goal and
     Bernstein decomposes it into tasks, runs agents in per-task git worktrees,
     and records every run in a replay journal with lineage tracking and an
     opt-in HMAC-chained audit log. No model sits in the coordination loop, so
     the same plan replays byte-identically. The signature and Merkle legs of
     verification check from the on-disk artefacts alone; replaying the HMAC
     chain needs the install's audit key. Adapters ship for Claude Code, Codex,
-    Gemini CLI, Aider, OpenHands and 40+ other agent CLIs. The MCP server
+    Gemini CLI, Aider, OpenHands and other agent CLIs. The MCP server
     exposes 14 tools covering run control, task listing and claiming, progress
     updates, artifact posting, approvals, subtasks, cost reporting, and skill
     loading. Every MCP tool description states whether the call reads files,

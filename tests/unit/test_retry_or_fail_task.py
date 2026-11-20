@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from bernstein.core.models import TaskStatus
+from bernstein.core.models import DispatchTier, TaskStatus
 
 # Both imports point to the same function: task_lifecycle re-exports from task_retry
 from bernstein.core.task_lifecycle import retry_or_fail_task as retry_lifecycle
@@ -31,6 +31,7 @@ class MockTask:
         self.role = "backend"
         self.priority = 1
         self.scope = MockScope()
+        self.dispatch_tier = DispatchTier.LOCAL
         self.complexity = MockComplexity()
         self.estimated_minutes = 10
         self.depends_on = []

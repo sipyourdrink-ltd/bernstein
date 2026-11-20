@@ -18,9 +18,10 @@ still needs approvals, requests them from roster members who may give them:
   spread over hours rather than dumped on six people at once.
 
 Nothing is requested while a roster member's *changes requested* stands: the
-author has something to do first. Automation and maintainer pull requests are
-skipped for the same reason as the maintainer: what they wait for is not a
-roster approval.
+author has something to do first. Automation and the maintainer's own changes
+are skipped: what they wait for is not a roster approval. Maintainer-opened
+pull requests carrying outside-authored commits use the ordinary review path
+once their author evidence is complete.
 
 Dry run when QUORUM_REQUEST_REVIEWS is "0" or `--dry-run` is given; the plan
 is printed either way, one line per pull request.
@@ -79,9 +80,11 @@ def plan_requests(
     per_reviewer_cap: int = OPEN_REQUESTS_PER_REVIEWER,
 ) -> list[str]:
     """Who to ask for a review on this pull request, in order. Empty means nobody."""
-    if pr.is_draft or pr.author == roster.maintainer or pr.author in roster.automation:
+    if pr.is_draft or pr.author in roster.automation:
         return []
     if pr.author == qc.GITHUB_ACTIONS_BOT:
+        return []
+    if pr.author == roster.maintainer and (not pr.commit_authors_complete or not qc.outside_commit_authors(pr, roster)):
         return []
 
     standing = qc.standing_reviews(pr.reviews)
@@ -129,7 +132,9 @@ def needs_a_look(raw: dict[str, Any], roster: Any) -> bool:
     author = (raw.get("user") or {}).get("login") or ""
     if raw.get("draft") or not author:
         return False
-    return author != roster.maintainer and author not in roster.automation and author != qc.GITHUB_ACTIONS_BOT
+    # The list payload has no author history; maintainer PRs need that read
+    # before they can be classified as their own or carried contributions.
+    return author not in roster.automation and author != qc.GITHUB_ACTIONS_BOT
 
 
 def request_load(open_prs: list[dict[str, Any]]) -> dict[str, int]:

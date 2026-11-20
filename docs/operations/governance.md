@@ -153,6 +153,22 @@ claimed inputs to a named spine entry.
 
 ## `govern audit-compliance`: what this install can and cannot show
 
+The main audit runner exposes the same 23 policy-library observations:
+
+```sh
+bernstein govern audit --only CMP --json
+bernstein govern audit --only CMP --profile soc2 --json
+bernstein govern audit --list --only CMP
+```
+
+CMP checks are opt-in, like installation checks, so adding this catalogue does
+not change the default workspace audit gate. `--profile` defaults to selecting
+CMP when no `--only` is given and marks required IDs with `required` in JSON or
+an asterisk in text. Supported profiles are `soc2`, `iso27001`, `pci_dss`,
+`nist_800_53`, `hipaa` and `gdpr`, using the existing library mappings; selection
+does not assert conformance. Unknown profiles are rejected before execution.
+The older `audit-compliance` command remains available.
+
 ```
 bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip CMP-014]
                                   [--profile soc2] [--list] [--json-output]
@@ -481,3 +497,8 @@ window.
 
 For `--skip` (check exclusion), see the audit check contract defined in
 issue #5072.
+
+CMP execution errors use the shared audit error handling: the failed control
+remains in the report, remaining controls still run, and `--strict` returns 1
+for the crash. Exit 2 is reserved for missing prerequisites without a failure
+or crash.
