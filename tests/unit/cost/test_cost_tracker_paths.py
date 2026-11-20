@@ -294,6 +294,15 @@ class TestRecordCumulative:
         assert t.record_cumulative("a", "t", "sonnet", 2000, 700, total_cache_read_tokens=150) == 0.0
         assert len(t.usages) == 2
 
+    @pytest.mark.parametrize("reported_cost", [1.0, 0.5])
+    def test_uncharged_report_advances_token_watermark(self, reported_cost: float) -> None:
+        t = Tracker(run_id="r")
+        t.record_cumulative("a", "t", "sonnet", 1000, 0, total_cost_usd=1.0)
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0, total_cost_usd=reported_cost) == 0.0
+        assert t.record_cumulative("a", "t", "sonnet", 2000, 0) == 0.0
+        assert t.spent_usd == pytest.approx(1.0)
+        assert len(t.usages) == 1
+
     def test_decreasing_totals_clamped_no_negative(self) -> None:
         t = Tracker(run_id="r")
         t.record_cumulative("a", "t", "sonnet", 5000, 2000, total_cost_usd=1.0)

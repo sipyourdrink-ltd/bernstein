@@ -965,6 +965,12 @@ class CostTracker:
         if total_cost_usd is not None:
             delta_cost = max(0.0, float(total_cost_usd) - self._cumulative_costs.get(key, 0.0))
             if delta_cost == 0.0:
+                self._cumulative_tokens[key] = (
+                    max(prev_input, cur_input),
+                    max(prev_output, cur_output),
+                    max(prev_cache_read, cur_cache_read),
+                    max(prev_cache_write, cur_cache_write),
+                )
                 return 0.0
         elif all(d == 0 for d in (delta_input, delta_output, delta_cache_read, delta_cache_write)):
             return 0.0
