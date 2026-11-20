@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 শিডিউলার কেন সাদামাটা Python, আর তার বিনিময়ে কী ছাড়া হলো: [কেন ডিটারমিনিস্টিক](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)।
 
 ### রোজকার কমান্ড
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 রান অবস্থা প্রতিটি নোডে `.sdd/runs/<run_id>/`-এ চেকপয়েন্ট হয়। রান আবার শুরু করার সময় রানের শুরুতে ম্যানিফেস্ট ডাইজেস্ট যাচাই করা হয়, তাই স্পেসিফিকেশন পরিবর্তন প্রত্যাখ্যান করা হয়, ভিন্ন একটি ম্যানিফেস্ট নীরবে চালানোর বদলে। দেখুন [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। অসম্পূর্ণ নোডের প্রম্পটে `{goal}` প্রতিস্থাপনের জন্য আবার শুরু করার সময় একই `-g` মান আবার দিন।
+
+`bernstein compliance controls` প্রতিটি নিয়ন্ত্রণের পরীক্ষাসমূহ এবং সর্বশেষ সম্পূর্ণ পরিমাপ দেখায়, যদি তা পাওয়া যায়। [বেঞ্চমার্ক কভারেজ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 রিপোজিটরি হাইজিন গেট: `bernstein readme-l10n verify` এমন PR ব্যর্থ করে যার অনূদিত README ইংরেজি উৎস থেকে সরে গেছে (এবং বাসি সেকশনটির নাম বলে দেয়), `bernstein readme-l10n sync` ইংরেজিতে সম্পাদনার পরে সেগুলো আবার বেঁধে দেয়। দেখুন [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 

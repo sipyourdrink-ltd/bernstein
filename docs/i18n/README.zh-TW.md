@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 排程器為什麼是純 Python，以及這換來什麼代價：[為什麼確定性](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 執行狀態會在每個節點將檢查點寫入 `.sdd/runs/<run_id>/`。續跑會在執行開始時驗證清單摘要，因此規格變更會被拒絕，而非靜默執行另一份不同的清單。見[工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 續跑時請再次傳入相同的 `-g` 值，以取代未完成節點提示詞中的 `{goal}`。
+
+`bernstein compliance controls` 列出各控制項的基準測試套件，並在有完整測量結果時顯示最近一次結果。 [基準測試涵蓋範圍](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 

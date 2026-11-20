@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Чому планувальник написаний чистою мовою Python і на які компроміси це спирається: [чому детермінізм](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### повсякденні команди
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Під час відновлення знову передайте те саме значення `-g`, щоб підставити його замість `{goal}` у промпти незавершених вузлів.
+
+`bernstein compliance controls` показує набори тестів для кожного контролю та останній повний результат вимірювання, якщо він є. [Покриття тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Гейти гігієни репозиторію: `bernstein readme-l10n verify` блокує PR, перекладені README якого відстали від англійського оригіналу (називаючи застарілий розділ), а `bernstein readme-l10n sync` оновлює зв'язки після змін в англійському тексті. Дивіться [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
