@@ -34,6 +34,31 @@ concurrency:
 permissions: {}
 
 jobs:
+  environment-waits:
+    name: Report environment waits over 24 hours
+    runs-on: [self-hosted, linux, vps]
+    timeout-minutes: 15
+    permissions:
+      contents: read     # Check out the reporting script.
+      actions: read      # Read waiting runs, pending environments and jobs.
+      deployments: read  # Date reviewer-only waits from deployment statuses when no timer is set.
+      issues: write      # Maintain the reconciliation tracking issue.
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Write job summary and update tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/report_environment_waits.py
+
   reconcile:
     name: Compare pyproject.toml vs published channels
     runs-on: [self-hosted, linux, vps]

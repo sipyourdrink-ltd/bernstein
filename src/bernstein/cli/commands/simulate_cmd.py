@@ -78,7 +78,7 @@ def _resolve_dir(explicit: str | None, default: Path) -> str | None:
     "out_path",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
-    help="Write report to this path (``.json`` or ``.md``). Stdout always shows the Markdown summary.",
+    help="Write a report file (.md or .markdown for Markdown, otherwise JSON). This does not change stdout.",
 )
 @click.option(
     "--metrics-dir",
@@ -100,7 +100,7 @@ def _resolve_dir(explicit: str | None, default: Path) -> str | None:
     type=click.Choice(("md", "json"), case_sensitive=False),
     default="md",
     show_default=True,
-    help="Stdout format. Use ``--out`` for the sibling-format sidecar.",
+    help="Format for standard output.",
 )
 def simulate_cmd(
     plan: Path,
