@@ -19,6 +19,7 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.scaffold_cmd import scaffold_cmd
+from bernstein.cli.main import cli
 from bernstein.cli.scaffold.templates import (
     SCAFFOLD_TEMPLATES,
     ScaffoldError,
@@ -207,6 +208,28 @@ class TestScaffoldCli:
         assert result.exit_code == 0, result.output
         assert (dest / "index.html").exists()
         assert (dest / "style.css").exists()
+
+    def test_cli_requires_force_to_overwrite_nonempty_output(self, tmp_path: Path) -> None:
+        dest = tmp_path / "site"
+        dest.mkdir()
+        page = dest / "index.html"
+        existing_content = "<h1>Existing site</h1>"
+        page.write_text(existing_content, encoding="utf-8")
+        args = ["scaffold", "Garden notebook", "--template", "static-site", "--output", str(dest)]
+        runner = CliRunner()
+
+        refused = runner.invoke(cli, args)
+
+        assert refused.exit_code == 1, refused.output
+        assert "--force" in refused.output
+        assert page.read_text(encoding="utf-8") == existing_content
+        assert not (dest / "style.css").exists()
+
+        forced = runner.invoke(cli, [*args, "--force"])
+
+        assert forced.exit_code == 0, forced.output
+        assert "Garden notebook" in page.read_text(encoding="utf-8")
+        assert (dest / "style.css").is_file()
 
     def test_cli_unknown_template_errors(self, tmp_path: Path) -> None:
         runner = CliRunner()

@@ -11,7 +11,7 @@ adapter: opencode
 binary: opencode
 install:
   method: npm
-  spec: "opencode-ai@latest"
+  spec: "opencode-ai@1.19.6"
 auth:
   required_for_help: false
   required_for_models: false
