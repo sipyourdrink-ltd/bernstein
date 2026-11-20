@@ -216,7 +216,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` يقارن سلسلة الإيصالات بالقيمة النهائية لرأس السلسلة وعدد خطوات التفويض المختومين في بيان التشغيل باستخدام HMAC بمفتاح التدقيق، فيكشف حذف ذيل السلسلة والاستبدال والإضافة بعد الإغلاق، بما في ذلك إعادة كتابة الإعلان دون امتلاك المفتاح. إزالة الإعلان تترك التشغيل غير مكتمل (رمز الخروج `3`)، ولا يُعدّ صالحًا أبدًا. لا يكشف هذا إعادة تشغيل لقطة أصلية أقدم، ولا يحمي من كاتب يمتلك مفتاح التدقيق. راجع [سير عمل التحقق من التفويض](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### كيف يعمل
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 يمر كل هدف عبر أربع مراحل:
 
@@ -227,8 +227,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 لماذا تم بناء المجدول بلغة Python الخالصة، وما المقايضات المترتبة على ذلك: [لماذا الحتمية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
+يُرجع فحص `can_spawn()` في متتبّع التكاليف القيمة `False` عندما يبلغ الإنفاق التراكمي بعد التصحيح عتبة الإيقاف المحددة للميزانية أو يتجاوزها، حتى لو لم يُبلَّغ عن أي رموز جديدة. بعد إعادة التشغيل، لا تكفي أعداد الرموز المحفوظة وحدها لاستعادة التكلفة التراكمية الدقيقة التي سبق الإبلاغ عنها لمجموعة محددة من الوكيل والمهمة والنموذج.
+
 ### أوامر الاستخدام اليومي
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -238,6 +240,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+إذا انتهت مهمة في تشغيل SSH منفصل برمز خروج غير صفري، تفشل المهمة ويفشل التشغيل. يسجّل إيصال المهمة رمز الخروج وتظل المهام اللاحقة قيد الانتظار.
 
 واجهة المشغل الكاملة (أتمتة طلبات السحب PR، الجداول الزمنية، جسور المحادثة، برنامج الإصلاح التلقائي autofix) مفصلة في [أوامر المشغل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 

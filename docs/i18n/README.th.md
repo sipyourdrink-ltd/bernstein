@@ -216,7 +216,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 `bernstein delegation verify RUN` เปรียบเทียบสายโซ่ใบรับกับค่าเฮดสุดท้ายและจำนวนฮอปที่ผนึกไว้ในแมนิเฟสต์การรันด้วย HMAC โดยใช้คีย์ตรวจสอบ จึงตรวจพบการลบส่วนท้าย การแทนที่ และการต่อสายโซ่หลังปิดการรัน รวมถึงการเขียนคำประกาศใหม่โดยไม่มีคีย์ การลบคำประกาศทำให้การรันยังไม่สมบูรณ์ (รหัสออก `3`) และไม่ถือว่าถูกต้อง การตรวจสอบนี้ไม่สามารถตรวจพบการนำสแนปช็อตแท้ที่เก่ากว่ามาใช้ซ้ำ และไม่ป้องกันผู้เขียนที่ถือคีย์ตรวจสอบ ดู[ขั้นตอนการตรวจสอบการมอบหมาย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)
 
 ### การทำงานของระบบ
-<!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
+<!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
 
 แต่ละเป้าหมายจะดำเนินผ่านสี่ขั้นตอน:
 
@@ -227,8 +227,10 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 เหตุใดตัวจัดตารางงานจึงเป็น Python ล้วน และสิ่งที่ต้องแลกเปลี่ยน: [ทำไมต้องกำหนดผลลัพธ์แน่นอน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)
 
+ฟังก์ชันตรวจสอบ `can_spawn()` ของตัวติดตามค่าใช้จ่ายจะคืนค่า `False` เมื่อค่าใช้จ่ายสะสมหลังปรับยอดถึงหรือเกินเกณฑ์หยุดที่กำหนดไว้สำหรับงบประมาณ แม้จะไม่มีรายงานการใช้โทเคนเพิ่ม หลังจากเริ่มระบบใหม่ จำนวนโทเคนที่บันทึกไว้เพียงอย่างเดียวไม่เพียงพอที่จะคำนวณย้อนหาค่าใช้จ่ายสะสมที่แน่นอนซึ่งเคยรายงานไว้สำหรับชุดเอเจนต์ งาน และโมเดลนั้น
+
 ### คำสั่งที่ใช้ประจำวัน
-<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
+<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
 
 ```bash
 cd your-project
@@ -238,6 +240,8 @@ bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
 bernstein stop                    # graceful shutdown with drain
 ```
+
+หากงานในการรัน SSH แบบแยกจากเทอร์มินัลสิ้นสุดด้วยรหัสออกที่ไม่ใช่ศูนย์ ทั้งงานนั้นและการรันจะล้มเหลว ใบรับรองผลของงานจะบันทึกรหัสออก และงานถัดไปจะยังคงอยู่ในสถานะรอ
 
 ชุดคำสั่งผู้ปฏิบัติงานทั้งหมด (การจัดการ PR อัตโนมัติ, ตารางเวลา, ตัวเชื่อมต่อแชท, เดมอน autofix) อยู่ใน [คำสั่งผู้ปฏิบัติงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)
 
