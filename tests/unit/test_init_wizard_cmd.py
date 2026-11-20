@@ -91,11 +91,11 @@ class TestInitWizardCmd:
         assert "default_adapter: claude" in yaml
 
     def test_init_wizard_existing_yaml_non_interactive(self) -> None:
-        """Non-interactive should overwrite existing yaml."""
+        """An unattended setup preserves existing configuration."""
         with tempfile.TemporaryDirectory() as td:
             (Path(td) / "bernstein.yaml").write_text("old: content\n")
             runner = CliRunner()
             result = runner.invoke(init_wizard_cmd, ["--dir", td, "--non-interactive"])
             assert result.exit_code == 0
             content = (Path(td) / "bernstein.yaml").read_text()
-            assert "goal:" in content
+            assert content == "old: content\n"
