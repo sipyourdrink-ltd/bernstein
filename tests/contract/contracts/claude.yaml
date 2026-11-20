@@ -10,7 +10,7 @@ adapter: claude
 binary: claude
 install:
   method: npm
-  spec: "@anthropic-ai/claude-code@latest"
+  spec: "@anthropic-ai/claude-code@2.1.328"
 auth:
   # ``claude --help`` works without authentication.
   required_for_help: false
