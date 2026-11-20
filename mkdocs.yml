@@ -2,7 +2,7 @@ site_name: Bernstein
 site_url: https://docs.bernstein.run/
 site_author: Alex Chernysh
 site_description: >-
-  The open-source governance layer for AI agents. No model in the coordination
+  An open-source governance layer for AI agents. No model in the coordination
   loop, so parallel runs in per-task git worktrees replay byte-identically.
   Signed lineage and an opt-in HMAC audit chain, air-gap friendly.
 repo_url: https://github.com/sipyourdrink-ltd/bernstein
@@ -586,6 +586,7 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v4.0.0: release-notes/v4.0.0.md
           - v3.24.0: release-notes/v3.24.0.md
           - v3.23.0: release-notes/v3.23.0.md
           - v3.22.0: release-notes/v3.22.0.md
@@ -768,4 +769,5 @@ exclude_docs: |
   /templates/
   _internal/
   /assets/*.md
+  /release-notes/fragments/7082-landed-group-release.md
   /i18n/

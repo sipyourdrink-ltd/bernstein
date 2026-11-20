@@ -4,7 +4,7 @@ type: software
 title: "Bernstein: a deterministic, open-source governance layer for AI agents"
 abstract: >-
   Bernstein is a deterministic orchestrator that runs a crew of CLI coding
-  agents (Claude Code, Codex, Gemini CLI, and 40+ more) against a single
+  agents (Claude Code, Codex, Gemini CLI and others) against a single
   goal in per-task git worktrees.  There is no model in the coordination
   loop, so replay of yesterday's plan reproduces yesterday's task graph
   byte-identically.  Every step carries signed lineage, and an opt-in
@@ -32,8 +32,8 @@ keywords:
   - gemini-cli
   - aider
   - software-engineering
-version: "3.24.1"
-date-released: "2026-11-05"
+version: "4.0.0"
+date-released: "2026-11-20"
 preferred-citation:
   type: software
   title: "Bernstein: a deterministic, open-source governance layer for AI agents"

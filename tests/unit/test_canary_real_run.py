@@ -21,6 +21,7 @@ stub flows so PR CI stays fast.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,7 +29,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from types import ModuleType
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "canary_real_run.py"
@@ -217,8 +217,6 @@ def test_default_emit_is_resolved_when_not_injected(canary: ModuleType, monkeypa
 
 
 def _count_worktrees(repo_root: Path) -> int:
-    import subprocess
-
     out = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
         cwd=str(repo_root),
@@ -231,18 +229,35 @@ def _count_worktrees(repo_root: Path) -> int:
 
 
 @pytest.fixture
-def temp_git_repo(tmp_path: Path) -> Iterator[Path]:
-    import subprocess
+def temp_git_repo(tmp_path: Path, canary: ModuleType) -> Path:
+    canary._git_init(tmp_path)
+    return tmp_path
 
-    repo = tmp_path / "canary_repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-b", "main"], cwd=str(repo), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "canary@example.com"], cwd=str(repo), check=True)
-    subprocess.run(["git", "config", "user.name", "Canary"], cwd=str(repo), check=True)
-    (repo / "README.md").write_text("# canary\n")
-    subprocess.run(["git", "add", "README.md"], cwd=str(repo), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
-    yield repo
+
+@pytest.mark.parametrize("inherited_env", [False, True], ids=["gitconfig", "environment"])
+def test_canary_seed_commit_uses_actions_bot_identity(
+    tmp_path: Path, canary: ModuleType, monkeypatch: pytest.MonkeyPatch, inherited_env: bool
+) -> None:
+    config = tmp_path / "gitconfig"
+    config.write_text(
+        "[author]\n name = Local Author\n email = author@example.org\n"
+        "[committer]\n name = Local Committer\n email = committer@example.org\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    for role in ("AUTHOR", "COMMITTER"):
+        for field, value in [("NAME", "Local Operator"), ("EMAIL", "operator@example.org")]:
+            key = f"GIT_{role}_{field}"
+            if inherited_env:
+                monkeypatch.setenv(key, value)
+            else:
+                monkeypatch.delenv(key, raising=False)
+    canary._git_init(tmp_path)
+    identities = subprocess.check_output(
+        ["git", "log", "-1", "--format=%an <%ae>%n%cn <%ce>"], cwd=tmp_path, text=True
+    ).splitlines()
+    bot = "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+    assert identities == [bot, bot]
 
 
 class TestRealCanaryFlows:

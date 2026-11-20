@@ -108,8 +108,8 @@ ensure_git_repo() {
     if [[ ! -d "${PROJECT_DIR}/.git" ]]; then
         log "Initializing git repo for demo project..."
         git -C "${PROJECT_DIR}" init -b main
-        git -C "${PROJECT_DIR}" config user.email "demo@bernstein.run"
-        git -C "${PROJECT_DIR}" config user.name "Bernstein Demo"
+        git -C "${PROJECT_DIR}" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git -C "${PROJECT_DIR}" config user.name "github-actions[bot]"
         git -C "${PROJECT_DIR}" add -A
         git -C "${PROJECT_DIR}" commit -m "Initial demo project"
     fi
