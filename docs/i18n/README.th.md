@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 เหตุใดตัวจัดตารางงานจึงเป็น Python ล้วน และสิ่งที่ต้องแลกเปลี่ยน: [ทำไมต้องกำหนดผลลัพธ์แน่นอน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)
 
 ### คำสั่งที่ใช้ประจำวัน
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 สถานะการรันจะบันทึกจุดตรวจสอบไปยัง `.sdd/runs/<run_id>/` ทุกโหนด การดำเนินการต่อจะตรวจสอบค่าแฮชของไฟล์ manifest ตอนเริ่มการรัน ทำให้การเปลี่ยนแปลงสเปกถูกปฏิเสธ แทนที่จะรัน manifest อีกฉบับที่ต่างออกไปโดยไม่แจ้งให้ทราบ ดูที่ [manifest ของ workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) เมื่อดำเนินการต่อ ให้ระบุค่า `-g` เดิมอีกครั้งเพื่อแทนที่ `{goal}` ในพรอมป์ต์ของโหนดที่ยังไม่เสร็จ
+
+`bernstein compliance controls` แสดงชุดทดสอบของแต่ละมาตรการควบคุมและผลการวัดที่สมบูรณ์ล่าสุดหากมี [ขอบเขตการทดสอบ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 เกตสุขอนามัยของที่เก็บโค้ด: `bernstein readme-l10n verify` จะทำให้ PR ที่ไฟล์ README ฉบับแปลคลาดเคลื่อนจากต้นฉบับภาษาอังกฤษล้มเหลว (พร้อมระบุส่วนที่ล้าสมัย) ส่วน `bernstein readme-l10n sync` จะผูกการเชื่อมโยงใหม่หลังจากการแก้ไขภาษาอังกฤษ ดูที่ [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)
 

@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 スケジューラーが素の Python である理由と、それが何を諦めているかは[なぜ決定論的か](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md)にある。
 
 ### 日常のコマンド
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 実行状態はノードごとに `.sdd/runs/<run_id>/` にチェックポイントされる。再開は実行開始時にマニフェストのダイジェストを検証するので、仕様が変わっていれば、別のマニフェストを黙って実行するのではなく拒否される。[ワークフローマニフェスト](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) を参照。 再開時にも同じ `-g` の値を指定し、未完了ノードのプロンプト内の `{goal}` を置換する。
+
+`bernstein compliance controls` は、各統制項目のベンチマークスイートと、利用可能な場合は最新の完全な測定結果を表示します。 [ベンチマークのカバレッジ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 リポジトリ衛生のゲート: `bernstein readme-l10n verify` は、翻訳版 README が英語の原文からずれた PR を（古くなったセクション名を挙げて）失敗させる。`bernstein readme-l10n sync` は英語を編集したあとに束ね直す。[readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md) を参照。
 

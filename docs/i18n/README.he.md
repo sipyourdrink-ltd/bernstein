@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 מדוע המתזמן נכתב ב-Python טהור ואילו פשרות נובעות מכך: [מדוע דטרמיניסטי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### פקודות יומיומיות
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 מצב הריצה נשמר כנקודת שמירה תחת `.sdd/runs/<run_id>/` בכל צומת. החידוש מאמת את גיבוב המניפסט בתחילת הריצה, כך ששינוי במפרט נדחה במקום להריץ בשקט מניפסט אחר. ראה [מניפסטים של זרימת עבודה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). בעת החידוש יש לספק שוב את אותו ערך `-g` כדי להחליף את `{goal}` בפרומפטים של הצמתים שטרם הושלמו.
+
+`bernstein compliance controls` מציגה את ערכות הבדיקות לכל בקרה ואת המדידה המלאה האחרונה, אם קיימת. [כיסוי הבדיקות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 שערי היגיינה של המאגר: `bernstein readme-l10n verify` מכשיל PR שבו קובצי README מתורגמים סטו מהמקור האנגלי (תוך ציון החלק המיושן), ו-`bernstein readme-l10n sync` מצמיד אותם מחדש לאחר עריכה באנגלית. ראה [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 

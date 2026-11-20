@@ -242,6 +242,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 
 Run state checkpoints to `.sdd/runs/<run_id>/` on every node. Resume validates the manifest digest at run start, so a spec change is refused rather than silently executing a different manifest. See [workflow manifests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Supply the same `-g` value again on resume so `{goal}` is substituted in prompts for unfinished nodes.
 
+`bernstein compliance controls` lists benchmark suites for each control and shows the latest complete measurement, when available. [Benchmark coverage](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
+
 Repository hygiene gates: `bernstein readme-l10n verify` fails a PR whose translated READMEs drifted from the English source (naming the stale section), `bernstein readme-l10n sync` rebinds them after an English edit. See [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### supported agents
@@ -275,7 +277,6 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browser dashboard with task creation and review on the same API the TUI uses |
 | [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: run agents on Cloudflare Workers with R2 workspace sync against your own account. The hosted `api.bernstein.run` service is not yet available |
-| [benchmark coverage](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection) | `bernstein compliance controls` lists benchmark suites for each control and shows the latest complete measurement, when available |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | read-only query receipts, plus a query driver that binds each result to the schema snapshot it was derived against |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | point roles at agent definitions outside the built-in templates - a generic YAML/SKILL.md directory, or a Claude Code plugin-layout tree |
 | [integrations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/integrations.md) | what Bernstein bridges to, by the name you call it: SCIM, OIDC, Vault, OPA/Cedar, SPIFFE, OpenTelemetry, MCP, A2A - with what is shipped, what is wired, and what is not planned |

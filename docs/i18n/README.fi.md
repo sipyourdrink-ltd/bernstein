@@ -214,7 +214,7 @@ Jokainen tavoite etenee neljän vaiheen läpi:
 Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja siihen liittyy: [miksi deterministinen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
+
+`bernstein compliance controls` näyttää kunkin kontrollin testikokoelmat ja viimeisimmän täydellisen mittauksen, jos sellainen on saatavilla. [Vertailutestien kattavuus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Koodihygieniaportit: `bernstein readme-l10n verify` hylkää PR:n, jonka käännetyt README-tiedostot poikkeavat englanninkielisestä lähteestä (nimetten vanhentuneen osion), ja `bernstein readme-l10n sync` päivittää sidokset englanninkielisten muokkausten jälkeen. Katso [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 

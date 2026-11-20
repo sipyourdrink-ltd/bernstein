@@ -214,7 +214,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 لماذا تم بناء المجدول بلغة Python الخالصة، وما المقايضات المترتبة على ذلك: [لماذا الحتمية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### أوامر الاستخدام اليومي
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 يتم تسجيل نقطة تحقق لحالة التشغيل في `.sdd/runs/<run_id>/` عند كل عقدة. يتحقق الاستئناف من تجزئة البيان عند بدء التشغيل، لذا يتم رفض أي تغيير في المواصفة بدلاً من تنفيذ بيان مختلف بصمت. انظر [بيانات سير العمل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). مرّر قيمة `-g` نفسها مجددًا عند الاستئناف لاستبدال `{goal}` في مطالبات العقد غير المكتملة.
+
+`bernstein compliance controls` تعرض مجموعات الاختبار لكل ضابط وآخر قياس مكتمل إن وُجد. [تغطية الاختبارات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 بوابات سلامة المستودع: يفشل `bernstein readme-l10n verify` أي طلب سحب تباعدت ملفات README المترجمة فيه عن الأصل الإنجليزي (مع تسمية القسم القديم)، بينما يعيد `bernstein readme-l10n sync` ربطها بعد التعديل الإنجليزي. انظر [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 

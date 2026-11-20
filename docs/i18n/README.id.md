@@ -214,7 +214,7 @@ Setiap target melalui empat tahapan:
 Mengapa penjadwal menggunakan Python murni dan konsekuensi rancangannya: [mengapa deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### perintah sehari-hari
-<!-- l10n: en="everyday commands" hash="sha256:d6c36bf4f993" -->
+<!-- l10n: en="everyday commands" hash="sha256:14ce3c0c9675" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non
 ```
 
 Status eksekusi disimpan sebagai checkpoint ke `.sdd/runs/<run_id>/` pada setiap node. Melanjutkan eksekusi akan memvalidasi digest manifes pada awal eksekusi, sehingga perubahan spesifikasi akan ditolak, bukan dijalankan diam-diam sebagai manifes yang berbeda. Lihat [manifes workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Saat melanjutkan, berikan kembali nilai `-g` yang sama agar `{goal}` diganti dalam prompt node yang belum selesai.
+
+`bernstein compliance controls` menampilkan rangkaian uji untuk setiap kontrol dan pengukuran lengkap terakhir jika tersedia. [Cakupan tolok ukur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
 Gerbang kebersihan repositori: `bernstein readme-l10n verify` menggagalkan PR yang terjemahan README-nya menyimpang dari sumber bahasa Inggris (menyebutkan bagian yang usang), `bernstein readme-l10n sync` mengikat ulang tautan setelah pengeditan bahasa Inggris. Lihat [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
