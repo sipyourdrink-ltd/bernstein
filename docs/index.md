@@ -88,7 +88,7 @@ address when bundled UI assets are available (for example,
 workspace; launching it in another directory selects that other workspace.
 Use the running task server's UI address to watch its live run.
 
-| ![A three-column terminal dashboard: agents with their live logs on the left, the task board on the right, an activity feed and a cost line underneath](assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](assets/webui-agents-diffs.png) |
+| ![A three-column terminal dashboard: agents with their live logs on the left, the task board on the right, an activity feed and a cost line underneath](assets/tui-agents.png) | ![Browser Tasks page with the Diff drawer showing working-tree changes](assets/webui-agents-diffs.png) |
 |:---:|:---:|
 | `bernstein live` — the terminal dashboard | `bernstein gui serve` — browser dashboard for its selected workspace |
 
