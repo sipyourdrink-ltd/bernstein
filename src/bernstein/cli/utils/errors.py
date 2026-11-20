@@ -17,8 +17,6 @@ from enum import IntEnum
 import click
 from rich.console import Console
 
-from bernstein.core.orchestration.bootstrap_output import plain_bootstrap_stderr
-
 console = Console(stderr=True)
 
 
@@ -69,6 +67,7 @@ class BernsteinError(Exception):
     def print(self, *, plain: bool = False) -> None:
         """Print the error, remedy and any additional suggestion to stderr."""
         from bernstein.cli.error_suggestions import suggest_and_format
+        from bernstein.core.orchestration.bootstrap_output import plain_bootstrap_stderr
 
         plain = plain or plain_bootstrap_stderr.get() is not None
         if plain:
