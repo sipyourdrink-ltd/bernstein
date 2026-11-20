@@ -702,6 +702,34 @@ class TestSpawnMissingBinary:
 
 
 class TestSpawnWarnings:
+    @pytest.mark.parametrize("configured", [True, False])
+    def test_spawn_records_omit_credential_details(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, configured: bool
+    ) -> None:
+        name = "OPENROUTER_API_KEY"
+        value = "test-credential-marker"
+        if configured:
+            monkeypatch.setenv(name, value)
+        else:
+            monkeypatch.delenv(name, raising=False)
+        with (
+            patch.object(adapter_module.subprocess, "Popen", return_value=_make_popen_mock(pid=3001)),
+            caplog.at_level(logging.INFO, logger=adapter_module.__name__),
+        ):
+            OpenAIAgentsAdapter().spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5-mini", effort="high"),
+                session_id="credential-log-test",
+                mcp_config={"api_key_env": name},
+                timeout_seconds=0,
+            )
+        records = [record for record in caplog.records if record.name == adapter_module.__name__]
+        assert any("spawn_manifest_summary" in record.getMessage() for record in records)
+        for record in records:
+            assert name not in repr(vars(record))
+            assert value not in repr(vars(record))
+
     def test_warns_when_openai_api_key_missing(
         self,
         tmp_path: Path,
@@ -723,7 +751,7 @@ class TestSpawnWarnings:
                 model_config=ModelConfig(model="gpt-5-mini", effort="high"),
                 session_id="warn-missing-key",
             )
-        assert "OPENAI_API_KEY is not set" in caplog.text
+        assert "configured API credential is not set" in caplog.text
 
     def test_fast_exit_rate_limit_raises(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()

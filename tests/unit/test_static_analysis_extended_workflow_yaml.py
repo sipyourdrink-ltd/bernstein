@@ -43,6 +43,7 @@ Invariants exercised here:
 
 from __future__ import annotations
 
+from glob import iglob
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,7 @@ import yaml
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 
 STATIC_ANALYSIS = "static-analysis-extended.yml"
+TRIVY_FS = "trivy-fs.yml"
 NEVER_ON_MERGE_GROUP = (
     STATIC_ANALYSIS,
     "mutation-fixed.yml",
@@ -95,6 +97,62 @@ def test_static_analysis_still_covers_main() -> None:
     assert "main" in triggers["push"]["branches"]
 
 
+def test_trivy_fs_push_covers_dependency_files_anywhere() -> None:
+    push = _triggers(TRIVY_FS)["push"]
+    assert push["branches"] == ["main"]
+    paths = set(push["paths"])
+    assert {
+        "**/package-lock.json",
+        "**/npm-shrinkwrap.json",
+        "**/pnpm-lock.yaml",
+        "**/yarn.lock",
+        "**/uv.lock",
+        "**/poetry.lock",
+        "**/Pipfile.lock",
+        "**/requirements*.txt",
+        "**/package.json",
+        "**/pyproject.toml",
+    } <= paths
+    # A recursive glob for a root manifest also matches the original root path.
+    assert all(path in paths or f"**/{path}" in paths for path in _triggers(STATIC_ANALYSIS)["push"]["paths"])
+
+
+def test_trivy_fs_runs_independently_and_keeps_weekly_and_manual_runs() -> None:
+    triggers = _triggers(TRIVY_FS)
+    assert set(triggers) == {"push", "schedule", "workflow_dispatch"}
+    assert triggers["schedule"] == [{"cron": "23 5 * * 0"}]
+    assert set(_load(TRIVY_FS)["jobs"]) == {"trivy-fs"}
+    assert "trivy-fs" not in _load(STATIC_ANALYSIS)["jobs"]
+
+
+@pytest.mark.parametrize(
+    ("changed_files", "expected"),
+    [
+        ([".github/adapter-clis/package-lock.json"], {TRIVY_FS}),
+        ([".github/adapter-clis/package-lock.json", "src/example.py"], {STATIC_ANALYSIS, TRIVY_FS}),
+        (["uv.lock"], {STATIC_ANALYSIS, TRIVY_FS}),
+        (["docs/notes.md"], set()),
+    ],
+    ids=["adapter-lockfile", "mixed-push", "existing-root-lockfile", "docs-only"],
+)
+def test_push_selects_expected_scans(tmp_path: Path, changed_files: list[str], expected: set[str]) -> None:
+    for path in changed_files:
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
+
+    selected = set()
+    for workflow in (STATIC_ANALYSIS, TRIVY_FS):
+        patterns = _triggers(workflow)["push"]["paths"]
+        if any(
+            (tmp_path / match).is_file()
+            for pattern in patterns
+            for match in iglob(pattern, root_dir=tmp_path, recursive=True, include_hidden=True)
+        ):
+            selected.add(workflow)
+    assert selected == expected
+
+
 @pytest.mark.parametrize("name", NEVER_ON_MERGE_GROUP)
 def test_lane_keeps_its_schedule(name: str) -> None:
     """Invariant 3: the cadence each lane's coverage argument rests on."""
@@ -103,9 +161,12 @@ def test_lane_keeps_its_schedule(name: str) -> None:
     )
 
 
+def _analysis_jobs() -> dict[str, dict[str, Any]]:
+    return _load(STATIC_ANALYSIS)["jobs"] | _load(TRIVY_FS)["jobs"]
+
+
 def _upload_steps() -> list[tuple[str, dict[str, Any]]]:
-    jobs = _load(STATIC_ANALYSIS)["jobs"]
-    return [(name, step) for name, job in jobs.items() for step in _steps_using(job, CODE_SCANNING_ACTION)]
+    return [(name, step) for name, job in _analysis_jobs().items() for step in _steps_using(job, CODE_SCANNING_ACTION)]
 
 
 def test_code_scanning_uploads_exist() -> None:
@@ -128,7 +189,7 @@ def test_upload_reports_even_when_the_scan_fails(job_name: str, step: dict[str, 
 @pytest.mark.parametrize("job_name", sorted({name for name, _ in _upload_steps()}))
 def test_raw_sarif_survives_as_an_artifact(job_name: str) -> None:
     """Invariant 5."""
-    artifacts = _steps_using(_load(STATIC_ANALYSIS)["jobs"][job_name], ARTIFACT_ACTION)
+    artifacts = _steps_using(_analysis_jobs()[job_name], ARTIFACT_ACTION)
 
     assert artifacts, f"{job_name} uploads SARIF to Code Scanning but keeps no artifact"
     for step in artifacts:

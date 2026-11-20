@@ -142,7 +142,7 @@ jobs:
         # SHA-pinned action vendors a pinned uv release, so the toolchain
         # is reproducible without an unpinned `pip install` step
         # (Scorecard pinned-dependencies).
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           python-version: "3.14"
@@ -331,7 +331,7 @@ jobs:
           git -c advice.detachedHead=false checkout "$HEAD_SHA"
 
       - name: Install uv (provides Python via .python-version)
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
 
@@ -528,8 +528,8 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="ci-heal/${SHORT_SHA}"
-          git config user.email "bernstein-autoheal@users.noreply.github.com"
-          git config user.name "bernstein-autoheal[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           git checkout -b "$BRANCH"
           git add -A
           git commit -m "fix(ci-heal-v2): apply ${STRATEGY} for ${SHORT_SHA}"
