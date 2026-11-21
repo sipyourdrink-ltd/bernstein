@@ -291,6 +291,13 @@ class QualityGatesConfig:
     behavior_probe_gate_timeout_s: int = 300
     behavior_probe_max_callables: int = 12
     behavior_probe_max_probes_per_callable: int = 6
+    fix_proof: bool = False
+    fix_proof_repeats: int = 2
+    fix_proof_timeout_s: int = 120
+    fix_proof_command: str = ""
+    fix_proof_regression_command: str = ""
+    fix_proof_regression_paths: list[str] = field(default_factory=list)
+    fix_proof_roles: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return this configuration as a plain JSON-able dict.

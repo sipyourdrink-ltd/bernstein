@@ -80,6 +80,7 @@ class PlanConfig:
     budget: str | None = None
     max_agents: int | None = None
     repos: list[RepoRef] = field(default_factory=list)
+    fix_proof: bool | None = None
 
 
 #: Most completion signals one task may carry. The task server's TaskCreate caps
@@ -307,6 +308,10 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
             )
         )
 
+    raw_fix_proof = data.get("fix_proof")
+    if raw_fix_proof is not None and not isinstance(raw_fix_proof, bool):
+        raise PlanLoadError("Plan 'fix_proof' must be a boolean")
+
     config = PlanConfig(
         name=str(data.get("name", "")),
         description=str(data.get("description", "")),
@@ -316,6 +321,7 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
         budget=str(budget_raw) if budget_raw is not None else None,
         max_agents=int(max_agents_raw) if max_agents_raw is not None else None,
         repos=repos,
+        fix_proof=raw_fix_proof,
     )
 
     tasks: list[Task] = []
@@ -332,6 +338,9 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
     if config.context_files:
         for task in tasks:
             task.metadata["context_files"] = list(config.context_files)
+    if config.fix_proof is not None:
+        for task in tasks:
+            task.metadata.setdefault("fix_proof", config.fix_proof)
 
     return config, tasks
 
@@ -458,6 +467,27 @@ def _parse_step(
         if parsed:
             metadata["phases"] = [p.value for p in parsed]
 
+    raw_step_fix_proof = step.get("fix_proof")
+    if raw_step_fix_proof is not None:
+        if not isinstance(raw_step_fix_proof, bool):
+            raise PlanLoadError(f"Step {step_index} in stage {stage_name!r}: 'fix_proof' must be a boolean")
+        metadata["fix_proof"] = raw_step_fix_proof
+
+    kind_raw = step.get("kind")
+    if kind_raw is not None:
+        metadata["kind"] = str(kind_raw)
+    fixes_issue_raw = step.get("fixes_issue")
+    if fixes_issue_raw is not None:
+        metadata["fixes_issue"] = str(fixes_issue_raw)
+
+    raw_task_type = step.get("task_type")
+    if raw_task_type is not None:
+        task_type = _parse_enum_field(TaskType, raw_task_type, "task_type", stage_name, step_index)
+    elif str(kind_raw or "").strip().lower() in {"bug", "bugfix", "bug-fix", "fix"}:
+        task_type = TaskType.FIX
+    else:
+        task_type = TaskType.STANDARD
+
     return Task(
         id=f"plan-{stage_index}-{step_index}",
         title=title,
@@ -470,7 +500,7 @@ def _parse_step(
         ),
         estimated_minutes=_parse_int_field(step, "estimated_minutes", stage_name, step_index, default=30),
         status=TaskStatus.OPEN,
-        task_type=TaskType.STANDARD,
+        task_type=task_type,
         depends_on=depends_on,
         owned_files=owned_files,
         completion_signals=signals,

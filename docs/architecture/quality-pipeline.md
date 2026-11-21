@@ -128,6 +128,7 @@ Default required gates (only those whose `quality_gates.<flag>: true`):
 | `test_expansion`         | `test_expansion`            | `python_changed`   | optional            |
 | `agent_test_mutation`    | `agent_test_mutation`       | `tests_changed`    | required            |
 | `behavior_probe`         | `behavior_probe`            | `python_changed`   | optional            |
+| `fix_proof`              | `fix_proof`                 | `any_changed`      | required            |
 | `migration_reversibility` | `migration_reversibility_check` | `any_changed`  | required            |
 | `benchmark`              | `benchmark.enabled`         | `always`           | required            |
 | `incident_evals`         | (no flag; not available)    | `always`           | required            |
