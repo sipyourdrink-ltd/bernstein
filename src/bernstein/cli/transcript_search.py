@@ -148,8 +148,10 @@ def _search_json_structured(
     for field_path, value in _flatten_dict(obj):  # pyright: ignore[reportUnknownArgumentType]
         if query_lower in value.lower():
             context_lines = value.splitlines()
+            line_hits = 0
             for ci, cline in enumerate(context_lines):
                 if query_lower in cline.lower():
+                    line_hits += 1
                     start = max(0, ci - _CONTEXT_LINES)
                     end = min(len(context_lines), ci + _CONTEXT_LINES + 1)
                     results.append(
@@ -161,8 +163,9 @@ def _search_json_structured(
                             field_path=field_path,
                         )
                     )
-            # If no line-level matches, add top-level entry
-            if field_path not in seen_paths:
+            # Only when no single line matched (the query spans a line break): the whole field once.
+            # Keyed on the set alone, it added a copy of every line hit and doubled the total (#8055).
+            if line_hits == 0 and field_path not in seen_paths:
                 results.append(
                     TraceMatchEntry(
                         trace_file=str(trace_file),

@@ -237,3 +237,26 @@ class TestFormatSearchResults:
         assert "[1]" in output
         assert "[2]" in output
         assert "[3]" in output
+
+
+def test_json_line_hits_do_not_add_a_field_fallback(tmp_path: Path) -> None:
+    """A field whose lines match is not reported again as a whole field (#8055)."""
+    traces = tmp_path / ".sdd" / "traces"
+    traces.mkdir(parents=True)
+
+    def search(payload: dict[str, str], query: str) -> tuple[list[tuple[str | None, str]], int]:
+        (traces / "sample.json").write_text(json.dumps(payload), encoding="utf-8")
+        rows, count = search_transcripts(query, tmp_path)
+        return [(row.field_path, row.matched_text) for row in rows], count
+
+    # One matching line: one result.
+    assert search({"note": "needle"}, "needle") == ([("note", "needle")], 1)
+    # Two matching lines in one field: two line results, no fallback.
+    assert search({"note": "a needle\nmore\nanother needle"}, "needle") == (
+        [("note", "a needle"), ("note", "another needle")],
+        2,
+    )
+    # A query that spans a line break matches no single line: one whole-field result.
+    rows, count = search({"note": "the first\nsecond part"}, "first\nsecond")
+    assert count == 1
+    assert rows == [("note", "the first\nsecond part")]
