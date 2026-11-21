@@ -6,16 +6,19 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.skills.activation_log import ActivationRecord, log_activation
 from bernstein.core.skills.helpfulness import build_helpfulness_report, helpfulness_path, write_helpfulness_report
 
 
-def _write_task_completion(workdir: Path, task_id: str, *, success: bool, role: str = "backend") -> None:
+def _write_task_completion(
+    workdir: Path, task_id: str, *, success: bool, role: str = "backend", timestamp: float | None = 1.0
+) -> None:
     metrics_dir = workdir / ".sdd" / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "metric_type": "task_completion_time",
-        "timestamp": 1.0,
         "value": 3.0,
         "labels": {
             "task_id": task_id,
@@ -24,6 +27,8 @@ def _write_task_completion(workdir: Path, task_id: str, *, success: bool, role: 
             "success": str(success),
         },
     }
+    if timestamp is not None:
+        payload["timestamp"] = timestamp
     with (metrics_dir / "task_completion_time_2026-05-22.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True))
         handle.write("\n")
@@ -56,6 +61,29 @@ def test_build_helpfulness_report_uses_beta_bernoulli_scores(tmp_path: Path) -> 
     assert docs_helper.failures == 1
     assert docs_helper.posterior_mean == 1.0 / 3.0
     assert "ignored-helper" not in report.skills
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        pytest.param([(20, True), (10, False)], (1, 0), id="newest-first"),
+        pytest.param([(10, False), (20, True)], (1, 0), id="newest-last"),
+        pytest.param([(10, True), (10, False)], (0, 1), id="equal-times"),
+        pytest.param([(10, False), (10, True)], (1, 0), id="equal-times-reversed"),
+        pytest.param([(None, True), (None, False)], (0, 1), id="undated"),
+        pytest.param([(None, False), (None, True)], (1, 0), id="undated-reversed"),
+        pytest.param([(0, True), (None, False)], (1, 0), id="dated-before-undated"),
+    ],
+)
+def test_out_of_order_completions_use_recorded_time(
+    tmp_path: Path, rows: list[tuple[float | None, bool]], expected: tuple[int, int]
+) -> None:
+    log_activation(ActivationRecord(skill="format", role="qa", task_id="task-1"), workdir=tmp_path)
+    for timestamp, success in rows:
+        _write_task_completion(tmp_path, "task-1", success=success, timestamp=timestamp)
+
+    score = build_helpfulness_report(tmp_path).skills["format"]
+    assert (score.successes, score.failures) == expected
 
 
 def test_write_helpfulness_report_persists_stable_json(tmp_path: Path) -> None:
