@@ -68,6 +68,9 @@ def _make_stops(
     n = len(colors)
     if n == 0:
         raise ValueError("At least one color is required")
+    # Checked before the one-color shortcut, so one color follows the same rule as two (#8063).
+    if stops is not None and len(stops) != n:
+        raise ValueError(f"stops length {len(stops)} != colors length {n}")
     if n == 1:
         c = colors[0]
         return [(0.0, c), (1.0, c)]
@@ -75,8 +78,6 @@ def _make_stops(
     if stops is None:
         positions: list[float] = [i / (n - 1) for i in range(n)]
     else:
-        if len(stops) != n:
-            raise ValueError(f"stops length {len(stops)} != colors length {n}")
         positions = list(stops)
 
     return sorted(zip(positions, colors, strict=False), key=operator.itemgetter(0))

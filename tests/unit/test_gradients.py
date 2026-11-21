@@ -40,3 +40,17 @@ def test_make_stops_handles_single_color() -> None:
     stops = _make_stops([(1, 2, 3)], None)
 
     assert stops == [(0.0, (1, 2, 3)), (1.0, (1, 2, 3))]
+
+
+def test_single_color_rejects_mismatched_stops() -> None:
+    """One color takes no explicit stops or exactly one, like any other palette length (#8063)."""
+    solid = [(12, 24, 36)]
+    for stops in ([], [0.0, 1.0]):
+        with pytest.raises(ValueError, match=f"stops length {len(stops)} != colors length 1"):
+            linear_gradient(2, 1, solid, stops=stops)
+
+    omitted = linear_gradient(2, 1, solid)
+    matching = linear_gradient(2, 1, solid, stops=[0.5])
+    assert omitted == matching
+    assert "12;24;36" in omitted
+    assert omitted.count("48;2;") == omitted.count("12;24;36") // 2  # one solid color, no blend
