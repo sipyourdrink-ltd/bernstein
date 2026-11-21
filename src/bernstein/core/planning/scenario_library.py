@@ -142,7 +142,7 @@ def load_layered_scenario_library(
 def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
     try:
         loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
         return None
     if not isinstance(loaded, dict):
         return None
