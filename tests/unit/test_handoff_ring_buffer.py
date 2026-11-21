@@ -89,3 +89,14 @@ def test_default_max_entries_is_documented_500() -> None:
     """The class doc says the default is 500 lines; keep it pinned so a
     silent change does not blow the on-disk footprint."""
     assert DEFAULT_MAX_ENTRIES == 500
+
+
+def test_read_zero_limit_returns_empty_tail(tmp_path: Path) -> None:
+    """A limit of zero asks for no trailing entries; ``entries[-0:]`` returned all of them (#8060)."""
+    buf = StreamTailBuffer(tmp_path, "s")
+    buf.append("terminal", "first", ts=1.0)
+    buf.append("terminal", "second", ts=2.0)
+
+    assert buf.read(limit=0) == []
+    assert [e.text for e in buf.read(limit=1)] == ["second"]
+    assert [e.text for e in buf.read()] == ["first", "second"]
