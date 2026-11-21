@@ -776,7 +776,7 @@ its merged branch, or the merge commit.
 | `--base REV` | `main` | Base branch to diff against. |
 | `--workdir PATH` | `.` | Project root. |
 | `--stat` | off | Show the `--stat` summary only. |
-| `--raw` | off | Print the raw diff without syntax highlighting. |
+| `--raw` | off | Write only the Git patch to stdout, preserving its bytes for redirection or `git apply`. |
 | `--fold` | off | Collapse each hunk to its header plus a few lines. |
 | `--fold-lines N` | 3 | Lines kept per hunk when `--fold` is set. |
 | `--word-diff` | off | Highlight only the tokens that changed on replaced lines. |
