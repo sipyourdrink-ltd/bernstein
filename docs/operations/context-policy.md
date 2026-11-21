@@ -82,12 +82,24 @@ explicit configuration is present.
 
 ## Verifying context
 
-Run `bernstein context verify` to recompute a task's recorded context capsule
-offline and check it against the audit chain and run journal:
+Run `bernstein context verify <task_id>` to recompute a task's context
+capsule offline and check it against the audit chain and the run journal:
 
 ```bash
+# Human-readable result
 bernstein context verify <task_id>
+
+# Machine-readable, from another project root
+bernstein context verify <task_id> --json --workdir /path/to/project
 ```
+
+The exit code is `0` when the capsule verifies, `1` when the command finds no
+readable capsule, and `2` for a mock capsule or a failed verification check.
+The command takes one task at a time.
+
+The result is one of `OK`, `NO CAPSULE`, `MOCK` or `MISMATCH`, with the
+reason. `--json` adds the separate checks: `signature_ok`, `chain_ok` and
+`journal_ok`.
 
 To verify a signed run receipt, use
 [`bernstein verify receipt`](../reference/cli/verify.md).
