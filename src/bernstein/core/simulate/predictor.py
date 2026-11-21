@@ -138,6 +138,10 @@ def _coerce_str(raw: object) -> str:
 
 
 def _coerce_float(raw: object) -> float | None:
+    if isinstance(raw, bool):
+        # JSON booleans coerce to 0.0/1.0 via float(); treat them as
+        # malformed so a boolean never overrides a numeric fallback.
+        return None
     try:
         value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
