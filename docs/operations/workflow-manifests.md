@@ -119,7 +119,10 @@ bernstein workflow init my-flow --target ~/workflows/my-flow.yaml --force
 `validate` sniffs the file structurally: `phases:` at the top level
 means legacy DSL, a top-level `nodes:` list means the current manifest
 schema. The non-matching path imports no schema, so a malformed DSL file
-can't crash the manifest validator or vice versa. `init` scaffolds a
+can't crash the manifest validator or vice versa. A file that is not
+valid UTF-8 is an error that names the file and the byte: `validate` and
+`run --dry-run` exit 1, and `list` shows it on its own error row and still
+lists the valid manifests beside it. `init` scaffolds a
 blank manifest and round-trips it through the parser before writing, so
 the scaffold can never fail its own `validate`.
 
