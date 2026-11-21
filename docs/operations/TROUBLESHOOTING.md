@@ -684,6 +684,33 @@ grep -n "ruff\|uv run" .sdd/runtime/<session>.log   # which command was run
 
 ---
 
+## 24. A Merge Is Refused Because the Agent Wrote Under `.sdd/`
+
+**Symptom:** A task fails on merge with `merge-preflight safety guard
+refused: N forbidden path(s) staged`, and the log has a `merge_preflight`
+line with `reason=deny-list-match`. The plan told the agent to write its
+result under `.sdd/` (for example `.sdd/verdicts/pr-N-<sha>.md`). See issue
+[#8078](https://github.com/sipyourdrink-ltd/bernstein/issues/8078).
+
+**Cause:** `.sdd/` holds runtime state, and the decoy-commit guard (defect
+28) refuses any merge whose staged set touches it, together with
+`attestations/`, `auth/`, `.env` and the run-config files. The guard is
+correct to refuse. Before #8078 the worktree was then cleaned up and the
+agent's files were lost.
+
+**Resolution:**
+- The refused `.sdd/` files are kept in
+  `.sdd/quarantine/merge-refused/<branch>/`, at their original paths. The
+  refusal error and a `merge_preflight: kept N refused file(s)` warning name
+  the folder, and `MergeResult.quarantined_to` carries it.
+- Credential paths (`.sdd/auth/`, `.sdd/attestations/`,
+  `.sdd/runtime/agent_tokens/`) and paths outside `.sdd/` are refused and
+  never copied.
+- Change the plan so the deliverable goes to a path outside `.sdd/`, then
+  rerun.
+
+---
+
 ## Quick Reference: Exit Codes
 
 | Exit code | Meaning | Likely cause |
