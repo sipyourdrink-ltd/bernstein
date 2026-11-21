@@ -220,7 +220,7 @@ Perché lo scheduler è in puro Python e quali sono i compromessi adottati: [per
 Il controllo `can_spawn()` del modulo di monitoraggio dei costi restituisce `False` quando la spesa cumulativa dopo la rettifica raggiunge o supera la soglia di arresto configurata per il budget, anche se non sono stati segnalati nuovi token. Dopo un riavvio, i soli conteggi dei token salvati non consentono di ricostruire il costo cumulativo esatto comunicato in precedenza per una determinata combinazione di agente, attività e modello.
 
 ### comandi quotidiani
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Lo stato di esecuzione salva un checkpoint in `.sdd/runs/<run_id>/` a ogni nodo. La ripresa convalida il digest del manifesto all'avvio dell'esecuzione, quindi una modifica alla specifica viene rifiutata invece di eseguire silenziosamente un manifesto diverso. Consulta [manifesti dei workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Alla ripresa, fornisci di nuovo lo stesso valore di `-g` per sostituire `{goal}` nei prompt dei nodi non completati.
+I comandi diretti del workflow salvano i checkpoint in `runs/<run_id>/` rispetto alla directory di lavoro corrente. La ripresa verifica l’impronta del manifesto originale. Se l’impronta dell’obiettivo è registrata, fornisci esattamente il valore iniziale di `-g`, anche con `-m`. Puoi omettere `-g` se l’obiettivo iniziale era vuoto o se nessun prompt agente rimanente di una vecchia esecuzione può usare `{goal}`. [manifesti dei workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` mostra le suite di test per ciascun controllo e l’ultima misurazione completa disponibile. [Copertura dei benchmark](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

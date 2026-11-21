@@ -22,7 +22,7 @@ auto-detected from the same command group - the current YAML manifest
 | `bernstein workflow validate <file>` | Validate a manifest (either schema). |
 | `bernstein workflow init <name>` | Scaffold a new manifest. |
 | `bernstein workflow show <name>` | Inspect a legacy DSL file's phases/edges. |
-| `bernstein workflow resume <run_id>` | Resume a killed or interrupted workflow run. |
+| `bernstein workflow resume <run_id> -g "<original goal>"` | Resume an interrupted workflow run with its original goal. |
 
 Manifests resolve from three places, project-local wins:
 
@@ -117,22 +117,38 @@ bernstein workflow resume <run_id> -g "Add JWT auth"
 bernstein workflow resume <run_id> -m ./my-flow.yaml -g "Add JWT auth"
 ```
 
-Pass the original goal again when unfinished nodes use `{goal}`, including
-when supplying `-m`. The resume command defaults `--goal` to an empty string;
-it does not restore the goal from `spec_snapshot.json`.
+When a checkpoint has a goal digest, pass the exact original `-g` value on
+resume, including when supplying `-m`. The checkpoint stores a SHA-256 digest
+of the original UTF-8 input. Whitespace and Unicode spelling are significant.
+For an originally empty goal, omit `-g` or pass `-g ""`. A mismatch stops the
+run before any node or condition executes.
+
+Older checkpoints lack a goal digest. They can resume with `-g` omitted when
+no remaining agent prompt can use `{goal}`. A pending conditional prompt can
+still run. If the original goal cannot be verified for a reachable prompt,
+review the retained results and start a new run.
 
 The resume command:
 - Validates that the provided manifest matches the one used at run start via spec digest
-- Loads persisted state from `.sdd/runs/<run_id>/`
+- Loads persisted state from `runs/<run_id>/` under the workflow working directory
 - Skips already-completed nodes
 - Continues execution from the first non-completed node
 - Preserves loop iteration counts when resuming loop nodes
 
-State persistence location: `.sdd/runs/<run_id>/` contains:
+Direct `bernstein workflow run` and `bernstein workflow resume` use the
+current working directory. A caller that configures
+`WorkflowRunner(workdir=...)` uses that directory as the base. Each
+`runs/<run_id>/` directory contains:
+
 - `spec_snapshot.json` - state format `version`, `spec_name`, `spec_version`,
-  `spec_digest`, `node_ids`, and `source` (manifest path or name); no goal text
+  `spec_digest`, `node_ids`, `source` (manifest path or name), and, for new
+  runs, `goal_digest`. The goal binding contains only the digest
 - `<node_id>.node.json` - checkpoint for each completed node
 - `run_complete.json` - sentinel written when run finishes
+
+If node checkpoints survive but `spec_snapshot.json` is missing, restore the
+original snapshot before resuming. You can also review the retained results and
+start a new run with a new run ID.
 
 **Spec digest validation**: On resume, the runner computes a digest of the
 provided manifest and compares it to the one recorded at run start. A mismatch

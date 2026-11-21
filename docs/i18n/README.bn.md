@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 সংশোধনের পর মোট ব্যয় বাজেটের নির্ধারিত বন্ধের সীমায় পৌঁছালে বা তা ছাড়িয়ে গেলে খরচের হিসাব রাখার মডিউলের `can_spawn()` পরীক্ষা `False` ফেরত দেয়, নতুন কোনো টোকেনের হিসাব না এলেও। পুনরায় চালু করার পর শুধু সংরক্ষিত টোকেন সংখ্যা থেকে কোনো নির্দিষ্ট এজেন্ট, কাজ ও মডেলের জন্য আগে জানানো সঠিক ক্রমপুঞ্জিত খরচ পুনর্গঠন করা যায় না।
 
 ### রোজকার কমান্ড
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-রান অবস্থা প্রতিটি নোডে `.sdd/runs/<run_id>/`-এ চেকপয়েন্ট হয়। রান আবার শুরু করার সময় রানের শুরুতে ম্যানিফেস্ট ডাইজেস্ট যাচাই করা হয়, তাই স্পেসিফিকেশন পরিবর্তন প্রত্যাখ্যান করা হয়, ভিন্ন একটি ম্যানিফেস্ট নীরবে চালানোর বদলে। দেখুন [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। অসম্পূর্ণ নোডের প্রম্পটে `{goal}` প্রতিস্থাপনের জন্য আবার শুরু করার সময় একই `-g` মান আবার দিন।
+সরাসরি ওয়ার্কফ্লো CLI বর্তমান ওয়ার্কিং ডিরেক্টরির অধীনে `runs/<run_id>/`-এ চেকপয়েন্ট সংরক্ষণ করে। আবার শুরু করার সময় মূল ম্যানিফেস্টের ডাইজেস্ট যাচাই করা হয়। লক্ষ্যের ডাইজেস্ট সংরক্ষিত থাকলে `-g`-এর মূল মান হুবহু দিন, এমনকি `-m` ব্যবহার করলেও। মূল লক্ষ্য খালি থাকলে, বা পুরোনো রানে অবশিষ্ট কোনো এজেন্ট প্রম্পট `{goal}` ব্যবহার করতে না পারলে, `-g` বাদ দিতে পারেন। [ওয়ার্কফ্লো ম্যানিফেস্ট](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` প্রতিটি নিয়ন্ত্রণের পরীক্ষাসমূহ এবং সর্বশেষ সম্পূর্ণ পরিমাপ দেখায়, যদি তা পাওয়া যায়। [বেঞ্চমার্ক কভারেজ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 정정된 누적 지출이 설정된 예산 중단 임계값에 도달하거나 이를 초과하면 새 토큰 사용량이 보고되지 않았더라도 비용 추적기의 `can_spawn()` 검사는 `False`를 반환합니다. 재시작 후에는 저장된 토큰 수만으로 특정 에이전트, 작업, 모델 조합에 대해 이전에 보고된 정확한 누적 비용을 복원할 수 없습니다.
 
 ### 일상적인 명령
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-실행 상태는 노드마다 `.sdd/runs/<run_id>/`에 체크포인트된다. 재개는 실행 시작 시 매니페스트 다이제스트를 검증하므로, 명세가 바뀌었다면 다른 매니페스트를 조용히 실행하는 대신 거부된다. [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)를 보라. 재개할 때 같은 `-g` 값을 다시 지정해야 미완료 노드의 프롬프트에서 `{goal}`이 치환된다.
+워크플로를 직접 실행하는 CLI 명령은 현재 작업 디렉터리를 기준으로 `runs/<run_id>/`에 체크포인트를 저장합니다. 재개할 때는 원래 매니페스트의 다이제스트를 검증합니다. 목표 다이제스트가 기록되어 있으면 `-m`을 사용할 때도 처음 지정한 `-g` 값을 그대로 전달하세요. 원래 목표가 비어 있었거나 이전 실행에서 남은 에이전트 프롬프트가 모두 `{goal}`을 사용할 수 없는 경우에는 `-g`를 생략할 수 있습니다. [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` 명령은 각 통제 항목의 벤치마크 모음과 가장 최근에 완료된 측정 결과가 있으면 그 결과를 표시합니다. [벤치마크 범위](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

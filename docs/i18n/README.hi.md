@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 अगर सुधार के बाद कुल खर्च बजट के लिए तय रोक सीमा तक पहुँच जाता है या उससे ऊपर चला जाता है, तो खर्च का हिसाब रखने वाले मॉड्यूल की `can_spawn()` जाँच `False` लौटाती है, भले ही किसी नए टोकन की सूचना न मिली हो। रीस्टार्ट के बाद सिर्फ़ सहेजी गई टोकन गिनती से किसी ख़ास एजेंट, कार्य और मॉडल के संयोजन के लिए पहले बताई गई सटीक संचयी लागत का पता नहीं लगाया जा सकता।
 
 ### रोज़मर्रा के कमांड
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:2faff4ab7780" -->
 
 ```bash
 cd your-project
@@ -242,7 +242,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। दोबारा शुरू करते समय वही `-g` मान फिर से दें, ताकि अधूरे नोड्स के प्रॉम्प्ट में `{goal}` की जगह वह मान डाला जाए।
+वर्कफ़्लो CLI के सीधे कमांड मौजूदा कार्य डायरेक्टरी के अंदर `runs/<run_id>/` में चेकपॉइंट रखते हैं। रन फिर शुरू करते समय मूल मैनिफ़ेस्ट के डाइजेस्ट की जाँच होती है। अगर लक्ष्य का डाइजेस्ट दर्ज है, तो `-g` का मूल मान हूबहू दें, भले ही आप `-m` का उपयोग करें। अगर मूल लक्ष्य खाली था या किसी पुराने रन का कोई भी शेष एजेंट प्रॉम्प्ट `{goal}` का उपयोग नहीं कर सकता, तो आप `-g` छोड़ सकते हैं। [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)
 
 `bernstein compliance controls` हर नियंत्रण के लिए परीक्षण समूह और उपलब्ध होने पर नवीनतम पूर्ण माप दिखाता है। [बेंचमार्क कवरेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

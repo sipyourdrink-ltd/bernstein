@@ -177,7 +177,7 @@ def spec_digest(spec: WorkflowSpec) -> str:
 
 STATE_VERSION = 1
 
-#: Subdirectory for one run's checkpoint state (under .sdd/).
+#: Checkpoint root relative to the runner's working directory.
 STATE_DIR_RELPATH = "runs"
 
 #: File written alongside the state directory recording the spec digest
@@ -188,6 +188,7 @@ SPEC_SNAPSHOT_FILE = "spec_snapshot.json"
 #: terminal state.  ``run``/resume re-derives the full execution record
 #: by reading these files.
 NODE_STATE_SUFFIX = ".node.json"
+RUN_COMPLETE_FILE = "run_complete.json"
 
 
 def _run_state_dir(workdir: Path, run_id: str) -> Path:
@@ -219,29 +220,77 @@ def _validated_run_id(run_id: str) -> str:
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 
 
-def record_spec_snapshot(workdir: Path, run_id: str, spec: WorkflowSpec, manifest_source: str | None = None) -> str:
-    """Persist the spec digest + name so resume can validate identity.
+def _goal_digest(goal: str) -> str:
+    try:
+        encoded = goal.encode("utf-8")
+    except UnicodeEncodeError:
+        raise WorkflowRunError("workflow goal must be valid UTF-8 text") from None
+    return hashlib.sha256(encoded).hexdigest()
 
-    Optionally records the manifest source path/name so resume can re-resolve
-    it for digest validation.
 
-    Returns the computed digest.  Writes atomically so a crash mid-write
-    never leaves a half-written snapshot.
-    """
-    digest = spec_digest(spec)
-    state_dir = _run_state_dir(workdir, run_id)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "version": STATE_VERSION,
-        "spec_name": spec.name,
-        "spec_version": spec.version,
-        "spec_digest": digest,
-        "node_ids": [n.id for n in spec.nodes],
-        "source": manifest_source,
-    }
+def _check_spec_digest(snapshot: dict[str, Any], current: str, run_id: str) -> None:
+    recorded = snapshot.get("spec_digest")
+    if not isinstance(recorded, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded):
+        raise WorkflowRunError(f"invalid manifest digest in workflow run {run_id}")
+    if recorded != current:
+        raise WorkflowRunError(
+            f"refusing to resume workflow run {run_id}: spec digest mismatch - "
+            f"recorded {recorded[:16]}... but current spec hashes to {current[:16]}...; "
+            "the manifest changed between run start and resume"
+        )
+
+
+def _initialize_snapshot(
+    workdir: Path, run_id: str, spec: WorkflowSpec, source: str | None, digest: str, goal_digest: str | None
+) -> tuple[dict[str, Any], bool]:
+    """Return the original snapshot and whether this caller published it."""
     from bernstein.core.persistence.atomic_write import write_atomic_json
+    from bernstein.core.persistence.file_locks import cross_process_lock
 
-    write_atomic_json(state_dir / SPEC_SNAPSHOT_FILE, payload)
+    path = _run_state_dir(workdir, run_id) / SPEC_SNAPSHOT_FILE
+
+    def read_existing() -> dict[str, Any]:
+        existing = load_spec_snapshot(workdir, run_id)
+        if not isinstance(existing, dict):
+            raise WorkflowRunError(f"cannot read the existing snapshot for workflow run {run_id}")
+        _check_spec_digest(existing, digest, run_id)
+        return existing
+
+    if path.exists():
+        return read_existing(), False
+    with cross_process_lock(path.with_suffix(".lock")):
+        if path.exists():
+            return read_existing(), False
+        if _has_run_progress(path.parent):
+            raise WorkflowRunError(
+                f"cannot resume workflow run {run_id}: missing {SPEC_SNAPSHOT_FILE}; "
+                "restore the original snapshot or start a new run with a new run ID"
+            )
+        snapshot: dict[str, Any] = {
+            "version": STATE_VERSION,
+            "spec_name": spec.name,
+            "spec_version": spec.version,
+            "spec_digest": digest,
+            "node_ids": [n.id for n in spec.nodes],
+            "source": source,
+        }
+        if goal_digest is not None:
+            snapshot["goal_digest"] = goal_digest
+        write_atomic_json(path, snapshot)
+        return snapshot, True
+
+
+def _has_run_progress(state_dir: Path) -> bool:
+    """Look for published checkpoints regardless of the incoming manifest's node IDs."""
+    return any(
+        entry.name.endswith(NODE_STATE_SUFFIX) or entry.name == RUN_COMPLETE_FILE for entry in state_dir.iterdir()
+    )
+
+
+def record_spec_snapshot(workdir: Path, run_id: str, spec: WorkflowSpec, manifest_source: str | None = None) -> str:
+    """Record the first manifest snapshot, preserving the original no-goal helper format."""
+    digest = spec_digest(spec)
+    _initialize_snapshot(workdir, run_id, spec, manifest_source, digest, None)
     return digest
 
 
@@ -289,8 +338,9 @@ def load_spec_snapshot(workdir: Path, run_id: str) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        return loaded if isinstance(loaded, dict) else None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
 
@@ -300,12 +350,12 @@ def record_run_complete(workdir: Path, run_id: str, succeeded: bool) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     from bernstein.core.persistence.atomic_write import write_atomic_json
 
-    write_atomic_json(state_dir / "run_complete.json", {"succeeded": succeeded, "completed_at_epoch": time.time()})
+    write_atomic_json(state_dir / RUN_COMPLETE_FILE, {"succeeded": succeeded, "completed_at_epoch": time.time()})
 
 
 def run_complete_marker_exists(workdir: Path, run_id: str) -> dict[str, Any] | None:
     """Return the completion marker if the run finished, else None."""
-    path = _run_state_dir(workdir, run_id) / "run_complete.json"
+    path = _run_state_dir(workdir, run_id) / RUN_COMPLETE_FILE
     if not path.exists():
         return None
     try:
@@ -425,17 +475,12 @@ class WorkflowRunner:
         snapshot = load_spec_snapshot(self._workdir, run_id)
         if snapshot is None:
             raise WorkflowRunError(
-                f"no workflow run state for run {run_id} under {self._workdir / STATE_DIR_RELPATH}; "
-                "start a new run with `bernstein workflow run` instead"
+                f"no workflow run state for run {run_id} under {self._workdir / STATE_DIR_RELPATH}: "
+                f"{SPEC_SNAPSHOT_FILE} is missing or unreadable; "
+                "restore the original snapshot or start a new run with `bernstein workflow run`"
             )
-        recorded_digest = snapshot["spec_digest"]
-        current_digest = spec_digest(spec)
-        if current_digest != recorded_digest:
-            raise WorkflowRunError(
-                f"refusing to resume workflow run {run_id}: spec digest mismatch - "
-                f"recorded {recorded_digest[:16]}... but current spec hashes to {current_digest[:16]}...; "
-                "the manifest changed between run start and resume"
-            )
+        recorded_digest = spec_digest(spec)
+        _check_spec_digest(snapshot, recorded_digest, run_id)
 
         # --- refuse to resume a finished run ---
         completion = run_complete_marker_exists(self._workdir, run_id)
@@ -448,6 +493,8 @@ class WorkflowRunner:
             raise WorkflowRunError(
                 f"workflow run {run_id} already completed; cannot resume a finished run, start a new run instead"
             )
+
+        self._check_goal(snapshot, spec, run_id, _goal_digest(goal))
 
         # Now run the actual workflow logic, skipping completed nodes.
         execution = WorkflowExecution(spec_name=spec.name, run_id=run_id)
@@ -566,7 +613,8 @@ class WorkflowRunner:
             inspect ``execution.succeeded`` and per-node statuses.
 
         Side effects (for resume support):
-        - Records a spec digest and run id under ``.sdd/runs/<run_id>/``.
+        - Records the spec and goal digests under ``runs/<run_id>/``
+          relative to the configured working directory.
         - Persists a terminal ``NodeExecution`` checkpoint after every node
           transitions, so a later ``bernstein workflow resume`` can re-enter
           at the first non-completed node.
@@ -574,7 +622,7 @@ class WorkflowRunner:
           ``resume`` call refuses with a clear error instead of re-running
           a finished DAG.
 
-        State persisted under ``.sdd/runs/<run_id>/``:
+        State persisted under ``runs/<run_id>/``:
 
         * ``spec_snapshot.json`` - manifest name, version, digest, and
           optional source path; ``resume`` re-validates the digest.
@@ -596,12 +644,6 @@ class WorkflowRunner:
         execution = WorkflowExecution(spec_name=spec.name, run_id=rid)
         start = time.monotonic()
 
-        self._audit(
-            "workflow.start",
-            spec.name,
-            {"run_id": rid, "node_count": len(spec.nodes), "goal": goal},
-        )
-
         # --- persistence bootstrap ---
         # Refuse to resume a run that already completed.
         if run_complete_marker_exists(self._workdir, rid) is not None:
@@ -614,12 +656,25 @@ class WorkflowRunner:
                 f"workflow run {rid} already completed; cannot resume a finished run, start a new run instead"
             )
 
-        spec_digest_result = record_spec_snapshot(self._workdir, rid, spec, manifest_source=spec.name)
-        self._audit(
-            "workflow.spec_snapshot_recorded",
-            spec.name,
-            {"run_id": rid, "spec_digest": spec_digest_result},
+        spec_digest_result = spec_digest(spec)
+        goal_digest = _goal_digest(goal)
+        snapshot, snapshot_written = _initialize_snapshot(
+            self._workdir, rid, spec, spec.name, spec_digest_result, goal_digest
         )
+        self._check_goal(snapshot, spec, rid, goal_digest)
+
+        self._audit(
+            "workflow.start",
+            spec.name,
+            {"run_id": rid, "node_count": len(spec.nodes), "goal": goal},
+        )
+
+        if snapshot_written:
+            self._audit(
+                "workflow.spec_snapshot_recorded",
+                spec.name,
+                {"run_id": rid, "spec_digest": spec_digest_result},
+            )
 
         results: dict[str, NodeExecution] = {}
         layers = spec.topological_order()
@@ -708,6 +763,46 @@ class WorkflowRunner:
         return execution
 
     # ----- internal helpers -------------------------------------------------
+
+    def _check_goal(self, snapshot: dict[str, Any], spec: WorkflowSpec, run_id: str, goal_digest: str) -> None:
+        if "goal_digest" in snapshot:
+            recorded = snapshot["goal_digest"]
+            if not isinstance(recorded, str) or re.fullmatch(r"[0-9a-f]{64}", recorded) is None:
+                raise WorkflowRunError(f"invalid goal binding in workflow run {run_id}")
+            if recorded != goal_digest:
+                raise WorkflowRunError(f"goal mismatch for workflow run {run_id}; repeat the exact original goal")
+        elif self._legacy_goal_needed(spec, run_id):
+            raise WorkflowRunError(
+                f"workflow run {run_id} has no original goal binding for a remaining prompt; "
+                "review the retained results and start a new run"
+            )
+
+    def _legacy_goal_needed(self, spec: WorkflowSpec, run_id: str) -> bool:
+        """Could an unfinished prompt consume the goal? Never evaluate a predicate here."""
+        unblocked: set[str] = set()
+        for layer in spec.topological_order():
+            abort_after_layer = False
+            for node in layer:
+                saved = load_node_state(self._workdir, run_id, node.id)
+                if saved is not None:
+                    status = NodeStatus(saved["status"])
+                    if status == NodeStatus.FAILED:
+                        abort_after_layer = True
+                    elif self._dep_satisfied(
+                        NodeExecution(node.id, status, condition_skipped=saved.get("condition_skipped", False))
+                    ):
+                        unblocked.add(node.id)
+                elif unblocked.issuperset(node.depends_on):
+                    if node.interactive and node.when is None:
+                        # An unconditional interactive gate stops the runner in this layer.
+                        abort_after_layer = True
+                    elif not node.interactive and node.agent is not None and "{goal}" in (node.prompt or ""):
+                        return True
+                    # An unexecuted node may succeed or be intentionally condition-skipped.
+                    unblocked.add(node.id)
+            if abort_after_layer:
+                break
+        return False
 
     @staticmethod
     def _dep_satisfied(dep_result: NodeExecution | None) -> bool:
