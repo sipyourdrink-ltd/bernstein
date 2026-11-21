@@ -1638,6 +1638,38 @@ def _poll_no_plan_after_spawn() -> dict[str, Any] | None:
 _RUN_WAIT_DEFAULT_S = 3600.0
 
 
+def _is_run_journal_finalized(workdir: Path | None = None) -> bool:
+    """Whether the active foreground run has journaled ``run_completed``.
+
+    When ``.sdd/runtime/spawner-run-owner.json`` binds this workdir to a
+    foreground run, wait-mode callers must confirm that the orchestrator
+    actually flushed ``run_completed`` (and finished any in-progress
+    ``.finalizing`` section) before declaring completion (issue #6089).
+
+    When no foreground owner record exists (for example, mocked or remote
+    servers without a local ``.sdd`` tree), no local journal can lag behind
+    HTTP ``/status``, so the check does not block completion.
+    """
+    from bernstein.core.orchestration.run_closure_owner import read_spawner_run_owner
+    from bernstein.core.replay.journal import contained_run_journal, load_events
+
+    root = Path.cwd() if workdir is None else Path(workdir)
+    sdd_dir = root / ".sdd"
+    owner = read_spawner_run_owner(sdd_dir)
+    if owner is None:
+        return True
+    journal_path = contained_run_journal(sdd_dir / "runs", owner.run_id)
+    if journal_path is None:
+        return False
+    events = load_events(journal_path).events
+    if not any(
+        event.get("event") == "run_completed" and event.get("run_id") in (None, "", owner.run_id) for event in events
+    ):
+        return False
+    runtime_dir = sdd_dir / "runtime"
+    return not ((runtime_dir / ".finalizing").exists() and not (runtime_dir / ".finalized").exists())
+
+
 def _wait_for_run_completion(
     *,
     poll_interval_s: float = 2.0,
@@ -1730,6 +1762,8 @@ def _wait_for_run_completion(
     gone_polls = 0
     gone_pid: int | None = None
     quiescent_since: float | None = None
+    shutdown_signaled = False
+    pending_quiescent_payload: dict[str, Any] | None = None
 
     def _reset_streak(reason: str, **fields: Any) -> None:
         nonlocal gone_since, gone_last_seen, gone_polls, gone_pid
@@ -1753,6 +1787,11 @@ def _wait_for_run_completion(
         status_payload = server_get("/status")
         health_payload = server_get("/health")
         if not (isinstance(status_payload, dict) and isinstance(health_payload, dict)):
+            # Once quiescence has already been confirmed and shutdown signaled,
+            # the server may exit while the orchestrator finishes flushing its
+            # terminal journal event.
+            if pending_quiescent_payload is not None and _is_run_journal_finalized():
+                return pending_quiescent_payload
             # Not an observation. The window may only be satisfied by time in
             # which a recovery restart was possible and would have been seen,
             # and a server this CLI cannot reach is exactly the state in which
@@ -1799,17 +1838,27 @@ def _wait_for_run_completion(
             elif not quiescent:
                 quiescent_since = None
 
-            if quiescent:
+            if not quiescent:
+                pending_quiescent_payload = None
+            else:
+                pending_quiescent_payload = status_payload
+                if not shutdown_signaled:
+                    logger.info(
+                        "run_completion_detected: total=%d open=%d claimed=%d agent_count=%d "
+                        "- sending belt-and-braces shutdown signal",
+                        total,
+                        open_count,
+                        claimed_count,
+                        agent_count,
+                    )
+                    _signal_orchestrator_shutdown(reason="cli detected run completion (quiescent)")
+                    shutdown_signaled = True
+                if _is_run_journal_finalized():
+                    return status_payload
                 logger.info(
-                    "run_completion_detected: total=%d open=%d claimed=%d agent_count=%d "
-                    "- sending belt-and-braces shutdown signal",
-                    total,
-                    open_count,
-                    claimed_count,
-                    agent_count,
+                    "run_completion_waiting_for_journal: quiescent board observed, "
+                    "waiting for run_completed journal finalization",
                 )
-                _signal_orchestrator_shutdown(reason="cli detected run completion (quiescent)")
-                return status_payload
 
             # Second terminal state: the orchestrator is gone while declared
             # tasks are still non-terminal (issue #3010: the agent produced no
