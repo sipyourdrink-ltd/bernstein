@@ -12,6 +12,17 @@ if TYPE_CHECKING:
     from textual.binding import Binding
 
 
+_PALETTE_ACTION = "command_palette"
+_DEFAULT_PALETTE_KEY = "ctrl+p"
+
+
+def _display_key(key: str) -> str:
+    """Return a binding key as the help screen shows it: ``ctrl+p`` is ``Ctrl+P``."""
+    shown = key.replace("ctrl+", "Ctrl+").replace("escape", "Escape")
+    head, sep, last = shown.rpartition("+")
+    return f"{head}{sep}{last.upper()}" if sep and len(last) == 1 else shown
+
+
 class HelpScreen(ModalScreen[None]):
     """Modal screen showing shortcuts, palette tips, and recent actions."""
 
@@ -75,14 +86,16 @@ class HelpScreen(ModalScreen[None]):
 
         entries = resolve_all_bindings()
         for entry in entries:
-            key_display = entry.key.replace("ctrl+", "Ctrl+").replace("escape", "Escape")
-            table.add_row(key_display, entry.description)
+            table.add_row(_display_key(entry.key), entry.description)
+        # The hint names the resolved key, as the table does; a fixed "Ctrl+P" was wrong for an
+        # override (#7874).
+        palette = next((e.key for e in entries if e.action == _PALETTE_ACTION), _DEFAULT_PALETTE_KEY)
 
         visible = ", ".join(self._visible_panels[:6]) if self._visible_panels else "task-list, task-context, agent-log"
         hints.update(
             "\n".join(
                 [
-                    "Use Ctrl+P to search commands and jump directly to tasks.",
+                    f"Use {_display_key(palette)} to search commands and jump directly to tasks.",
                     "Use / to filter tasks by status, role, priority, or agent.",
                     f"Visible panels: {visible}",
                 ]
