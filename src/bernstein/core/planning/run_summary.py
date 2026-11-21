@@ -30,19 +30,7 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class GateResult:
-    """One janitor gate's pass/fail outcome.
-
-    Attributes:
-        name: Gate name (e.g. ``"tests"``, ``"lint"``).
-        passed: True if the gate passed.
-        detail: Optional short description shown in the rendered table.
-    """
-
-    name: str
-    passed: bool
-    detail: str = ""
+from bernstein.core.verify_result import CheckOutcome as GateResult
 
 
 @dataclass(frozen=True, slots=True)

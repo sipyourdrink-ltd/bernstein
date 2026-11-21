@@ -29,9 +29,14 @@ stopped matching.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-__all__ = ["VerifyResult"]
+__all__ = [
+    "CheckOutcome",
+    "FailuresResult",
+    "ReceiptVerification",
+    "VerifyResult",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,3 +55,48 @@ class VerifyResult[ReceiptT]:
     ok: bool
     reason: str
     receipt: ReceiptT | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReceiptVerification:
+    """Outcome of verifying a signed receipt, manifest, or projection.
+
+    Attributes:
+        ok: ``True`` when every verification check passed.
+        errors: Human-readable verification failure messages, empty when ``ok``.
+    """
+
+    ok: bool
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CheckOutcome:
+    """Pass/fail outcome of a single named check or quality gate.
+
+    Attributes:
+        name: Check or gate identifier.
+        passed: ``True`` when the check passed.
+        detail: Optional human-readable explanation or failure evidence.
+    """
+
+    name: str
+    passed: bool
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-serialisable view of the check."""
+        return {"name": self.name, "passed": self.passed, "detail": self.detail}
+
+
+@dataclass(frozen=True, slots=True)
+class FailuresResult:
+    """Outcome of a gate or policy check reporting a list of failures.
+
+    Attributes:
+        ok: ``True`` when ``failures`` is empty and the check passed.
+        failures: Descriptions of failed checks, empty when ``ok``.
+    """
+
+    ok: bool
+    failures: list[str] = field(default_factory=list)

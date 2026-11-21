@@ -63,6 +63,7 @@ from typing import TYPE_CHECKING, Any, cast
 from cryptography.exceptions import InvalidSignature
 
 from bernstein.core.lineage.spine import content_hash_of
+from bernstein.core.verify_result import ReceiptVerification as ManifestVerification
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -232,14 +233,6 @@ class C2paManifest:
                 data = assertion.get("data")
                 return cast("dict[str, Any]", data) if isinstance(data, dict) else None
         return None
-
-
-@dataclass(frozen=True, slots=True)
-class ManifestVerification:
-    """Outcome of :func:`verify_manifest`."""
-
-    ok: bool
-    errors: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

@@ -23,23 +23,15 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import json
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from bernstein.core.lineage.entry import LineageEntry, canonicalise, compute_operator_hmac, entry_hash
 from bernstein.core.lineage.identity import AgentCard, jws_header_kid, verify_detached
 from bernstein.core.lineage.tips import compute_tips, detect_forks
+from bernstein.core.verify_result import FailuresResult as GateResult
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-@dataclass(frozen=True, slots=True)
-class GateResult:
-    """Outcome of `check`. `ok` is True iff `failures` is empty."""
-
-    ok: bool
-    failures: list[str] = field(default_factory=list)
 
 
 def _load_cards(cards_dir: Path) -> tuple[dict[tuple[str, str], AgentCard], list[str]]:

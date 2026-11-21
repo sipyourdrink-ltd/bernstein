@@ -62,6 +62,7 @@ from bernstein.core.planning.sla_store import (
     contract_from_dict,
 )
 from bernstein.core.security.sanitize import sanitize_log
+from bernstein.core.verify_result import ReceiptVerification as ReceiptVerification
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -118,14 +119,6 @@ class SLAViolationReceipt:
     def receipt_id(self) -> str:
         """The stable id used for on-disk storage: ``<contract_id>-<tick>``."""
         return f"{self.contract_id}-{self.tick_instant}"
-
-
-@dataclass(frozen=True, slots=True)
-class ReceiptVerification:
-    """Outcome of :func:`verify_receipt`."""
-
-    ok: bool
-    errors: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
