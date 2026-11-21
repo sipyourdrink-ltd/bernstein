@@ -70,6 +70,8 @@ def get_worktree_status(workdir: Path) -> WorktreeStatus | None:
             errors="replace",
             timeout=10,
         )
+        if dirty_result.returncode != 0:
+            return None
         is_dirty = bool(dirty_result.stdout.strip())
 
         return WorktreeStatus(branch=branch, is_dirty=is_dirty)
