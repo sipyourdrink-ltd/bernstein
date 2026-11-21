@@ -317,6 +317,87 @@ def connect(port: int, host: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------
+# Keyword-only transitions (regressions)
+# ---------------------------------------------------------------------------
+
+
+class TestKeywordOnlyTransitions:
+    def test_positional_becomes_keyword_only_with_default_is_breaking(self) -> None:
+        # f(width, *, height) -> f(*, height, width=0): f(2, height=3) raises TypeError.
+        old = "def paint(width, *, height): pass"
+        new = "def paint(*, height, width=0): pass"
+
+        report = check_compatibility(old, new, "canvas.py")
+
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.CHANGED_PARAM_POSITION
+        assert "'width'" in change.description
+
+    def test_new_required_keyword_only_param_is_breaking(self) -> None:
+        # f(*, width) -> f(*, height, width): f(width=2) now lacks height.
+        old = "def paint(*, width): pass"
+        new = "def paint(*, height, width): pass"
+
+        report = check_compatibility(old, new, "canvas.py")
+
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.ADDED_REQUIRED_PARAMETER
+        assert "'height'" in change.description
+
+    def test_required_insertion_alongside_keyword_only_reorder(self) -> None:
+        # The reorder of width/depth stays compatible; only the inserted
+        # required height is breaking.
+        old = "def paint(*, width, depth): pass"
+        new = "def paint(*, depth, height, width): pass"
+
+        report = check_compatibility(old, new, "canvas.py")
+
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.ADDED_REQUIRED_PARAMETER
+        assert "'height'" in change.description
+
+    def test_positional_only_losing_slot_is_breaking(self) -> None:
+        # f(width, /, *, height) -> f(*, width, height): f(2, height=3) no longer binds.
+        old = "def paint(width, /, *, height): pass"
+        new = "def paint(*, width, height): pass"
+
+        report = check_compatibility(old, new, "canvas.py")
+
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.CHANGED_PARAM_POSITION
+        assert "'width'" in change.description
+        assert "keyword-only" in change.description
+
+    def test_positional_only_params_tracked_with_defaults(self) -> None:
+        old = "def paint(width, /, depth=1, *, height): pass"
+        new = "def paint(width, /, depth=1, *, height): pass"
+
+        report = check_compatibility(old, new, "canvas.py")
+
+        assert report.is_compatible
+
+    def test_keyword_only_promoted_over_vararg_slot_is_breaking(self) -> None:
+        # f(*items, width, height) -> f(height, *items, width): f(1, width=2, height=3)
+        # now binds height twice.
+        old = "def collect(*items, width, height): pass"
+        new = "def collect(height, *items, width): pass"
+
+        report = check_compatibility(old, new, "mod.py")
+
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.CHANGED_PARAM_POSITION
+        assert "'height'" in change.description
+
+    def test_keyword_only_promoted_without_vararg_is_compatible(self) -> None:
+        old = "def collect(*, width): pass"
+        new = "def collect(width): pass"
+
+        report = check_compatibility(old, new, "mod.py")
+
+        assert report.is_compatible
+
+
+# ---------------------------------------------------------------------------
 # CompatReport dataclass
 # ---------------------------------------------------------------------------
 

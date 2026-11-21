@@ -40,6 +40,7 @@ class ChangeType(Enum):
     REMOVED_FUNCTION = "removed_function"
     REMOVED_METHOD = "removed_method"
     REMOVED_PARAMETER = "removed_parameter"
+    ADDED_REQUIRED_PARAMETER = "added_required_parameter"
     CHANGED_PARAM_TYPE = "changed_param_type"
     CHANGED_PARAM_POSITION = "changed_param_position"
     REMOVED_CLASS = "removed_class"
@@ -108,6 +109,14 @@ def _is_public(name: str) -> bool:
     return not name.startswith("_")
 
 
+class _ParamKind(Enum):
+    """How a parameter accepts arguments."""
+
+    POSITIONAL_ONLY = "positional_only"
+    POSITIONAL_OR_KEYWORD = "positional_or_keyword"
+    KEYWORD_ONLY = "keyword_only"
+
+
 @dataclass(frozen=True)
 class _ParamInfo:
     """Extracted info about a single function parameter."""
@@ -115,6 +124,7 @@ class _ParamInfo:
     name: str
     annotation: str  # empty string when no annotation
     has_default: bool
+    kind: _ParamKind
     position: int | None  # None for keyword-only parameters
 
 
@@ -126,6 +136,7 @@ class _FuncInfo:
     qualified_name: str  # e.g. "MyClass.method" or just "func"
     params: list[_ParamInfo]
     line: int
+    has_vararg: bool = False  # True when the signature has a *args parameter
 
 
 @dataclass(frozen=True)
@@ -150,20 +161,23 @@ def _extract_params(args: ast.arguments, _qualified_prefix: str) -> list[_ParamI
     Skips ``self`` and ``cls`` for methods.
     """
     params: list[_ParamInfo] = []
-    # Number of positional args without defaults
-    n_args = len(args.args)
+    # Positional-only and positional-or-keyword args share the trailing default
+    # list, so defaults align to the tail of the combined sequence.
+    positional = [*args.posonlyargs, *args.args]
     n_defaults = len(args.defaults)
-    first_default_idx = n_args - n_defaults
+    first_default_idx = len(positional) - n_defaults
+    n_posonly = len(args.posonlyargs)
 
-    for i, arg in enumerate(args.args):
+    for i, arg in enumerate(positional):
         if arg.arg in ("self", "cls"):
             continue
-        has_default = i >= first_default_idx
+        kind = _ParamKind.POSITIONAL_ONLY if i < n_posonly else _ParamKind.POSITIONAL_OR_KEYWORD
         params.append(
             _ParamInfo(
                 name=arg.arg,
                 annotation=_annotation_str(arg.annotation),
-                has_default=has_default,
+                has_default=i >= first_default_idx,
+                kind=kind,
                 position=len(params),
             )
         )
@@ -176,6 +190,7 @@ def _extract_params(args: ast.arguments, _qualified_prefix: str) -> list[_ParamI
                 name=arg.arg,
                 annotation=_annotation_str(arg.annotation),
                 has_default=default is not None,
+                kind=_ParamKind.KEYWORD_ONLY,
                 position=None,
             )
         )
@@ -194,6 +209,7 @@ def _extract_functions(tree: ast.Module) -> dict[str, _FuncInfo]:
                 qualified_name=node.name,
                 params=params,
                 line=node.lineno,
+                has_vararg=node.args.vararg is not None,
             )
     return funcs
 
@@ -213,6 +229,7 @@ def _extract_classes(tree: ast.Module) -> dict[str, _ClassInfo]:
                         qualified_name=qualified,
                         params=params,
                         line=child.lineno,
+                        has_vararg=child.args.vararg is not None,
                     )
             classes[node.name] = _ClassInfo(
                 name=node.name,
@@ -237,6 +254,7 @@ def _compare_params(
 
     old_params = {p.name: p for p in old_func.params}
     new_params = {p.name: p for p in new_func.params}
+    old_positional_count = sum(1 for p in old_func.params if p.position is not None)
 
     # Removed parameters
     for param_name, old_param in old_params.items():
@@ -269,24 +287,51 @@ def _compare_params(
                 )
             )
 
-        # An old positional call can break if its required argument moves or becomes keyword-only.
-        if (
-            not old_param.has_default
+        # An old positional call can break if its argument moves slot, becomes
+        # keyword-only, or a keyword-only argument is promoted over *args.
+        became_keyword_only = (
+            old_param.kind is not _ParamKind.KEYWORD_ONLY and new_param.kind is _ParamKind.KEYWORD_ONLY
+        )
+        moved_position = (
+            old_param.kind is not _ParamKind.KEYWORD_ONLY
+            and new_param.kind is not _ParamKind.KEYWORD_ONLY
+            and not old_param.has_default
             and not new_param.has_default
-            and old_param.position is not None
             and old_param.position != new_param.position
-        ):
-            move = (
-                "became keyword-only"
-                if new_param.position is None
-                else f"moved from position {old_param.position} to {new_param.position}"
-            )
+        )
+        promoted_over_vararg = (
+            old_param.kind is _ParamKind.KEYWORD_ONLY
+            and new_param.kind is not _ParamKind.KEYWORD_ONLY
+            and old_func.has_vararg
+            and new_param.position is not None
+            and new_param.position >= old_positional_count
+        )
+        if became_keyword_only or moved_position or promoted_over_vararg:
+            if became_keyword_only:
+                move = f"became keyword-only (was position {old_param.position})"
+            elif promoted_over_vararg:
+                move = f"moved from keyword-only to position {new_param.position}"
+            else:
+                move = f"moved from position {old_param.position} to {new_param.position}"
             breaks.append(
                 BreakingChange(
                     file=filename,
                     name=old_func.qualified_name,
                     change_type=ChangeType.CHANGED_PARAM_POSITION,
-                    description=f"Required parameter '{param_name}' in '{old_func.qualified_name}' {move}",
+                    description=f"Parameter '{param_name}' in '{old_func.qualified_name}' {move}",
+                    line=old_func.line,
+                )
+            )
+
+    # A new required parameter breaks existing callers that do not pass it.
+    for param_name, new_param in new_params.items():
+        if param_name not in old_params and not new_param.has_default:
+            breaks.append(
+                BreakingChange(
+                    file=filename,
+                    name=old_func.qualified_name,
+                    change_type=ChangeType.ADDED_REQUIRED_PARAMETER,
+                    description=f"Required parameter '{param_name}' was added to '{old_func.qualified_name}'",
                     line=old_func.line,
                 )
             )

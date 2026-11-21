@@ -179,6 +179,21 @@ def _extract_removed_param_name(description: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _extract_position_change(description: str) -> tuple[int | None, int | None]:
+    """Parse the former and new slot from a CHANGED_PARAM_POSITION description.
+
+    Returns ``(old_position, new_position)``; a side is None when the
+    description does not carry it (e.g. ``became keyword-only``).
+    """
+    m = re.search(r"moved from position (\d+) to (\d+)", description)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r"became keyword-only \(was position (\d+)\)", description)
+    if m:
+        return int(m.group(1)), None
+    return None, None
+
+
 def _resolve_call_target(
     node: ast.Call,
     imported_names: dict[str, str],
@@ -238,7 +253,10 @@ def _check_single_breaking_change(
 
     if ct == ChangeType.CHANGED_PARAM_POSITION:
         pos_args = [a for a in node.args if not isinstance(a, ast.Starred)]
-        if len(pos_args) >= 2:
+        old_pos, _new_pos = _extract_position_change(bc.description)
+        # Only calls passing enough positional values to reach the lost or
+        # shifted slot can break; keyword use of the parameter is still valid.
+        if len(pos_args) > (old_pos if old_pos is not None else 1):
             return CallSiteImpact(
                 caller_file=caller_file,
                 caller_line=call_line,
