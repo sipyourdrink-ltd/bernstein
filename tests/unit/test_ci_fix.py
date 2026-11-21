@@ -513,3 +513,20 @@ class TestGHADownload:
         # Has a run ID but not a github.com URL, so owner/repo extraction fails.
         with pytest.raises(ValueError, match="Cannot parse owner/repo"):
             download_github_actions_log_api("https://not-github.com/foo/actions/runs/123")
+
+
+def test_passing_ruff_step_is_absent_from_ci_failures() -> None:
+    """The command text ``ruff check`` is not a lint failure; a diagnostic is (#8028)."""
+    passing_ruff = (
+        "ruff check src/\nAll checks passed!\npytest -q\nFAILED tests/test_math.py::test_sum - AssertionError"
+    )
+    assert [f.kind.value for f in parse_failures(passing_ruff)] == ["pytest"]
+
+    lint_only = "ruff check src/\nsrc/bernstein/core/foo.py:12:1: E501 Line too long (130 > 120)\nFound 1 error."
+    assert [f.kind.value for f in parse_failures(lint_only)] == ["ruff_lint"]
+
+    both = (
+        "ruff check src/\nsrc/bernstein/core/foo.py:12:1: E501 Line too long (130 > 120)\nFound 1 error.\n"
+        "pytest -q\nFAILED tests/test_math.py::test_sum - AssertionError"
+    )
+    assert sorted(f.kind.value for f in parse_failures(both)) == ["pytest", "ruff_lint"]
