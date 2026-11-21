@@ -37,6 +37,27 @@ does not append an `answered`, `refused`, or `timeout` close. Preserve the
 mailbox journal for audit or later replay analysis. Automatic reconstruction
 and replay resolution of recorded closes remain separate follow-up work.
 
+## Deadlock receipts for cooperative waits
+
+When a scheduler tick observes that the durable mailbox chain changed, the
+orchestrator folds outstanding `rendezvous_open` entries from
+`.sdd/runtime/mailbox.jsonl` into the wait graph. If the graph contains a
+cycle, Bernstein writes a signed receipt under
+`.sdd/runtime/deadlock-receipts/`. The receipt records the cycle's canonical
+task-ID order, the mailbox `entry_hash` supporting each edge, and the latest
+open entry as the one designated to break the cycle.
+
+The receipt path is content-addressed by the canonical cycle and its open-entry
+hashes. That makes repeated ticks and orchestrator restarts idempotent: the same
+deadlock is recorded once, while a later cycle formed by new opens is a distinct
+incident. Closing either wait removes its graph edge and prevents a receipt for
+that cycle. A parallel open on an existing cycle edge changes the supporting
+evidence and therefore mints a follow-up receipt for that incident. Detection
+uses the existing single-result `find_cycle()` helper: when independent cycles
+coexist, only its deterministically named cycle is receipted until that cycle
+resolves. Detection and recording are observational only; this slice does not
+cancel tasks, append a close, or resolve the cycle automatically.
+
 ## The park is a receipt, not a flag
 
 A park is a pair of Merkle-chained journal rows plus matching HMAC audit-chain
