@@ -99,7 +99,7 @@ def generate_man_page(
     Returns:
         Complete troff man page as a string.
     """
-    page_title = f"bernstein-{cmd_name}".replace(" ", "-")
+    page_title = cmd_name if cmd_name == "bernstein" else f"bernstein-{cmd_name}".replace(" ", "-")
     upper_title = page_title.upper()
     date_str = datetime.date.today().strftime("%B %Y")
 
