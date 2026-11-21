@@ -41,7 +41,7 @@ full resolution chain.
 ```
 bernstein config get cli
 # cli = 'codex'  (source: global)
-# resolution: session -> project -> context -> global -> default
+# resolution: global -> default
 ```
 
 Flags: `--project-dir DIR` (default `.`) — the project root used to load
@@ -85,8 +85,8 @@ read from, and `--json` emits a shape a CI check can gate on:
 }
 ```
 
-The payload carries the precedence it resolved by, so a caller does not have to
-hardcode the order. Values are the redacted ones -- a resolution report is what
+The `precedence` array lists the resolver’s canonical layer order. Each
+setting’s `chain` contains only the sources that supplied a value. Values are the redacted ones -- a resolution report is what
 an operator pastes into an issue, so a secret must not be the thing that leaks.
 
 An unknown key exits non-zero and lists the known ones, rather than reporting
@@ -134,32 +134,30 @@ full detail.
 
 ## Precedence
 
-`bernstein config get`/`list`/`explain`/`conflicts` resolve a key across, from
-highest to lowest precedence:
+The resolver supports the following layers, from highest to lowest priority:
 
-1. **seed** — the run-seed (`bernstein.yaml`) value actually enforced by the
-   orchestrator, when present.
-2. **session** — environment overrides (`BERNSTEIN_CLI`, `BERNSTEIN_BUDGET`,
-   `BERNSTEIN_MAX_AGENTS`, `BERNSTEIN_EFFORT`, `BERNSTEIN_MODEL`,
-   `BERNSTEIN_HOST_ISOLATION_TIER`, `BERNSTEIN_HOST_ISOLATION_EVIDENCE`) or
-   caller-provided session overrides.
+1. **seed** — an explicit seed override supplied by the run caller.
+2. **session** — environment variables such as `BERNSTEIN_CLI`,
+   `BERNSTEIN_BUDGET`, `BERNSTEIN_MAX_AGENTS`, `BERNSTEIN_EFFORT`,
+   `BERNSTEIN_MODEL`, `BERNSTEIN_HOST_ISOLATION_TIER`, and
+   `BERNSTEIN_HOST_ISOLATION_EVIDENCE`, or caller-provided session overrides.
 3. **project** — `<project>/.sdd/config.yaml`.
-4. **context** — the active operating context, when one is selected (see
-   `bernstein ctx` in [`CONFIG.md`](CONFIG.md#operating-contexts-bernstein-ctx)).
-5. **global** — `~/.bernstein/config.yaml`, the file `bernstein config set`
-   writes to.
-6. **default** — built-in defaults (`cli=claude`, `budget=None`,
-   `max_agents=6`, `effort=max`, `model=None`,
-   `host_isolation_tier=none`, `host_isolation_evidence=""`).
+4. **context** — the active operating context, when one is selected. See
+   [Operating contexts](CONFIG.md#operating-contexts-bernstein-ctx).
+5. **global** — `~/.bernstein/config.yaml`, which `bernstein config set` writes.
+6. **default** — the built-in CLI defaults listed below.
 
-In code this order has exactly one definition, `CONFIG_PRECEDENCE` in
-`src/bernstein/core/config/home.py`; `tests/unit/test_config_explain_cmd.py`
-fails if the resolver, the command, or the `ConfigSource` vocabulary parts ways
-with it.
+`bernstein config get`, `list`, `explain`, and `conflicts` use layers 2–6. The
+standalone commands do not load `bernstein.yaml` as a seed override. `config
+explain --json` still lists `seed` in the canonical precedence array. The dashboard runtime view supplies seed overrides when available. The
+resolver gives an explicit seed override priority over the other layers.
 
-Only `bernstein config set`/`get`/`list`/`explain`/`conflicts`/`view-mode`
-operate on this precedence chain. `bernstein config diff` is a separate, narrower tool
-that only compares the project seed file to built-in defaults.
+The run seed has separate schema defaults. `cli` defaults to `auto` in the
+run seed and Pydantic schema. The Pydantic `effort` field defaults to `null`.
+The built-in defaults for the standalone `config` commands appear below.
+
+`bernstein config diff` compares the project seed against its own built-in
+baseline. The baseline can contain keys absent from the current seed schema.
 
 ## Known config keys
 

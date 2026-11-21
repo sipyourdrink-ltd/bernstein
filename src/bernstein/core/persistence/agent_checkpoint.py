@@ -279,20 +279,22 @@ def load_checkpoint(agent_id: str, runtime_dir: Path) -> AgentCheckpoint | None:
 def discard_checkpoint(agent_id: str, runtime_dir: Path) -> bool:
     """Remove the checkpoint for ``agent_id``; return whether one was removed.
 
-    Discarding is the answer to a checkpoint whose observations moved. Once
-    the file is gone the resume has nothing to continue from, so no
-    continuation entry is appended and the chain reads the next run as a new
-    run rather than as a continuation.
+    Once the agent checkpoint is gone, the next run has no grant
+    continuation entry from it. The separate task checkpoint is preserved.
     """
     path = runtime_dir / "agents" / agent_id / _CHECKPOINT_FILENAME
     try:
         path.unlink()
-    except OSError:
+    except FileNotFoundError:
         return False
     return True
 
 
-def find_checkpoint_for_task(task_id: str, runtime_dir: Path) -> AgentCheckpoint | None:
+class AmbiguousAgentCheckpointError(ValueError):
+    """An explicit discard cannot select a unique checkpoint for the task."""
+
+
+def find_checkpoint_for_task(task_id: str, runtime_dir: Path, *, for_discard: bool = False) -> AgentCheckpoint | None:
     """Find the checkpoint for ``task_id`` across all agent directories.
 
     Checkpoints are stored per **agent** (``agents/{agent_id}/checkpoint.json``)
@@ -300,20 +302,33 @@ def find_checkpoint_for_task(task_id: str, runtime_dir: Path) -> AgentCheckpoint
     rather than key by id — looking up ``agents/{task_id}/`` would silently
     miss every real checkpoint. Returns the newest match (``checkpointed_at``)
     when several agents checkpointed the same task; ``None`` when none did.
+    An explicit discard needs a complete scan and a unique match so removing
+    one checkpoint cannot silently select an older attempt for the same task.
     """
     agents_dir = runtime_dir / "agents"
-    if not agents_dir.is_dir():
+    try:
+        agent_dirs = list(agents_dir.iterdir())
+    except FileNotFoundError:
+        return None
+    except OSError:
+        if for_discard:
+            raise
         return None
     best: AgentCheckpoint | None = None
-    for path in agents_dir.glob(f"*/{_CHECKPOINT_FILENAME}"):
+    for agent_dir in agent_dirs:
+        path = agent_dir / _CHECKPOINT_FILENAME
         try:
             candidate = AgentCheckpoint(**json.loads(path.read_text()))
-        except (OSError, TypeError, ValueError):
-            # A single unreadable checkpoint must not block resume of
-            # unrelated tasks; corrupt files surface via scan tooling.
+        except (FileNotFoundError, NotADirectoryError, TypeError, ValueError):
+            continue
+        except OSError:
+            if for_discard:
+                raise
             continue
         if candidate.task_id != task_id:
             continue
+        if for_discard and best is not None:
+            raise AmbiguousAgentCheckpointError(f"Multiple agent checkpoints match task {task_id!r}.")
         if best is None or candidate.checkpointed_at > best.checkpointed_at:
             best = candidate
     return best

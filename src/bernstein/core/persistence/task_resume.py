@@ -59,6 +59,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -74,6 +76,7 @@ __all__ = [
     "load_checkpoint",
     "save_checkpoint",
     "scratchpad_sha256",
+    "write_resume_signal",
 ]
 
 
@@ -145,6 +148,18 @@ def checkpoint_path_for(workdir: Path, task_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def write_resume_signal(workdir: Path, task_id: str, **fields: object) -> Path:
+    """Publish one complete signal for a task in the existing resume directory."""
+    directory = workdir / ".sdd" / "runtime" / "resume"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{task_id}.signal"
+    # Only the shared signal directory is created by this command.
+    if not target.parent.is_dir():
+        raise FileNotFoundError(f"Resume signal directory does not exist: {target.parent}")
+    write_atomic_json(target, {"task_id": task_id, **fields})
+    return target
+
+
 def save_checkpoint(workdir: Path, checkpoint: TaskResumeCheckpoint) -> Path:
     """Atomically persist ``checkpoint`` for the task it identifies.
 
@@ -203,20 +218,21 @@ def load_checkpoint(workdir: Path, task_id: str) -> TaskResumeCheckpoint:
 
     Raises:
         CheckpointMissingError: No checkpoint file on disk.
-        CheckpointCorruptError: File exists but is unreadable or invalid.
+        CheckpointCorruptError: The contents have invalid encoding, JSON or schema.
+        OSError: The checkpoint could not be read.
     """
     path = checkpoint_path_for(workdir, task_id)
-    if not path.is_file():
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
         raise CheckpointMissingError(
             f"No resume checkpoint for task {task_id!r} at {path}. "
             "Either the task has not produced a checkpoint yet or the "
             "directory was cleaned up. Run the task fresh with "
             f"`bernstein run` instead."
-        )
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise CheckpointCorruptError(f"Checkpoint for task {task_id!r} is unreadable at {path}: {exc}") from exc
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise CheckpointCorruptError(f"Checkpoint for task {task_id!r} at {path} is not valid UTF-8: {exc}") from exc
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:

@@ -103,7 +103,17 @@ def default_registry() -> Registry:
 
 
 def get_trigger_source(name: str) -> type[TriggerSource]:
-    """Look up a trigger-source class by name."""
+    """Look up a trigger-source class in the process-wide registry.
+
+    Args:
+        name: Registered trigger-source name.
+
+    Returns:
+        The registered class.
+
+    Raises:
+        KeyError: If the registry has no source named ``name``.
+    """
     return _default_registry_instance.get(name)
 
 

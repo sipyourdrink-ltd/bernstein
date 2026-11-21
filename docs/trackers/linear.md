@@ -6,6 +6,10 @@ workflow states when a task transitions. The adapter also supports
 per-ticket CLI choice via Linear labels: a label prefix such as
 `cli/claude` pins the spawned CLI for that ticket.
 
+At the adapter boundary, each Linear issue is exposed as a Bernstein
+`Ticket`. The `Ticket` ID holds the Linear issue ID, while its display
+identifier is kept separately in the raw metadata.
+
 The adapter implements `bernstein.core.trackers.AbstractTrackerAdapter`
 and lives at `bernstein.core.trackers.linear.LinearTracker`. It is
 disabled by default and must be opted in via `bernstein.yaml`.

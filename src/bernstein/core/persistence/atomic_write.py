@@ -43,14 +43,8 @@ logger = logging.getLogger(__name__)
 
 
 def _tmp_path_for(path: Path) -> Path:
-    """Build a unique sibling temp path for *path*.
-
-    Incorporating both the PID and ``os.urandom`` disambiguates concurrent
-    writers and interrupted previous runs so we never collide on the tmp
-    slot.
-    """
-    suffix = f".tmp.{os.getpid()}.{os.urandom(4).hex()}"
-    return path.with_name(path.name + suffix)
+    """Choose a short sibling name even when the target is at the filesystem limit."""
+    return path.with_name(f".tmp.{os.urandom(16).hex()}")
 
 
 def _fsync_dir(directory: Path) -> None:
@@ -82,7 +76,7 @@ def write_atomic_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     The sequence is:
 
     1. Create parent directory if missing.
-    2. Write bytes to ``<path>.tmp.<pid>.<rand>`` and ``fsync`` the fd.
+    2. Write bytes to a unique ``.tmp.<rand>`` sibling and ``fsync`` the fd.
     3. ``os.replace`` the temp file onto *path* (atomic rename).
     4. ``fsync`` the containing directory so the rename is durable.
 
@@ -105,14 +99,9 @@ def write_atomic_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path_for(path)
+    # Only clean up a staging file that this writer created.
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     try:
-        # Owner-only by default. Runtime state may carry task metadata,
-        # session tokens, or other material that should not be world-readable.
-        fd = os.open(
-            str(tmp),
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            mode,
-        )
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
             fh.flush()

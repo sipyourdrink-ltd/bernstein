@@ -2871,6 +2871,7 @@ def record_mcp_capability_drift(
     server_name: str,
     current_tools: tuple[str, ...],
     previous_tools: tuple[str, ...] | None = None,
+    definition_drift: dict[str, Any] | None = None,
 ) -> AuditEvent:
     """Append an ``mcp.capability_drift`` event into *chain* (#7937).
 
@@ -2887,6 +2888,8 @@ def record_mcp_capability_drift(
         current_tools: The tool names the server declared on this call.
         previous_tools: The tool names the server declared previously;
             ``None`` for first contact (no prior digest to record).
+        definition_drift: Optional profile-tagged full-definition observation;
+            additive metadata, without changing the legacy name digest fields.
 
     Returns:
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
@@ -2906,6 +2909,8 @@ def record_mcp_capability_drift(
         removed_tools=removed_tools,
         tool_count=len(current_tools),
     ).to_dict()
+    if definition_drift is not None:
+        payload["tool_definitions"] = definition_drift
     return chain.log_with_prev_digest(
         event_type=EVENT_MCP_CAPABILITY_DRIFT,
         actor=server_name,

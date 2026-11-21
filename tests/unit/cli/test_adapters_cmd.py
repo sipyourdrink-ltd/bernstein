@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
@@ -51,3 +52,29 @@ def test_adapters_group_registered_on_main_cli() -> None:
 
     assert result.exit_code == 0
     assert "list" in result.output
+
+
+def test_adapters_list_counts_selectable_names_including_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Count selectable names, including generic and aliases, but not mock."""
+    from bernstein.adapters import registry
+
+    names = ("agy", "antigravity", "generic", "mock")
+    monkeypatch.setattr(registry, "_ADAPTERS", {name: registry._ADAPTERS[name] for name in names})
+    monkeypatch.setattr(registry, "_entrypoints_loaded", True)
+    result = CliRunner().invoke(cli, ["adapters", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert "Selectable CLI agent adapter names: 3" in result.output
+
+
+def test_rich_help_counts_selectable_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Help uses the same live selection set as adapters list."""
+    from bernstein.adapters import registry
+
+    monkeypatch.setattr(registry, "selectable_adapter_names", lambda: frozenset({"claude", "codex"}))
+    result = CliRunner().invoke(cli, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "2 selectable adapter names" in result.output

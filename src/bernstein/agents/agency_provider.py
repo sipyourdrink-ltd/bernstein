@@ -231,7 +231,7 @@ def _infer_role(
     Args:
         name: Agent display name (e.g. "Code Reviewer").
         description: Agent description text (reserved for future use).
-        capabilities: List of capability keywords (reserved for future use).
+        _capabilities: Reserved parameter.
         division_role: Fallback role derived from the Agency division.
 
     Returns:

@@ -4,6 +4,14 @@ Bernstein-specific terms used throughout the codebase and documentation.
 
 ---
 
+### Agent Session
+
+An execution context belonging to an individual worker, with its own lifecycle distinct from a run's orchestration lifecycle. The persisted `session.json` is a run-level snapshot, not an individual worker session; see [Session persistence (fast resume)](../operations/session-fast-resume.md).
+
+### Adapter
+
+An adapter lets Bernstein run a supported external CLI coding agent, such as Claude Code CLI. See the [integrations index](../adapters/index.md) for examples.
+
 ### Bulletin Board
 
 An append-only communication channel where agents post findings, blockers, and status updates visible to all other agents in the same run. Implemented in `src/bernstein/core/communication/bulletin.py`.
@@ -56,6 +64,10 @@ policy graph. See [docs/security/lethal-trifecta.md](../security/lethal-trifecta
 for the threat model and default capability table; implementation in
 `src/bernstein/core/security/capability_matrix.py`.
 
+### Mission
+
+A multi-day goal with ordered phases and verification gates. See the [mission timeline](../operations/mission-timeline.md).
+
 ### Janitor
 
 The verification system that checks whether an agent's work is correct - runs lint, type-checks, tests, and other quality gates before accepting work. Distinct from the **Cross-Model Verifier** (which double-checks output by re-running on a second model) and the **Reviewer** (which performs LLM-based review). Implemented in `src/bernstein/core/quality/janitor.py`.
@@ -82,6 +94,18 @@ Automated checks (lint, type-check, tests, coverage) that must pass before work 
 
 Killing or collecting agents that have exceeded their timeout or become unresponsive. Part of the agent lifecycle management. Implemented in `src/bernstein/core/agents/agent_lifecycle.py`.
 
+### Run
+
+One orchestration of a goal. See the [single-writer run-state actor](../orchestration/run-actor.md).
+
+### Plan
+
+A declarative input describing a goal for Bernstein to execute. See the [plans guide](../architecture/plans.md).
+
+### Orchestrator
+
+Schedules eligible work and advances tasks on each [Tick](#tick).
+
 ### SDD
 
 Software-Defined Development - the `.sdd/` directory where all runtime state lives: worktrees, sessions, task logs, and agent data. Initialized in `src/bernstein/core/orchestration/bootstrap.py`.
@@ -94,13 +118,33 @@ A versioned catalog of message schemas for MCP, A2A, and ACP protocols. Backs fo
 
 Writes role-specific Claude Code skills (`.claude/skills/*.md`) into the agent's worktree before spawn. This moves orchestration boilerplate into skills that survive context compaction, reducing prompt size by 30-40%. Implemented in `src/bernstein/adapters/skills_injector.py`.
 
+### Stage
+
+A group of steps within a [plan](../architecture/plans.md). Stages declare their prerequisites explicitly with `depends_on`; their position in the plan does not create an implicit prerequisite. See the [plans guide](../architecture/plans.md).
+
 ### Spawn
 
 Creating a short-lived agent process for a task batch. The spawner handles prompt construction, worktree setup, and process management. Implemented in `src/bernstein/core/agents/spawner.py`.
 
+### Supervisor
+
+Observes worker liveness and reports stalls. For example, `bernstein supervisor status --json` returns a snapshot with stuck-worker counts and worker details; see the [Supervisor reference](../api/supervisor.md).
+
+### Step
+
+An item in a [plan](../architecture/plans.md) that Bernstein materializes as a [Task](#task) for the orchestrator to schedule. See the [plans guide](../architecture/plans.md).
+
+### Task
+
+An executable work record with its own lifecycle and status.
+
 ### Tick
 
 The orchestrator's polling cycle (approximately 3 seconds). Each tick fetches pending tasks, spawns agents, checks heartbeats, and evaluates quality gates. Implemented in `src/bernstein/core/orchestration/orchestrator.py`.
+
+### Ticket
+
+A persistent work specification describing work to be done. An imported ticket can produce a task whose status is tracked independently of the ticket.
 
 ### WAL
 
@@ -110,15 +154,23 @@ Write-Ahead Log -- the durable journal of state transitions used for crash recov
 
 A pre-spawn pool of agent processes kept idle so newly-claimed tasks see lower spawn latency. Instead of fork-and-init on every task, the orchestrator hands a queued process its prompt and the agent is already past CLI startup costs. Sized for typical concurrency; can be disabled if RAM is constrained (each pre-spawned process holds its baseline working set). Implemented in `src/bernstein/core/agents/warm_pool.py` and `src/bernstein/core/agents/spawner_warm_pool.py`.
 
+### Workspace
+
+The **project workspace** is the project root that the [`bernstein worktrees` command](../operations/worktrees.md) inspects. In the default worktree-isolation layout, an artifact-mode session instead uses an **artifact workspace**: the plain directory `.sdd/workspaces/{session_id}` under the repo root that serves as that session's working directory. Unlike a [worktree](#worktree), it is not a git checkout and has no per-session branch; see the [artifact guide](../operations/artifacts.md).
+
 ### Worktree
 
-An isolated git worktree per agent, located at `.sdd/worktrees/{session_id}`. Each agent works in its own branch without interfering with others. Implemented in `src/bernstein/core/git/worktree.py`.
+An isolated git checkout per agent, located at `.sdd/worktrees/{session_id}`. Each agent works in its own branch without interfering with others. In the default worktree-isolation layout, this differs from an [artifact workspace](#workspace), which is a plain directory rather than a git checkout. See the [worktree guide](../operations/worktrees.md). Implemented in `src/bernstein/core/git/worktree.py`.
 
 ---
 
 ### ACP Bridge
 
 The ACP (Agent Client Protocol) adapter that lets ACP-aware editors (e.g. Zed) use Bernstein as their multi-agent backend over stdio or HTTP. Implemented in `src/bernstein/core/protocols/acp/`. See `bernstein acp serve --stdio | --http :PORT`.
+
+### Substrate
+
+An editor or desktop integration that can host Bernstein's tools. For example, Claude Desktop can load Bernstein as an MCP server; see [Register Bernstein in Claude Desktop](../substrate/claude-desktop.md).
 
 ### Autofix Daemon
 

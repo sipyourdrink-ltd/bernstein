@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.tui.accessibility import (
     AccessibilityConfig,
     AccessibilityLevel,
@@ -48,25 +50,23 @@ class TestAccessibilityConfig:
 
 
 class TestDetectAccessibility:
-    @patch.dict(os.environ, {"BERNSTEIN_ACCESSIBILITY": "full"}, clear=False)
-    def test_explicit_full(self) -> None:
-        assert detect_accessibility() == AccessibilityLevel.FULL
-
-    @patch.dict(os.environ, {"BERNSTEIN_ACCESSIBILITY": "basic"}, clear=False)
-    def test_explicit_basic(self) -> None:
-        assert detect_accessibility() == AccessibilityLevel.BASIC
-
-    @patch.dict(os.environ, {"BERNSTEIN_ACCESSIBILITY": "off"}, clear=False)
-    def test_explicit_off(self) -> None:
-        assert detect_accessibility() == AccessibilityLevel.OFF
-
-    @patch.dict(os.environ, {"BERNSTEIN_ACCESSIBILITY": "", "ORCA_RUNNING": "1"}, clear=False)
-    def test_orca_detection(self) -> None:
-        assert detect_accessibility() == AccessibilityLevel.FULL
-
-    @patch.dict(os.environ, {"BERNSTEIN_ACCESSIBILITY": "", "NVDA_RUNNING": "1"}, clear=False)
-    def test_nvda_detection(self) -> None:
-        assert detect_accessibility() == AccessibilityLevel.FULL
+    @pytest.mark.parametrize(
+        "env,expected",
+        [
+            pytest.param({"BERNSTEIN_ACCESSIBILITY": "full"}, AccessibilityLevel.FULL, id="explicit_full"),
+            pytest.param({"BERNSTEIN_ACCESSIBILITY": "basic"}, AccessibilityLevel.BASIC, id="explicit_basic"),
+            pytest.param({"BERNSTEIN_ACCESSIBILITY": "off"}, AccessibilityLevel.OFF, id="explicit_off"),
+            pytest.param(
+                {"BERNSTEIN_ACCESSIBILITY": "", "ORCA_RUNNING": "1"}, AccessibilityLevel.FULL, id="orca_detection"
+            ),
+            pytest.param(
+                {"BERNSTEIN_ACCESSIBILITY": "", "NVDA_RUNNING": "1"}, AccessibilityLevel.FULL, id="nvda_detection"
+            ),
+        ],
+    )
+    def test_detect_accessibility(self, env: dict[str, str], expected: AccessibilityLevel) -> None:
+        with patch.dict(os.environ, env, clear=False):
+            assert detect_accessibility() == expected
 
     @patch.dict(
         os.environ,

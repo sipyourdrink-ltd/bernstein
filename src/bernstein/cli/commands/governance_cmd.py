@@ -581,7 +581,7 @@ def _parse_playbook_json(raw_output: str) -> dict[str, object]:
     "inventory_file",
     type=click.Path(exists=True, dir_okay=False),
     default=None,
-    help="Path to inventory JSON file. If omitted, runs the discovery pass.",
+    help="Path to the inventory JSON file. If omitted, runs the discovery pass.",
 )
 @click.option(
     "--output-dir",

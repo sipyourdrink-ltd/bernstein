@@ -99,6 +99,11 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
 
 === "Docker"
 
+    From your Git repository on the host, switch to a working branch before
+    starting the container. If you're on the default branch, run
+    `git switch -c bernstein/first-run`. See the [first-run walkthrough](first-run.md)
+    for how to select a worker and model, check setup, and review the changes on that branch before opening a pull request.
+
     ```bash
     docker run -v "$(pwd)":/workspace -v "$(pwd)/.sdd":/workspace/.sdd \
       -p 8052:8052 ghcr.io/sipyourdrink-ltd/bernstein -g "your goal"
@@ -107,8 +112,7 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
     The explicit `.sdd` mount keeps run state in your project directory. On
     images up to 3.14.159 it is **required**: without it the container creates
     a root-owned volume at `/workspace/.sdd` and the run fails with
-    `Permission denied`. Run from a non-default git branch
-    ([first run](first-run.md) explains why).
+    `Permission denied`.
 
 === "From source"
 
@@ -126,7 +130,7 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
 
 === "Dev container"
 
-    The repo ships a `.devcontainer/` (Python 3.12, pipx, port 8052 forwarded)
+    The repo ships a `.devcontainer/` (Python 3.13, uv, port 8052 forwarded)
     for GitHub Codespaces / VS Code Dev Containers. It is aimed at working
     **on** Bernstein itself; to use Bernstein in your own project, pick one of
     the other methods.

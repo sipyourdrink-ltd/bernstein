@@ -45,47 +45,34 @@ The mixed approach usually delivers the best quality-to-cost ratio.
 
 ## Prompt caching
 
-Bernstein supports provider prompt caching to reduce token costs on repeated context.
-
-```yaml
-prompt_caching:
-  enabled: true
-  strategy: "role_context"  # Cache role prompts and project context
-```
-
-Caching is most effective when:
-- Multiple agents share the same role (e.g., several backend agents)
-- Project context files are stable between tasks
-- The same codebase analysis is reused across tasks
-
-Expected savings: 30-60% on input tokens for cached portions.
+Prompt caching depends on the provider and adapter. Reuse stable role prompts
+and project context where the provider supports it. For cache accounting, see
+[Cost-aware scheduling](cost-aware-scheduling.md).
 
 ## Batch API usage
 
-For non-urgent workloads, use batch API pricing (typically 50% cheaper):
+Enable the provider batch manager and optionally filter candidates by
+case-insensitive substrings in task titles or descriptions:
 
 ```yaml
-batch_mode:
+batch:
   enabled: true
-  max_wait_seconds: 300
-  min_batch_size: 5
+  eligible: [documentation]
 ```
 
-Batch mode collects tasks and submits them together. Latency increases but cost decreases. Appropriate for overnight runs, CI/CD, and non-interactive workflows.
+The dispatch path also checks task eligibility and adapter capabilities. See
+[Batch routing](../architecture/batch-routing.md) for the route conditions.
 
-## Token budget management
+## Run spending cap
 
-Set per-task and per-run token budgets to prevent runaway costs:
+Set `budget` to a scalar USD amount in `bernstein.yaml`:
 
 ```yaml
-budget:
-  per_task_max_tokens: 100000
-  per_run_max_tokens: 2000000
-  per_run_max_cost_usd: 50.00
-  alert_threshold_pct: 80
+budget: "$50"
 ```
 
-When a task exceeds its token budget, it is terminated gracefully with partial results saved. The orchestrator can retry with a cheaper model.
+For pre-dispatch ceilings by model, pool, role, or run, see
+[Cost-aware scheduling](cost-aware-scheduling.md).
 
 ### Hard cap via `--max-cost-usd`
 
@@ -101,8 +88,8 @@ bootstrap. The orchestrator resolves the effective cap from
 the following precedence chain:
 
 1. `BERNSTEIN_MAX_COST_USD` env var (set by the CLI flag).
-2. `.sdd/runtime/run_config.json` (`per_run_max_cost_usd`).
-3. `bernstein.yaml` `seed.budget_usd`.
+2. `.sdd/runtime/run_config.json` (`budget_usd`).
+3. `budget` in `bernstein.yaml` (parsed into `SeedConfig.budget_usd`).
 4. Default `0.0` (= unlimited).
 
 Three thresholds fire as cumulative spend rises: warn at 80%,
@@ -111,20 +98,12 @@ drains live agents, persists state, and exits. Non-positive values
 normalise to `0.0` (unlimited); invalid env values are logged at
 warning level so a typo never silently disables the guard.
 
-This pairs with the soft-threshold `budget` block above: keep the
-soft block for early signals during the run, set `--max-cost-usd`
-for the line you do not want crossed.
+### Model fallback after provider errors
 
-### Cheaper retry strategy
-
-```yaml
-cheaper_retry:
-  enabled: true
-  fallback_model: "haiku"
-  max_retries: 2
-```
-
-When a task fails or exceeds budget on an expensive model, retry it with a cheaper model. Many tasks succeed with less capable models on the second attempt because the first attempt's partial work narrows the problem.
+Configure an ordered `model_fallback.fallback_chain` for supported provider
+failures. The default strike limit is 3. Connection timeouts and HTTP status
+codes `429`, `503`, and `529` count by default. A run budget halt follows the
+spending-cap rules above. See [Configuration Reference](CONFIG.md#model-fallback).
 
 ## Context window optimization
 
@@ -147,16 +126,10 @@ Narrow scopes and explicit file lists mean:
 - Lower cost per task
 - Better conflict detection (via `files` field)
 
-### Context compression
+### Context files
 
-Enable context compression to reduce token usage for large codebases:
-
-```yaml
-context:
-  compression: true
-  max_context_files: 20
-  summary_depth: "shallow"  # shallow | medium | deep
-```
+Use `context_files` in `bernstein.yaml` to list the files to include in agent
+context. Keep that list focused on files the agents need for the run.
 
 ## Spend visibility
 
@@ -233,34 +206,11 @@ For a multi-run aggregate of the same comparison see `bernstein cost` -
 the `--json` payload includes `savings_vs_opus_usd` over the configured
 window.
 
-## Cost monitoring and alerts
+## Cost monitoring
 
-### Budget alerts
-
-```yaml
-notifications:
-  channels:
-    - type: slack
-      webhook_url: "https://hooks.slack.com/..."
-  alerts:
-    - event: budget.threshold
-      threshold_pct: 80
-    - event: budget.exceeded
-```
-
-### Datadog integration
-
-Export cost metrics to Datadog for dashboards and alerting:
-
-```yaml
-datadog:
-  enabled: true
-  host: "localhost"
-  port: 8125
-  prefix: "bernstein"
-```
-
-Metrics exported: `bernstein.cost.total`, `bernstein.cost.per_task`, `bernstein.tokens.input`, `bernstein.tokens.output`.
+The run emits warnings at the spending thresholds described above. Use the
+cost commands in this guide to inspect spend, and see
+[OTLP export](../observability/otlp-export.md) for telemetry configuration.
 
 ## Cost comparison: Bernstein vs. manual
 

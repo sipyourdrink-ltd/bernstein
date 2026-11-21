@@ -16,7 +16,8 @@ name: Required-check name canary
 #
 # Invariants asserted:
 #   1. `.github/workflows/ci.yml` has a job whose key is `ci-gate`.
-#   2. That job's `name:` is exactly `CI gate`.
+#   2. That job's name is `CI gate` except on draft pull requests,
+#      where it is `CI deferred (draft)`.
 #   3. Exactly two workflow files emit a check-run named `CI gate`:
 #      `ci.yml::ci-gate` (real aggregator) and
 #      `ci-gate-stub.yml::ci-gate` (synthetic emitter for PRs whose diff
@@ -132,18 +133,24 @@ jobs:
               )
               ci_gate = {}
 
-          # Invariant 2: ci-gate.name == "CI gate".
+          # The expression marker is split so Actions does not interpolate
+          # the Python literal before the invariant check runs.
+          TEMPLATE_OPEN = "$" "{{"
+
+          # Invariant 2: drafts cannot emit the required name on a skip.
+          # Ready PRs and every merge group must emit the exact required name.
           ci_gate_name = ci_gate.get("name")
-          if ci_gate_name != REQUIRED_CONTEXT:
+          expected_gate_name = (
+              TEMPLATE_OPEN
+              + " github.event_name == 'pull_request' && github.event.pull_request.draft"
+              + f" && 'CI deferred (draft)' || '{REQUIRED_CONTEXT}' "
+              + "}}"
+          )
+          if ci_gate_name != expected_gate_name:
               failures.append(
                   f"ci.yml: job `{REQUIRED_JOB_KEY}` has name={ci_gate_name!r}; "
-                  f"required-context drift if not {REQUIRED_CONTEXT!r}."
+                  f"expected draft-safe required-context expression {expected_gate_name!r}."
               )
-
-          # NOTE: the GitHub Actions expression markers are reconstructed
-          # via string concatenation so the YAML parser does not try to
-          # interpret the Python literals as workflow expressions.
-          TEMPLATE_OPEN = "$" "{{"
 
           # Invariant 3: only allow-listed workflow files emit a job
           # named "CI gate". Two emitters are intentional: ci.yml (real

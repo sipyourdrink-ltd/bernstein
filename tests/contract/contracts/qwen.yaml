@@ -15,7 +15,7 @@ adapter: qwen
 binary: qwen
 install:
   method: npm
-  spec: "@qwen-code/qwen-code@latest"
+  spec: "@qwen-code/qwen-code@0.28.0"
 auth:
   required_for_help: false
   required_for_models: false

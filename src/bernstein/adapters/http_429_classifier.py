@@ -19,6 +19,7 @@ current state.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final
@@ -45,11 +46,21 @@ class _PatternRule:
         needle: Case-insensitive substring to match against the body.
         classification: Result when the needle matches.
         reason_label: Short machine-readable reason (e.g. ``session_cap``).
+        exhaustion_pattern: Stronger match when the input may include log
+            context outside the provider's response.
     """
 
     needle: str
     classification: HTTP429Classification
     reason_label: str
+    exhaustion_pattern: str | None = None
+
+
+_SPEND_EXHAUSTION = (
+    r"(?:spend(?:ing)?|daily) limit (?:of \$?[0-9]+(?:[.,][0-9]+)* )?"
+    r"(?:has been |was |is )?(?:reached|exceeded|exhausted)\b|"
+    r"\b(?:hit|reached|exceeded) (?:the |your |its )?(?:daily |(?:daily )?spend(?:ing)? )limit\b"
+)
 
 
 #: Data-driven pattern table. Append a new endpoint's wording here; the
@@ -65,17 +76,25 @@ _PATTERN_RULES: Final[tuple[_PatternRule, ...]] = (
         HTTP429Classification.STANDING,
         "session_cap",
     ),
-    _PatternRule("spending limit", HTTP429Classification.STANDING, "spend_cap"),
-    _PatternRule("spend limit", HTTP429Classification.STANDING, "spend_cap"),
-    _PatternRule("daily limit", HTTP429Classification.STANDING, "spend_cap"),
+    _PatternRule("spending limit", HTTP429Classification.STANDING, "spend_cap", _SPEND_EXHAUSTION),
+    _PatternRule("spend limit", HTTP429Classification.STANDING, "spend_cap", _SPEND_EXHAUSTION),
+    _PatternRule("daily limit", HTTP429Classification.STANDING, "spend_cap", _SPEND_EXHAUSTION),
     _PatternRule("budget exceeded", HTTP429Classification.STANDING, "spend_cap"),
     _PatternRule("insufficient_quota", HTTP429Classification.STANDING, "quota_exceeded"),
     _PatternRule("quota exceeded", HTTP429Classification.STANDING, "quota_exceeded"),
-    _PatternRule("credit balance", HTTP429Classification.STANDING, "credit_cap"),
+    _PatternRule(
+        "credit balance",
+        HTTP429Classification.STANDING,
+        "credit_cap",
+        r"insufficient credit balance|(?:out of|exhausted) (?:your )?credit balance|"
+        r"credit balance (?:is |has been )?(?:zero|too low|exhausted)\b",
+    ),
 )
 
 
-def classify_429(body: str, retry_after: str | None = None) -> HTTP429Classification:
+def classify_429(
+    body: str, retry_after: str | None = None, *, require_explicit_cap: bool = False
+) -> HTTP429Classification:
     """Classify a 429 response body into RETRYABLE or STANDING.
 
     Args:
@@ -84,6 +103,8 @@ def classify_429(body: str, retry_after: str | None = None) -> HTTP429Classifica
         retry_after: Optional ``Retry-After`` header value. Reserved for
             future standing-cap heuristics; classification is currently
             body-driven.
+        require_explicit_cap: Require exhaustion wording for ambiguous spend
+            and balance phrases when scanning surrounding log lines.
 
     Returns:
         :data:`HTTP429Classification.RETRYABLE` for unknown or
@@ -93,6 +114,9 @@ def classify_429(body: str, retry_after: str | None = None) -> HTTP429Classifica
 
     lowered = body.lower()
     for rule in _PATTERN_RULES:
-        if rule.needle in lowered:
-            return rule.classification
+        if rule.needle not in lowered:
+            continue
+        if require_explicit_cap and rule.exhaustion_pattern and not re.search(rule.exhaustion_pattern, lowered):
+            continue
+        return rule.classification
     return HTTP429Classification.RETRYABLE

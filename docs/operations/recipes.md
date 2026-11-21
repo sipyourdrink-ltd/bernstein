@@ -35,7 +35,7 @@ Source:
 ```text
 bernstein recipes list                                       [--bundled-only]
 bernstein recipes show NAME
-bernstein recipes run NAME --param key=value [--param ...]   [--dry-run] [-g GOAL]
+bernstein recipes run NAME_OR_FILE --param key=value [--param ...]   [--dry-run] [-g GOAL]
 ```
 
 - `list` enumerates bundled + user-installed recipes with their
@@ -45,9 +45,37 @@ bernstein recipes run NAME --param key=value [--param ...]   [--dry-run] [-g GOA
 - `run` executes end-to-end. `--dry-run` prints the resolved workflow
   plan without spawning agents.
 
+## Previewing a manifest file
+
+A bare recipe name uses discovery (project-local, user, then bundled
+recipes; the first matching name wins). An explicit `.yaml` or `.yml`
+path loads that manifest directly. For example, from a source checkout:
+
+```bash
+bernstein recipes run ./templates/recipes/bump-dependency.yaml \
+  --param package=httpx --param version=0.27.0 --dry-run
+```
+
+Repeat `--param KEY=VALUE` for distinct inputs. Values are validated against
+the manifest's declared types and choices; omitted inputs use their
+defaults, and required inputs without defaults must be supplied. Malformed
+assignments, duplicate keys, unknown keys, and invalid parameter values
+exit 1. Failure to load or render the manifest exits 2.
+
+A successful preview prints the recipe identity and resolved parameter
+values, the resolved workflow YAML, and its topological execution layers.
+It returns before handing the workflow to the runner, so neither agent
+nodes nor command nodes execute. Registered recipe commands are separate
+from this ad hoc preview.
+
 ## Registered runs (content-addressed, receipt-backed)
 
-`recipes run` executes a manifest ad hoc. For a workflow you fire
+`recipes run` executes a manifest ad hoc. Registry commands that need an
+existing `.sdd/` directory exit with status `1` and print an initialization
+hint to stderr if the directory is missing. If `.sdd` is a file, registry
+commands report the obstruction on stderr and exit with status `1`.
+
+For a workflow you fire
 repeatedly, register it first: the recipe id becomes the sha256 of its
 canonical body, and every fire writes a receipt to the audit chain.
 

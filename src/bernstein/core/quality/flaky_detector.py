@@ -10,6 +10,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import perf_counter_ns
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
@@ -94,11 +95,15 @@ class PytestPhaseObservation:
 
 @dataclass(frozen=True)
 class PytestInvocationObservation:
-    """Observed exit, final collection, and reports for a single invocation."""
+    """Observed exit, elapsed duration, final collection, and reports for one invocation.
+
+    Duration is diagnostic metadata and does not affect the proof verdict.
+    """
 
     exit_code: int
     selected_node_ids: tuple[str, ...]
     phases: tuple[PytestPhaseObservation, ...]
+    duration_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -259,8 +264,10 @@ def capture_pytest_observation(args: Sequence[str]) -> PytestInvocationObservati
             phases.append(PytestPhaseObservation(item.nodeid, report.when, outcome))
             return report
 
+    started = perf_counter_ns()
     code = pytest.main(list(args), plugins=[Observer()])
-    return PytestInvocationObservation(int(code), tuple(selected), tuple(phases))
+    duration_ms = (perf_counter_ns() - started) // 1_000_000
+    return PytestInvocationObservation(int(code), tuple(selected), tuple(phases), duration_ms=duration_ms)
 
 
 def iter_pytest_outcomes(output: str) -> Iterator[tuple[str, PytestOutcome]]:

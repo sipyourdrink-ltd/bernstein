@@ -81,12 +81,29 @@ bernstein ps                 # running agents, with a parked footer
 Both read the on-disk store unioned with the calling process's own
 supervisor, so they agree.
 
-`bernstein ps --json-output` keeps its existing shape — a bare agent
-list, or an object when something is parked — and the object now carries
-`parked_available` alongside `parked`. The unavailable-versus-empty
-distinction is therefore on the human surfaces and on `bernstein agents
-parked`; `ps --json` cannot express it without changing its top-level
-type, which would break existing readers.
+`bernstein ps --json-output` uses two shapes, depending on whether any
+sessions are parked. With no parked sessions it returns the bare agent
+array (for example, `[]`); when sessions are parked it returns an object,
+for example:
+
+```json
+{"agents": [], "parked": ["batch:T-1234"], "parked_available": true}
+```
+
+The bare array does not report parked-state availability. In particular,
+`[]` can mean either that the store exists and is empty or that no
+supervisor has written state. When there are no running agents, `ps` emits
+`[]` in both cases. Use `bernstein agents parked` to distinguish them:
+
+| `bernstein agents parked` output | What it means |
+|---|---|
+| `No parked sessions.` | The store exists and is empty — a measured zero |
+| `Parked state unavailable.` | No supervisor has ever written to this workspace — not a report of zero |
+
+The unavailable-versus-empty distinction is therefore available on the
+human surfaces and on `bernstein agents parked`; the bare array from
+`ps --json-output` cannot express it without changing its top-level type,
+which would break existing readers.
 
 ## What gets parked, and under what id
 

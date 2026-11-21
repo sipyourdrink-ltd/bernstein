@@ -34,17 +34,65 @@ explicitly: `git push origin 'refs/bernstein/snapshots/*'`.
 
 ### What gets captured
 
-- Every tracked file's current contents.
-- Every untracked file in the work tree (`git add -A` against the
-  throwaway index).
-- File deletions, as removals against the parent tree.
+When the repository has a current commit (`HEAD`), the temporary index starts
+from that commit. The snapshot therefore contains the current working-tree
+contents of files tracked in that commit, including edits made after staging,
+and records tracked files deleted from the working tree as removals. New
+(non-ignored) files are also captured, even if they have not been staged.
+
+New files that match the repository's ordinary Git ignore rules are omitted:
+`git add -A` does not add ignored, untracked files. A file already tracked in
+the current commit is still captured if it is edited or deleted, even if an
+ignore rule now matches its path. In a repository with no current commit, the
+temporary index starts empty, and the snapshot captures the addable files in
+the working tree.
+
+The snapshot describes the working-tree state, not the real staging index.
+For example, if `notes.txt` is staged as `staged version` and then edited to
+`later working-tree version`, the snapshot contains `later working-tree
+version`; the real index still contains `staged version`. A new ignored file
+such as `.env.local` is omitted from the snapshot. Snapshotting leaves the
+real index unchanged.
 
 What is **not** captured:
 
 - Environment variables, secrets caches, or anything outside the work
   tree.
+- New files excluded by ordinary Git ignore rules.
 - The agent's deliberate staging decisions - the real index is left
   untouched.
+
+### Storage and inspection
+
+The temporary index lives in the **current worktree's Git admin directory**,
+resolved by `git rev-parse --path-format=absolute --git-dir`. In a linked
+worktree, `.git` is a file pointing to that admin directory, not a directory
+in which to store the index. The temporary index is removed after capture;
+the real staging index is left unchanged.
+
+Snapshot metadata JSON sidecars instead live at
+`<common-git-dir>/bernstein/snapshots/<snapshot_id>.json`, where
+`<common-git-dir>` is resolved by
+`git rev-parse --path-format=absolute --git-common-dir`. The sidecars are
+shared by the main and linked worktrees, just like the snapshot refs.
+Removing the linked worktree that created a snapshot does not remove this
+shared metadata: the snapshot and its task information remain accessible
+from another worktree of the same repository. Cloning a repository does not
+copy these JSON sidecars.
+
+For inspection, `bernstein git snapshots` lists snapshot refs, sorted
+newest-first by the metadata timestamp (`ts_ns`). If a ref still exists but
+its sidecar is missing, `SnapshotStore.get()` and `SnapshotStore.list()`
+reconstruct a minimal **ref-backed record**: the snapshot ID, tree SHA and
+ref are retained, the label is the snapshot ID, and `ts_ns=0`. These records
+sort last, after snapshots with positive metadata timestamps, regardless of
+the timestamp embedded in the snapshot ID.
+
+The fallback record has no task, tool-call, agent or parent-snapshot
+information. In particular, `task_id` is `None`, so
+`bernstein git snapshots --task <id>` excludes it even if the snapshot
+originally belonged to that task. Use the unfiltered list to find such
+snapshots; their ref-backed trees can still be used for undo.
 
 ## Pre-tool-use hook
 

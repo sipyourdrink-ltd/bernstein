@@ -1,6 +1,6 @@
 # CLI agent adapters
 
-One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 50+ more): a task prompt becomes a CLI invocation and results stream back. One module per tool. The subtree also holds the scanner contract, deep-research adapters, and ingest adapters for runtimes Bernstein did not schedule.
+CLI agent adapters (claude, codex, gemini, aider, goose and others): a task prompt becomes a CLI invocation and results stream back. One module per tool. The subtree also holds the scanner contract, deep-research adapters, and ingest adapters for runtimes Bernstein did not schedule.
 
 ## Key files
 

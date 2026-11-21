@@ -1,10 +1,10 @@
 ---
-title: Bernstein - The Open-Source Governance Layer for AI Agents
+title: Bernstein - an open-source governance layer for AI agents
 description: >-
-  The open-source governance layer for AI agents. No model in the coordination
+  An open-source governance layer for AI agents. No model in the coordination
   loop, so replaying a plan reproduces its task graph byte-identically.
   Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline,
-  without rerunning it. Run Claude Code, Codex, Gemini CLI, and 50+ more behind
+  without rerunning it. Run Claude Code, Codex, Gemini CLI and others behind
   one governance surface, for any deliverable, with zero vendor lock-in.
 tags:
   - orchestration
@@ -40,9 +40,9 @@ hide:
 
 ## What it does
 
-Bernstein takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
+Bernstein is an open-source governance layer for AI agents: it applies declared controls and records verifiable results. Its deterministic orchestration takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges code changes when the gates allow. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
 
-No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
+No framework to learn. No vendor lock-in. Supported agent integrations are replaceable through registered adapters, subject to task capabilities and role requirements; see the [adapter catalog](adapters/ADAPTER_GUIDE.md). The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 
 Results stay checkable after the run ends: an always-on lineage spine and replay journal record what happened, and an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) adds receipts you can verify offline.
 
@@ -81,11 +81,16 @@ Then run:
 bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 ```
 
-A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other.
+To watch an existing run in a browser, open that task server's `/ui/`
+address when bundled UI assets are available (for example,
+`http://127.0.0.1:8052/ui/` on the default task-server port).
+`bernstein gui serve` starts a separate GUI server using its current
+workspace; launching it in another directory selects that other workspace.
+Use the running task server's UI address to watch its live run.
 
-| ![A three-column terminal dashboard: agents with their live logs on the left, the task board on the right, an activity feed and a cost line underneath](assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](assets/webui-agents-diffs.png) |
+| ![A three-column terminal dashboard: agents with their live logs on the left, the task board on the right, an activity feed and a cost line underneath](assets/tui-agents.png) | ![Browser Tasks page with the Diff drawer showing working-tree changes](assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the same run in a browser |
+| `bernstein live` — the terminal dashboard | `bernstein gui serve` — browser dashboard for its selected workspace |
 
 ## Why Bernstein?
 
@@ -110,7 +115,7 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
     ---
 
-    50+ CLI adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
+    55 selectable CLI adapter names (see `bernstein adapters list`): Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
     Mix cheap local models with cloud models in the same run.
 
 - :material-source-branch:{ .lg .middle } **Git worktree isolation**
@@ -119,7 +124,8 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
     Each coding agent works in its own git worktree
     (artifact-mode tasks get an isolated plain directory).
-    No merge conflicts. Clean history. Parallel by default.
+    Changes pass through the merge gate when integrated; overlapping edits
+    can still conflict. Parallel by default.
 
 - :material-shield-check:{ .lg .middle } **Built-in verification**
 
@@ -150,6 +156,7 @@ for offline client compliance review.
 | :material-wrench: [Configuration](operations/CONFIG.md) | bernstein.yaml reference |
 | :material-puzzle: [Adapter Guide](adapters/ADAPTER_GUIDE.md) | Supported agents and how to add your own |
 | :material-api: [API Reference](reference/openapi-reference.md) | Task server REST API |
+| :material-book-open-variant: [Glossary](reference/GLOSSARY.md) | Definitions for terms used throughout the documentation |
 | :material-connection: [Integrations](integrations.md) | what Bernstein bridges to, by the name you call it |
 | :material-sitemap: [Architecture](architecture/ARCHITECTURE.md) | How Bernstein works under the hood |
 | :material-state-machine: [Lifecycle FSM](architecture/LIFECYCLE.md) | Task and agent state machines with transition tables |

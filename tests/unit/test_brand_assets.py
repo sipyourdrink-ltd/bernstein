@@ -131,18 +131,20 @@ def test_logo_panel_carries_its_own_background() -> None:
 
 
 def test_readme_header_starts_with_the_banner() -> None:
-    """GitHub's prefers-color-scheme follows the OS, not the GitHub theme, so the
-    README header carries no theme-switched wordmark: the banner, which has its
-    own opaque background, is the first image and the only identity mark."""
+    """The light fallback and the dark variant are the only header banner."""
     readmes = [REPO / "README.md", *sorted((REPO / "docs" / "i18n").glob("README.*.md"))]
     for readme in readmes:
         header = readme.read_text(encoding="utf-8").split("</div>")[0]
-        first_image = re.search(r"<img\b[^>]*\bsrc=\"([^\"]+)\"", header)
-        assert first_image, f"{readme.name}: no image in the header"
-        assert first_image.group(1).endswith("docs/assets/banner-readme.webp"), readme.name
+        picture = re.search(r"<picture>\s*(.*?)\s*</picture>", header, flags=re.DOTALL)
+        assert picture, f"{readme.name}: no picture in the header"
+        assert header.count("<picture>") == 1, readme.name
+        assert header.count("<img ") == 1, readme.name
+        first_image = re.search(r'<img\b[^>]*\bsrc="([^"]+)"', picture[1])
+        assert first_image and first_image[1].endswith("docs/assets/readme-banner-light.webp"), readme.name
+        dark_image = re.search(r'<source media="\(prefers-color-scheme: dark\)" srcset="([^"]+)"', picture[1])
+        assert dark_image and dark_image[1].endswith("docs/assets/readme-banner-dark.webp"), readme.name
         for wordmark in ("logo-dark.svg", "logo-light.svg", "logo-readme.svg"):
             assert wordmark not in header, f"{readme.name}: header still shows {wordmark}"
-        assert "prefers-color-scheme" not in header, readme.name
 
 
 def _names_listed_in_guide() -> set[str]:

@@ -47,7 +47,7 @@ assertion. `run_assertions(assertions, repo_root)` executes them (pass
 otherwise they are reported as failed); `verify_contract()` is the
 top-level entry point.
 
-You can emit the assertions as a real pytest file for CI:
+`load_contract()` returns `None` if the contract file is absent. If the file exists but is invalid (including tampering or schema-version errors), the error from `FeatureContract.load()` propagates; it is not treated as a missing contract. Check for the missing-contract case before calling `extract_assertions()`:
 
 ```python
 from pathlib import Path
@@ -58,6 +58,8 @@ from bernstein.core.planning.spec_assertions import (
 )
 
 contract = load_contract()
+if contract is None:
+    raise FileNotFoundError("No feature contract found")
 report = extract_assertions(contract)
 assertions_to_pytest(report.assertions, out_path=Path("tests/spec/test_plan_jwt.py"))
 ```
@@ -74,7 +76,13 @@ The step grammar parsed out of `acceptance_steps`:
 | (the feature's `acceptance_check`) | `test_passes` | the command / pytest selector exits 0 |
 
 Steps that match no rule land in the report's `unparsed` list rather
-than running.
+than running. `unparsed` records individual steps; `skipped_features`
+records feature IDs for which extraction produced no assertions at all.
+These are not mutually exclusive outcomes: a feature can have an
+unparsed step and still produce assertions from other recognized steps
+(or its `acceptance_check`). A feature whose steps are all unparsed and
+has no `acceptance_check` contributes no assertion, so it appears in
+`skipped_features` as well as contributing its steps to `unparsed`.
 
 ## Configuration
 

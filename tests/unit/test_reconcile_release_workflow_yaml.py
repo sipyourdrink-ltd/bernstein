@@ -60,6 +60,15 @@ def _run(step: WorkflowStep) -> str:
     return run
 
 
+def test_environment_wait_report_runs_independently_with_scoped_permissions() -> None:
+    job = _load()["jobs"]["environment-waits"]
+    assert "needs" not in job and "if" not in job
+    assert job["permissions"] == {"contents": "read", "actions": "read", "deployments": "read", "issues": "write"}
+    step = next(step for step in job["steps"] if isinstance(step, dict) and "run" in step)
+    assert step["run"] == "python3 scripts/report_environment_waits.py"
+    assert step["env"] == {"GH_TOKEN": "${{ github.token }}"}
+
+
 def test_compare_step_audits_github_release_assets() -> None:
     """Release reconciliation must detect tag releases that exist without dist assets."""
     run = _run(_step("Compare versions and release assets"))

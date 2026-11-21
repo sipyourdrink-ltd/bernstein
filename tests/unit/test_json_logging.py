@@ -6,8 +6,9 @@ import json
 import logging
 from io import StringIO
 
+import pytest
 from bernstein.core.correlation import set_current_context
-from bernstein.core.json_logging import JsonFormatter
+from bernstein.core.json_logging import JsonFormatter, setup_json_logging
 
 
 def test_json_formatter_basic() -> None:
@@ -142,3 +143,23 @@ def test_json_logging_end_to_end() -> None:
 
     finally:
         test_logger.removeHandler(handler)
+
+
+def test_configured_json_handler_redacts_child_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    package_logger = logging.getLogger("bernstein")
+    monkeypatch.setattr(package_logger, "handlers", [])
+    monkeypatch.setattr(package_logger, "propagate", True)
+    monkeypatch.setattr(package_logger, "level", logging.NOTSET)
+    monkeypatch.setenv("BERNSTEIN_LOG_JSON", "1")
+    previous_level = root.level
+    try:
+        setup_json_logging()
+        logging.getLogger("bernstein.json-redaction-test").info("Contact %s", "person@example.com")
+        records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+        assert records[-1]["message"] == "Contact [REDACTED]"
+    finally:
+        root.setLevel(previous_level)

@@ -4,7 +4,7 @@
     "name": "chernistry",
     "url": "https://github.com/chernistry"
   },
-  "description": "The open-source governance layer for AI agents. Spawn parallel agents in per-task git worktrees, verify their work, and merge results; no model in the coordination loop, so replaying a plan reproduces its task graph byte-identically.",
+  "description": "An open-source governance layer for AI agents. Spawn parallel agents in per-task git worktrees, verify their work, and merge results; no model in the coordination loop, so replaying a plan reproduces its task graph byte-identically.",
   "homepage": "https://github.com/sipyourdrink-ltd/bernstein",
   "keywords": [
     "orchestration",
@@ -17,5 +17,5 @@
   "license": "Apache-2.0",
   "name": "bernstein",
   "repository": "https://github.com/sipyourdrink-ltd/bernstein",
-  "version": "3.24.1"
+  "version": "4.0.0"
 }

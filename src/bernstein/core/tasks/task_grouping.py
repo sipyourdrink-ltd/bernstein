@@ -153,6 +153,8 @@ def compact_small_tasks(
             if next_idx in merged_indices:
                 continue
             next_batch = result[next_idx]
+            if next_batch[0].role != batch[0].role:
+                continue
 
             if _can_merge_batches(batch, next_batch, effective_max):
                 batch.extend(next_batch)

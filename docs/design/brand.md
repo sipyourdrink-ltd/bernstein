@@ -28,7 +28,7 @@ Two files, chosen by colour scheme:
 | dark | `docs/assets/logo-dark.svg` | `#F2EFE6` (token `text`, dark) |
 | light | `docs/assets/logo-light.svg` | `#181614` (token `text`, light) |
 
-The README does not choose between them: GitHub's `prefers-color-scheme` follows the reader's OS or browser, not the GitHub theme, so a light/dark `<picture>` can put dark ink on a dark page. Its header starts with `docs/assets/banner-readme.webp`, which carries the wordmark on its own opaque background and is the only identity mark in the header. `docs/assets/logo-readme.svg`, the dark wordmark on its own opaque `#13130F` panel (rounded, hairline stroke), stays available for surfaces that cannot choose by colour scheme. **The two wordmark paths are hotlinked** from the PyPI project page, the website repository and third-party listings via `raw.githubusercontent.com/.../main/docs/assets/logo-{dark,light}.svg`. Change their content; never their name or location.
+The README uses a single `<picture>` with `docs/assets/readme-banner-dark.webp` for readers whose system or browser prefers dark mode and `docs/assets/readme-banner-light.webp` as the fallback. Both images carry their own opaque backgrounds. The old `docs/assets/banner-readme.webp` remains available for existing hotlinks. `docs/assets/logo-readme.svg`, the dark wordmark on its own opaque `#13130F` panel (rounded, hairline stroke), stays available for surfaces that cannot choose by colour scheme. **The two wordmark paths are hotlinked** from the PyPI project page, the website repository and third-party listings via `raw.githubusercontent.com/.../main/docs/assets/logo-{dark,light}.svg`. Change their content; never their name or location.
 
 ## Colours
 
@@ -71,7 +71,7 @@ Where the identity is wired in:
 
 | Surface | File |
 |---|---|
-| README header | `README.md` and `docs/i18n/README.*.md`: `docs/assets/banner-readme.webp` is the first image and the only identity mark |
+| README header | `README.md` and `docs/i18n/README.*.md`: one `<picture>` uses `docs/assets/readme-banner-{light,dark}.webp` |
 | Docs site logo + favicon | `mkdocs.yml` (`theme.logo`, `theme.favicon` → `assets/brand/bernstein-mark.svg`) |
 | Docs `og:image` | `docs/overrides/main.html`, `docs/benchmarks/leaderboard.html` |
 | Operator GUI favicon | `web/index.html` (inline SVG data URI of the mark) |

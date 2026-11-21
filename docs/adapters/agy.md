@@ -11,12 +11,20 @@ Verified against **Antigravity CLI 1.0.0**.
 
 ## Which lane am I in? (`agy` vs `gemini`)
 
-Two adapters, two lanes -- pick by how you authenticate:
+The authentication paths have different provider terms:
 
 | Lane | Adapter | Binary | Who |
 |---|---|---|---|
-| Consumer / default | `agy` (alias: `antigravity`) | `agy` | Free, AI Pro, Ultra subscribers (keyring / OAuth sign-in) |
+| Consumer / default (not recommended) | `agy` (alias: `antigravity`) | `agy` | Free, AI Pro, Ultra subscribers (keyring / OAuth sign-in); see provider restrictions below |
 | Enterprise / API key | `gemini` | `gemini` | Enterprise licenses and paid API-key operators |
+
+The consumer lane is not recommended for use with Bernstein. Google's
+[Antigravity additional terms](https://antigravity.google/terms) say that
+access through third-party software breaches the terms and may lead to
+suspension or closure of Antigravity and/or Gemini CLI accounts. The
+[Antigravity FAQ](https://antigravity.google/docs/faq/) says that wrapping
+headless mode in third-party coding agents or applications is not
+supported under consumer plans.
 
 The `gemini` adapter (see `docs/adapters/gemini.md`) remains fully
 supported for the enterprise and API-key paths. The `agy` adapter is a
@@ -26,16 +34,14 @@ coverage, so the two lanes never share discovery state. The
 `docs/adapters/antigravity.md`).
 
 ```bash
-# consumer lane
-bernstein run --cli agy "fix the flaky test"
-
 # enterprise / API-key lane
 bernstein run --cli gemini "fix the flaky test"
 ```
 
 ## Invocation
 
-The harness path is the CLI's print mode:
+The invocation below documents the adapter's existing print-mode
+contract. The consumer-plan restrictions above apply to this reference.
 
 ```
 agy -p "<prompt>" --sandbox --dangerously-skip-permissions [--model <model>] [--print-timeout <N>s]
@@ -68,12 +74,9 @@ rename of the resume surface is caught before resume support lands.
 
 The Antigravity CLI is closed-source and distributed via an upstream
 installer; Bernstein does not ship any installer URL inside the
-package. Install from the upstream channel of your choice, then sign
-in:
-
-```bash
-agy install     # configure environment paths and shell settings
-```
+package. The CLI's `agy install` command configures environment paths
+and shell settings. Installation and authentication details here are
+reference information subject to the consumer-plan restrictions above.
 
 Auth defaults to keyring / OAuth. `GOOGLE_API_KEY` / `GEMINI_API_KEY`
 are honoured as optional overrides (shared with the gemini lane) and

@@ -101,6 +101,9 @@ The result is one of `OK`, `NO CAPSULE`, `MOCK` or `MISMATCH`, with the
 reason. `--json` adds the separate checks: `signature_ok`, `chain_ok` and
 `journal_ok`.
 
+To verify a signed run receipt, use
+[`bernstein verify receipt`](../reference/cli/verify.md).
+
 ## Declared context manifest
 
 `bernstein context manifest <task-id>` derives the **context manifest** for a

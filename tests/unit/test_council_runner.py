@@ -192,14 +192,17 @@ class TestRunCouncilHappyPath:
         candidate_prompts = [prompt for agent, prompt, _ in calls if agent.model.model != "judge-m"]
         assert candidate_prompts == ["solve the task", "solve the task"]
 
-    def test_judge_prompt_embeds_task_and_candidate_outputs(self) -> None:
+    def test_judge_prompt_embeds_task_and_candidate_outputs(self, caplog: pytest.LogCaptureFixture) -> None:
         calls: list[tuple[Any, str, dict[str, Any]]] = []
         behaviors = {
             "cand-a": _FakeRunResult("answer from a"),
             "cand-b": _FakeRunResult("answer from b"),
             "judge-m": _FakeRunResult("synthesized winner"),
         }
-        with patch.dict("sys.modules", _fake_sdk_modules(behaviors, calls)):
+        with (
+            patch.dict("sys.modules", _fake_sdk_modules(behaviors, calls)),
+            caplog.at_level("INFO", logger="bernstein.adapters.council_runner"),
+        ):
             run_council(_FakeAgent(), "solve the task", _council_cfg(), _manifest())
         judge_prompt = next(prompt for agent, prompt, _ in calls if agent.model.model == "judge-m")
         assert "solve the task" in judge_prompt
@@ -207,6 +210,9 @@ class TestRunCouncilHappyPath:
         assert "answer from b" in judge_prompt
         assert "candidates[0]=cand-a" in judge_prompt
         assert "candidates[1]=cand-b" in judge_prompt
+        assert "judge responded" in caplog.text
+        for payload in ("solve the task", "answer from a", "answer from b", "synthesized winner"):
+            assert payload not in caplog.text
 
     def test_judge_agent_has_tools_and_handoffs_stripped(self) -> None:
         calls: list[tuple[Any, str, dict[str, Any]]] = []

@@ -30,6 +30,8 @@ FACT_CONFIG_READ = "config-read"
 
 @dataclass(frozen=True)
 class ChangeFact:
+    """A typed fact about a change used to derive lineage dependencies."""
+
     kind: str
     path: str
     symbol: str | None = None

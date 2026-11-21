@@ -68,13 +68,27 @@ For each merged finding:
 
 ```
 detected_by      = sorted distinct bots that raised it
-agreement_ratio  = min(len(detected_by) / bots_ran, 1.0)
-consensus_score  = agreement_ratio * max(member confidence)
+agreement_ratio  = min(len(detected_by) / max(bots_ran, 1), 1.0)
+max_confidence   = max(clamp(member confidence, 0.0, 1.0))
+consensus_score  = agreement_ratio * max_confidence
 ```
 
-`bots_ran` is the total number of active bots in the run. Pass it
-explicitly when some bots produced zero findings; otherwise it is derived
-from the input bots and will under-count, inflating agreement.
+The default `bots_ran` denominator is the number of distinct bots found
+across the complete input, not just the bots in that finding's cluster.
+Each cluster's `detected_by` likewise counts each reporting bot only once,
+regardless of how many matching reports that bot supplied. Pass
+`bots_ran` explicitly when the run included bots with no findings; an
+explicit denominator is floored at one. The agreement ratio is capped at
+one, and every member confidence is clamped to `[0.0, 1.0]` before taking
+the maximum.
+
+For example, suppose bot A submits two reports for the same issue at the
+same location, each with confidence `0.8`, while bot B reports a different
+issue. For the first issue, `detected_by` contains only A, so the duplicate
+reports count once. With the default denominator of two distinct bots,
+its agreement is `1/2` and its score is `0.5 * 0.8 = 0.4`. If the run
+actually had four bots, two silent, passing `bots_ran=4` changes the
+agreement to `1/4` and the score to `0.25 * 0.8 = 0.2`.
 
 ## Buckets
 
