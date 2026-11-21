@@ -92,6 +92,12 @@ def _node_symbol(node: ast.stmt) -> str | None:
 def _slice_lines(source_lines: list[str], start: int, end: int) -> str:
     """Return inclusive 1-indexed line range as text with trailing newline."""
     snippet = "\n".join(source_lines[start - 1 : end])
+    # Every sliced line keeps its terminator, so the final newline is added
+    # back - unless the range ends on the phantom empty element of a
+    # newline-terminated file, where the join already accounts for it.
+    ends_at_phantom = bool(source_lines) and end == len(source_lines) and source_lines[-1] == ""
+    if not ends_at_phantom:
+        return snippet + "\n"
     return snippet if snippet.endswith("\n") else snippet + "\n"
 
 
