@@ -181,6 +181,23 @@ def test_decorators_stay_with_oversized_definitions(
     assert "".join(part.text for part in chunks) == source
 
 
+def test_blank_lines_before_decorator_round_trip_with_line_numbers(tmp_path: Path) -> None:
+    """A gap ending on blank lines keeps every line - chunk span and text agree."""
+    fp = tmp_path / "gap.py"
+    source = "def a(): pass\n\n\n@d\ndef f(): pass\n"
+    fp.write_text(source, encoding="utf-8")
+
+    chunks = chunk_for_review(fp)
+    assert len(chunks) == 1
+    chunk = chunks[0]
+    assert (chunk.start_line, chunk.end_line) == (1, 5)
+    # Line numbers inside the chunk match the file: f's def stays on line 5.
+    assert chunk.text.splitlines() == ["def a(): pass", "", "", "@d", "def f(): pass"]
+    # Round-trip: concatenated chunks reproduce the source byte-for-byte.
+    assert chunk.text == source
+    assert "".join(part.text for part in chunks) == source
+
+
 def test_nested_classes_belong_to_outer_class_chunk(tmp_path: Path) -> None:
     """Inner classes are part of the outer class's AST node - not separate symbols."""
     fp = tmp_path / "nest.py"
