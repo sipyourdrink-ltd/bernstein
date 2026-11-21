@@ -319,21 +319,15 @@ class SQLiteMemoryStore:
             removed += cursor.rowcount
 
             # 2. Remove by capacity (keep top N by importance/recency)
-            # Find IDs to keep
-            keep_query = """
-                SELECT id FROM memory
-                ORDER BY importance DESC, created_at DESC
-                LIMIT ?
-            """
-            to_keep = [row[0] for row in conn.execute(keep_query, (max_entries,))]
-
-            if to_keep:
-                placeholders = ",".join("?" for _ in to_keep)
-                cursor = conn.execute(
-                    f"DELETE FROM memory WHERE id NOT IN ({placeholders})",
-                    to_keep,
+            cursor = conn.execute(
+                """
+                DELETE FROM memory WHERE id NOT IN (
+                    SELECT id FROM memory ORDER BY importance DESC, created_at DESC LIMIT ?
                 )
-                removed += cursor.rowcount
+                """,
+                (max_entries,),
+            )
+            removed += cursor.rowcount
 
         return removed
 
