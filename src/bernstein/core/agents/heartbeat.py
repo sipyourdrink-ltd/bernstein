@@ -264,7 +264,7 @@ class HeartbeatMonitor:
         try:
             pid = int(raw_pid)
         except ValueError:
-            logger.info("Heartbeat reap for session %s: malformed pidfile contents %r", session_id, raw_pid)
+            logger.warning("Heartbeat reap for session %s: malformed pidfile", session_id)
             return
 
         # Verify the PID still belongs to this session's heartbeat loop before
@@ -1110,14 +1110,13 @@ def detect_idle_agents(
 ) -> list[str]:
     """Detect agents that are idle and should be killed to save cost.
 
-    An agent is considered idle if:
-    - Log file hasn't grown in max_idle_seconds (default 3 minutes)
-    - Heartbeat is still alive (agent process is running)
+    The heuristic reports sessions that are not marked dead and have
+    at most ten parsed log lines.
 
     Args:
         workdir: Repository root directory.
         agents: Dict of agent sessions (id -> AgentSession).
-        max_idle_seconds: Threshold for considering agent idle.
+        _max_idle_seconds: Reserved parameter.
 
     Returns:
         List of session IDs that are idle and should be killed.

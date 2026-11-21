@@ -71,6 +71,7 @@ def case_task_result(case: CollusionCase) -> TaskResult:
     # uses (CrossTaskAdmission.receipt_section), so the bundle's per-case
     # receipts and the merge receipt's collusion record cannot drift.
     # One evaluation feeds both the judged result and the receipt.
+    """Evaluate a collusion case and package its gate verdict as a task result."""
     admission = run_cross_task_gate(list(case.tasks))
     result = run_case(case, verdict=admission.verdict)
     receipt = {
@@ -93,6 +94,7 @@ def case_task_result(case: CollusionCase) -> TaskResult:
 
 
 def build_collusion_bundle(cases: list[CollusionCase]) -> SubmissionBundle:
+    """Build a benchmark submission bundle from the supplied collusion cases."""
     return SubmissionBundle(
         suite_hash=suite_hash(cases),
         suite_version=COLLUSION_SUITE_VERSION,
@@ -138,6 +140,7 @@ def sign_bundle(bundle: SubmissionBundle, private_key_pem: str) -> SubmissionBun
 
 
 def verify_bundle_signature(bundle: SubmissionBundle, public_key_pem: str) -> bool:
+    """Verify the bundle signature against the supplied public key."""
     if not bundle.signature:
         return False
     outcome = verify_payload(

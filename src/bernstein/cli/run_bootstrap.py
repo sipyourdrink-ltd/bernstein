@@ -193,17 +193,18 @@ def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
     """
     try:
         config, _tasks = load_plan(plan_path)
-    except PlanLoadError as exc:
-        console.print(f"[red]Failed to load plan file:[/red] {exc}")
+    except (PlanLoadError, OSError, TypeError, ValueError, OverflowError) as exc:
+        click.echo(f"Failed to load plan file: {exc}", err=True)
         raise SystemExit(1) from exc
 
     unapplied = [name for name in _UNAPPLIED_PLAN_SETTINGS if getattr(config, name)]
     if unapplied:
-        console.print(
-            f"[red]Cannot run {plan_path} with --from-plan:[/red] it sets "
+        click.echo(
+            f"Cannot run {plan_path} with --from-plan: it sets "
             f"{', '.join(unapplied)}, which `bernstein run` does not apply, so the run "
             "would not match the plan. Remove the setting(s) (configure agent count in "
-            "bernstein.yaml) and run again."
+            "bernstein.yaml) and run again.",
+            err=True,
         )
         raise SystemExit(1)
     return config
@@ -232,7 +233,7 @@ def _load_plan_goal(plan_path: Path) -> str:
     if plan_path.suffix == ".json":
         with suppress(json.JSONDecodeError):
             data = json.loads(content)
-            if "goal" in data:
+            if isinstance(data, dict) and "goal" in data:
                 return str(data["goal"])
 
     if plan_path.suffix.lower() in _YAML_PLAN_SUFFIXES:
@@ -287,8 +288,8 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         try:
             _plan_config, tasks = load_plan(plan_file)
             return tasks
-        except PlanLoadError as exc:
-            console.print(f"[red]Plan load error:[/red] {exc}")
+        except (PlanLoadError, OSError, TypeError, ValueError, OverflowError) as exc:
+            click.echo(f"Plan load error: {exc}", err=True)
             raise SystemExit(1) from exc
 
     _headers: dict[str, str] = {}
@@ -303,15 +304,19 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         )
         resp.raise_for_status()
         tasks_data = resp.json()
+        if not isinstance(tasks_data, list) or not all(isinstance(task, dict) for task in tasks_data):
+            raise ValueError("Expected a JSON list of task objects.")
+        return [Task.from_dict(task) for task in tasks_data]
     except httpx.ConnectError as err:
-        console.print("[red]Task server not running. Start with `bernstein run` first,[/red]")
-        console.print("[red]or pass a plan file: `bernstein run --dry-run plan.yaml`[/red]")
+        click.echo(
+            "Task server not running. Start with `bernstein run` first,\n"
+            "or pass a plan file: `bernstein run --dry-run plan.yaml`",
+            err=True,
+        )
         raise SystemExit(1) from err
     except Exception as exc:
-        console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
+        click.echo(f"Failed to fetch tasks: {exc}", err=True)
         raise SystemExit(1) from exc
-
-    return [Task.from_dict(td) for td in tasks_data]
 
 
 def _confirm_run(
@@ -770,17 +775,17 @@ def _show_dry_run_plan(
 ) -> None:
     """Show scheduling plan without executing.
 
-    When a plan file is provided, loads tasks directly from it so no running
-    server is required.  Otherwise falls back to fetching open tasks from a
-    running task server.
+    Load a saved plan when supplied. Otherwise synthesize one from an explicit
+    goal or an explicit or discovered seed file. With none of these inputs,
+    preview the open tasks on the running task server.
 
     Args:
-        _workdir: Project root directory.
+        workdir: Project root directory.
         plan_file: Optional plan file path.
-        _goal: Optional goal string.
-        _seed_file: Optional seed file path.
-        model_override: Optional model override.
-        _cli: Optional CLI override.
+        goal: Optional goal string.
+        seed_file: Optional seed file path.
+        model_override: Model used for the cost estimate when supplied.
+        cli: Compatibility parameter. Validated by the CLI before this call.
     """
     _ = cli  # Part of interface: --cli is validated by its click.Choice
     from rich.table import Table
@@ -970,7 +975,8 @@ def plan_init_writes(root: Path) -> tuple[PlannedWrite, ...]:
     from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
 
     planned = [PlannedWrite(rel, PLAN_EXISTS if (root / rel).is_dir() else PLAN_CREATE) for rel in SDD_DIRS]
-    for rel in (INIT_WORKSPACE_CONFIG, INIT_RUNTIME_GITIGNORE, INIT_PROJECT_CONFIG):
+    selected = find_seed_file(root) or (root / INIT_PROJECT_CONFIG)
+    for rel in (INIT_WORKSPACE_CONFIG, INIT_RUNTIME_GITIGNORE, selected.relative_to(root).as_posix()):
         planned.append(PlannedWrite(rel, PLAN_EXISTS if (root / rel).exists() else PLAN_CREATE))
     if (root / INIT_TEMPLATES_DIR).exists():
         planned.append(PlannedWrite(INIT_TEMPLATES_DIR, PLAN_EXISTS))
@@ -1161,7 +1167,7 @@ def _init_impl(
         gi_path.write_text("*.pid\n*.log\n")
 
     # Create bernstein.yaml in project root if not present
-    yaml_path = root / INIT_PROJECT_CONFIG
+    yaml_path = find_seed_file(root) or (root / INIT_PROJECT_CONFIG)
     if not yaml_path.exists():
         yaml_path.write_text(_generate_default_yaml(project_type))
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
@@ -1211,8 +1217,9 @@ def _init_impl(
     # Print clear next steps
     console.print("")
     console.print("[green]Done.[/green] Next steps:")
-    console.print("  1. Edit [bold]bernstein.yaml[/bold]: set a goal")
-    console.print("  2. Run [bold]bernstein[/bold] to start the orchestra")
+    from bernstein.cli.first_run_readiness import project_handoff
+
+    project_handoff(root, remote=remote).render(console)
     console.print("")
     # ``examples/`` is a repo directory and is not part of the wheel, so an
     # operator who installed from PyPI has no such path to look at. The
@@ -2330,7 +2337,7 @@ def exec_restart() -> None:
     is_flag=False,
     flag_value=".sdd/logs/activity.log",
     default=None,
-    help="Write activity to log file (default: .sdd/logs/activity.log).",
+    help="Write activity to a log file (default: .sdd/logs/activity.log).",
 )
 @click.option(
     "--max-cost-usd",
@@ -2911,7 +2918,7 @@ def _run_impl(
                 except Exception:
                     loaded_goal = str(plan_file)
             except Exception as exc:
-                console.print(f"[red]Failed to load plan file:[/red] {exc}")
+                click.echo(f"Failed to load plan file: {exc}", err=True)
                 raise SystemExit(1) from exc
 
             console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
@@ -2928,7 +2935,7 @@ def _run_impl(
                     console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
                     console.print(f"[dim]Goal:[/dim] {goal[:100]}")
                 except (ValueError, OSError) as exc:
-                    console.print(f"[red]Failed to load plan:[/red] {exc}")
+                    click.echo(f"Failed to load plan: {exc}", err=True)
                     raise SystemExit(1) from exc
             effective_goal, team = _resolve_goal_and_team(workdir, goal, seed_file)
             plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
@@ -2991,7 +2998,7 @@ def _run_impl(
             # into a generic "failed to load plan file" message.
             raise
         except Exception as exc:
-            console.print(f"[red]Failed to load plan file:[/red] {exc}")
+            click.echo(f"Failed to load plan file: {exc}", err=True)
             raise SystemExit(1) from exc
 
     # --from-plan: load goal from saved plan file, override inline goal
@@ -3001,7 +3008,7 @@ def _run_impl(
             console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
             console.print(f"[dim]Goal:[/dim] {goal[:100]}")
         except (ValueError, OSError) as exc:
-            console.print(f"[red]Failed to load plan:[/red] {exc}")
+            click.echo(f"Failed to load plan: {exc}", err=True)
             raise SystemExit(1) from exc
 
     # Confirmation prompt before execution (skip with --auto-approve)

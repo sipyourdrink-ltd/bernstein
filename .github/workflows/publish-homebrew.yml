@@ -195,8 +195,8 @@ jobs:
           cp /tmp/bernstein.rb /tmp/homebrew-tap/Formula/bernstein.rb
 
           cd /tmp/homebrew-tap
-          git config user.name "bernstein[bot]"
-          git config user.email "bernstein-bot@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/bernstein.rb
           if git diff --cached --quiet; then
             echo "No changes to publish - formula already at ${META_VERSION}."

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit
 
 from bernstein.core import defaults as _defaults
 from bernstein.core.tasks.artifacts import ArtifactSpec
@@ -173,18 +175,24 @@ class ApiTierInfo:
 
 
 class Scope(Enum):
+    """Relative size of a task's expected work."""
+
     SMALL = "small"  # <30 min, single file
     MEDIUM = "medium"  # 30-120 min, few files
     LARGE = "large"  # 2-8 hours, subsystem
 
 
 class Complexity(Enum):
+    """Relative difficulty of implementing a task."""
+
     LOW = "low"  # Docs, formatting, simple fixes
     MEDIUM = "medium"  # Feature implementation, tests
     HIGH = "high"  # Architecture, complex reasoning, security
 
 
 class TaskStatus(Enum):
+    """Lifecycle states persisted by the task store."""
+
     PLANNED = "planned"  # Awaiting human approval before execution (plan mode)
     OPEN = "open"
     CLAIMED = "claimed"
@@ -1256,6 +1264,8 @@ class AgentSession:
     # the attachment set next to the ``agent_spawned`` event. Empty when the
     # session's tasks declare nothing.
     context_attachments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    # Optional export references only; composition manifests grant no authority.
+    agent_manifest_references: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     # Skill templates injected into the worktree at spawn time (issue #3382).
     # Each entry is ``{"template_name", "version", "pre_render_digest",
     # "rendered_digest", "trigger_source", "status"}`` in injection order -
@@ -1646,6 +1656,7 @@ class OrchestratorConfig:
     """
 
     max_agents: int = 6
+    hash_profile: str = "py-json-v1"
     # Derived from ORCHESTRATOR.tick_interval_s (float, canonical) so overrides
     # via ``tuning.orchestrator.tick_interval_s`` actually change the tick rate.
     poll_interval_s: int = field(default_factory=_default_poll_interval_s)
@@ -1957,6 +1968,10 @@ class NodeCapacity:
     active_agents: int = 0
     gpu_available: bool = False
     supported_models: list[str] = field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+    disk_free_mb: int | None = None
+    mem_used_pct: float | None = None
+    mesh_rtt_ms: float | None = None
+    platform: str | None = None
 
 
 @dataclass
@@ -1972,10 +1987,24 @@ class NodeInfo:
     registered_at: float = field(default_factory=time.time)
     labels: dict[str, str] = field(default_factory=dict[str, str])  # e.g. {"gpu": "true", "region": "us-east"}
     cell_ids: list[str] = field(default_factory=list[str])  # Cells running on this node
+    health: str = "ok"
+    unhealthy_since: float | None = None
 
     def is_alive(self, timeout_s: float = 60.0) -> bool:
         """Check if the node has sent a heartbeat within timeout."""
         return time.time() - self.last_heartbeat < timeout_s
+
+    @property
+    def is_healthy(self) -> bool:
+        return self.health == "ok"
+
+    @property
+    def can_accept_work(self) -> bool:
+        return self.status == NodeStatus.ONLINE and self.is_healthy
+
+    @property
+    def is_schedulable(self) -> bool:
+        return self.can_accept_work and self.capacity.available_slots > 0
 
 
 @dataclass(frozen=True)
@@ -2112,6 +2141,9 @@ class ClusterConfig:
         claim_journal_path: MESH only. Explicit path to the signed claim
             journal. ``None`` uses the conventional
             ``.sdd/cluster/claim_journal.jsonl``.
+        shards: Optional partitions inside one registry process as (ID, URL) pairs.
+            Empty retains single-dictionary storage. URLs are metadata only.
+        shard_vnodes: Virtual nodes per shard, an integer from 1 to 1024.
         gossip_peer_keys: MESH only. The peers whose gossiped receipts this
             node will fold, each pinned to the Ed25519 key that must have
             signed them. Empty means no peer is trusted: a MESH node folds
@@ -2133,6 +2165,50 @@ class ClusterConfig:
     claim_lease_ttl_s: int = 300
     claim_journal_path: str | None = None
     gossip_peer_keys: tuple[MeshPeerKey, ...] = ()
+    # Opt-in partitions inside one registry process. URLs are metadata, not forwarding targets.
+    shards: tuple[tuple[str, str], ...] = ()
+    shard_vnodes: int = 128
+
+    min_disk_free_mb: int = 512
+    max_mem_used_pct: float = 95.0
+    max_mesh_rtt_ms: float = 5000.0
+
+    def __post_init__(self) -> None:
+        if type(self.shard_vnodes) is not int or not 1 <= self.shard_vnodes <= 1024:
+            raise ValueError("cluster.shard_vnodes must be an integer from 1 to 1024")
+        if not isinstance(self.shards, tuple) or len(self.shards) > 256:
+            raise ValueError("cluster.shards must be a tuple of at most 256 (id, url) pairs")
+        seen: set[str] = set()
+        for pair in self.shards:
+            if not isinstance(pair, tuple) or len(pair) != 2:
+                raise ValueError("cluster.shards entries must be (id, url) tuples")
+            shard_id, url = pair
+            if not isinstance(shard_id, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", shard_id) is None:
+                raise ValueError("cluster.shards IDs must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+            if shard_id in seen:
+                raise ValueError("cluster.shards IDs must be unique")
+            seen.add(shard_id)
+            if not isinstance(url, str) or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+                raise ValueError("cluster.shards URLs must be strings without whitespace or control characters")
+            try:
+                parsed = urlsplit(url)
+                port = parsed.port
+                valid = (
+                    parsed.scheme in ("http", "https")
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                    and "?" not in url
+                    and "#" not in url
+                    and (port is None or 1 <= port <= 65535)
+                )
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError(
+                    "cluster.shards URLs require absolute HTTP(S), a hostname and valid port; "
+                    "no credentials, query or fragment"
+                )
 
     @property
     def is_mesh(self) -> bool:

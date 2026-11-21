@@ -39,6 +39,25 @@ bernstein test-adapter --adapter codex --task "List the files in this directory"
    `✓`/`✗` line.
 7. Always tears down the throwaway worktree afterward, even on error.
 
+## Reading the result and command exit status
+
+The printed `Exit code` is the adapter process's wait result, not the
+`bernstein test-adapter` command's own exit status. The command reports the
+adapter outcome but does not propagate a nonzero adapter result as its own
+exit status. For the outcomes below, the command exits with status `0` unless
+an exception occurs while the check is running:
+
+| Printed result | Meaning | Command exit status |
+|---|---|---|
+| An integer, including a nonzero value | The adapter process returned that wait result. | `0`; a nonzero adapter result does not make the command fail. |
+| `timed out` | Waiting exceeded `--timeout`; the command reports the timeout and attempts to kill the adapter. | `0` if the check completes without an exception. |
+| `running` | The adapter did not provide a waitable process handle, so its completion could not be checked. | `0` if the check completes without an exception. |
+
+The `Expected file exists` or `Expected file missing` line is informational:
+it reports the heuristic file check and does not set the command's exit
+status. An exception during the check is different: the command prints
+`Error during adapter test` and exits with status `1`.
+
 This runs entirely locally against the installed CLI binary — it does not
 require `bernstein serve` or a running task server, and it does not touch
 the project's real working tree (the run happens in its own worktree under

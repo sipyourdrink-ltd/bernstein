@@ -45,8 +45,6 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.security.sanitize import sanitize_log
-
 if TYPE_CHECKING:
     from bernstein.adapters.openai_agents_runner import RunnerManifest
 
@@ -213,19 +211,19 @@ async def _run_candidate(
         candidate_agent = agent.clone(**clone_kwargs)
     except Exception as exc:  # intentional-broad-except: one bad candidate must never kill the council
         logger.warning(
-            "run_council._run_candidate: %s SETUP FAILED before dispatch: %s: %s - "
+            "run_council._run_candidate: %s SETUP FAILED before dispatch: %s - "
             "excluding it from judge synthesis, continuing with remaining candidates",
             label,
             type(exc).__name__,
-            sanitize_log(str(exc)),
         )
         return None
 
     run_kwargs: dict[str, Any] = {} if max_turns is None else {"max_turns": max_turns}
     logger.info(
-        "run_council._run_candidate: dispatching %s base_url=%r (credential env var=%r) timeout=%.1fs max_turns=%s",
+        "run_council._run_candidate: dispatching %s custom_endpoint=%s "
+        "(credential env var=%r) timeout=%.1fs max_turns=%s",
         label,
-        member.get("base_url") or "<default>",
+        bool(member.get("base_url")),
         member.get("api_key_env") or "<ambient OPENAI_API_KEY>",
         timeout,
         max_turns if max_turns is not None else "SDK-default",
@@ -246,28 +244,16 @@ async def _run_candidate(
         return None
     except Exception as exc:  # intentional-broad-except: one bad candidate must never kill the council
         logger.warning(
-            "run_council._run_candidate: %s FAILED after %.2fs: %s: %s - excluding it "
+            "run_council._run_candidate: %s FAILED after %.2fs: %s - excluding it "
             "from judge synthesis, continuing with remaining candidates",
             label,
             time.monotonic() - started,
             type(exc).__name__,
-            # Provider exception messages can embed response fragments -
-            # sanitize so a crafted payload cannot forge log lines.
-            sanitize_log(str(exc)),
         )
         return None
 
     elapsed = time.monotonic() - started
-    output_text = str(getattr(result, "final_output", ""))
-    logger.info(
-        "run_council._run_candidate: %s responded in %.2fs - FULL output follows "
-        "(newlines escaped, never truncated):\n%s",
-        label,
-        elapsed,
-        # Model output is external input: escape newlines so a crafted
-        # completion cannot forge log entries, while keeping every byte.
-        sanitize_log(output_text),
-    )
+    logger.info("run_council._run_candidate: %s responded in %.2fs", label, elapsed)
     return label, str(model_id), result
 
 
@@ -344,17 +330,14 @@ async def _run_judge(
 
     run_kwargs: dict[str, Any] = {} if max_turns is None else {"max_turns": max_turns}
     logger.info(
-        "run_council._run_judge: dispatching judge model=%r base_url=%r (credential env var=%r) "
-        "timeout=%.1fs max_turns=%s over %d candidate output(s) - full judge prompt follows:\n%s",
+        "run_council._run_judge: dispatching judge model=%r custom_endpoint=%s (credential env var=%r) "
+        "timeout=%.1fs max_turns=%s over %d candidate output(s)",
         model_id,
-        judge_member.get("base_url") or "<default>",
+        bool(judge_member.get("base_url")),
         judge_member.get("api_key_env") or "<ambient OPENAI_API_KEY>",
         timeout,
         max_turns if max_turns is not None else "SDK-default",
         len(candidate_outputs),
-        # The judge prompt embeds the task prompt and candidate outputs -
-        # both external input - so escape newlines before logging.
-        sanitize_log(judge_prompt),
     )
     started = time.monotonic()
     judge_result = await asyncio.wait_for(
@@ -362,14 +345,7 @@ async def _run_judge(
         timeout=timeout,
     )
     elapsed = time.monotonic() - started
-    output_text = str(getattr(judge_result, "final_output", ""))
-    logger.info(
-        "run_council._run_judge: judge responded in %.2fs - FULL synthesis output "
-        "follows (newlines escaped, never truncated):\n%s",
-        elapsed,
-        # Model output is external input - escape newlines before logging.
-        sanitize_log(output_text),
-    )
+    logger.info("run_council._run_judge: judge responded in %.2fs", elapsed)
     return judge_result
 
 

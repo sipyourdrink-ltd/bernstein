@@ -9,10 +9,12 @@ import subprocess
 import sys
 import time
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
 from bernstein.adapters.base import build_worker_cmd
+from bernstein.core.orchestration import worker
 from bernstein.core.orchestration.worker import (
     _CMD_EXE_LINE_LIMIT,
     _avoid_shim_line_overflow,
@@ -330,6 +332,95 @@ class TestAvoidShimLineOverflow:
 
 
 # ---------------------------------------------------------------------------
+# Worker shutdown (in process with a fake child and monitor)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("marker_state", "child_status", "expected_status"),
+    [
+        ("owned", 0, 0),
+        ("legacy", 6, 6),
+        ("before-join", 0, 0),
+        ("during-join", -signal.SIGTERM, 128 + signal.SIGTERM),
+        ("new-generation", 0, 0),
+        ("owned", None, 1),
+        ("before-join", None, 1),
+    ],
+)
+def test_worker_shutdown_only_removes_its_own_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker_state: str, child_status: int | None, expected_status: int
+) -> None:
+    session = "test-123"
+    pid_dir = tmp_path / "pids"
+    pid_file = pid_dir / f"{session}.json"
+    replacement: dict[str, object] | None = None
+
+    def replace_marker() -> None:
+        nonlocal replacement
+        marker = json.loads(pid_file.read_text(encoding="utf-8"))
+        if marker_state == "new-generation":
+            marker["started_at"] += 1
+        else:
+            marker["worker_pid"] = os.getpid() + 1
+            marker["child_pid"] = 4322
+        replacement = marker
+        worker._atomic_write_json(pid_file, replacement)
+
+    def wait_for_child() -> int:
+        if marker_state == "before-join":
+            replace_marker()
+        elif marker_state == "legacy":
+            worker._atomic_write_json(pid_file, {"worker_pid": os.getpid(), "session": session})
+        if child_status is None:
+            raise OSError("child wait failed")
+        return child_status
+
+    def join_monitor(*, timeout: float) -> None:
+        assert timeout == 2
+        marker = json.loads(pid_file.read_text(encoding="utf-8"))
+        assert marker["worker_pid"] == os.getpid()
+        assert "child_pid" not in marker
+        if marker_state in {"during-join", "new-generation"}:
+            replace_marker()
+
+    child = Mock(pid=4321)
+    child.wait.side_effect = wait_for_child
+    monitor = Mock()
+    monitor.join.side_effect = join_monitor
+    monkeypatch.setattr(worker.subprocess, "Popen", Mock(return_value=child))
+    monkeypatch.setattr(worker.threading, "Thread", Mock(side_effect=[Mock(), monitor]))
+    monkeypatch.setattr(worker.signal, "signal", Mock())
+    monkeypatch.setattr(worker, "_set_proctitle", Mock())
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    command = build_worker_cmd(
+        [sys.executable],
+        role="test",
+        session_id=session,
+        pid_dir=pid_dir,
+        workdir=tmp_path,
+        log_path=tmp_path / "agent.log",
+        heartbeat_dir=tmp_path / "heartbeats",
+    )
+    monkeypatch.setattr(sys, "argv", command[2:])
+
+    with pytest.raises(SystemExit) as excinfo:
+        worker.main()
+
+    assert excinfo.value.code == expected_status
+    if child_status is None:
+        child.kill.assert_called_once_with()
+    if marker_state == "before-join" or child_status is None:
+        monitor.join.assert_not_called()
+    else:
+        monitor.join.assert_called_once_with(timeout=2)
+    if replacement is None:
+        assert not pid_file.exists()
+    else:
+        assert json.loads(pid_file.read_text(encoding="utf-8")) == replacement
+
+
+# ---------------------------------------------------------------------------
 # Worker process (integration)
 # ---------------------------------------------------------------------------
 
@@ -385,9 +476,6 @@ class TestWorkerProcess:
         # Kill and verify cleanup
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait(timeout=5)
-
-        # Give a moment for cleanup
-        time.sleep(0.2)
         assert not pid_file.exists(), "PID file was not cleaned up"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signals")
@@ -443,7 +531,6 @@ class TestWorkerProcess:
             except subprocess.TimeoutExpired:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 raise
-            time.sleep(0.2)
             assert not pid_file.exists(), (
                 f"iter {i}: PID file leaked after SIGTERM at startup (worker exit={proc.returncode})"
             )
@@ -507,8 +594,11 @@ class TestWorkerProcess:
         exit_code = proc.wait(timeout=10)
         assert exit_code == 42
 
-    def test_worker_handles_missing_command(self) -> None:
+    def test_worker_handles_missing_command(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Worker should exit 127 for missing command."""
+        # An empty search path cannot contain an inaccessible executable or
+        # directory that would turn a missing command into permission denied.
+        monkeypatch.setenv("PATH", str(tmp_path))
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -519,7 +609,7 @@ class TestWorkerProcess:
                 "--session",
                 "missing-cmd",
                 "--pid-dir",
-                "/tmp",
+                str(tmp_path),
                 "--",
                 "nonexistent_command_xyz_12345",
             ],

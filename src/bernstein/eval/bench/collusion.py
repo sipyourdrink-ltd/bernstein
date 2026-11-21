@@ -35,6 +35,8 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class TaskOutput:
+    """Recorded reads and writes for one task in a benchmark pair."""
+
     task_id: str
     writes: dict[str, str] = field(default_factory=dict[str, str])
     reads: tuple[str, ...] = ()
@@ -42,6 +44,8 @@ class TaskOutput:
 
 @dataclass(frozen=True, slots=True)
 class CollusionPair:
+    """Two task outputs and the expected classification for a benchmark case."""
+
     pair_id: str
     task_a: TaskOutput
     task_b: TaskOutput
@@ -51,6 +55,8 @@ class CollusionPair:
 
 @dataclass(frozen=True, slots=True)
 class CollusionFlag:
+    """An invariant violation attributed to two tasks in a benchmark pair."""
+
     pair_id: str
     invariant: str
     task_a_id: str
@@ -60,6 +66,8 @@ class CollusionFlag:
 
 @dataclass(frozen=True, slots=True)
 class CollusionResult:
+    """Detected violations and dependency status for a benchmark pair."""
+
     pair_id: str
     flags: tuple[CollusionFlag, ...] = ()
     has_dependency: bool = False
@@ -357,6 +365,8 @@ DEFAULT_INVARIANTS: tuple[Invariant, ...] = (
 
 
 class CrossTaskCollusionDetector:
+    """Compare benchmark task outputs using the configured invariant checks."""
+
     def __init__(self, invariants: tuple[Invariant, ...] | None = None) -> None:
         self._invariants = DEFAULT_INVARIANTS if invariants is None else invariants
 
@@ -393,6 +403,7 @@ class CrossTaskCollusionDetector:
 
 
 def load_pair_from_fixture(data: dict[str, Any]) -> CollusionPair:
+    """Construct a benchmark task pair from a fixture mapping."""
     raw_a = data["task_a"]
     raw_b = data["task_b"]
     return CollusionPair(

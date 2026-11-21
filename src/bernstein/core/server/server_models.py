@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -248,6 +248,9 @@ class TaskCreate(BaseModel):
     model: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "opus", "sonnet", "haiku"
     effort: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "max", "high", "medium", "low"
     cli: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # adapter override: "claude", "opencode", …
+    requires: list[Annotated[str, Field(strict=True, min_length=1, max_length=_MAX_SHORT_STR_LEN)]] = Field(
+        default_factory=list, max_length=_MAX_LIST_LEN
+    )
     batch_eligible: bool = False  # Non-urgent: eligible for provider batch APIs at ~50% cost
     completion_signals: list[CompletionSignalSchema] = Field(
         default_factory=lambda: list[CompletionSignalSchema](),
@@ -290,6 +293,13 @@ class TaskCreate(BaseModel):
     @classmethod
     def _validate_owned_files(cls, value: list[str]) -> list[str]:
         return _ensure_relative_owned_files(value)
+
+    @field_validator("requires")
+    @classmethod
+    def _validate_requires(cls, value: list[str]) -> list[str]:
+        if any(not capability.strip() for capability in value):
+            raise ValueError("requires entries must be nonblank capability strings")
+        return value
 
     @field_validator("artifact_spec")
     @classmethod
@@ -388,6 +398,7 @@ class TaskResponse(BaseModel):
     model: str | None
     effort: str | None
     cli: str | None = None
+    requires: list[str] = Field(default_factory=list)
     batch_eligible: bool = False
     completion_signals: list[dict[str, str]] = Field(default_factory=lambda: list[dict[str, str]]())
     slack_context: dict[str, Any] | None = None
@@ -400,6 +411,9 @@ class TaskResponse(BaseModel):
     progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
     version: int = 1
     parent_session_id: str | None = None  # Coordinator session that owns this task
+    # Claim owner: the session or cluster worker node id that claimed the task,
+    # so a cluster view can place in-flight tasks under the node running them.
+    claimed_by_session: str | None = None
     # Retry bookkeeping: typed fields are the single source of truth.
     retry_count: int = 0
     max_retries: int = 3
@@ -479,6 +493,14 @@ class TaskReopenRequest(BaseModel):
     """Body for POST /tasks/{task_id}/reopen."""
 
     reason: str = ""
+    dispatch_tier: DispatchTier | None = None
+
+    @field_validator("dispatch_tier", mode="before", json_schema_input_type=DispatchTier)
+    @classmethod
+    def _reject_null_tier(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("dispatch_tier cannot be null; omit it to preserve the current tier")
+        return value
 
     @field_validator("reason")
     @classmethod
@@ -926,6 +948,10 @@ class NodeCapacitySchema(BaseModel):
     active_agents: int = 0
     gpu_available: bool = False
     supported_models: list[str] = Field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+    disk_free_mb: int | None = Field(default=None, ge=0)
+    mem_used_pct: float | None = Field(default=None, ge=0, le=100)
+    mesh_rtt_ms: float | None = Field(default=None, ge=0)
+    platform: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class NodeRegisterRequest(BaseModel):

@@ -1,17 +1,21 @@
 # Single-writer run-state actor
 
 `core/orchestration/run_actor.py` funnels every mutation of an
-orchestration session's live state through one actor task. Callers
+orchestration run's live state through one actor task. Callers
 enqueue typed events; one writer applies them via a pure reducer and
 appends to a bounded replay buffer. Subscribers read from the buffer
 with a `last_seen_seq` and receive explicit `Gap` markers when they
 have fallen past the window.
 
+This actor owns run-level state. Individual worker sessions have their
+own lifecycle. The literal event identifiers `session_started` and
+`session_ended` below remain the run reducer's event names.
+
 ## TL;DR
 
 | Concept       | Role |
 |---------------|---|
-| `RunState`    | Frozen dataclass; canonical per-session state. |
+| `RunState`    | Frozen dataclass; canonical per-run state. |
 | `Event`       | Typed mutation request; stamped with a monotonic `seq`. |
 | `apply_event` | Pure reducer `(state, event) -> state`. |
 | `RunActor`    | Owns one `RunState`; single-writer async task. |
@@ -133,7 +137,7 @@ corrupt.
 
 * In-memory only. Persistence is out of scope; pair with the existing
   WAL if durability is required.
-* One actor per session, one process. Cross-process fan-out is not
+* One actor per orchestration run, one process. Cross-process fan-out is not
   handled here.
 * Migrating every legacy writer is its own follow-up. The actor lands
   alongside one critical caller adaptation; the remaining call sites

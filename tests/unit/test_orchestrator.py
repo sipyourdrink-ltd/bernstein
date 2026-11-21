@@ -3366,8 +3366,11 @@ class TestDeadAgentFileOwnershipEdgeCases:
 class TestStaleHeartbeatReapingDefault:
     """An agent whose heartbeat exceeds the configured timeout is reaped and its tasks failed."""
 
+    @patch("bernstein.core.agents.agent_lifecycle._is_process_alive", return_value=False)
     @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
-    def test_stale_heartbeat_reaps_agent(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
+    def test_stale_heartbeat_reaps_agent(
+        self, _mock_recycle_alive: MagicMock, _mock_lifecycle_alive: MagicMock, tmp_path: Path
+    ) -> None:
         """Heartbeat older than heartbeat_timeout_s triggers reaping and task failure."""
         adapter = _mock_adapter()
         config = OrchestratorConfig(
@@ -5837,8 +5840,11 @@ class TestEvolutionAgentLifetimeRecording:
         assert kw["role"] == "qa"
         assert kw["tasks_completed"] == 0  # timed out before completing
 
+    @patch("bernstein.core.agents.agent_lifecycle._is_process_alive", return_value=False)
     @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
-    def test_heartbeat_reap_records_agent_lifetime(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
+    def test_heartbeat_reap_records_agent_lifetime(
+        self, _mock_recycle_alive: MagicMock, _mock_lifecycle_alive: MagicMock, tmp_path: Path
+    ) -> None:
         """_reap_dead_agents (heartbeat path) calls record_agent_lifetime."""
         transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
         cfg = OrchestratorConfig(

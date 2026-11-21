@@ -11,7 +11,7 @@ the repository. This command group is the operator surface over it:
 * ``fetch``    - pull an anchored chain from a remote (after a clone) and
   materialize it locally, refusing divergence.
 * ``resume``   - verify end to end, rebuild scheduler state by replay,
-  and hand the frontier tasks to the resume watcher.
+  and write a local resume signal for each frontier task.
 * ``runs``     - list anchored runs.
 * ``gc``       - squash a ref's anchor history to bound repo growth.
 """
@@ -19,8 +19,10 @@ the repository. This command group is the operator surface over it:
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING, NoReturn
 
 import click
 from rich.panel import Panel
@@ -28,14 +30,19 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.persistence.ledger_git import (
+    LedgerAnchorMissingError,
     LedgerDivergenceError,
     LedgerGitError,
+    LedgerGitIOError,
+    LedgerLocalAheadError,
     anchor_ledger,
     fetch_ledger_ref,
     gc_ledger_ref,
     list_ledger_runs,
     materialize_ledger,
+    plan_ledger_materialization,
 )
+from bernstein.core.persistence.task_resume import write_resume_signal
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_RESUMED,
     LedgerError,
@@ -47,6 +54,10 @@ from bernstein.core.persistence.work_ledger import (
     run_ledger_dir,
 )
 from bernstein.core.security.audit_chain import AuditChainStore, record_work_ledger_anchor
+from bernstein.core.security.path_containment import PathContainmentError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Exit codes shared across the group so operators (and the dashboard) can
 # branch on the specific failure mode.
@@ -54,6 +65,9 @@ EXIT_OK = 0
 EXIT_NO_LEDGER = 1
 EXIT_VERIFY_FAILED = 2
 EXIT_DIVERGED = 3
+# Preserve the generic failure status for resume I/O errors.
+EXIT_IO_ERROR = 1
+EXIT_SIGNAL_WRITE_FAILED = EXIT_IO_ERROR
 
 _WORKDIR_OPTION = click.option(
     "--workdir",
@@ -77,7 +91,7 @@ def _ledger_dir(workdir: Path | None, run_id: str) -> Path:
 
 def _print_errors(errors: list[str]) -> None:
     for error in errors:
-        console.print(f"  [red]-[/red] {error}")
+        click.echo(f"  - {error}", err=True)
 
 
 @click.group("ledger")
@@ -111,7 +125,7 @@ def ledger_verify_cmd(run_id: str, workdir: Path | None, expected_head: str | No
     ledger_dir = _ledger_dir(workdir, run_id)
     reader = LedgerReader(ledger_dir)
     if not reader.exists():
-        console.print(f"[red]No work ledger for run {run_id!r}[/red] at {ledger_dir}")
+        click.echo(f"No work ledger for run {run_id!r} at {ledger_dir}", err=True)
         raise SystemExit(EXIT_NO_LEDGER)
 
     result = reader.verify(expected_head=expected_head)
@@ -132,7 +146,7 @@ def ledger_verify_cmd(run_id: str, workdir: Path | None, expected_head: str | No
             f"[green]Ledger verified:[/green] run {run_id}, {result.entries} entries, head {result.head_hash[:16]}..."
         )
     else:
-        console.print(f"[red]Ledger verification failed for run {run_id!r}:[/red]")
+        click.echo(f"Ledger verification failed for run {run_id!r}:", err=True)
         _print_errors(result.errors)
     if not result.ok:
         raise SystemExit(EXIT_VERIFY_FAILED)
@@ -163,16 +177,16 @@ def ledger_anchor_cmd(run_id: str, workdir: Path | None, output_json: bool) -> N
     root = (workdir or Path.cwd()).resolve()
     ledger_dir = _ledger_dir(workdir, run_id)
     if not LedgerReader(ledger_dir).exists():
-        console.print(f"[red]No work ledger for run {run_id!r}[/red] at {ledger_dir}")
+        click.echo(f"No work ledger for run {run_id!r} at {ledger_dir}", err=True)
         raise SystemExit(EXIT_NO_LEDGER)
 
     try:
         anchor = anchor_ledger(root, ledger_dir, run_id=run_id)
     except LedgerDivergenceError as exc:
-        console.print(f"[red]Divergence detected:[/red] {exc}")
+        click.echo(f"Divergence detected: {exc}", err=True)
         raise SystemExit(EXIT_DIVERGED) from None
     except LedgerGitError as exc:
-        console.print(f"[red]Anchor failed:[/red] {exc}")
+        click.echo(f"Anchor failed: {exc}", err=True)
         raise SystemExit(EXIT_VERIFY_FAILED) from None
 
     chain = AuditChainStore(root / ".sdd" / "audit")
@@ -225,11 +239,11 @@ def ledger_fetch_cmd(run_id: str, workdir: Path | None, remote: str, output_json
         fetch_ledger_ref(root, run_id, remote=remote)
         result = materialize_ledger(root, run_id, ledger_dir)
     except LedgerDivergenceError as exc:
-        console.print(f"[red]Divergence detected:[/red] {exc}")
+        click.echo(f"Divergence detected: {exc}", err=True)
         raise SystemExit(EXIT_DIVERGED) from None
     except LedgerGitError as exc:
         message = str(exc)
-        console.print(f"[red]Fetch failed:[/red] {message}")
+        click.echo(f"Fetch failed: {message}", err=True)
         raise SystemExit(EXIT_NO_LEDGER if "no anchored ledger" in message else EXIT_VERIFY_FAILED) from None
 
     if output_json:
@@ -250,7 +264,7 @@ def _render_state(run_id: str, ledger_dir: Path, state: LedgerState) -> None:
     console.print()
     console.print(
         Panel(
-            f"[bold]Resuming run[/bold] [cyan]{run_id}[/cyan] from its work ledger",
+            f"[bold]Resume plan for run[/bold] [cyan]{run_id}[/cyan]",
             border_style="green",
             expand=False,
         )
@@ -270,28 +284,12 @@ def _render_state(run_id: str, ledger_dir: Path, state: LedgerState) -> None:
     console.print()
 
 
-def _write_resume_signals(root: Path, run_id: str, state: LedgerState) -> list[Path]:
-    """Drop one signal file per frontier task for the resume watcher.
-
-    The signal shape matches ``bernstein resume`` so any worker watching
-    ``.sdd/runtime/resume/`` claims a ledger-resumed task the same way it
-    claims a checkpoint-resumed one.
-    """
-    signal_dir = root / ".sdd" / "runtime" / "resume"
-    signal_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
+def _write_resume_signals(root: Path, run_id: str, state: LedgerState) -> Iterator[Path]:
+    """Write local resume signals and yield each path once written."""
     for task_id in state.resume_frontier():
-        target = signal_dir / f"{task_id}.signal"
-        payload = {
-            "task_id": task_id,
-            "run_id": run_id,
-            "source": "work_ledger",
-            "ledger_head": state.head_hash,
-            "resume_count": state.resumes,
-        }
-        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        written.append(target)
-    return written
+        yield write_resume_signal(
+            root, task_id, run_id=run_id, source="work_ledger", ledger_head=state.head_hash, resume_count=state.resumes
+        )
 
 
 @ledger_group.command("resume")
@@ -309,68 +307,100 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
 
     Verifies the chain end to end, rebuilds scheduler state by replaying
     every transition, refuses divergent chains, then records the resume as
-    a new chain entry and hands the frontier tasks to the resume watcher.
+    a new chain entry and writes local signals for the frontier tasks.
 
     \b
     Exit codes:
         0  resume prepared (state rebuilt from the verified chain)
-        1  no ledger on disk (and none anchored) for this run
-        2  chain verification failed (exact entry position reported)
+        1  no ledger on disk (and none anchored), or an I/O operation failed
+        2  invalid run ID, chain verification failed or the ledger rejected the resume entry
         3  local and anchored chains diverge (two divergent resumes)
     """
-    root = (workdir or Path.cwd()).resolve()
-    ledger_dir = _ledger_dir(workdir, run_id)
-    reader = LedgerReader(ledger_dir)
+    signal_paths: list[str] = []
+    report: dict[str, object] = {
+        "run_id": run_id,
+        "dry_run": dry_run,
+        "signal_paths": signal_paths,
+        "runtime_acknowledged": False,
+    }
 
-    # A fresh clone has the anchored ref but no materialized file yet.
-    if not reader.exists():
-        try:
-            materialize_ledger(root, run_id, ledger_dir)
-        except LedgerDivergenceError as exc:
-            console.print(f"[red]Divergence detected:[/red] {exc}")
-            raise SystemExit(EXIT_DIVERGED) from None
-        except LedgerGitError as exc:
-            console.print(f"[red]No work ledger for run {run_id!r}:[/red] {exc}")
-            console.print("[dim]After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.[/dim]")
-            raise SystemExit(EXIT_NO_LEDGER) from None
+    def emit_report() -> None:
+        report["dispatch_status"] = "queued" if signal_paths else "not_dispatched"
+        click.echo(json.dumps(report, indent=2))
 
-    result = reader.verify()
-    if not result.ok:
-        console.print(f"[red]Refusing to resume run {run_id!r}: the chain does not verify.[/red]")
-        _print_errors(result.errors)
-        raise SystemExit(EXIT_VERIFY_FAILED)
+    def fail(exit_code: int, message: str, *, errors: list[str] | None = None, hint: str | None = None) -> NoReturn:
+        if output_json:
+            report["error"] = message
+            if errors:
+                report["errors"] = errors
+            if hint:
+                report["hint"] = hint
+            emit_report()
+        click.echo(message, err=True)
+        if errors:
+            _print_errors(errors)
+        if hint:
+            click.echo(hint, err=True)
+        raise SystemExit(exit_code) from None
 
-    # Divergence gate: when an anchored chain exists it must be identical
-    # to, an extension of, or an ancestor of the local chain. Two chains
-    # extending the same parent entry are two divergent resumes.
     try:
-        materialize_result = materialize_ledger(root, run_id, ledger_dir)
-        materialized_action = materialize_result.action
-    except LedgerDivergenceError as exc:
-        console.print(f"[red]Divergence detected:[/red] {exc}")
-        raise SystemExit(EXIT_DIVERGED) from None
-    except LedgerGitError:
-        # No anchored ref, or local ahead of the anchor: both fine to resume.
+        root = (workdir or Path.cwd()).resolve()
+        ledger_dir = _ledger_dir(workdir, run_id)
+        report["ledger_dir"] = str(ledger_dir)
+        reader = LedgerReader(ledger_dir)
+        has_local = reader.exists()
+        if has_local:
+            result = reader.verify(allow_interrupted_tail=True)
+            if not result.ok:
+                fail(
+                    EXIT_VERIFY_FAILED,
+                    f"Refusing to resume run {run_id!r}: the chain does not verify.",
+                    errors=result.errors,
+                )
+
+        # Divergence gate: when an anchored chain exists it must be identical
+        # to, an extension of, or an ancestor of the local chain. Two chains
+        # extending the same parent entry are two divergent resumes.
+        entries = reader.entries()
         materialized_action = "none"
+        try:
+            if dry_run:
+                plan, anchored = plan_ledger_materialization(root, run_id, ledger_dir)
+                if plan.action in ("created", "fast-forwarded"):
+                    entries = iter(anchored)
+            else:
+                materialized_action = materialize_ledger(root, run_id, ledger_dir).action
+        except LedgerDivergenceError as exc:
+            fail(EXIT_DIVERGED, f"Divergence detected: {exc}")
+        except LedgerAnchorMissingError as exc:
+            if not has_local:
+                fail(
+                    EXIT_NO_LEDGER,
+                    f"No work ledger for run {run_id!r}: {exc}",
+                    hint="After a clone, run 'bernstein ledger fetch <run-id>' to pull the anchored chain.",
+                )
+        except LedgerLocalAheadError:
+            pass  # The verified local history already extends the anchor.
+        except LedgerGitIOError as exc:
+            fail(EXIT_IO_ERROR, f"Could not read the anchor for run {run_id!r}: {exc}")
+        except LedgerGitError as exc:
+            fail(EXIT_VERIFY_FAILED, f"Could not verify the anchor for run {run_id!r}: {exc}")
 
-    state = replay_state(reader.entries(), run_id=run_id)
+        state = replay_state(entries, run_id=run_id)
+    except UnicodeDecodeError as exc:
+        fail(EXIT_VERIFY_FAILED, f"Invalid UTF-8 in work ledger for run {run_id!r}: {exc}")
+    except PathContainmentError as exc:
+        fail(EXIT_VERIFY_FAILED, f"Invalid ledger path for run {run_id!r}: {exc}")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        fail(EXIT_IO_ERROR, f"Could not prepare work ledger for run {run_id!r}: {exc}")
 
-    if output_json:
-        console.print_json(
-            json.dumps(
-                {
-                    **state.to_dict(),
-                    "run_id": run_id,
-                    "ledger_dir": str(ledger_dir),
-                    "materialized": materialized_action,
-                    "dry_run": dry_run,
-                }
-            )
-        )
-    else:
+    report.update(state.to_dict(), materialized=materialized_action)
+    if not output_json:
         _render_state(run_id, ledger_dir, state)
 
     if dry_run:
+        if output_json:
+            emit_report()
         return
 
     # Record the resume as a chain entry: the nonce makes two independent
@@ -386,18 +416,30 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
                 "state": RunJournalState.RESUMED.value,
             },
         )
-    except LedgerError as exc:
-        console.print(f"[red]Failed to record the resume entry:[/red] {exc}")
-        raise SystemExit(EXIT_VERIFY_FAILED) from None
+    except (LedgerError, UnicodeDecodeError, PathContainmentError) as exc:
+        if isinstance(exc.__cause__, OSError):
+            fail(EXIT_IO_ERROR, f"Could not write the resume entry: {exc}")
+        fail(EXIT_VERIFY_FAILED, f"Failed to record the resume entry: {exc}")
+    except OSError as exc:
+        fail(EXIT_IO_ERROR, f"Could not write the resume entry: {exc}")
 
-    signals = _write_resume_signals(root, run_id, state)
-    if not output_json:
-        if signals:
-            for signal in signals:
-                console.print(f"[green]Resume signal written:[/green] {signal}")
-        else:
-            console.print("[yellow]Nothing to resume:[/yellow] no in-flight or scheduled tasks in the ledger.")
-        console.print("[dim]Re-anchor after the run advances: bernstein ledger anchor " + run_id + "[/dim]")
+    try:
+        for signal in _write_resume_signals(root, run_id, state):
+            signal_paths.append(str(signal))
+            if not output_json:
+                console.print(f"[green]Resume signal queued:[/green] {signal}")
+    except OSError as exc:
+        fail(EXIT_SIGNAL_WRITE_FAILED, f"Could not write resume signal: {exc}")
+
+    if output_json:
+        emit_report()
+        return
+
+    if signal_paths:
+        console.print("[dim]Runtime acknowledgement: unavailable.[/dim]")
+    else:
+        console.print("[yellow]Nothing to resume:[/yellow] no in-flight or scheduled tasks in the ledger.")
+    console.print("[dim]Re-anchor after the run advances: bernstein ledger anchor " + run_id + "[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +456,7 @@ def ledger_runs_cmd(workdir: Path | None, output_json: bool) -> None:
     try:
         runs = list_ledger_runs(root)
     except LedgerGitError as exc:
-        console.print(f"[red]Failed to list ledger refs:[/red] {exc}")
+        click.echo(f"Failed to list ledger refs: {exc}", err=True)
         raise SystemExit(EXIT_VERIFY_FAILED) from None
     if output_json:
         console.print_json(json.dumps({"runs": runs}))
@@ -451,7 +493,7 @@ def ledger_gc_cmd(run_id: str, workdir: Path | None, output_json: bool) -> None:
     try:
         result = gc_ledger_ref(root, run_id)
     except LedgerGitError as exc:
-        console.print(f"[red]gc failed:[/red] {exc}")
+        click.echo(f"gc failed: {exc}", err=True)
         raise SystemExit(EXIT_NO_LEDGER) from None
     if output_json:
         console.print_json(json.dumps({"run_id": run_id, **result.to_dict()}))

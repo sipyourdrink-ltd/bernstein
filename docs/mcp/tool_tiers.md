@@ -71,8 +71,9 @@ bernstein mcp tools --tier all --json-output
 - Dropping from `all` to `standard` removes the scenario bridge and the
   lineage verifier. Pick `standard` for everyday orchestration where you do
   not invoke scenario recipes from the agent.
-- Dropping from `standard` to `core` additionally removes cost reporting,
-  graceful stop, approval, subtask creation, and skill loading. Pick `core`
+- Dropping from `standard` to `core` additionally removes graceful stop,
+  approval, subtask creation, and skill loading. The core status tool still
+  returns task counts and a cost summary. Pick `core`
   for the leanest surface on small-context adapters or when only the
   start/observe loop matters.
 - The fewer tools advertised, the fewer tokens spent describing them on

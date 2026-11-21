@@ -59,7 +59,11 @@ class TaskDagError(Exception):
 
 
 class TaskDagCycleError(TaskDagError):
-    """Raised when the task DAG contains a dependency cycle."""
+    """Raised when the task DAG has tasks that cannot be scheduled.
+
+    Attributes:
+        remaining: IDs of tasks still pending when the traversal stalled.
+    """
 
     def __init__(self, remaining: list[str]) -> None:
         self.remaining = remaining
@@ -89,7 +93,12 @@ class TaskNode:
 
 @dataclass
 class TaskDag:
-    """A directed acyclic graph of :class:`TaskNode` objects."""
+    """A directed acyclic graph of :class:`TaskNode` objects.
+
+    Attributes:
+        nodes: Task nodes indexed by ID. Each graph starts with an empty
+            mapping unless one is supplied.
+    """
 
     nodes: dict[str, TaskNode] = field(default_factory=dict)
 
@@ -209,9 +218,12 @@ def topological_iter_with_parallel(dag: TaskDag) -> Iterator[frozenset[TaskNode]
     * If every ready task has ``parallel_safe = True`` we yield them
       together as a single concurrent batch.
 
+    Args:
+        dag: Task graph to traverse.
+
     Raises:
-        TaskDagCycleError: if the DAG has a cycle (unmet deps remain
-            after no node can progress).
+        TaskDagCycleError: If tasks remain but none of their outstanding
+            dependencies can be satisfied by the traversal.
     """
     pending: dict[str, TaskNode] = dag.nodes.copy()
     completed: set[str] = set()

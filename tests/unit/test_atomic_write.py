@@ -74,6 +74,17 @@ def test_atomic_write_leaves_no_tmp_files_on_success(tmp_path: Path) -> None:
     assert leftovers == []
 
 
+def test_atomic_write_leaves_an_occupied_staging_file_intact(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    staging = tmp_path / ".tmp.occupied"
+    staging.write_bytes(b"other writer")
+    with patch("bernstein.core.persistence.atomic_write._tmp_path_for", return_value=staging):
+        with pytest.raises(FileExistsError):
+            write_atomic_bytes(target, b"new request")
+    assert staging.read_bytes() == b"other writer"
+    assert not target.exists()
+
+
 def test_atomic_write_repeated_writes_never_corrupt(tmp_path: Path) -> None:
     """After many repeated writes the file always parses cleanly."""
     target = tmp_path / "state.json"

@@ -174,7 +174,7 @@ export function tokenClass(kind: TokenKind): string {
     case 'meta':
       return 'text-primary';
     case 'tag':
-      return 'text-accent-foreground';
+      return 'text-accent font-medium';
     case 'punct':
       return 'text-meta-foreground';
     case 'plain':

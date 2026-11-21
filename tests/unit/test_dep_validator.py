@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
+import pytest
 from bernstein.core.dep_validator import DependencyValidator
-from bernstein.core.models import TaskStatus
+from bernstein.core.models import Task, TaskStatus
 
 
 def test_valid_dag(make_task: Any) -> None:
@@ -21,6 +22,34 @@ def test_valid_dag(make_task: Any) -> None:
     assert result.cycles == []
 
 
+@pytest.mark.parametrize(("task_count", "missing_count"), [(4, 1), (4, 8), (8, 1), (8, 8)])
+def test_find_cycles_task_id_reads_are_linear(task_count: int, missing_count: int) -> None:
+    class CountingTask:
+        def __init__(self, task_id: str, depends_on: list[str]) -> None:
+            self._id = task_id
+            self.depends_on = depends_on
+            self.id_reads = 0
+
+        @property
+        def id(self) -> str:
+            self.id_reads += 1
+            return self._id
+
+    counted_tasks = [
+        CountingTask(
+            f"T-{idx}",
+            [f"T-{dep}" for dep in range(idx)] + [f"missing-{dep}" for dep in range(missing_count)],
+        )
+        for idx in range(task_count)
+    ]
+    tasks = cast("list[Task]", counted_tasks)
+
+    assert DependencyValidator()._find_cycles(tasks) == []
+    # Known edges grow quadratically; missing edges grow with missing_count.
+    # ID reads must stay linear in tasks, independent of either edge count.
+    assert task_count <= sum(task.id_reads for task in counted_tasks) <= 4 * task_count
+
+
 def test_simple_cycle(make_task: Any) -> None:
     a = make_task(id="A")
     b = make_task(id="B")
@@ -31,6 +60,42 @@ def test_simple_cycle(make_task: Any) -> None:
 
     assert result.valid is False
     assert result.cycles == [["A", "B", "A"]]
+
+
+def test_cycles_preserve_paths_and_order_with_missing_dependencies(make_task: Any) -> None:
+    a = make_task(id="A")
+    b = make_task(id="B")
+    c = make_task(id="C")
+    d = make_task(id="D")
+    a.depends_on = ["missing-A", "C", "B"]
+    b.depends_on = ["A"]
+    c.depends_on = ["A", "B", "missing-C"]
+    d.depends_on = ["D", "missing-D"]
+
+    result = DependencyValidator().validate([a, b, c, d])
+
+    assert result.valid is False
+    assert result.cycles == [["A", "C", "A"], ["A", "C", "B", "A"], ["D", "D"]]
+    assert result.missing_deps == [("A", "missing-A"), ("C", "missing-C"), ("D", "missing-D")]
+
+
+def test_find_cycles_refreshes_task_ids_between_calls(make_task: Any) -> None:
+    a = make_task(id="A")
+    b = make_task(id="B")
+    a.depends_on = ["B"]
+    b.depends_on = ["A"]
+    validator = DependencyValidator()
+    tasks = [a]
+
+    assert validator._find_cycles(tasks) == []
+    tasks.append(b)
+    assert validator._find_cycles(tasks) == [["A", "B", "A"]]
+    tasks.pop()
+    assert validator._find_cycles(tasks) == []
+
+
+def test_find_cycles_empty_graph() -> None:
+    assert DependencyValidator()._find_cycles([]) == []
 
 
 def test_diamond_dependency(make_task: Any) -> None:

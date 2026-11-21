@@ -6,7 +6,7 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 ## 1) Adapter parity is not perfect
 
-**What:** Bernstein ships 40+ CLI adapters, but different CLI agents expose different capabilities and process semantics.
+**What:** Bernstein ships 55 selectable CLI adapter names, but different CLI agents expose different capabilities and process semantics.
 
 **Impact:** Stop/restart behavior, output shape, structured output support, and error handling can vary by adapter. The conformance harness (`adapters/conformance.py`) helps catch regressions across adapters.
 
@@ -31,6 +31,8 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 - For a single long-running goal you want to detach from and reattach later, use `bernstein run-service submit`/`attach` (below) rather than a full cluster.
 
 **Detached single-host runs (shipped):** `bernstein run-service` decouples a run from the invoking terminal on one host. A session-detached supervisor owns execution while the durable work ledger owns state. `attach` proves ledger continuity across the detach boundary before rendering progress, and every lifecycle boundary is a signed audit-chain receipt. A supervisor killed mid-run resumes from the ledger tip with zero lost completed tasks. `bernstein worker` remains the multi-host fan-out path.
+
+**Local execution limit:** Without an SSH sidecar, the detached local path of `run-service` records task lifecycle events but does not yet execute the submitted task.
 
 **Off-host execution on ssh (shipped):** `bernstein run-service submit --backend ssh` runs each task of a detached goal on another host over ssh, each in its own isolated remote git worktree (one branch per task). It appends a signed `run.ssh_task` receipt binding that worktree, so an offline verifier can prove each task ran in isolation across the ssh boundary. A supervisor killed mid-run resumes on the ssh backend from the ledger tip with zero lost completed tasks. Remote credentials are resolved from the credential vault only (`--ssh-secret ENV=PROVIDER`) and never reach the ledger or the receipts. Enabling the hosted sandbox backends in the existing registry (`core/sandbox/backends/`) behind an optional extra remains a later increment.
 

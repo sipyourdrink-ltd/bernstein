@@ -22,10 +22,11 @@ A normal file store is *named*: you write `report.json` and look it up
 by name. Two writes of the same bytes use twice the disk.
 
 A content-addressed store is *keyed by hash*: you write `report.json`
-and the store hands you back a 64-char hex digest. Look-up is by digest,
-not name. Identical bytes produce the same digest, so a second write of
-the same content returns the existing digest without storing anything
-new. Properties that follow:
+and the store hands you back a 64-char hex digest. The digest is derived
+from the bytes alone, not from the content type or metadata. Look-up is by
+digest, not name. Identical bytes produce the same digest, so a second
+write of the same content returns the existing digest without storing
+anything new. Properties that follow:
 
 - **Automatic dedup.** Two agents emitting the same artifact share one
   blob.
@@ -129,8 +130,10 @@ digest = put_text(store, "some text", metadata={"role": "qa"})
 
 Public methods:
 
-- `put(content, content_type, metadata)` → digest. No-op if digest
-  already exists (`_dedup_saves` counter increments).
+- `put(content, content_type, metadata)` → digest. If that digest
+  already exists as a complete entry, the write does not replace or update
+  it: its original content type, metadata, and creation time are kept. The
+  duplicate increments this store instance's `_dedup_saves` counter.
 - `get(digest, *, verify=True)` → bytes or `None`. Validates the digest
   format first to prevent path traversal (`_validate_digest`), then
   re-hashes the stored bytes and raises `CASIntegrityError` if they do
@@ -144,7 +147,44 @@ Public methods:
 - `get_entry(digest)` → `CASEntry` or `None`.
 - `list_entries()` → list of all entries, sorted by `created_at`.
 - `stats()` → `CASStats(total_entries, total_bytes, dedup_saves)` for
-  dashboards.
+  dashboards. `total_entries` and `total_bytes` describe entries currently
+  stored; `dedup_saves` counts duplicate puts made by this store instance,
+  not a persistent or store-wide total.
+
+For example, a repeated put with different descriptive fields still
+returns the original entry. The digest identifies the bytes, so callers
+that need distinct metadata records should store those records separately
+rather than expecting a duplicate put to update the CAS entry:
+
+```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from bernstein.core.persistence.cas_store import CASStore
+
+with TemporaryDirectory() as tmp:
+    store = CASStore(Path(tmp))
+    payload = b'{"ok": true}'
+    digest = store.put(
+        payload,
+        content_type="application/json",
+        metadata={"label": "first"},
+    )
+    original_entry = store.get_entry(digest)
+    duplicate_digest = store.put(
+        payload,
+        content_type="text/plain",
+        metadata={"label": "second"},
+    )
+
+    assert duplicate_digest == digest
+    assert original_entry is not None
+    entry = store.get_entry(digest)
+    assert entry is not None
+    assert entry.content_type == "application/json"
+    assert entry.metadata == {"label": "first"}
+    assert entry.created_at == original_entry.created_at
+    assert store.get(digest) == payload
+```
 
 Convenience helpers in the same module:
 

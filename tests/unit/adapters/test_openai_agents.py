@@ -702,6 +702,34 @@ class TestSpawnMissingBinary:
 
 
 class TestSpawnWarnings:
+    @pytest.mark.parametrize("configured", [True, False])
+    def test_spawn_records_omit_credential_details(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, configured: bool
+    ) -> None:
+        name = "OPENROUTER_API_KEY"
+        value = "test-credential-marker"
+        if configured:
+            monkeypatch.setenv(name, value)
+        else:
+            monkeypatch.delenv(name, raising=False)
+        with (
+            patch.object(adapter_module.subprocess, "Popen", return_value=_make_popen_mock(pid=3001)),
+            caplog.at_level(logging.INFO, logger=adapter_module.__name__),
+        ):
+            OpenAIAgentsAdapter().spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5-mini", effort="high"),
+                session_id="credential-log-test",
+                mcp_config={"api_key_env": name},
+                timeout_seconds=0,
+            )
+        records = [record for record in caplog.records if record.name == adapter_module.__name__]
+        assert any("spawn_manifest_summary" in record.getMessage() for record in records)
+        for record in records:
+            assert name not in repr(vars(record))
+            assert value not in repr(vars(record))
+
     def test_warns_when_openai_api_key_missing(
         self,
         tmp_path: Path,
@@ -723,7 +751,7 @@ class TestSpawnWarnings:
                 model_config=ModelConfig(model="gpt-5-mini", effort="high"),
                 session_id="warn-missing-key",
             )
-        assert "OPENAI_API_KEY is not set" in caplog.text
+        assert "configured API credential is not set" in caplog.text
 
     def test_fast_exit_rate_limit_raises(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()
@@ -1831,14 +1859,14 @@ class TestRunnerRun:
             prompt="hello",
             workdir="/workspace",
             model="deepseek/deepseek-chat",
-            base_url="https://openrouter.ai/api/v1",
+            base_url="https://openrouter.ai/api/v1?key=synthetic-endpoint-secret",
             api_key_env="OPENROUTER_API_KEY",
         )
         client_sentinel = object()
         explicit_model_sentinel = object()
         fake_agent_cls = MagicMock()
         fake_runner = MagicMock()
-        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_runner.run_sync.return_value = _FakeResult(summary="synthetic-provider-output")
         fake_chat_model_cls = MagicMock(return_value=explicit_model_sentinel)
         fake_sdk = MagicMock(
             Agent=fake_agent_cls,
@@ -1849,7 +1877,7 @@ class TestRunnerRun:
         with (
             patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
             patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
-            caplog.at_level("INFO"),
+            caplog.at_level("DEBUG", logger="bernstein.adapters.openai_agents_runner"),
         ):
             rc = run(manifest)
         assert rc == EXIT_OK
@@ -1861,10 +1889,10 @@ class TestRunnerRun:
             openai_client=client_sentinel,
         )
         assert fake_agent_cls.call_args.kwargs["model"] is explicit_model_sentinel
-        assert any(
-            "deepseek/deepseek-chat" in rec.message and "https://openrouter.ai/api/v1" in rec.message
-            for rec in caplog.records
-        )
+        assert fake_openai.AsyncOpenAI.call_args.kwargs["base_url"] == manifest.base_url
+        assert "routing model='deepseek/deepseek-chat'" in caplog.text
+        assert "synthetic-endpoint-secret" not in caplog.text
+        assert "synthetic-provider-output" not in caplog.text
 
     def test_run_uses_bare_model_string_without_base_url(self) -> None:
         """No ``base_url`` override: existing behavior (bare model string,
@@ -2038,13 +2066,38 @@ class TestRunnerHeartbeat:
 
     def test_heartbeat_stops_after_event_set(self, tmp_path: Path) -> None:
         hb_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
-        stop_event = _start_heartbeat("hb-stop", hb_dir, interval_s=0.05)
+        threads: list[threading.Thread] = []
+        events: list[threading.Event] = []
+
+        def capture_thread(**kwargs: Any) -> threading.Thread:
+            thread = threading.Thread(**kwargs)
+            threads.append(thread)
+            return thread
+
+        def capture_event() -> threading.Event:
+            event = threading.Event()
+            events.append(event)
+            return event
+
         hb_file = hb_dir / "hb-stop.json"
-        _await_heartbeat_payload(hb_file)
-        stop_event.set()
-        time.sleep(0.15)
+        try:
+            with patch.object(runner_module, "threading", wraps=threading) as runner_threads:
+                runner_threads.Event.side_effect = capture_event
+                runner_threads.Thread.side_effect = capture_thread
+                stop_event = _start_heartbeat("hb-stop", hb_dir, interval_s=60.0)
+            (thread,) = threads
+            _await_heartbeat_payload(hb_file)
+            assert thread.is_alive()
+            stop_event.set()
+            thread.join(timeout=5.0)
+            assert not thread.is_alive(), "setting the stop event must wake and stop the heartbeat writer"
+        finally:
+            for event in events:
+                event.set()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(timeout=5.0)
         hb_file.unlink()
-        time.sleep(0.15)
         assert not hb_file.exists()
 
     def test_resolve_heartbeat_dir_prefers_manifest_field(self) -> None:

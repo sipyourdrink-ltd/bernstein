@@ -41,7 +41,7 @@ def _reset_tick_cache() -> Any:
 
 
 def _ctx(token: str | None) -> Any:
-    meta = SimpleNamespace(progressToken=token)
+    meta = {"progress_token": token}
     rc = SimpleNamespace(meta=meta)
     return SimpleNamespace(request_context=rc, report_progress=AsyncMock())
 
@@ -184,3 +184,48 @@ async def test_no_token_poll_result_is_unchanged(tmp_path: Any, monkeypatch: pyt
     without_ctx = json.loads(await _run_status_impl("run-3085", "."))
     with_tokenless_ctx = json.loads(await _run_status_impl("run-3085", ".", _ctx(token=None)))
     assert without_ctx == with_tokenless_ctx
+
+
+@pytest.mark.asyncio
+async def test_native_sdk_client_receives_only_advancing_journal_progress(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise SDK metadata normalization and actual notification delivery."""
+    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.tasks.checkpoint_retry import task_run_id
+    from bernstein.mcp.server import create_mcp_server
+    from tests.support.mcp_wire import sdk_mcp_session
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_MCP_COST_METER", "0")
+    run_id = "run-native-3085"
+    journal = EventJournal(run_id, tmp_path / ".sdd")
+    journal.record("run_started", goal="offline notification regression")
+    task_journal = EventJournal(task_run_id(run_id), tmp_path / ".sdd")
+    notifications: list[tuple[float, float | None, str | None]] = []
+
+    async def progress(progress: float, total: float | None, message: str | None) -> None:
+        notifications.append((progress, total, message))
+
+    async with sdk_mcp_session(create_mcp_server()) as client:
+        arguments = {"run_id": run_id, "workdir": str(tmp_path)}
+        plain = await client.call_tool("bernstein_run_status", arguments)
+        assert not plain.is_error
+        assert run_id not in _PROGRESS_TICKS
+
+        first = await client.call_tool("bernstein_run_status", arguments, progress_callback=progress)
+        assert not first.is_error
+        assert len(notifications) == 1
+        vector = _PROGRESS_TICKS[run_id]
+        payload = _progress_notification_payload(vector)
+        assert notifications[0] == (float(payload["progress"]), payload["total"], payload["message"])
+
+        repeated = await client.call_tool("bernstein_run_status", arguments, progress_callback=progress)
+        assert not repeated.is_error
+        assert len(notifications) == 1
+
+        task_journal.record("retry.checkpoint")
+        advanced = await client.call_tool("bernstein_run_status", arguments, progress_callback=progress)
+        assert not advanced.is_error
+        assert len(notifications) == 2
+        assert _PROGRESS_TICKS[run_id].strictly_advances(vector)

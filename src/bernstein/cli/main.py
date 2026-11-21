@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- the open-source governance layer for AI agents.
+"""CLI entry point for Bernstein -- an open-source governance layer for AI agents.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -412,13 +412,16 @@ def print_rich_help() -> None:
     from rich.panel import Panel
     from rich.table import Table
 
+    from bernstein.adapters.registry import selectable_adapter_names
+
     c = console
     c.print()
     c.print(
         Panel(
-            "[bold]bernstein[/bold]  the open-source governance layer for AI agents.\n"
+            "[bold]bernstein[/bold]  an open-source governance layer for AI agents.\n"
             "  No model in the coordination loop, so a plan replays to the same task graph.\n"
-            "  40+ adapters, per-task git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
+            f"  {len(selectable_adapter_names())} selectable adapter names, per-task git worktrees, "
+            "opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
             expand=False,
@@ -692,7 +695,7 @@ def _validate_evolve_mode(evolve: bool, budget: float, max_cycles: int, yes: boo
     is_flag=False,
     flag_value=".sdd/logs/activity.log",
     default=None,
-    help="Write activity to log file. Default: .sdd/logs/activity.log",
+    help="Write activity to a log file. Default: .sdd/logs/activity.log.",
 )
 @click.option(
     "--sandbox",
@@ -767,7 +770,7 @@ def cli(
     refine_spec: str | None,
     unsafe_allow_unicode_tags: bool,
 ) -> None:
-    """The open-source governance layer for AI agents.
+    """An open-source governance layer for AI agents.
 
     Parallel runs in per-task git worktrees, byte-identical run receipts, signed
     lineage that checks offline from the artefacts. Replaying the HMAC audit

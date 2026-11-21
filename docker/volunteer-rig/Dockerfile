@@ -1,5 +1,5 @@
 # python:3.13-slim
-FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl jq git ca-certificates \
@@ -16,4 +16,7 @@ COPY docker/volunteer-rig/fixtures/ /fixtures/
 RUN useradd --create-home --uid 1000 rig
 USER rig
 
+# This one-shot job reports the seed and fixture assertions through its exit status.
+# Compose checks the long-running Gitea service before starting the seeder.
+HEALTHCHECK NONE
 ENTRYPOINT ["volunteer-rig-seed"]

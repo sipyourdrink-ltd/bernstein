@@ -8,6 +8,12 @@ decides whether a task is a batch *candidate*, then an adapter-capability
 a batch-eligible task on an adapter with no batch surface is refused back to
 the interactive path rather than silently faked onto one.
 
+| Term | What is grouped or decided? |
+|---|---|
+| Provider batch routing | A per-task decision: route one task to a provider's batch endpoint or the interactive path. |
+| Task grouping | Groups multiple small tasks to share an agent session; the grouped units are tasks. |
+| Batch pass | Processes a caller's list of items (such as accounts, files, or records); the grouped units are those items. See the [batch pass guide](../operations/batch-receipts.md). |
+
 There is no dedicated CLI for this; it runs automatically at task
 decomposition and dispatch time. `bernstein explain <task>` surfaces whether
 a task was marked batch-eligible.

@@ -90,6 +90,11 @@ recomputes offline from `.sdd` alone.
 
 ## Verifying a dropped receipt
 
+In the web UI, open **Governance** and choose or drop a file under
+**Verify a receipt**. Confirm the selected filename and select **Verify
+receipt** to send the original bytes to the server. A successful check shows
+the integrity-only tier and its trust caveat beside the verdict.
+
 ```
 POST /governance/verify-receipt
 ```
@@ -110,19 +115,18 @@ installation serving it.
 | `divergent_step` | The first divergent journal step, when journal tamper was located. |
 
 The tier is always `integrity-only` because the signature is checked against
-the key embedded in the receipt: that proves the file is internally consistent
-and that no byte changed after signing, not who produced it. Provenance
-requires the operator's key out of band —
-`bernstein verify receipt <file> --public-key <pem>` — and no key can be pinned
-through the endpoint, because a key arriving in the same request as the receipt
-is the same channel rather than an independent anchor.
+the key embedded in the receipt. The verifier checks the canonical signed
+contents. JSON formatting such as trailing whitespace can change without
+affecting the result. To check who signed the receipt, obtain the operator's
+public key separately and use `bernstein verify receipt <file> --public-key
+<pem>`. The endpoint uses only the embedded key.
 
 A receipt that does not verify is answered with `200` and a failing verdict.
 The result is a statement about the evidence, not a failed request.
 
 ## Guarantees
 
-- **Verifiability** - `bernstein governance verify <run>` re-resolves and
+- **Verifiability** - `bernstein govern verify <run>` re-resolves and
   re-projects every recorded access and budget decision from the presented
   bindings and ledger and confirms the recorded verdicts. Any single-byte tamper
   to a record, the bindings, or the spine fails the check.
@@ -136,7 +140,7 @@ The result is a statement about the evidence, not a failed request.
 ## CLI
 
 ```
-bernstein governance verify <run> --bindings bindings.json [--ledger ledger.jsonl]
+bernstein govern verify <run> --bindings bindings.json [--ledger ledger.jsonl]
 ```
 
 Exit codes: `0` verified, `1` no records / bad input, `2` mismatch.
@@ -148,6 +152,22 @@ event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
 
 ## `govern audit-compliance`: what this install can and cannot show
+
+The main audit runner exposes the same 23 policy-library observations:
+
+```sh
+bernstein govern audit --only CMP --json
+bernstein govern audit --only CMP --profile soc2 --json
+bernstein govern audit --list --only CMP
+```
+
+CMP checks are opt-in, like installation checks, so adding this catalogue does
+not change the default workspace audit gate. `--profile` defaults to selecting
+CMP when no `--only` is given and marks required IDs with `required` in JSON or
+an asterisk in text. Supported profiles are `soc2`, `iso27001`, `pci_dss`,
+`nist_800_53`, `hipaa` and `gdpr`, using the existing library mappings; selection
+does not assert conformance. Unknown profiles are rejected before execution.
+The older `audit-compliance` command remains available.
 
 ```
 bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip CMP-014]
@@ -413,6 +433,36 @@ unchanged environment reports nothing. By default only drifted entities print;
 
 Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.
 
+### Repeating and resuming a reviewed reconcile diff
+
+The library helper `bernstein.core.govern.reconcile.apply_reconcile_diff`
+consumes a `ReconcileDiff`, a `ChangeReceipt` context template, and trusted
+callbacks for whole-diff authorization, fresh observation and applying one
+entry. It has no built-in environment mutator and does not change the
+read-only `govern reconcile --propose` CLI. The authorizer must approve the
+entire diff under the template's effective policy digest before any callback
+can mutate state, including any separate approval required for removals.
+
+Each attempt uses the existing kind-qualified entity/desired-value key.
+Policy changes do not rewrite that intent identity: authorization is a
+separate input and previous receipts must match the exact plan, policy,
+environment and approver. The template's plan digest is the canonical digest
+of `diff.to_dict()`; its timestamp is supplied by the caller.
+
+A matching fresh value produces a `skipped` attempt without calling the
+mutator. An unread entity is unavailable; only explicitly confirmed absence
+can satisfy a removal. Fresh unsatisfied drift that differs from the reviewed
+observation fails rather than overwriting a changed target. The first failure
+stops the loop, so never-attempted entries have no attempt in that receipt.
+
+For partial resume, supply the trusted in-process prior `ChangeReceipt`.
+Prior successful or satisfied entries are recorded as skips; failed and
+never-attempted entries are reconsidered. Loading an external receipt requires
+shared-protocol envelope verification and independent signer trust before
+passing its data to this helper. A new diff is required for later drift or a
+changed policy context. Existing `govern apply` admission and receipt
+verification remain separate; an idempotency key is never approval.
+
 ## Skip vs. suppress
 
 `bernstein govern audit-compliance` is the compliance check set above. The check
@@ -447,3 +497,8 @@ window.
 
 For `--skip` (check exclusion), see the audit check contract defined in
 issue #5072.
+
+CMP execution errors use the shared audit error handling: the failed control
+remains in the report, remaining controls still run, and `--strict` returns 1
+for the crash. Exit 2 is reserved for missing prerequisites without a failure
+or crash.

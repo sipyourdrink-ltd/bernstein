@@ -29,6 +29,7 @@ build green.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -261,3 +262,32 @@ def test_the_scan_still_runs_on_main_and_pull_requests() -> None:
     assert isinstance(triggers, dict), "workflow must declare a mapping of triggers"
     assert "pull_request" in triggers, "the gate must run before a merge"
     assert "push" in triggers, "the gate must run on what actually landed"
+
+
+def test_renovate_waits_for_both_scanner_updates_before_opening_a_branch() -> None:
+    """A group name alone still permits a branch with just one available bump."""
+    config = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
+    rules = [rule for rule in config["packageRules"] if rule.get("groupName") == "trufflehog"]
+    assert len(rules) == 1
+    rule = rules[0]
+    assert set(rule["matchPackageNames"]) == {SCANNER_ACTION, "ghcr.io/trufflesecurity/trufflehog"}
+    assert rule.get("minimumGroupSize") == 2, "a lone action or image bump must wait for its companion"
+
+
+def test_renovate_extracts_the_scanner_image_that_joins_the_action_group() -> None:
+    """Read the real custom-manager regex, so an untracked version cannot pass."""
+    config = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
+    managers = config["customManagers"]
+    assert len(managers) == 1
+    manager = managers[0]
+    assert manager["customType"] == "regex"
+    assert manager["managerFilePatterns"] == [r"/^\.github/workflows/trufflehog\.yml$/"]
+    matches = []
+    for pattern in manager["matchStrings"]:
+        # Renovate uses JavaScript named groups; the pattern otherwise uses
+        # the shared RE2/Python subset and is evaluated against the actual file.
+        pattern = re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", pattern)
+        matches.extend(match.groupdict() for match in re.finditer(pattern, WORKFLOW.read_text(encoding="utf-8")))
+    assert matches == [
+        {"datasource": "docker", "depName": "ghcr.io/trufflesecurity/trufflehog", "currentValue": _scanner_version()}
+    ]
