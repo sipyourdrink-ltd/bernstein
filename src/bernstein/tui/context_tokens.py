@@ -159,9 +159,9 @@ def _extract_sections(prompt: str) -> dict[str, str]:
         matched = False
         for pattern, section_name in header_patterns:
             if re.match(pattern, line, re.MULTILINE):
-                # Save previous section
+                # Save previous section, after any earlier one of the same category (#8031)
                 if current_section and current_text:
-                    sections[current_section] = "\n".join(current_text)
+                    _append_section(sections, current_section, current_text)
                 current_section = section_name
                 current_text = [line]
                 matched = True
@@ -172,9 +172,19 @@ def _extract_sections(prompt: str) -> dict[str, str]:
 
     # Save last section
     if current_section and current_text:
-        sections[current_section] = "\n".join(current_text)
+        _append_section(sections, current_section, current_text)
 
     return sections
+
+
+def _append_section(sections: dict[str, str], name: str, lines: list[str]) -> None:
+    """Add a section's text to its category, keeping earlier sections of it in source order.
+
+    ``Task`` and ``Goal`` share a category. Replacing the text lost the earlier section, which
+    ``analyze_context`` then counted as ``other``.
+    """
+    text = "\n".join(lines)
+    sections[name] = f"{sections[name]}\n{text}" if name in sections else text
 
 
 def analyze_context(prompt: str) -> TokenBreakdown:
