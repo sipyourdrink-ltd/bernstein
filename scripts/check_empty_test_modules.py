@@ -95,6 +95,13 @@ def ast_defined_test_count(source: str) -> int:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
             count += 1
         elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            # pytest skips a ``Test`` class with its own constructor and collects none of its
+            # methods, so counting them proved a module non-empty that pytest finds empty (#8057).
+            if any(
+                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name in ("__init__", "__new__")
+                for item in node.body
+            ):
+                continue
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith("test_"):
                     count += 1
