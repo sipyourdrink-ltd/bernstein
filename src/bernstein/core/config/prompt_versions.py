@@ -12,6 +12,8 @@ import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
+from fractions import Fraction
+from math import isfinite
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -108,11 +110,13 @@ def evaluate_canary(state: CanaryState) -> str:
     """Return 'promote', 'rollback', or 'continue' based on pass rates."""
     if state.canary_task_count < state.auto_promote_threshold:
         return "continue"
-    canary_rate = state.canary_pass_count / state.canary_task_count if state.canary_task_count else 0
-    stable_rate = state.stable_pass_count / state.stable_task_count if state.stable_task_count else canary_rate
+    canary_rate = Fraction(state.canary_pass_count, state.canary_task_count) if state.canary_task_count else 0
+    stable_rate = Fraction(state.stable_pass_count, state.stable_task_count) if state.stable_task_count else canary_rate
     if canary_rate >= stable_rate:
         return "promote"
-    if stable_rate - canary_rate > state.auto_rollback_diff_pct / 100:
+    threshold = state.auto_rollback_diff_pct
+    margin_pct = Fraction(str(threshold)) if isfinite(threshold) else threshold
+    if (stable_rate - canary_rate) * 100 > margin_pct:
         return "rollback"
     return "continue"
 
