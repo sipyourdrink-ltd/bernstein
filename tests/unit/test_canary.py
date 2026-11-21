@@ -260,6 +260,30 @@ def test_evaluate_continue_when_slightly_worse_under_threshold() -> None:
     assert evaluate_canary(state) == "continue"
 
 
+@pytest.mark.parametrize(
+    ("canary_passes", "canary_tasks", "margin", "expected"),
+    [
+        (7, 10, 10.0, "continue"),
+        (6, 10, 10.0, "rollback"),
+        (8, 10, 10.0, "promote"),
+        (777, 1000, 2.3, "continue"),
+    ],
+)
+def test_evaluate_canary_at_exact_rollback_margin(
+    canary_passes: int, canary_tasks: int, margin: float, expected: str
+) -> None:
+    state = CanaryState(
+        stable_version="s",
+        canary_version="c",
+        stable_pass_count=8,
+        stable_task_count=10,
+        canary_pass_count=canary_passes,
+        canary_task_count=canary_tasks,
+        auto_rollback_diff_pct=margin,
+    )
+    assert evaluate_canary(state) == expected
+
+
 def test_evaluate_no_stable_data_defaults_to_promote() -> None:
     # When there are no stable samples, stable_rate defers to canary_rate,
     # so canary >= stable trivially and we should promote.
