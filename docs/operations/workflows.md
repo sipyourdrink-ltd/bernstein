@@ -99,7 +99,7 @@ dependency failed. Once any node fails, the run aborts: every node in a
 later layer is skipped and nothing in it is dispatched, even on a branch
 that did not fail. A node with `loop:` re-fires until
 its `until` bash predicate exits `0` or `max_iterations` is reached, at
-which point the run raises rather than silently truncating.
+which point the node records a failure if its predicate still has not passed.
 
 `bernstein workflow run` exits non-zero if any node ends up `failed`.
 
@@ -123,24 +123,40 @@ it does not restore the goal from `spec_snapshot.json`.
 
 The resume command:
 - Validates that the provided manifest matches the one used at run start via spec digest
-- Loads persisted state from `.sdd/runs/<run_id>/`
+- Loads persisted state from `runs/<run_id>/` under the workflow working directory
 - Skips already-completed nodes
 - Continues execution from the first non-completed node
-- Preserves loop iteration counts when resuming loop nodes
+- Preserves the original total iteration limit when resuming a command loop
 
-State persistence location: `.sdd/runs/<run_id>/` contains:
+The CLI stores checkpoints under `runs/<run_id>/` relative to the directory where it was run. The Python runner uses its configured working directory.
 - `spec_snapshot.json` - state format `version`, `spec_name`, `spec_version`,
   `spec_digest`, `node_ids`, and `source` (manifest path or name); no goal text
 - `<node_id>.node.json` - checkpoint for each completed node
-- `run_complete.json` - sentinel written when run finishes
+- `<node_id>.loop.json` - progress for a command loop, including the current iteration and its last durable decision
+- `command_loops.json` - tracks command-loop initialization for the manifest. The runner marks it active before any workflow effect can start.
+- `run_complete.json` - sentinel written when the run finishes
 
 **Spec digest validation**: On resume, the runner computes a digest of the
 provided manifest and compares it to the one recorded at run start. A mismatch
 is refused to prevent executing different manifests with the same run ID.
 
-**Loop node resume behavior**: When resuming a loop node, the runner reads
-the persisted iteration count and continues from the next iteration, preserving
-all loop state.
+A command loop checkpoints its outer `when` decision, each successful command,
+and the decision made by `until`. Resuming continues at the next unstarted
+step. The original `max_iterations` applies across all starts and resumes.
+A successful stop, a command failure, a predicate timeout or exhaustion retains
+its outcome even if interruption preceded the ordinary terminal node checkpoint.
+
+If the workspace trust check refuses a predicate before dispatch, the runner
+preserves the previous checkpoint. Once the workflow can dispatch effects,
+a missing command-loop checkpoint or a started effect without a saved outcome
+stops both runner entry points before another node can execute. Review the
+external effects and retained results before starting a new run.
+
+An interrupted initialization can recreate missing loop checkpoints while
+the initialization marker still establishes that dispatch was impossible.
+Older runs with no loop checkpoint require the same review even if an earlier
+node has no checkpoint. A completed node’s ordinary checkpoint remains
+authoritative.
 
 ## Validating and inspecting
 

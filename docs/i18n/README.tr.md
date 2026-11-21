@@ -220,7 +220,7 @@ Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: 
 Düzeltilmiş toplam harcama bütçe için belirlenen durdurma eşiğine ulaştığında veya bu eşiği aştığında, yeni token bildirilmemiş olsa bile maliyet izleyicisinin `can_spawn()` denetimi `False` döndürür. Yeniden başlatıldıktan sonra, belirli bir ajan, görev ve model birleşimi için daha önce bildirilen kesin toplam maliyet yalnızca kayıtlı token sayılarından çıkarılamaz.
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ Bağlantısı terminalden ayrılmış bir SSH çalıştırmasındaki görev sıf
 
 Operatör arayüzünün tamamı (PR otomasyonu, zamanlamalar, sohbet köprüleri, autofix arka plan programı) [operatör komutları](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md) sayfasındadır.
 
+Komut döngüsü, ilk yineleme sınırını koruyarak son kontrol noktasından devam eder. Sonucu kaydedilmeden bir komut çalıştırılmış veya bir koşul değerlendirilmiş olabilirse devam işlemi durur. Döngü zaten başlamış olabilecekse eksik bir kontrol noktası da devam işlemini durdurur. Yeni bir çalıştırma başlatmadan önce işlemin etkilerini inceleyin.
+
 `bernstein workflow`, ajan, komut ve döngü düğümlerinden oluşan bildirimsel YAML DAG'larını çalıştırır - kesintiye uğramış çalıştırmalar için devam ettirme desteğiyle:
 
 ```bash
@@ -242,7 +244,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Çalıştırma durumu her düğümde `.sdd/runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Devam ettirirken aynı `-g` değerini yeniden verin; böylece tamamlanmamış düğümlerin istemlerinde `{goal}` yerine bu değer konur.
+Çalıştırma durumu her düğümde `runs/<run_id>/` içine kontrol noktası olarak kaydedilir. Devam ettirme, çalıştırma başında manifest karmasını doğrular; bu nedenle bir spesifikasyon değişikliği, farklı bir manifesti sessizce çalıştırmak yerine reddedilir. Bkz. [workflow manifestleri](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Devam ettirirken aynı `-g` değerini yeniden verin; böylece tamamlanmamış düğümlerin istemlerinde `{goal}` yerine bu değer konur.
 
 `bernstein compliance controls` her kontrol için test takımlarını ve varsa son tam ölçümü gösterir. [Karşılaştırma testlerinin kapsamı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

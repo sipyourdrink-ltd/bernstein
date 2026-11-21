@@ -220,7 +220,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果修正後的累計支出達到或超過設定的預算停止門檻，即使沒有回報新增的 token，費用追蹤器的 `can_spawn()` 檢查也會傳回 `False`。重新啟動後，單憑已儲存的 token 計數，無法還原先前針對特定代理程式、任務與模型組合所回報的確切累計費用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:30738c0f582c" -->
 
 ```bash
 cd your-project
@@ -235,6 +235,8 @@ bernstein stop                    # graceful shutdown with drain
 
 完整的操作介面（PR 自動化、定時任務、聊天橋接、autofix 守護行程）見[操作命令](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)。
 
+命令迴圈會從最後一個檢查點恢復，並保留原本的迭代次數上限。如果某項命令可能已執行或某個條件可能已判斷，但沒有儲存結果，恢復程序就會停止。如果迴圈可能已經開始，缺少檢查點也會使恢復停止。開始新的執行前，請先檢查該操作造成的影響。
+
 `bernstein workflow` 執行由代理、命令和迴圈節點組成的宣告式 YAML DAG——支援在執行中斷後續跑：
 
 ```bash
@@ -242,7 +244,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-執行狀態會在每個節點將檢查點寫入 `.sdd/runs/<run_id>/`。續跑會在執行開始時驗證清單摘要，因此規格變更會被拒絕，而非靜默執行另一份不同的清單。見[工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 續跑時請再次傳入相同的 `-g` 值，以取代未完成節點提示詞中的 `{goal}`。
+執行狀態會在每個節點將檢查點寫入 `runs/<run_id>/`。續跑會在執行開始時驗證清單摘要，因此規格變更會被拒絕，而非靜默執行另一份不同的清單。見[工作流程清單](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 續跑時請再次傳入相同的 `-g` 值，以取代未完成節點提示詞中的 `{goal}`。
 
 `bernstein compliance controls` 列出各控制項的基準測試套件，並在有完整測量結果時顯示最近一次結果。 [基準測試涵蓋範圍](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
