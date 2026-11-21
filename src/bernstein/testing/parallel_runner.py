@@ -77,7 +77,8 @@ def discover_test_files(test_dir: Path, pattern: str = "test_*.py") -> list[str]
     """
     if not test_dir.is_dir():
         return []
-    return sorted(str(p) for p in test_dir.glob(pattern))
+    # Files only: a directory named like a test module (``test_data.py/``) is not runnable (#8062).
+    return sorted(str(p) for p in test_dir.glob(pattern) if p.is_file())
 
 
 def bucket_tests(

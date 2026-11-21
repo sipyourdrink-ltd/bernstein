@@ -296,3 +296,17 @@ class TestFormatParallelReport:
         text = format_parallel_report(report)
         assert "FAILURES" not in text
         assert "Speedup: 3.00x" in text
+
+
+def test_discovery_omits_directories_matching_the_pattern(tmp_path: Path) -> None:
+    """A directory named like a test module is not a test file (#8062)."""
+    (tmp_path / "test_data.py").mkdir()
+    (tmp_path / "test_math.py").write_text("def test_sum(): assert 1 + 2 == 3\n")
+    nested = tmp_path / "pkg"
+    nested.mkdir()
+    (nested / "test_api.py").write_text("def test_ok(): pass\n")
+    (nested / "test_fixtures.py").mkdir()
+
+    assert [Path(p).name for p in discover_test_files(tmp_path)] == ["test_math.py"]
+    recursive = discover_test_files(tmp_path, "**/test_*.py")
+    assert [Path(p).relative_to(tmp_path).as_posix() for p in recursive] == ["pkg/test_api.py", "test_math.py"]
