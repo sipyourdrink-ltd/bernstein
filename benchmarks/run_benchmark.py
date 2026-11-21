@@ -45,6 +45,7 @@ import json
 import math
 import random
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -479,6 +480,7 @@ def load_task(path: Path) -> BenchmarkTask:
         for st in raw.get("subtasks", [])
     ]
 
+    _check_task_graph(str(raw["id"]), subtasks)
     return BenchmarkTask(
         id=str(raw["id"]),
         name=str(raw["name"]),
@@ -487,6 +489,41 @@ def load_task(path: Path) -> BenchmarkTask:
         parallelizable=bool(raw.get("parallelizable", True)),
         subtasks=subtasks,
     )
+
+
+def _check_task_graph(task_id: str, subtasks: list[SubTask]) -> None:
+    """Refuse a subtask graph the scheduler cannot finish (#7941).
+
+    An unknown dependency never completes and a cycle never becomes ready, so the scheduler stopped
+    with steps left and the run reported partial times as a result. A forward reference (a step that
+    depends on one listed after it) is valid.
+
+    Raises:
+        ValueError: Naming the task, the step and the graph problem.
+    """
+    ids = {st.id for st in subtasks}
+    for st in subtasks:
+        for dep in st.depends_on:
+            if dep not in ids:
+                raise ValueError(f"task {task_id!r}: subtask {st.id!r} depends on unknown subtask {dep!r}")
+    deps = {st.id: st.depends_on for st in subtasks}
+    done: set[str] = set()
+    visiting: list[str] = []
+
+    def _visit(node: str) -> None:
+        if node in done:
+            return
+        if node in visiting:
+            loop = [*visiting[visiting.index(node) :], node]
+            raise ValueError(f"task {task_id!r}: dependency cycle {' -> '.join(loop)}")
+        visiting.append(node)
+        for dep in deps[node]:
+            _visit(dep)
+        visiting.pop()
+        done.add(node)
+
+    for st in subtasks:
+        _visit(st.id)
 
 
 def load_all_tasks(tasks_dir: Path = TASKS_DIR) -> list[BenchmarkTask]:
@@ -1707,7 +1744,12 @@ def main() -> None:
 
     # --- YAML-task benchmark mode ---
     tasks_dir = Path(args.tasks_dir)
-    tasks = load_all_tasks(tasks_dir)
+    try:
+        tasks = load_all_tasks(tasks_dir)
+    except ValueError as exc:
+        # Before any result is written: a graph that cannot finish has no result to report (#7941).
+        print(f"Invalid benchmark task graph: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     if not tasks:
         print(f"No task YAML files found in {tasks_dir}")

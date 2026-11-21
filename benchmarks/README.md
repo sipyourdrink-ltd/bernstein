@@ -28,6 +28,11 @@ What it is not:
 - Not a SWE-Bench evaluation.
 - Not a controlled cross-framework comparison.
 
+Each task's subtask graph must be able to finish. A `depends_on` entry that
+names no subtask, or a dependency cycle, makes the run exit 1 with
+`Invalid benchmark task graph: task '<id>': ...` on stderr, before any result
+file is written. A subtask may depend on one listed after it.
+
 ### Issues modeling harness
 
 `benchmarks/run_benchmark.py --issues-file benchmarks/issues.json`
