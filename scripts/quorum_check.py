@@ -48,7 +48,10 @@ The rules, in the order they are applied
    needs only the ordinary two approvals, touches no path a CODEOWNERS line
    of its own covers, and touches nothing under `.github/`, `schemas/` or
    `proto/`. Anywhere else the notice is ignored and rule 5 applies.
-5. Everyone else needs the quorum: two approvals, at least one from a core
+5. Unprotected docs-only changes need one eligible approval, without a core
+   reviewer. The same applies to unprotected `size/s` changes up to 400 lines.
+   Reserved and sensitive paths keep the normal rules.
+   Everyone else needs the quorum: two approvals, at least one from a core
    reviewer, none of them from anyone who wrote or pushed the change. Over
    400 changed lines, or on a path containing `sandbox`, `security` or
    `audit`, a third approval is required and two of the three must be core.
@@ -150,6 +153,46 @@ SENSITIVE_WORDS = ("sandbox", "security", "audit")
 # which is a change nobody asked for.
 SENSITIVE_EXEMPT_PREFIXES = ("tests/", "docs/")
 
+# Small-change relief never reaches reserved implementation, security or
+# release surfaces, even if the base CODEOWNERS has no entry for a path.
+SMALL_EXCLUDED_PREFIXES = (
+    ".github/",
+    "security/",
+    "core/",
+    "src/bernstein/core/",
+    "release/",
+    "releases/",
+    "docs/release-notes/",
+    "packaging/",
+    "Formula/",
+    "packages/vscode/",
+    ".plugin/",
+)
+SMALL_EXCLUDED_PATHS = (
+    "CHANGELOG.md",
+    "scripts/bump_version.py",
+    "scripts/format_release_notes.py",
+    "scripts/rotate_release_notes.py",
+    "scripts/publish_required_check.py",
+    "scripts/build_copr_srpm.py",
+    "scripts/gen_distribution_manifests.py",
+    "scripts/wait_for_pypi_visibility.py",
+    "scripts/build_airgap_wheelhouse.py",
+    "scripts/sign_airgap_wheelhouse.sh",
+    "scripts/copr_build_watch.py",
+    "scripts/rpm_install_smoke.sh",
+    "mcp.json",
+    "server.json",
+    "plugin.json",
+    "CITATION.cff",
+    "docker/requirements-build.in",
+    "docker/requirements-build.txt",
+    "scripts/build_packages.sh",
+    "scripts/safe-push-main.sh",
+    "scripts/check_compatibility.py",
+    "scripts/render_docker_mcp_catalog.py",
+)
+
 # Section 1 as decided for automation: the paths where automation stops being
 # allowed to merge its own work. Wider than SENSITIVE_WORDS because a change
 # to the workflows, the schemas or the wire protocol is not something the
@@ -194,10 +237,8 @@ query($owner: String!, $name: String!, $number: Int!) {
 GOVERNANCE_WINDOW = timedelta(hours=72)
 # Literal paths rather than a `.github/workflows/` prefix rule: a prefix would
 # put every unrelated CI edit behind a three-day window, which is a cost the
-# gate does not need to pay to protect itself. Both quorum workflows are here
-# because both are invocation surface -- `quorum.yml` decides whether the check
-# runs at all, and `quorum-rerun.yml` is the only thing that closes the window
-# below, so a change silencing either one is a change to the gate.
+# quorum gate does not need. Include the workflows that invoke the check,
+# reevaluate it after the window, or assign the label that selects its quorum.
 GOVERNANCE_PATHS = (
     "docs/governance/review-charter.md",
     "GOVERNANCE.md",
@@ -206,6 +247,7 @@ GOVERNANCE_PATHS = (
     ".github/quorum-roster.toml",
     ".github/workflows/quorum.yml",
     ".github/workflows/quorum-rerun.yml",
+    ".github/workflows/pr-labels.yml",
     "scripts/quorum_check.py",
     "scripts/queue_hygiene.py",
 )
@@ -438,6 +480,8 @@ class PullRequest:
     # rules above fell back to the commit itself wherever one of these was
     # consulted, and the verdict says so.
     uncompared: tuple[str, ...] = ()
+    labels: frozenset[str] = frozenset()
+    paths_complete: bool = True
 
     def is_current(self, sha: str) -> bool:
         """Whether a review given on `sha` was given on what is about to merge."""
@@ -812,7 +856,23 @@ def fetch_pull_request(
         and 0 < len(commits) < PR_COMMIT_LIMIT
         and commits[-1].get("sha") == head_sha
     )
-    paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
+    reported_files = raw.get("changed_files")
+    paths_complete = (
+        isinstance(reported_files, int) and not isinstance(reported_files, bool) and reported_files == len(files)
+    )
+    paths = []
+    for entry in files:
+        if entry.get("status") == "renamed":
+            names = (entry.get("filename"), entry.get("previous_filename"))
+        else:
+            names = (entry["filename"],)
+            if entry.get("previous_filename"):
+                names += (entry["previous_filename"],)
+        for name in names:
+            if isinstance(name, str) and name:
+                paths.append(name)
+            else:
+                paths_complete = False
     reviews = [
         Review(
             login=(r.get("user") or {}).get("login", ""),
@@ -863,6 +923,8 @@ def fetch_pull_request(
         update_only=update_only,
         diff_changed_at=diff_changed_at,
         uncompared=tuple(diffs.uncompared),
+        labels=frozenset(label["name"] for label in raw.get("labels", [])),
+        paths_complete=paths_complete,
     )
 
 
@@ -896,12 +958,22 @@ class Requirement:
     who: str
 
 
+@dataclass(frozen=True)
+class PendingQuorum:
+    """Remaining roster reviews after evaluating the charter, before open requests."""
+
+    eligible: frozenset[str]
+    total: int
+    core: int
+
+
 @dataclass
 class Verdict:
     passed: bool
     title: str
     requirements: list[Requirement] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    pending_quorum: PendingQuorum | None = None
 
     def summary(self) -> str:
         lines = [f"### `quorum`: {self.title}", ""]
@@ -927,6 +999,29 @@ def _sensitive_paths(paths: list[str]) -> list[str]:
     return sorted(
         p for p in paths if not p.startswith(SENSITIVE_EXEMPT_PREFIXES) and any(word in p for word in SENSITIVE_WORDS)
     )
+
+
+def small_change(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
+    """Whether the one-approval exception applies, using base ownership rules."""
+    if not pr.paths or not pr.paths_complete or _sensitive_paths(pr.paths):
+        return False
+    if any(
+        owners_for(path, owners)[1]
+        or path in GOVERNANCE_PATHS
+        or path in SMALL_EXCLUDED_PATHS
+        or path.startswith(SMALL_EXCLUDED_PREFIXES)
+        for path in pr.paths
+    ):
+        return False
+    # The docs site also ships templates, scripts, styles, schemas and build
+    # dependencies. Directory membership alone cannot identify prose or media.
+    docs_only = all(
+        path.endswith(".md")
+        or path in {"docs/agents.txt", "docs/llms.txt", "docs/llms-full.txt"}
+        or (path.startswith("docs/") and path.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")))
+        for path in pr.paths
+    )
+    return docs_only or ("size/s" in pr.labels and pr.changed_lines <= THIRD_APPROVAL_LINES)
 
 
 def adoptable(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
@@ -1075,7 +1170,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
 
         sensitive = _sensitive_paths(pr.paths)
         large = pr.changed_lines > THIRD_APPROVAL_LINES
-        need_total, need_core = (3, 2) if (large or sensitive) else (2, 1)
+        small = small_change(pr, owners)
+        need_total, need_core = (1, 0) if small else ((3, 2) if (large or sensitive) else (2, 1))
         reason = (
             f"{pr.changed_lines} changed lines"
             if large
@@ -1083,6 +1179,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         )
 
         text = f"{need_total} approvals, {need_core} from a core reviewer ({reason})"
+        if small:
+            text = "1 approval, no core reviewer required (unprotected docs-only or size/s change)"
         met = len(approving) >= need_total and len(approving_core) >= need_core
         who = _names(eligible - approving)
         approval_window_ends = BACKLOG_WINDOW_ENDS if now < BACKLOG_WINDOW_ENDS else SPRINT_WINDOW_ENDS
@@ -1092,6 +1190,12 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             if roster.maintainer not in approving:
                 who += f", or @{roster.maintainer} alone"
         verdict.requirements.append(Requirement(text, met, who))
+        if not met and not blocking:
+            verdict.pending_quorum = PendingQuorum(
+                eligible=eligible - approving,
+                total=max(0, need_total - len(approving)),
+                core=max(0, need_core - len(approving_core)),
+            )
 
         if pr.changed_lines > MAINTAINER_OR_SPLIT_LINES:
             verdict.requirements.append(

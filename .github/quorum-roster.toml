@@ -12,10 +12,12 @@
 
 maintainer = "chernistry"
 
-# Approve as a code owner; one core approval is part of every quorum.
+# Approve as a code owner; ordinary quorums include a core approval, except
+# the unprotected docs-only/size/s rule in charter section 3.
 core_reviewers = ["vaibhav8a", "thegoodengineer", "tenequm", "Phoenix1504e", "Chirag6722"]
 
-# Approve; two approvals of any kind form the quorum when one is a core one.
+# Approve; a committer alone can satisfy the unprotected docs-only/size/s quorum.
+# Ordinary changes still need two approvals including one core reviewer.
 committers = ["Silentpartnercoding"]
 
 # Triage only: labels, assignments, milestones, closing duplicates. No
