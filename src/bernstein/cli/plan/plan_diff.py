@@ -24,7 +24,7 @@ class StepChange:
     """A single field-level change within a modified step.
 
     Attributes:
-        step_id: Unique identifier for the step (stage_name/step_title).
+        step_id: Display label for the step (stage_name/step_title).
         change_type: Whether the step was added, removed, or modified.
         field: The field that changed (only for ``modified``).
         old_value: Previous field value (only for ``modified`` / ``removed``).
@@ -109,20 +109,14 @@ def load_plan_yaml(path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _step_id(stage_name: str, step: dict) -> str:
-    """Build a unique step identifier from its stage and title."""
-    title = step.get("title") or step.get("goal") or ""
-    return f"{stage_name}/{title}"
-
-
-def _extract_steps(plan: dict) -> dict[str, dict]:
-    """Return a mapping of step_id -> step dict for all steps in the plan."""
-    steps: dict[str, dict] = {}
+def _extract_steps(plan: dict) -> dict[tuple[str, str], dict]:
+    """Index steps by their stage name and title."""
+    steps: dict[tuple[str, str], dict] = {}
     for stage in plan.get("stages") or []:
         stage_name = str(stage.get("name", ""))
         for step in stage.get("steps") or []:
-            sid = _step_id(stage_name, step)
-            steps[sid] = dict(step)
+            title = str(step.get("title") or step.get("goal") or "")
+            steps[stage_name, title] = dict(step)
     return steps
 
 
@@ -143,7 +137,7 @@ def _extract_deps(plan: dict) -> set[tuple[str, str]]:
 def compute_plan_diff(old_plan: dict, new_plan: dict) -> PlanDiff:
     """Compare two parsed plan dicts and return the structural diff.
 
-    Steps are matched by their composite ID (``stage_name/step_title``).
+    Steps are matched by the pair of stage name and step title.
     For steps present in both plans, each comparable field is checked for
     changes.
 
@@ -160,20 +154,22 @@ def compute_plan_diff(old_plan: dict, new_plan: dict) -> PlanDiff:
     old_ids = set(old_steps)
     new_ids = set(new_steps)
 
-    added = sorted(new_ids - old_ids)
-    removed = sorted(old_ids - new_ids)
+    added = sorted("/".join(key) for key in new_ids - old_ids)
+    removed = sorted("/".join(key) for key in old_ids - new_ids)
 
     modified: list[StepChange] = []
-    for sid in sorted(old_ids & new_ids):
-        old_s = old_steps[sid]
-        new_s = new_steps[sid]
+    # Sort by the displayed label, using the pair to break ties.
+    common_steps = (("/".join(key), key) for key in old_ids & new_ids)
+    for label, key in sorted(common_steps):
+        old_s = old_steps[key]
+        new_s = new_steps[key]
         for fld in _STEP_FIELDS:
             old_val = old_s.get(fld)
             new_val = new_s.get(fld)
             if old_val != new_val:
                 modified.append(
                     StepChange(
-                        step_id=sid,
+                        step_id=label,
                         change_type="modified",
                         field=fld,
                         old_value=str(old_val) if old_val is not None else None,
