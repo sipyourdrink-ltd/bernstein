@@ -172,6 +172,8 @@ def _expand_field(spec: str, lo: int, hi: int, names: dict[str, int] | None = No
 
     result: set[int] = set()
     for part in spec.split(","):
+        if not part:
+            raise CronParseError(f"empty list item in cron field {spec!r}")
         step = 1
         if "/" in part:
             base, step_str = part.split("/", 1)
