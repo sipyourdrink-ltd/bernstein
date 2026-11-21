@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from bernstein.core.spend_forecast import (
@@ -11,6 +13,18 @@ from bernstein.core.spend_forecast import (
     forecast_monthly_spend,
     format_forecast_report,
 )
+
+
+@pytest.mark.parametrize(("day", "remaining", "projected"), [(31, 0, 31.0), (10, 20, 93.0)])
+def test_month_end_projection_cannot_subtract_spend(tmp_path: Path, day: int, remaining: int, projected: float) -> None:
+    (tmp_path / "costs_sample.json").write_text(json.dumps({"total_spent_usd": 31}))
+    with patch("datetime.datetime") as clock:
+        clock.now.return_value = datetime(2026, 1, day)
+        forecast = forecast_monthly_spend(tmp_path)
+
+    assert forecast.days_elapsed == day
+    assert forecast.days_remaining == remaining
+    assert forecast.projected_monthly_usd == pytest.approx(projected)
 
 
 class TestSpendForecast:
