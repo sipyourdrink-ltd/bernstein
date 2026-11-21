@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.tui.dependency_graph import render_dependency_graph
 
 
@@ -47,24 +49,22 @@ class TestEmptyAndStandalone:
         assert "Task C" in result
 
 
+@pytest.mark.parametrize("reverse_input", [False, True], ids=["forward", "reversed"])
+def test_text_graph_shows_each_chain_edge(reverse_input: bool) -> None:
+    tasks = [
+        _task("a", "Design API", "done"),
+        _task("b", "Implement API", "in_progress", depends_on=["a"]),
+        _task("c", "Write tests", "open", depends_on=["b"]),
+    ]
+    if reverse_input:
+        tasks.reverse()
+    result = render_dependency_graph(tasks)
+    assert "[DONE] Design API --> [IN_PROGRESS] Implement API" in result
+    assert "[IN_PROGRESS] Implement API --> [OPEN] Write tests" in result
+
+
 class TestLinearDependencies:
     """A -> B -> C chain."""
-
-    def test_linear_chain(self) -> None:
-        tasks = [
-            _task("a", "Design API", "done"),
-            _task("b", "Implement API", "in_progress", depends_on=["a"]),
-            _task("c", "Write tests", "open", depends_on=["b"]),
-        ]
-        result = render_dependency_graph(tasks)
-        assert "[DONE]" in result
-        assert "[IN_PROGRESS]" in result
-        assert "[OPEN]" in result
-        assert "Design API" in result
-        assert "Implement API" in result
-        assert "Write tests" in result
-        # The dependency arrow should appear
-        assert "--" in result
 
     def test_linear_order_preserved(self) -> None:
         """Tasks appear in dependency order, not input order."""
