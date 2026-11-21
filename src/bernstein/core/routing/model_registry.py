@@ -27,9 +27,10 @@ The posture is fail-closed throughout, matching ``active_set``:
   registry assembled from rows that could have been rewritten.
 
 This module is slice 1 and 2 of the issue: the event shapes, the projection
-and reconstruction at a past instant. It reads the chain; nothing in the
-routing path consults it yet, and admission evidence is recorded but not
-re-verified.
+and reconstruction at a past instant. Legacy opaque evidence references remain
+readable and writable for compatibility; they do not claim evaluation
+qualification. New operator admissions use structured evidence and require
+offline qualification before the event is appended.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from bernstein.core.lineage.entry import ModelRef
     from bernstein.core.security.audit import AuditEvent
     from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.eval.bench.model_admission import ModelAdmissionEvidence
 
 #: Schema version of the projected state's canonical form. Bumped only when
 #: the canonical bytes change shape, so a stored digest keeps its meaning.
@@ -266,6 +268,8 @@ def record_model_admission(
     admitted_by: str,
     expires_at: str,
     evidence_ref: str = "",
+    evidence: ModelAdmissionEvidence | None = None,
+    require_verified_evidence: bool = False,
 ) -> AuditEvent:
     """Append a ``model.admitted`` event into *chain*.
 
@@ -283,7 +287,13 @@ def record_model_admission(
             timestamp format (see :func:`format_timestamp`). Required: an
             admission that never lapses cannot be distinguished from one
             nobody has reviewed since.
-        evidence_ref: Optional reference to the evidence relied on.
+        evidence_ref: Legacy opaque reference, not a claim of verified evidence.
+        evidence: Structured evidence and operator qualification inputs. When
+            supplied, verification is mandatory and evidence_ref is derived
+            from the verified bundle hash.
+        require_verified_evidence: Refuse an admission lacking structured
+            evidence. Operator workflows must enable this; the default keeps
+            legacy programmatic event writers compatible.
 
     Returns:
         The recorded :class:`AuditEvent`, whose details carry every input plus
@@ -297,6 +307,15 @@ def record_model_admission(
     classes = _normalise_task_classes(task_classes)
     _require_text(admitted_by, "admitted_by")
     _require_timestamp(expires_at, "expires_at")
+    verified: dict[str, Any] | None = None
+    if require_verified_evidence and evidence is None:
+        raise ValueError("model admission requires verified evaluation evidence")
+    if evidence is not None:
+        verified = evidence.verify(provider=provider, model=model, version=version, task_classes=classes)
+        verified_ref = "sha256:" + verified["bundle_hash"]
+        if evidence_ref and evidence_ref != verified_ref:
+            raise ValueError("evidence_ref does not match the verified bundle hash")
+        evidence_ref = verified_ref
     return chain.log_with_prev_digest(
         event_type=EVENT_MODEL_ADMITTED,
         actor=admitted_by,
@@ -311,6 +330,7 @@ def record_model_admission(
             "admitted_by": admitted_by,
             "expires_at": expires_at,
             "evidence_ref": evidence_ref,
+            **({"verified_evidence": verified} if verified is not None else {}),
         },
     )
 
