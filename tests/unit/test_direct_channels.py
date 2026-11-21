@@ -155,3 +155,17 @@ def test_detect_wakeup_respects_since_cursor(tmp_path: Path) -> None:
     # After acknowledging the message via cursor: no further wakeup.
     second = detect_wakeup("worker-2", workdir=tmp_path, since=seen)
     assert second.should_wake is False
+
+
+def test_receive_continues_after_a_non_object_record(tmp_path: Path) -> None:
+    """A JSON array or scalar in the inbox is skipped, not an AttributeError for the whole read (#8054)."""
+    inbox = tmp_path / ".sdd" / "runtime" / "channels" / "demo"
+    inbox.mkdir(parents=True)
+    (inbox / "001.json").write_text("[]", encoding="utf-8")
+    (inbox / "002.json").write_text("7", encoding="utf-8")
+    (inbox / "003.json").write_text('{"id":"003","body":"first"}', encoding="utf-8")
+    (inbox / "004.json").write_text('{"id":"004","body":"second"}', encoding="utf-8")
+
+    assert [m.body for m in receive("demo", workdir=tmp_path)] == ["first", "second"]
+    # The cursor still excludes what came before it.
+    assert [m.body for m in receive("demo", workdir=tmp_path, since="003")] == ["second"]
