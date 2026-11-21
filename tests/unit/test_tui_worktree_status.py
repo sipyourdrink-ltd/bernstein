@@ -5,15 +5,38 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from bernstein.core.worktrees.classifier import ClassifiedWorktree, WorktreeState
 from bernstein.tui.worktree_status import (
     RuntimeHealthPanel,
     WorktreeListPanel,
+    WorktreeStatus,
     count_reapable,
+    get_worktree_status,
     render_runtime_health,
     render_worktree_list,
 )
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "expected"),
+    [
+        (128, "", None),
+        (0, "", WorktreeStatus(branch="main", is_dirty=False)),
+        (0, "?? new.txt\n", WorktreeStatus(branch="main", is_dirty=True)),
+    ],
+    ids=["failed", "clean", "dirty"],
+)
+def test_failed_porcelain_query_returns_no_status(
+    tmp_path: Path, returncode: int, stdout: str, expected: WorktreeStatus | None
+) -> None:
+    branch = subprocess.CompletedProcess(["git", "rev-parse", "--abbrev-ref", "HEAD"], 0, stdout="main\n")
+    status = subprocess.CompletedProcess(["git", "status", "--porcelain"], returncode, stdout=stdout)
+    with patch("bernstein.tui.worktree_status.subprocess.run", side_effect=[branch, status]):
+        assert get_worktree_status(tmp_path) == expected
 
 
 def test_render_runtime_health_empty() -> None:
