@@ -105,6 +105,38 @@ def test_invalid_recorded_calibration_does_not_change_hard_gate(raw: object) -> 
     assert adapter.score_task(task, receipt)[0]
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("ts", float("inf"), id="nonfinite-timestamp"),
+        pytest.param("ts", True, id="boolean-timestamp"),
+        pytest.param("predicted_prob", 1.1, id="probability-out-of-range"),
+        pytest.param("observed_outcome", 1, id="nonboolean-outcome"),
+    ],
+)
+@pytest.mark.parametrize("path", ["src/allowed.py", "outside.py"])
+def test_malformed_second_calibration_row_discards_the_population(field: str, value: object, path: str) -> None:
+    goal = _task()
+    task = goal.to_bench_task()
+    events = _events(path)
+    baseline = evaluate_trajectory_drift(goal, events).to_dict()
+    rows = _payload()
+    rows[1][field] = value
+    adapter = GoalDriftReplayAdapter(trajectory_data={"events": events, "intent_calibration_records": rows})
+
+    receipt = adapter.run_task(task, {})
+    assert receipt["intent_calibration_records"] == []
+    assert receipt["passed_gate"] is baseline["passed_gate"]
+
+    restored = json.loads(json.dumps(receipt, allow_nan=False))
+    passed, _, scored = GoalDriftReplayAdapter().score_task(task, restored)
+    assert passed is baseline["passed_gate"]
+    for curve in (receipt["drift_curve"], scored["drift_curve"]):
+        assert curve["intent_calibration"]["status"] == "unavailable"
+        assert curve["intent_calibration"]["sample_count"] == 0
+        assert curve == baseline
+
+
 def test_mixed_versions_are_unavailable() -> None:
     records = (*_records(), CalibrationRecord(102, "judge", "intent/v2", 0.5, True))
     curve = evaluate_trajectory_drift(_task(), _events(), intent_calibration_records=records)
