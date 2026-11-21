@@ -71,7 +71,9 @@ def _build_app_bindings() -> list[BindingType]:
 Pressing `?` or `h` opens the in-TUI help screen, which also calls
 `resolve_all_bindings()` and renders the live, fully-resolved key map —
 so the help screen always reflects your current overrides, not just the
-defaults.
+defaults. The palette hint above the table names the resolved
+`command_palette` key too, so with `command_palette: "ctrl+g"` both say
+Ctrl+G. Keys are shown with the modifier and letter capitalised (`Ctrl+P`).
 
 ## Limitations
 
