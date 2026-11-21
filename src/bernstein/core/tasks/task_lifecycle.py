@@ -4404,6 +4404,8 @@ def _record_cost_and_convergence(
     tokens_in = task_m.tokens_prompt if task_m else 0
     tokens_out = task_m.tokens_completion if task_m else 0
     cost_tags: dict[str, str] = {}
+    if session is not None and session.model_call_id:
+        cost_tags["model_call_id"] = session.model_call_id
     if tokens_sidecar_source:
         cost_tags["tokens_sidecar_source"] = tokens_sidecar_source
     response_profile = getattr(session, "response_profile", "") if session else ""

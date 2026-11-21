@@ -48,11 +48,13 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+
+from bernstein.core.persistence.file_locks import cross_process_lock
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +374,7 @@ class ModelCallLedger:
     def __init__(self, sdd_dir: Path) -> None:
         self._sdd_dir = sdd_dir
         self._path = sdd_dir / "runtime" / "model_calls.jsonl"
+        self._lock_path = self._path.with_suffix(".lock")
         self._records: list[ModelCallRecord] = []
         self._refusals: list[TransitionRefusal] = []
         self._loaded = False
@@ -409,7 +412,7 @@ class ModelCallLedger:
                 row = _as_object(parsed)
                 kind = row.get("kind")
                 if kind == _ROW_KIND_RECORD:
-                    self._records.append(ModelCallRecord.from_dict(_as_object(row.get("record"))))
+                    self._upsert_in_memory(ModelCallRecord.from_dict(_as_object(row.get("record"))))
                 elif kind == _ROW_KIND_REFUSAL:
                     self._refusals.append(
                         TransitionRefusal(
@@ -503,6 +506,13 @@ class ModelCallLedger:
             InvalidStatusTransitionError: *to_status* is not reachable
                 from ``record.status``.
         """
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            current = self.get_record(record.id) or record
+            return self._transition(current, to_status)
+
+    def _transition(self, record: ModelCallRecord, to_status: ModelCallStatus) -> ModelCallRecord:
+        """Apply the status graph while the caller holds the ledger lock."""
         if to_status not in _ALLOWED_TRANSITIONS[record.status]:
             refusal = TransitionRefusal(
                 record_id=record.id,
@@ -641,29 +651,182 @@ class ModelCallLedger:
         )
         return self._run(record, call)
 
+    def begin_call(
+        self,
+        *,
+        capability_id: str,
+        adapter_id: str,
+        model: str,
+        model_version: str = "",
+        parameters: Mapping[str, Any] | None = None,
+        parameter_schema_version: str = "",
+        input_text: str = "",
+        journal_entry_id: str = "",
+    ) -> ModelCallRecord:
+        """Start an asynchronous call lifecycle and persist the ``running`` record.
+
+        Intended for subprocess/agent spawns where execution completes out of
+        band and is finalized later via :meth:`finalize_call` or
+        :meth:`finish_call`.
+        """
+        record = ModelCallRecord.new(
+            capability_id=capability_id,
+            adapter_id=adapter_id,
+            model=model,
+            model_version=model_version,
+            parameters=parameters,
+            parameter_schema_version=parameter_schema_version,
+            input_text=input_text,
+            journal_entry_id=journal_entry_id,
+        )
+        running = self.transition(record, "running")
+        self._store(running)
+        return running
+
+    def finish_call(
+        self,
+        running: ModelCallRecord,
+        *,
+        output_text: str = "",
+        error: str = "",
+    ) -> ModelCallRecord:
+        """Finalize a running call, refusing stale terminal snapshots."""
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            current = self.get_record(running.id) or running
+            return self._finish_call(current, output_text=output_text, error=error)
+
+    def _finish_call(
+        self,
+        running: ModelCallRecord,
+        *,
+        output_text: str,
+        error: str,
+    ) -> ModelCallRecord:
+        """Check and persist a terminal transition under the ledger lock."""
+        if error:
+            terminal = replace(
+                self._transition(running, "failed"),
+                error=error,
+            )
+        else:
+            terminal = replace(
+                self._transition(running, "succeeded"),
+                output_text=output_text,
+            )
+        self._store_locked(terminal)
+        return terminal
+
+    def finalize_call(
+        self,
+        record_id: str,
+        *,
+        output_text: str = "",
+        error: str = "",
+    ) -> ModelCallRecord | None:
+        """Idempotently finalize ``record_id`` if it is still ``running``.
+
+        Returns the terminal record, or ``None`` if ``record_id`` is unknown.
+        If the record is already terminal (``succeeded`` or ``failed``),
+        returns it unchanged without raising a transition refusal.
+        """
+        if not record_id:
+            return None
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            current = self.get_record(record_id)
+            if current is None:
+                return None
+            if current.status in ("succeeded", "failed"):
+                return current
+            return self._finish_call(current, output_text=output_text, error=error)
+
+    def invoke_adapter(
+        self,
+        *,
+        adapter: Any,
+        capability_id: str,
+        model: str,
+        input_text: str,
+        parameters: Mapping[str, Any] | None = None,
+        adapter_id: str = "",
+        model_version: str | None = None,
+        parameter_schema_version: str = "",
+        journal_entry_id: str = "",
+        reuse_identical: bool = False,
+    ) -> ModelCallRecord:
+        """Validate *parameters* against *adapter*, invoke, and record the call."""
+        resolved_adapter_id = adapter_id or str(adapter.name())
+        validated_params = _validate_adapter_parameters(adapter, parameters)
+        schema_version = parameter_schema_version or str(getattr(adapter, "parameter_schema_version", "") or "")
+        resolved_version = model_version if model_version is not None else _resolve_model_version(adapter, model)
+        return self.invoke(
+            capability_id=capability_id,
+            adapter_id=resolved_adapter_id,
+            model=model,
+            model_version=resolved_version,
+            parameters=validated_params,
+            parameter_schema_version=schema_version,
+            input_text=input_text,
+            journal_entry_id=journal_entry_id,
+            reuse_identical=reuse_identical,
+            call=lambda: str(adapter.invoke(model=model, input_text=input_text, parameters=validated_params)),
+        )
+
+    def replay_adapter(self, record_id: str, *, adapter: Any) -> ModelCallRecord | None:
+        """Re-execute stored *record_id* against *adapter*, validating parameters."""
+        original = self.get_record(record_id)
+        if original is None:
+            logger.warning("model call ledger: replay of unknown record %s", record_id)
+            return None
+        validated_params = _validate_adapter_parameters(adapter, original.parameters)
+        current_schema = str(getattr(adapter, "parameter_schema_version", "") or "")
+        if (
+            _resolve_model_version(adapter, original.model) != original.model_version
+            or current_schema != original.parameter_schema_version
+            or validated_params != original.parameters
+        ):
+            raise ValueError(
+                "Incompatible exact replay: model version, parameter schema, or resolved parameters changed"
+            )
+        return self.replay(
+            record_id,
+            call=lambda: str(
+                adapter.invoke(
+                    model=original.model,
+                    input_text=original.input_text,
+                    parameters=validated_params,
+                )
+            ),
+        )
+
     def _run(self, record: ModelCallRecord, call: Callable[[], str]) -> ModelCallRecord:
         """Drive *record* through the status graph around *call*."""
         running = self.transition(record, "running")
         try:
             output = call()
         except Exception as exc:
-            failed = replace(
-                self.transition(running, "failed"),
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            self._store(failed)
+            self.finish_call(running, error=f"{type(exc).__name__}: {exc}")
             raise
-        succeeded = replace(
-            self.transition(running, "succeeded"),
-            output_text=output,
-        )
-        self._store(succeeded)
-        return succeeded
+        return self.finish_call(running, output_text=output)
+
+    def _upsert_in_memory(self, record: ModelCallRecord) -> None:
+        for idx, existing in enumerate(self._records):
+            if existing.id == record.id:
+                self._records[idx] = record
+                return
+        self._records.append(record)
 
     def _store(self, record: ModelCallRecord) -> None:
-        """Append *record* to memory and to the JSONL file."""
+        """Serialize record appends with terminal load/check/write operations."""
+        with cross_process_lock(self._lock_path):
+            self._loaded = False
+            self._store_locked(record)
+
+    def _store_locked(self, record: ModelCallRecord) -> None:
+        """Append a row while the caller holds the ledger lock."""
         self._ensure_loaded()
-        self._records.append(record)
+        self._upsert_in_memory(record)
         self._append_row({"kind": _ROW_KIND_RECORD, "record": record.to_dict()})
 
     def _append_row(self, row: dict[str, Any]) -> None:
@@ -674,3 +837,93 @@ class ModelCallLedger:
                 handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
         except OSError as exc:
             logger.warning("model call ledger: failed to write %s: %s", self._path, exc)
+
+
+def _validate_adapter_parameters(adapter: Any, parameters: Mapping[str, Any] | None) -> dict[str, Any]:
+    validator = getattr(adapter, "validate_parameters", None)
+    if callable(validator):
+        validated = validator(dict(parameters or {}))
+        if isinstance(validated, dict):
+            return dict(validated)
+    return dict(parameters or {})
+
+
+def _resolve_model_version(adapter: Any, model: str) -> str:
+    resolver = getattr(adapter, "model_version_for", None)
+    if callable(resolver):
+        ver = resolver(model)
+        if isinstance(ver, str):
+            return ver
+    raw = getattr(adapter, "model_version", "")
+    return raw if isinstance(raw, str) else ""
+
+
+def begin_adapter_call(
+    sdd_dir: Path,
+    *,
+    adapter: Any,
+    capability_id: str,
+    adapter_id: str,
+    model: str,
+    parameters: Mapping[str, Any] | None = None,
+    input_text: str = "",
+    journal_entry_id: str = "",
+) -> ModelCallRecord:
+    """Validate *parameters* against *adapter* and begin an async call record."""
+    validated_params = _validate_adapter_parameters(adapter, parameters)
+    schema_raw = getattr(adapter, "parameter_schema_version", "")
+    schema_version = schema_raw if isinstance(schema_raw, str) else ""
+    model_version = _resolve_model_version(adapter, model)
+    return ModelCallLedger(sdd_dir).begin_call(
+        capability_id=capability_id,
+        adapter_id=adapter_id,
+        model=model,
+        model_version=model_version,
+        parameters=validated_params,
+        parameter_schema_version=schema_version,
+        input_text=input_text,
+        journal_entry_id=journal_entry_id,
+    )
+
+
+def finalize_session_model_call(
+    sdd_dir: Path,
+    session: Any,
+    *,
+    error: str = "",
+    execution_succeeded: bool = False,
+) -> ModelCallRecord | None:
+    """Finalize a session, separating known success from process-stop metadata."""
+    model_call_id = getattr(session, "model_call_id", "")
+    if not isinstance(model_call_id, str) or not model_call_id:
+        return None
+
+    resolved_error = error
+    if not resolved_error and not execution_succeeded:
+        abort_reason = getattr(session, "abort_reason", "")
+        abort_detail = getattr(session, "abort_detail", "")
+        exit_code = getattr(session, "exit_code", None)
+        if isinstance(abort_reason, str) and abort_reason:
+            resolved_error = abort_detail if isinstance(abort_detail, str) and abort_detail else abort_reason
+        elif isinstance(exit_code, int) and exit_code != 0:
+            resolved_error = f"exit_code={exit_code}"
+
+    output_text = ""
+    if not resolved_error:
+        log_path_raw = getattr(session, "log_path", "")
+        if isinstance(log_path_raw, str) and log_path_raw:
+            try:
+                log_file = Path(log_path_raw)
+                if log_file.is_file():
+                    output_text = log_file.read_text(errors="replace")[-4096:]
+            except OSError:
+                output_text = ""
+        if not output_text:
+            finish_reason = getattr(session, "finish_reason", "")
+            output_text = finish_reason if isinstance(finish_reason, str) and finish_reason else "completed"
+
+    return ModelCallLedger(sdd_dir).finalize_call(
+        model_call_id,
+        output_text=output_text,
+        error=resolved_error,
+    )

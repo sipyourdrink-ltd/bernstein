@@ -628,6 +628,11 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     if _rl_tracker is not None and session.provider:
         _rl_tracker.decrement_active(session.provider)
     _preserve_runner_logs(orch, session)
+    workdir = getattr(orch, "_workdir", None)
+    if isinstance(workdir, Path):
+        from bernstein.core.cost.model_call_ledger import finalize_session_model_call
+
+        finalize_session_model_call(workdir / ".sdd", session, execution_succeeded=session.exit_code == 0)
     # issue #5844: record the checkpointed-retry reference before any of this
     # session's tasks reach a retry decision below, and before _dispose_dead_worktree
     # touches the worktree.
@@ -1558,7 +1563,12 @@ def _read_runner_cost_usd(
         return 0.0, 0, 0
 
     model = session.model_config.model if session.model_config else ""
-    price_result = price_model_usage(model, total_in, total_out)
+    price_result = price_model_usage(
+        model,
+        total_in,
+        total_out,
+        model_call_id=getattr(session, "model_call_id", "") or "",
+    )
     logger.info(
         "orphan_cost_recovered: task_id=%s agent_id=%s source=%s "
         "input_tokens=%d output_tokens=%d cost_usd=%.6f priced=%s",
