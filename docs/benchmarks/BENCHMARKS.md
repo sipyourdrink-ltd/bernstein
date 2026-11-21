@@ -97,6 +97,14 @@ uv run python benchmarks/bench_orchestrator.py
 
 Measures raw throughput of the JSONL-backed task store. Each run uses its own temporary directory and removes it on success or failure.
 
+The temporary directory is created under the system temp location and honors `TMPDIR`, so the filesystem being measured follows that variable. When comparing storage timings, point `TMPDIR` at a directory on the target volume:
+
+```bash
+TMPDIR=/path/to/dir/on/target-volume uv run python benchmarks/bench_task_store.py
+```
+
+Otherwise, with `TMPDIR=/dev/shm` on Linux, the reported flush latency is for tmpfs (RAM), not the disk holding the checkout.
+
 - High write throughput on local SSD
 - Low flush latency
 

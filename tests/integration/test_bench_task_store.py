@@ -18,6 +18,11 @@ def test_benchmark_workspace_lifecycle(
     notes = tmp_path / "bench_workdir" / "existing-project-notes.txt"
     notes.parent.mkdir()
     notes.write_text("keep me", encoding="utf-8")
+    # Sentinel at the default archive path: a regression to TaskStore's
+    # default archive_path would append 1,000 completions here.
+    archive = tmp_path / ".sdd" / "archive" / "tasks.jsonl"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"sentinel\n")
     temp_root = tmp_path / "temp"
     temp_root.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(temp_root))
@@ -42,3 +47,4 @@ def test_benchmark_workspace_lifecycle(
     assert first != second
     assert not list(temp_root.iterdir())
     assert notes.read_text(encoding="utf-8") == "keep me"
+    assert archive.read_bytes() == b"sentinel\n"
