@@ -24,6 +24,7 @@ and all metadata fields default to empty values.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003 (used at runtime for path.read_text)
 from typing import Any, TypeGuard, cast
@@ -105,6 +106,8 @@ class SkillMD:
 
 # -- Parsing ------------------------------------------------------------------
 
+_FENCE_LINE = re.compile(r"^---[ \t]*\r?$", re.MULTILINE)
+
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Extract YAML frontmatter and markdown body from *text*.
@@ -120,17 +123,17 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         when no frontmatter is found or parsing fails.
     """
     stripped = text.strip()
-    if not stripped.startswith("---"):
+    opening = _FENCE_LINE.match(stripped)
+    if opening is None:
         return {}, stripped
 
-    rest = stripped[3:]  # text after opening "---"
-    end_idx = rest.find("\n---")
-    if end_idx == -1:
+    closing = _FENCE_LINE.search(stripped, opening.end())
+    if closing is None:
         # No closing fence - treat entire content as body.
         return {}, stripped
 
-    fm_text = rest[:end_idx].strip()
-    body = rest[end_idx + 4 :].lstrip("\n")  # skip "\n---"
+    fm_text = stripped[opening.end() : closing.start()].strip()
+    body = stripped[closing.end() :].lstrip("\r\n")
 
     if not fm_text:
         return {}, body
