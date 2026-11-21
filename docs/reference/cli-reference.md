@@ -468,7 +468,7 @@ it still answers what happened after the run and its server have exited.
 | `--since HOURS` | all | Hours back to include. |
 | `--output FILE` / `-o` | `.sdd/runtime/retrospective.md` | Output path. |
 | `--print` | off | Also print to stdout. |
-| `--archive PATH` | `.sdd/archive/tasks.jsonl` | Source archive. |
+| `--archive PATH` | `.sdd/archive/tasks.jsonl` | Source archive. A path you pass must be an existing file: a missing path or a directory is a usage error that names it. An empty file, or no archive at the default path, gives the empty result ("No tasks found", exit 0). |
 
 #### `bernstein runs`
 
