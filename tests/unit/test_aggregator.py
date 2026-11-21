@@ -950,3 +950,20 @@ def test_min_sample_constants() -> None:
     assert MIN_SAMPLES_CUSUM == 8
     assert MIN_SAMPLES_MANN_KENDALL == 8
     assert MIN_SAMPLES_BOCPD == 20
+
+
+def test_ewma_state_reports_the_factor_used_for_the_update(tmp_path: Path) -> None:
+    """The state names the smoothing factor its current value was computed with (#8030)."""
+    agg = MetricsAggregator(FileMetricsCollector(tmp_path))
+    agg.update_ewma("duration", 0.0, lambda_=0.2)
+    row = agg.update_ewma("duration", 10.0, lambda_=0.75)
+
+    for state in (row, agg.get_ewma_state("duration")):
+        assert state is not None
+        assert state.current_value == pytest.approx(7.5)
+        assert state.lambda_ == 0.75
+
+    # A repeated factor still gives the ordinary weighted average.
+    repeated = agg.update_ewma("duration", 2.5, lambda_=0.75)
+    assert repeated.current_value == pytest.approx(_ewma_update(7.5, 2.5, 0.75))
+    assert repeated.lambda_ == 0.75
