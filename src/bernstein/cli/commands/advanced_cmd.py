@@ -324,6 +324,16 @@ def retro(
     archive_path = Path(archive)
     runtime_dir = workdir / ".sdd" / "runtime"
 
+    # A path the caller named must be an archive file. A missing one or a directory read as an empty
+    # archive and exited 0 with no report (#7959). The default path keeps its empty result, so a
+    # workspace with no archive yet is not an error.
+    source = click.get_current_context().get_parameter_source("archive")
+    if source is not click.core.ParameterSource.DEFAULT and not archive_path.is_file():
+        reason = "is a directory" if archive_path.is_dir() else "does not exist"
+        raise click.BadParameter(
+            f"{archive_path} {reason}; pass the path of a tasks.jsonl archive file", param_hint="--archive"
+        )
+
     since_ts: float | None = None
     if since is not None:
         since_ts = _time.time() - since * 3600
