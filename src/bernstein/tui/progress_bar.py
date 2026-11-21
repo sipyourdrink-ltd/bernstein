@@ -46,10 +46,12 @@ class TaskProgress:
         if self.custom_pct is not None:
             return max(0.0, min(100.0, self.custom_pct))
         if self.total_steps > 0:
-            return (self.completed_steps / self.total_steps) * 100.0
-        if self.tests_total > 0:
-            return (self.tests_passing / self.tests_total) * 100.0
-        return 0.0
+            completed, total = self.completed_steps, self.total_steps
+        elif self.tests_total > 0:
+            completed, total = self.tests_passing, self.tests_total
+        else:
+            return 0.0
+        return (max(0, min(completed, total)) / total) * 100.0
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> TaskProgress:
