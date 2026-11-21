@@ -26,6 +26,8 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from fractions import Fraction
+from math import ceil
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -247,7 +249,20 @@ class FairScheduler:
         for tid in self._rr_order:
             self._tenants[tid].deficit += self._tenants[tid].quota.weight
 
-        # --- try again after crediting -----------------------------------
+        result = self._try_serve(n)
+        if result is not None:
+            return result
+
+        runnable = [state for state in self._tenants.values() if state.queue and not self._at_concurrency_limit(state)]
+        if not runnable:
+            return None
+
+        # Jump to the first round in which a runnable tenant has a full quantum.
+        # Exact ratios also handle weights whose reciprocals overflow a float.
+        quantum = Fraction(self._QUANTUM)
+        rounds = min(ceil((quantum - Fraction(state.deficit)) / Fraction(state.quota.weight)) for state in runnable)
+        for state in runnable:
+            state.deficit = float(Fraction(state.deficit) + rounds * Fraction(state.quota.weight))
         return self._try_serve(n)
 
     def _try_serve(self, n: int) -> SchedulingDecision | None:
