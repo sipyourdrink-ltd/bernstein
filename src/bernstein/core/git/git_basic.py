@@ -817,6 +817,34 @@ def _parse_latest_version(tags: list[str], tag_prefix: str) -> tuple[int, int, i
     return 0, 0, 0, None
 
 
+_BREAKING_FOOTER_PREFIXES = ("BREAKING CHANGE:", "BREAKING-CHANGE:")
+
+
+def _has_breaking_footer(body: str) -> bool:
+    """Detect a breaking-change footer in the trailing footer block.
+
+    Per Conventional Commits, ``BREAKING CHANGE`` and ``BREAKING-CHANGE`` are
+    equivalent footer tokens, and footers are the final blank-line-separated
+    block of the message -- a marker quoted in body prose or inside a fenced
+    code example must not trigger a major bump.
+    """
+    lines = body.splitlines()
+    end = len(lines)
+    while end > 0 and not lines[end - 1].strip():
+        end -= 1
+    start = end
+    while start > 0 and lines[start - 1].strip():
+        start -= 1
+    in_fence = False
+    for line in lines[start:end]:
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence and line.startswith(_BREAKING_FOOTER_PREFIXES):
+            return True
+    return False
+
+
 def _compute_bump(messages: list[str]) -> str:
     """Determine semver bump level from conventional commit subjects and footers.
 
@@ -830,11 +858,7 @@ def _compute_bump(messages: list[str]) -> str:
     for message in messages:
         subject, _, body = message.partition("\n")
         lower = subject.lower()
-        if (
-            "breaking change" in lower
-            or "!:" in subject
-            or any(line.startswith("BREAKING CHANGE:") for line in body.splitlines())
-        ):
+        if "breaking change" in lower or "!:" in subject or _has_breaking_footer(body):
             return "major"
         if lower.startswith("feat"):
             bump = "minor"
@@ -845,8 +869,9 @@ def version_from_commits(cwd: Path, tag_prefix: str = "v") -> str:
     """Compute the next semantic version from conventional commits since the last tag.
 
     Scans commit messages between the latest ``v*`` tag and HEAD.  Bumps
-    major on ``BREAKING CHANGE`` or ``!:`` in a subject or a ``BREAKING CHANGE:``
-    footer, minor on ``feat``, patch on anything else (``fix``, ``refactor``, etc.).
+    major on ``BREAKING CHANGE`` or ``!:`` in a subject or a
+    ``BREAKING CHANGE:``/``BREAKING-CHANGE:`` footer, minor on ``feat``, patch
+    on anything else (``fix``, ``refactor``, etc.).
 
     If no previous tag exists, starts from ``0.1.0``.
 

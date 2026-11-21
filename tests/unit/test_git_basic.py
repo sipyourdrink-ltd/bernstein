@@ -27,10 +27,20 @@ from bernstein.core.git_basic import (
     ("body", "expected"),
     [
         ("Migration notes.\n\nBREAKING CHANGE: remove the old format", "2.0.0"),
+        ("Migration notes.\n\nBREAKING-CHANGE: remove legacy format", "2.0.0"),
         (None, "1.2.4"),
         ("feat: illustrate a BREAKING CHANGE: marker in prose", "1.2.4"),
+        ("Example:\n\n```text\nBREAKING CHANGE: example only\n```\n\nSee the migration guide.", "1.2.4"),
+        ("Update the docs.\n\n```text\nBREAKING CHANGE: example only\n```", "1.2.4"),
     ],
-    ids=["breaking-footer", "plain-fix", "ordinary-body"],
+    ids=[
+        "breaking-footer",
+        "breaking-footer-hyphenated",
+        "plain-fix",
+        "ordinary-body",
+        "breaking-marker-in-body-fence",
+        "breaking-marker-in-trailing-fence",
+    ],
 )
 def test_version_bump_from_breaking_footer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str | None, expected: str
