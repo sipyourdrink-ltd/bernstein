@@ -1832,6 +1832,8 @@ Experimental voice control (see [`operations/voice-control.md`](../operations/vo
 
 Use `bernstein explain [COMMAND_NAME]` to see examples, tips, and related
 commands. For example, `bernstein explain run` shows ways to start a run.
+Each example is printed whole on its own line, with its description under it,
+so a narrow terminal wraps it and redirected output keeps the full command.
 
 Run `bernstein explain` to list the commands with detailed help, or
 `bernstein explain --help` for usage.

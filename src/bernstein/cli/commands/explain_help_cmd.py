@@ -185,6 +185,7 @@ def explain_help_cmd(command_name: str | None) -> None:
     """
     from rich.panel import Panel
     from rich.table import Table
+    from rich.text import Text
 
     if command_name is None:
         # List all commands with examples
@@ -211,12 +212,13 @@ def explain_help_cmd(command_name: str | None) -> None:
     console.print(f"  {info['summary']}\n")
 
     # Examples
-    examples_table = Table(show_header=True, header_style="bold green", expand=True)
-    examples_table.add_column("Example", style="white", no_wrap=True, ratio=2)
-    examples_table.add_column("Description", style="dim", ratio=1)
+    # Plain soft-wrapped lines, not a table in a panel: the table cut a long example with an ellipsis
+    # at 80 columns, and a wrapped cell puts border characters inside a command someone copies (#7945).
+    console.print("[bold green]Examples[/bold green]")
     for cmd, desc in info.get("examples", []):
-        examples_table.add_row(f"  $ {cmd}", desc)
-    console.print(Panel(examples_table, title="[bold]Examples[/bold]", border_style="green"))
+        console.print(Text(f"  $ {cmd}", style="white"), soft_wrap=True)
+        console.print(Text(f"      {desc}", style="dim"), soft_wrap=True)
+    console.print()
 
     # Tips
     tips = info.get("tips", [])
