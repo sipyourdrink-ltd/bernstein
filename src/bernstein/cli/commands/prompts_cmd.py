@@ -181,7 +181,9 @@ def prompts_compare(name: str, v1: int, v2: int, as_json: bool) -> None:
         raise SystemExit(1)
 
     if as_json:
-        console.print(json.dumps(result, indent=2))
+        # Written as is: Rich wrapped long strings and read `[bold]` in a name as markup, so stdout
+        # did not parse as JSON (#7871).
+        click.echo(json.dumps(result, indent=2))
         return
 
     console.print(
