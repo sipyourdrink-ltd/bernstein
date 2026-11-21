@@ -20,6 +20,7 @@ Log sources scanned (in priority order):
 
 from __future__ import annotations
 
+import heapq
 import re
 import time
 from contextlib import suppress
@@ -290,27 +291,20 @@ class LogSearchIndex:
         role_lower = agent_role.lower()
         level_lower = level.lower()
 
-        matches: list[LogEntry] = []
-        for entry in entries:
+        def matches(entry: LogEntry) -> bool:
             if earliest_ts > 0 and entry.timestamp > 0 and entry.timestamp < earliest_ts:
-                continue
+                return False
             if role_lower and role_lower not in entry.agent_role.lower():
-                continue
+                return False
             if level_lower and entry.level != level_lower:
-                continue
-            if query_lower and query_lower not in entry.message.lower():
-                continue
-            matches.append(entry)
-            if len(matches) >= limit:
-                break
+                return False
+            return not query_lower or query_lower in entry.message.lower()
 
         # Newest first (entries with timestamp=0 go to the end)
-        matches.sort(key=lambda e: max(e.timestamp, 0), reverse=True)
-
         return LogSearchResult(
             query=query,
             total_scanned=total_scanned,
-            entries=matches[:limit],
+            entries=heapq.nlargest(limit, filter(matches, entries), key=lambda e: max(e.timestamp, 0)),
         )
 
     # -- scanning -----------------------------------------------------------
