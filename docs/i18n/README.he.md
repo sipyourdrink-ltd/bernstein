@@ -49,7 +49,17 @@ Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא
 מדיניות המתאמים לפי תפקיד מאפשרת להגדיר רשימת מתאמים מותרת כברירת מחדל לתפקידים שלא צוינו בנפרד; ראו את [המדריך](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### איך נראית ריצה
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+אפשר להציג תצוגה מקדימה של רשימת המשימות המקומית או של יעד בעזרת הדגל הגלובלי `--json`. כל פקודה כותבת אובייקט JSON אחד לפלט התקני ומסתיימת לפני הפעלת הסוכנים.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` מחזירה את המערך `tasks`, שבו כל משימה מיוצגת כאובייקט. עבור רשימת משימות ריקה הפלט הוא `{"tasks": []}`. הפקודה עם `--plan-only` מחזירה שתי מחרוזות. השדה `plan` מכיל את הטקסט בפורמט Markdown והשדה `saved_plan` מכיל את הנתיב לקובץ שנשמר.
 
 קובץ YAML אחד מצהיר על הריצה כולה: פאזות, תפקידים, תלויות והתנאים שבהם צומת בכלל רץ. המתזמן מריץ אותו כ-Python טהור - שום דבר בקובץ אינו פרומפט, ואף מודל לא מחליט מה קורה הלאה. הגרף הזה מייצר חבילת ראיות ביקורת; הקובץ המלא נמצא ב-[`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

@@ -28,7 +28,9 @@ from bernstein.cli.helpers import (
     auth_headers,
     console,
     find_seed_file,
+    is_json,
     persist_server_port,
+    plain_run_output,
     print_banner,
     print_startup_banner,
     server_get,
@@ -121,7 +123,7 @@ def _resolve_goal_and_team(workdir: Path, goal: str | None, seed_file: str | Non
         if found is None:
             from bernstein.cli.errors import no_seed_or_goal
 
-            no_seed_or_goal().print()
+            no_seed_or_goal().print(plain=plain_run_output())
             raise SystemExit(1)
         seed_path = found
 
@@ -130,7 +132,7 @@ def _resolve_goal_and_team(workdir: Path, goal: str | None, seed_file: str | Non
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 
-        seed_parse_error(exc).print()
+        seed_parse_error(exc).print(plain=plain_run_output())
         raise SystemExit(1) from exc
 
     team = list(seed.team) if seed.team != "auto" else None
@@ -208,6 +210,59 @@ def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
         )
         raise SystemExit(1)
     return config
+
+
+def _yaml_rerun_instruction(plan: Path, *, from_plan: bool, ctx: click.Context | None) -> str:
+    """Keep explicit execution settings with the YAML they were previewed against."""
+    from click.core import ParameterSource
+
+    from bernstein.core.config.platform_compat import shell_quote
+
+    commands = ["bernstein"]
+    contexts = [ctx.parent, ctx] if ctx is not None and ctx.parent is not None else [ctx]
+    for context in contexts:
+        if context is None or not isinstance(context.command, click.Group):
+            commands.append("run")
+        if context is None:
+            continue
+        for option in context.command.params:
+            if not isinstance(option, click.Option) or option.name is None:
+                continue
+            if context.get_parameter_source(option.name) is not ParameterSource.COMMANDLINE:
+                continue
+            flag = option.opts[0]
+            if flag in {"--from-plan", "--plan-only", "--json", "--auto-approve", "--yes"}:
+                continue
+            if flag not in {
+                "--budget",
+                "--budget-cap",
+                "--cells",
+                "--cli",
+                "--fresh",
+                "--hard-budget",
+                "--headless",
+                "--idle",
+                "--max-cost-usd",
+                "--model",
+                "--port",
+                "--quiet",
+                "--retry-budget",
+                "--routing",
+                "--task",
+                "--wait",
+                "--workflow",
+            }:
+                # Do not offer a partial command or save arbitrary option values.
+                return "To run this plan, repeat your original command without `--plan-only` or automatic approval."
+            commands.append(flag)
+            if not option.is_flag:
+                commands.append(str(context.params[option.name]))
+    if from_plan:
+        commands.append("--from-plan")
+    elif str(plan).startswith("-"):
+        commands.append("--")
+    commands.append(str(plan))
+    return "Re-run with `" + " ".join(shell_quote(arg) for arg in commands) + "`"
 
 
 def _load_plan_goal(plan_path: Path) -> str:
@@ -349,15 +404,19 @@ def _confirm_run(
         default_cli=cli_override or (_seed.cli if _seed and _seed.cli != "auto" else None),
     )
 
+    plain = plain_run_output()
     if effective_goal:
         plan_obj, plan_tasks = _build_synthetic_plan(effective_goal, team)
         from bernstein.cli.plan_display import display_plan_and_confirm
 
-        return display_plan_and_confirm(plan_obj, plan_tasks, console=console)
+        return display_plan_and_confirm(plan_obj, plan_tasks, console=console, plain=plain)
 
     with suppress(UnicodeDecodeError, EOFError):
-        if not click.confirm("\nProceed with execution?", default=True):
-            console.print("[dim]Cancelled.[/dim]")
+        if not click.confirm("\nProceed with execution?", default=True, err=plain):
+            if plain:
+                click.echo("Cancelled.", err=True)
+            else:
+                console.print("[dim]Cancelled.[/dim]")
             return False
     return True
 
@@ -790,7 +849,10 @@ def _show_dry_run_plan(
     _ = cli  # Part of interface: --cli is validated by its click.Choice
     from rich.table import Table
 
-    console.print("\n[bold]Dry-run mode: no agents will be spawned.[/bold]\n")
+    structured = is_json()
+    plain = plain_run_output()
+    if not (structured or plain):
+        console.print("\n[bold]Dry-run mode: no agents will be spawned.[/bold]\n")
 
     if plan_file is not None:
         tasks = _load_dry_run_tasks(plan_file)
@@ -805,49 +867,65 @@ def _show_dry_run_plan(
         # No seed/goal/plan: fall back to previewing a running server's backlog.
         tasks = _load_dry_run_tasks(None)
 
+    if structured:
+        click.echo(json.dumps({"tasks": [task.to_dict() for task in tasks]}))
+        return
     if not tasks:
-        console.print("[yellow]No tasks to schedule.[/yellow]")
+        if plain:
+            click.echo("No tasks to schedule.")
+        else:
+            console.print("[yellow]No tasks to schedule.[/yellow]")
         return
 
-    table = Table(title="Dry-Run Scheduling Plan", show_header=True, header_style="bold cyan")
-    table.add_column("#", justify="right")
-    table.add_column("Role", style="cyan")
-    table.add_column("Title")
-    table.add_column("Model", style="green")
-    table.add_column("Effort")
-    table.add_column("Priority", justify="center")
+    if plain:
+        click.echo("#\tRole\tTitle\tModel\tEffort\tPriority")
+        for index, task in enumerate(tasks, 1):
+            click.echo(
+                f"{index}\t{task.role}\t{task.title}\t{task.model or 'auto'}\t{task.effort or 'auto'}\t{task.priority}",
+                color=False,
+            )
+    else:
+        table = Table(title="Dry-Run Scheduling Plan", show_header=True, header_style="bold cyan")
+        table.add_column("#", justify="right")
+        table.add_column("Role", style="cyan")
+        table.add_column("Title")
+        table.add_column("Model", style="green")
+        table.add_column("Effort")
+        table.add_column("Priority", justify="center")
 
-    for i, task in enumerate(tasks, 1):
-        table.add_row(
-            str(i),
-            task.role,
-            task.title[:60] + "..." if len(task.title) > 60 else task.title,
-            task.model or "auto",
-            task.effort or "auto",
-            str(task.priority),
-        )
+        for i, task in enumerate(tasks, 1):
+            table.add_row(
+                str(i),
+                task.role,
+                task.title[:60] + "..." if len(task.title) > 60 else task.title,
+                task.model or "auto",
+                task.effort or "auto",
+                str(task.priority),
+            )
 
-    console.print(table)
+        console.print(table)
 
+    write_line = click.echo if plain else console.print
     deps_found = False
     for task in tasks:
         if task.depends_on:
             if not deps_found:
-                console.print("\n[bold]Dependency graph:[/bold]")
+                write_line("Dependency graph:" if plain else "\n[bold]Dependency graph:[/bold]")
                 deps_found = True
             dep_str = ", ".join(task.depends_on)
-            console.print(f"  {task.title} -> [{dep_str}]")
+            write_line(f"  {task.title} -> [{dep_str}]")
 
     est_model = model_override or "sonnet"
-    console.print(f"\n  Total tasks: {len(tasks)}")
+    write_line(f"\n  Total tasks: {len(tasks)}")
     if not model_cost_is_known(est_model):
         # No pricing-table entry: meters at $0 but is not free (issue #5337).
-        console.print(f"  Estimated cost: unpriced ({est_model} not in pricing table)")
+        write_line(f"  Estimated cost: unpriced ({est_model} not in pricing table)")
     else:
         low_usd, high_usd = estimate_run_cost(len(tasks), est_model)
-        console.print(f"  Estimated cost: ${(low_usd + high_usd) / 2:.2f} (${low_usd:.2f}-${high_usd:.2f})")
+        write_line(f"  Estimated cost: ${(low_usd + high_usd) / 2:.2f} (${low_usd:.2f}-${high_usd:.2f})")
 
-    console.print("\n[green]Dry run complete. No agents were spawned.[/green]")
+    if not plain:
+        console.print("\n[green]Dry run complete. No agents were spawned.[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -1096,7 +1174,7 @@ def init(
             badge_variant=badge_variant,
             remote=remote,
         )
-    except (click.UsageError, SystemExit):
+    except (click.UsageError, KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:
         handle_first_run_exception(exc, verbose=_is_verbose())
@@ -2565,10 +2643,10 @@ def run(
             refresh_cache=refresh_cache,
             force_fresh=force_fresh,
         )
-    except (click.UsageError, SystemExit):
+    except (click.UsageError, KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:
-        handle_first_run_exception(exc, verbose=_is_verbose())
+        handle_first_run_exception(exc, verbose=_is_verbose(), plain=plain_run_output())
 
 
 def _run_impl(
@@ -2648,17 +2726,26 @@ def _run_impl(
     # Opt-in operator observability (spec 2026-05-17).  Defaults to off.
     # Prints the one-time notice and emits first_run_* events around the
     # body.  Fail-closed: any internal failure is swallowed.
-    with suppress(Exception):
-        from bernstein.core.telemetry.wire import maybe_print_first_run_notice
+    ctx = click.get_current_context(silent=True)
+    if quiet and ctx is not None:
+        # The root result callback prints tips after the run context has closed.
+        ctx.ensure_object(dict)["QUIET"] = True
+    output = (ctx.obj or {}) if ctx is not None else {}
+    plain_output = quiet or plain_run_output()
+    if not plain_output:
+        with suppress(Exception):
+            from bernstein.core.telemetry.wire import maybe_print_first_run_notice
 
-        maybe_print_first_run_notice()
+            maybe_print_first_run_notice()
 
     # ``--from-plan`` on a YAML plan: the file carries stages and steps, so run
     # it exactly like the positional plan file instead of reducing it to a goal
     # and re-decomposing (which dropped every step, model pin and dependency).
+    yaml_from_option = False
     if plan_file is None and from_plan is not None and from_plan.suffix.lower() in _YAML_PLAN_SUFFIXES:
         _staged_config = _stage_yaml_from_plan(from_plan)
         plan_file, from_plan = from_plan, None
+        yaml_from_option = True
         if cli is None:
             cli = _staged_config.cli
         if budget_spec is None and max_cost_usd is None:
@@ -2752,8 +2839,7 @@ def _run_impl(
     # 1e5c13013 ("fix: ... double banner ..."), which mistakenly removed the
     # call assuming cli() always printed it -- cli() actually early-returns
     # for subcommand invocations, so `bernstein run` lost the banner entirely.
-    ctx = click.get_current_context(silent=True)
-    if ctx is None or not (ctx.obj and ctx.obj.get("_BANNER_PRINTED")):
+    if not (plain_output or output.get("_BANNER_PRINTED")):
         print_startup_banner()
 
     # Set process title so orchestrator is visible in Activity Monitor / ps
@@ -2827,10 +2913,11 @@ def _run_impl(
         # backend.  Without this, the orchestrator's argparse default would
         # fall back to ``--adapter claude`` and quietly burn real tokens.
         os.environ["BERNSTEIN_ADAPTER"] = cli
-        click.echo(
-            "Bernstein --idle mode: every agent will be spawned via the mock adapter and sleep "
-            "BERNSTEIN_MOCK_IDLE_MIN_S..MAX_S seconds (default 15-120). Zero LLM spend."
-        )
+        if not plain_output:
+            click.echo(
+                "Bernstein --idle mode: every agent will be spawned via the mock adapter and sleep "
+                "BERNSTEIN_MOCK_IDLE_MIN_S..MAX_S seconds (default 15-120). Zero LLM spend."
+            )
 
     # --dry-run: show scheduling plan without executing
     if dry_run:
@@ -2900,7 +2987,7 @@ def _run_impl(
             default_cli=cli,
         )
 
-        rerun_hint: str | None = None
+        rerun_instruction: str | None = None
 
         if plan_file is not None:
             if worker_role:
@@ -2921,19 +3008,20 @@ def _run_impl(
                 click.echo(f"Failed to load plan file: {exc}", err=True)
                 raise SystemExit(1) from exc
 
-            console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
-            console.print(f"[dim]Plan name:[/dim] {loaded_goal}")
+            if not plain_output:
+                console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
+                console.print(f"[dim]Plan name:[/dim] {loaded_goal}")
             plan_obj = create_plan(loaded_goal, tasks)
-            # Not --from-plan: that path reads only the ``**Goal:**`` line out
-            # of the saved markdown and re-decomposes from the plan name, which
-            # silently drops every task just previewed.
-            rerun_hint = f"bernstein run {plan_file}"
+            # Reuse the original YAML and its invocation mode. --from-plan
+            # applies top-level adapter and budget settings from that file.
+            rerun_instruction = _yaml_rerun_instruction(plan_file, from_plan=yaml_from_option, ctx=ctx)
         else:
             if from_plan is not None:
                 try:
                     goal = _load_plan_goal(from_plan)
-                    console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
-                    console.print(f"[dim]Goal:[/dim] {goal[:100]}")
+                    if not plain_output:
+                        console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
+                        console.print(f"[dim]Goal:[/dim] {goal[:100]}")
                 except (ValueError, OSError) as exc:
                     click.echo(f"Failed to load plan: {exc}", err=True)
                     raise SystemExit(1) from exc
@@ -2941,15 +3029,24 @@ def _run_impl(
             plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
 
         builder = PlanBuilder(plan_obj, tasks)
-        md = builder.render_to_markdown()
+        md = builder.render_to_markdown(rerun_instruction=rerun_instruction)
+
+        saved_plan = _save_plan_markdown(md, workdir)
+        if output.get("JSON"):
+            click.echo(json.dumps({"plan": md, "saved_plan": str(saved_plan)}))
+            return
+        if plain_output:
+            click.echo(md)
+            return
 
         from rich.markdown import Markdown
 
         console.print(Markdown(md))
-
-        saved_plan = _save_plan_markdown(md, workdir)
         console.print(f"\n[dim]Plan saved to:[/dim] {saved_plan}")
-        console.print(f"[dim]Execute with:[/dim] {rerun_hint or f'bernstein run --from-plan {saved_plan}'}")
+        if rerun_instruction:
+            console.print(rerun_instruction, markup=False, style="dim")
+        else:
+            console.print(f"[dim]Execute with:[/dim] bernstein run --from-plan {saved_plan}")
         return
 
     # --plan_file: loadable YAML plan (stages + steps)
@@ -2966,8 +3063,9 @@ def _run_impl(
             except Exception:
                 goal = str(plan_file)
 
-            console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
-            console.print(f"[dim]Plan name:[/dim] {goal}")
+            if not plain_output:
+                console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
+                console.print(f"[dim]Plan name:[/dim] {goal}")
             loaded_goal = goal or str(plan_file)
 
             if worker_role:
@@ -2976,7 +3074,7 @@ def _run_impl(
                 # to bypass.
                 raise click.UsageError("--worker requires a seed file; it is not supported with --plan-file.")
 
-            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
+            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(plain_output):
                 bootstrapped = bootstrap_from_goal(
                     goal=loaded_goal,
                     workdir=workdir,
@@ -3005,8 +3103,9 @@ def _run_impl(
     elif from_plan is not None:
         try:
             goal = _load_plan_goal(from_plan)
-            console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
-            console.print(f"[dim]Goal:[/dim] {goal[:100]}")
+            if not plain_output:
+                console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
+                console.print(f"[dim]Goal:[/dim] {goal[:100]}")
         except (ValueError, OSError) as exc:
             click.echo(f"Failed to load plan: {exc}", err=True)
             raise SystemExit(1) from exc
@@ -3023,7 +3122,7 @@ def _run_impl(
             # bypass.
             raise click.UsageError("--worker requires a seed file; it is not supported with an inline goal.")
         try:
-            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
+            with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(plain_output):
                 bootstrapped = bootstrap_from_goal(
                     goal=goal,
                     workdir=workdir,
@@ -3037,7 +3136,7 @@ def _run_impl(
         except RuntimeError as exc:
             from bernstein.cli.errors import bootstrap_failed
 
-            bootstrap_failed(exc).print()
+            bootstrap_failed(exc).print(plain=plain_output)
             raise SystemExit(1) from exc
         _finalize_run_output(quiet=quiet, wait=wait, seed=bootstrapped.seed)
         return
@@ -3052,15 +3151,15 @@ def _run_impl(
         else:
             from bernstein.cli.errors import no_seed_or_goal
 
-            no_seed_or_goal().print()
+            no_seed_or_goal().print(plain=plain_output)
             raise SystemExit(1)
 
-    if not quiet:
+    if not plain_output:
         console.print(f"[dim]Using seed file:[/dim] {path}")
     try:
         # CLI --cells overrides seed file value when explicitly set (cells > 1)
         cli_cells: int | None = cells if cells > 1 else None
-        with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
+        with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(plain_output):
             bootstrapped = bootstrap_from_seed(
                 seed_path=path,
                 workdir=workdir,
@@ -3076,12 +3175,12 @@ def _run_impl(
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 
-        seed_parse_error(exc).print()
+        seed_parse_error(exc).print(plain=plain_output)
         raise SystemExit(1) from exc
     except RuntimeError as exc:
         from bernstein.cli.errors import bootstrap_failed
 
-        bootstrap_failed(exc).print()
+        bootstrap_failed(exc).print(plain=plain_output)
         raise SystemExit(1) from exc
 
     _finalize_run_output(quiet=quiet, wait=wait, seed=bootstrapped.seed)

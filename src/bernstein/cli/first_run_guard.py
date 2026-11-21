@@ -103,6 +103,7 @@ def handle_first_run_exception(
     *,
     verbose: bool = False,
     console: Console | None = None,
+    plain: bool = False,
 ) -> NoReturn:
     """Render a hint and raise :class:`SystemExit` with the category's exit code.
 
@@ -115,6 +116,7 @@ def handle_first_run_exception(
         verbose: When True, the original traceback is rendered below the
             hint panel.  When False, the traceback is hidden.
         console: Optional Rich console (defaults to a stderr console).
+        plain: Keep error output suitable for machine and headless modes.
 
     Raises:
         SystemExit: Always, with ``code`` set to the sysexits.h exit code
@@ -137,8 +139,8 @@ def handle_first_run_exception(
 
     category = categorize_exception(exc)
     ctx = _context_from_exception(exc)
-    target = console or _stderr_console
-    render_hint(target, category, exc=exc, context=ctx, verbose=verbose)
+    target = console or (Console(stderr=True, force_terminal=False, no_color=True) if plain else _stderr_console)
+    render_hint(target, category, exc=exc, context=ctx, verbose=verbose, plain=plain)
     raise SystemExit(exit_code_for(category))
 
 

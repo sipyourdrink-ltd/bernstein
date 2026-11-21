@@ -100,6 +100,16 @@ Role-adapter policy supports an optional default allow-list for unlisted roles; 
 
 ### what a run looks like
 
+Preview the local backlog or a goal with the global `--json` flag. Each command prints one JSON object to stdout and exits before starting any workers.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` returns a `tasks` array of task objects. An empty backlog gives `{"tasks": []}`. `--plan-only` returns two strings. `plan` contains the Markdown and `saved_plan` is the path to the saved file.
+
 One YAML file declares the run: phases, roles, dependencies, and the conditions under which a node runs at all. The scheduler executes it as plain Python - nothing in the file is a prompt, and no model decides what happens next. This graph produces an audit evidence pack; the full file ships at [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
 ```yaml

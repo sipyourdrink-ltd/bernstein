@@ -49,7 +49,17 @@ Bernstein は AI エージェントのためのオープンソース・ガバナ
 ロール別アダプターポリシーでは、個別に指定されていないロールに既定の許可リストを任意で設定できます。[ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)を参照してください。
 
 ### 実行はこう見える
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+グローバルオプション `--json` を使うと、ローカルの未処理タスクや指定した目標のプレビューを確認できます。各コマンドは標準出力に JSON オブジェクトを 1 つ出力し、ワーカーを起動する前に終了します。
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` はタスクオブジェクトの配列 `tasks` を返します。未処理タスクがなければ出力は `{"tasks": []}` です。`--plan-only` は 2 つの文字列を返します。`plan` は Markdown 本文、`saved_plan` は保存したファイルのパスです。
 
 1 つの YAML ファイルが実行全体を宣言します: フェーズ、ロール、依存関係、そしてノードが実行される条件。スケジューラはそれを素の Python として実行します - ファイルの中にプロンプトは一切なく、次に何が起きるかをモデルが決めることもありません。このグラフは監査エビデンスパックを生成します。完全なファイルは [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) にあります。
 

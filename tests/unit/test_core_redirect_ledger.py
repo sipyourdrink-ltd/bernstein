@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import cast
 
 import bernstein.core as core_pkg
@@ -18,6 +19,13 @@ REDIRECT_MAP = cast(dict[str, str], core_pkg.__dict__["_REDIRECT_MAP"])
 def test_redirect_map_matches_reviewed_ledger_digest() -> None:
     """Adding or changing a redirect requires a policy ledger review."""
     assert redirect_map_digest(REDIRECT_MAP) == REVIEWED_REDIRECT_MAP_DIGEST
+
+
+def test_json_logging_imports_share_one_module() -> None:
+    """Both historical paths must expose the module used by the CLI and server."""
+    canonical = import_module("bernstein.core.observability.json_logging")
+    assert import_module("bernstein.core.json_logging") is canonical
+    assert import_module("bernstein.core.server.json_logging") is canonical
 
 
 def test_redirect_ledger_covers_every_current_redirect() -> None:

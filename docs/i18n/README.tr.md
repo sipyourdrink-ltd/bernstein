@@ -49,7 +49,17 @@ Görev sunucusu, yeni görevlerin alınması için durumu kalıcı olarak saklan
 Rol bağdaştırıcısı ilkesi, ayrı ayrı belirtilmeyen roller için isteğe bağlı bir varsayılan izin listesi destekler; [kılavuza](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) bakın.
 
 ### bir çalıştırma nasıl görünür
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Yerel görev kuyruğunu veya bir hedef için hazırlanan planı önizlemek için genel `--json` seçeneğini kullanın. Her komut standart çıktıya bir JSON nesnesi yazar ve işçi süreçlerini başlatmadan sonlanır.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run`, görev nesnelerini içeren bir `tasks` dizisi döndürür. Kuyruk boşsa çıktı `{"tasks": []}` olur. `--plan-only` iki karakter dizisi döndürür. `plan` Markdown metnini, `saved_plan` ise kaydedilen dosyanın yolunu içerir.
 
 Tek bir YAML dosyası çalıştırmayı bildirir: fazlar, roller, bağımlılıklar ve bir düğümün hangi koşullarda çalışacağı. Zamanlayıcı bunu saf Python olarak yürütür - dosyada hiçbir şey prompt değildir ve bundan sonra ne olacağına hiçbir model karar vermez. Bu graf bir denetim kanıt paketi üretir; dosyanın tamamı [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) içindedir.
 

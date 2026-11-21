@@ -39,7 +39,7 @@ class _VersionedRoute(APIRoute):
         return handler
 
 
-def build_router() -> APIRouter:
+def build_router(*, prefix: str = "/api/v1") -> APIRouter:
     """Return a fresh ``/api/v1`` router for a single application instance.
 
     ``create_app`` includes every route group into this router. Using a
@@ -51,7 +51,7 @@ def build_router() -> APIRouter:
     with it, and app startup eventually fails with ``RecursionError``.
     Each app must therefore get its own router instance.
     """
-    return APIRouter(prefix="/api/v1", route_class=_VersionedRoute)
+    return APIRouter(prefix=prefix, route_class=_VersionedRoute)
 
 
 # Kept for backward compatibility with external importers. Application code

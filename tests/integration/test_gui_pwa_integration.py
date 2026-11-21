@@ -33,6 +33,23 @@ def client() -> TestClient:
 # ---------------------------------------------------------------------------
 
 
+def test_mount_leaves_icon_rendering_until_requested(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[int] = []
+
+    def render(size: int) -> bytes:
+        requests.append(size)
+        return b"fixture"
+
+    monkeypatch.setattr(pwa, "render_icon_png", render)
+    app = FastAPI()
+    mount(app)
+    assert requests == []
+    with TestClient(app) as browser:
+        for size in (192, 192, 512):
+            assert browser.get(f"/ui/icon-{size}.png").content == b"fixture"
+    assert requests == [192, 512]
+
+
 def test_manifest_endpoint_returns_200(client: TestClient) -> None:
     r = client.get("/ui/manifest.webmanifest")
     assert r.status_code == 200

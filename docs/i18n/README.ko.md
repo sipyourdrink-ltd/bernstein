@@ -49,7 +49,17 @@ Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니
 역할별 어댑터 정책에서는 개별적으로 지정하지 않은 역할에 기본 허용 목록을 선택적으로 설정할 수 있습니다. [안내서](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)를 참고하세요.
 
 ### 실행은 이렇게 생겼다
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+전역 옵션 `--json`으로 로컬 대기 작업이나 지정한 목표를 미리 볼 수 있습니다. 각 명령은 표준 출력에 JSON 객체 하나를 출력하고 워커를 시작하기 전에 종료합니다.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run`은 작업 객체를 담은 `tasks` 배열을 반환합니다. 대기 작업이 없으면 출력은 `{"tasks": []}`입니다. `--plan-only`는 문자열 두 개를 반환합니다. `plan`에는 Markdown 본문이, `saved_plan`에는 저장된 파일 경로가 들어 있습니다.
 
 YAML 파일 하나가 실행 전체를 선언합니다: 페이즈, 역할, 의존성, 그리고 노드가 실행되는 조건까지. 스케줄러는 이를 순수 Python으로 실행합니다 - 파일 안에 프롬프트는 하나도 없고, 다음에 무슨 일이 일어날지 모델이 결정하지도 않습니다. 이 그래프는 감사 증적 패키지를 만듭니다. 전체 파일은 [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)에 있습니다.
 

@@ -49,7 +49,17 @@ Bernstein হলো AI এজেন্টদের জন্য ওপেন-স
 ভূমিকা-অ্যাডাপ্টার নীতিতে আলাদাভাবে উল্লেখ না করা ভূমিকাগুলির জন্য একটি ঐচ্ছিক ডিফল্ট অনুমোদন তালিকা নির্ধারণ করা যায়; [নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md) দেখুন।
 
 ### একটি রান দেখতে কেমন
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+স্থানীয় কাজের তালিকা বা কোনো লক্ষ্যের পূর্বরূপ দেখতে গ্লোবাল `--json` ফ্ল্যাগ ব্যবহার করুন। প্রতিটি কমান্ড স্ট্যান্ডার্ড আউটপুটে একটি JSON অবজেক্ট লিখে কোনো ওয়ার্কার চালু করার আগেই শেষ হয়।
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` কাজের অবজেক্ট নিয়ে গঠিত `tasks` অ্যারে ফেরায়। কাজের তালিকা খালি হলে ফল হয় `{"tasks": []}`। `--plan-only` দুটি স্ট্রিং ফেরায়। `plan`-এ থাকে Markdown লেখা আর `saved_plan`-এ থাকে সংরক্ষিত ফাইলের পাথ।
 
 একটিমাত্র YAML ফাইল পুরো রানটি ঘোষণা করে: ফেজ, রোল, নির্ভরতা এবং কোন শর্তে একটি নোড আদৌ চলবে। শিডিউলার এটিকে বিশুদ্ধ Python হিসেবে চালায় - ফাইলের কিছুই প্রম্পট নয়, আর এরপরে কী হবে তা কোনো মডেল ঠিক করে না। এই গ্রাফটি একটি অডিট এভিডেন্স প্যাক তৈরি করে; সম্পূর্ণ ফাইলটি আছে [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)-এ।
 

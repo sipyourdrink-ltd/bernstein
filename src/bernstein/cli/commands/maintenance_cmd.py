@@ -5,16 +5,16 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import click
 from rich.table import Table
 
 from bernstein.cli.helpers import console
-from bernstein.core.git_hygiene import run_hygiene
-from bernstein.core.models import TaskStatus
-from bernstein.core.task_store import TaskStore
-from bernstein.core.worktree import WorktreeManager
+from bernstein.core.tasks.models import TaskStatus
+
+if TYPE_CHECKING:
+    from bernstein.core.tasks.task_store import TaskStore
 
 _ACTIVE_TASK_STATUSES = frozenset(
     {
@@ -48,6 +48,8 @@ def _load_task_store(workdir: Path) -> TaskStore:
     Returns:
         Replayed task store backed by the project's runtime files.
     """
+    from bernstein.core.tasks.task_store import TaskStore
+
     sdd_dir = workdir / ".sdd"
     store = TaskStore(
         jsonl_path=sdd_dir / "runtime" / "tasks.jsonl",
@@ -140,6 +142,8 @@ def _cleanup_candidates(workdir: Path) -> list[str]:
     Returns:
         Sorted list of session ids whose worktrees are no longer needed.
     """
+    from bernstein.core.git.worktree import WorktreeManager
+
     store = _load_task_store(workdir)
     live_sessions = _active_session_ids(store)
     manager = WorktreeManager(workdir)
@@ -191,6 +195,9 @@ def cleanup_cmd(workdir: Path, yes: bool, force: bool) -> None:
         raise SystemExit(1)
     if force and not yes and not click.confirm("--force will DELETE unmerged agent branches. Continue?", default=False):
         raise SystemExit(1)
+
+    from bernstein.core.git.git_hygiene import run_hygiene
+    from bernstein.core.git.worktree import WorktreeManager
 
     store = _load_task_store(resolved_workdir)
     active_sessions = _active_session_ids(store)

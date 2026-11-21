@@ -39,7 +39,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from bernstein.core.evidence.bundle import read_evidence_bundle
-from bernstein.core.orchestration.mission_digest import build_mission_digest, render_digest_message
 from bernstein.core.orchestration.missions import (
     KIND_MISSION_DEFINED,
     LedgerReader,
@@ -159,6 +158,8 @@ def mission_digest(
     ``message`` the digest projects to -- the exact bytes a chat delivery posts,
     so a caller can cross-check a posted message against this projection.
     """
+    from bernstein.core.orchestration.mission_digest import build_mission_digest, render_digest_message
+
     mission_id = _validate_mission_id(mission_id)
     if not isinstance(fire_time, int) or fire_time < 0:
         raise HTTPException(status_code=400, detail="fire_time must be a non-negative integer epoch")

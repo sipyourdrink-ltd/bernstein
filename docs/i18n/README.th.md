@@ -49,7 +49,17 @@ Bernstein คือเลเยอร์ governance โอเพนซอร์�
 นโยบายอะแดปเตอร์ตามบทบาทรองรับรายการอนุญาตเริ่มต้นแบบเลือกใช้สำหรับบทบาทที่ไม่ได้ระบุไว้แยกต่างหาก ดู[คู่มือ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md)
 
 ### การรันหน้าตาเป็นอย่างไร
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+ใช้แฟล็กส่วนกลาง `--json` เพื่อดูตัวอย่างรายการงานที่รอดำเนินการในเครื่องหรือแผนสำหรับเป้าหมายที่กำหนด แต่ละคำสั่งจะแสดงออบเจ็กต์ JSON หนึ่งรายการทางเอาต์พุตมาตรฐานและจบการทำงานก่อนเริ่มเวิร์กเกอร์
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` ส่งคืนอาร์เรย์ `tasks` ที่ประกอบด้วยออบเจ็กต์งาน หากไม่มีงานรออยู่ ผลลัพธ์คือ `{"tasks": []}` ส่วน `--plan-only` ส่งคืนสตริงสองค่า โดย `plan` คือข้อความ Markdown และ `saved_plan` คือพาธของไฟล์ที่บันทึกไว้
 
 ไฟล์ YAML ไฟล์เดียวประกาศการรันทั้งหมด: เฟส บทบาท การพึ่งพา และเงื่อนไขที่โหนดจะถูกรัน ตัวจัดตารางรันมันเป็น Python ล้วน - ไม่มีอะไรในไฟล์เป็นพรอมป์ต และไม่มีโมเดลตัดสินว่าจะเกิดอะไรต่อไป กราฟนี้สร้างแพ็กหลักฐานการตรวจสอบ ไฟล์เต็มอยู่ที่ [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)
 

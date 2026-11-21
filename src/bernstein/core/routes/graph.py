@@ -8,8 +8,6 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from bernstein.core.knowledge.knowledge_graph import query_impact
-
 router = APIRouter(tags=["graph"])
 
 
@@ -28,6 +26,8 @@ def graph_impact(
     file: Annotated[str, Query(..., min_length=1)],
 ) -> ImpactResponse:
     """Return downstream files impacted by changing the given file."""
+    from bernstein.core.knowledge.knowledge_graph import query_impact
+
     workdir = getattr(request.app.state, "workdir", Path.cwd())
     result = query_impact(Path(workdir), file)
     return ImpactResponse(

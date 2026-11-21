@@ -49,7 +49,17 @@ Máy chủ tác vụ hỗ trợ cổng nhận tác vụ mới do người vận 
 Chính sách bộ điều hợp theo vai trò hỗ trợ danh sách cho phép mặc định tùy chọn cho các vai trò không được liệt kê riêng; xem [hướng dẫn](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### một lần chạy trông như thế nào
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Dùng cờ toàn cục `--json` để xem trước danh sách tác vụ đang chờ trên máy hoặc kế hoạch cho một mục tiêu. Mỗi lệnh ghi một đối tượng JSON ra đầu ra chuẩn rồi kết thúc trước khi khởi chạy tiến trình thực thi.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` trả về mảng `tasks` gồm các đối tượng tác vụ. Nếu danh sách trống, kết quả là `{"tasks": []}`. `--plan-only` trả về hai chuỗi. `plan` chứa văn bản Markdown và `saved_plan` chứa đường dẫn đến tệp đã lưu.
 
 Một file YAML duy nhất khai báo cả lần chạy: các phase, vai trò, phụ thuộc và điều kiện để một node được chạy. Bộ lập lịch thực thi nó như Python thuần - không có gì trong file là prompt, và không model nào quyết định điều gì xảy ra tiếp theo. Đồ thị này tạo ra một gói bằng chứng kiểm toán; file đầy đủ nằm ở [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

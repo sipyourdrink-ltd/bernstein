@@ -171,7 +171,7 @@ class TestFinalizeRunOutputNonTty:
                 _finalize_run_output(quiet=False)
 
         assert excinfo.value.code == 1
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "Run failed before any work started" in out
         assert "nonsensical" in out
         assert "bernstein status" in out

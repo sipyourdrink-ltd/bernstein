@@ -451,7 +451,7 @@ def preflight_checks(
     if unattended is None:
         unattended = not sys.stdin.isatty()
     if unattended and env is None:
-        from bernstein.core.agents.spawner import build_spawner_env
+        from bernstein.core.agents.spawner_env import build_spawner_env
 
         env = build_spawner_env(cli if cli not in ("mock", "auto") else None)
 
@@ -463,6 +463,12 @@ def preflight_checks(
         _check_binary(cli, env=env)
         _check_api_key(cli, env=env)
     _check_port_free(port)
+
+
+def _failure_console() -> Console:
+    from bernstein.core.orchestration.bootstrap_output import plain_bootstrap_stderr
+
+    return plain_bootstrap_stderr.get() or console
 
 
 def check_adapter_configured(
@@ -508,7 +514,7 @@ def check_adapter_configured(
     if resolve_seed_path(workdir).exists():
         return
 
-    console.print(NO_ADAPTER_CONFIGURED, style="bold red", markup=False, highlight=False)
+    _failure_console().print(NO_ADAPTER_CONFIGURED, style="bold red", markup=False, highlight=False)
     raise SystemExit(1)
 
 
@@ -537,9 +543,10 @@ def _preflight_auto_mode() -> None:
 
     discovery = discover_agents_cached()
     if not discovery.agents:
-        console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
+        target = _failure_console()
+        target.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
         for name, hint in _CLI_INSTALL_HINT.items():
-            console.print(f"  {name}: {hint}")
+            target.print(f"  {name}: {hint}")
         raise SystemExit(1)
 
     agent_parts: list[str] = []

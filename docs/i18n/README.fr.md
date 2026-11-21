@@ -49,7 +49,17 @@ Le serveur de tâches permet un contrôle persistant par l’opérateur de l’a
 La politique des adaptateurs par rôle permet de définir une liste facultative d’adaptateurs autorisés par défaut pour les rôles non répertoriés ; voir le [guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### à quoi ressemble une exécution
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Utilisez l’option globale `--json` pour prévisualiser la liste locale des tâches en attente ou un objectif. Chaque commande écrit un objet JSON sur la sortie standard et se termine avant le démarrage des agents.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` renvoie un tableau `tasks` contenant les tâches sous forme d’objets. Si la liste est vide, le résultat est `{"tasks": []}`. `--plan-only` renvoie deux chaînes de caractères. `plan` contient le texte Markdown et `saved_plan` le chemin du fichier enregistré.
 
 Un seul fichier YAML déclare l'exécution : phases, rôles, dépendances et conditions sous lesquelles un nœud s'exécute. L'ordonnanceur l'exécute comme du Python pur - rien dans le fichier n'est un prompt, et aucun modèle ne décide de la suite. Ce graphe produit un dossier de preuves d'audit ; le fichier complet est dans [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

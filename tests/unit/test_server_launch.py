@@ -50,15 +50,20 @@ def test_clean_stale_runtime_removes_dead_pids_tasks_and_index_locks(tmp_path: P
 
 
 def test_wait_for_server_polls_until_health_endpoint_succeeds() -> None:
-    """_wait_for_server retries through connection errors until a 200 /health response arrives."""
+    """A listening but unready server must not be announced as ready."""
     healthy = SimpleNamespace(status_code=200)
 
     with (
-        patch("bernstein.core.server.server_launch.httpx.get", side_effect=[httpx.ConnectError("down"), healthy]),
+        patch(
+            "bernstein.core.server.server_launch.httpx.get",
+            side_effect=[httpx.ConnectError("down"), SimpleNamespace(status_code=503), healthy],
+        ) as probe,
         patch("bernstein.core.server.server_launch.time.sleep"),
-        patch("bernstein.core.server.server_launch.time.monotonic", side_effect=[0.0, 1.0, 2.0]),
+        patch("bernstein.core.server.server_launch.time.monotonic", side_effect=[0.0, 1.0, 2.0, 3.0]),
     ):
         assert _wait_for_server(8052) is True
+    assert probe.call_count == 3
+    probe.assert_called_with("http://127.0.0.1:8052/health/ready", timeout=5.0)
 
 
 def test_inject_manager_task_posts_seed_payload_with_auth_header(tmp_path: Path) -> None:

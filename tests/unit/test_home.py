@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from bernstein.core.home import BernsteinHome, resolve_config
+
+
+def test_default_config_read_does_not_import_layer_schemas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A new local dashboard can display defaults before it has any configured values."""
+    monkeypatch.delenv("BERNSTEIN_MAX_AGENTS", raising=False)
+    home = BernsteinHome(tmp_path / "home")
+    with patch("builtins.__import__", wraps=__import__) as imports:
+        result = resolve_config("max_agents", home=home, project_dir=tmp_path)
+
+    assert result["source"] == "default"
+    assert "bernstein.core.config.config_schema" not in [call.args[0] for call in imports.call_args_list]
+
 
 # ---------------------------------------------------------------------------
 # BernsteinHome.ensure()

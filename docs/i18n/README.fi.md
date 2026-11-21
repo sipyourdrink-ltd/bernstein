@@ -49,7 +49,17 @@ Tehtäväpalvelin tukee operaattorin hallitsemaa, tilansa säilyttävää portti
 Roolien sovitinkäytäntö tukee valinnaista sallittujen sovittimien oletuslistaa rooleille, joita ei ole määritelty erikseen; katso [opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### miltä ajo näyttää
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Voit esikatsella paikallista tehtäväjonoa tai tavoitetta yleisellä `--json`-valitsimella. Jokainen komento tulostaa yhden JSON-olion vakiotulosteeseen ja päättyy ennen työntekijäprosessien käynnistämistä.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` palauttaa tehtäväoliot `tasks`-taulukkona. Tyhjän tehtäväjonon tulos on `{"tasks": []}`. `--plan-only` palauttaa kaksi merkkijonoa. `plan` sisältää Markdown-tekstin ja `saved_plan` tallennetun tiedoston polun.
 
 Yksi YAML-tiedosto deklaroi ajon: vaiheet, roolit, riippuvuudet ja ehdot, joilla solmu ylipäätään ajetaan. Skeduloija suorittaa sen puhtaana Pythonina - mikään tiedostossa ei ole prompti, eikä mikään malli päätä mitä seuraavaksi tapahtuu. Tämä graafi tuottaa auditointievidenssipaketin; koko tiedosto on [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

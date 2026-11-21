@@ -7,10 +7,14 @@ dropped while the command printed "Loaded plan from" and exited 0.
 
 from __future__ import annotations
 
+import json
+import shlex
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
+from click.testing import CliRunner
 
 from bernstein.cli import run_bootstrap
 from tests.unit.test_issue_3255_plan_only_honors_plan_file import (
@@ -70,6 +74,84 @@ def test_from_plan_yaml_applies_plan_cli_and_budget(tmp_path: Path, monkeypatch:
     bootstrap_goal = _run(tmp_path, monkeypatch, PLAN)
 
     assert bootstrap_goal.call_args.kwargs["cli"] == "codex"
+
+
+@pytest.mark.parametrize("source_option", ["--from-plan", "--"])
+@pytest.mark.parametrize("override", [False, True])
+def test_json_preview_rerun_replays_the_original_yaml_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_option: str, override: bool
+) -> None:
+    from bernstein.cli.main import cli
+
+    monkeypatch.chdir(tmp_path)
+    name = "-execution plan.yaml"
+    Path(name).write_text(PLAN, encoding="utf-8")
+    runner = CliRunner()
+    options = (
+        ["--cli", "gemini", "--model", "fixture model", "--budget", "1usd", "--hard-budget", "2usd"] if override else []
+    )
+    with _run_impl_environment(), _no_execution() as (bootstrap_goal, _, _):
+        preview = runner.invoke(cli, ["--json", "run", "--plan-only", "--auto-approve", *options, source_option, name])
+        assert preview.exit_code == 0, preview.output
+        document = json.loads(preview.stdout)
+        assert document["plan"] == Path(document["saved_plan"]).read_text(encoding="utf-8")
+        command = document["plan"].split("<!-- Re-run with `", 1)[1].split("` -->", 1)[0]
+        args = shlex.split(command)
+        assert args[:2] == ["bernstein", "run"]
+        assert args[-2:] == [source_option, name]
+        assert "--auto-approve" not in args
+        bootstrap_goal.assert_not_called()
+
+        flags = Mock()
+        monkeypatch.setattr(run_bootstrap, "_propagate_env_flags", flags)
+        monkeypatch.setattr(run_bootstrap, "_abort_if_default_branch_merge_target", lambda _: None)
+        monkeypatch.setattr(run_bootstrap, "_emit_preflight_runtime_warnings", lambda **_: None)
+        execution = runner.invoke(cli, args[1:])
+        assert execution.exit_code == 0, execution.output
+        kwargs = bootstrap_goal.call_args.kwargs
+        assert [task.title for task in kwargs["tasks"]] == ["Add the limiter", "Cover the limiter"]
+        if override:
+            assert kwargs["cli"] == "gemini"
+            assert kwargs["model"] == "fixture model"
+            assert flags.call_args.kwargs["max_cost_usd"] == 1.0
+            assert flags.call_args.kwargs["hard_budget_usd"] == 2.0
+        elif source_option == "--from-plan":
+            assert kwargs["cli"] == "codex"
+            assert flags.call_args.kwargs["max_cost_usd"] == 5.0
+
+
+def test_yaml_preview_with_other_options_keeps_the_original_command_as_the_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.cli.main import cli
+
+    monkeypatch.chdir(tmp_path)
+    Path("plan.yaml").write_text(PLAN, encoding="utf-8")
+    with _run_impl_environment(), _no_execution():
+        result = CliRunner().invoke(cli, ["--json", "run", "--plan-only", "--activity-log", "events.json", "plan.yaml"])
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert "repeat your original command" in document["plan"].lower()
+    assert "Re-run with `bernstein run plan.yaml`" not in document["plan"]
+
+
+def test_yaml_preview_preserves_root_option_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.cli.main import cli
+
+    monkeypatch.chdir(tmp_path)
+    Path("plan.yaml").write_text(PLAN, encoding="utf-8")
+    runner = CliRunner()
+    with _run_impl_environment(), _no_execution() as (bootstrap_goal, _, _):
+        preview = runner.invoke(cli, ["--json", "--plan-only", "--model", "fixture model", "--from-plan", "plan.yaml"])
+        assert preview.exit_code == 0, preview.output
+        command = json.loads(preview.stdout)["plan"].split("<!-- Re-run with `", 1)[1].split("` -->", 1)[0]
+        args = shlex.split(command)
+        assert args == ["bernstein", "--model", "fixture model", "--from-plan", "plan.yaml"]
+        monkeypatch.setattr(run_bootstrap, "_abort_if_default_branch_merge_target", lambda _: None)
+        monkeypatch.setattr(run_bootstrap, "_emit_preflight_runtime_warnings", lambda **_: None)
+        execution = runner.invoke(cli, args[1:])
+        assert execution.exit_code == 0, execution.output
+        assert bootstrap_goal.call_args.kwargs["model"] == "fixture model"
 
 
 def test_explicit_cli_flag_beats_plan_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

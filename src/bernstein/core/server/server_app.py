@@ -35,9 +35,9 @@ from bernstein.core.models import (
     NodeInfo,
     Task,
 )
+from bernstein.core.observability.json_logging import setup_json_logging
 from bernstein.core.protocols.a2a.server_receipts import build_receipt_issuer
 from bernstein.core.server.access_log import StructuredAccessLogMiddleware
-from bernstein.core.server.json_logging import setup_json_logging
 from bernstein.core.server.server_middleware import (
     CrashGuardMiddleware,
     IPAllowlistMiddleware,
@@ -1685,7 +1685,9 @@ def create_app(
     # so reusing the module-level instance would grow it by a full copy of
     # the v1 route set on every create_app call (unbounded route/memory
     # growth in app-per-test suites, ending in RecursionError at startup).
-    api_v1_router = build_api_v1_router()
+    # Supply the prefix at the mount point. With a nonempty mount prefix,
+    # FastAPI can keep the versioned route tree lazy during server startup.
+    api_v1_router = build_api_v1_router(prefix="")
 
     for r in all_routers:
         application.include_router(r)
@@ -1696,7 +1698,7 @@ def create_app(
     # Gateway metrics - active only when a gateway session is running.
     application.state.mcp_gateway = None  # type: ignore[attr-defined]
 
-    application.include_router(api_v1_router)
+    application.include_router(api_v1_router, prefix="/api/v1")
 
     # Alias so callers that expect the versioned path can fetch the OpenAPI
     # schema too.  FastAPI auto-mounts /openapi.json on the root app; the

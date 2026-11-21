@@ -9,6 +9,9 @@ This module acts as a facade, re-exporting functionality from:
 - git_pr: Pull requests, branching, and worktree management
 """
 
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
 from bernstein.core.git.git_basic import (
     GitResult,
     checkout_discard,
@@ -38,26 +41,28 @@ from bernstein.core.git.git_basic import (
     unstage_paths,
     version_from_commits,
 )
-from bernstein.core.git.git_pr import (
-    MergeResult,
-    PullRequestResult,
-    _parse_conflict_files,
-    apply_diff,
-    bisect_regression,
-    branch_delete,
-    create_branch,
-    create_github_pr,
-    create_task_branch,
-    delete_old_branches,
-    enable_pr_auto_merge,
-    merge_branch,
-    merge_with_conflict_detection,
-    push_branch,
-    push_head_as,
-    worktree_add,
-    worktree_list,
-    worktree_remove,
-)
+
+if TYPE_CHECKING:
+    from bernstein.core.git.git_pr import (
+        MergeResult,
+        PullRequestResult,
+        _parse_conflict_files,
+        apply_diff,
+        bisect_regression,
+        branch_delete,
+        create_branch,
+        create_github_pr,
+        create_task_branch,
+        delete_old_branches,
+        enable_pr_auto_merge,
+        merge_branch,
+        merge_with_conflict_detection,
+        push_branch,
+        push_head_as,
+        worktree_add,
+        worktree_list,
+        worktree_remove,
+    )
 
 __all__ = [
     # git_basic
@@ -108,3 +113,16 @@ __all__ = [
     "worktree_list",
     "worktree_remove",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Load branch and pull request helpers when a caller uses them."""
+    if name in __all__:
+        value = getattr(import_module("bernstein.core.git.git_pr"), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

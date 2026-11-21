@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import io
 import logging
 import os
 import sys
@@ -18,6 +17,8 @@ from bernstein.cli.helpers import (
     SERVER_URL,
     console,
     find_seed_file,
+    is_json,
+    plain_run_output,
 )
 from bernstein.cli.run import render_run_summary_from_dict
 from bernstein.cli.ui import make_console
@@ -26,7 +27,6 @@ from bernstein.core.cost.model_prices import is_free_route, model_cost_is_known
 from bernstein.core.cost.preflight import CostBand, compute_band, format_band
 from bernstein.core.plan_loader import load_plan_from_yaml
 from bernstein.core.runtime_state import directory_size_bytes
-from bernstein.core.tasks.lifecycle import SUCCESSFUL_TASK_STATUSES, UNSUCCESSFUL_TERMINAL_STATUSES
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -34,8 +34,6 @@ if TYPE_CHECKING:
     from bernstein.core.config.seed import SeedConfig
 
 logger = logging.getLogger(__name__)
-
-_TERMINAL_TASK_STATES = frozenset(status.value for status in SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES)
 
 
 def validate_seed_or_exit(seed_file: str | None) -> SeedConfig | None:
@@ -70,7 +68,7 @@ def validate_seed_or_exit(seed_file: str | None) -> SeedConfig | None:
     except SeedError as exc:
         from bernstein.cli.utils.errors import seed_parse_error
 
-        seed_parse_error(exc).print()
+        seed_parse_error(exc).print(plain=plain_run_output())
         raise SystemExit(1) from exc
 
 
@@ -105,25 +103,30 @@ def _abort_if_default_branch_merge_target(workdir: Path) -> None:
             and ``BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH`` is not set.
     """
     from bernstein.cli.first_run_readiness import merge_target
+
+    branch, protected = merge_target(workdir)
+    if not protected:
+        return
     from bernstein.core.agents.spawner_merge import (
         ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH,
         _allow_merge_to_default_branch,
     )
 
-    branch, protected = merge_target(workdir)
-    if not protected:
-        return
     if _allow_merge_to_default_branch():
         return
-    console.print(
-        f"[bold red]Refusing to start:[/bold red] the checked-out branch {branch!r} is the "
-        "repository default branch, so every agent's work would be refused by the merge "
-        "guard and discarded instead of merged."
+    reason = (
+        f"the checked-out branch {branch!r} is the repository default branch, so every agent's "
+        "work would be refused by the merge guard and discarded instead of merged."
     )
-    console.print(
+    remedy = (
         "Fix: check out a working branch first (git checkout -b <branch>), or set "
         f"{ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 to explicitly allow merging to the default branch."
     )
+    if plain_run_output():
+        click.echo(f"Refusing to start: {reason}\n{remedy}", err=True, color=False)
+    else:
+        console.print(f"[bold red]Refusing to start:[/bold red] {reason}")
+        console.print(remedy)
     raise SystemExit(1)
 
 
@@ -196,12 +199,17 @@ def _show_run_summary() -> None:
     even then -- a run whose work was discarded must not end with a clean,
     silent summary (gh-2756).
     """
+    import json
+
     from bernstein.cli.helpers import server_get
 
-    force_no_color = not sys.stdout.isatty()
-    con = make_console(no_color=force_no_color)
     data = server_get("/status")
-    if data is not None:
+    if is_json():
+        click.echo(json.dumps(data))
+        con = make_console(no_color=True, file=sys.stderr)
+    else:
+        con = make_console(no_color=plain_run_output() or not sys.stdout.isatty())
+    if data is not None and not is_json():
         render_run_summary_from_dict(data, console=con)
     _surface_merge_refusals(Path.cwd(), since_ts=_CLI_RUN_EPOCH, console=con)
 
@@ -248,9 +256,11 @@ def _exit_nonzero_on_unhealthy_run(status_payload: object) -> None:
             break
     if run_healthy_from_status_counts(counts):  # type: ignore[arg-type]
         return
-    console.print(
-        "[red]Run did not meet its goal[/red] -- a declared task never completed or a task "
-        "failed. See .sdd/runtime/retrospective.md for the run-health breakdown."
+    click.echo(
+        "Run did not meet its goal -- a declared task never completed or a task "
+        "failed. See .sdd/runtime/retrospective.md for the run-health breakdown.",
+        err=True,
+        color=False,
     )
     raise SystemExit(run_health_exit_code(healthy=False))
 
@@ -533,7 +543,7 @@ def _emit_preflight_runtime_warnings(
     sdd_dir = workdir / ".sdd"
     disk_usage_gb = directory_size_bytes(sdd_dir) / (1024**3)
     band = estimate.band
-    if not quiet:
+    if not (quiet or plain_run_output()):
         # Only print a count that came from the plan/backlog; when the count
         # is unknown (planning happens after startup) say so explicitly
         # instead of substituting a made-up number.
@@ -592,9 +602,11 @@ def _emit_preflight_runtime_warnings(
     if budget_cap is not None and budget_cap > 0.0:
         p90 = band.p90 if band is not None else estimate.high_usd
         if p90 > budget_cap:
-            console.print(
-                f"[bold red]Budget cap exceeded:[/bold red] p90 ${p90:.2f} > cap ${budget_cap:.2f}. Aborting spawn."
-            )
+            detail = f"p90 ${p90:.2f} > cap ${budget_cap:.2f}. Aborting spawn."
+            if quiet or plain_run_output():
+                click.echo(f"Budget cap exceeded: {detail}", err=True)
+            else:
+                console.print(f"[bold red]Budget cap exceeded:[/bold red] {detail}")
             raise SystemExit(1)
 
     # Cost confirmation is skipped when the plan approval prompt follows
@@ -606,6 +618,7 @@ def _emit_preflight_runtime_warnings(
         and not click.confirm(
             f"Warning: estimated cost may reach ${estimate.high_usd:.2f}. Continue?",
             default=True,
+            err=quiet or plain_run_output(),
         )
     ):
         raise SystemExit(1)
@@ -613,14 +626,7 @@ def _emit_preflight_runtime_warnings(
 
 @contextlib.contextmanager
 def _quiet_bootstrap_console(enabled: bool) -> Any:
-    """Suppress bootstrap Rich output while leaving the final summary visible.
-
-    Args:
-        enabled: When True, redirects bootstrap console writes to an in-memory buffer.
-
-    Yields:
-        ``None`` while the bootstrap module uses a muted console.
-    """
+    """Hide stage narration in plain modes and route failure details to stderr."""
     if not enabled:
         yield
         return
@@ -628,13 +634,18 @@ def _quiet_bootstrap_console(enabled: bool) -> Any:
     from rich.console import Console
 
     import bernstein.core.bootstrap as bootstrap_module
+    from bernstein.core.orchestration import preflight
+    from bernstein.core.orchestration.bootstrap_output import plain_bootstrap_stderr
 
-    original_console = bootstrap_module.console
-    bootstrap_module.console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+    muted = Console(quiet=True, force_terminal=False)
+    token = plain_bootstrap_stderr.set(Console(stderr=True, force_terminal=False, no_color=True, soft_wrap=True))
+    original = bootstrap_module.console, preflight.console
+    bootstrap_module.console = preflight.console = muted
     try:
         yield
     finally:
-        bootstrap_module.console = original_console
+        bootstrap_module.console, preflight.console = original
+        plain_bootstrap_stderr.reset(token)
 
 
 def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContextManager[Any]:
@@ -656,7 +667,13 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
-def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
+def _report_first_spawn_refusal(reason: str | None, *, waiting: bool = False) -> None:
+    message = "First spawn attempt failed" if waiting else "Run failed before any work started"
+    click.echo(f"{message}: {reason}", err=True, color=False)
+    click.echo("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md", err=True, color=False)
+
+
+def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True, report_refusal: bool = False) -> None:
     """Diagnose a spawned-then-dead agent before a display branch's own wait.
 
     The non-interactive detach path (issue #3528, #4246) briefly confirms the
@@ -686,12 +703,17 @@ def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
             status ("waiting for the first agent") while it polls, so a slow
             start reads as progress instead of a hang. ``--quiet`` passes
             False to keep its promise of no progress chatter.
+        report_refusal: Show a first-spawn refusal while continuing to wait for the run outcome.
     """
     from bernstein.cli.run_bootstrap import _await_first_spawn_outcome, _poll_no_plan_after_spawn
     from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
 
-    outcome, _reason = _await_first_spawn_outcome(narrate_wait=narrate_wait)
+    outcome, reason = _await_first_spawn_outcome(narrate_wait=narrate_wait)
+    if report_refusal and outcome == "refused":
+        _report_first_spawn_refusal(reason, waiting=True)
     if outcome == "spawned" and _poll_no_plan_after_spawn() is not None:
+        if is_json():
+            _show_run_summary()
         raise BernsteinFirstRunError(
             "Spawned agent exited before producing a work plan",
             category=ErrorCategory.NO_PLAN_PRODUCED,
@@ -734,6 +756,9 @@ class TaskStateProgressTracker:
         default_adapter: str | None = None,
         default_model: str | None = None,
     ) -> None:
+        from bernstein.core.tasks.lifecycle import SUCCESSFUL_TASK_STATUSES, UNSUCCESSFUL_TERMINAL_STATUSES
+
+        self._terminal_states = {status.value for status in SUCCESSFUL_TASK_STATUSES | UNSUCCESSFUL_TERMINAL_STATUSES}
         self.console = console or make_console()
         self.seen_states: dict[str, str] = {}
         self.default_adapter = default_adapter or "unknown"
@@ -756,7 +781,7 @@ class TaskStateProgressTracker:
             title = str(task.get("title") or "")
 
             if task_id not in self.seen_states:
-                if current_state not in _TERMINAL_TASK_STATES:
+                if current_state not in self._terminal_states:
                     self.seen_states[task_id] = "planned"
                     planned_line = self.format_line(task_id, "planned", adapter, model, title)
                     lines.append(planned_line)
@@ -863,7 +888,7 @@ def _finalize_run_output(
             # the progress output, and takes this branch even on a TTY: a
             # caller that wants an exit code wants the run's outcome, not a
             # dashboard it has to close.
-            _raise_if_no_plan_after_spawn(narrate_wait=not quiet)
+            _raise_if_no_plan_after_spawn(narrate_wait=not (quiet or plain_run_output()), report_refusal=True)
             final_status = _wait_for_run_completion(timeout_s=_RUN_WAIT_DEFAULT_S if wait is None else wait)
             _show_run_summary()
             _exit_nonzero_on_unhealthy_run(final_status)
@@ -873,7 +898,10 @@ def _finalize_run_output(
 
         caps = detect_capabilities()
 
-        if caps.supports_textual:
+        ctx = click.get_current_context(silent=True)
+        output = (ctx.obj or {}) if ctx is not None else {}
+        interactive = not (output.get("JSON") or output.get("HEADLESS") or output.get("QUIET"))
+        if interactive and caps.supports_textual:
             _raise_if_no_plan_after_spawn()
             try:
                 from bernstein.cli.dashboard import BernsteinApp as DashboardApp
@@ -891,7 +919,7 @@ def _finalize_run_output(
             # The operator watched the run to its end in the dashboard, so a
             # finished run is the common case here, not the edge one.
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
-        elif caps.is_tty:
+        elif interactive and caps.is_tty:
             # TTY but Textual not supported -- use Rich fallback (TUI-003)
             _raise_if_no_plan_after_spawn()
             _try_fallback_display()
@@ -905,7 +933,7 @@ def _finalize_run_output(
 
             run_adapter = seed.cli if seed is not None and seed.cli != "auto" else None
             tracker = TaskStateProgressTracker(
-                console=console,
+                console=make_console(no_color=True, file=sys.stderr) if plain_run_output() else console,
                 default_adapter=run_adapter,
                 default_model=seed.model if seed is not None else None,
             )
@@ -914,8 +942,7 @@ def _finalize_run_output(
             tracker.poll()
             _show_run_summary()
             if outcome == "refused":
-                console.print(f"[red]Run failed before any work started:[/red] {reason}")
-                console.print("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md")
+                _report_first_spawn_refusal(reason)
                 raise SystemExit(1)
             if outcome == "spawned":
                 # An agent was confirmed alive at least once, so an empty
@@ -933,7 +960,8 @@ def _finalize_run_output(
             # A run that already reached a terminal state within the detach
             # window must not report success on its way out.
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
-            console.print("Run continues in the background (check: bernstein status).")
+            if not output.get("JSON"):
+                console.print("Run continues in the background (check: bernstein status).")
     finally:
         _drain_completed_backlog_files()
 

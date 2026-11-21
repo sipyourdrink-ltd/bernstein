@@ -439,6 +439,13 @@ def _load_context_config(project_dir: Path) -> tuple[dict[str, object], str | No
 # ---------------------------------------------------------------------------
 
 
+def _validate_config_value(key: str, value: object, layer: ConfigSource, path: str | None) -> None:
+    # The schema models are needed only when a layer actually supplies a value.
+    from bernstein.core.config.config_schema import validate_layer_partial
+
+    validate_layer_partial({key: value}, layer_name=layer, path=path)
+
+
 def resolve_config(
     key: str,
     *,
@@ -485,14 +492,11 @@ def resolve_config(
     global_data = home.load_raw()
     combined_session_overrides = _session_overrides_from_env() | dict(session_overrides or {})
 
-    if validate_layers:
-        from bernstein.core.config.config_schema import validate_layer_partial
-
     layers: list[ConfigProvenanceLayer] = []
     if seed_overrides is not None and key in seed_overrides:
         value = _coerce_config_value(key, seed_overrides[key])
         if validate_layers:
-            validate_layer_partial({key: value}, layer_name="seed", path=seed_overrides_path)
+            _validate_config_value(key, value, "seed", seed_overrides_path)
         layers.append(
             {
                 "source": "seed",
@@ -506,7 +510,7 @@ def resolve_config(
         if validate_layers:
             env_var = _ENV_OVERRIDE_MAP.get(key)
             env_path = f"${env_var}" if env_var and os.environ.get(env_var) is not None else None
-            validate_layer_partial({key: value}, layer_name="session", path=env_path)
+            _validate_config_value(key, value, "session", env_path)
         layers.append(
             {
                 "source": "session",
@@ -519,7 +523,7 @@ def resolve_config(
         value = project_config[key]
         proj_path = str(project_dir / ".sdd" / _CONFIG_YAML_FILENAME)
         if validate_layers:
-            validate_layer_partial({key: value}, layer_name="project", path=proj_path)
+            _validate_config_value(key, value, "project", proj_path)
         layers.append(
             {
                 "source": "project",
@@ -532,7 +536,7 @@ def resolve_config(
         value = context_config[key]
         ctx_path = str(project_dir / ".sdd" / _CONTEXT_DIR[0] / _CONTEXT_DIR[1] / f"{context_name}.json")
         if validate_layers:
-            validate_layer_partial({key: value}, layer_name="context", path=ctx_path)
+            _validate_config_value(key, value, "context", ctx_path)
         layers.append(
             {
                 "source": "context",
@@ -545,7 +549,7 @@ def resolve_config(
         value = global_data[key]
         glob_path = str(home.path / _CONFIG_YAML_FILENAME)
         if validate_layers:
-            validate_layer_partial({key: value}, layer_name="global", path=glob_path)
+            _validate_config_value(key, value, "global", glob_path)
         layers.append(
             {
                 "source": "global",

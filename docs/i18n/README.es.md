@@ -49,7 +49,17 @@ El servidor de tareas admite un control persistente del operador para la asignac
 La política de adaptadores por rol admite una lista predeterminada opcional de adaptadores permitidos para los roles no enumerados; consulta la [guía](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### cómo es una ejecución
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Usa la opción global `--json` para obtener una vista previa de la lista local de tareas pendientes o de un objetivo. Cada comando escribe un objeto JSON en la salida estándar y termina antes de iniciar ningún agente.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` devuelve un array `tasks` de objetos de tarea. Si la lista está vacía, devuelve `{"tasks": []}`. `--plan-only` devuelve dos cadenas. `plan` contiene el texto en Markdown y `saved_plan` indica la ruta del archivo guardado.
 
 Un único archivo YAML declara la ejecución: fases, roles, dependencias y las condiciones bajo las que un nodo llega a ejecutarse. El planificador lo ejecuta como Python puro - nada en el archivo es un prompt y ningún modelo decide qué pasa después. Este grafo produce un paquete de evidencias de auditoría; el archivo completo está en [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
