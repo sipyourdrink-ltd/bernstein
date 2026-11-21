@@ -251,3 +251,16 @@ class TestFormatForTerminal:
         lines = formatted.splitlines()
         # Non-empty lines only
         assert all(line.strip() for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("one\ntwo", "one\ntwo"),
+        ("one\ntwo\n \t\n\n", "one\ntwo"),
+        ("one\ntwo\n\nthree", "one\ntwo\n... (truncated)"),
+    ],
+    ids=["exact-fit", "trailing-blanks", "one-more-line"],
+)
+def test_release_notes_exact_limit_has_no_marker(raw: str, expected: str) -> None:
+    assert format_for_terminal(raw, max_lines=2) == expected
