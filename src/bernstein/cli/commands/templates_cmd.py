@@ -172,7 +172,9 @@ def templates_show(template_name: str) -> None:
             console.print(f"Available: {', '.join(available)}")
         raise SystemExit(1)
 
-    console.print(src.read_text())
+    # Written as stored: Rich read `[models]` as markup and dropped it, and wrapped long lines, so the
+    # text shown was not the text `templates use` writes (#7955).
+    click.echo(src.read_text(), nl=False)
 
 
 @templates_hooks_group.command("list")
