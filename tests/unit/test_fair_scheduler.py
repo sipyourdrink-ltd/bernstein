@@ -54,6 +54,25 @@ class TestSchedulingDecision:
 # ---- Single tenant ----
 
 
+@pytest.mark.parametrize("weight", [0.5, 5e-324])
+def test_dequeue_serves_fractional_weight_without_polling(weight: float) -> None:
+    scheduler = FairScheduler([TenantQuota("A", weight=weight, max_concurrent=1)])
+    scheduler.enqueue("first", "A")
+
+    first = scheduler.dequeue()
+    assert first is not None and first.task_id == "first"
+    assert scheduler.stats()[0].queue_depth == 0
+    scheduler.mark_active(first.task_id)
+    assert scheduler.dequeue() is None
+
+    scheduler.enqueue("second", "A")
+    assert scheduler.dequeue() is None
+    assert scheduler.stats()[0].queue_depth == 1
+    scheduler.mark_done(first.task_id)
+    second = scheduler.dequeue()
+    assert second is not None and second.task_id == "second"
+
+
 class TestSingleTenant:
     def test_enqueue_dequeue_single_task(self) -> None:
         s = FairScheduler(quotas=[TenantQuota(tenant_id="A")])
@@ -101,6 +120,20 @@ class TestSingleTenant:
 
 
 class TestMultiTenantFairness:
+    def test_fractional_weights_keep_their_proportions(self) -> None:
+        scheduler = FairScheduler([TenantQuota("A", weight=0.5), TenantQuota("B", weight=0.25)])
+        for i in range(6):
+            scheduler.enqueue(f"A-{i}", "A")
+            scheduler.enqueue(f"B-{i}", "B")
+
+        tenants = []
+        for _ in range(6):
+            decision = scheduler.dequeue()
+            assert decision is not None
+            tenants.append(decision.tenant_id)
+        assert tenants.count("A") == 4
+        assert tenants.count("B") == 2
+
     def test_equal_weight_round_robin(self) -> None:
         """Two tenants with equal weight should alternate."""
         s = FairScheduler(
