@@ -142,3 +142,21 @@ class TestFormatNotesSnapshot:
         )
         assert "## v0.0.0" in body
         assert "_No user-visible changes._" in body
+
+
+def test_release_parameters_precede_fragment(fmt) -> None:
+    """The release parameters join the query, and the ``#fragment`` stays the anchor (#8058)."""
+    from urllib.parse import parse_qs, urlsplit
+
+    release = {"utm_source": ["github.com"], "utm_medium": ["release-note"], "utm_campaign": ["v1.2.3"]}
+    for link, query in (
+        ("https://bernstein.run/guide#setup", release),
+        ("https://bernstein.run/guide?lang=en#setup", {"lang": ["en"], **release}),
+    ):
+        once = fmt._with_release_utm(f"See {link} now.", "1.2.3")
+        url = next(word for word in once.split() if word.startswith("https://"))
+        parts = urlsplit(url)
+        assert parts.fragment == "setup", url
+        assert parse_qs(parts.query) == query, url
+        # Formatting twice gives the same link.
+        assert fmt._with_release_utm(once, "1.2.3") == once

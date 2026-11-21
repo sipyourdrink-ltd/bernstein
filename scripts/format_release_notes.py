@@ -83,8 +83,11 @@ def _with_release_utm(body: str, version: str) -> str:
         url = match.group(0)
         if "utm_" in url:
             return url
-        sep = "&" if "?" in url else "?"
-        return f"{url}{sep}{utm_params}"
+        # The parameters belong in the query, before any ``#fragment``. Appended to the whole URL,
+        # they became part of the fragment and changed the anchor the reader lands on (#8058).
+        base, hash_mark, fragment = url.partition("#")
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}{utm_params}{hash_mark}{fragment}"
 
     return _BERNSTEIN_URL_RE.sub(_sub, body)
 
