@@ -19,8 +19,9 @@ Alternatively, a single top-level object {"events": [...], "diff": "..."} or lis
 may be supplied to apply across all evaluated tasks. Events may include an optional
 numeric "intent_score" from a recorded evaluator. Finite scores with non-negative
 integer steps are projected into "intent_scores" in step order (preserving event
-order within a step); missing or invalid scores are omitted. No evaluator is called,
-and intent scores do not participate in hard measurements or threshold decisions.
+order within a step); missing or invalid scores are omitted. By default no evaluator
+is called. Library callers may explicitly supply an in-process intent_scorer;
+its recorded scores do not participate in hard measurements or threshold decisions.
 Trajectory payloads may also supply intent_calibration_records in the existing
 calibration-log JSON shape. The separate quality report uses the recorded policy
 identifier and population; missing/ambiguous evidence is unavailable, never fitted.
@@ -30,17 +31,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import posixpath
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
 from bernstein.eval.calibration import CalibrationRecord, compute_report
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
+logger = logging.getLogger(__name__)
+
+IntentScorer = Callable[["GoalDriftTask", list[dict[str, Any]], str], Any]
 
 
 @dataclass(frozen=True)
@@ -190,9 +194,10 @@ class DriftTrajectoryCurve:
     step_coverage: float = 1.0
     intent_scores: tuple[tuple[int, float], ...] = ()
     intent_calibration: dict[str, Any] | None = None
+    intent_scorer_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "task_id": self.task_id,
             "step_measurements": [m.to_dict() for m in self.step_measurements],
             "max_hard_drift": self.max_hard_drift,
@@ -207,10 +212,14 @@ class DriftTrajectoryCurve:
             if self.intent_calibration is not None
             else _intent_calibration_report(()),
         }
+        if self.intent_scorer_error is not None:
+            payload["intent_scorer_error"] = self.intent_scorer_error
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DriftTrajectoryCurve:
         measurements = tuple(DriftStepMeasurement.from_dict(m) for m in data.get("step_measurements", ()))
+        raw_error = data.get("intent_scorer_error")
         return cls(
             task_id=str(data["task_id"]),
             step_measurements=measurements,
@@ -225,6 +234,7 @@ class DriftTrajectoryCurve:
                 (int(s["step_index"]), float(s["intent_score"])) for s in data.get("intent_scores", ())
             ),
             intent_calibration=deepcopy(data.get("intent_calibration")),
+            intent_scorer_error=str(raw_error) if raw_error is not None else None,
         )
 
 
@@ -396,6 +406,96 @@ def _intent_calibration_payload(records: Sequence[CalibrationRecord]) -> list[di
     ]
 
 
+def _default_intent_step(events: Sequence[dict[str, Any]]) -> int:
+    steps = [
+        ev["step"]
+        for ev in events
+        if isinstance(ev, Mapping)
+        and not isinstance(ev.get("step"), bool)
+        and isinstance(ev.get("step"), int)
+        and ev["step"] >= 0
+    ]
+    return max(steps, default=0)
+
+
+def _validate_step_score(step: object, score: object) -> tuple[int, float]:
+    if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+        raise ValueError(f"Invalid intent score step: {step!r}")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise ValueError(f"Invalid intent score value: {score!r}")
+    try:
+        value = float(score)
+    except OverflowError as exc:
+        raise ValueError(f"Non-finite intent score value: {score!r}") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"Non-finite intent score value: {score!r}")
+    return (step, value)
+
+
+def _parse_intent_score_entry(entry: object, default_step: int) -> tuple[int, float]:
+    if isinstance(entry, Mapping):
+        if "intent_score" not in entry:
+            raise ValueError(f"Intent scorer mapping missing 'intent_score': {entry!r}")
+        if "step" in entry:
+            step = entry["step"]
+        elif "step_index" in entry:
+            step = entry["step_index"]
+        else:
+            step = default_step
+        return _validate_step_score(step, entry["intent_score"])
+    if isinstance(entry, tuple) and len(entry) == 2:
+        return _validate_step_score(entry[0], entry[1])
+    raise ValueError(f"Invalid intent scorer entry: {entry!r}")
+
+
+def _normalize_intent_scorer_output(raw: object, events: Sequence[dict[str, Any]]) -> tuple[tuple[int, float], ...]:
+    default_step = _default_intent_step(events)
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return (_validate_step_score(default_step, raw),)
+    if isinstance(raw, Mapping):
+        return (_parse_intent_score_entry(raw, default_step),)
+    if isinstance(raw, tuple) and len(raw) == 2 and not isinstance(raw[0], (Mapping, Sequence)):
+        return (_validate_step_score(raw[0], raw[1]),)
+    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+        if not raw:
+            raise ValueError("Intent scorer returned an empty sequence")
+        return tuple(_parse_intent_score_entry(item, default_step) for item in raw)
+    raise ValueError(f"Invalid intent scorer return value: {raw!r}")
+
+
+def _invoke_intent_scorer(
+    scorer: IntentScorer,
+    task: GoalDriftTask,
+    events: list[dict[str, Any]],
+    diff_text: str,
+) -> tuple[tuple[tuple[int, float], ...], str | None]:
+    try:
+        raw = scorer(task, deepcopy(events), diff_text)
+        return _normalize_intent_scorer_output(raw, events), None
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        logger.warning("Optional intent scorer failed for task %s: %s", task.id, err)
+        return (), err
+
+
+def _recorded_intent_scores(raw: object) -> tuple[tuple[int, float], ...]:
+    if not isinstance(raw, list):
+        return ()
+    scores: list[tuple[int, float]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            return ()
+        try:
+            scores.append(_parse_intent_score_entry(item, 0))
+        except (ValueError, OverflowError):
+            return ()
+    return tuple(sorted(scores, key=lambda pair: pair[0]))
+
+
+def _intent_scores_payload(scores: Sequence[tuple[int, float]]) -> list[dict[str, Any]]:
+    return [{"step_index": step, "intent_score": score} for step, score in scores]
+
+
 def evaluate_trajectory_drift(
     task: GoalDriftTask,
     events: list[dict[str, Any]],
@@ -404,8 +504,22 @@ def evaluate_trajectory_drift(
     require_step_coverage: bool = False,
     *,
     intent_calibration_records: Sequence[CalibrationRecord] = (),
+    intent_scorer: IntentScorer | None = None,
+    recorded_intent_scores: Sequence[tuple[int, float]] = (),
+    intent_scorer_error: str | None = None,
 ) -> DriftTrajectoryCurve:
     """Evaluate full trajectory drift deterministically from lineage events and diff."""
+    scorer_scores: tuple[tuple[int, float], ...] = ()
+    scorer_error = intent_scorer_error
+    if intent_scorer is not None:
+        scorer_scores, invoked_error = _invoke_intent_scorer(intent_scorer, task, events, diff_text)
+        if invoked_error is not None:
+            scorer_error = invoked_error
+
+    projected_scores = tuple(
+        sorted((*_project_intent_scores(events), *recorded_intent_scores, *scorer_scores), key=lambda item: item[0])
+    )
+
     if not events and not diff_text:
         return DriftTrajectoryCurve(
             task_id=task.id,
@@ -417,7 +531,9 @@ def evaluate_trajectory_drift(
             passed_gate=False,
             unmeasured=True,
             step_coverage=0.0,
+            intent_scores=projected_scores,
             intent_calibration=_intent_calibration_report(intent_calibration_records),
+            intent_scorer_error=scorer_error,
         )
 
     step_paths_map: dict[int, list[str]] = {}
@@ -484,8 +600,9 @@ def evaluate_trajectory_drift(
         passed_gate=passed,
         unmeasured=unmeasured,
         step_coverage=step_coverage,
-        intent_scores=_project_intent_scores(events),
+        intent_scores=projected_scores,
         intent_calibration=_intent_calibration_report(intent_calibration_records),
+        intent_scorer_error=scorer_error,
     )
 
 
@@ -656,6 +773,7 @@ class GoalDriftReplayAdapter:
         diff_text: str | None = None,
         threshold: float = 0.0,
         require_step_coverage: bool = False,
+        intent_scorer: IntentScorer | None = None,
     ) -> None:
         self._task_map = task_map or get_goal_drift_task_map()
         self._simulate_drift = simulate_drift
@@ -664,6 +782,7 @@ class GoalDriftReplayAdapter:
         self._diff_text = diff_text
         self._threshold = threshold
         self._require_step_coverage = require_step_coverage
+        self._intent_scorer = intent_scorer
 
     @property
     def synthetic(self) -> bool:
@@ -716,6 +835,11 @@ class GoalDriftReplayAdapter:
             diff = ""
 
         calibration_records = _recorded_intent_calibration(calibration_raw)
+        scorer_scores: tuple[tuple[int, float], ...] = ()
+        scorer_error: str | None = None
+        if self._intent_scorer is not None:
+            scorer_scores, scorer_error = _invoke_intent_scorer(self._intent_scorer, drift_task, events, diff)
+
         curve = evaluate_trajectory_drift(
             drift_task,
             events,
@@ -723,6 +847,8 @@ class GoalDriftReplayAdapter:
             threshold=threshold,
             require_step_coverage=require_step_coverage,
             intent_calibration_records=calibration_records,
+            recorded_intent_scores=scorer_scores,
+            intent_scorer_error=scorer_error,
         )
 
         task_hash = task.content_hash()
@@ -731,7 +857,7 @@ class GoalDriftReplayAdapter:
         journal_head = compute_events_journal_head(events)
         spine_head = hashlib.sha256(f"{journal_head}:{receipt_hash}".encode()).hexdigest()
 
-        return {
+        receipt: dict[str, Any] = {
             "journal_head": journal_head,
             "spine_head": spine_head,
             "run_id": f"goal-drift-{task_hash[:12]}",
@@ -742,6 +868,11 @@ class GoalDriftReplayAdapter:
             "diff": diff,
             "passed_gate": curve.passed_gate,
         }
+        if scorer_scores:
+            receipt["recorded_intent_scores"] = _intent_scores_payload(scorer_scores)
+        if scorer_error is not None:
+            receipt["intent_scorer_error"] = scorer_error
+        return receipt
 
     def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
         """Score task receipt against drift assertions."""
@@ -751,6 +882,8 @@ class GoalDriftReplayAdapter:
         diff = receipt.get("diff", "")
         stored_curve_dict = receipt.get("drift_curve")
         threshold = stored_curve_dict.get("threshold", self._threshold) if stored_curve_dict else self._threshold
+        raw_error = receipt.get("intent_scorer_error")
+        scorer_error = str(raw_error) if raw_error is not None else None
 
         curve = evaluate_trajectory_drift(
             drift_task,
@@ -759,6 +892,8 @@ class GoalDriftReplayAdapter:
             threshold=threshold,
             require_step_coverage=self._require_step_coverage,
             intent_calibration_records=_recorded_intent_calibration(receipt.get("intent_calibration_records")),
+            recorded_intent_scores=_recorded_intent_scores(receipt.get("recorded_intent_scores")),
+            intent_scorer_error=scorer_error,
         )
 
         for assertion in task.assertions:
@@ -767,38 +902,56 @@ class GoalDriftReplayAdapter:
                 return (
                     False,
                     0.0,
-                    {
-                        "error": f"Hard drift detected: max_hard_drift={curve.max_hard_drift} > 0.0",
-                        "drift_curve": curve.to_dict(),
-                    },
+                    _attach_scorer_error(
+                        {
+                            "error": f"Hard drift detected: max_hard_drift={curve.max_hard_drift} > 0.0",
+                            "drift_curve": curve.to_dict(),
+                        },
+                        curve,
+                    ),
                 )
             if kind == "passed_gate" and not curve.passed_gate:
                 return (
                     False,
                     0.0,
-                    {
-                        "error": f"Trajectory failed drift gate: threshold={curve.threshold}",
-                        "drift_curve": curve.to_dict(),
-                    },
+                    _attach_scorer_error(
+                        {
+                            "error": f"Trajectory failed drift gate: threshold={curve.threshold}",
+                            "drift_curve": curve.to_dict(),
+                        },
+                        curve,
+                    ),
                 )
 
         if curve.unmeasured:
             return (
                 False,
                 0.0,
-                {
-                    "error": "Trajectory is unmeasured: empty telemetry or incomplete step coverage",
-                    "drift_curve": curve.to_dict(),
-                },
+                _attach_scorer_error(
+                    {
+                        "error": "Trajectory is unmeasured: empty telemetry or incomplete step coverage",
+                        "drift_curve": curve.to_dict(),
+                    },
+                    curve,
+                ),
             )
 
         score = 1.0 if curve.max_hard_drift == 0.0 else max(0.0, 1.0 - curve.max_hard_drift)
-        harness_output = {
-            "status": "PASS" if curve.passed_gate else "FAIL",
-            "task_id": task.id,
-            "max_hard_drift": curve.max_hard_drift,
-            "cumulative_hard_drift": curve.cumulative_hard_drift,
-            "passed_gate": curve.passed_gate,
-            "drift_curve": curve.to_dict(),
-        }
+        harness_output = _attach_scorer_error(
+            {
+                "status": "PASS" if curve.passed_gate else "FAIL",
+                "task_id": task.id,
+                "max_hard_drift": curve.max_hard_drift,
+                "cumulative_hard_drift": curve.cumulative_hard_drift,
+                "passed_gate": curve.passed_gate,
+                "drift_curve": curve.to_dict(),
+            },
+            curve,
+        )
         return curve.passed_gate, score, harness_output
+
+
+def _attach_scorer_error(payload: dict[str, Any], curve: DriftTrajectoryCurve) -> dict[str, Any]:
+    if curve.intent_scorer_error is not None:
+        payload["intent_scorer_error"] = curve.intent_scorer_error
+    return payload

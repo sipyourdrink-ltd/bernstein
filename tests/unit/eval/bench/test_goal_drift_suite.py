@@ -246,6 +246,189 @@ class TestRecordedIntentScores:
         assert adapter.run_task(task, {}) == receipt
 
 
+class TestOptionalIntentScorer:
+    """Issue #7099: connect optional in-process intent scorer without altering hard checks."""
+
+    def test_default_invocation_never_calls_any_intent_scorer(
+        self, recorded_intent_task: GoalDriftTask, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.eval.bench import goal_drift_suite as mod
+
+        called = False
+
+        def _unexpected_scorer(*_args: object, **_kwargs: object) -> float:
+            nonlocal called
+            called = True
+            raise AssertionError("default invocation must not call an intent scorer")
+
+        monkeypatch.setattr(mod, "_invoke_intent_scorer", _unexpected_scorer)
+
+        events = [{"step": 0, "touched_paths": ["src/example/item.py"]}]
+        curve = evaluate_trajectory_drift(recorded_intent_task, events)
+        assert curve.intent_scores == ()
+        assert curve.intent_scorer_error is None
+        assert "intent_scorer_error" not in curve.to_dict()
+
+        task = recorded_intent_task.to_bench_task()
+        adapter = GoalDriftReplayAdapter(trajectory_data={task.id: {"events": events}})
+        receipt = adapter.run_task(task, {})
+        passed, score, output = adapter.score_task(task, receipt)
+        assert passed is True
+        assert score == 1.0
+        assert output["drift_curve"]["intent_scores"] == []
+        assert "intent_scorer_error" not in receipt
+        assert called is False
+
+    def test_explicit_in_process_scorer_supplies_recorded_score_for_projection_and_replay(
+        self, recorded_intent_task: GoalDriftTask
+    ) -> None:
+        calls: list[tuple[str, int, str]] = []
+
+        def fixture_scorer(task: GoalDriftTask, events: list[dict], diff_text: str) -> float:
+            calls.append((task.id, len(events), diff_text))
+            return 0.91
+
+        events = [{"step": 0, "touched_paths": ["src/example/item.py"]}]
+        task = recorded_intent_task.to_bench_task()
+        adapter = GoalDriftReplayAdapter(
+            trajectory_data={
+                task.id: {"events": events, "diff": "--- a/src/example/item.py\n+++ b/src/example/item.py\n+x=1\n"}
+            },
+            intent_scorer=fixture_scorer,
+        )
+        receipt = adapter.run_task(task, {})
+
+        assert len(calls) == 1
+        assert calls[0][0] == task.id
+        assert receipt["recorded_intent_scores"] == [{"step_index": 0, "intent_score": 0.91}]
+        assert receipt["drift_curve"]["intent_scores"] == [{"step_index": 0, "intent_score": 0.91}]
+        assert receipt["passed_gate"] is True
+
+        # A plain replay adapter without the scorer reproduces the recorded score from the receipt.
+        replayed_passed, replayed_score, output = GoalDriftReplayAdapter().score_task(
+            task, json.loads(json.dumps(receipt))
+        )
+        assert replayed_passed is True
+        assert replayed_score == 1.0
+        assert output["drift_curve"] == receipt["drift_curve"]
+        assert len(calls) == 1
+
+    def test_explicit_scorer_accepts_step_mapping_and_multiple_scores(
+        self, recorded_intent_task: GoalDriftTask
+    ) -> None:
+        def multi_step_scorer(_task: GoalDriftTask, _events: list[dict], _diff_text: str) -> list[dict[str, object]]:
+            return [{"step": 1, "intent_score": 0.6}, {"step": 0, "intent_score": 0.95}]
+
+        events = [
+            {"step": 0, "touched_paths": ["src/example/item.py"]},
+            {"step": 1, "touched_paths": ["tests/unit/test_item.py"]},
+        ]
+        curve = evaluate_trajectory_drift(recorded_intent_task, events, intent_scorer=multi_step_scorer)
+        assert curve.intent_scores == ((0, 0.95), (1, 0.6))
+        assert curve.passed_gate is True
+        assert curve.max_hard_drift == 0.0
+
+    @pytest.mark.parametrize(
+        ("path", "threshold", "expected_passed", "expected_max_drift"),
+        [
+            ("src/example/item.py", 0.0, True, 0.0),
+            ("src/example/settings.py", 0.0, False, 1.0),
+            ("src/other.py", 0.6, True, 0.5),
+            ("src/other.py", 0.4, False, 0.5),
+        ],
+    )
+    def test_scorer_error_is_visible_and_preserves_hard_measurement_and_threshold(
+        self,
+        recorded_intent_task: GoalDriftTask,
+        caplog: pytest.LogCaptureFixture,
+        path: str,
+        threshold: float,
+        expected_passed: bool,
+        expected_max_drift: float,
+    ) -> None:
+        def failing_scorer(_task: GoalDriftTask, _events: list[dict], _diff_text: str) -> float:
+            raise RuntimeError("intent backend unavailable")
+
+        events = [{"step": 0, "touched_paths": [path]}]
+        baseline = evaluate_trajectory_drift(recorded_intent_task, events, threshold=threshold)
+
+        with caplog.at_level("WARNING"):
+            errored = evaluate_trajectory_drift(
+                recorded_intent_task, events, threshold=threshold, intent_scorer=failing_scorer
+            )
+
+        assert errored.intent_scorer_error == "RuntimeError: intent backend unavailable"
+        assert "RuntimeError: intent backend unavailable" in caplog.text
+        assert errored.step_measurements == baseline.step_measurements
+        assert errored.max_hard_drift == expected_max_drift == baseline.max_hard_drift
+        assert errored.cumulative_hard_drift == baseline.cumulative_hard_drift
+        assert errored.final_hard_drift == baseline.final_hard_drift
+        assert errored.threshold == baseline.threshold == threshold
+        assert errored.passed_gate is expected_passed is baseline.passed_gate
+
+        task = replace(recorded_intent_task, assertions=({"kind": "passed_gate"},)).to_bench_task()
+        baseline_receipt = GoalDriftReplayAdapter(
+            trajectory_data={task.id: {"events": events}},
+            threshold=threshold,
+        ).run_task(task, {})
+        baseline_score_result = GoalDriftReplayAdapter(threshold=threshold).score_task(task, baseline_receipt)
+
+        adapter = GoalDriftReplayAdapter(
+            trajectory_data={task.id: {"events": events}},
+            threshold=threshold,
+            intent_scorer=failing_scorer,
+        )
+        receipt = adapter.run_task(task, {})
+        assert receipt["intent_scorer_error"] == "RuntimeError: intent backend unavailable"
+        assert receipt["drift_curve"]["intent_scorer_error"] == "RuntimeError: intent backend unavailable"
+        assert receipt["passed_gate"] is expected_passed is baseline_receipt["passed_gate"]
+
+        passed, score, output = GoalDriftReplayAdapter(threshold=threshold).score_task(task, receipt)
+        assert passed is expected_passed is baseline_score_result[0]
+        assert score == baseline_score_result[1]
+        assert output["intent_scorer_error"] == "RuntimeError: intent backend unavailable"
+        assert output["drift_curve"] == receipt["drift_curve"]
+        assert DriftTrajectoryCurve.from_dict(json.loads(json.dumps(receipt["drift_curve"]))) == errored
+
+    @pytest.mark.parametrize("bad_return", [None, float("nan"), float("inf"), "0.5", True, []])
+    def test_invalid_scorer_return_records_visible_error_without_affecting_hard_gate(
+        self, recorded_intent_task: GoalDriftTask, bad_return: object
+    ) -> None:
+        events = [{"step": 0, "touched_paths": ["src/example/item.py"]}]
+        curve = evaluate_trajectory_drift(
+            recorded_intent_task,
+            events,
+            intent_scorer=lambda _t, _e, _d: bad_return,
+        )
+        assert curve.intent_scorer_error is not None
+        assert curve.intent_scores == ()
+        assert curve.passed_gate is True
+        assert curve.max_hard_drift == 0.0
+
+    def test_runner_and_verifier_roundtrip_with_optional_intent_scorer(self, goal_drift_suite: BenchSuite) -> None:
+        seen_tasks: list[str] = []
+
+        def in_process_scorer(task: GoalDriftTask, _events: list[dict], _diff_text: str) -> float:
+            seen_tasks.append(task.id)
+            return 0.75
+
+        adapter = GoalDriftReplayAdapter(smoke_synthetic=True, intent_scorer=in_process_scorer)
+        runner = BenchRunner(suite=goal_drift_suite, adapter=adapter, scheduler_config={"scheduler": "deterministic"})
+        bundle = StubSigner().sign(runner.run())
+
+        assert len(seen_tasks) == len(goal_drift_suite.tasks)
+        assert bundle.pass_rate == 1.0
+        for result in bundle.task_results:
+            curve_dict = result.receipt["drift_curve"]
+            assert len(curve_dict["intent_scores"]) == 1
+            assert curve_dict["intent_scores"][0]["intent_score"] == 0.75
+
+        verifier = BenchVerifier(suite=goal_drift_suite, adapter=GoalDriftReplayAdapter(), allow_stub_signature=True)
+        verification = verifier.verify(bundle)
+        assert verification.status == VerificationStatus.MATCH
+        assert verification.passed is True
+
+
 # ===========================================================================
 # 3. Determinism: byte-identical curves across machines
 # ===========================================================================
