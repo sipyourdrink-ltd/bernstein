@@ -88,6 +88,8 @@ def _eval_node(node: ast.AST, variables: dict[str, float]) -> float:
             return 0.0  # Avoid ZeroDivisionError; return 0 for undefined ratios
         if op_type is ast.FloorDiv and abs(right) < 1e-15:
             return 0.0
+        if op_type is ast.Mod and abs(right) < 1e-15:
+            return 0.0  # Same convention: a zero divisor must not abort the whole batch (#8061)
         return float(_BINOP_MAP[op_type](left, right))
 
     if isinstance(node, ast.UnaryOp):
