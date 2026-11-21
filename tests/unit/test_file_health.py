@@ -146,6 +146,31 @@ def test_get_missing_file(tracker: FileHealthTracker) -> None:
     assert tracker.get("src/foo.py") is None
 
 
+def test_file_health_uses_coverage_for_the_matching_filename(sdd_dir: Path, tracker: FileHealthTracker) -> None:
+    target = "lib/metadata.py"
+    source = sdd_dir.parent / target
+    source.parent.mkdir()
+    source.write_text("value = 1\n", encoding="utf-8")
+    report = sdd_dir / "metrics" / "coverage.json"
+    report.parent.mkdir()
+
+    own = (target, 12)
+    other = ("data.py", 91)
+    for rows, expected in (
+        ([other, own], 12),
+        ([own, other], 12),
+        ([("metadata.py", 65), own], 12),
+        ([other], 70),
+    ):
+        files = {path: {"summary": {"percent_covered": pct}} for path, pct in rows}
+        report.write_text(json.dumps({"files": files}), encoding="utf-8")
+        score, _ = tracker.compute_and_record(target, "sample", "success")
+        assert score.coverage_score == expected
+        stored = tracker.get(target)
+        assert stored is not None
+        assert stored.coverage_score == expected
+
+
 def test_compute_and_record_success(sdd_dir: Path, tracker: FileHealthTracker) -> None:
     """Record a successful task touch and verify score is persisted."""
     # Create a real Python file so complexity/coupling work
