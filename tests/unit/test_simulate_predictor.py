@@ -166,6 +166,24 @@ def test_load_traces_keeps_zero_primary_latency(tmp_path: Path) -> None:
     assert samples == (0.0, 0.0, 3.0, 7.0)
 
 
+def test_load_traces_boolean_primary_latency_falls_back_to_duration(tmp_path: Path) -> None:
+    (tmp_path / "timing.jsonl").write_text(
+        '{"role": "qa", "latency_seconds": false, "duration_s": 9}\n',
+        encoding="utf-8",
+    )
+    samples = load_traces(tmp_path).latency_samples[("qa", "mock")]
+    assert samples == (9.0,)
+
+
+def test_load_traces_boolean_primary_latency_without_fallback_yields_no_sample(tmp_path: Path) -> None:
+    (tmp_path / "timing.jsonl").write_text(
+        '{"role": "qa", "latency_seconds": false}\n',
+        encoding="utf-8",
+    )
+    out = load_traces(tmp_path)
+    assert ("qa", "mock") not in out.latency_samples
+
+
 def test_load_traces_skips_negative_latency(tmp_path: Path) -> None:
     body = (
         '{"role": "backend", "adapter": "mock", "status": "completed", "latency_seconds": -5.0}\n'
