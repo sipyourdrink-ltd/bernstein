@@ -44,6 +44,21 @@ def test_load_run_snapshots(tmp_path: Path) -> None:
     assert len(snapshots) == 2
 
 
+@pytest.mark.parametrize("bad_total", ["pending", None, 10**400], ids=["text", "null", "overflow"])
+def test_bad_total_does_not_hide_other_snapshots(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, bad_total: object
+) -> None:
+    for run_id, timestamp, total in [("a", 30, 2.5), ("b", 20, bad_total), ("c", 10, 0.0)]:
+        data = {"run_id": run_id, "timestamp": timestamp, "total_spent_usd": total}
+        (tmp_path / f"costs_{run_id}.json").write_text(json.dumps(data), encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        snapshots = load_run_snapshots(tmp_path)
+
+    assert [(run.run_id, run.total_spent_usd) for run in snapshots] == [("c", 0.0), ("a", 2.5)]
+    assert f"Skipping corrupt cost file {tmp_path / 'costs_b.json'}:" in caplog.text
+
+
 def test_load_empty_dir(tmp_path: Path) -> None:
     """load_run_snapshots returns empty list for non-existent dir."""
     snapshots = load_run_snapshots(tmp_path / "nonexistent")
