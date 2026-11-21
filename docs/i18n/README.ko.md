@@ -132,7 +132,7 @@ flowchart LR
 재시도는 `dispatch_tier`를 유지하며, 작업을 다시 열 때 계층을 명시적으로 선택할 수 있습니다. [디스패치 계층 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)을 참조하세요.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor는 오래 남아 있는 실행 레인을 JSON으로 보고합니다. 누�
 pipx, pip, brew, dnf, npm, Docker는 [설치 가이드](https://docs.bernstein.run/en/latest/getting-started/install/)를 보라. 에어갭 환경용 wheelhouse는 별도의 [에어갭 가이드](https://docs.bernstein.run/en/latest/installation/air-gap/)가 있다.
 
 `bernstein worktrees sweep`는 완료된 작업이 남긴 워크트리와 샌드박스 세션을 경과 시간 및 디스크 사용량과 함께 미리 보여 줍니다. 워크트리만 삭제할 수 있으며, `--apply`와 별도의 삭제 승인이 필요합니다. 샌드박스는 보고서에만 표시됩니다(삭제: #6571). `doctor`는 오래 남아 있는 리소스에 대해 경고합니다. [정리 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)를 참조하세요.
+`bernstein worktrees gc`는 전달이 보장되지 않는 [`worktree.gc` 훅](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event)을 통해 디렉터리 삭제 성공 여부를 알립니다.
 
 스킬 초기화에 실패하면 원인과 감사 이벤트를 영구 기록하고 [격리](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)합니다. `bernstein status`는 개수를 표시하고, `doctor`와 `govern audit`는 비활성화된 선언을 보고합니다. 원인을 수정한 후 `bernstein quarantine re-enable DECLARATION_ID`로 표시를 명시적으로 해제하세요.
 

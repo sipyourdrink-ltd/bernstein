@@ -132,7 +132,7 @@ Mỗi node được nhận bởi một agent có vai trò được phase cho ph�
 Các lần thử lại giữ nguyên `dispatch_tier`; khi mở lại tác vụ, có thể chọn cấp một cách tường minh. Xem [hợp đồng cấp điều phối](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor báo cáo các luồng thực thi bị bỏ lại quá giới hạn thờ
 pipx, pip, brew, dnf, npm và Docker được trình bày trong [hướng dẫn cài đặt](https://docs.bernstein.run/en/latest/getting-started/install/); gói cài đặt cách ly mạng có [hướng dẫn air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) riêng.
 
 `bernstein worktrees sweep` xem trước các cây làm việc và phiên sandbox do tác vụ đã hoàn tất để lại, kèm thời gian tồn tại và dung lượng đĩa. Chỉ có thể xóa cây làm việc, bằng `--apply` và với phê duyệt xóa riêng. Sandbox chỉ được liệt kê trong báo cáo (xóa: #6571); `doctor` cảnh báo về tài nguyên bị bỏ lại lâu ngày. Xem [quy trình dọn dẹp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` cho biết việc xóa thư mục có thành công hay không qua [hook `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event), với thông báo được gửi theo khả năng.
 
 Khi khởi tạo kỹ năng thất bại, kỹ năng được [cách ly](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), đồng thời lưu bền vững nguyên nhân và sự kiện kiểm toán. `bernstein status` hiển thị số lượng; `doctor` và `govern audit` báo cáo các khai báo bị vô hiệu hóa. Sau khi sửa nguyên nhân, hãy gỡ dấu cách ly một cách tường minh bằng `bernstein quarantine re-enable DECLARATION_ID`.
 

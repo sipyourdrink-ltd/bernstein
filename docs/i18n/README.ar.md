@@ -132,7 +132,7 @@ flowchart LR
 تحافظ المحاولات المتكررة على `dispatch_tier`؛ ويمكن اختيار المستوى صراحةً عند إعادة فتح المهمة. راجع [عقد مستويات التنفيذ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### التثبيت في 30 ثانية
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ bernstein run --worker backend
 تمت تغطية pipx وpip وbrew وdnf وnpm وDocker في [دليل التثبيت](https://docs.bernstein.run/en/latest/getting-started/install/)؛ وحزمة التثبيت المعزولة لها [دليل air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) الخاص بها.
 
 يعرض `bernstein worktrees sweep` معاينة لأشجار العمل وجلسات البيئة المعزولة التي تركتها المهام المكتملة، مع عمرها واستخدامها للقرص. يمكن حذف أشجار العمل فقط، باستخدام `--apply` وموافقة منفصلة على الحذف. أما البيئات المعزولة فيقتصر التعامل معها على عرض التقارير (الحذف: #6571)؛ ويحذر `doctor` من الموارد المتروكة منذ وقت طويل. راجع [خطوات التنظيف](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+يُبلغ `bernstein worktrees gc` عمّا إذا نجحت إزالة الدليل عبر [خطّاف `worktree.gc`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) الذي يُرسَل على أساس بذل أفضل جهد.
 
 تُوضَع المهارات التي تفشل تهيئتها في [الحجر](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)، مع حفظ السبب وحدث التدقيق بشكل دائم. يعرض `bernstein status` العدد، ويُبلّغ `doctor` و`govern audit` عن التعريفات المعطّلة. بعد إصلاح السبب، أزل العلامة صراحةً باستخدام `bernstein quarantine re-enable DECLARATION_ID`.
 

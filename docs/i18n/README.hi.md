@@ -132,7 +132,7 @@ flowchart LR
 दोबारा प्रयास में `dispatch_tier` बना रहता है; कार्य को फिर से खोलते समय स्तर स्पष्ट रूप से चुना जा सकता है। [डिस्पैच स्तर का अनुबंध](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) देखें।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor पुराने लीक हुए निष्पादन लेन
 pipx, pip, brew, dnf, npm और Docker [इंस्टॉल गाइड](https://docs.bernstein.run/en/latest/getting-started/install/) में हैं; एयर-गैप्ड wheelhouse की अपनी अलग [एयर-गैप गाइड](https://docs.bernstein.run/en/latest/installation/air-gap/) है।
 
 `bernstein worktrees sweep` पूरे हो चुके कार्यों के बचे हुए वर्कट्री और सैंडबॉक्स सत्रों का पूर्वावलोकन उनकी आयु और डिस्क उपयोग के साथ दिखाता है। केवल वर्कट्री हटाए जा सकते हैं, जिसके लिए `--apply` और अलग हटाने की स्वीकृति चाहिए। सैंडबॉक्स केवल रिपोर्ट में दिखाए जाते हैं (हटाना: #6571); `doctor` पुराने बचे संसाधनों की चेतावनी देता है। [सफ़ाई प्रक्रिया](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep) देखें।
+`bernstein worktrees gc` अपने [`worktree.gc` हुक](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) के ज़रिए यथासंभव बताता है कि डायरेक्टरी सफलतापूर्वक हटाई गई या नहीं।
 
 स्किल के प्रारंभ में विफलता होने पर उसे [क्वारंटीन](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) किया जाता है और कारण तथा ऑडिट इवेंट स्थायी रूप से दर्ज होते हैं। `bernstein status` संख्या दिखाता है; `doctor` और `govern audit` निष्क्रिय घोषणाओं की रिपोर्ट देते हैं। कारण ठीक करने के बाद `bernstein quarantine re-enable DECLARATION_ID` से मार्कर स्पष्ट रूप से हटाएँ।
 

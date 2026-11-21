@@ -132,7 +132,7 @@ Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri
 Yeniden denemeler `dispatch_tier` değerini korur; görev yeniden açılırken seviye açıkça seçilebilir. [Dağıtım seviyesi sözleşmesine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) bakın.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor, yaş sınırını aşan terk edilmiş yürütme hatlarını JSON biçimi
 pipx, pip, brew, dnf, npm ve Docker [kurulum kılavuzunda](https://docs.bernstein.run/en/latest/getting-started/install/) ele alınmıştır; yalıtılmış paket kendi [air-gap kılavuzuna](https://docs.bernstein.run/en/latest/installation/air-gap/) sahiptir.
 
 `bernstein worktrees sweep`, tamamlanan görevlerin geride bıraktığı çalışma ağaçlarını ve sandbox oturumlarını yaşları ve disk kullanımlarıyla önizler. Yalnızca çalışma ağaçları, `--apply` ve ayrı bir silme onayı ile silinebilir. Sandbox ortamları yalnızca raporda gösterilir (silme: #6571); `doctor` uzun süredir kalan kaynaklar için uyarır. [Temizleme akışına](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep) bakın.
+`bernstein worktrees gc`, dizinin başarıyla kaldırılıp kaldırılmadığını iletimi garanti edilmeyen [`worktree.gc` kancası](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) aracılığıyla bildirir.
 
 Beceri başlatma hataları, nedeni ve denetim olayı kalıcı olarak kaydedilerek [karantinaya](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) alınır. `bernstein status` sayıyı gösterir; `doctor` ve `govern audit` devre dışı bırakılan bildirimleri raporlar. Nedeni düzelttikten sonra `bernstein quarantine re-enable DECLARATION_ID` ile işareti açıkça kaldırın.
 

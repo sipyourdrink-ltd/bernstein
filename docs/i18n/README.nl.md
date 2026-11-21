@@ -132,7 +132,7 @@ Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en
 Nieuwe pogingen behouden `dispatch_tier`; bij het heropenen van een taak kan het niveau expliciet worden gekozen. Zie het [contract voor dispatchniveaus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:22e6a14d53e8" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -152,6 +152,7 @@ Doctor rapporteert achtergebleven uitvoeringslanen die de leeftijdsgrens oversch
 pipx, pip, brew, dnf, npm en Docker worden behandeld in de [installatiehandleiding](https://docs.bernstein.run/en/latest/getting-started/install/); de geïsoleerde wheelhouse heeft een eigen [air-gap-handleiding](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` toont een voorvertoning van werkbomen en sandboxsessies die voltooide taken hebben achtergelaten, met ouderdom en schijfgebruik. Alleen werkbomen kunnen worden verwijderd, met `--apply` en een afzonderlijke verwijderingsgoedkeuring. Sandboxen worden alleen in het rapport vermeld (verwijdering: #6571); `doctor` waarschuwt voor oudere achtergebleven resources. Zie de [opruimprocedure](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees gc` meldt via de [`worktree.gc`-hook](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#lifecycle-event) of de map is verwijderd, zonder garantie dat de melding aankomt.
 
 Bij een mislukte initialisatie wordt de vaardigheid in [quarantaine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) geplaatst, met een blijvend opgeslagen reden en auditgebeurtenis. `bernstein status` toont het aantal; `doctor` en `govern audit` melden de uitgeschakelde declaraties. Verhelp de oorzaak en verwijder de markering expliciet met `bernstein quarantine re-enable DECLARATION_ID`.
 

@@ -99,9 +99,9 @@ bernstein worktrees unlock [--workdir DIR] [--force] [--json]
 - `list` - tabular dump with path, task id, state, age, size, PID. Use
   `--json` for scripting. The JSON `reapable` field already reflects the
   unsaved-work veto.
-- `gc` - reap non-`active` worktrees that carry no unsaved work. `--yes`
-  skips the confirmation prompt; `--dry` prints what would be reaped
-  without touching disk.
+- `gc` previews eligible worktrees by default. Use `--apply` to remove them
+  after confirmation, or `--yes` to apply without prompting. `--dry`
+  (alias `--dry-run`) forces a preview even with either apply flag.
 - `--force-unsaved` - also reap worktrees that hold unsaved work
   (uncommitted changes or unmerged commits). **Dangerous:** this
   destroys the only copy of that work. It requires a second explicit
@@ -128,26 +128,29 @@ clear a lock by hand, use `bernstein worktrees unlock`.
 
 ## Lifecycle event
 
-The CLI emits `worktree.gc` after each reap (or, with `--dry`,
-once per would-be reap), and once per worktree preserved for safety.
-Plugins can hook this event; the env keys exposed to handlers are
-`BERNSTEIN_WORKTREE_GC_*`, including `BERNSTEIN_WORKTREE_GC_REAPED`
-(`0` for a safety-skip, `1` for a reap) and
-`BERNSTEIN_WORKTREE_GC_UNSAVED` (`1` when the worktree held unsaved
-work). This notification is best-effort and ephemeral - it requires a
-plugin `HookRegistry` and leaves no durable record. For the durable,
-tamper-evident record see the audit trail below.
+During apply, `gc` sends a best-effort `worktree.gc` notification to
+`post_archive` handlers when a plugin `HookRegistry` is installed. It
+sends one after the remover returns for each target and one after
+recording each unsaved-work skip. The handler environment includes:
+
+| Key | Value |
+|-----|-------|
+| `BERNSTEIN_WORKTREE_GC_EVENT` | `worktree.gc` |
+| `BERNSTEIN_WORKTREE_GC_REAPED` | `1` when the remover reports successful directory removal during apply. `0` for a safety skip, an already absent path, or a removal error. |
+| `BERNSTEIN_WORKTREE_GC_UNSAVED` | `1` when the row indicates unsaved work, otherwise `0`. |
+| `BERNSTEIN_WORKTREE_GC_DRY_RUN` | `0` for CLI apply. |
+
+A removal error can leave a partially removed directory. Git metadata
+pruning is best-effort. CLI previews return before locking, audit writes,
+removal and hook dispatch. See the audit trail for the durable record of
+the pre-action decision.
 
 ## Audit trail
 
-Reaping a worktree is the orchestrator's only routine destructive
-action, so each reap is anchored to the HMAC-chained audit log under
-`.sdd/audit/` alongside the best-effort lifecycle event. The audit
-write does **not** depend on a plugin `HookRegistry`: it is written
-even when the CLI runs standalone.
-
-For every reaped worktree - and for every worktree *skipped* for safety -
-`gc` appends one event:
+During apply, `gc` appends one event to the HMAC-chained audit log
+under `.sdd/audit/` for each selected target before attempting removal.
+It also appends one per worktree skipped for safety. These writes take
+place even when the CLI runs standalone.
 
 | Field | Value |
 |-------|-------|
@@ -156,37 +159,20 @@ For every reaped worktree - and for every worktree *skipped* for safety -
 | `resource_type` | `worktree` |
 | `resource_id` | session id (worktree directory basename) |
 
-The `details` payload captures, before deletion: `state`, `task_id`,
-`path`, `size_bytes`, `age_seconds`, `last_trace_mtime`, the
-pre-deletion git `head_sha`, a `dirty` flag (uncommitted/unmerged
-changes present), `has_unsaved_work` (the classifier's reap veto),
-`reaped` (`false` for a safety-skip, `true` for an actual deletion),
-`forced` (`true` when `--force-unsaved` overrode the veto), and
-`dry_run`.
+The `details` payload records `state`, `task_id`, `path`, `size_bytes`,
+`age_seconds`, `last_trace_mtime`, `head_sha`, `dirty`, and
+`has_unsaved_work` (the classifier's veto). `reaped=true` records
+selection for removal before the attempt. `reaped=false` records an
+unsaved-work skip. `forced` records the force option for a selected
+target. CLI apply records `dry_run=false`.
 
-**Safety-skips are recorded, not silent.** When `gc` preserves a
-worktree because it holds unsaved work, it still appends a
-`worktree.reap` event flagged `reaped=false` with the unsaved-work
-reason, so the decision to preserve is anchored in the same
-tamper-evident chain as a real reap.
+**Pre-action fingerprint.** `head_sha` records the available Git HEAD
+before a removal attempt, and `dirty` reflects `git status --porcelain`
+at that point. Either field may be `null` when Git cannot determine it.
 
-**Pre-deletion fingerprint.** `head_sha` and `dirty` are read from the
-worktree *before* `rmtree`, so the entry proves exactly which commit
-and working-tree state were destroyed - enough to decide whether to
-restore from reflog after an accidental GC. A `corrupt` worktree may
-have no readable `.git`; its fingerprint degrades to `head_sha=null`
-and `dirty=null` rather than crashing GC or attributing the enclosing
-repository's HEAD.
-
-**Fail-closed contract.** The audit event is appended *before* the
-directory is removed. If the append fails (e.g. audit key permission
-error, full disk) the reap is aborted and the error propagates - a
-worktree is never destroyed without a record. Operators whose audit
-key is misconfigured will see `gc` fail rather than silently delete;
-fix the key (see `docs/security/audit-log.md`) and retry.
-
-**`--dry` mode** records the event flagged `dry_run=true` and performs
-no `rmtree`, so a dry run is itself auditable.
+**Fail-closed contract.** If an audit append fails, `gc` propagates the
+error, skips removal and notification for that row, and stops before
+processing any later rows.
 
 Verify and inspect the reap events:
 
@@ -244,8 +230,7 @@ Inspect what's on disk:
 bernstein worktrees list
 ```
 
-Preview reap plan without touching disk — this is the default, so no flag is
-needed:
+Preview the removal plan with the default invocation:
 
 ```bash
 bernstein worktrees gc
@@ -320,9 +305,7 @@ bernstein worktrees sweep --apply --removal-approval removal.json
 ```
 
 The default and `--dry-run` are read-only, including no audit writes, signing
-keys or GC lock creation. `--dry-run` outranks `--apply`. The legacy `worktrees
-gc` also accepts `--dry-run` as an alias of `--dry`; its CLI preview now makes
-no audit writes. Its existing `--yes` deletion opt-in remains supported.
+keys or GC lock creation. `--dry-run` outranks `--apply`.
 
 Rows include task ids, age and disk bytes. Worktree bytes are measured locally.
 Text output also prints each lane's full resource id and removal status on a
