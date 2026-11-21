@@ -1,0 +1,558 @@
+"""Read-only recorded-decision API test vectors (#5070)."""
+
+from __future__ import annotations
+
+import errno
+import hashlib
+import json
+import os
+from pathlib import Path
+from urllib.parse import quote
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from bernstein.core.cost.spend_ledger import CallTags, SpendLedger
+from bernstein.core.routes import governance as routes
+from bernstein.core.security import governance
+
+
+@pytest.fixture(autouse=True)
+def _platform_support(request: pytest.FixtureRequest) -> None:
+    if not routes.ANCHORED_OPEN_SUPPORTED and request.node.name != "test_unsupported_platform_fails_closed":
+        pytest.skip("descriptor-bound no-follow reads are unavailable on this platform")
+
+
+def _client(workdir: Path) -> TestClient:
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.include_router(routes.router, prefix="/api/v1")
+    app.state.workdir = workdir
+    app.dependency_overrides[routes.require_operator] = lambda: "fixture-operator"
+    return TestClient(app)
+
+
+def _record(workdir: Path, **fields: object) -> Path:
+    directory = workdir / ".sdd" / "lineage" / "run-1" / "governance_decisions"
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {
+        "run_id": "run-1",
+        "subject": "alice",
+        "action": "tasks:write",
+        "verdict": "deny",
+        "inputs_hash": "sha256:recorded-inputs",
+        "timestamp": 1000,
+        "context": {},
+        "journal_entry_hash": "sha256:recorded-anchor",
+    } | fields
+    path = directory / "000000-record.json"
+    path.write_text(json.dumps(record))
+    return path
+
+
+def _snapshot(root: Path) -> dict[str, bytes | None]:
+    return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
+
+
+def _budget_refusal(
+    workdir: Path, *, prior_spend: float = 9.0, cap_usd: float | None = None, next_cost_usd: float = 2.0
+) -> tuple[SpendLedger, Path]:
+    path = workdir / ".sdd" / "cost" / "ledger.jsonl"
+    path.parent.mkdir(parents=True)
+    ledger = SpendLedger(path=path)
+    ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=prior_spend)
+    with pytest.raises(governance.BudgetRefused):
+        governance.check_budget_decision(
+            run_id="run-1",
+            lineage_root=workdir / ".sdd" / "lineage",
+            hmac_key=b"synthetic-test-key-only",
+            subject="alice",
+            cap_usd=prior_spend + 1.0 if cap_usd is None else cap_usd,
+            next_cost_usd=next_cost_usd,
+            ledger_path=path,
+            now=1000,
+        )
+    return ledger, path
+
+
+def _list(client: TestClient) -> dict:
+    response = client.get("/api/v1/governance/decisions", params={"run_id": "run-1"})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_list_and_detail_preserve_recorded_fields_without_writes_or_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _record(tmp_path, context={"policy_version": "policy-17", "role": "viewer"})
+    monkeypatch.setattr(routes, "_hmac_key", lambda: pytest.fail("read route must not access keys"))
+    before = _snapshot(tmp_path)
+    client = _client(tmp_path)
+    (row,) = _list(client)["decisions"]
+    assert row["subject"] == "alice"
+    assert row["action"] == "tasks:write"
+    assert row["verdict"] == "deny"
+    assert row["inputs_hash"] == "sha256:recorded-inputs"
+    assert row["journal_entry_hash"] == "sha256:recorded-anchor"
+    assert row["policy_version"] == "policy-17"
+    assert row["context"] == {"policy_version": "policy-17", "role": "viewer"}
+    assert row["budget"] is None
+    detail = client.get(f"/governance/decisions/{row['decision_id']}", params={"run_id": "run-1"})
+    assert detail.status_code == 200
+    assert detail.json() == row
+    assert client.get(f"/governance/decisions/{'0' * 64}", params={"run_id": "run-1"}).status_code == 404
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("context", [{}, {"policy_version": ""}, {"policy_version": None}])
+@pytest.mark.parametrize("anchor", ["", None])
+def test_missing_policy_and_anchor_are_not_invented(tmp_path: Path, context: dict, anchor: str | None) -> None:
+    _record(tmp_path, context=context, journal_entry_hash=anchor)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    assert row["policy_version"] == "this decision names no policy version"
+    assert row["journal_entry_hash"] == ""
+
+
+def test_malformed_anchor_is_not_presented_as_text(tmp_path: Path) -> None:
+    _record(tmp_path, journal_entry_hash={"value": "unreadable"})
+    response = _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"})
+    assert response.status_code == 409
+
+
+def test_empty_run_writes_nothing(tmp_path: Path) -> None:
+    assert _list(_client(tmp_path)) == {"run_id": "run-1", "decisions": []}
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("run_id", ["", ".", "..", "../other", "/run", "a/b", "a\\b", "a\x00b", "a" * 201, "a b"])
+def test_invalid_run_ids_are_rejected(tmp_path: Path, run_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "_read_recorded_decisions", lambda *_: pytest.fail("invalid run reached storage"))
+    client = _client(tmp_path)
+    for suffix in ("", "/" + "a" * 64):
+        assert client.get(f"/governance/decisions{suffix}", params={"run_id": run_id}).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "decision_id", ["unknown", "a" * 63, "a" * 65, "A" * 64, "..hidden", "a/b", "/a", "a\\b", "a\x00b"]
+)
+def test_invalid_decision_id_never_reads_the_run(
+    tmp_path: Path, decision_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(routes, "_read_recorded_decisions", lambda *_: pytest.fail("invalid digest reached storage"))
+    url = f"/governance/decisions/{quote(decision_id, safe='')}"
+    assert _client(tmp_path).get(url, params={"run_id": "run-1"}).status_code == 404
+
+
+def test_valid_run_id_keeps_its_stored_spelling(tmp_path: Path) -> None:
+    run_id = "run:v1.2_A-b"
+    record = _record(tmp_path, run_id=run_id)
+    run = record.parent.parent
+    run.rename(run.with_name(run_id))
+    response = _client(tmp_path).get("/governance/decisions", params={"run_id": run_id})
+    assert response.status_code == 200
+    assert [row["run_id"] for row in response.json()["decisions"]] == [run_id]
+
+
+@pytest.mark.parametrize("component", ["run", "decisions", "record"])
+@pytest.mark.parametrize("within_project", [True, False], ids=["sibling", "outside"])
+def test_redirected_evidence_is_rejected_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component: str, within_project: bool
+) -> None:
+    project = tmp_path / "project"
+    record = _record(project)
+    link = {"run": record.parent.parent, "decisions": record.parent, "record": record}[component]
+    target = (project if within_project else tmp_path) / "elsewhere"
+    link.rename(target)
+    link.symlink_to(target, target_is_directory=component != "record")
+    original = os.open
+
+    def guarded_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if kwargs.get("dir_fd") is not None and path == link.name:
+            pytest.fail("redirected evidence reached the descriptor-relative open")
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", guarded_open)
+    client = _client(project)
+    for suffix in ("", "/" + "a" * 64):
+        assert client.get(f"/governance/decisions{suffix}", params={"run_id": "run-1"}).status_code == 409
+
+
+def test_outside_record_link_is_rejected(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    outside = tmp_path / "unrelated.json"
+    outside.write_text(record.read_text())
+    record.unlink()
+    record.symlink_to(outside)
+    assert _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"}).status_code == 409
+
+
+def test_different_run_in_record_is_rejected(tmp_path: Path) -> None:
+    _record(tmp_path, run_id="other-run")
+    assert _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"}).status_code == 409
+
+
+@pytest.mark.parametrize("state", ["verified", "unavailable", "mismatch"])
+def test_budget_values_have_provenance_and_each_state(
+    tmp_path: Path, state: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger, path = _budget_refusal(tmp_path)
+    if state == "unavailable":
+        path.unlink()
+    elif state == "mismatch":
+        ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=1.0)
+    original = governance.verify_budget_projection
+    calls = []
+
+    def verify(record: governance.GovernanceDecision, prior: float) -> tuple[float | None, str]:
+        calls.append(prior)
+        return original(record, prior)
+
+    monkeypatch.setattr(governance, "verify_budget_projection", verify)
+    before = _snapshot(tmp_path)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    budget = row["budget"]
+    assert row["verdict"] == "refuse"
+    assert budget["cap_usd"]["value"] == 10.0
+    assert budget["prior_spend_usd"]["value"] == (9.0 if state == "verified" else None)
+    for field in ("cap_usd", "prior_spend_usd"):
+        assert budget[field]["state"] == state
+        assert budget[field]["provenance"]
+        assert budget[field]["reason"]
+    assert "journal anchor and signer are not verified" in budget["verification_scope"]
+    assert len(calls) == (0 if state == "unavailable" else 1)
+    assert _snapshot(tmp_path) == before
+
+
+def test_changing_ledger_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger, _ = _budget_refusal(tmp_path)
+    original = governance.verify_budget_projection
+
+    def verify(record: governance.GovernanceDecision, prior: float) -> tuple[float | None, str]:
+        result = original(record, prior)
+        ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=1.0)
+        return result
+
+    monkeypatch.setattr(governance, "verify_budget_projection", verify)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+    assert "changed" in row["budget"]["prior_spend_usd"]["reason"]
+
+
+@pytest.mark.parametrize(("cap", "next_cost"), [(10, 2), (10, 2.0), (10.0, 2)])
+def test_integer_budget_inputs_match_their_recorded_hash(tmp_path: Path, cap: float, next_cost: float) -> None:
+    ledger, _ = _budget_refusal(tmp_path, cap_usd=cap, next_cost_usd=next_cost)
+    client = _client(tmp_path)
+    (row,) = _list(client)["decisions"]
+    assert row["verdict"] == "refuse"
+    assert row["budget"]["cap_usd"]["value"] == 10
+    assert row["budget"]["prior_spend_usd"]["state"] == "verified"
+    assert row["budget"]["prior_spend_usd"]["value"] == 9
+
+    ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=1)
+    (changed,) = _list(client)["decisions"]
+    assert changed["budget"]["prior_spend_usd"]["state"] == "mismatch"
+    assert changed["budget"]["prior_spend_usd"]["value"] is None
+
+
+def test_nonfinite_record_returns_controlled_error(tmp_path: Path) -> None:
+    _record(tmp_path, context={"cap_usd": float("nan")})
+    assert _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"}).status_code == 409
+
+
+def test_nonobject_record_returns_controlled_error(tmp_path: Path) -> None:
+    path = _record(tmp_path)
+    path.write_text("[]")
+    assert _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"}).status_code == 409
+
+
+def test_overflowing_timestamp_returns_controlled_error_for_list_and_detail(tmp_path: Path) -> None:
+    path = _record(tmp_path)
+    client = _client(tmp_path)
+    (healthy,) = _list(client)["decisions"]
+    malformed = json.loads(path.read_text()) | {"timestamp": float("inf")}
+    (path.parent / "000001-invalid.json").write_text(json.dumps(malformed))
+    before = _snapshot(tmp_path)
+    for route in ("/governance/decisions", f"/governance/decisions/{healthy['decision_id']}"):
+        assert client.get(route, params={"run_id": "run-1"}).status_code == 409
+    assert _snapshot(tmp_path) == before
+
+
+def test_unsupported_platform_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _record(tmp_path)
+    monkeypatch.setattr(routes, "ANCHORED_OPEN_SUPPORTED", False)
+    monkeypatch.setattr(routes, "open_anchored", lambda *a, **kw: pytest.fail("unsupported platform reached storage"))
+    client = _client(tmp_path)
+    for suffix in ("", "/" + "a" * 64):
+        response = client.get(f"/governance/decisions{suffix}", params={"run_id": "run-1"})
+        assert response.status_code == 409
+        assert "unavailable on this platform" in response.json()["detail"]
+
+
+def test_record_open_refusal_after_enumeration_cannot_return_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _record(tmp_path)
+    original = os.open
+    opened = []
+
+    def open_record(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if str(path).endswith(".json"):
+            opened.append(path)
+            assert flags & os.O_NOFOLLOW
+            assert flags & os.O_NONBLOCK
+            assert isinstance(kwargs.get("dir_fd"), int)
+            # Deterministically model the OS refusing a replaced link at open;
+            # no racing writer or outside-file read is needed for this test.
+            raise OSError(errno.ELOOP, "no-follow open refused the record")
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(routes.os, "open", open_record)
+    monkeypatch.setattr(governance, "read_decisions", lambda *args: pytest.fail("unrestricted reader must not be used"))
+    response = _client(tmp_path).get("/governance/decisions", params={"run_id": "run-1"})
+    assert response.status_code == 409
+    assert len(opened) == 1
+
+
+def test_ledger_open_refusal_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _budget_refusal(tmp_path)
+    original = routes.open_anchored
+
+    def open_evidence(root: Path, *components: str, **kwargs: object) -> int:
+        if components[-1] == "ledger.jsonl":
+            assert kwargs["require_regular_file"]
+            raise OSError(errno.ELOOP, "no-follow open refused the ledger")
+        return original(root, *components, **kwargs)
+
+    monkeypatch.setattr(routes, "open_anchored", open_evidence)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
+def test_redirected_ledger_is_unavailable_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = tmp_path / "project"
+    _, ledger = _budget_refusal(project)
+    target = tmp_path / "other-ledger"
+    ledger.rename(target)
+    ledger.symlink_to(target)
+    original = routes.open_anchored
+
+    def open_evidence(root: Path, *components: str, **kwargs: object) -> int:
+        if components[-1] == ledger.name:
+            pytest.fail("redirected ledger reached the descriptor-relative open")
+        return original(root, *components, **kwargs)
+
+    monkeypatch.setattr(routes, "open_anchored", open_evidence)
+    (row,) = _list(_client(project))["decisions"]
+    assert row["budget"]["cap_usd"]["value"] == 10.0
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
+@pytest.mark.parametrize("failed_read", [1, 2])
+def test_descriptor_read_error_never_verifies_zero_spend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_read: int
+) -> None:
+    _, ledger = _budget_refusal(tmp_path, prior_spend=0.0)
+    ledger_stat = ledger.stat()
+    actual_fdopen = os.fdopen
+
+    class UnreadableStream:
+        def __init__(self, stream):
+            self.stream = stream
+            self.reads = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.stream.close()
+
+        def read(self):
+            self.reads += 1
+            if self.reads == failed_read:
+                raise OSError("ledger read interrupted")
+            return self.stream.read()
+
+        def seek(self, offset):
+            return self.stream.seek(offset)
+
+    def open_stream(fd, *args, **kwargs):
+        is_ledger = os.path.samestat(os.fstat(fd), ledger_stat)
+        stream = actual_fdopen(fd, *args, **kwargs)
+        return UnreadableStream(stream) if is_ledger else stream
+
+    monkeypatch.setattr(os, "fdopen", open_stream)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
+@pytest.mark.parametrize("stage", ["parsing", "serialization"])
+def test_nesting_failure_returns_controlled_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    _record(tmp_path)
+    original = json.dumps
+
+    def fail_parsing(value: object, *args: object, **kwargs: object) -> object:
+        raise RecursionError("simulated parser nesting limit")
+
+    def fail_serialization(value: object, *args: object, **kwargs: object) -> str:
+        if isinstance(value, dict) and "subject" in value:
+            raise RecursionError("simulated serializer nesting limit")
+        return original(value, *args, **kwargs)
+
+    if stage == "parsing":
+        monkeypatch.setattr(routes.json, "loads", fail_parsing)
+    else:
+        monkeypatch.setattr(routes.json, "dumps", fail_serialization)
+    client = _client(tmp_path)
+    for route in ("/governance/decisions", f"/governance/decisions/{'0' * 64}"):
+        assert client.get(route, params={"run_id": "run-1"}).status_code == 409
+
+
+def test_response_model_depth_failure_returns_controlled_error(tmp_path: Path) -> None:
+    context = {}
+    for _ in range(260):
+        context = {"nested": context}
+    path = _record(tmp_path, context=context)
+    record = governance.GovernanceDecision.from_dict(json.loads(path.read_bytes()))
+    decision_id = hashlib.sha256(json.dumps(record.to_dict(), sort_keys=True, allow_nan=False).encode()).hexdigest()
+    before = _snapshot(tmp_path)
+    client = _client(tmp_path)
+    for route in ("/governance/decisions", f"/governance/decisions/{decision_id}"):
+        assert client.get(route, params={"run_id": "run-1"}).status_code == 409
+    assert path.read_bytes() == before[str(path.relative_to(tmp_path))]
+    assert _snapshot(tmp_path) == before
+
+
+def test_public_schema_matches_response_models() -> None:
+    path = Path(__file__).resolve().parents[2] / "docs" / "api" / "recorded-decisions.schema.json"
+    assert json.loads(path.read_text()) == routes.RecordedDecisions.model_json_schema()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("run_id", None),
+        ("subject", 1),
+        ("action", []),
+        ("verdict", None),
+        ("inputs_hash", {}),
+        ("timestamp", 1000.75),
+        ("timestamp", True),
+        ("context", []),
+        ("context", None),
+        ("context", {"policy_version": 12}),
+    ],
+)
+def test_invalid_field_type_is_unreadable(tmp_path: Path, field: str, value: object) -> None:
+    _record(tmp_path, **{field: value})
+    for suffix in ("", "/" + "a" * 64):
+        response = _client(tmp_path).get("/governance/decisions" + suffix, params={"run_id": "run-1"})
+        assert response.status_code == 409
+
+
+def test_displayed_prior_spend_is_bound_to_hash_precision(tmp_path: Path) -> None:
+    ledger, _ = _budget_refusal(tmp_path)
+    ledger.record(tags=CallTags(agent_id="alice"), model="test", cost_usd=0.0000004)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    prior = row["budget"]["prior_spend_usd"]
+    assert prior["state"] == "verified"
+    assert prior["value"] == 9
+    assert "six decimal places" in prior["provenance"]
+
+
+def test_each_request_reads_budget_evidence_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, path = _budget_refusal(tmp_path)
+    for stamp in (1001, 1002):
+        with pytest.raises(governance.BudgetRefused):
+            governance.check_budget_decision(
+                run_id="run-1",
+                lineage_root=tmp_path / ".sdd" / "lineage",
+                hmac_key=b"synthetic-test-key-only",
+                subject="alice",
+                cap_usd=10,
+                next_cost_usd=2,
+                ledger_path=path,
+                now=stamp,
+            )
+    _record(tmp_path)
+    opened = []
+    verified = []
+    original = routes.open_anchored
+    verify = governance.verify_budget_projection
+
+    def counted_verification(record, prior):
+        verified.append(record.timestamp)
+        return verify(record, prior)
+
+    def counted(root: Path, *parts: str, **kwargs: object) -> int:
+        if parts[-1] == "ledger.jsonl":
+            opened.append(parts[-1])
+        return original(root, *parts, **kwargs)
+
+    monkeypatch.setattr(routes, "open_anchored", counted)
+    monkeypatch.setattr(governance, "verify_budget_projection", counted_verification)
+    client = _client(tmp_path)
+    rows = _list(client)["decisions"]
+    assert len(rows) == 4
+    assert len(opened) == 1
+    assert len(verified) == 3
+    for action, expected in (("budget", 1), ("tasks:write", 0)):
+        row = next(decision for decision in rows if decision["action"] == action)
+        opened.clear()
+        verified.clear()
+        assert client.get("/governance/decisions/" + row["decision_id"], params={"run_id": "run-1"}).json() == row
+        assert len(opened) == expected
+        assert len(verified) == expected
+
+
+def test_unreadable_ledger_rows_cannot_verify_zero(tmp_path: Path) -> None:
+    _, path = _budget_refusal(tmp_path, prior_spend=0.0)
+    path.write_bytes(b"unreadable ledger row\n")
+    (row,) = _list(_client(tmp_path))["decisions"]
+    assert row["budget"]["prior_spend_usd"]["state"] == "unavailable"
+    assert row["budget"]["prior_spend_usd"]["value"] is None
+
+
+def test_operation_documents_requirements_and_responses(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    spec = client.get("/openapi.json").json()
+    for alias in ("", "/api/v1"):
+        for suffix in ("", "/{decision_id}"):
+            operation = spec["paths"][alias + "/governance/decisions" + suffix]["get"]
+            assert next(p for p in operation["parameters"] if p["name"] == "run_id")["required"]
+            assert {"200", "400", "401", "403", "409"} <= operation["responses"].keys()
+            if suffix:
+                assert "404" in operation["responses"]
+            url = alias + "/governance/decisions" + suffix.replace("{decision_id}", "a" * 64)
+            assert client.get(url).status_code == 400
+
+
+def test_one_verified_projection_supplies_the_visible_spend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _budget_refusal(tmp_path)
+    load = SpendLedger.load_entries
+    reads = 0
+
+    def read(path: Path) -> list:
+        nonlocal reads
+        reads += 1
+        return [] if reads > 1 else load(path)
+
+    monkeypatch.setattr(SpendLedger, "load_entries", read)
+    (row,) = _list(_client(tmp_path))["decisions"]
+    prior = row["budget"]["prior_spend_usd"]
+    assert prior["value"] == 9
+    assert prior["state"] == "verified"
+
+
+def test_direct_mount_requires_authenticated_operator(tmp_path: Path) -> None:
+    app = FastAPI()
+    app.state.workdir = tmp_path
+    app.include_router(routes.router)
+    client = TestClient(app)
+    for suffix in ("", "/" + "a" * 64):
+        response = client.get("/governance/decisions" + suffix, params={"run_id": "run-1"})
+        assert response.status_code == 403
