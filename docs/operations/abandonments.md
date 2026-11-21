@@ -91,6 +91,10 @@ bernstein abandonments stats  [--workdir PATH] [--json]
   `by_reason`, `by_role`, and `by_adapter`. These are counts, not rates; a
   malformed or invalid ledger row is skipped.
 
+The ledger is one JSON object per LF-terminated line. A row whose text holds
+U+2028 or U+2029, written literally (`ensure_ascii=False`) or escaped, is read
+as one row by both commands.
+
 Pass `--json` (or set the global `--json` flag) for machine-readable
 output. If `list` has no rows to display (including when `--limit` is
 non-positive), it prints `No abandonments recorded.`; JSON `list` returns
