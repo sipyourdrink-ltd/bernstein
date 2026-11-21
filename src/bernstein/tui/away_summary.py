@@ -108,8 +108,22 @@ def _fetch_task_completion_events(workdir: Path, since_ts: float) -> list[dict[s
     tasks_jsonl = workdir / ".sdd" / "runtime" / "tasks.jsonl"
     if not tasks_jsonl.exists():
         return []
-    records = [rec for rec in _read_jsonl(tasks_jsonl, since_ts) if rec.get("status") in {"done", "failed"}]
-    return records
+    terminal = [rec for rec in _read_jsonl(tasks_jsonl, float("-inf")) if rec.get("status") in {"done", "failed"}]
+    return [rec for rec in terminal if (when := _completion_time(rec)) is not None and when >= since_ts]
+
+
+def _completion_time(record: dict[str, Any]) -> float | None:
+    """When a terminal task row finished, or ``None`` when the row does not say.
+
+    The TaskStore writes ``completed_at``; a row read only for ``timestamp`` counted as never having
+    finished, so a recent task was left out of the recap (#7944). An older row that carries only
+    ``timestamp`` still counts by it.
+    """
+    for key in ("completed_at", "timestamp"):
+        value = record.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
 
 
 def _build_summary_text(
