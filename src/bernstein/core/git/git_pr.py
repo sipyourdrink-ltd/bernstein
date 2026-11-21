@@ -54,6 +54,11 @@ class MergeResult:
             tie the recorded merge decision back to the git object it
             actually produced, rather than recording only that *a* merge
             happened.
+        quarantined_to: When the guard refused ``.sdd/`` agent output, the
+            folder (relative to the repository root) that keeps a copy of
+            it, under :data:`MERGE_QUARANTINE_DIR`. Empty when nothing was
+            kept. Credential paths are never copied (#8078).
+        quarantined_files: The refused paths that were copied there.
     """
 
     success: bool
@@ -62,6 +67,8 @@ class MergeResult:
     error: str = ""
     refused_forbidden_files: list[str] = field(default_factory=list)
     merge_commit: str = ""
+    quarantined_to: str = ""
+    quarantined_files: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -128,6 +135,75 @@ def _is_forbidden_for_merge(path: str) -> bool:
         if norm == prefix.rstrip("/") or norm.startswith(prefix):
             return True
     return norm in _MERGE_DENY_EXACT
+
+
+#: Where a refused merge keeps the agent output it could not commit (#8078). Under ``.sdd/`` so the
+#: kept files are runtime state too, and never reach a commit themselves.
+MERGE_QUARANTINE_DIR = ".sdd/quarantine/merge-refused"
+
+#: Refused paths that hold credentials. They are not copied: a quarantine copy would put a key or a
+#: token in one more place, and outlive the worktree it came from.
+_NEVER_QUARANTINE_PREFIXES: tuple[str, ...] = (
+    ".sdd/auth/",
+    ".sdd/attestations/",
+    ".sdd/runtime/agent_tokens/",
+)
+
+
+def _quarantinable(path: str) -> bool:
+    """Return True for a refused path that is agent output under ``.sdd/``, not a credential."""
+    norm = path.replace("\\", "/")
+    while norm.startswith("./"):
+        norm = norm[2:]
+    if not norm.startswith(".sdd/") or norm.startswith(f"{MERGE_QUARANTINE_DIR}/"):
+        return False
+    return not any(norm.startswith(prefix) for prefix in _NEVER_QUARANTINE_PREFIXES)
+
+
+def _quarantine_refused_files(cwd: Path, branch: str, forbidden: list[str]) -> tuple[str, list[str]]:
+    """Copy the refused ``.sdd/`` agent output out of the staged merge, before it is aborted.
+
+    The merge guard refuses a staged set that holds runtime state, and the worktree is cleaned up
+    after a failed merge, so a file an agent was told to write under ``.sdd/`` was lost (#8078).
+    The guard still refuses the merge; this keeps the files where an operator can find them.
+
+    Args:
+        cwd: Repository root where the merge is staged; the files are read from its working tree.
+        branch: The branch being merged, which names the quarantine folder.
+        forbidden: The refused paths, as :func:`_verify_merge_staging_is_safe` returned them.
+
+    Returns:
+        The quarantine folder relative to *cwd* (empty when nothing was kept), and the kept paths.
+    """
+    candidates = [p for p in forbidden if _quarantinable(p)]
+    if not candidates:
+        return "", []
+    safe_branch = "".join(c if c.isalnum() or c in "-_." else "_" for c in branch) or "branch"
+    relative = f"{MERGE_QUARANTINE_DIR}/{safe_branch}"
+    root = cwd / relative
+    kept: list[str] = []
+    for path in candidates:
+        source = cwd / path
+        if not source.is_file():
+            continue
+        target = root / path
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        except OSError as exc:
+            logger.warning("merge_preflight: could not keep refused file %s for %s: %s", path, branch, exc)
+            continue
+        kept.append(path)
+    if not kept:
+        return "", []
+    logger.warning(
+        "merge_preflight: kept %d refused file(s) from %s in %s: %s",
+        len(kept),
+        branch,
+        relative,
+        ", ".join(kept),
+    )
+    return relative, kept
 
 
 def _verify_merge_staging_is_safe(
@@ -403,6 +479,8 @@ def merge_with_conflict_detection(
         # provenance logging.
         forbidden = _verify_merge_staging_is_safe(cwd, branch)
         if forbidden:
+            # Read from the staged working tree, so it runs before the abort clears it (#8078).
+            quarantine, kept = _quarantine_refused_files(cwd, branch, forbidden)
             run_git(["merge", "--abort"], cwd, timeout=10)
             forbidden_str = ", ".join(forbidden[:5])
             more = f" (+{len(forbidden) - 5} more)" if len(forbidden) > 5 else ""
@@ -423,8 +501,11 @@ def merge_with_conflict_detection(
                     f"merge-preflight safety guard refused: {len(forbidden)} "
                     f"forbidden path(s) staged (.sdd/, attestations/, auth/, "
                     f"bernstein.yaml). First: {forbidden_str}{more}"
+                    + (f". Kept {len(kept)} refused file(s) in {quarantine}" if kept else "")
                 ),
                 refused_forbidden_files=forbidden.copy(),
+                quarantined_to=quarantine,
+                quarantined_files=kept,
             )
 
         # Clean merge - commit it
