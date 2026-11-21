@@ -87,10 +87,7 @@ DOCS_ONLY_GUARDED_JOBS = (
     "snapshot-tests",
     "test",
 )
-# install-smoke-rpm is in DOCS_ONLY_SKIPPABLE but not in the list above:
-# it carries a *stricter* guard (rpm-relevant paths on merge_group, of
-# which docs are never one), so docs-only skipping is implied and the
-# job needs no second condition.
+# install-smoke-rpm uses its own relevance flag on every event.
 
 
 @pytest.fixture(scope="module")

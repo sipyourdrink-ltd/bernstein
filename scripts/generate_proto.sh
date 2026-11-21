@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generate Python gRPC stubs from proto definitions.
-# Requires: pip install grpcio-tools
+# CI checks the output of grpcio-tools==1.83.0.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -8,22 +8,49 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 PROTO_DIR="$ROOT_DIR/proto"
 OUT_DIR="$ROOT_DIR/src/bernstein/core/grpc_gen"
 
-mkdir -p "$OUT_DIR"
+if [[ $# -gt 1 || (${1:-} != "" && ${1:-} != "--check") ]]; then
+    echo "Usage: $0 [--check]" >&2
+    exit 2
+fi
+
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+generated="$stage/bernstein/v1"
 
 python -m grpc_tools.protoc \
     -I"$PROTO_DIR" \
-    --python_out="$OUT_DIR" \
-    --pyi_out="$OUT_DIR" \
-    --grpc_python_out="$OUT_DIR" \
-    "$PROTO_DIR"/bernstein/v1/tasks.proto \
-    "$PROTO_DIR"/bernstein/v1/cluster.proto
+    --python_out="$stage" \
+    --pyi_out="$stage" \
+    --grpc_python_out="$stage" \
+    "$PROTO_DIR"/bernstein/v1/*.proto
 
-# Fix relative imports in generated code.
-for f in "$OUT_DIR"/*.py; do
+# protoc mirrors the source package. Bernstein ships these modules together
+# in the flat grpc_gen package, with relative imports between siblings.
+for f in "$generated"/*.py "$generated"/*.pyi; do
     sed -i.bak 's/^from bernstein\.v1 import/from . import/' "$f"
     rm -f "$f.bak"
 done
 
+# Only the flat *_pb2 modules belong to the generator. Older runs left
+# untracked files in bernstein/v1/ inside OUT_DIR.
+for f in "$OUT_DIR"/*_pb2.py "$OUT_DIR"/*_pb2.pyi "$OUT_DIR"/*_pb2_grpc.py; do
+    if [[ -f "$f" && ! -e "$generated/${f##*/}" ]]; then
+        if [[ ${1:-} == "--check" ]]; then
+            echo "Unexpected generated module: $f" >&2
+            exit 1
+        fi
+        rm "$f"
+    fi
+done
+if [[ ${1:-} == "--check" ]]; then
+    for f in "$generated"/*.py "$generated"/*.pyi; do
+        diff -u "$OUT_DIR/${f##*/}" "$f" || exit 1
+    done
+    exit 0
+fi
+
+mkdir -p "$OUT_DIR"
+cp "$generated"/*.py "$generated"/*.pyi "$OUT_DIR/"
 touch "$OUT_DIR/__init__.py"
 
 echo "Generated gRPC stubs in $OUT_DIR"
