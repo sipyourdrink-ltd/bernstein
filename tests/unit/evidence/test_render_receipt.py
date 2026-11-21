@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import doctest
 import hashlib
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +22,15 @@ from bernstein.core.evidence.render_receipt import (
     first_property_difference,
     render_delta,
 )
+
+
+def test_render_pair_reference_examples() -> None:
+    operations = Path(__file__).resolve().parents[3] / "docs" / "operations"
+    examples = doctest.testfile(
+        str(operations / "render-pairs.md"), module_relative=False, encoding="utf-8", raise_on_error=True
+    )
+    assert examples.attempted > 0
+    assert "(render-pairs.md)" in (operations / "replay.md").read_text(encoding="utf-8")
 
 
 def test_viewport_basics() -> None:
