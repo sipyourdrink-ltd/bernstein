@@ -140,6 +140,15 @@ class FrameBuffer:
             while first_change < min_len and new_line[first_change] == old_line[first_change]:
                 first_change += 1
 
+            # A character index is a terminal column only when the prefix is ASCII: a double-width
+            # glyph such as `表` takes two columns, so the suffix was written inside it (#8024).
+            # Such a row is repainted from column 1 and its tail cleared.
+            if not new_line[:first_change].isascii():
+                buf.write(f"\033[{row_idx + 1};1H")
+                buf.write(new_line)
+                buf.write(self._CLEAR_EOL)
+                continue
+
             # Move cursor to that cell (ANSI is 1-indexed)
             buf.write(f"\033[{row_idx + 1};{first_change + 1}H")
             buf.write(new_line[first_change:])

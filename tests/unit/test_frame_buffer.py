@@ -205,3 +205,26 @@ def test_fps_limiter_does_not_sleep_after_long_gap() -> None:
         mock_time.monotonic.return_value = buf._last_frame_time + 2.0
         buf.render_frame("second")
         mock_time.sleep.assert_not_called()
+
+
+def test_frame_diff_after_double_width_prefix() -> None:
+    """A changed cell after a double-width glyph is not written inside it (#8024)."""
+    from io import StringIO
+
+    def second_write(first: str, second: str) -> str:
+        stream = StringIO()
+        buffer = FrameBuffer(stream=stream)
+        buffer.render_frame(first)
+        stream.seek(0)
+        stream.truncate()
+        buffer.render_frame(second)
+        return stream.getvalue()
+
+    # `表` occupies columns 1 and 2. Column 2 is inside it; the row is repainted from column 1.
+    wide = second_write("表a", "表b")
+    assert "\x1b[1;2H" not in wide
+    assert "\x1b[1;1H表b" in wide
+
+    # The ASCII path still writes only the suffix, at the column after the shared prefix.
+    narrow = second_write("ab", "ac")
+    assert "\x1b[1;2Hc" in narrow
