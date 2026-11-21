@@ -140,7 +140,7 @@ def check_mcp_catalog_all_off() -> Check:
         name="MCP catalog all-off",
         status=CheckStatus.FAIL,
         detail=f"{len(installed)} entry(ies) installed: {names}{suffix}",
-        fix="bernstein mcp catalog remove <id> for each, or wipe ~/.config/bernstein/mcp.json",
+        fix="bernstein mcp catalog uninstall <id> for each, or wipe ~/.config/bernstein/mcp.json",
     )
 
 
