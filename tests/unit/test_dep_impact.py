@@ -240,6 +240,31 @@ class TestFindCallImpactsChangedParamPosition:
         assert impacts == []
 
 
+class TestFindCallImpactsBecameKeywordOnly:
+    def _impacts(self, source: str) -> list[CallSiteImpact]:
+        # f(a, b, c) became f(a, b, *, c)
+        bc = BreakingChange(
+            file="mod.py",
+            name="f",
+            change_type=ChangeType.CHANGED_PARAM_POSITION,
+            description="Parameter 'c' in 'f' became keyword-only (was position 2)",
+            line=1,
+        )
+        tree = _parse_with_line(source)
+        return _find_call_impacts(tree, "caller.py", {"f": "f"}, set(), [bc])
+
+    def test_positional_value_at_lost_slot_flagged(self) -> None:
+        # f(1, 2, 3) passes a third positional value that no longer binds.
+        impacts = self._impacts("f(1, 2, 3)")
+        assert len(impacts) == 1
+        assert "positional" in impacts[0].reason
+
+    def test_keyword_use_at_lost_slot_not_flagged(self) -> None:
+        # f(1, 2, c=3) is still a valid call under the new signature.
+        impacts = self._impacts("f(1, 2, c=3)")
+        assert impacts == []
+
+
 # ---------------------------------------------------------------------------
 # find_call_site_impacts - integration test with real files
 # ---------------------------------------------------------------------------
