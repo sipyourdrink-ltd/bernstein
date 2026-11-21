@@ -8,7 +8,9 @@ charting libraries required.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -35,6 +37,22 @@ class BenchmarkDataPoint:
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
+
+_SUBMICROSECOND_DIGITS = re.compile(r"[Tt ]\d{2}:?\d{2}:?\d{2}[.,]\d{6}(\d+)")
+
+
+def _timestamp_sort_key(point: BenchmarkDataPoint) -> tuple[bool, datetime | str, str]:
+    try:
+        instant = datetime.fromisoformat(point.timestamp)
+    except ValueError:
+        # Keep undated rows, in their original lexical order, after dated rows.
+        return True, point.timestamp, ""
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=UTC)
+    # datetime truncates fractions to microseconds. Compare any remaining decimal digits on ties.
+    tail = _SUBMICROSECOND_DIGITS.search(point.timestamp)
+    return False, instant, tail[1].rstrip("0") if tail else ""
 
 
 def load_benchmark_data(data_dir: Path) -> list[BenchmarkDataPoint]:
@@ -72,7 +90,7 @@ def load_benchmark_data(data_dir: Path) -> list[BenchmarkDataPoint]:
         except (KeyError, TypeError, ValueError):
             continue  # skip malformed files
 
-    points.sort(key=lambda p: p.timestamp)
+    points.sort(key=_timestamp_sort_key)
     return points
 
 

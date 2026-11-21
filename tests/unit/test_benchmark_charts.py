@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -215,6 +216,25 @@ class TestRenderComparisonReport:
 # ---------------------------------------------------------------------------
 # load_benchmark_data
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("earlier", "later"),
+    [
+        ("2026-04-01T08:00:00Z", "2026-04-01T08:00:00.500Z"),
+        ("2026-04-01T10:00:00+02:00", "2026-04-01T09:00:00Z"),
+        ("2026-04-01T08:00:00Z", "2026-04-01T08:00:00.0000001Z"),
+        ("2026-04-01T10:00:00.1234567+02:00", "2026-04-01T08:00:00.12345671Z"),
+    ],
+    ids=["fractional-seconds", "utc-offset", "sub-microsecond", "sub-microsecond-offset"],
+)
+def test_benchmark_rows_sort_by_instant(tmp_path: Path, earlier: str, later: str) -> None:
+    for filename, run_id, stamp in [("a.json", "later", later), ("b.json", "earlier", earlier)]:
+        _write_benchmark_json(tmp_path, filename, {**asdict(_SAMPLE_POINT_A), "run_id": run_id, "timestamp": stamp})
+
+    points = load_benchmark_data(tmp_path)
+
+    assert [(p.run_id, p.timestamp) for p in points] == [("earlier", earlier), ("later", later)]
 
 
 class TestLoadBenchmarkData:
