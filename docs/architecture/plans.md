@@ -180,6 +180,9 @@ Plus warnings:
 check reports an error - both spellings. A CI gate should branch on that rather
 than grep the output. The schema check runs first and, when it finds anything,
 the command reports those errors and stops without building the task graph.
+Before any check, the command reads the file as UTF-8. A file with an invalid
+UTF-8 byte, or one that raises an I/O error on read, exits `1` with
+`Plan file could not be read: <path>: <reason>` and no traceback (#7870).
 
 Common errors:
 
