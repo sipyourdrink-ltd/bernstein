@@ -34,11 +34,11 @@ and every one of them is collected unless you name a subset:
 
 | Section | Paths |
 |---|---|
-| `tasks` | `.sdd/tasks/*.jsonl` |
-| `logs` | `.sdd/runtime/*.log` |
+| `tasks` | `.sdd/tasks/*.jsonl`, `.sdd/runs/*/summary.json` |
+| `logs` | `.sdd/runtime/*.log`, `.sdd/logs/*.log` |
 | `costs` | `.sdd/runtime/costs/*.json` |
 | `audit` | `.sdd/audit/*.jsonl` |
-| `metrics` | `.sdd/metrics/*.jsonl` |
+| `metrics` | `.sdd/metrics/*.jsonl`, `.sdd/metrics/task_*.json` |
 | `traces` | `.sdd/traces/*.json` |
 | `config` | `.sdd/config/*`, `bernstein.yaml` |
 
@@ -90,6 +90,18 @@ hashes it lists contradicts itself, and reports `unverifiable`.
 Per-file hashes detect modification; they do not attest authorship. The
 manifest travels inside the archive, so someone who can edit a member can also
 recompute its hash and rewrite the manifest, and the result verifies `ok`.
+
+The archive is also readable directly by post-run inspection commands using
+`--from-archive PATH`:
+
+```bash
+bernstein report postmortem --from-archive run-archive.zip
+bernstein insights --from-archive run-archive.zip --format json
+```
+
+Both commands share the `RunSource` abstraction (`LiveRunSource` / `ArchiveRunSource`)
+and run `verify_archive` before reading any archive member, failing closed (exit 1)
+if the bundle has tampered, missing, unexpected, or unverifiable entries.
 
 ## Anchoring the manifest outside the archive
 
