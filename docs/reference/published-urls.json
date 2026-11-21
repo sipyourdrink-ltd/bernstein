@@ -127,6 +127,16 @@
       "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#compliance-pack-manifest-v1"
     },
     {
+      "url": "https://bernstein.run/compliance/sbom-deps/v1",
+      "kind": "redirect",
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#compliance-sbom-deps-v1"
+    },
+    {
+      "url": "https://bernstein.run/compliance/sbom/v1",
+      "kind": "redirect",
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#compliance-sbom-v1"
+    },
+    {
       "url": "https://bernstein.run/mcp-catalog.json",
       "kind": "document"
     },
