@@ -17,6 +17,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+from urllib.parse import urlparse
+
+from bernstein.core.protocols.mcp.mcp_registry import resolve_header_env_vars
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -119,26 +122,30 @@ class MCPServerConfig:
     Attributes:
         name: Human-readable identifier (used as mcpServers key).
         command: Command parts for stdio transport (e.g. ["npx", "-y", "pkg"]).
-        url: URL for SSE transport.
-        transport: Transport type - "stdio" or "sse".
+        url: URL for remote SSE/HTTP transport.
+        transport: Transport type - "stdio", "sse", or "http".
         env: Extra environment variables for the server process.
+        headers: HTTP headers for remote SSE/HTTP servers (may use ``${VAR}``).
     """
 
     name: str
     command: list[str] = field(default_factory=list[str])
     url: str = ""
-    transport: Literal["stdio", "sse"] = "stdio"
+    transport: Literal["stdio", "sse", "http"] = "stdio"
     env: dict[str, str] = field(default_factory=dict[str, str])
+    headers: dict[str, str] = field(default_factory=dict[str, str])
 
     def to_mcp_config_entry(self) -> dict[str, Any]:
         """Build the mcpServers dict entry for this server.
 
         Returns:
             Dict suitable for inclusion in the ``mcpServers`` structure
-            consumed by Claude Code's ``--mcp-config`` flag.
+            consumed by adapters supporting stdio or remote MCP configs.
         """
-        if self.transport == "sse":
-            entry: dict[str, Any] = {"url": self.url}
+        if self.transport in ("sse", "http"):
+            entry: dict[str, Any] = {"type": self.transport, "url": self.url}
+            if self.headers:
+                entry["headers"] = resolve_header_env_vars(self.headers, server_name=self.name)
         else:
             if not self.command:
                 return {}
@@ -170,10 +177,16 @@ def parse_server_configs(raw: dict[str, dict[str, Any]]) -> list[MCPServerConfig
     """
     configs: list[MCPServerConfig] = []
     for name, defn in raw.items():
-        # Determine transport from explicit key or infer from url presence
-        transport_raw = defn.get("transport", "")
-        if transport_raw == "sse" or (not transport_raw and defn.get("url")):
-            transport: Literal["stdio", "sse"] = "sse"
+        # Determine transport from explicit key/type or infer from url presence
+        transport_raw = str(defn.get("transport") or defn.get("type") or "").strip().lower()
+        url = str(defn.get("url", ""))
+        if transport_raw in ("http", "streamable-http", "streamable_http"):
+            transport: Literal["stdio", "sse", "http"] = "http"
+        elif transport_raw == "sse":
+            transport = "sse"
+        elif not transport_raw and url:
+            parsed_path = urlparse(url).path.rstrip("/").lower()
+            transport = "sse" if parsed_path.endswith("/sse") else "http"
         else:
             transport = "stdio"
 
@@ -194,7 +207,10 @@ def parse_server_configs(raw: dict[str, dict[str, Any]]) -> list[MCPServerConfig
         if isinstance(env_raw, dict):
             env = {str(k): str(v) for k, v in cast("dict[Any, Any]", env_raw).items()}
 
-        url = str(defn.get("url", ""))
+        headers_raw: Any = defn.get("headers", {})
+        headers: dict[str, str] = {}
+        if isinstance(headers_raw, dict):
+            headers = {str(k): str(v) for k, v in cast("dict[Any, Any]", headers_raw).items()}
 
         configs.append(
             MCPServerConfig(
@@ -203,6 +219,7 @@ def parse_server_configs(raw: dict[str, dict[str, Any]]) -> list[MCPServerConfig
                 url=url,
                 transport=transport,
                 env=env,
+                headers=headers,
             )
         )
     return configs
@@ -338,12 +355,12 @@ class MCPManager:
                 " ".join(config.command),
             )
         else:
-            # SSE transport - no subprocess to manage, mark alive optimistically
+            # Remote transport (SSE or HTTP) - no subprocess to manage, mark alive optimistically
             state.alive = bool(config.url)
             if state.alive:
-                logger.info("Registered SSE MCP server '%s' at %s", config.name, config.url)
+                logger.info("Registered %s MCP server '%s' at %s", config.transport.upper(), config.name, config.url)
             else:
-                logger.warning("SSE MCP server '%s' has no URL", config.name)
+                logger.warning("%s MCP server '%s' has no URL", config.transport.upper(), config.name)
 
         self._servers[config.name] = state
 
