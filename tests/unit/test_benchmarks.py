@@ -86,17 +86,46 @@ def test_bench_task_create(benchmark: Any, store: TaskStore) -> None:
     benchmark(_create)
 
 
-def test_bench_task_claim_next(benchmark: Any, store: TaskStore) -> None:
-    """Benchmark: claiming the next task for a role."""
+#: More claims than the 50 tasks the benchmark used to seed once, so a run past them would show.
+_CLAIM_ROUNDS = 60
 
-    # Pre-populate with 50 tasks
-    for i in range(50):
-        _run(store.create(_FakeCreateRequest(title=f"pre-{i}", role="backend")))
+
+def _claim_pair(store: TaskStore) -> tuple[Any, Any]:
+    """Return an untimed ``setup`` that seeds one claimable task, and a timed ``claim`` of it.
+
+    The benchmark used to seed 50 tasks once and reuse one destructive callback for warmup,
+    calibration and measurement, so every call past the 50th measured an empty lookup (#7873).
+    """
+    claimed: list[Task] = []
+
+    def _setup() -> tuple[tuple[()], dict[str, Any]]:
+        _run(store.create(_FakeCreateRequest(title=f"claim-{uuid.uuid4().hex[:6]}", role="backend")))
+        return (), {}
 
     def _claim() -> None:
-        _run(store.claim_next("backend"))
+        task = _run(store.claim_next("backend"))
+        assert task is not None, "a measured claim found no claimable task"
+        claimed.append(task)
 
-    benchmark(_claim)
+    _claim.claimed = claimed  # type: ignore[attr-defined]
+    return _setup, _claim
+
+
+def test_bench_task_claim_next(benchmark: Any, store: TaskStore) -> None:
+    """Benchmark: claiming the next task for a role. Every measured call claims a task."""
+    setup, claim = _claim_pair(store)
+    benchmark.pedantic(claim, setup=setup, rounds=_CLAIM_ROUNDS, iterations=1, warmup_rounds=0)
+    assert claim.claimed, "the benchmark measured no claim"
+
+
+def test_claim_pair_claims_a_task_on_every_call_past_fifty(store: TaskStore) -> None:
+    """The same setup and claim, run more than 50 times without the benchmark, never come back empty."""
+    setup, claim = _claim_pair(store)
+    for _ in range(_CLAIM_ROUNDS):
+        setup()
+        claim()
+    assert len(claim.claimed) == _CLAIM_ROUNDS
+    assert len({task.id for task in claim.claimed}) == _CLAIM_ROUNDS
 
 
 def test_bench_lifecycle_transition(benchmark: Any) -> None:
