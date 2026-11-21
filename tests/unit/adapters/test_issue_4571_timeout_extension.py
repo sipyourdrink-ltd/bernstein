@@ -12,13 +12,15 @@ extension never moved the kill. The fix:
   timer, start a fresh one at the new deadline). A missed re-arm leaves the
   original timer in place, so a non-extended agent is still killed on time.
 
-These tests exercise the real mechanism with a live timer at sub-second scale,
-not a mocked clock: the bug lives in the arming / re-arming.
+The deadline tests drive the real watchdog callback through a manual timer
+so runner scheduling cannot determine whether the old deadline fires.
 """
 
 from __future__ import annotations
 
+import signal
 import time
+from collections.abc import Callable
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -28,6 +30,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from bernstein.core.models import AgentBackend, AgentSession, Complexity, ModelConfig, Scope, Task
 
+from bernstein.adapters import base
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.defaults import TASK
@@ -72,63 +75,68 @@ class _WatchdogAdapter(CLIAdapter):
         return SpawnResult(pid=9004, log_path=workdir / "watchdog.log", timeout_timer=self.timer)
 
 
-def test_extending_a_session_moves_the_process_deadline() -> None:
-    """An extended budget re-arms the watchdog so the process survives past
-    the original deadline, and the re-armed timer still fires later."""
+@pytest.fixture
+def advance_watchdog_time(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+    now = 0.0
+    timers: list[ManualTimer] = []
+
+    class ManualTimer:
+        def __init__(self, interval: float, callback: Callable[[], None]) -> None:
+            self.interval = interval
+            self.callback = callback
+            self.deadline = 0.0
+            self.cancelled = False
+
+        def start(self) -> None:
+            self.deadline = now + self.interval
+            timers.append(self)
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    def advance(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+        for timer in sorted(timers, key=lambda timer: timer.deadline):
+            if timer.deadline <= now:
+                timers.remove(timer)
+                if not timer.cancelled:
+                    timer.callback()
+
+    monkeypatch.setattr(base, "threading", SimpleNamespace(Timer=ManualTimer))
+    return advance
+
+
+def test_extending_a_session_moves_the_process_deadline(advance_watchdog_time: Callable[[float], None]) -> None:
+    """The process survives the original deadline and is killed at the extended one."""
     from bernstein.adapters.codex import CodexAdapter
 
     adapter = CodexAdapter()
-    proc_mock = _make_popen_mock(pid=9001)
+    with patch.object(base, "kill_process_group", return_value=False) as kill_group:
+        timer = adapter._start_timeout_watchdog(pid=9001, timeout_seconds=1, session_id="extend-test")
+        advance_watchdog_time(0.5)
+        kill_group.assert_not_called()
+        adapter.extend_timeout(timer, pid=9001, timeout_seconds=1, session_id="extend-test")
 
-    with (
-        patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock),
-        patch("bernstein.adapters.base.kill_process_group") as mock_killpg,
-        patch("bernstein.adapters.base.process_alive", return_value=True),
-    ):
-        # Use a generous real-timer window so normal runner scheduling jitter does
-        # not turn this lifecycle test into a deadline test.
-        original_timeout = 1.0
-        timer = adapter._start_timeout_watchdog(pid=9001, timeout_seconds=original_timeout, session_id="extend-test")
-        arm_started = time.monotonic()
-        time.sleep(0.5)
-        elapsed_before_extension = time.monotonic() - arm_started
-        if elapsed_before_extension >= original_timeout:
-            timer.cancel()
-            pytest.skip(f"runner stalled for {elapsed_before_extension:.3f}s before extension")
-
-        # The extension path re-arms with a fresh deadline 1.0s from THIS moment,
-        # pushing the kill past the original 1.0s mark (to ~1.5s).
-        reinstate = adapter.extend_timeout(timer, pid=9001, timeout_seconds=1.0, session_id="extend-test")
-
-        # Past the ORIGINAL deadline (1.0s) but inside the re-armed window.
-        time.sleep(0.7)  # now ~1.2s: original would have fired at 1.0, re-armed fires at ~1.5
-        assert mock_killpg.call_count == 0, "extension did not move the deadline"
-
-        # Past the re-armed deadline.
-        time.sleep(0.6)  # now ~1.8s: re-armed deadline was ~1.5s
-        assert mock_killpg.call_count >= 1, "re-armed deadline never fired"
-
-    reinstate.cancel()
+        advance_watchdog_time(0.5)  # Original deadline.
+        kill_group.assert_not_called()
+        advance_watchdog_time(0.25)  # The replacement interval is relative to the re-arm.
+        kill_group.assert_not_called()
+        advance_watchdog_time(0.25)
+        kill_group.assert_called_once_with(9001, signal.SIGTERM)
 
 
-def test_non_extended_agent_still_killed_at_deadline() -> None:
-    """A watchdog that is NOT re-armed fires at its original deadline - the
-    property we must not lose while fixing the extension."""
+def test_non_extended_agent_still_killed_at_deadline(advance_watchdog_time: Callable[[float], None]) -> None:
+    """A watchdog that is never re-armed still fires at its original deadline."""
     from bernstein.adapters.codex import CodexAdapter
 
     adapter = CodexAdapter()
-    proc_mock = _make_popen_mock(pid=9002)
-
-    with (
-        patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock),
-        patch("bernstein.adapters.base.kill_process_group") as mock_killpg,
-        patch("bernstein.adapters.base.process_alive", return_value=True),
-    ):
-        timer = adapter._start_timeout_watchdog(pid=9002, timeout_seconds=0.8, session_id="no-extend")
-        time.sleep(1.1)
-        assert mock_killpg.call_count >= 1, "non-extended deadline never fired"
-
-    timer.cancel()
+    with patch.object(base, "kill_process_group", return_value=False) as kill_group:
+        adapter._start_timeout_watchdog(pid=9002, timeout_seconds=1, session_id="no-extend")
+        advance_watchdog_time(0.75)
+        kill_group.assert_not_called()
+        advance_watchdog_time(0.25)
+        kill_group.assert_called_once_with(9002, signal.SIGTERM)
 
 
 def test_timeout_fallback_follows_scope_bucket_not_literal_default(tmp_path: Path) -> None:

@@ -18,7 +18,7 @@ portable, offline-verifiable receipts of the chain.
 | `bernstein replay debug <LEFT> <RIGHT>` | Two-run time-travel path diff; content-addressed, byte-identical artifact |
 | `bernstein replay debug <RUN> --fork-from <n>` | Fork-and-reproduce a worktree anchored at parent step N |
 
-Privacy default is local-only. `publish` is opt-in.
+Privacy default is local-only. `publish` is opt-in. For help choosing the correct input and understanding identifier precedence, see the [CLI replay input selection table](../reference/cli/replay.md#choosing-replay-inputs).
 
 ## Two debugging jobs: exploratory vs forensic
 

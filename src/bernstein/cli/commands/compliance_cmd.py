@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
@@ -32,7 +33,6 @@ from bernstein.core.compliance_policies import (
     ALL_POLICIES,
     ComplianceFramework,
     CompliancePolicyLibrary,
-    PolicyInput,
     PolicySeverity,
     evaluate_all,
     evaluate_framework,
@@ -424,18 +424,33 @@ def check_policies(
     non-zero if any failing policy meets the severity threshold set by
     --fail-on (default: critical).
     """
-    inp = PolicyInput(
+    from click.core import ParameterSource
+
+    from bernstein.core.govern.compliance_checks import policy_input_from_project
+
+    workdir = workdir.resolve()
+    # Defaults describe the workspace. Explicit flags remain operator
+    # declarations and retain their existing policy-result provenance.
+    declarations = {
+        "audit_logging": audit_logging,
+        "audit_hmac_chain": audit_hmac_chain,
+        "sandbox_enabled": sandbox_enabled,
+        "seccomp_enabled": seccomp_enabled,
+        "tls_enforced": tls_enforced,
+        "mfa_enabled": mfa_enabled,
+        "rbac_enabled": rbac_enabled,
+        "encrypt_at_rest": encrypt_at_rest,
+        "vulnerability_scanning": vulnerability_scanning,
+        "secrets_rotation_days": secrets_rotation_days,
+    }
+    ctx = click.get_current_context()
+    explicit = {
+        name: value for name, value in declarations.items() if ctx.get_parameter_source(name) != ParameterSource.DEFAULT
+    }
+    inp = replace(
+        policy_input_from_project(workdir),
         audit_retention_days=observe_audit_retention_days(workdir / ".sdd" / "audit"),
-        audit_logging=audit_logging,
-        audit_hmac_chain=audit_hmac_chain,
-        sandbox_enabled=sandbox_enabled,
-        seccomp_enabled=seccomp_enabled,
-        tls_enforced=tls_enforced,
-        mfa_enabled=mfa_enabled,
-        rbac_enabled=rbac_enabled,
-        encrypt_at_rest=encrypt_at_rest,
-        vulnerability_scanning=vulnerability_scanning,
-        secrets_rotation_days=secrets_rotation_days,
+        **explicit,
     )
 
     if framework:
@@ -469,6 +484,14 @@ def check_policies(
     coverage = summarise_evidence_coverage(results)
 
     if as_json:
+        from bernstein.core.checks.adapters import ComplianceLibraryAdapter
+        from bernstein.core.checks.registry import CheckRegistry
+        from bernstein.core.govern.compliance_checks import iter_compliance_checks
+
+        checks = CheckRegistry()
+        for spec in iter_compliance_checks():
+            checks.register(ComplianceLibraryAdapter(spec))
+
         click.echo(
             json.dumps(
                 {
@@ -479,6 +502,9 @@ def check_policies(
                         "evidence": coverage.to_dict(),
                     },
                     "results": [r.to_dict() for r in results],
+                    "checks": [
+                        finding.to_dict() for finding in checks.run_all(workdir, only_areas=("CMP",), log_errors=False)
+                    ],
                 },
                 indent=2,
             )
@@ -698,7 +724,7 @@ def pack_group() -> None:
     "--lineage-dir",
     default=None,
     type=click.Path(path_type=Path),
-    help="Override path to lineage directory (default: <workdir>/.sdd/lineage).",
+    help="Override path to the lineage directory (default: <workdir>/.sdd/lineage).",
 )
 @click.option(
     "--agent-cards-dir",
@@ -1020,29 +1046,61 @@ def pack_ai_rmf(
     show_default=True,
     help="Output format.",
 )
-def controls_command(framework: str | None, output_format: str) -> None:
-    """List the registered compliance controls and their framework mappings."""
+@click.option(
+    "--bundle",
+    "bundle_paths",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    multiple=True,
+    help="Path to a benchmark submission bundle .json file (repeatable).",
+)
+@click.option(
+    "--bundle-dir",
+    "bundle_dirs",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    multiple=True,
+    help="Directory of benchmark submission bundle .json files (repeatable).",
+)
+def controls_command(
+    framework: str | None,
+    output_format: str,
+    bundle_paths: tuple[Path, ...],
+    bundle_dirs: tuple[Path, ...],
+) -> None:
+    """List the registered compliance controls, declaring benchmark suites, and latest measurements."""
+    from bernstein.compliance.control_coverage import (
+        build_control_coverage,
+        discover_bench_coverage_inputs,
+        render_coverage_markdown,
+        render_coverage_text,
+    )
     from bernstein.compliance.controls import get_default_registry
 
     registry = get_default_registry()
-    controls = registry.list_controls(framework=framework)
-    if framework and not controls:
+    try:
+        suite_controls, measurements = discover_bench_coverage_inputs(
+            bundle_paths=bundle_paths,
+            bundle_dirs=bundle_dirs,
+        )
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"Failed to load benchmark bundle: {exc}") from exc
+
+    entries = build_control_coverage(
+        registry,
+        suite_controls,
+        measurements,
+        framework=framework,
+    )
+    if framework and not entries:
         # A typo must not read as "no controls for this framework".
         known = sorted({k for c in registry.list_controls() for k in c.references})
         click.echo(f"No control references framework {framework!r}; known frameworks: {', '.join(known)}", err=True)
 
     if output_format == "json":
-        click.echo(json.dumps([c.to_dict() for c in controls], indent=2))
+        click.echo(json.dumps([e.to_dict() for e in entries], indent=2))
         return
 
     if output_format == "markdown":
-        click.echo(registry.to_markdown_table(framework=framework))
+        click.echo(render_coverage_markdown(entries))
         return
 
-    # Text table format
-    click.echo(f"{'Control ID':<14} {'Category':<14} {'Frameworks':<28} Title")
-    click.echo("─" * 95)
-    for c in controls:
-        fw_list = ", ".join(c.references.keys())
-        click.echo(f"{c.control_id:<14} {c.category:<14} {fw_list:<28} {c.title}")
-    click.echo(f"\nTotal: {len(controls)} controls")
+    click.echo(render_coverage_text(entries))

@@ -11,6 +11,19 @@ committed atomically at run close. The hash covers the whole declaration.
 > bundle referenced from `bernstein.yaml`. A run manifest is a one-shot,
 > per-run configuration snapshot generated automatically.
 
+## Which document answers what?
+
+| Source | What it answers | Input |
+|---|---|---|
+| [Saved run manifest](#how-to-use-it) | What configuration and provenance were declared for this run? | The run's declaration, written at run start and finalized at close. |
+| [Reusable team manifest](team-manifests.md) | What roles, model policies, response profiles and coordination settings define a named team? | A reusable, named team definition referenced from `bernstein.yaml`. |
+| [Bill of materials](run-bom.md) | What model components are recorded as used by this run? | A projection of the run's recorded lineage spine, not the saved run declaration. |
+
+The saved run manifest and lineage-derived bill of materials are both addressed
+by run identifier, but are different run-specific views built from different
+inputs: the declaration and the recorded lineage, respectively. See the
+[AI bill-of-materials guide](run-bom.md) for details.
+
 ## How to use it
 
 ```

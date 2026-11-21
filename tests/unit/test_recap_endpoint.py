@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from bernstein.core.routes.observability import _get_git_diff_stats
 from bernstein.core.server import create_app
 
 
@@ -89,6 +91,62 @@ async def test_recap_with_tasks(client: AsyncClient) -> None:
     assert data["summary"]["completed"] == 0
     assert data["summary"]["failed"] == 0
     assert data["summary"]["success_rate"] == pytest.approx(0.0)
+
+
+@pytest.mark.anyio
+async def test_recap_reports_full_changed_paths(client: AsyncClient, tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, timeout=10)
+
+    git("init", "-q")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    filename = "résumé draft.txt"
+    path = tmp_path / filename
+    path.write_text("Draft\n", encoding="utf-8")
+    git("add", "--", filename)
+    git("commit", "-qm", "Add draft")
+    path.write_text("Draft\nSecond line\n", encoding="utf-8")
+
+    created = await client.post("/tasks", json={"title": "Draft report", "description": "Add report", "role": "qa"})
+    assert created.is_success, created.text
+    task_id = created.json()["id"]
+    claimed = await client.post(f"/tasks/{task_id}/claim")
+    assert claimed.is_success, claimed.text
+    completed = await client.post(f"/tasks/{task_id}/complete", json={"result_summary": "Draft ready"})
+    assert completed.is_success, completed.text
+
+    response = await client.get("/recap")
+    assert response.status_code == 200
+    assert response.json()["diff_stats"] == {
+        "files_changed": 1,
+        "additions": 1,
+        "deletions": 0,
+        "changed_files": [filename],
+    }
+
+
+@pytest.mark.anyio
+async def test_recap_keeps_distinct_git_paths_with_non_utf8_bytes(tmp_path: Path) -> None:
+    def git(*args: str, data: bytes | None = None) -> bytes:
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, input=data, check=True, capture_output=True, timeout=10
+        ).stdout.strip()
+
+    git("init", "-q")
+    blob = git("hash-object", "-w", "--stdin", data=b"draft\n")
+    # The index represents names committed on a different filesystem,
+    # including byte names that this test host may be unable to create.
+    entries = b"".join(b"100644 " + blob + b"\t" + name + b"\0" for name in (b"notes-\xfe.txt", b"notes-\xff.txt"))
+    git("update-index", "-z", "--index-info", data=entries)
+
+    stats = await _get_git_diff_stats(tmp_path, [object()])
+
+    assert stats["files_changed"] == 2
+    assert stats["deletions"] == 2
+    paths = stats["changed_files"]
+    assert len(set(paths)) == 2
+    assert json.loads(json.dumps(paths, ensure_ascii=False).encode("utf-8")) == paths
 
 
 @pytest.mark.anyio

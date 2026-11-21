@@ -6,9 +6,15 @@ would explain a failure goes with it. The run archive is what survives, so for
 a postmortem the archive *is* the evidence, and evidence that cannot be checked
 is a claim.
 
-The archive is a Python API in `bernstein.cli.run_archive`: `create_archive`
-writes it and `verify_archive` checks it. There is no `bernstein` command for
-either yet, so a CI job or a script calls them directly:
+The ZIP run archive is a Python API in `bernstein.cli.run_archive`:
+`create_archive` writes it and `verify_archive` checks it. No `bernstein` command
+creates or verifies ZIP run archives yet, so a CI job or script calls these as
+separate Python operations:
+
+For a different on-disk format, `bernstein recap --archive PATH` summarizes a
+local task-log JSONL file; it does not read or verify ZIP archives. See the
+[recap CLI reference](../reference/cli-reference.md#bernstein-recap) for that
+option.
 
 ```python
 from pathlib import Path

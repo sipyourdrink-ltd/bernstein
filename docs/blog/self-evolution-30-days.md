@@ -42,9 +42,17 @@ does nothing else. No modifications. No proposals. Just watching.
 We seeded the system with 5 days of synthetic pre-run task data to give the anomaly detectors something
 to establish baselines against. Then we started the real run.
 
+The following command is quoted from the original account of the run. It is historical and
+archived here for context only; it is not supported by the current CLI and will not replay the
+30-day experiment:
+
 ```bash
 bernstein evolve --budget 5.00 --phase observe --days 30
 ```
+
+The current `evolve run --dry-run` command instead scans recorded run history for failure-pattern
+drafts. It does not replay historical experiments. `--window` configures the duration of an active
+evolution loop, not a history lookback or replay period; dry-run exits before that loop starts.
 
 ---
 
@@ -277,9 +285,11 @@ of work. It found one on day 29.
 
 ---
 
-## Reproducing this
+## Historical experiment and current preview
 
-The full metrics dataset is in `.sdd/metrics/` in the repo. The evolution config used:
+The full metrics dataset from the experiment is in `.sdd/metrics/` in the repo. The settings below
+record the historical experiment; they are not current `evolve run` CLI options or a recipe to replay
+that 30-day run:
 
 ```yaml
 # bernstein.yaml
@@ -298,13 +308,11 @@ evolve:
     rollback_window_hours: 48
 ```
 
-To run it yourself:
+For a current supported preview, scan completed run history for local failure-pattern drafts in an
+initialised workspace with `evolve.github_sync` disabled in `bernstein.yaml`:
 
 ```bash
-pip install bernstein
-cd your-project
-bernstein init
-bernstein evolve --budget 5.00
+bernstein evolve run --dry-run
 ```
 
 Source: https://github.com/sipyourdrink-ltd/bernstein

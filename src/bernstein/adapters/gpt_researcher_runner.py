@@ -52,6 +52,7 @@ async def _research(query: str, report_type: str) -> tuple[str, list[str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the GPT Researcher adapter and write its report artifacts."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prompt-file", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)

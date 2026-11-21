@@ -70,7 +70,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -205,8 +205,11 @@ class SessionMemory:
         session_id: Identifier for the current session. Used as the
             episodic filename stem and as a column in the semantic
             index so recall can be scoped per session.
-        clock_ns: Indirection point for tests to pin ``ts_ns``. Defaults
-            to :func:`time.time_ns`.
+        clock_ns: Clock supplying ``ts_ns``. None uses :func:`time.time_ns`.
+
+    Raises:
+        ValueError: If either identifier is empty, too long, or contains
+            disallowed characters.
     """
 
     def __init__(
@@ -669,19 +672,3 @@ def _sanitize_fts_query(query: str) -> str:
         if cleaned:
             tokens.append(f'"{cleaned}"')
     return " ".join(tokens)
-
-
-def _coerce_tags(value: object) -> Iterable[str]:
-    """Best-effort cast of a stored tags blob into an iterable of strings.
-
-    The episodic JSONL writer always stores tags as a list, but a
-    hand-edited record might contain a string or ``None``. The helper
-    keeps :meth:`SessionMemory.read_episodic` tolerant.
-    """
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if item]
-    if isinstance(value, str):
-        return [v for v in value.split(",") if v]
-    return []

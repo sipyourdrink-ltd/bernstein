@@ -11,8 +11,8 @@ bernstein govern audit --list --only INS
 The doctor's JSON retains `checks` and `runtime` and adds `findings`. That array
 uses exactly the same schema and producers as the installation audit's JSON
 array. The text report, display order, readiness calculation, exit behavior and
-`--fix` workflow remain unchanged. Installation checks are opt-in in the audit
-registry: use `--only INS` to measure the host rather than just the workspace.
+`--fix` workflow remain unchanged. Use `bernstein govern audit --only INS` to select the installation checks
+and measure the host.
 The audit CLI explicitly composes the installation catalog into its runner;
 the core default registry remains independent of CLI doctor implementations.
 See [installation check composition](../sdd/installation-check-composition.md)
@@ -256,96 +256,54 @@ under `provider_availability` in `bernstein.yaml` and exits non-zero when
 any declared chain element is broken. See
 [Provider availability & failover](provider-availability.md).
 
-## Aged leaked lanes
+## Aged leaked lanes (#6572)
 
-The default `bernstein doctor` report includes a **Leaked lanes** advisory.
-It reads task records for worktrees and audited sandbox sessions and warns
-when a terminal task's lane is older than 24 hours. Set
-`BERNSTEIN_LEAK_MAX_AGE_SECONDS` to a finite, non-negative number of seconds to
-change the threshold. Unknown task ownership is never counted as terminal;
-unreadable sources produce an unavailable-check warning, not a clean bill of
-health. The check never deletes anything or contacts sandbox providers.
-Preview remediation with `bernstein worktrees sweep` or `bernstein sandbox
-sweep`; applying the worktree removal plan requires a separate removal
-approval. Sandbox lanes are report-only (removal: #6571) and are never stopped
-or removed by sweep. See
-[worktree operations](worktrees.md#task-terminal-lane-sweep).
+The default `bernstein doctor` report checks confirmed leaked worktrees and
+sandbox sessions using the same canonical TaskStore replay snapshot. A lane
+is considered only when the sweep confirms all recorded owning tasks are
+finished; missing ownership, unknown tasks, active/resumable owners and
+superseded sandbox lifetimes remain excluded. The worktree and sandbox
+prerequisites landed through [#6919](https://github.com/sipyourdrink-ltd/bernstein/pull/6919)
+and [#6733](https://github.com/sipyourdrink-ltd/bernstein/pull/6733).
 
-## Proposed structured aged-leak finding (#6572)
+`BERNSTEIN_LEAK_MAX_AGE_SECONDS` sets the threshold in seconds, defaulting to
+`86400` (24 hours). The internal check's explicit `max_age_seconds` argument
+has precedence over the environment. Values must be finite and non-negative;
+invalid configuration is an unavailable-check error. The comparison is
+strictly **older than**: a lane exactly at the threshold is not aged.
 
-**Design proposal: the structured finding below remains unimplemented.**
-The basic advisory above does not implement this full result contract.
-[Issue #6572](https://github.com/sipyourdrink-ltd/bernstein/issues/6572)
-requires both worktree and sandbox listing prerequisites before a structured doctor
-finding. [#6733](https://github.com/sipyourdrink-ltd/bernstein/pull/6733)
-continues the sandbox half of #6549; it explicitly leaves doctor separate.
-The worktree contribution
-[#5751](https://github.com/sipyourdrink-ltd/bernstein/pull/5751) remains a
-draft with unresolved persistence/evidence and public listing boundaries.
-The combined sweep above now supplies a basic advisory, while this proposal
-preserves the remaining structured-finding and evidence-contract questions.
-It does not modify that contributor's PR or claim the complete doctor feature.
+Age describes the resource lifetime, **not time since task completion or
+leak onset**. Worktrees use directory birthtime when available, otherwise
+filesystem ctime (`directory_birthtime_or_ctime`); sandboxes use their audited
+session-create time (`audit_session_create`). A confirmed leak with missing,
+negative or non-finite age receives an unknown-age warning rather than a
+clean result. The existing classifiers' clock-skew handling is unchanged.
 
-The accepted goal is a read-only finding for a **confirmed leaked** worktree
-or sandbox older than an agreed configurable age, naming the lane, owning
-task IDs, recorded statuses and age. Only the prerequisite sweeps' leaked
-verdicts count: old active/resumable lanes, missing ownership/task records,
-mixed active owners and superseded sandbox lifetimes remain excluded.
-Unreadable task/audit evidence must be a doctor error, never a clean result.
-The check must not remove a lane, change a task, append audit events or mint
-a key. Advisory records do not authorize removal.
+| Evidence | Check result | Default doctor exit contribution |
+| --- | --- | --- |
+| Confirmed leak older than threshold | WARN with lane ID, owner IDs/statuses, age and source | Non-blocking |
+| Confirmed leak with unusable age | WARN with unknown age | Non-blocking |
+| No aged or unknown-age confirmed leaks | PASS | Non-blocking |
+| Unreadable/invalid task or audit evidence, or invalid threshold | FAIL with unavailable-check detail | Exit 1 |
 
-### Unresolved boundaries
+The existing aggregate text row retains each lane's details. In
+`bernstein doctor --json`, that row in `checks` includes `leaked_lanes`, a
+list of structured records with `kind`, `resource_id`, `task_ids`,
+`task_statuses`, `age_seconds`, `age_source`, `max_age_seconds` and `reason`.
+`reason` is `age_exceeded` or `age_unavailable`; unavailable ages are JSON
+`null`, never NaN. An unavailable check emits no asserted lane findings.
+These records are separate from the installation audit's `findings` catalogue.
 
-1. **Public threshold configuration.** Decide the configuration source,
-   units, documented default, override precedence and invalid-value behavior.
-   The issue explicitly leaves the default undecided; no new flag, env name
-   or seed schema is selected by this proposal. The basic advisory uses the
-   environment variable and default documented above.
-2. **Age evidence and comparison.** Decide the age source, threshold
-   comparison and unknown/unusable timestamp behavior. Existing sandbox ages
-   use create-event time; worktree ages use filesystem ctime. Neither proves
-   time since task completion or leak onset. Trace-staleness thresholds are
-   separate and do not supply an age default for this finding.
-3. **Diagnostic surface and result contract.** Decide the normal/extended
-   doctor integration, per-lane or aggregate text/JSON output, finding
-   severity/exit behavior and distinct evidence-unavailable errors. No
-   severity, unknown-age result or public output schema is selected here.
-4. **Dependency readiness.** Land the corrected worktree sweep/evidence
-   boundary from #5751 alongside the sandbox half before integration. Do not
-   invent a second status reader, ship sandbox-only coverage or infer a
-   removal policy from the existing advisory listing.
+The check reads evidence only. It does not delete lanes, update tasks, append
+audit events, mint keys or contact sandbox providers, and has no automatic
+removal action under `--fix`. Preview remediation with `bernstein worktrees
+sweep` or `bernstein sandbox sweep`. Applying a removal plan still requires
+its separate authenticated removal gate; a doctor warning grants no removal
+authority. See [worktree operations](worktrees.md#task-terminal-lane-sweep).
 
-### Future acceptance matrix
-
-These are proposed properties, not implemented or executed tests. The
-threshold and reporting decisions above remain open.
-
-1. `test_doctor_reports_both_confirmed_leak_kinds_older_than_configured_age`:
-   real task/archive/audit/worktree fixtures produce both finding kinds with
-   exact lane IDs, owning task IDs/statuses and honest age provenance.
-2. `test_doctor_age_threshold_preserves_younger_and_boundary_candidates`:
-   an injected clock covers below/at/above the agreed threshold without a
-   hardcoded default or trace-staleness shortcut.
-3. `test_old_active_or_excluded_lanes_never_become_leak_findings`: old active,
-   resumable, orphaned, missing-owner/task, mixed-owner and superseded cases
-   remain excluded regardless of PID liveness or filesystem age.
-4. `test_doctor_refuses_incomplete_task_or_audit_evidence_without_clean_report`:
-   unreadable, invalid, torn or replay-skipped evidence returns the agreed
-   error with its source path instead of replaying an older terminal result.
-5. `test_doctor_leak_status_matches_native_archive_and_live_reopen`: actual
-   TaskStore archive IDs and reopen precedence, every agreed finished status
-   and live controls agree across both sweeps and doctor.
-6. `test_doctor_age_reports_unknown_and_future_time_honestly`: missing or
-   invalid timestamps and clock skew follow the agreed contract without
-   inventing age from unrelated metadata or completion prose.
-7. `test_doctor_leak_age_configuration_is_explicit_and_validated`: cover the
-   approved source/default/units/precedence, invalid values and project
-   isolation without widening unrelated configuration.
-8. `test_doctor_leak_check_never_mutates_project_or_removes_lanes`: complete
-   byte snapshots and forbidden-write controls prove no removal, task
-   mutation, key creation or audit append, including under `--fix`.
-9. `test_doctor_leak_findings_reach_agreed_text_json_and_exit_surface`:
-   exercise the approved CLI collector/renderer with distinct agreed results
-   for confirmed old leaks and evidence errors; general readiness must not
-   misrepresent this finding.
+Regression coverage in `tests/unit/sandbox/test_leaked_lane_sweep.py` exercises
+both kinds, canonical statuses, a reopen after the shared snapshot,
+threshold/default/override boundaries, unavailable task evidence, unknown
+ages, existing sweep exclusions and byte-preserving reads. The public CLI
+JSON/text and error-exit boundary is exercised by
+`tests/unit/test_doctor_leaked_lanes.py`.

@@ -280,7 +280,7 @@ def verify_legacy_cmd(
     if expect_fingerprint is not None and baseline_run_id is not None:
         raise click.UsageError("--expect and --baseline are mutually exclusive; pass only one.")
     if (expect_fingerprint is not None or baseline_run_id is not None) and determinism_run_id is None:
-        raise click.UsageError("--expect/--baseline require --determinism <run-id>.")
+        raise click.UsageError("--determinism <run-id> is required when using --expect or --baseline.")
 
     if wheelhouse_path is wal_run_id is determinism_run_id is formal_task_id is None and not memory_audit:
         console.print(

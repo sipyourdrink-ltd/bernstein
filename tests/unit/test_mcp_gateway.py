@@ -165,6 +165,14 @@ class TestGatewayReplay:
         assert result is not None
         assert result["result"] == "second"
 
+    def test_warns_when_replay_reader_stops(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        with patch("bernstein.core.wal.WALReader.iter_entries", side_effect=OSError("private diagnostic")):
+            replay = GatewayReplay(run_id="replay-run", sdd_dir=tmp_path / ".sdd")
+
+        assert replay.indexed_count == 0
+        assert "MCP replay stopped reading the WAL after indexing 0 responses (OSError)" in caplog.text
+        assert "private diagnostic" not in caplog.text
+
     def test_handles_missing_wal_gracefully(self, tmp_path: Any) -> None:
         """GatewayReplay with a nonexistent WAL does not raise; index is empty."""
         from pathlib import Path
@@ -726,7 +734,7 @@ async def test_gateway_can_forward_while_observation_persists(tmp_path: Path, mo
         result = {"tools": [{"name": "demo"}]} if message["method"] == "tools/list" else {"ok": True}
         return {"jsonrpc": "2.0", "id": request_id, "result": result}, 0
 
-    def blocked_persistence(_tools: tuple[str, ...]) -> None:
+    def blocked_persistence(_tools: tuple[str, ...], _fingerprints: dict[str, dict[str, str]] | None = None) -> None:
         loop.call_soon_threadsafe(entered.set)
         assert release.wait(timeout=3)
         finished.set()
@@ -777,3 +785,143 @@ async def test_gateway_can_forward_while_observation_persists(tmp_path: Path, mo
                 await session
     assert finished.is_set()
     assert observation.cancelled()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field", ["description", "inputSchema", "outputSchema", "annotations", "title", "_meta", "future"]
+)
+async def test_full_definition_change_is_observed(tmp_path: Any, field: str) -> None:
+    from unittest.mock import AsyncMock
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import EVENT_MCP_CAPABILITY_DRIFT, AuditChainStore
+
+    store = ServerCapabilitiesStore(tmp_path)
+    chain = AuditChainStore(tmp_path / "audit", key=b"fixture-only-definition-key")
+    gateway = MCPGateway([], _make_wal_writer(tmp_path), store, server_name="fixture", audit_chain=chain)
+    gateway._upstream_tools_available = True
+    first = {"name": "search", "description": "Search records", "inputSchema": {"type": "object"}}
+
+    async def observe(tool: dict[str, Any]) -> None:
+        gateway._send_request = AsyncMock(return_value=({"result": {"tools": [tool]}}, 0))
+        await gateway._check_capability_drift()
+
+    await observe(first)
+    before = store.get_digest("fixture")
+    await observe({**first, field: {"changed": True}})
+    assert store.get_digest("fixture") != before
+    events = chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)
+    assert len(events) == 2
+    details = events[-1].details["tool_definitions"]
+    assert details["changed_tools"]["search"]["changed_fields"] == [field]
+    assert details["previous_digest"] == before
+    assert details["current_digest"] == store.get_digest("fixture")
+    # Existing name-only event fields retain their original meaning.
+    assert events[-1].details["previous_digest"] == events[-1].details["current_digest"]
+    # Reordering JSON keys is not a definition change.
+    await observe(dict(reversed(list({**first, field: {"changed": True}}.items()))))
+    assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 2
+
+
+@pytest.mark.asyncio
+async def test_definition_snapshot_migration_and_invalid_observation(tmp_path: Any) -> None:
+    from unittest.mock import AsyncMock
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import EVENT_MCP_CAPABILITY_DRIFT, AuditChainStore
+
+    store = ServerCapabilitiesStore(tmp_path)
+    chain = AuditChainStore(tmp_path / "audit", key=b"fixture-only-definition-key")
+    gateway = MCPGateway([], _make_wal_writer(tmp_path), store, server_name="fixture", audit_chain=chain)
+    gateway._upstream_tools_available = True
+    gateway._process_capability_drift(("first",))
+    first_contact = store.get_capabilities("fixture").first_contact_at
+
+    async def observe(tools: list[dict[str, Any]]) -> None:
+        gateway._send_request = AsyncMock(return_value=({"result": {"tools": tools}}, 0))
+        await gateway._check_capability_drift()
+
+    await observe([{"name": "first"}])
+    migrated = ServerCapabilitiesStore(tmp_path).get_capabilities("fixture")
+    assert migrated.first_contact_at == first_contact
+    assert migrated.tool_definition_fingerprints is not None
+    event = chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)[-1]
+    assert event.details["tool_definitions"]["previous_digest"] is None
+    for tools in ([{"name": "first"}, {"name": "second"}], [{"name": "second"}], [{"name": "renamed"}]):
+        await observe(tools)
+    events = chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)
+    assert len(events) == 5
+    assert set(events[-1].details["tool_definitions"]["changed_tools"]) == {"second", "renamed"}
+    baseline = store.get_digest("fixture")
+    for invalid in (
+        [{"name": "renamed"}, {"name": "renamed"}],
+        [{"name": 1}],
+        [{"name": "renamed", "future": float("nan")}],
+    ):
+        await observe(invalid)
+        assert store.get_digest("fixture") == baseline
+        assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 5
+
+
+def test_definition_fingerprint_committed_vectors() -> None:
+    import json
+    from pathlib import Path
+
+    vectors = json.loads((Path(__file__).parents[1] / "fixtures" / "mcp_tool_definition_vectors.json").read_text())
+    for vector in vectors:
+        fingerprints = MCPGateway._definition_fingerprints(vector["tools"])
+        assert {name: item["digest"] for name, item in fingerprints.items()} == vector["tool_digests"]
+        assert MCPGateway._definition_digest(fingerprints) == vector["server_digest"]
+
+
+@pytest.mark.parametrize("value", [9007199254740992, 9007199254740993, -9007199254740992, 10**21])
+def test_definition_profile_rejects_nonportable_integers(value: int) -> None:
+    with pytest.raises(ValueError, match="integer"):
+        MCPGateway._definition_fingerprints([{"name": "search", "inputSchema": {"default": [value]}}])
+
+
+def test_definition_profile_equivalent_portable_numbers() -> None:
+    assert MCPGateway._definition_fingerprints(
+        [{"name": "search", "future": 1}]
+    ) == MCPGateway._definition_fingerprints([{"name": "search", "future": 1.0}])
+
+
+@pytest.mark.asyncio
+async def test_definition_fingerprinting_does_not_block_proxy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from threading import Event
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    gateway = MCPGateway(
+        [],
+        _make_wal_writer(tmp_path),
+        ServerCapabilitiesStore(tmp_path),
+        audit_chain=AuditChainStore(tmp_path / "audit", key=b"fixture-only-thread-key"),
+    )
+    gateway._upstream_tools_available = True
+    entered, release = asyncio.Event(), Event()
+    loop = asyncio.get_running_loop()
+    original = gateway._definition_fingerprints
+
+    def fingerprint(tools: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(timeout=2)
+        return original(tools)
+
+    async def respond(message: dict[str, Any], request_id: str) -> tuple[dict[str, Any], float]:
+        result = {"tools": [{"name": "demo"}]} if message["method"] == "tools/list" else {"ok": True}
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}, 0
+
+    monkeypatch.setattr(gateway, "_definition_fingerprints", fingerprint)
+    monkeypatch.setattr(gateway, "_send_request", respond)
+    observation = asyncio.create_task(gateway._check_capability_drift())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert not observation.done()
+        reply = await asyncio.wait_for(gateway.handle_jsonrpc({"id": "ping", "method": "ping"}), timeout=1)
+        assert reply is not None and reply["result"] == {"ok": True}
+    finally:
+        release.set()
+        await observation

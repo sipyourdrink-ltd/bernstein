@@ -75,11 +75,19 @@ The watcher returns a list of `Suggestion` records:
 |---|---|
 | `suggestion_id` | Stable identifier for cross-referencing in logs. |
 | `run_id` | Run that the originating event belonged to. |
-| `detector` | Free-form detector name. The first slice emits a generic `observer` detector. |
+| `detector` | Free-form detector name. Built-in local detectors use names such as `cost_runaway` and `stuck_spawn`; model-generated suggestions use `observer`. |
 | `severity` | `info`, `warning`, or `critical`. |
 | `rationale` | Short human-readable explanation. |
 | `proposed_action` | Suggested next step (informational only - never executed automatically). |
-| `cost_usd` | Estimated USD cost of the LLM call that produced this suggestion. |
+| `cost_usd` | Estimated USD cost attributed to this suggestion; local detector suggestions have no model-call cost. |
+
+When the watcher is enabled, the environment-based factory registers the
+built-in local detectors. For each event, they run synchronously before the
+model observer. Their suggestions remain in the result if the model returns
+an empty response or the observer raises an error; the model may add a
+separate `observer` suggestion. These local suggestions are advisory too and
+are never applied automatically.
+
 
 ## Configuration
 
@@ -91,10 +99,10 @@ The watcher returns a list of `Suggestion` records:
 
 ## Limitations
 
-- The first slice ships the plumbing and a generic `observer`
-  detector. Detector packs (`stuck_loop`, `plan_drift`,
-  `budget_overrun`, `failure_recurrence`, `jailbreak_shape`) and
-  the suggestion-review CLI live in follow-up slices.
+- The enabled environment factory registers the built-in local detectors:
+  `cost_runaway`, `stuck_spawn`, `repeated_failure`,
+  `suspicious_tool_mask`, and `audit_chain_break`. The suggestion-review
+  CLI remains follow-up work.
 - The watcher cannot mutate orchestrator state by construction.
   Suggestions are advisory until a human or a future review
   CLI acts on them.

@@ -271,6 +271,7 @@ def generate(repo_path: Path, options: GenerateOptions | None = None) -> list[Ag
         ("git-workflow", _build_git_workflow(repo_path, opts) if opts.include_git_workflow else None),
         ("roles", _build_roles(repo_path)),
         ("documentation-duty", _build_documentation_duty()),
+        ("review-guidelines", _build_review_guidelines()),
     ]
 
     sections = [sec for _key, sec in builders if sec is not None]
@@ -590,6 +591,8 @@ def _build_build_test(repo_path: Path) -> AgentsMdSection | None:
     """
     pairs: list[tuple[str, str]] = []
 
+    makefile = repo_path / "Makefile"
+    targets = _parse_make_targets(makefile) if makefile.is_file() else set()
     pyproj = repo_path / "pyproject.toml"
     if pyproj.is_file():
         text = pyproj.read_text(encoding="utf-8", errors="replace")
@@ -602,15 +605,15 @@ def _build_build_test(repo_path: Path) -> AgentsMdSection | None:
             pairs.append((f"{run}pytest", "tests"))
         if "ruff" in text:
             pairs.extend(((f"{run}ruff check .", "lint"), (f"{run}ruff format .", "format")))
-        if "mypy" in text or "pyright" in text:
-            pairs.append((f"{run}mypy src", "type-check"))
+        if "typecheck" not in targets:
+            if "pyright" in text:
+                pairs.append((f"{run}pyright", "type-check"))
+            elif "mypy" in text:
+                pairs.append((f"{run}mypy src", "type-check"))
 
-    makefile = repo_path / "Makefile"
-    if makefile.is_file():
-        targets = _parse_make_targets(makefile)
-        for t in ("test", "lint", "build", "install"):
-            if t in targets:
-                pairs.append((f"make {t}", ""))
+    for t in ("test", "lint", "typecheck", "build", "install"):
+        if t in targets:
+            pairs.append((f"make {t}", ""))
 
     package_json = repo_path / "package.json"
     if package_json.is_file():
@@ -858,6 +861,46 @@ def _build_documentation_duty() -> AgentsMdSection:
     return AgentsMdSection(
         key="documentation-duty",
         title="Documentation duty",
+        body=body,
+        kind="custom",
+        always_apply=True,
+    )
+
+
+def _build_review_guidelines() -> AgentsMdSection:
+    """Project-wide review rules, embedded alongside Documentation duty."""
+    body = (
+        "Bernstein's job is a record of agent work that can be verified later, so review first for changes "
+        "that would make the scheduler or the record report something that did not happen.\n"
+        "\n"
+        "- Completion: a task or workflow node is done only on an accepted attempt. Flag code that releases "
+        "dependents, marks a task completed or reports success on a session ID, a spawn, a queued signal or a"
+        " non-zero exit.\n"
+        "- Cost and budgets: cumulative cost adds, never overwrites; the budget check runs before the next "
+        "spawn; a late adjustment cannot lower a total already counted.\n"
+        "- Determinism: the scheduler has no model in the loop. Flag unordered iteration, wall-clock or "
+        "random values in planning, replay or audit output.\n"
+        "- Audit chain and lineage: flag any change that weakens an existing check, skips a write without an "
+        "error, or describes a receipt as signed when no signing key is configured.\n"
+        "- Back-compat: legacy import paths go through `_REDIRECT_MAP` in `src/bernstein/core/__init__.py`; "
+        "flag new shim modules at old paths.\n"
+        "- Tests: a behaviour change has a test under `tests/` that fails without it and passes with `uv run "
+        "python scripts/run_tests.py`.\n"
+        "- Docs: a user-visible or operator change updates its docs in the same PR (see Documentation duty). "
+        "Claims in README, docs and release notes match the code: no superlatives, no counts the code does "
+        'not produce, and "test vectors" rather than "conformance vectors".\n'
+        "- Secrets: no keys, tokens or personal data in code, fixtures or logs.\n"
+        "\n"
+        "Severity: P0 a false record, data loss, a security or money defect; P1 a wrong result or broken "
+        "contract; P2 a missing test or doc. Style is ruff's job.\n"
+        "\n"
+        "Output: one comment per finding with severity, file:line, the failing scenario in one sentence and a"
+        " suggested fix. Done when every changed file was read; with no P0-P2 finding, say so and name the "
+        "checks above that you ran."
+    )
+    return AgentsMdSection(
+        key="review-guidelines",
+        title="Review guidelines",
         body=body,
         kind="custom",
         always_apply=True,

@@ -17,12 +17,26 @@ bernstein debug bundle --include-source-snippets 5    # also include the 5 most-
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--task TEXT` | none | Task id to filter traces/metrics by. |
-| `--run TEXT` | none | Run id to filter traces/metrics by. |
-| `--last / --no-last` | `--last` | Use the most recent run. |
+| `--task TEXT` | none | Task id to filter traces/metrics by. Takes precedence over `--run`. |
+| `--run TEXT` | none | Run id to filter traces/metrics by; used only when `--task` is not supplied. |
+| `--last / --no-last` | `--last` | Use the most recently recorded run when neither `--task` nor `--run` is supplied. This is also the behavior with `--no-last`. |
 | `--out`, `-o PATH` | timestamped file in CWD | Destination ZIP path. |
 | `--manifest-only` | off | Print the manifest JSON to stdout instead of writing a ZIP. |
 | `--include-source-snippets N` | `0` (off) | Include the N most-recently-changed `src/` files. |
+
+### Selection and file scope
+
+An explicit `--task` takes precedence over an explicit `--run`. If neither is
+provided, the command uses the most recently recorded run from
+`.sdd/runtime/run_id`—including when `--no-last` is supplied. If no run has been
+recorded, there is no resolved ID.
+
+A resolved ID filters trace and metric filenames by substring; that filtering
+happens before the recency limit is applied (up to 50 files of each type).
+Without a resolved ID, the newest eligible trace and metric files are included
+without an ID filter. Runtime log tails are collected separately: the last 200
+lines of each `.sdd/runtime/*.log` file are included regardless of the selected
+ID.
 
 ## Bundle contents
 

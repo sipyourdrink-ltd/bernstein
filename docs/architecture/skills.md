@@ -138,14 +138,71 @@ a WAL sink callback (default: an ``INFO`` log line) with
 which set ``error``); a name that is not found returns an error result
 without emitting the event.
 
+## Python lookups
+
+For Python callers, ``SkillLoader`` provides:
+
+- ``get(name: str) -> LoadedSkill`` returns the loaded skill with that name,
+  raising ``SkillNotFoundError`` if the name is not loaded.
+- ``has(name: str) -> bool`` returns ``True`` if the name is loaded, otherwise
+  ``False``.
+- ``list_all() -> list[LoadedSkill]`` returns all loaded skills in deterministic
+  alphabetical order by name.
+
 ## Sources
 
 Skills are aggregated from multiple sources into a single
 :class:`SkillLoader`. Source enumeration failures and artifact registration
-errors (including :class:`DuplicateSkillError`) quarantine the failing entry
-while other skills load. The default loader persists these markers and journals
-them; retry requires explicit [re-enable](../operations/declaration-quarantine.md).
-Duplicate names across sources are never silently shadowed.
+errors (including :class:`DuplicateSkillError`) are quarantined while other
+skills load. Duplicate names across sources are never silently shadowed.
+
+``SkillSource.iter_skills()`` returns an eager ``list[SkillArtifact]`` (possibly
+empty), not a generator. There are two failure boundaries:
+
+- **Source enumeration:** if ``iter_skills()`` raises, the whole source is
+  quarantined with ``origin`` set to the source label and ``skill_name`` set to
+  ``None``. The loader continues with the other sources.
+- **Artifact registration:** if registering a returned artifact raises, only
+  that artifact is quarantined; remaining artifacts from the same source and
+  other sources can still load. For duplicate names, the first successfully
+  registered definition is retained in source/artifact order. Each later
+  conflicting definition produces a ``DuplicateSkillError`` record rather
+  than replacing the first definition.
+
+### In-memory failure reporting
+
+Library callers that construct ``SkillLoader(sources=[...])`` directly can
+inspect ``SkillLoader.quarantined`` after construction. It returns a tuple of
+immutable ``QuarantinedSkill`` records in failure order for the current load.
+Each record has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| ``source_name`` | Label of the source involved. |
+| ``origin`` | Artifact origin, or the source label for a source enumeration failure. |
+| ``skill_name`` | Name of the failing skill, or ``None`` for a source enumeration failure. |
+| ``reason`` | Exception text (``str(exc)``). |
+| ``error_type`` | Exception class name. |
+| ``at`` | Unix timestamp of the failure (a ``float``). |
+
+To receive each new failure as it happens, pass
+``on_quarantine: Callable[[QuarantinedSkill], None]`` to the ``SkillLoader``
+constructor. The callback is called once per newly quarantined entry, during
+loading, after the record has been added to ``quarantined``. Callback exceptions
+are caught and logged: the record remains available and other skills continue
+loading even if the reporter fails.
+
+A bare ``SkillLoader`` without a ``quarantine_store`` keeps these records only
+in memory and logs failures; it does not persist disabled markers or journal
+events on its own. Callers can use ``on_quarantine`` for their own reporting.
+Constructing another bare loader attempts its supplied sources again.
+
+By contrast, the configured default loader created by
+``default_loader_from_templates`` supplies a persistent quarantine store. It
+persists disabled markers and journals failures; quarantined entries are skipped
+on later loads until explicit [re-enable](../operations/declaration-quarantine.md).
+Previously persisted entries also appear in ``quarantined`` when skipped, but do
+not trigger a new ``on_quarantine`` callback.
 
 ### First-party
 

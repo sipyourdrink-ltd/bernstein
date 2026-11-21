@@ -51,7 +51,7 @@ Os nomes na lista periódica saem em ordem alfabética. Não por número de PRs,
 
 ## GitHub Discussions e a página do LinkedIn não competem
 
-Fazem trabalhos diferentes. Para notícia rápida (um release, uma mudança, uma atualização da comunidade), a página do LinkedIn é o canal mais rápido. GitHub Discussions é onde você participa do projeto de fato: vê o contexto, discute, propõe, encontra a resposta, e isso fica registrado onde a próxima pessoa consegue achar. Se você quer as duas coisas, a notícia e a profundidade, siga os dois. Decisões continuam acontecendo em issues e pull requests; isso não mudou.
+Fazem trabalhos diferentes. Para notícia rápida (um release, uma mudança, uma atualização da comunidade), a página do LinkedIn é o canal mais rápido. GitHub Discussions é onde você participa do projeto de fato: vê o contexto, discute, propõe, encontra a resposta, e isso fica registrado onde a próxima pessoa consegue achar. Se você quer as duas coisas, a notícia e a profundidade, siga os dois. As decisões sobre propostas e pull requests de colaboradores são tomadas na issue ou no pull request público correspondente; o mantenedor planeja o trabalho futuro em privado.
 
 ## Por que estou fazendo isso, afinal
 
@@ -88,8 +88,6 @@ E mais uma coisa humana. Se uma oportunidade paga real algum dia aparecer em tor
 ## Quem está observando, e por que isso importa
 
 Não podemos, claro, publicar todo o nosso pipeline de analytics, mas por todas as aparências não somos os únicos lendo. Gente de grandes empresas de TI e laboratórios de IA aparece no site com bastante regularidade e faz perguntas bem específicas sobre a documentação. Os concorrentes, vamos assumir, também não estão dormindo.
-
-E, aliás: pelo nosso analytics passivo, tirando o ruído óbvio de bots, o Bernstein hoje roda regularmente em pelo menos umas 3.000 máquinas pelo mundo. Acho isso bem respeitável. O Bernstein não envia telemetria de produto por padrão e esse número não vem de nenhuma; é um sinal passivo, e é tudo que vou dizer sobre o método.
 
 Então a situação já é interessante por si só. Estamos construindo um produto livre que as pessoas realmente usam, que atrai a atenção de engenheiros, laboratórios de IA e grandes empresas, e qualquer usuário pode pegar o código-fonte e ser dono dele. Minha opinião, claramente uma opinião: quando você consegue uma ferramenta séria de graça e ainda é dono do código, fica difícil explicar por que alguém pagaria dezenas de milhares de dólares por mês por algo parecido.
 

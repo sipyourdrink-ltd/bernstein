@@ -80,12 +80,11 @@ workflow never surfaced.
    ```
 3. Reproduce under randomised order:
    ```
-   uv run pytest path/to/test_file.py --randomly-seed=<seed-from-report>
+   uv run --with pytest-randomly pytest path/to/test_file.py --randomly-seed=1234  # replace with the reported seed
    ```
-4. Reproduce under parallel execution (needs `pytest-xdist`, which
-   is not a project dependency - install it locally first):
+4. Reproduce under parallel execution with the optional `pytest-xdist` plugin:
    ```
-   uv run pytest path/to/test_file.py -n auto
+   uv run --with pytest-xdist pytest path/to/test_file.py -n 2
    ```
 5. Common root causes for our codebase:
    - Shared mutable global state across the agent registry.

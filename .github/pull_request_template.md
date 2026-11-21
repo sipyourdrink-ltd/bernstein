@@ -12,9 +12,9 @@
 
 ## Checklist
 
-- [ ] `uv run ruff check src/` passes
-- [ ] `uv run pyright src/` passes
-- [ ] `uv run python scripts/run_tests.py -x` passes
+- [ ] `make lint` passes (Ruff lint and format checks)
+- [ ] `make typecheck` passes (strict Pyright)
+- [ ] `make test TEST_ARGS=-x` passes
 - [ ] New code has type hints
 
 ### Documentation duty (every PR that touches a feature)

@@ -165,7 +165,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 
 | Capability | Docs status | Maturity | Notes |
 |---|---|---|---|
-| Agent catalog/discovery | Full | 3 | `bernstein agents sync/list/discover/match/showcase` (40+ CLI agent adapters) |
+| Agent catalog/discovery | Full | 3 | `bernstein agents sync/list/discover/match/showcase` (55 selectable CLI agent adapter names) |
 | Browser / computer-use adapter | Full | 3 | Adapter family for autonomous browser and computer-use agents; every action is a content-addressed lineage anchor (`adapters/computer_use.py`) |
 | GitHub App and CI fix flows | Full | 3 | `bernstein ci fix <url>`, `github setup` |
 | [Trigger sources](../operations/trigger-sources.md) | Full | 3 | `github`, `gitlab`, `slack`, `discord`, `file_watch`, `webhook`, `odata`, and `schedule` source adapters (`core/trigger_sources/`) |
@@ -191,7 +191,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [Notification sinks](../operations/notifications.md) | Full | 3 | `bernstein notify test --sink <id>` pluggable notification backends (`core/notifications/`) |
 | [PR review responder](../operations/review-responder.md) | Full | 3 | `bernstein review-responder start/status/tick` auto-responds to PR review comments (`core/review_responder/`) |
 | [Review pipeline DSL](../operations/review-pipeline.md) | Full | 3 | `bernstein review --pipeline review.yaml` YAML-driven multi-phase review, plus the bounded `--fix --until-checks-green` contour and its per-pass receipts (`core/quality/review_pipeline/`) |
-| [Plan archival](../operations/plan-archival.md) | Full | 3 | `bernstein plan ls/show` list and inspect archived plans (`core/planning/lifecycle.py`) |
+| [Plan archival](../operations/plan-archival.md) | Full | 3 | `bernstein plan ls/show` list and inspect managed plans (`core/planning/lifecycle.py`) |
 | [Slack integration](../operations/slack-webhooks.md) | Full | 3 | Slash commands and events API endpoints |
 | [Webhook ingestion](../integrations/automation-bridge.md) | Full | 3 | `POST /webhooks/` for external event routing |
 | [Adaptive parallelism](../architecture/adaptive-parallelism.md) | Full | 3 | Auto-tunes concurrency from observed success rates (`core/orchestration/adaptive_parallelism.py`) |
@@ -245,7 +245,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein doctor` | Full | 4 | Pre-flight health check |
 | `bernstein recap` | Full | 3 | Post-run summary |
 | `bernstein retro` | Full | 3 | Retrospective report |
-| `bernstein runs report` | Full | 3 | Finished runs projected from the work ledger and classified `pr-opened` / `gate-failed` / `no-changes` / `infra-error` / `wedged`, each with the evidence line it was read from |
+| `bernstein runs report` | Full | 3 | Recorded runs, including those still executing, classified `pr-opened` / `gate-failed` / `no-changes` / `infra-error` / `wedged`, each with its evidence line |
 | `bernstein runs scorecard` | Full | 3 | Content-addressed per-run scorecard derived from the work ledger. The same facts as `bernstein runs report` plus steps, task counters, `cost_usd`, host, parent run id, attempt count and elapsed seconds. Writes `<sha256>.json` to `.sdd/runs/<id>/scorecard/`; `--verify` re-derives the scorecard from the live ledger and names the diverging field on mismatch; `--json` prints the canonical content |
 | `bernstein report commits/incident/postmortem` | Brief | 3 | Per-run markdown summaries: `commits` is per-agent commit attribution ([reference](../operations/commit-attribution.md)); `incident` correlates a timeline from logs, metrics, and traces; `postmortem` writes a structured report for a failed run. The group has no reference page of its own; `cli-reference.md` and `bernstein report --help` carry it |
 | `bernstein trace ID` | Full | 3 | Decision trace |
@@ -298,7 +298,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein fleet steer`](../operations/fleet-steering.md) | Full | 3 | Mid-run steering: pause/resume/guidance/redirect/abort |
 | [`bernstein mcp catalog ...`](mcp-catalog.md) | Full | 3 | MCP catalog browser (browse/search/install) |
 | [`bernstein notify test`](../operations/notifications.md) | Full | 3 | Notification sink smoke test |
-| [`bernstein plan ls/show`](../operations/plan-archival.md) | Full | 3 | List and inspect archived plans |
+| [`bernstein plan ls/show`](../operations/plan-archival.md) | Full | 3 | List and inspect managed plans |
 | [`bernstein review-responder ...`](../operations/review-responder.md) | Full | 3 | PR review responder (start/status/tick) |
 | [`bernstein review --pipeline`](../operations/review-pipeline.md) | Full | 3 | Review with YAML pipeline DSL |
 | [`bernstein fork --run --from-step`](../operations/fork-from-step.md) | Full | 3 | Fork a run at a journal step into a new isolated run |

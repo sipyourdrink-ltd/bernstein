@@ -512,8 +512,8 @@ def _fetch_remote_agent_branch(
     workdir = _get_workdir(request)
     if not agent_branch.startswith("agent/"):
         logger.warning(
-            "fetch_remote_agent_branch: refusing non-agent branch %r",
-            agent_branch,
+            "fetch_remote_agent_branch: refusing non-agent branch %s",
+            for_log(agent_branch),
         )
         return
     try:
@@ -526,9 +526,9 @@ def _fetch_remote_agent_branch(
         )
         if result.returncode != 0:
             logger.warning(
-                "fetch_remote_agent_branch: fetch failed for %s: %s",
-                agent_branch,
-                result.stderr.strip(),
+                "fetch_remote_agent_branch: fetch failed for %s: exit %d",
+                for_log(agent_branch),
+                result.returncode,
             )
             return
         local_sha = subprocess.run(
@@ -542,18 +542,18 @@ def _fetch_remote_agent_branch(
         if local != agent_sha:
             logger.warning(
                 "fetch_remote_agent_branch: SHA mismatch for %s: expected %s, got %s",
-                agent_branch,
-                agent_sha[:12],
-                local[:12],
+                for_log(agent_branch),
+                for_log(agent_sha[:12]),
+                for_log(local[:12]),
             )
         else:
             logger.info(
                 "fetch_remote_agent_branch: fetched %s (%s)",
-                agent_branch,
-                agent_sha[:12],
+                for_log(agent_branch),
+                for_log(agent_sha[:12]),
             )
     except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("fetch_remote_agent_branch: %s: %s", agent_branch, exc)
+        logger.warning("fetch_remote_agent_branch: %s: %s", for_log(agent_branch), type(exc).__name__)
 
 
 def _run_auto_commit_pre_complete(
@@ -599,12 +599,11 @@ def _run_auto_commit_pre_complete(
             session_id,
             label="session id",
         )
-    except PathContainmentError as exc:
-        logger.info(
-            "auto_commit_pre_complete: task=%s session=%s reason=unsafe_session_path error=%s",
+    except PathContainmentError:
+        logger.warning(
+            "auto_commit_pre_complete: task=%s session=%s reason=unsafe_session_path",
             sanitize_log(str(task.id)),
             sanitize_log(str(session_id)),
-            sanitize_log(str(exc)),
         )
         return
 
@@ -1426,12 +1425,19 @@ async def next_task(
     # The caller names no task, so the path gate has nothing to check; a
     # task-scoped agent token is instead limited to its own tasks in the
     # candidate query, so a task outside its scope is never chosen.
+    tenant_scope = _resolve_request_tenant_scope(request)
+    allowed_tasks = agent_task_scope(request)
+    registry = getattr(request.app.state, "node_registry", None)
+    worker = registry.get(claimed_by_session) if registry is not None and claimed_by_session else None
+    # A pull reports a slot that may have opened since the last heartbeat.
+    if worker is not None and not worker.can_accept_work:
+        raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     task = await store.claim_next(
         role,
-        tenant_id=_resolve_request_tenant_scope(request),
+        tenant_id=tenant_scope,
         claimed_by_session=claimed_by_session,
         parent_session_id=parent_session_id,
-        task_ids=agent_task_scope(request),
+        task_ids=allowed_tasks,
     )
     if task is None:
         logger.info(
@@ -1945,7 +1951,10 @@ async def reopen_task(task_id: str, body: TaskReopenRequest, request: Request) -
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
-        task = await store.reopen(task_id, body.reason)
+        if body.dispatch_tier is None:
+            task = await store.reopen(task_id, body.reason)
+        else:
+            task = await store.reopen(task_id, body.reason, dispatch_tier=body.dispatch_tier)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:

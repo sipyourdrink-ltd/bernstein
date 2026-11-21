@@ -347,8 +347,7 @@ class ApprovalQueue:
             ApprovalNonceMismatch: When *nonce* was supplied but does
                 not match the pending approval's nonce.
             ApprovalNonceExpired: When *nonce* was supplied for an
-                approval that has already been resolved or evicted, so
-                replaying the same nonce twice is rejected.
+                expired, already-resolved or evicted approval.
         """
         if principal is None:
             raise ApprovalPrincipalRequired(
@@ -369,6 +368,8 @@ class ApprovalQueue:
                 raise KeyError(f"Unknown approval id: {approval_id}")
             pending = self._pending[approval_id]
             if nonce is not None:
+                if pending.is_expired():
+                    raise ApprovalNonceExpired(f"Approval {approval_id} has expired; refusing to resolve.")
                 supplied = _coerce_nonce(nonce)
                 if supplied is None or not _nonces_equal(supplied, pending.nonce):
                     raise ApprovalNonceMismatch(f"Approval {approval_id} nonce does not match; refusing to resolve.")

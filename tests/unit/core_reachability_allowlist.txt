@@ -74,7 +74,6 @@ bernstein.core.events.receipts: #4526 audit in flight
 bernstein.core.events.state: #4526 audit in flight
 bernstein.core.events.triggers: #4526 audit in flight
 bernstein.core.events.webhook_template: #4526 audit in flight
-bernstein.core.evidence.render_receipt: #4526 audit in flight
 bernstein.core.finding_verify: #4526 audit in flight
 bernstein.core.git.commit_provenance: #4526 audit in flight
 bernstein.core.git.git_hooks: #4526 audit in flight
@@ -315,7 +314,6 @@ bernstein.core.trackers.odata_writeback: #4526 audit in flight
 bernstein.core.trigger_sources.artifact: #4526 audit in flight
 bernstein.core.trigger_sources.file_watch: #4526 audit in flight
 bernstein.core.trigger_sources.registry: #4526 audit in flight
-bernstein.core.trigger_sources.webhook: #4526 audit in flight
 bernstein.core.volunteer.reputation: #4526 audit in flight
 bernstein.core.volunteer.review_task: #4526 audit in flight
 bernstein.core.volunteer.submission: #4526 audit in flight

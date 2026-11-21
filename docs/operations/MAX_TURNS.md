@@ -1,20 +1,19 @@
 # Explicit `max_turns` on task create
 
-By default, an agent's turn budget is computed from task complexity, model
-speed, and the task timeout (`compute_max_turns` in
-`bernstein.core.agents.claude_max_turns`): higher complexity gets more turns,
-and a fast model gets more turns than a slow one within the same timeout
-window. `TaskCreate.max_turns` lets an API caller bypass that computation
-entirely and pin an exact turn count.
+A task's turn budget depends on the adapter. The standalone
+`compute_max_turns` helper estimates a budget from task complexity, model
+speed, and the task timeout. The Claude adapter instead uses its own
+effort and task-scope calculation or its batch-mode limit by default.
+`TaskCreate.max_turns` lets an API caller request an explicit turn count
+for adapters that support it.
 
 ## When to use it
 
 - You know from experience that a task type needs more (or fewer) turns than
-  the complexity-based default.
-- You're running a benchmark or eval and need a deterministic, reproducible
-  turn budget across runs regardless of which model handles the task.
-- You want to hard-cap runaway agents on a specific task without changing
-  the global `max_turns_cap`.
+  the adapter's default.
+- You're running a benchmark or eval and want a reproducible turn count
+  on an adapter that supports explicit counts.
+- You want to set a turn limit for a specific task on a supported adapter.
 
 ## Usage
 
@@ -28,29 +27,34 @@ POST /tasks
 }
 ```
 
-Leave `max_turns` unset (the default, `null`) to keep the automatic
-complexity/model/timeout computation.
-
-Accepted values are 1 to 10000 inclusive; zero, negative, and larger
-values are rejected at request validation time because the number is
-passed verbatim to the CLI `--max-turns` flag.
+The request model accepts an optional integer from 1 to 10,000 inclusive.
+Omitting the field or passing `null` keeps the adapter's normal turn budget.
+Values that cannot be parsed as an integer in that range fail request
+validation (HTTP 422).
 
 ## Behavior
 
-When `max_turns` is set on the task:
+There are two distinct calculations to keep in mind:
 
-- `compute_max_turns(explicit_max_turns=...)` returns that value verbatim —
-  complexity, model tier, and timeout are still recorded on the
-  `MaxTurnsConfig` for logging, but none of them affect the number.
-- `constrained_by_timeout` is always `False` for an explicit value (the
-  caller is assumed to have already accounted for timeout).
-- The spawner threads the value through as `explicit_max_turns` to the
-  active adapter, but only if that adapter's `spawn()` signature accepts an
-  `explicit_max_turns` parameter. Adapters that don't support it log a
-  warning and silently fall back to auto-computed turns — the task still
-  runs, just without the explicit cap. Check the adapter's `spawn()`
-  signature if you need to confirm support before relying on this for a
-  hard limit.
+- The standalone `compute_max_turns(explicit_max_turns=...)` helper bypasses its
+  complexity/model/timeout calculation, but clamps the explicit value to its
+  configured `min_turns` and `max_turns_cap` bounds (defaults: 5 and 200).
+  This helper's bounds are separate from the request field's accepted range.
+- The Claude adapter supports the task's explicit count. Its `_build_command`
+  uses a positive `explicit_max_turns` verbatim for the CLI `--max-turns` flag;
+  it does not apply the helper's bounds. This explicit value replaces the
+  adapter's normal turn-count calculation (batch-mode limit or effort base
+  multiplied by task-scope multiplier), not the standalone helper's
+  complexity/model/timeout calculation. Without an explicit value, the
+  adapter uses that normal calculation.
+
+For a direct launch, Bernstein forwards the largest explicit count in
+the group of tasks to an adapter that accepts `explicit_max_turns`.
+If the adapter does not accept that argument, the spawner logs a warning
+and the launch continues with its automatic turn count. The caching
+wrapper accepts the argument at its own interface and logs a debug
+message when it omits the argument for an unsupported underlying adapter. The sandbox, container, and in-process launch paths do not
+use this forwarding logic.
 
 ## Schema
 

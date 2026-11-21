@@ -119,7 +119,11 @@ class TestCloneMissing:
 
     @patch("bernstein.core.persistence.workspace.subprocess.run")
     def test_clones_missing_repo(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        def clone_stub(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            Path(args[-1]).mkdir()
+            return subprocess.CompletedProcess(args=args, returncode=0)
+
+        mock_run.side_effect = clone_stub
         ws = Workspace(
             root=tmp_path,
             repos=[
@@ -139,6 +143,7 @@ class TestCloneMissing:
         assert args[1] == "clone"
         assert "--branch" in args
         assert "main" in args
+        assert (tmp_path / "repos" / "new-repo").is_dir()
 
     @patch("bernstein.core.persistence.workspace.subprocess.run")
     def test_skips_existing_repo(self, mock_run: MagicMock, tmp_path: Path) -> None:
@@ -167,9 +172,10 @@ class TestCloneMissing:
         assert cloned == []
 
     @patch("bernstein.core.persistence.workspace.subprocess.run")
-    def test_handles_clone_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_handles_clone_failure(self, mock_run: MagicMock, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level("INFO", logger="bernstein.core.persistence.workspace")
         mock_run.side_effect = subprocess.CalledProcessError(
-            returncode=128, cmd=["git", "clone"], stderr="fatal: repo not found"
+            returncode=128, cmd=["git", "clone"], stderr="fatal: synthetic-git-error-secret"
         )
         ws = Workspace(
             root=tmp_path,
@@ -177,12 +183,15 @@ class TestCloneMissing:
                 RepoConfig(
                     name="bad",
                     path=Path("./repos/bad"),
-                    url="https://github.com/org/bad.git",
+                    url="https://synthetic-git-url-secret@github.com/org/bad.git",
                 ),
             ],
         )
         cloned = ws.clone_missing()
         assert cloned == []
+        assert "exit_code=128" in caplog.text
+        assert "synthetic-git-url-secret" not in caplog.text
+        assert "synthetic-git-error-secret" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

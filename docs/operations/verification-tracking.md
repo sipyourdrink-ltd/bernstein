@@ -19,6 +19,25 @@ If you just want to know:
 
 ## What "verified" means
 
+### Declared gate scope
+
+The coarse completion signal below is separate from a gate's structured
+`VerificationScope`. A plugin's returned scope is preserved in its result and
+the persisted gate report, including `checked`, `cannot_check`, confidence,
+oracle identity and evidence reference. An inconclusive plugin also retains
+its reason and the configured required/advisory blocking semantics.
+
+Built-in gate results that declare a scope retain it across disk-cache reloads.
+Older cache entries without a scope remain unattested (`scope: null`); no
+coverage is inferred from their pass status or the changed-file list. An
+unreadable scope causes a cache miss and fresh execution. Plugins continue to
+execute without the built-in result cache.
+
+This preserves declarations; it does not establish their truth, require every
+oracle to declare one, or add coverage to a gate that returns no scope.
+
+### Completion signal
+
 A completion is **verified** if any of these are true:
 
 | Evidence type            | Source                       | Field                       |
