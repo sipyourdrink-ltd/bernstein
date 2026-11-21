@@ -464,3 +464,27 @@ class TestLoadBundledBenchmarks:
         tasks = load_benchmark_tasks(bundled_dir)
         types = {t.task_type for t in tasks}
         assert types == {"bugfix", "test", "refactor", "docs"}
+
+
+def test_benchmark_loader_skips_scalar_files_and_keeps_valid_neighbor(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A scalar ``files`` value is an invalid task, not a list of characters (#8032)."""
+    (tmp_path / "bad.yaml").write_text(
+        "task_id: bad\ndescription: Update sample\ntask_type: docs\nfiles: main.py\nexpected_outcome: Updated\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "good.yaml").write_text(
+        "task_id: good\ndescription: Update sample\ntask_type: docs\nfiles: [main.py]\nexpected_outcome: Updated\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "plain.yaml").write_text(
+        "task_id: plain\ndescription: No files\ntask_type: docs\nexpected_outcome: Updated\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        tasks = load_benchmark_tasks(tmp_path)
+
+    assert [(t.task_id, t.files) for t in tasks] == [("good", ["main.py"]), ("plain", [])]
+    assert "bad.yaml" in caplog.text

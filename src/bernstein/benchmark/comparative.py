@@ -67,12 +67,18 @@ class BenchmarkTask:
 
         Raises:
             KeyError: If required fields are missing.
+            TypeError: If ``files`` is not a list of path strings.
         """
+        files = raw.get("files", [])
+        # A list of path strings. A scalar such as ``files: main.py`` is not one: ``list()`` would
+        # split it into characters (#8032). TypeError lets the loader skip the file and say why.
+        if not isinstance(files, list) or not all(isinstance(path, str) for path in files):
+            raise TypeError(f"files must be a list of path strings, got {files!r}")
         return cls(
             task_id=str(raw["task_id"]),
             description=str(raw["description"]),
             task_type=raw["task_type"],
-            files=list(raw.get("files", [])),
+            files=list(files),
             expected_outcome=str(raw["expected_outcome"]),
         )
 
