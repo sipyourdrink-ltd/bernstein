@@ -185,7 +185,9 @@ def inject_badge(
     if not readme_path.exists():
         return False
 
-    text = readme_path.read_text(encoding="utf-8")
+    # Decode the bytes as they are: ``read_text`` translates CRLF to LF and
+    # ``write_text`` then wrote LF over every existing line (#8059).
+    text = readme_path.read_bytes().decode("utf-8")
     if _badge_already_present(text):
         return False
 
@@ -194,7 +196,21 @@ def inject_badge(
     prefix = text[:insert_at]
     suffix = text[insert_at:]
 
-    needs_leading_nl = bool(prefix) and not prefix.endswith("\n")
-    glue = ("\n" if needs_leading_nl else "") + snippet + "\n"
-    readme_path.write_text(prefix + glue + suffix, encoding="utf-8")
+    terminator = _line_terminator(prefix, suffix)
+    needs_leading_nl = bool(prefix) and not prefix.endswith(("\n", "\r"))
+    glue = (terminator if needs_leading_nl else "") + snippet + terminator
+    readme_path.write_bytes((prefix + glue + suffix).encode("utf-8"))
     return True
+
+
+def _line_terminator(prefix: str, suffix: str) -> str:
+    """Return the line terminator in use at the insertion point.
+
+    The line before the insertion point decides. With no terminated line
+    before it, the first line after it decides, then LF.
+    """
+    for ending in ("\r\n", "\n", "\r"):
+        if prefix.endswith(ending):
+            return ending
+    match = re.search(r"\r\n|\n|\r", suffix)
+    return match.group(0) if match else "\n"
