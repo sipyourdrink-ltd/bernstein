@@ -427,8 +427,8 @@ class ContextCompressor:
                     break
                 selected.add(fname)
                 bm25_matches.add(fname)
-                # Follow dependencies up to max_depth
-                for dep in self.graph.reachable_from(fname, max_depth=max_depth):
+                # Break ties by path before applying the file limit.
+                for dep in sorted(self.graph.reachable_from(fname, max_depth=max_depth)):
                     if len(selected) >= max_files:
                         break
                     if dep not in selected:
