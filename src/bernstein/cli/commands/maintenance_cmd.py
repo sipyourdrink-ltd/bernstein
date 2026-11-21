@@ -88,11 +88,15 @@ def _history_rows(workdir: Path, file_path: Path, *, limit: int) -> list[History
     Args:
         workdir: Repository root.
         file_path: File to inspect.
-        limit: Maximum number of rows to return.
+        limit: Maximum number of rows to return; zero returns none.
 
     Returns:
         Newest-first history rows for the requested file.
     """
+    # Zero asks for no records. The loop below appends before it checks the count, so without this a
+    # zero limit returned one record (#7957).
+    if limit <= 0:
+        return []
     normalized_path = _normalize_repo_path(workdir, file_path)
     store = _load_task_store(workdir)
     matches: list[HistoryRow] = []
@@ -224,12 +228,18 @@ def cleanup_cmd(workdir: Path, yes: bool, force: bool) -> None:
     show_default=True,
     help="Project root containing .sdd/archive/tasks.jsonl.",
 )
-@click.option("--limit", type=int, default=10, show_default=True, help="Maximum number of matching tasks to show.")
+@click.option(
+    "--limit",
+    type=click.IntRange(min=0),
+    default=10,
+    show_default=True,
+    help="Maximum number of matching tasks to show, newest first. 0 shows none.",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
 def history_cmd(file_path: Path, workdir: Path, limit: int, as_json: bool) -> None:
     """Show archived tasks that list FILE_PATH as an owned file."""
     resolved_workdir = workdir.resolve()
-    rows = _history_rows(resolved_workdir, file_path, limit=max(1, limit))
+    rows = _history_rows(resolved_workdir, file_path, limit=limit)
 
     if as_json:
         click.echo(json.dumps({"file": _normalize_repo_path(resolved_workdir, file_path), "tasks": rows}, indent=2))
