@@ -26,7 +26,9 @@ still runs with `<repo>` as its working directory. The watched directory
 selects which file changes are monitored; it does not change the working
 directory of the run. `--glob` filters changed paths relative to the watched
 directory (so with the default directory, `src/**/*.py` matches paths under
-`src/`).
+`src/`). Each `**/` segment matches zero or more directories: `src/**/*.py`
+matches `src/root.py` as well as `src/nested/module.py`, and `**/*.py` matches
+a Python file at the root. A pattern without `**/` keeps `fnmatch` rules.
 
 | Flag / argument | Default | Meaning |
 |---|---|---|
