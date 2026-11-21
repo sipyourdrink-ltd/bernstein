@@ -115,7 +115,7 @@ class _ParamInfo:
     name: str
     annotation: str  # empty string when no annotation
     has_default: bool
-    position: int
+    position: int | None  # None for keyword-only parameters
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,6 @@ def _extract_params(args: ast.arguments, _qualified_prefix: str) -> list[_ParamI
     n_defaults = len(args.defaults)
     first_default_idx = n_args - n_defaults
 
-    position = 0
     for i, arg in enumerate(args.args):
         if arg.arg in ("self", "cls"):
             continue
@@ -165,10 +164,9 @@ def _extract_params(args: ast.arguments, _qualified_prefix: str) -> list[_ParamI
                 name=arg.arg,
                 annotation=_annotation_str(arg.annotation),
                 has_default=has_default,
-                position=position,
+                position=len(params),
             )
         )
-        position += 1
 
     # keyword-only args
     for i, arg in enumerate(args.kwonlyargs):
@@ -178,10 +176,9 @@ def _extract_params(args: ast.arguments, _qualified_prefix: str) -> list[_ParamI
                 name=arg.arg,
                 annotation=_annotation_str(arg.annotation),
                 has_default=default is not None,
-                position=position,
+                position=None,
             )
         )
-        position += 1
 
     return params
 
@@ -272,17 +269,24 @@ def _compare_params(
                 )
             )
 
-        # Changed position for required parameters
-        if not old_param.has_default and not new_param.has_default and old_param.position != new_param.position:
+        # An old positional call can break if its required argument moves or becomes keyword-only.
+        if (
+            not old_param.has_default
+            and not new_param.has_default
+            and old_param.position is not None
+            and old_param.position != new_param.position
+        ):
+            move = (
+                "became keyword-only"
+                if new_param.position is None
+                else f"moved from position {old_param.position} to {new_param.position}"
+            )
             breaks.append(
                 BreakingChange(
                     file=filename,
                     name=old_func.qualified_name,
                     change_type=ChangeType.CHANGED_PARAM_POSITION,
-                    description=(
-                        f"Required parameter '{param_name}' in '{old_func.qualified_name}' "
-                        f"moved from position {old_param.position} to {new_param.position}"
-                    ),
+                    description=f"Required parameter '{param_name}' in '{old_func.qualified_name}' {move}",
                     line=old_func.line,
                 )
             )
