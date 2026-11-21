@@ -56,11 +56,11 @@ def _is_public_symbol(node: SymbolNode) -> bool:
 
 
 def _top_level_dir(path: str) -> str:
-    """Return the first path segment, excluding ``src/`` packaging shims."""
+    """Return the first path segment, omitting ``src/`` around package directories."""
     parts = path.split("/")
-    if parts and parts[0] == "src" and len(parts) > 1:
+    if parts[0] == "src" and len(parts) > 2:
         return parts[1]
-    return parts[0] if parts else ""
+    return parts[0]
 
 
 def _package_for_file(path: str) -> str:

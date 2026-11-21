@@ -23,16 +23,15 @@ REPO = Path("/fake/repo")
 class TestLsFiles:
     """Tests for file listing helpers."""
 
-    @patch("bernstein.core.git.git_context._run_git")
+    @patch("bernstein.core.git.git_context.subprocess.check_output")
     def test_ls_files(self, mock: MagicMock) -> None:
-        mock.return_value = "src/a.py\nsrc/b.py\ntests/test_a.py"
+        mock.return_value = b" src/a.py\0src/b\nc.py\0tests/test_a.py\0"
         result = ls_files(REPO)
-        assert result == ["src/a.py", "src/b.py", "tests/test_a.py"]
-        mock.assert_called_once_with(["ls-files"], REPO, timeout=5)
+        assert result == [" src/a.py", "src/b\nc.py", "tests/test_a.py"]
 
-    @patch("bernstein.core.git.git_context._run_git")
+    @patch("bernstein.core.git.git_context.subprocess.check_output")
     def test_ls_files_empty(self, mock: MagicMock) -> None:
-        mock.return_value = None
+        mock.return_value = b""
         assert ls_files(REPO) == []
 
     @patch("bernstein.core.git.git_context._run_git")
