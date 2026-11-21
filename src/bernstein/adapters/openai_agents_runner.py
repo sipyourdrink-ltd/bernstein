@@ -1169,6 +1169,65 @@ def _gpt5_mini_responses_rejects_sampling(manifest: RunnerManifest, base_url: st
     }
 
 
+#: Bernstein effort tiers as the Responses API's ``reasoning.effort`` values (#8076). ``normal`` is
+#: Bernstein's name for medium. The provider values pass through. See
+#: docs/adapters/capability_contract.md#reasoning-effort.
+_REASONING_EFFORT_MAP: dict[str, str] = {
+    "none": "none",
+    "minimal": "minimal",
+    "low": "low",
+    "normal": "medium",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max",
+}
+
+#: Model families that accept ``reasoning.effort``. Another model (gpt-4.1, gpt-4o) rejects the
+#: parameter, and the manifest's effort defaults to "high", so sending it to every model would
+#: break the calls that work today.
+_REASONING_MODEL_PREFIXES: tuple[str, ...] = ("o1", "o3", "o4", "gpt-5", "gpt-6")
+
+
+def _reasoning_effort(manifest: RunnerManifest, base_url: str | None) -> str | None:
+    """Return the ``reasoning.effort`` value to send, or ``None`` to keep the provider default.
+
+    An effort outside :data:`_REASONING_EFFORT_MAP` raises before any call. The effort is sent only
+    to the default OpenAI endpoint, and only for a model in :data:`_REASONING_MODEL_PREFIXES`.
+
+    Raises:
+        ValueError: When the manifest's effort is not a value the provider accepts.
+    """
+    effort = (manifest.effort or "").strip().lower()
+    if not effort:
+        return None
+    if effort not in _REASONING_EFFORT_MAP:
+        accepted = ", ".join(sorted(_REASONING_EFFORT_MAP))
+        raise ValueError(f"Unsupported openai_agents reasoning effort {manifest.effort!r}; use one of: {accepted}")
+    if manifest.council is not None or base_url:
+        return None
+    if not manifest.model.lower().startswith(_REASONING_MODEL_PREFIXES):
+        logger.info(
+            "openai_agents_runner session=%s: model %s takes no reasoning effort; not sending effort=%s",
+            manifest.session_id,
+            manifest.model,
+            effort,
+        )
+        return None
+    return _REASONING_EFFORT_MAP[effort]
+
+
+def _reasoning_settings(effort: str) -> Any:
+    """Build the SDK's ``Reasoning`` value for *effort*.
+
+    ``model_construct`` skips the installed ``openai`` package's literal check, so a value that the
+    provider accepts and an older package does not know (``max``) still reaches the request.
+    """
+    from openai.types.shared import Reasoning
+
+    return Reasoning.model_construct(effort=effort)
+
+
 def _build_model_settings_kwargs(
     manifest: RunnerManifest,
     *,
@@ -1211,6 +1270,15 @@ def _build_model_settings_kwargs(
         kwargs["extra_args"] = {"top_k": manifest.top_k}
     if manifest.max_tokens and _model_settings_accepts(model_settings_cls, "max_tokens"):
         kwargs["max_tokens"] = manifest.max_tokens
+    effort = _reasoning_effort(manifest, base_url)
+    if effort is not None and _model_settings_accepts(model_settings_cls, "reasoning"):
+        kwargs["reasoning"] = _reasoning_settings(effort)
+        logger.info(
+            "openai_agents_runner session=%s: model %s, reasoning effort=%s",
+            manifest.session_id,
+            manifest.model,
+            effort,
+        )
     kwargs = _inject_alibaba_enable_thinking(
         kwargs,
         base_url,
