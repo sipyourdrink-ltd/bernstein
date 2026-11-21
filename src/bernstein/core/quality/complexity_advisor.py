@@ -26,6 +26,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
     from pathlib import Path
 
     from bernstein.core.models import Task
@@ -242,37 +243,45 @@ def _cross_file_dep_score(owned_files: list[str], workdir: Path) -> float:
     module_stems = {p.stem for p in paths}
     # Also include dotted package paths relative to workdir
     module_dotted: set[str] = set()
+    package_members: dict[Path, set[str]] = {}
     for p in paths:
+        module_path = p.parent if p.name == "__init__.py" else p.with_suffix("")
+        package_members.setdefault(module_path.parent, set()).add(module_path.name)
         with suppress(ValueError):
             rel = p.relative_to(workdir)
             dotted = ".".join(rel.with_suffix("").parts)
             module_dotted.add(dotted)
 
+    targets = module_stems | module_dotted
     files_with_internal_imports = 0
     for p in paths:
-        if _imports_any(p, module_stems | module_dotted):
+        siblings = package_members.get(p.parent, set()) - {p.stem}
+        if _imports_any(p, targets, siblings):
             files_with_internal_imports += 1
 
     return files_with_internal_imports / len(paths)
 
 
-def _import_node_matches(node: ast.AST, targets: set[str]) -> bool:
+def _import_node_matches(node: ast.AST, targets: set[str], siblings: Collection[str] = ()) -> bool:
     """Return True if an import AST node references any of *targets*."""
     if isinstance(node, ast.Import):
         return any(alias.name in targets or alias.name.split(".")[0] in targets for alias in node.names)
     if isinstance(node, ast.ImportFrom):
+        if node.level == 1 and node.module is None:
+            return any(alias.name in siblings for alias in node.names)
         module = node.module or ""
         root = module.split(".")[0]
         return module in targets or root in targets
     return False
 
 
-def _imports_any(path: Path, targets: set[str]) -> bool:
+def _imports_any(path: Path, targets: set[str], siblings: Collection[str] = ()) -> bool:
     """Return True if *path* imports any of the *targets* module names.
 
     Args:
         path: Python source file to parse.
         targets: Set of module names/stems to look for.
+        siblings: Other owned module or package names for ``from . import name``.
 
     Returns:
         True if at least one import references a target.
@@ -283,4 +292,4 @@ def _imports_any(path: Path, targets: set[str]) -> bool:
     except (SyntaxError, OSError):
         return False
 
-    return any(_import_node_matches(node, targets) for node in ast.walk(tree))
+    return any(_import_node_matches(node, targets, siblings) for node in ast.walk(tree))
