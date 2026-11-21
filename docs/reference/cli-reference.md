@@ -383,7 +383,7 @@ which commits changed the file.
 | Argument / flag | Default | Meaning |
 |---|---|---|
 | `FILE_PATH` | required | File path to match against archived tasks' recorded `owned_files`. |
-| `--limit N` | `10` | Maximum number of matching tasks to show. |
+| `--limit N` | `10` | Maximum number of matching tasks to show, newest first. `0` shows none (an empty table message, or `"tasks": []` with `--json`). A negative value is a usage error. |
 | `--workdir PATH` | `.` | Project root containing `.sdd/archive/tasks.jsonl`. |
 | `--json` | off | Print an object with the normalized `file` path and matching `tasks` array. |
 
