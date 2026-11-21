@@ -155,14 +155,11 @@ def build_load_test_report(
     durations = [r.duration_ms for r in results]
     pct = compute_percentiles(durations)
 
-    # Compute throughput from wall-clock span of timestamps.
-    if len(results) >= 2:
-        earliest = min(r.timestamp for r in results)
-        latest = max(r.timestamp for r in results)
-        elapsed = latest - earliest
+    # Measure from the first request start through the last completion.
+    if results:
+        first_start = min(r.timestamp for r in results)
+        elapsed = max((r.timestamp - first_start) + r.duration_ms / 1000 for r in results)
         rps = len(results) / elapsed if elapsed > 0 else 0.0
-    elif len(results) == 1:
-        rps = 1.0
     else:
         rps = 0.0
 
