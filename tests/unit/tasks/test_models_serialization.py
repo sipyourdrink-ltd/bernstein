@@ -11,6 +11,7 @@ small predicate helpers (``ProgressSnapshot.is_same_progress``,
 from __future__ import annotations
 
 import time
+from typing import Literal
 
 import pytest
 
@@ -47,6 +48,32 @@ def test_task_from_dict_minimal_applies_defaults() -> None:
     assert task.priority == 2
     assert task.task_type is TaskType.STANDARD
     assert task.estimated_minutes == 30
+
+
+@pytest.mark.parametrize("sensitivity", ["public", "internal", "confidential"])
+def test_task_sensitivity_dict_round_trip(sensitivity: Literal["public", "internal", "confidential"]) -> None:
+    task = Task(id="classification", title="T", description="D", role="backend", sensitivity=sensitivity)
+
+    restored = Task.from_dict(task.to_dict())
+
+    assert restored.sensitivity == sensitivity
+    assert task.to_dict()["sensitivity"] == sensitivity
+
+
+@pytest.mark.parametrize("sensitivity", ["public", "internal", "confidential"])
+def test_task_from_dict_preserves_explicit_sensitivity(sensitivity: str) -> None:
+    task = Task.from_dict(
+        {"id": "classification", "title": "T", "description": "D", "role": "backend", "sensitivity": sensitivity}
+    )
+
+    assert task.sensitivity == sensitivity
+
+
+def test_task_from_dict_legacy_sensitivity_defaults_to_internal() -> None:
+    raw = {"id": "legacy", "title": "T", "description": "D", "role": "backend"}
+
+    assert Task.from_dict(raw).sensitivity == "internal"
+    assert Task(id="new", title="T", description="D", role="backend").sensitivity == "internal"
 
 
 def test_task_from_dict_invalid_task_type_falls_back_to_standard() -> None:

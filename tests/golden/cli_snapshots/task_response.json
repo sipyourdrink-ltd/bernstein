@@ -1,5 +1,6 @@
 {
   "approval_required": false,
+  "approval_spec": null,
   "artifact_spec": null,
   "assigned_agent": null,
   "batch_eligible": false,
@@ -40,6 +41,7 @@
   "risk_level": "low",
   "role": "backend",
   "scope": "medium",
+  "sensitivity": "internal",
   "slack_context": null,
   "status": "open",
   "task_type": "standard",
