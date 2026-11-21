@@ -10,6 +10,7 @@ prints either a table or the stable ``--json`` rows.
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 
@@ -47,10 +48,30 @@ def runs_group() -> None:
     """Operator surface over runs projected from the work ledger."""
 
 
+def _since_seconds(_ctx: click.Context, _param: click.Parameter, value: str | None) -> float | None:
+    """Parse ``--since`` into a finite, non-negative window in seconds, or refuse it (#7942).
+
+    ``parse_duration`` raised a bare ``ValueError`` (a traceback), and it accepted ``nan``, ``inf``
+    and a negative amount, none of which names a window in the past.
+    """
+    if value is None:
+        return None
+    try:
+        seconds = parse_duration(value)
+    except ValueError:
+        seconds = math.nan
+    if not math.isfinite(seconds) or seconds < 0:
+        raise click.BadParameter(
+            f"{value!r} is not a duration in the past; use a number and a unit s, m, h or d, for example 6h or 2d"
+        )
+    return seconds
+
+
 @runs_group.command("report")
 @click.option(
     "--since",
     default=None,
+    callback=_since_seconds,
     help='Only include runs started in the last DURATION, e.g. "6h", "2d".',
 )
 @click.option(
@@ -66,7 +87,7 @@ def runs_group() -> None:
     default=False,
     help="Emit stable machine-readable rows instead of a table.",
 )
-def runs_report_cmd(since: str | None, workdir: Path | None, output_json: bool) -> None:
+def runs_report_cmd(since: float | None, workdir: Path | None, output_json: bool) -> None:
     """List all recorded runs with an outcome and one-line evidence.
 
     This includes runs that are still running. Until a run records a wrap-up,
@@ -86,7 +107,7 @@ def runs_report_cmd(since: str | None, workdir: Path | None, output_json: bool) 
       bernstein runs report --json          # stable machine-readable rows
     """
     root = (workdir or Path.cwd()).resolve()
-    cutoff = time.time() - parse_duration(since) if since else None
+    cutoff = time.time() - since if since is not None else None
     runs = list_finished_runs(root / ".sdd", since=cutoff)
 
     if output_json:
