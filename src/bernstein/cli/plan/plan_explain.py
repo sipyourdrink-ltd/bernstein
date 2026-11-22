@@ -76,8 +76,10 @@ def _compute_critical_path(stages: list[dict[str, Any]]) -> int:
     name_to_deps: dict[str, list[str]] = {}
     for stage in stages:
         name = str(stage.get("name", ""))
-        deps = stage.get("depends_on", [])
-        if not isinstance(deps, list):
+        deps = stage.get("depends_on")
+        if deps is None:
+            deps = []
+        elif not isinstance(deps, list):
             deps = [deps]
         name_to_deps[name] = [str(d) for d in deps]
 
