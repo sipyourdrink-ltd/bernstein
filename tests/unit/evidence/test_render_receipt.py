@@ -588,6 +588,32 @@ def test_first_property_difference_reports_missing_properties(missing_from_base:
     assert first_property_difference(base, head) == ("root.a", "style.color")
 
 
+@pytest.mark.parametrize("missing_from_base", [True, False], ids=["missing-from-base", "missing-from-head"])
+@pytest.mark.parametrize("missing_first", [True, False], ids=["missing-first", "changed-first"])
+@pytest.mark.parametrize("reverse_base", [False, True])
+@pytest.mark.parametrize("reverse_head", [False, True])
+def test_first_property_difference_orders_missing_and_changed_keys_together(
+    missing_from_base: bool, missing_first: bool, reverse_base: bool, reverse_head: bool
+) -> None:
+    first = ("root.a", "style.display")
+    last = ("root.z", "style.color")
+    missing, changed = (first, last) if missing_first else (last, first)
+    common = ("root.0", "style.color")
+    base = {common: "gray", changed: "red"}
+    head = {common: "gray", changed: "blue"}
+    present = head if missing_from_base else base
+    present[missing] = ""
+    if reverse_base:
+        base = dict(reversed(base.items()))
+    if reverse_head:
+        head = dict(reversed(head.items()))
+    base_items, head_items = list(base.items()), list(head.items())
+
+    assert first_property_difference(base, head) == first
+    assert list(base.items()) == base_items
+    assert list(head.items()) == head_items
+
+
 @pytest.mark.parametrize("head_environment", [_env(), _env(locale="fr-FR"), None])
 def test_render_delta_keeps_both_unstable_property_lists(head_environment: EnvironmentDescriptor | None) -> None:
     base = _receipt(unstable_properties={"experimentalFont": "true", "cssSubgrid": "enabled"})
