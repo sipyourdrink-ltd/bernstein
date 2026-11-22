@@ -1798,7 +1798,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Subcommand | Purpose |
 |---|---|
-| `tasks` | Render the current task dependency graph as ASCII or Mermaid. |
+| `tasks` | Show the current task dependency graph as ASCII. Use `--format mermaid` to write a standalone Mermaid diagram to stdout. |
 | `impact FILE_QUERY` | Print downstream files impacted by changing FILE_QUERY. |
 
 #### `bernstein govern`
