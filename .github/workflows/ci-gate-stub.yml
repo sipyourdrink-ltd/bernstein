@@ -57,7 +57,7 @@ name: CI gate stub
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       # Documentation & prose
       - "docs/**"
@@ -135,21 +135,70 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # Both the classifier and its paths-ignore policy come from the event base.
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/ci_gate_stub_guard.py
+            /.github/workflows/ci.yml
+      - name: Fetch the event commit graph
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: stub-event-graph
+          fetch-depth: 0
+          # Only the Git objects are needed to enumerate changed paths.
+          sparse-checkout-cone-mode: false
+          sparse-checkout: '!/*'
           persist-credentials: false
       - name: Collect changed paths
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          # The REST file list is the same diff GitHub itself filters on,
-          # so this needs no base-ref fetch and no merge-base arithmetic.
-          gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" \
-            --jq '.[].filename' > changed-paths.txt
-          echo "Collected $(wc -l < changed-paths.txt) changed path(s)."
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          def commit_sha(value):
+              if not re.fullmatch(r"[0-9a-f]{40}", value) or value == "0" * 40:
+                  raise SystemExit("Expected one full commit SHA")
+              return value
+
+          def git(*args):
+              return subprocess.check_output(["git", "-C", "stub-event-graph", *args])
+
+          base = commit_sha(os.environ["EXPECTED_BASE"])
+          head = commit_sha(os.environ["EXPECTED_HEAD"])
+          if git("rev-parse", "--is-shallow-repository") != b"false\n":
+              raise SystemExit("Incomplete event history")
+          # Multiple merge bases leave the three-dot PR diff ambiguous.
+          root = commit_sha(git("merge-base", "--all", base, head).decode("ascii").removesuffix("\n"))
+          diff = git("diff", "--no-renames", "--ignore-submodules=none", "--no-ext-diff", "--no-textconv",
+                     "--name-only", "-z", root, head, "--")
+          if not diff or not diff.endswith(b"\0"):
+              raise SystemExit("Missing or incomplete changed paths")
+          paths = diff[:-1].decode("utf-8").split("\0")
+          # The trusted classifier reads one path per line with splitlines() and strip().
+          if any(not path or path != path.strip() or path.splitlines() != [path] for path in paths):
+              raise SystemExit("Filename cannot be passed intact to the classifier")
+
+          # Only freshness is live. The classified filenames come from the event commit trees.
+          pr = f"repos/{os.environ['REPO']}/pulls/{os.environ['PR_NUMBER']}"
+          live_head = subprocess.check_output(["gh", "api", pr, "--jq", ".head.sha"], text=True)
+          if live_head.removesuffix("\n") != head:
+              raise SystemExit("PR head differs from this event")
+          (Path(os.environ["RUNNER_TEMP"]) / "stub-paths.txt").write_text("\n".join(paths) + "\n", encoding="utf-8")
+          PY
       - name: Evaluate against ci.yml paths-ignore
         id: guard
-        run: python3 scripts/ci_gate_stub_guard.py --changed-paths changed-paths.txt
+        run: python3 scripts/ci_gate_stub_guard.py --changed-paths "$RUNNER_TEMP/stub-paths.txt"
 
   ci-gate:
     # The check-run name posted to the PR is taken from this `name:`, and
