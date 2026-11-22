@@ -9,12 +9,35 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add scripts dir to path so we can import the module
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from check_coverage_thresholds import MODULE_THRESHOLDS, CoverageResult
+from check_coverage_thresholds import MODULE_THRESHOLDS, CoverageResult, measure_coverage
+
+
+@pytest.mark.parametrize("module", ["sample_ops", "sample_pkg.sample_ops"])
+def test_measure_coverage_collects_an_importable_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module: str
+) -> None:
+    src = tmp_path / "src"
+    source = src.joinpath(*module.split(".")).with_suffix(".py")
+    source.parent.mkdir(parents=True)
+    source.write_text("def one():\n    return 1\n", encoding="utf-8")
+    tests = tmp_path / "tests" / "unit"
+    tests.mkdir(parents=True)
+    (tests / "test_sample_ops.py").write_text(
+        f"from {module} import one\n\ndef test_one():\n    assert one() == 1\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", str(src))
+
+    result = measure_coverage(module, 100)
+
+    assert result == CoverageResult(module, covered=2, total=2, percent=100.0, threshold=100, passed=True)
 
 
 class TestCoverageResult:
