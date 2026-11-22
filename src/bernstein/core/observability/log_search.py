@@ -24,6 +24,7 @@ import re
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,8 +34,7 @@ if TYPE_CHECKING:
 # Data classes
 # ---------------------------------------------------------------------------
 
-_TIMESTAMP_RE = re.compile(r"^\[?(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?[Z+-]?(?:\d{2}:\d{2})?)")
-_ISO_FULL = re.compile(r"^(?P<y>\d{4})-(?P<mo>\d{2})-(?P<d>\d{2})[T ](?P<h>\d{2}):(?P<mi>\d{2}):(?P<s>\d{2})")
+_TIMESTAMP_RE = re.compile(r"^\[?(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)")
 
 
 @dataclass(frozen=True)
@@ -130,22 +130,8 @@ def _parse_log_timestamp(line: str) -> float:
     m = _TIMESTAMP_RE.match(line.strip())
     if not m:
         return 0.0
-    ts_str = m.group("ts")
-    iso_m = _ISO_FULL.match(ts_str)
-    if not iso_m:
-        return 0.0
-    import datetime
-
     try:
-        dt = datetime.datetime(
-            int(iso_m.group("y")),
-            int(iso_m.group("mo")),
-            int(iso_m.group("d")),
-            int(iso_m.group("h")),
-            int(iso_m.group("mi")),
-            int(iso_m.group("s")),
-        )
-        return dt.timestamp()
+        return datetime.fromisoformat(m.group("ts")).timestamp()
     except ValueError:
         return 0.0
 
