@@ -177,10 +177,12 @@ def import_workflow_tasks(
         logger.info("workflow_importer: %s → %d unchecked item(s)", wf_file.name, len(items))
 
         for title in items:
-            if title.strip().lower() in existing_titles:
+            normalized_title = title.strip().lower()
+            if normalized_title in existing_titles:
                 logger.debug("workflow_importer: skipping duplicate %r", title)
                 continue
             if dry_run:
+                existing_titles.add(normalized_title)
                 logger.info("workflow_importer [dry-run]: would import %r", title)
                 imported += 1
             elif _import_single_task(title, wf_file, client, base_url, existing_titles):
