@@ -16,14 +16,20 @@ import json
 from pathlib import Path
 
 
+def _combination_key(result: dict) -> str:
+    return f"{result['python']}+mcp{result['mcp']}+a2a{result['a2a']}"
+
+
 def check_compatibility(current_results: dict, baseline: dict) -> dict:
     """Compare current results against baseline to detect regressions."""
-    baseline_compat = baseline.get("compatibility", {})
+    baseline_compat = baseline.get("compatibility")
+    if baseline_compat is None:
+        baseline_compat = {_combination_key(row): row for row in baseline.get("results", [])}
     breaking_changes = []
     new_compatibilities = []
 
     for result in current_results.get("results", []):
-        key = f"{result['python']}+mcp{result['mcp']}+a2a{result['a2a']}"
+        key = _combination_key(result)
         baseline_entry = baseline_compat.get(key)
 
         if baseline_entry is None:
