@@ -95,7 +95,7 @@ uv run python benchmarks/bench_orchestrator.py
 
 ### Task store throughput
 
-Measures raw throughput of the JSONL-backed task store.
+Measures raw throughput of the JSONL-backed task store. Each run uses its own temporary directory and removes it on success or failure.
 
 - High write throughput on local SSD
 - Low flush latency
