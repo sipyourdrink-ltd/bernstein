@@ -2,17 +2,15 @@
 """Refresh ``tests/fixtures/ci/test-shard-durations.json`` from a CI run's logs.
 
 Harvests per-file wall times from ``scripts/run_tests.py`` PASS/FAIL lines in a
-GitHub Actions run log zip, maps basenames onto ``tests/unit/**/test_*.py``
+GitHub Actions run log zip, maps timings onto ``tests/unit/**/test_*.py``
 paths, and writes the committed durations document consumed by ``shard_files``.
 
 Usage:
     uv run python scripts/refresh_test_shard_durations.py --run-id 33330849513
     uv run python scripts/refresh_test_shard_durations.py --run-id 33330849513 --repo sipyourdrink-ltd/bernstein
 
-Basename collisions (duplicate ``test_*.py`` names under different dirs) get
-the average of that basename's observed timings assigned to every colliding
-path — good enough to keep them off the long pole until a
-``run_tests.py --record-durations`` pass records unambiguous relative paths.
+Repository-relative timings apply to the named file. For files without such
+timings, older basename-only logs supply the same average to matching files.
 """
 
 from __future__ import annotations
@@ -66,7 +64,7 @@ def _iter_ubuntu_shard_logs(zf: zipfile.ZipFile) -> list[str]:
 
 
 def harvest_basename_durations(log_zip: Path) -> dict[str, list[float]]:
-    """Return ``{basename: [seconds, ...]}`` from ubuntu shard job logs."""
+    """Group durations by the path or basename printed in ubuntu shard logs."""
     by_name: dict[str, list[float]] = defaultdict(list)
     with zipfile.ZipFile(log_zip) as zf:
         for name in _iter_ubuntu_shard_logs(zf):
@@ -80,19 +78,13 @@ def map_basenames_to_paths(
     by_name: dict[str, list[float]],
     test_root: Path,
 ) -> dict[str, float]:
-    """Map harvested basename timings onto repo-relative POSIX paths."""
-    name_to_paths: dict[str, list[str]] = defaultdict(list)
+    """Prefer repo-relative timings, falling back to legacy basenames."""
+    durations: dict[str, float] = {}
     for path in sorted(test_root.rglob("test_*.py")):
         rel = path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
-        name_to_paths[path.name].append(rel)
-
-    durations: dict[str, float] = {}
-    for name, samples in by_name.items():
-        if not samples:
-            continue
-        average = sum(samples) / len(samples)
-        for rel in name_to_paths.get(name, []):
-            durations[rel] = average
+        samples = by_name.get(rel) or by_name.get(path.name)
+        if samples:
+            durations[rel] = sum(samples) / len(samples)
     return durations
 
 
