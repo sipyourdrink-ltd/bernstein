@@ -38,6 +38,17 @@ def test_render_wiki_emits_three_sections_for_empty_inputs() -> None:
     assert output.endswith("\n")
 
 
+def test_wiki_groups_root_level_test_modules() -> None:
+    wiki = render_wiki(SemanticGraph(), ["test_root.py", "tests/test_inner.py"])
+
+    layout = wiki.split("## Test layout\n\n", 1)[1].splitlines()
+    assert layout == [
+        "- 2 test file(s) tracked.",
+        "- `./` (1 file(s))",
+        "- `tests/` (1 file(s))",
+    ]
+
+
 def test_render_wiki_is_deterministic_for_fixture_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write(tmp_path / "src" / "pkg" / "__init__.py", "")
     _write(
