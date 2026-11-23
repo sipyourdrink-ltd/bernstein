@@ -132,7 +132,7 @@ Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en
 Nieuwe pogingen behouden `dispatch_tier`; bij het heropenen van een taak kan het niveau expliciet worden gekozen. Zie het [contract voor dispatchniveaus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

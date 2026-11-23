@@ -132,7 +132,7 @@ Jokaisen solmun ottaa agentti, jonka roolin vaihe sallii; rooliaidat ja hyväksy
 Uudelleenyritykset säilyttävät `dispatch_tier`-arvon; tehtävää uudelleen avattaessa tason voi valita erikseen. Katso [suoritustasojen sopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### asennus 30 sekunnissa
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

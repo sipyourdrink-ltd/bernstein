@@ -132,7 +132,7 @@ flowchart LR
 การลองใหม่จะคงค่า `dispatch_tier` ไว้ และสามารถเลือกระดับอย่างชัดเจนเมื่อเปิดงานอีกครั้ง ดู[ข้อกำหนดระดับการส่งงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

@@ -132,7 +132,7 @@ flowchart LR
 ניסיונות חוזרים שומרים על `dispatch_tier`; בפתיחה מחדש של משימה אפשר לבחור את הרמה במפורש. ראו את [חוזה רמות השיגור](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

@@ -132,7 +132,7 @@ Chaque nœud est pris par un agent dont le rôle est autorisé par la phase ; le
 Les nouvelles tentatives conservent `dispatch_tier` ; la réouverture d’une tâche permet de choisir explicitement le niveau. Voir le [contrat des niveaux d’exécution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installation en 30 secondes
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

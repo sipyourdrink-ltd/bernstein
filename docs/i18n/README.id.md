@@ -132,7 +132,7 @@ Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate
 Percobaan ulang mempertahankan `dispatch_tier`; saat tugas dibuka kembali, tingkat dapat dipilih secara eksplisit. Lihat [kontrak tingkat dispatch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

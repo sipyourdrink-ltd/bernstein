@@ -132,7 +132,7 @@ Jeden Knoten übernimmt ein Agent, dessen Rolle die Phase zulässt; Rollenzäune
 Wiederholungsversuche behalten `dispatch_tier` bei; beim erneuten Öffnen einer Aufgabe kann die Stufe ausdrücklich gewählt werden. Siehe [Vertrag für Dispatch-Stufen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### in 30 Sekunden installieren
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

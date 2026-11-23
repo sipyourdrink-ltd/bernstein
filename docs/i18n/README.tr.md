@@ -132,7 +132,7 @@ Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri
 Yeniden denemeler `dispatch_tier` değerini korur; görev yeniden açılırken seviye açıkça seçilebilir. [Dağıtım seviyesi sözleşmesine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen) bakın.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

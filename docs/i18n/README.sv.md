@@ -132,7 +132,7 @@ Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkänna
 Nya försök behåller `dispatch_tier`; när en uppgift öppnas igen kan nivån väljas uttryckligen. Se [kontraktet för körningsnivåer](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installera på 30 sekunder
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

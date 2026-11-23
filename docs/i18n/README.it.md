@@ -132,7 +132,7 @@ Ogni nodo viene preso da un agente il cui ruolo è ammesso dalla fase; i recinti
 I nuovi tentativi mantengono `dispatch_tier`; alla riapertura di un’attività è possibile scegliere esplicitamente il livello. Vedi il [contratto dei livelli di esecuzione](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installazione in 30 secondi
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

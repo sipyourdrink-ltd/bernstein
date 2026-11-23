@@ -132,7 +132,7 @@ flowchart LR
 Повторні спроби зберігають `dispatch_tier`; під час повторного відкриття завдання можна явно вибрати рівень. Див. [контракт рівнів виконання](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

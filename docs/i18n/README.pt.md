@@ -132,7 +132,7 @@ Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de pape
 As novas tentativas preservam `dispatch_tier`; ao reabrir uma tarefa, é possível selecionar explicitamente o nível. Consulte o [contrato dos níveis de execução](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

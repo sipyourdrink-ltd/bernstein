@@ -132,7 +132,7 @@ Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i
 Ponowne próby zachowują `dispatch_tier`; przy ponownym otwieraniu zadania można jawnie wybrać poziom. Zobacz [kontrakt poziomów wykonania](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
