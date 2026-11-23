@@ -133,6 +133,23 @@ For hand-authored multi-task plans, use one checkbox per task:
 | `[US<n>]` | Sets `story_id` to the user-story slice. |
 | `-> T###, T###` | Trailing arrow declares inline dependencies. |
 
+### Fenced examples are skipped
+
+The parser reads task rows only from plain checklist lines: rows inside
+fenced code blocks are examples and never enter the DAG, so a plan can
+embed a sample backlog. Fence handling follows Markdown:
+
+- A run of at least three backticks or tildes opens a block, indented up
+  to three spaces (relative to any enclosing list item) and optionally
+  followed by an info string such as `markdown`. A backtick fence whose
+  info string contains a backtick does not open a block; tilde fences
+  open regardless of the info string.
+- The block closes at the first later line carrying the same fence
+  character in a run at least as long, with nothing after it.
+- List items are tracked: under `- ```markdown` the indented closing
+  fence ends the block, and the real tasks below it are selected
+  normally.
+
 ## Scheduler behaviour
 
 The scheduler resolves parallel-safety in this order:

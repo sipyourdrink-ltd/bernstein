@@ -328,6 +328,11 @@ _DEPENDS_INLINE = re.compile(r"(?:->|→)\s*([\w,\s-]+?)\s*$", re.ASCII)
 _TASK_ID = re.compile(r"^T\d+[\w-]*$", re.ASCII)
 _STORY_ID = re.compile(r"^US\d+[\w-]*$", re.IGNORECASE | re.ASCII)
 _FENCE_LINE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+# Markdown list-item opener: ``-``, ``*``, ``+`` or an ordered marker
+# (``1.`` / ``1)``) at any indent. Open items are tracked as containers so
+# a fence opener inside a list item ("- ```markdown") is recognised and
+# the item's closing fence is not mistaken for a new opener (#7980).
+_LIST_ITEM_LINE = re.compile(r"^ *(?P<marker>[-*+]|\d{1,9}[.)])(?:[ \t]+|$)")
 
 
 def parse_task_line(line: str) -> ParsedTaskLine | None:
@@ -392,23 +397,59 @@ def parse_task_line(line: str) -> ParsedTaskLine | None:
     )
 
 
+def _match_fence(line: str, containers: list[int]) -> re.Match[str] | None:
+    """Match a fence line at the current list-container depth.
+
+    ``containers`` holds the content indent of each open list item,
+    outermost first. A fence may sit up to three spaces deeper than its
+    container (Markdown allows up to three spaces of indentation before
+    a fence); lines indented further are code blocks, not fences.
+    """
+    base = containers[-1] if containers else 0
+    rest = line[base:]
+    if len(rest) - len(rest.lstrip(" ")) > 3:
+        return None
+    return _FENCE_LINE.fullmatch(rest)
+
+
 def parse_task_lines(content: str) -> list[ParsedTaskLine]:
     """Parse all task DAG rows from a markdown document.
 
-    Skip fenced code examples, headings, prose, and blank lines.
+    Skip fenced code examples, headings, prose, and blank lines. Fences
+    are recognised inside Markdown list items (``- ```markdown``): list
+    container indentation is tracked so the item's closing fence ends the
+    block instead of opening a new one (#7980).
     """
     out: list[ParsedTaskLine] = []
     open_fence = ""
+    containers: list[int] = []
     for line in content.splitlines():
-        if match := _FENCE_LINE.fullmatch(line):
-            marker, suffix = match.groups()
-            if open_fence:
+        indent = len(line) - len(line.lstrip(" "))
+        if open_fence:
+            # Only a closing fence at the same container depth ends the
+            # block; list state is frozen while the fence is open.
+            if match := _match_fence(line, containers):
+                marker, suffix = match.groups()
                 if marker.startswith(open_fence) and not suffix.strip(" \t"):
                     open_fence = ""
-            elif marker[0] == "~" or "`" not in suffix:
-                open_fence = marker
             continue
-        if open_fence:
+        if line.strip():
+            # Non-blank line: drop containers this line dedents out of,
+            # then record a new list item. Blank lines keep containers.
+            while containers and indent < containers[-1]:
+                containers.pop()
+            if item := _LIST_ITEM_LINE.match(line):
+                containers.append(indent + len(item.group("marker")) + 1)
+                rest = line[item.end() :]
+                if match := _FENCE_LINE.fullmatch(rest):
+                    marker, suffix = match.groups()
+                    if marker[0] == "~" or "`" not in suffix:
+                        open_fence = marker
+                    continue
+        if match := _match_fence(line, containers):
+            marker, suffix = match.groups()
+            if marker[0] == "~" or "`" not in suffix:
+                open_fence = marker
             continue
         parsed = parse_task_line(line)
         if parsed is not None:

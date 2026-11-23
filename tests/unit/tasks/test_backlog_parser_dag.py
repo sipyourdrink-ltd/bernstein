@@ -150,6 +150,25 @@ def test_parse_task_lines_skips_fenced_examples(opening: str, inside: str, closi
     assert [row.task_id for row in parse_task_lines(doc)] == ["T002"]
 
 
+@pytest.mark.parametrize(
+    "doc",
+    [
+        # Fence opener on a bullet item line; the indented closing fence
+        # must end the block, not open a new one (#7980).
+        "- ```markdown\n  - [ ] [T001] Example\n  ```\n\n- [ ] [T002] Ship",
+        # Ordered-list item with a deeper content indent.
+        "1. ```markdown\n   - [ ] [T001] Example\n   ```\n\n- [ ] [T002] Ship",
+        # Nested bullet: the fence sits on the inner item's line.
+        "- Item\n  - ```markdown\n    - [ ] [T001] Example\n    ```\n- [ ] [T002] Ship",
+    ],
+)
+def test_parse_task_lines_skips_fences_inside_list_items(doc: str) -> None:
+    # A list-prefixed fence opener ("- ```markdown") opens the block; when
+    # the opener is missed, the closing fence becomes a new opener and
+    # swallows every real task below it (#7980).
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T002"]
+
+
 # ---------------------------------------------------------------------------
 # _parse_priority - 0-4 ticket scale collapses to 1-3 internal scale
 # ---------------------------------------------------------------------------
