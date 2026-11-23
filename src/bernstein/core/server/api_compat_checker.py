@@ -269,27 +269,28 @@ def _compare_params(
                 )
             )
 
-        # An old positional call can break if its required argument moves or becomes keyword-only.
-        if (
-            not old_param.has_default
-            and not new_param.has_default
-            and old_param.position is not None
-            and old_param.position != new_param.position
-        ):
-            move = (
-                "became keyword-only"
-                if new_param.position is None
-                else f"moved from position {old_param.position} to {new_param.position}"
+    # An old positional call can break if its argument moves, becomes keyword-only,
+    # or is displaced by another parameter. Compare occupied positional slots,
+    # including defaulted parameters: a value passed positionally before must
+    # still bind to the same parameter name.
+    old_slots = [p.name for p in old_func.params if p.position is not None]
+    new_slots = [p.name for p in new_func.params if p.position is not None]
+    for index, old_name in enumerate(old_slots):
+        if index < len(new_slots) and new_slots[index] == old_name:
+            continue
+        if old_name not in new_params:
+            continue  # removal already reported above
+        new_position = new_params[old_name].position
+        move = "became keyword-only" if new_position is None else f"moved from position {index} to {new_position}"
+        breaks.append(
+            BreakingChange(
+                file=filename,
+                name=old_func.qualified_name,
+                change_type=ChangeType.CHANGED_PARAM_POSITION,
+                description=f"Parameter '{old_name}' in '{old_func.qualified_name}' {move}",
+                line=old_func.line,
             )
-            breaks.append(
-                BreakingChange(
-                    file=filename,
-                    name=old_func.qualified_name,
-                    change_type=ChangeType.CHANGED_PARAM_POSITION,
-                    description=f"Required parameter '{param_name}' in '{old_func.qualified_name}' {move}",
-                    line=old_func.line,
-                )
-            )
+        )
 
     return breaks
 
