@@ -225,8 +225,19 @@ class TestRenderComparisonReport:
         ("2026-04-01T10:00:00+02:00", "2026-04-01T09:00:00Z"),
         ("2026-04-01T08:00:00Z", "2026-04-01T08:00:00.0000001Z"),
         ("2026-04-01T10:00:00.1234567+02:00", "2026-04-01T08:00:00.12345671Z"),
+        ("2026-04-01X08:00:00.1234567Z", "2026-04-01X08:00:00.1234568Z"),
+        ("2026-04-01T10:00:00.1234567+02:00:00.0000004", "2026-04-01T08:00:00.1234565Z"),
+        ("2026-04-01T10:00:00.0000001+00:00:00.0000004", "2026-04-01T09:59:59.9999998Z"),
     ],
-    ids=["fractional-seconds", "utc-offset", "sub-microsecond", "sub-microsecond-offset"],
+    ids=[
+        "fractional-seconds",
+        "utc-offset",
+        "sub-microsecond",
+        "sub-microsecond-offset",
+        "any-separator",
+        "fractional-offset",
+        "fractional-offset-borrow",
+    ],
 )
 def test_benchmark_rows_sort_by_instant(tmp_path: Path, earlier: str, later: str) -> None:
     for filename, run_id, stamp in [("a.json", "later", later), ("b.json", "earlier", earlier)]:

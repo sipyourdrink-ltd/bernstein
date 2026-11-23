@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -39,7 +39,11 @@ class BenchmarkDataPoint:
 # ---------------------------------------------------------------------------
 
 
-_SUBMICROSECOND_DIGITS = re.compile(r"[Tt ]\d{2}:?\d{2}:?\d{2}[.,]\d{6}(\d+)")
+_SUBMICROSECOND_DIGITS = re.compile(
+    r".\d{2}:?\d{2}:?\d{2}[.,]\d{6}(\d+)"
+    r"(?:([+-])\d{2}:?\d{2}(?::?\d{2}[.,]\d{6}(\d+))?)?"
+)
+_ONE_MICROSECOND = timedelta(microseconds=1)
 
 
 def _timestamp_sort_key(point: BenchmarkDataPoint) -> tuple[bool, datetime | str, str]:
@@ -50,9 +54,29 @@ def _timestamp_sort_key(point: BenchmarkDataPoint) -> tuple[bool, datetime | str
         return True, point.timestamp, ""
     if instant.tzinfo is None:
         instant = instant.replace(tzinfo=UTC)
-    # datetime truncates fractions to microseconds. Compare any remaining decimal digits on ties.
-    tail = _SUBMICROSECOND_DIGITS.search(point.timestamp)
-    return False, instant, tail[1].rstrip("0") if tail else ""
+    # datetime truncates fractions to microseconds. Compare any remaining decimal
+    # digits on ties, folding fractional timezone-offset seconds into the tail so
+    # the key reflects the UTC instant rather than the wall-clock spelling.
+    match = _SUBMICROSECOND_DIGITS.search(point.timestamp)
+    if match is None:
+        return False, instant, ""
+    local_digits = match[1]
+    offset_digits = match[3]
+    if offset_digits is None:
+        return False, instant, local_digits.rstrip("0")
+    width = max(len(local_digits), len(offset_digits))
+    scale = 10**width
+    remainder = int(local_digits)
+    remainder -= int(offset_digits) if match[2] == "+" else -int(offset_digits)
+    if remainder < 0:
+        instant -= _ONE_MICROSECOND
+        remainder += scale
+    elif remainder >= scale:
+        instant += _ONE_MICROSECOND
+        remainder -= scale
+    if remainder == 0:
+        return False, instant, ""
+    return False, instant, str(remainder).rjust(width, "0").rstrip("0")
 
 
 def load_benchmark_data(data_dir: Path) -> list[BenchmarkDataPoint]:
