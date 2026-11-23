@@ -3,30 +3,30 @@
     "registered": 57,
     "selectable": 55
   },
-  "commits_main_7d": 457,
+  "commits_main_7d": 162,
   "days_since_last_commit": 0,
-  "distinct_outside_authors": 54,
-  "generated_at": "2026-11-16",
+  "distinct_outside_authors": 46,
+  "generated_at": "2026-11-23",
   "grabbable": {
     "good_first_issue_open": 0,
     "good_first_issue_unassigned": 0,
     "up_for_grabs_open": 8,
     "up_for_grabs_unassigned": 8
   },
-  "issue_close_lag_hours_median": 28.0,
-  "issues_closed_count": 389,
+  "issue_close_lag_hours_median": 28.9,
+  "issues_closed_count": 482,
   "latest_release": {
-    "date": "2026-11-05",
-    "tag": "v3.24.1"
+    "date": "2026-11-20",
+    "tag": "v4.0.0"
   },
   "merged_prs_by_author_class": {
-    "automation": 81,
-    "maintainer": 517,
-    "outside": 20
+    "automation": 91,
+    "maintainer": 652,
+    "outside": 23
   },
-  "pr_merge_lag_hours_median": 0.5,
-  "pr_merged_count": 618,
-  "pr_merged_within_24h_pct": 82.7,
+  "pr_merge_lag_hours_median": 0.9,
+  "pr_merged_count": 766,
+  "pr_merged_within_24h_pct": 76.5,
   "readme_translations": {
     "in_sync": 23,
     "stale": 0,
