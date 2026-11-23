@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -27,10 +28,11 @@ from bernstein.core.git_basic import (
     ("body", "expected"),
     [
         ("Migration notes.\n\nBREAKING CHANGE: remove the old format", "2.0.0"),
+        ("Migration notes.\n\nBREAKING-CHANGE: remove the old format", "2.0.0"),
         (None, "1.2.4"),
         ("feat: illustrate a BREAKING CHANGE: marker in prose", "1.2.4"),
     ],
-    ids=["breaking-footer", "plain-fix", "ordinary-body"],
+    ids=["breaking-footer", "breaking-footer-hyphen", "plain-fix", "ordinary-body"],
 )
 def test_version_bump_from_breaking_footer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str | None, expected: str
@@ -50,6 +52,43 @@ def test_version_bump_from_breaking_footer(
     git("commit", "--allow-empty", "-qm", "fix: follow up")
 
     assert version_from_commits(tmp_path) == expected
+
+
+def test_version_from_commits_ignores_show_signature_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: ``log.showSignature=true`` must not leak gpg output into parsed subjects.
+
+    Without ``--no-show-signature``, a user's ``log.showSignature=true`` config
+    makes ``git log --pretty=format:...`` interleave gpg diagnostics into
+    stdout, so the parsed subject becomes a gpg line instead of e.g.
+    ``feat: ...`` and the bump degrades to patch.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    real_run_git = run_git
+    commands: list[list[str]] = []
+
+    def spy_run_git(args: list[str], cwd: Path, **kwargs: Any) -> GitResult:
+        commands.append(list(args))
+        return real_run_git(args, cwd, **kwargs)
+
+    def git(*args: str) -> None:
+        real_run_git(list(args), tmp_path, check=True)
+
+    git("init", "-q")
+    git("config", "user.name", "Fixture")
+    git("config", "user.email", "fixture@example.invalid")
+    git("config", "log.showSignature", "true")
+    git("commit", "--allow-empty", "-qm", "chore: baseline")
+    git("tag", "v1.2.3")
+    git("commit", "--allow-empty", "-qm", "feat: add thing")
+
+    with patch("bernstein.core.git.git_basic.run_git", side_effect=spy_run_git):
+        assert version_from_commits(tmp_path) == "1.3.0"
+
+    log_cmds = [c for c in commands if c[:1] == ["log"]]
+    assert log_cmds, "expected version_from_commits to run git log"
+    assert all("--no-show-signature" in c for c in log_cmds)
 
 
 def test_run_git_raises_called_process_error_when_check_is_true(tmp_path: Path) -> None:

@@ -323,6 +323,12 @@ def _changelog_conventional_inner(
     By default, shows commits since the latest semver tag. Use --since to
     specify a different starting point, or --all for the full history.
 
+    When --version is omitted, the version label is the next semantic version
+    computed from the commits in range: a ``BREAKING CHANGE:`` or
+    ``BREAKING-CHANGE:`` footer or a ``!`` after the type/scope in the subject
+    (e.g. ``feat!:``) bumps major, ``feat`` bumps minor, and anything else
+    bumps patch.
+
     \b
     Examples:
       bernstein changelog conventional            # since latest tag, console

@@ -833,7 +833,7 @@ def _compute_bump(messages: list[str]) -> str:
         if (
             "breaking change" in lower
             or "!:" in subject
-            or any(line.startswith("BREAKING CHANGE:") for line in body.splitlines())
+            or any(line.startswith(("BREAKING CHANGE:", "BREAKING-CHANGE:")) for line in body.splitlines())
         ):
             return "major"
         if lower.startswith("feat"):
@@ -846,7 +846,10 @@ def version_from_commits(cwd: Path, tag_prefix: str = "v") -> str:
 
     Scans commit messages between the latest ``v*`` tag and HEAD.  Bumps
     major on ``BREAKING CHANGE`` or ``!:`` in a subject or a ``BREAKING CHANGE:``
-    footer, minor on ``feat``, patch on anything else (``fix``, ``refactor``, etc.).
+    / ``BREAKING-CHANGE:`` footer, minor on ``feat``, patch on anything else
+    (``fix``, ``refactor``, etc.).  ``--no-show-signature`` keeps a user's
+    ``log.showSignature=true`` config from interleaving gpg diagnostics into
+    the parsed subjects.
 
     If no previous tag exists, starts from ``0.1.0``.
 
@@ -860,7 +863,7 @@ def version_from_commits(cwd: Path, tag_prefix: str = "v") -> str:
     tags = list_tags(cwd, pattern=f"{tag_prefix}*")
     major, minor, patch_v, latest_tag = _parse_latest_version(tags, tag_prefix)
 
-    log_cmd = ["log", "-z", "--pretty=format:%s%n%b"]
+    log_cmd = ["log", "--no-show-signature", "-z", "--pretty=format:%s%n%b"]
     if latest_tag:
         log_cmd.insert(1, f"{latest_tag}..HEAD")
     log_r = run_git(log_cmd, cwd, timeout=10)
