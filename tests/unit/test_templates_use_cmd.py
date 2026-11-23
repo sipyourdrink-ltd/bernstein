@@ -46,3 +46,24 @@ def test_templates_use_displays_literal_output_path(tmp_path: Path, monkeypatch:
     assert f"Created {target}" in result.output
     quoted = f'"{target}"' if os.name == "nt" else f"'{target}'"
     assert f"bernstein run {quoted}" in result.output
+
+
+def test_templates_use_rejects_directory_at_default_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory at the computed default plans/<name>.yaml is rejected before the prompt."""
+    monkeypatch.chdir(tmp_path)
+    dest_dir = Path("plans") / "rest-api.yaml"
+    dest_dir.mkdir(parents=True)
+    child = dest_dir / "rest-api.yaml"
+    child.write_text("existing plan", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["templates", "use", "rest-api"], input="y\n")
+
+    assert result.exit_code == 2, result.output
+    assert str(dest_dir) in result.output
+    assert "is a directory" in result.output
+    assert "File already exists:" not in result.output
+    assert "Overwrite?" not in result.output
+    assert child.read_text(encoding="utf-8") == "existing plan"

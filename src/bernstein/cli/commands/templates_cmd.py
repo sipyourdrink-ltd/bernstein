@@ -146,6 +146,11 @@ def templates_use(template_name: str, output: str | None) -> None:
         raise SystemExit(1)
 
     dest = Path(output) if output else Path("plans") / f"{template_name}.yaml"
+    if dest.is_dir():
+        # The OUTPUT argument is rejected by its click.Path type; the computed
+        # default needs the same guard or confirming the prompt would copy into
+        # the directory and overwrite a child the prompt never identified.
+        raise click.UsageError(f"Output {str(dest)!r} is a directory.")
     dest.parent.mkdir(parents=True, exist_ok=True)
     filename = str(dest)
 
