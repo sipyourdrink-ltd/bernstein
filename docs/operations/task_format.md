@@ -148,7 +148,10 @@ embed a sample backlog. Fence handling follows Markdown:
   character in a run at least as long, with nothing after it.
 - List items are tracked: under `- ```markdown` the indented closing
   fence ends the block, and the real tasks below it are selected
-  normally.
+  normally. The same holds when items nest on one line (`- -
+  ```markdown`): the opener is recognised relative to the innermost
+  item. A fence that is never closed ends at the boundary of its
+  enclosing list item, so sibling tasks below it are still selected.
 
 ## Scheduler behaviour
 

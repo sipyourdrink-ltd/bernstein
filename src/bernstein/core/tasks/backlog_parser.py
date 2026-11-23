@@ -418,21 +418,30 @@ def parse_task_lines(content: str) -> list[ParsedTaskLine]:
     Skip fenced code examples, headings, prose, and blank lines. Fences
     are recognised inside Markdown list items (``- ```markdown``): list
     container indentation is tracked so the item's closing fence ends the
-    block instead of opening a new one (#7980).
+    block instead of opening a new one, and an unterminated block ends at
+    the enclosing item's boundary rather than swallowing the rows below
+    it (#7980).
     """
     out: list[ParsedTaskLine] = []
     open_fence = ""
+    fence_base = 0
     containers: list[int] = []
     for line in content.splitlines():
         indent = len(line) - len(line.lstrip(" "))
         if open_fence:
-            # Only a closing fence at the same container depth ends the
-            # block; list state is frozen while the fence is open.
-            if match := _match_fence(line, containers):
-                marker, suffix = match.groups()
-                if marker.startswith(open_fence) and not suffix.strip(" \t"):
-                    open_fence = ""
-            continue
+            if line.strip() and indent < fence_base:
+                # Dedent out of the item holding the fence: Markdown ends
+                # an unterminated block at the item boundary. Reprocess
+                # the line below so a sibling task row is still selected.
+                open_fence = ""
+            else:
+                # Only a closing fence at the same container depth ends
+                # the block; list state is frozen while the fence is open.
+                if match := _match_fence(line, containers):
+                    marker, suffix = match.groups()
+                    if marker.startswith(open_fence) and not suffix.strip(" \t"):
+                        open_fence = ""
+                continue
         if line.strip():
             # Non-blank line: drop containers this line dedents out of,
             # then record a new list item. Blank lines keep containers.
@@ -440,16 +449,25 @@ def parse_task_lines(content: str) -> list[ParsedTaskLine]:
                 containers.pop()
             if item := _LIST_ITEM_LINE.match(line):
                 containers.append(indent + len(item.group("marker")) + 1)
-                rest = line[item.end() :]
+                pos = item.end()
+                # Nested items may open on the same line ("- - ```markdown"):
+                # strip the inner markers too so a fence nested inside
+                # them is seen relative to the innermost item (#7980).
+                while nested := _LIST_ITEM_LINE.match(line[pos:]):
+                    containers.append(pos + len(nested.group("marker")) + 1)
+                    pos += nested.end()
+                rest = line[pos:]
                 if match := _FENCE_LINE.fullmatch(rest):
                     marker, suffix = match.groups()
                     if marker[0] == "~" or "`" not in suffix:
                         open_fence = marker
+                        fence_base = containers[-1]
                     continue
         if match := _match_fence(line, containers):
             marker, suffix = match.groups()
             if marker[0] == "~" or "`" not in suffix:
                 open_fence = marker
+                fence_base = containers[-1] if containers else 0
             continue
         parsed = parse_task_line(line)
         if parsed is not None:
