@@ -228,6 +228,8 @@ class TestRenderComparisonReport:
         ("2026-04-01X08:00:00.1234567Z", "2026-04-01X08:00:00.1234568Z"),
         ("2026-04-01T10:00:00.1234567+02:00:00.0000004", "2026-04-01T08:00:00.1234565Z"),
         ("2026-04-01T10:00:00.0000001+00:00:00.0000004", "2026-04-01T09:59:59.9999998Z"),
+        ("2026-04-01T10:00:00Z", "2026-04-01T10:00:00.0000001+00:00:00.00000002"),
+        ("2026-04-01T10:00:00+00:00:00.0000004", "2026-04-01T10:00:00Z"),
     ],
     ids=[
         "fractional-seconds",
@@ -237,6 +239,8 @@ class TestRenderComparisonReport:
         "any-separator",
         "fractional-offset",
         "fractional-offset-borrow",
+        "unequal-width-tails",
+        "fractional-offset-no-local-fraction",
     ],
 )
 def test_benchmark_rows_sort_by_instant(tmp_path: Path, earlier: str, later: str) -> None:

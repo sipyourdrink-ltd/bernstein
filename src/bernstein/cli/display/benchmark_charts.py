@@ -40,8 +40,9 @@ class BenchmarkDataPoint:
 
 
 _SUBMICROSECOND_DIGITS = re.compile(
-    r".\d{2}:?\d{2}:?\d{2}[.,]\d{6}(\d+)"
+    r"^\d{4}-?\d{2}-?\d{2}.\d{2}:?\d{2}:?\d{2}(?:[.,]\d{6}(\d+))?"
     r"(?:([+-])\d{2}:?\d{2}(?::?\d{2}[.,]\d{6}(\d+))?)?"
+    r"Z?$"
 )
 _ONE_MICROSECOND = timedelta(microseconds=1)
 
@@ -60,14 +61,18 @@ def _timestamp_sort_key(point: BenchmarkDataPoint) -> tuple[bool, datetime | str
     match = _SUBMICROSECOND_DIGITS.search(point.timestamp)
     if match is None:
         return False, instant, ""
-    local_digits = match[1]
+    local_digits = match[1] or ""
     offset_digits = match[3]
     if offset_digits is None:
         return False, instant, local_digits.rstrip("0")
     width = max(len(local_digits), len(offset_digits))
     scale = 10**width
-    remainder = int(local_digits)
-    remainder -= int(offset_digits) if match[2] == "+" else -int(offset_digits)
+    remainder = int(local_digits or "0") * 10 ** (width - len(local_digits))
+    offset_tail = int(offset_digits) * 10 ** (width - len(offset_digits))
+    if match[2] == "+":
+        remainder -= offset_tail
+    else:
+        remainder += offset_tail
     if remainder < 0:
         instant -= _ONE_MICROSECOND
         remainder += scale
@@ -84,7 +89,9 @@ def load_benchmark_data(data_dir: Path) -> list[BenchmarkDataPoint]:
 
     Each JSON file must contain an object whose keys map to
     :class:`BenchmarkDataPoint` fields.  Files are returned sorted by
-    ``timestamp`` (ascending).
+    recorded instant (ascending): timestamps with a timezone offset are
+    ordered at their UTC position, and rows without a parseable timestamp
+    keep their lexical order at the end.
 
     Args:
         data_dir: Directory containing ``*.json`` benchmark result files.
