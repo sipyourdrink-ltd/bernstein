@@ -261,7 +261,11 @@ class FairScheduler:
         # Exact ratios also handle weights whose reciprocals overflow a float.
         quantum = Fraction(self._QUANTUM)
         rounds = min(ceil((quantum - Fraction(state.deficit)) / Fraction(state.quota.weight)) for state in runnable)
-        for state in runnable:
+        # Credit every tenant for the skipped rounds, matching the ordinary
+        # per-round credit loop above. Capped tenants keep accruing deficit
+        # while they wait so a cap release does not reshuffle fairness.
+        for tid in self._rr_order:
+            state = self._tenants[tid]
             state.deficit = float(Fraction(state.deficit) + rounds * Fraction(state.quota.weight))
         return self._try_serve(n)
 

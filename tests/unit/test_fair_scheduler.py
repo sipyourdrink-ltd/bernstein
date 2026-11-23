@@ -318,6 +318,47 @@ class TestMaxConcurrent:
         # Further dequeue returns None (both capped).
         assert s.dequeue() is None
 
+    def test_capped_tenant_keeps_accruing_deficit_during_jump(self) -> None:
+        """Skipped credit rounds must credit capped tenants too.
+
+        Regression: the multi-round jump credited only runnable tenants, so a
+        concurrency-capped tenant stopped accruing deficit while another tenant
+        kept serving. When the cap later released, the capped tenant was
+        short-changed (B,B,A instead of B,B,B for weights A=0.25, B=0.5).
+        """
+        s = FairScheduler(
+            quotas=[
+                TenantQuota(tenant_id="A", weight=0.25),
+                TenantQuota(tenant_id="B", weight=0.5, max_concurrent=1),
+            ]
+        )
+        # Occupy B's only concurrency slot.
+        s.enqueue("B-active", "B")
+        d = s.dequeue()
+        assert d is not None and d.tenant_id == "B"
+        s.mark_active(d.task_id)
+
+        for i in range(4):
+            s.enqueue(f"A-{i}", "A")
+        for i in range(3):
+            s.enqueue(f"B-{i}", "B")
+
+        # While B is capped, A keeps serving.
+        d1 = s.dequeue()
+        assert d1 is not None and d1.tenant_id == "A"
+        d2 = s.dequeue()
+        assert d2 is not None and d2.tenant_id == "A"
+
+        # Release the cap: B's accumulated deficit must buy it three straight
+        # serves before A's next turn.
+        s.mark_done("B-active")
+        served: list[str] = []
+        for _ in range(3):
+            decision = s.dequeue()
+            assert decision is not None
+            served.append(decision.tenant_id)
+        assert served == ["B", "B", "B"]
+
 
 # ---- mark_active / mark_done ----
 
