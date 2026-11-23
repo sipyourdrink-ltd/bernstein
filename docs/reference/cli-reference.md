@@ -949,7 +949,7 @@ digest. (`cli/commands/skill_cmd.py`.)
 |---|---|
 | `list` | List available templates. |
 | `show TEMPLATE_NAME` | Display the template on stdout. |
-| `use TEMPLATE_NAME [OUTPUT]` | Copy the template file to OUTPUT (default `plans/<name>.yaml`). |
+| `use TEMPLATE_NAME [OUTPUT]` | Copy the template to the given file path (default `plans/<name>.yaml`). An existing directory is rejected before the overwrite prompt. |
 | `compress ROLE\|--all` | Operator-gated LLM compression of role prompt templates (`cli/commands/templates_cmd.py`). Rewrite via the configured adapter (`--model`, `--provider`), then mechanical validators (fenced blocks, headings, URLs, inline code, placeholders, completion-contract block; at most two targeted fix retries), then apply. Originals are stored under `~/.local/share/bernstein/template-backups/` keyed by content hash with readback verification; the receipt `{role, pre_sha256, post_sha256, pre_tokens, post_tokens, validators, adapter, model}` is chained to the audit log and a `templates.lock` row lets `bernstein team drift` classify the change as intentional. Prints only the template token delta; per-spawn savings come from `bernstein cost` grouped by role. `--workdir DIR`, `--yes` skips the confirmation. |
 | `restore ROLE` | Reverse the most recent receipted compression byte-identically (backup hash, on-disk hash, and directory digest all verified). `--workdir DIR`. |
 | `hooks list` / `hooks use` | Browse and scaffold bundled command-hook templates. |
