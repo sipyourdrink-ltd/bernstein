@@ -264,6 +264,14 @@ unreadable spec or a spec with no EARS-shaped requirements exits with status
 `1` and a diagnostic on stderr. Command-line usage errors exit with status
 `2`.
 
+The draft stage recognises a line as a requirement only when `shall` appears
+as a complete word; matching is case-insensitive, so `SHALL` and `Shall`
+count too. Words that merely contain those letters — `shallow`, `shallot`,
+`Marshall` — are prose and are skipped, as are headings, list markers, and
+checkbox decoration. A spec whose only `shall`-looking occurrences are such
+words extracts no requirements and exits `1` like any spec without
+EARS-shaped requirements.
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `SPEC` | required | Spec / requirements document (positional). |
