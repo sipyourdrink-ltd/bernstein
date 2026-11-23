@@ -44,6 +44,15 @@ status = JiraToBernstein.map("In Progress")  # → TaskStatus.IN_PROGRESS
 label = BernsteinToJira.map(TaskStatus.DONE)  # → "Done"
 ```
 
+## Status summary
+
+```python
+status = client.get_status()
+print(status.total, status.open, status.done, status.agents, status.cost_usd)
+```
+
+`get_status()` reads the aggregate totals from the nested `summary` object when the server includes one, so dashboard responses keep working as the payload shape evolves. Responses from older servers that carry the totals as flat top-level fields are still decoded directly. An explicit zero in the nested summary takes precedence over a non-zero flat value, so a total the dashboard reports as zero is never silently replaced by a stale top-level figure.
+
 ## Async client
 
 ```python
