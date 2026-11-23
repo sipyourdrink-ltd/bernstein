@@ -225,6 +225,7 @@ def parse_stream_json_usage(text: str) -> tuple[int, int, str]:
        per-session breakdown (``tokens.prompt`` / ``tokens.completion``).
     2. The terminal ``result`` message's cumulative ``usage`` block.
     3. The sum of per-call ``usage`` blocks on ``assistant`` messages.
+    4. Runner ``{"type": "usage", ...}`` events (``openai_agents_runner``).
 
     Args:
         text: Raw session-log text (line-delimited stream-json, or a single
@@ -289,6 +290,22 @@ def parse_stream_json_usage(text: str) -> tuple[int, int, str]:
             model = _record_model(rec)
     if total_in > 0 or total_out > 0:
         return total_in, total_out, model or fallback_model
+
+    # 4. openai_agents_runner stdout {"type": "usage", ...} events.
+    usage_in = 0
+    usage_out = 0
+    usage_model = ""
+    for rec in records:
+        if rec.get("type") != "usage" or rec.get("usage_missing"):
+            continue
+        usage = _record_usage(rec) or rec
+        call_in, call_out = _extract_in_out(usage)
+        usage_in += call_in
+        usage_out += call_out
+        if not usage_model:
+            usage_model = _record_model(rec)
+    if usage_in > 0 or usage_out > 0:
+        return usage_in, usage_out, usage_model or fallback_model
 
     return 0, 0, fallback_model
 

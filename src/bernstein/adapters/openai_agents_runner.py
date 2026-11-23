@@ -56,9 +56,10 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import yaml
@@ -66,10 +67,32 @@ import yaml
 from bernstein.core.instrumentation import get_instrumenter, init_instrumenter, resolve_agent_dir
 from bernstein.core.security.sanitize import sanitize_log
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _UsageBreakdown:
+    """Normalized token counts and tool calls extracted from SDK usage payloads."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+    tool_calls: int = 0
+
+
+@dataclass
+class _SidecarUsageTotals:
+    """Cumulative token counts already appended to ``.tokens`` by per-turn hooks."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
+_hook_sidecar_lock = threading.Lock()
+_hook_sidecar_totals: dict[str, _SidecarUsageTotals] = {}
 
 # Wave 3 (per-agent instrumentation): monotonically increasing ids for
 # llm-calls.jsonl / tool-calls.jsonl records within this process. Reset per
@@ -119,6 +142,24 @@ def _reset_instrumentation_counters() -> None:
     _conversation_idx_counter = itertools.count(0)
     _hook_llm_calls_logged = 0
     _pending_tool_calls.clear()
+    with _hook_sidecar_lock:
+        _hook_sidecar_totals.clear()
+
+
+def _record_hook_sidecar_totals(session_id: str, usage: _UsageBreakdown) -> None:
+    """Accumulate per-turn tokens already appended to ``.tokens`` by RunHooks."""
+    with _hook_sidecar_lock:
+        totals = _hook_sidecar_totals.setdefault(session_id, _SidecarUsageTotals())
+        totals.input_tokens += usage.input_tokens
+        totals.output_tokens += usage.output_tokens
+        totals.cached_tokens += usage.cached_tokens
+        totals.reasoning_tokens += usage.reasoning_tokens
+
+
+def _consume_hook_sidecar_totals(session_id: str) -> _SidecarUsageTotals:
+    """Pop and return cumulative tokens already written to ``.tokens`` by RunHooks."""
+    with _hook_sidecar_lock:
+        return _hook_sidecar_totals.pop(session_id, _SidecarUsageTotals())
 
 
 def _mark_hook_llm_call_logged() -> None:
@@ -400,10 +441,16 @@ def _build_instrumentation_hooks(sdk: Any, manifest: RunnerManifest) -> Any:
             self._llm_ts_start = None
             try:
                 model_name = _model_name_for_hooks(agent, manifest)
-                usage = getattr(response, "usage", None)
-                prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage is not None else None
-                completion_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage is not None else None
-                total_tokens = int(getattr(usage, "total_tokens", 0) or 0) if usage is not None else None
+                raw_usage = _usage_field(response, "usage")
+                turn_usage = _extract_single_usage(raw_usage)
+                prompt_tokens = turn_usage.input_tokens if raw_usage is not None else None
+                completion_tokens = turn_usage.output_tokens if raw_usage is not None else None
+                raw_total = _coerce_token_count(_usage_field(raw_usage, "total_tokens"))
+                total_tokens = (
+                    (raw_total or (turn_usage.input_tokens + turn_usage.output_tokens))
+                    if raw_usage is not None
+                    else None
+                )
                 instrumenter.log_llm_call(
                     call_id=call_id,
                     ts_start=ts_start,
@@ -415,6 +462,14 @@ def _build_instrumentation_hooks(sdk: Any, manifest: RunnerManifest) -> Any:
                     status="ok",
                 )
                 _mark_hook_llm_call_logged()
+                # Flush per-turn usage immediately to .tokens so early process
+                # termination (task marked done mid-run) never drops spent tokens.
+                if _append_tokens_sidecar(
+                    _resolve_tokens_sidecar_path(manifest),
+                    turn_usage.input_tokens,
+                    turn_usage.output_tokens,
+                ):
+                    _record_hook_sidecar_totals(manifest.session_id, turn_usage)
                 logger.debug(
                     "wrote llm_call entry call_id=%s session=%s model=%s usage_prompt=%s "
                     "usage_completion=%s usage_total=%s",
@@ -1432,7 +1487,7 @@ def _resolve_tokens_sidecar_path(manifest: RunnerManifest) -> Path:
     return runtime_dir / f"{manifest.session_id}.tokens"
 
 
-def _append_tokens_sidecar(path: Path, input_tokens: int, output_tokens: int) -> None:
+def _append_tokens_sidecar(path: Path, input_tokens: int, output_tokens: int) -> bool:
     """Append one usage record to the ``.tokens`` sidecar file.
 
     Uses the exact schema Claude Code's wrapper script writes
@@ -1447,9 +1502,12 @@ def _append_tokens_sidecar(path: Path, input_tokens: int, output_tokens: int) ->
         path: Absolute sidecar path from :func:`_resolve_tokens_sidecar_path`.
         input_tokens: Prompt tokens for this call.
         output_tokens: Completion tokens for this call.
+
+    Returns:
+        ``True`` if a non-empty record was written, ``False`` otherwise.
     """
     if input_tokens <= 0 and output_tokens <= 0:
-        return
+        return False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         record = json.dumps({"ts": time.time(), "in": input_tokens, "out": output_tokens})
@@ -1459,45 +1517,146 @@ def _append_tokens_sidecar(path: Path, input_tokens: int, output_tokens: int) ->
         # "tokens" here is the usage-count sidecar file, not a credential.
         # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning("failed to write tokens sidecar %s: %s", path, exc)
+        return False
+    return True
+
+
+def _coerce_token_count(value: Any) -> int:
+    """Coerce numeric token fields safely without mistaking mocks/bools for 1."""
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    if isinstance(value, str):
+        try:
+            return max(0, int(value.strip()))
+        except ValueError:
+            return 0
+    return 0
+
+
+def _usage_field(obj: Any, key: str) -> Any:
+    """Read ``key`` from either a mapping or an object attribute."""
+    if obj is None:
+        return None
+    if isinstance(obj, Mapping):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _first_token_count(obj: Any, keys: tuple[str, ...]) -> int:
+    """Return the first positive token count across alias keys."""
+    for key in keys:
+        count = _coerce_token_count(_usage_field(obj, key))
+        if count > 0:
+            return count
+    return 0
+
+
+def _extract_nested_token_count(obj: Any, detail_keys: tuple[str, ...], field: str) -> int:
+    """Read a token breakdown field from nested details objects or top level."""
+    for detail_key in detail_keys:
+        details = _usage_field(obj, detail_key)
+        if details is not None:
+            count = _coerce_token_count(_usage_field(details, field))
+            if count > 0:
+                return count
+    return _coerce_token_count(_usage_field(obj, field))
+
+
+def _extract_single_usage(usage: Any) -> _UsageBreakdown:
+    """Extract normalized token counts from one usage object or mapping."""
+    if usage is None:
+        return _UsageBreakdown()
+    return _UsageBreakdown(
+        input_tokens=_first_token_count(usage, ("input_tokens", "prompt_tokens")),
+        output_tokens=_first_token_count(usage, ("output_tokens", "completion_tokens")),
+        cached_tokens=_extract_nested_token_count(
+            usage, ("input_tokens_details", "prompt_tokens_details"), "cached_tokens"
+        ),
+        reasoning_tokens=_extract_nested_token_count(
+            usage, ("output_tokens_details", "completion_tokens_details"), "reasoning_tokens"
+        ),
+        tool_calls=_coerce_token_count(_usage_field(usage, "tool_calls")),
+    )
+
+
+def _sum_raw_response_usage(result: Any) -> _UsageBreakdown:
+    """Aggregate per-request usage across ``result.raw_responses``."""
+    raw_responses = _usage_field(result, "raw_responses") or []
+    total_in = 0
+    total_out = 0
+    total_cached = 0
+    total_reasoning = 0
+    total_tool_calls = 0
+    for raw_response in raw_responses:
+        entry = _extract_single_usage(_usage_field(raw_response, "usage"))
+        total_in += entry.input_tokens
+        total_out += entry.output_tokens
+        total_cached += entry.cached_tokens
+        total_reasoning += entry.reasoning_tokens
+        total_tool_calls += entry.tool_calls
+    return _UsageBreakdown(
+        input_tokens=total_in,
+        output_tokens=total_out,
+        cached_tokens=total_cached,
+        reasoning_tokens=total_reasoning,
+        tool_calls=total_tool_calls,
+    )
+
+
+def _extract_usage_breakdown(result: Any) -> _UsageBreakdown:
+    """Extract ``_UsageBreakdown`` from ``result.usage``, ``context_wrapper.usage``, or ``raw_responses``."""
+    if result is None:
+        return _UsageBreakdown()
+
+    top_usage = _extract_single_usage(_usage_field(result, "usage"))
+    raw_sum: _UsageBreakdown | None = None
+    if top_usage.input_tokens > 0 or top_usage.output_tokens > 0:
+        if top_usage.cached_tokens > 0 and top_usage.reasoning_tokens > 0:
+            return top_usage
+        raw_sum = _sum_raw_response_usage(result)
+        return _UsageBreakdown(
+            input_tokens=top_usage.input_tokens,
+            output_tokens=top_usage.output_tokens,
+            cached_tokens=top_usage.cached_tokens or raw_sum.cached_tokens,
+            reasoning_tokens=top_usage.reasoning_tokens or raw_sum.reasoning_tokens,
+            tool_calls=top_usage.tool_calls or raw_sum.tool_calls,
+        )
+
+    ctx = _usage_field(result, "context_wrapper")
+    ctx_usage = _extract_single_usage(_usage_field(ctx, "usage")) if ctx is not None else _UsageBreakdown()
+    if ctx_usage.input_tokens > 0 or ctx_usage.output_tokens > 0:
+        if raw_sum is None:
+            raw_sum = _sum_raw_response_usage(result)
+        return _UsageBreakdown(
+            input_tokens=ctx_usage.input_tokens,
+            output_tokens=ctx_usage.output_tokens,
+            cached_tokens=ctx_usage.cached_tokens or raw_sum.cached_tokens,
+            reasoning_tokens=ctx_usage.reasoning_tokens or raw_sum.reasoning_tokens,
+            tool_calls=ctx_usage.tool_calls or top_usage.tool_calls or raw_sum.tool_calls,
+        )
+
+    raw_sum = raw_sum if raw_sum is not None else _sum_raw_response_usage(result)
+    return _UsageBreakdown(
+        input_tokens=raw_sum.input_tokens,
+        output_tokens=raw_sum.output_tokens,
+        cached_tokens=raw_sum.cached_tokens,
+        reasoning_tokens=raw_sum.reasoning_tokens,
+        tool_calls=top_usage.tool_calls or ctx_usage.tool_calls or raw_sum.tool_calls,
+    )
 
 
 def _extract_usage_tokens(result: Any) -> tuple[int, int, int]:
     """Extract ``(input_tokens, output_tokens, tool_calls)`` from a result-like object.
 
-    Accepts anything shaped like an SDK run result: ``result.usage`` first
-    (aggregate), then the ``result.raw_responses`` per-call fallback (bug-13
-    follow-up: ``RunResult`` never defines ``usage``, so the fallback is the
-    path that actually fires on real SDK objects). Also accepts the
-    ``run_data`` payload some SDK exceptions carry (e.g. ``MaxTurnsExceeded``
-    exposes the partial run's ``raw_responses`` via ``exc.run_data``), and
-    ``None`` (returns all zeros).
-
-    Args:
-        result: An SDK ``RunResult``, an exception's ``run_data`` object,
-            or ``None``.
-
-    Returns:
-        ``(input_tokens, output_tokens, tool_calls)``. All zero when no
-        usable usage data exists on the object.
+    Checks ``result.usage`` first, then ``result.context_wrapper.usage``, and
+    finally sums per-call usage across ``result.raw_responses``. Accepts both
+    attribute objects and mappings (plus ``prompt_tokens``/``completion_tokens``
+    aliases), as well as exception ``run_data`` objects or ``None``.
     """
-    usage: Any = getattr(result, "usage", None)
-    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    tool_calls = int(getattr(usage, "tool_calls", 0) or 0)
-
-    if input_tokens <= 0 and output_tokens <= 0:
-        raw_responses: Any = getattr(result, "raw_responses", None) or []
-        fallback_input = 0
-        fallback_output = 0
-        for raw_response in raw_responses:
-            raw_usage = getattr(raw_response, "usage", None)
-            fallback_input += int(getattr(raw_usage, "input_tokens", 0) or 0)
-            fallback_output += int(getattr(raw_usage, "output_tokens", 0) or 0)
-        if fallback_input > 0 or fallback_output > 0:
-            input_tokens = fallback_input
-            output_tokens = fallback_output
-
-    return input_tokens, output_tokens, tool_calls
+    breakdown = _extract_usage_breakdown(result)
+    return breakdown.input_tokens, breakdown.output_tokens, breakdown.tool_calls
 
 
 def _log_max_turns_exceeded(exc: BaseException, max_turns: int | None) -> None:
@@ -1602,7 +1761,23 @@ def _emit_session_usage(
             priceable model.
     """
     model_id = model if model is not None else manifest.model
-    input_tokens, output_tokens, tool_calls = _extract_usage_tokens(usage_source)
+    breakdown = _extract_usage_breakdown(usage_source)
+    already_written = _consume_hook_sidecar_totals(manifest.session_id)
+    if (
+        breakdown.input_tokens <= 0
+        and breakdown.output_tokens <= 0
+        and (already_written.input_tokens > 0 or already_written.output_tokens > 0)
+    ):
+        breakdown = _UsageBreakdown(
+            input_tokens=already_written.input_tokens,
+            output_tokens=already_written.output_tokens,
+            cached_tokens=already_written.cached_tokens,
+            reasoning_tokens=already_written.reasoning_tokens,
+            tool_calls=breakdown.tool_calls,
+        )
+    input_tokens = breakdown.input_tokens
+    output_tokens = breakdown.output_tokens
+    tool_calls = breakdown.tool_calls
 
     if input_tokens <= 0 and output_tokens <= 0:
         # No usable token counts. Never fabricate tokens/cost and never
@@ -1662,24 +1837,29 @@ def _emit_session_usage(
         running_total_usd,
     )
 
-    emit_event(
-        {
-            "type": "usage",
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "tool_calls": tool_calls,
-            "model": model_id,
-            "cost_usd": price_result.cost_usd,
-            "priced": price_result.priced,
-            "running_total_usd": running_total_usd,
-            "usage_source": source_desc,
-        },
-    )
+    usage_event: dict[str, Any] = {
+        "type": "usage",
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "tool_calls": tool_calls,
+        "model": model_id,
+        "cost_usd": price_result.cost_usd,
+        "priced": price_result.priced,
+        "running_total_usd": running_total_usd,
+        "usage_source": source_desc,
+    }
+    if breakdown.cached_tokens > 0:
+        usage_event["cached_tokens"] = breakdown.cached_tokens
+    if breakdown.reasoning_tokens > 0:
+        usage_event["reasoning_tokens"] = breakdown.reasoning_tokens
+    emit_event(usage_event)
 
+    delta_in = max(0, input_tokens - already_written.input_tokens)
+    delta_out = max(0, output_tokens - already_written.output_tokens)
     _append_tokens_sidecar(
         _resolve_tokens_sidecar_path(manifest),
-        input_tokens,
-        output_tokens,
+        delta_in,
+        delta_out,
     )
 
 

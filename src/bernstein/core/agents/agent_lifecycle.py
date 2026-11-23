@@ -2873,6 +2873,8 @@ def handle_orphaned_task(
                 tokens_used=_orphan_tokens_in + _orphan_tokens_out,
                 cost_usd=_orphan_cost_usd,
                 janitor_passed=success,
+                tokens_prompt=_orphan_tokens_in,
+                tokens_completion=_orphan_tokens_out,
             )
             if _orphan_cost_usd > 0:
                 logger.info(

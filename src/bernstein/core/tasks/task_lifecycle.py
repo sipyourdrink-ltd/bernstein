@@ -4494,7 +4494,11 @@ def _record_completion_metrics(
     if session is None and getattr(task, "assigned_agent", None):
         agent_id = task.assigned_agent
         agent_m = collector.agent_metrics.get(agent_id) if hasattr(collector, "agent_metrics") else None
-        dead_model = getattr(agent_m, "model", "") or ""
+        raw_agent_model = getattr(agent_m, "model", "") if agent_m is not None else ""
+        raw_task_model = getattr(task_m, "model", "") if task_m is not None else ""
+        dead_model = (raw_agent_model if isinstance(raw_agent_model, str) else "") or (
+            raw_task_model if isinstance(raw_task_model, str) else ""
+        )
         sidecar_session = SimpleNamespace(
             id=agent_id,
             model_config=SimpleNamespace(model=dead_model),
@@ -4572,6 +4576,8 @@ def _record_completion_metrics(
         janitor_passed=janitor_passed,
         cost_usd=cost_usd,
         tokens_used=tokens_prompt + tokens_completion,
+        tokens_prompt=tokens_prompt,
+        tokens_completion=tokens_completion,
     )
 
     if session is not None:
