@@ -121,6 +121,12 @@ plugins:
         'quickstart/remote.md': 'getting-started/remote.md'
         'operations/observability.md': 'operations/error-telemetry.md'
         'security/security-acknowledgments.md': 'security/bug-bounty.md'
+        'blog/ten-agents-one-release.md': 'https://bernstein.run/blog'
+        'blog/zero-llm-coordination.md': 'https://bernstein.run/blog'
+        'blog/multi-agent-benchmark.md': 'https://bernstein.run/blog'
+        'blog/self-evolution-30-days.md': 'https://bernstein.run/blog'
+        'blog/cobol-modernization.md': 'https://bernstein.run/blog'
+        'blog/v1.9-four-commands-last-mile.md': 'https://bernstein.run/blog'
   - minify:
       minify_html: true
 
@@ -173,13 +179,6 @@ nav:
       - What's new: whats-new.md
       - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md
-      - Blog:
-          - Ten agents one release: blog/ten-agents-one-release.md
-          - Zero-LLM coordination: blog/zero-llm-coordination.md
-          - Multi-agent benchmark: blog/multi-agent-benchmark.md
-          - Self-evolution 30 days: blog/self-evolution-30-days.md
-          - COBOL modernization: blog/cobol-modernization.md
-          - v1.9 four commands: blog/v1.9-four-commands-last-mile.md
   - Get started:
       - getting-started/index.md
       - Install: getting-started/install.md
