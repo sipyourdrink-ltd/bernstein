@@ -254,6 +254,61 @@ class TestSpawnScenarioTasks:
         with pytest.raises(TypeError):
             spawn_scenario_tasks([], poster=42)  # type: ignore[arg-type]
 
+    def test_spawn_orders_and_resolves_template_dependencies(self) -> None:
+        recipe = ScenarioRecipe(
+            scenario_id="ordered",
+            name="Ordered",
+            description="desc",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(id="verify", title="Verify", description="v", role="qa", depends_on=("restore",)),
+                ScenarioTaskTemplate(id="restore", title="Restore", description="r", role="devops"),
+                ScenarioTaskTemplate(
+                    id="audit",
+                    title="Audit",
+                    description="a",
+                    role="security",
+                    depends_on=("verify",),
+                ),
+            ),
+        )
+        payloads = build_task_payloads(recipe)
+        assert [p.template_id for p in payloads] == ["restore", "verify", "audit"]
+
+        calls: list[dict[str, Any]] = []
+
+        def fake_poster(_path: str, body: dict[str, Any]) -> dict[str, Any]:
+            calls.append(body)
+            return {"id": f"task-{len(calls)}"}
+
+        ids = spawn_scenario_tasks(payloads, poster=fake_poster)
+        assert ids == ["task-1", "task-2", "task-3"]
+        assert "depends_on" not in calls[0]
+        assert calls[1]["depends_on"] == ["task-1"]
+        assert calls[2]["depends_on"] == ["task-2"]
+
+    def test_spawn_skips_dependents_when_upstream_fails(self) -> None:
+        recipe = ScenarioRecipe(
+            scenario_id="ordered-fail",
+            name="Ordered Fail",
+            description="desc",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(id="step1", title="Step 1", description="s1", role="devops"),
+                ScenarioTaskTemplate(id="step2", title="Step 2", description="s2", role="qa", depends_on=("step1",)),
+            ),
+        )
+        payloads = build_task_payloads(recipe)
+        posted_titles: list[str] = []
+
+        def failing_poster(_path: str, body: dict[str, Any]) -> dict[str, Any]:
+            posted_titles.append(str(body["title"]))
+            raise RuntimeError("server rejected step1")
+
+        ids = spawn_scenario_tasks(payloads, poster=failing_poster)
+        assert ids == []
+        assert posted_titles == ["Step 1"]
+
 
 class TestRoutineBridgeProvision:
     def test_provision_writes_artefacts(self, tmp_path: Path) -> None:

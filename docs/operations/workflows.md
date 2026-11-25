@@ -73,12 +73,31 @@ Node fields (`core/workflows/workflow_spec.py`, `WorkflowNode`):
 | `prompt` | Prompt body; `{goal}` is substituted from `run(goal=...)`. |
 | `loop` | `{until: "<bash predicate>", max_iterations: N}` - re-fires the node until the predicate exits 0 or the cap is hit. |
 | `fresh_context` | Agent nodes only: no session carryover between loop iterations. |
+| `always_run` | Run this node as a cleanup/teardown step even if an earlier node failed and aborted the run. A failed run still reports failure even when an `always_run` node succeeds. |
 | `timeout_seconds` | Per-iteration wall-clock cap (1-86400, default set in `workflow_spec.py`). |
 | `interactive` | **Rejected at load time** - see [Limitations](#limitations). |
 
-Bundled examples ship under `templates/workflows/`: `idea-to-pr.yaml`,
-`refactor-with-tests.yaml`, `doc-update.yaml`, `hot-fix.yaml`,
-`security-review.yaml`, `dependency-bump.yaml`.
+### Bundled workflows
+
+Fifteen stock manifests ship under `templates/workflows/` (packaged into the wheel under `bernstein/_default_templates/workflows/`):
+
+| Workflow | Intended use |
+|---|---|
+| `idea-to-pr.yaml` | End-to-end feature delivery: research, plan, implement, test, and open a PR. |
+| `refactor-with-tests.yaml` | Target a module, refactor safely, and loop on tests until green. |
+| `hot-fix.yaml` | Reproduce a production defect, patch, regression-test, and ship a hotfix. |
+| `doc-update.yaml` | Audit and update project documentation against recent code changes. |
+| `security-review.yaml` | Static-scan, triage, patch, and adversary-review security findings. |
+| `dependency-bump.yaml` | Bump locked dependencies, run the test suite, and loop on flake fixes. |
+| `audit-evidence-pack.yaml` | Collect audit logs, SBOM/provenance, and eval results into a verified evidence pack. |
+| `incident-postmortem.yaml` | Triage an incident, land a regression-tested guardrail, and write the postmortem. |
+| `release-readiness.yaml` | Pre-release audit across changelog fragments, dependency health, and smoke tests. |
+| `deprecation-rollout.yaml` | Phased deprecation rollout: warn, migrate callers, verify zero usage, and remove the shim. |
+| `ai-governance-gate.yaml` | Audit an agentic workflow against OWASP Agentic Top 10, eval stability, and ISO 42001 controls. |
+| `zero-downtime-migration.yaml` | Design, implement, and verify an expand-backfill-contract migration with rehearsed rollback. |
+| `finops-spend-audit.yaml` | Attribute cloud and LLM token spend, rightsize model routing, and verify quality floors. |
+| `disaster-recovery-drill.yaml` | Rehearse isolated backup restore, measure RTO/RPO, verify integrity, and always tear down the sandbox (`always_run: true`). |
+| `mcp-plugin-vetting.yaml` | Vet a third-party MCP server or agent plugin for supply-chain, permission, and injection safety. |
 
 ## Running
 
@@ -96,8 +115,12 @@ command-typed nodes shell out with `subprocess.run`. Each node's
 terminal status is one of `success`, `failed`, or `skipped`. A node is
 skipped when its own `when` predicate is false, or when an upstream
 dependency failed. Once any node fails, the run aborts: every node in a
-later layer is skipped and nothing in it is dispatched, even on a branch
-that did not fail. A node with `loop:` re-fires until
+later layer is skipped and nothing in it is dispatched — even on a branch
+that did not fail — unless that node sets `always_run: true` for
+guaranteed cleanup/teardown (for example, `sandbox-disposal` in
+`disaster-recovery-drill.yaml`). An `always_run` node still cannot turn
+an aborted run into a success, and downstream non-`always_run` nodes
+remain skipped. A node with `loop:` re-fires until
 its `until` bash predicate exits `0` or `max_iterations` is reached, at
 which point the run raises rather than silently truncating.
 

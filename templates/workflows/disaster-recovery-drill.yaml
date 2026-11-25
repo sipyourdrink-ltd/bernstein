@@ -1,6 +1,6 @@
 name: disaster-recovery-drill
-description: "Rehearse isolated backup restore, measure RTO/RPO, and verify ledger and data integrity."
-version: "1.0.0"
+description: "Rehearse isolated backup restore, measure RTO/RPO, verify integrity, and always tear down the sandbox."
+version: "1.1.0"
 nodes:
   - id: isolated-restore
     agent: devops
@@ -16,10 +16,19 @@ nodes:
       probes for: {goal}
     fresh_context: true
     timeout_seconds: 1800
-  - id: disposal-and-receipt
-    depends_on: [integrity-verification]
+  - id: sandbox-disposal
+    depends_on: [isolated-restore, integrity-verification]
+    always_run: true
     agent: security
     prompt: |
-      Confirm zero residual secrets/volumes remain after teardown and issue the
-      DR readiness receipt for: {goal}
+      Tear down temporary restore targets and volumes and confirm zero residual
+      secrets or restored backup artifacts remain (even after a failed restore
+      or verification) for: {goal}
     timeout_seconds: 1200
+  - id: dr-receipt
+    depends_on: [integrity-verification, sandbox-disposal]
+    agent: docs
+    prompt: |
+      Issue the dated DR readiness receipt with measured RTO/RPO, integrity
+      verification evidence, and disposal confirmation for: {goal}
+    timeout_seconds: 900

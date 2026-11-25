@@ -88,12 +88,14 @@ def get_scenario_detail(scenario_id: str, scenarios_dir: Path | None = None) -> 
         "version": recipe.version,
         "tasks": [
             {
+                **({"id": t.id} if t.id else {}),
                 "title": t.title,
                 "description": t.description,
                 "role": t.role,
                 "priority": t.priority,
                 "scope": t.scope,
                 "complexity": t.complexity,
+                **({"depends_on": list(t.depends_on)} if t.depends_on else {}),
             }
             for t in recipe.tasks
         ],
@@ -144,13 +146,25 @@ async def invoke_scenario_via_server(
 
     orchestration_id = payloads[0].orchestration_id
     task_ids: list[str] = []
+    spawned_by_template_id: dict[str, str] = {}
     headers = _auth_headers()
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         for payload in payloads:
+            resolved_deps: list[str] | None = None
+            if payload.depends_on_template_ids:
+                missing = [dep for dep in payload.depends_on_template_ids if dep not in spawned_by_template_id]
+                if missing:
+                    logger.warning(
+                        "Skipping scenario task %s because upstream template dependencies failed to spawn: %s",
+                        payload.title,
+                        ", ".join(missing),
+                    )
+                    continue
+                resolved_deps = [spawned_by_template_id[dep] for dep in payload.depends_on_template_ids]
             try:
                 resp = await client.post(
                     f"{server_url}/tasks",
-                    json=payload.as_server_payload(),
+                    json=payload.as_server_payload(resolved_depends_on=resolved_deps),
                     headers=headers,
                 )
                 resp.raise_for_status()
@@ -166,6 +180,8 @@ async def invoke_scenario_via_server(
                 tid = ""
             if tid:
                 task_ids.append(tid)
+                if payload.template_id:
+                    spawned_by_template_id[payload.template_id] = tid
 
     return {
         "orchestration_id": orchestration_id,

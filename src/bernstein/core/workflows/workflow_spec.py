@@ -126,6 +126,10 @@ class WorkflowNode(BaseModel):
         fresh_context: When ``True``, agent-typed nodes get a fresh
             session per iteration (no carryover).  Ignored for command-
             typed nodes.
+        always_run: When ``True``, the node still executes as a cleanup /
+            teardown step even when an upstream dependency failed or an
+            earlier layer aborted the run.  A failed run still reports
+            ``succeeded = False`` even when an ``always_run`` node succeeds.
         interactive: Stub for human-approval gates.  Manifests with this
             set to ``True`` are rejected at load time with a ``ValueError``
             referencing #1110 so the failure surfaces before any upstream
@@ -149,6 +153,7 @@ class WorkflowNode(BaseModel):
     loop: LoopSpec | None = None
     when: str | None = Field(default=None, min_length=1, description="Bash predicate gating whether this node runs.")
     fresh_context: bool = False
+    always_run: bool = False
     interactive: bool = False
     timeout_seconds: int = Field(default=DEFAULT_NODE_TIMEOUT_SECONDS, ge=1, le=86_400)
 

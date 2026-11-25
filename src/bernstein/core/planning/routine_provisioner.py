@@ -132,7 +132,8 @@ def _format_task_list(tasks: tuple[ScenarioTaskTemplate, ...]) -> str:
     lines: list[str] = []
     for idx, t in enumerate(tasks, start=1):
         suffix = f" - {t.description}" if t.description else ""
-        lines.append(f"{idx}. **{t.title}** (role: `{t.role}`, priority: {t.priority}){suffix}")
+        dep_note = f", depends_on: {', '.join(f'`{d}`' for d in t.depends_on)}" if t.depends_on else ""
+        lines.append(f"{idx}. **{t.title}** (role: `{t.role}`, priority: {t.priority}{dep_note}){suffix}")
     return "\n".join(lines)
 
 
@@ -155,6 +156,12 @@ def build_routine_prompt(scenario: ScenarioRecipe, bernstein_url: str) -> str:
         Markdown prompt body suitable for pasting into the Routine UI.
     """
     task_list = _format_task_list(scenario.tasks)
+    has_deps = any(t.depends_on for t in scenario.tasks)
+    execution_mode = (
+        f"- Bernstein decomposes this into {len(scenario.tasks)} tasks respecting declared task dependencies.\n"
+        if has_deps
+        else f"- Bernstein decomposes this into {len(scenario.tasks)} parallel tasks.\n"
+    )
     return (
         "You are a Bernstein orchestration relay.\n"
         "When triggered, you drive a multi-agent Bernstein run end to end.\n"
@@ -179,7 +186,7 @@ def build_routine_prompt(scenario: ScenarioRecipe, bernstein_url: str) -> str:
         f"{task_list}\n"
         "\n"
         "## Expected behaviour\n"
-        f"- Bernstein decomposes this into {len(scenario.tasks)} parallel tasks.\n"
+        f"{execution_mode}"
         "- Each task runs in an isolated git worktree.\n"
         "- Quality gates verify output before merge.\n"
         "- A failing task auto-retries with an escalated model.\n"

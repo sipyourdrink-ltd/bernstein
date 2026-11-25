@@ -64,6 +64,14 @@ nodes:
       max_attempts: 2
       until: "status == 'done'"
 
+  reverify-security-signoff:
+    phase: verify
+    role: security
+    description: "Re-verify enforced technical controls and guardrails after remediation"
+    estimated_minutes: 20
+    depends_on:
+      - rework-guardrails
+
   publish-aims-record:
     phase: register
     role: docs
@@ -71,4 +79,6 @@ nodes:
     estimated_minutes: 20
     depends_on:
       - source: security-signoff
+        condition: "status == 'done'"
+      - source: reverify-security-signoff
         condition: "status == 'done'"

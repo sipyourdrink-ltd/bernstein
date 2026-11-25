@@ -51,6 +51,14 @@ the running task.
 Each spawned task carries `metadata.scenario_id` and
 `metadata.orchestration_id` so the status tool can group them.
 
+Task templates may optionally declare `id:` and `depends_on: [<task-id>, ...]`
+when stages must run in sequence (for example,
+`disaster-recovery-failover-drill`). `build_task_payloads` orders dependent
+tasks topologically, and `spawn_scenario_tasks` / `bernstein_scenario` resolve
+each template dependency to the server-assigned task id before posting
+`depends_on` to `POST /tasks`. If an upstream task fails to spawn, dependent
+tasks are skipped rather than posted unconstrained.
+
 ## Provisioning flow
 
 ```

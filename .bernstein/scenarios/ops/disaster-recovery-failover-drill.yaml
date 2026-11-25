@@ -1,41 +1,47 @@
 id: disaster-recovery-failover-drill
 name: Disaster Recovery and Backup Restore Drill
-version: "1.0"
+version: "1.1"
 description: |
   Prove backup and WAL restore readiness inside an isolated sandbox environment,
   measuring actual RTO/RPO and verifying hash-chain and schema integrity without
-  touching live production state.
+  touching live production state. Ordered stages use explicit task dependencies
+  and delegate restore, verification, and always-run teardown to the
+  dependency-aware `disaster-recovery-drill` workflow so validation and cleanup
+  cannot race restore or be skipped on failure.
 tags: [ops, sre, disaster-recovery, backup, compliance]
 tasks:
-  - title: Inventory backup snapshots, encryption state, and target RTO/RPO
+  - id: inventory-backups
+    title: Inventory backup snapshots, encryption state, and target RTO/RPO
     role: devops
     priority: 0
     scope: small
     complexity: low
     description: |
-      Verify snapshot recency, retention policy, and network isolation of the
-      temporary restore sandbox.
-  - title: Execute cold restore from runbook alone and time RTO/RPO
+      Perform a read-only pre-drill check of backup snapshot recency, encryption
+      status, retention policy, and target RTO/RPO thresholds before provisioning
+      any restore sandbox.
+  - id: run-dr-workflow
+    depends_on: [inventory-backups]
+    title: Execute sequenced DR restore, verification, and always-run teardown workflow
     role: devops
     priority: 1
-    scope: medium
+    scope: large
     complexity: medium
     description: |
-      Run the documented restore procedure without undocumented manual fixes and
-      record exact wall-clock recovery time and data-loss window.
-  - title: Validate restored ledger checksums and application smoke probes
-    role: qa
-    priority: 1
-    scope: medium
-    complexity: medium
-    description: |
-      Verify database invariants, audit-log hash chains, and read-only service
-      health endpoints against the restored state.
-  - title: Confirm clean sandbox teardown and file DR readiness receipt
+      Run the dependency-aware `disaster-recovery-drill` workflow
+      (`bernstein workflow run disaster-recovery-drill`) against an isolated
+      sandbox so cold restore, ledger/checksum verification, guaranteed
+      `always_run` sandbox disposal, and receipt generation execute in strict
+      dependency order without racing or leaving restored backup data behind on
+      failure.
+  - id: audit-dr-receipt
+    depends_on: [run-dr-workflow]
+    title: Audit DR drill receipt, RTO/RPO deltas, and teardown confirmation
     role: security
     priority: 2
     scope: small
     complexity: low
     description: |
-      Verify zero residual snapshots or secrets remain in temporary storage and
-      sign off the DR drill evidence report.
+      Review the completed DR drill receipt and teardown attestation from the
+      `disaster-recovery-drill` run, confirm zero residual secrets or temporary
+      volumes, and file remediation items for any RTO/RPO gap.

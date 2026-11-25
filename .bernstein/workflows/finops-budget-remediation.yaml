@@ -54,6 +54,14 @@ nodes:
       max_attempts: 2
       until: "status == 'done'"
 
+  reverify-quality-and-security-floors:
+    phase: verify
+    role: qa
+    description: "Re-verify held-out benchmark accuracy and security floors after routing retune"
+    estimated_minutes: 25
+    depends_on:
+      - retune-routing
+
   publish-finops-report:
     phase: approve
     role: docs
@@ -61,4 +69,6 @@ nodes:
     estimated_minutes: 15
     depends_on:
       - source: verify-quality-and-security-floors
+        condition: "status == 'done'"
+      - source: reverify-quality-and-security-floors
         condition: "status == 'done'"
