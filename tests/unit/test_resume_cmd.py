@@ -52,11 +52,18 @@ from bernstein.core.persistence.task_resume import (
     CHECKPOINT_FILENAME,
     CheckpointCorruptError,
     CheckpointMissingError,
+    ResumeDispatchStatus,
     TaskResumeCheckpoint,
     bump_resume_count,
     checkpoint_dir_for,
     checkpoint_path_for,
+    claim_resume_request,
     load_checkpoint,
+    load_resume_request,
+    read_resume_requests,
+    record_resume_outcome,
+    resume_request_acknowledged,
+    resume_requests_path_for,
     save_checkpoint,
     scratchpad_sha256,
 )
@@ -478,7 +485,10 @@ def test_resume_queues_long_signal_name(workdir: Path) -> None:
     assert report["dispatch_status"] == "queued"
     assert report["signal_paths"] == [str(signal)]
     assert json.loads(signal.read_bytes())["task_id"] == task_id
-    assert list(signal.parent.iterdir()) == [signal]
+    # The companion request record lives beside the wake-up hint.
+    companion = signal.with_suffix(".requests.json")
+    assert sorted(signal.parent.iterdir()) == sorted([signal, companion])
+    assert json.loads(companion.read_bytes())["requests"][0]["task_id"] == task_id
 
 
 def test_cli_resume_signal_write_failure_reports_error_in_json(workdir: Path) -> None:
@@ -584,3 +594,88 @@ def test_mid_step_kill_continues_from_next_step_boundary(workdir: Path) -> None:
     # And the resume_context block names the last completed step so the
     # adapter knows where to resume *from*.
     assert "step-5" in plan.resume_context
+
+
+# ---------------------------------------------------------------------------
+# Deterministic resume requests (#7854)
+# ---------------------------------------------------------------------------
+
+
+def _resume_json(workdir: Path, task_id: str) -> dict[str, object]:
+    result = CliRunner().invoke(resume_cmd, [task_id, "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_OK, result.output
+    return json.loads(result.stdout)
+
+
+def test_duplicate_resume_reuses_request_id_without_double_bump(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="dup"))
+    first = _resume_json(workdir, "dup")
+    second = _resume_json(workdir, "dup")
+
+    assert first["request_id"] == second["request_id"]
+    assert first["source_digest"] == second["source_digest"]
+    assert load_checkpoint(workdir, "dup").resume_count == 1
+    records = read_resume_requests(workdir, "dup")
+    assert len(records) == 1
+    assert records[0].request_id == first["request_id"]
+
+
+def test_queued_request_has_no_runtime_acknowledgement(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="queued"))
+    report = _resume_json(workdir, "queued")
+
+    assert report["dispatch_status"] == "queued"
+    assert report["runtime_acknowledged"] is False
+    request_id = str(report["request_id"])
+    record = load_resume_request(workdir, "queued", request_id)
+    assert record is not None
+    assert record.dispatch_status == ResumeDispatchStatus.QUEUED.value
+    assert resume_request_acknowledged(workdir, "queued", request_id) is False
+
+
+def test_claim_then_restart_recovers_from_record(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="crash"))
+    report = _resume_json(workdir, "crash")
+    request_id = str(report["request_id"])
+
+    claimed = claim_resume_request(workdir, "crash", request_id, worker_id="worker-1")
+    assert claimed is not None
+    assert claimed.dispatch_status == ResumeDispatchStatus.CLAIMED.value
+    assert resume_request_acknowledged(workdir, "crash", request_id) is False
+
+    # Worker restarts: recovery comes from the persisted claimed record.
+    recovered = claim_resume_request(workdir, "crash", request_id, worker_id="worker-1-restart")
+    assert recovered is not None
+    assert recovered.dispatch_status == ResumeDispatchStatus.CLAIMED.value
+    assert recovered.claimed_at == claimed.claimed_at
+    assert recovered.worker_id == "worker-1"
+
+    resumed = record_resume_outcome(workdir, "crash", request_id)
+    assert resumed is not None
+    assert resumed.dispatch_status == ResumeDispatchStatus.RESUMED.value
+    assert resumed.resumed_at
+    assert resume_request_acknowledged(workdir, "crash", request_id) is True
+    assert claim_resume_request(workdir, "crash", request_id) is None
+
+    # A repeat CLI command must report the real outcome, not re-queue it.
+    repeat = _resume_json(workdir, "crash")
+    assert repeat["dispatch_status"] == ResumeDispatchStatus.RESUMED.value
+    assert repeat["runtime_acknowledged"] is True
+
+
+def test_legacy_signal_is_an_unacknowledged_hint_until_next_publish(workdir: Path) -> None:
+    resume_dir = workdir / ".sdd" / "runtime" / "resume"
+    resume_dir.mkdir(parents=True)
+    (resume_dir / "legacy.signal").write_text(
+        json.dumps({"task_id": "legacy", "resume_count": 1, "adapter": "claude"}), encoding="utf-8"
+    )
+
+    hints = read_resume_requests(workdir, "legacy")
+    assert len(hints) == 1
+    assert hints[0].dispatch_status == ResumeDispatchStatus.QUEUED.value
+    assert resume_request_acknowledged(workdir, "legacy", hints[0].request_id) is False
+
+    save_checkpoint(workdir, _make_checkpoint(task_id="legacy"))
+    report = _resume_json(workdir, "legacy")
+    assert json.loads((resume_dir / "legacy.signal").read_bytes())["request_id"] == report["request_id"]
+    assert resume_requests_path_for(workdir, "legacy").is_file()

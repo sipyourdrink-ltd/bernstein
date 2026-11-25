@@ -42,7 +42,14 @@ from bernstein.core.persistence.ledger_git import (
     materialize_ledger,
     plan_ledger_materialization,
 )
-from bernstein.core.persistence.task_resume import write_resume_signal
+from bernstein.core.persistence.task_resume import (
+    SOURCE_WORK_LEDGER,
+    ResumeDispatchStatus,
+    ResumeRequestCorruptError,
+    ResumeRequestRecord,
+    ledger_source_digest,
+    publish_resume_request,
+)
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_RESUMED,
     LedgerError,
@@ -284,12 +291,28 @@ def _render_state(run_id: str, ledger_dir: Path, state: LedgerState) -> None:
     console.print()
 
 
-def _write_resume_signals(root: Path, run_id: str, state: LedgerState) -> Iterator[Path]:
-    """Write local resume signals and yield each path once written."""
+def _publish_resume_requests(root: Path, run_id: str, state: LedgerState) -> Iterator[tuple[Path, ResumeRequestRecord]]:
+    """Publish one deterministic request per frontier task and yield its signal.
+
+    The digest uses the task's last task-level transition, so run-level resume
+    entries (and their nonces) cannot change the request id and completed tasks
+    are excluded by ``resume_frontier()``.
+    """
     for task_id in state.resume_frontier():
-        yield write_resume_signal(
-            root, task_id, run_id=run_id, source="work_ledger", ledger_head=state.head_hash, resume_count=state.resumes
+        digest = ledger_source_digest(run_id, task_id, state.tasks[task_id].last_seq)
+        record = publish_resume_request(
+            root,
+            task_id,
+            source_digest=digest,
+            source=SOURCE_WORK_LEDGER,
+            run_id=run_id,
+            signal_fields={
+                "ledger_head": state.head_hash,
+                "resume_count": state.resumes,
+            },
         )
+        signal = root / ".sdd" / "runtime" / "resume" / f"{task_id}.signal"
+        yield signal, record
 
 
 @ledger_group.command("resume")
@@ -317,15 +340,20 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
         3  local and anchored chains diverge (two divergent resumes)
     """
     signal_paths: list[str] = []
+    resume_requests: list[dict[str, object]] = []
     report: dict[str, object] = {
         "run_id": run_id,
         "dry_run": dry_run,
         "signal_paths": signal_paths,
+        "resume_requests": resume_requests,
         "runtime_acknowledged": False,
     }
 
     def emit_report() -> None:
         report["dispatch_status"] = "queued" if signal_paths else "not_dispatched"
+        report["runtime_acknowledged"] = bool(resume_requests) and all(
+            bool(item["runtime_acknowledged"]) for item in resume_requests
+        )
         click.echo(json.dumps(report, indent=2))
 
     def fail(exit_code: int, message: str, *, errors: list[str] | None = None, hint: str | None = None) -> NoReturn:
@@ -424,11 +452,21 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
         fail(EXIT_IO_ERROR, f"Could not write the resume entry: {exc}")
 
     try:
-        for signal in _write_resume_signals(root, run_id, state):
+        for signal, record in _publish_resume_requests(root, run_id, state):
             signal_paths.append(str(signal))
+            resume_requests.append(
+                {
+                    "task_id": record.task_id,
+                    "request_id": record.request_id,
+                    "source_digest": record.source_digest,
+                    "run_id": record.run_id,
+                    "dispatch_status": record.dispatch_status,
+                    "runtime_acknowledged": record.dispatch_status == ResumeDispatchStatus.RESUMED.value,
+                }
+            )
             if not output_json:
                 console.print(f"[green]Resume signal queued:[/green] {signal}")
-    except OSError as exc:
+    except (OSError, ResumeRequestCorruptError) as exc:
         fail(EXIT_SIGNAL_WRITE_FAILED, f"Could not write resume signal: {exc}")
 
     if output_json:

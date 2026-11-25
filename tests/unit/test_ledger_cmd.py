@@ -714,3 +714,35 @@ class TestGcAndRuns:
         result = CliRunner().invoke(ledger_group, ["runs", "--workdir", str(project)])
         assert result.exit_code == 0, result.output
         assert "run-a" in result.output
+
+    def _resume_json(self, project: Path) -> dict[str, Any]:
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    def test_duplicate_ledger_resume_keeps_request_ids_stable(self, project: Path) -> None:
+        _seed(project)
+        first = self._resume_json(project)
+        second = self._resume_json(project)
+
+        assert [item["request_id"] for item in first["resume_requests"]] == [
+            item["request_id"] for item in second["resume_requests"]
+        ]
+        assert [item["dispatch_status"] for item in second["resume_requests"]] == ["queued"]
+        assert second["runtime_acknowledged"] is False
+        entries = list(LedgerReader(run_ledger_dir(project / ".sdd", "run-a")).entries())
+        assert sum(entry.kind == KIND_RUN_RESUMED for entry in entries) == 2
+
+    def test_mixed_ledger_requests_only_the_resume_frontier(self, project: Path) -> None:
+        ledger = _seed(project)
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t3")
+        ledger.append(kind=KIND_TASK_COMPLETED, task_id="t3")
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t4")
+        ledger.close()
+
+        report = self._resume_json(project)
+        assert report["completed_tasks"] == ["t1", "t3"]
+        assert report["resume_frontier"] == ["t2", "t4"]
+        assert {item["task_id"] for item in report["resume_requests"]} == {"t2", "t4"}
+        assert all(item["runtime_acknowledged"] is False for item in report["resume_requests"])
+        assert not (project / ".sdd" / "runtime" / "resume" / "t1.signal").exists()
