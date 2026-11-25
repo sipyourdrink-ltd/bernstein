@@ -14,7 +14,7 @@ import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from rich.console import Console
 
@@ -84,11 +84,21 @@ _QWEN_API_KEY_VARS: tuple[str, ...] = (
 )
 
 
+def _resolve_cli_binary(cli: str) -> str:
+    """Resolve an adapter registry name (e.g. ``q_dev``, ``cursor``) to its CLI binary."""
+    from bernstein.adapters.report import _binary_for_adapter
+
+    binary = _binary_for_adapter(cli)
+    if binary == cli:
+        return {"charm": "crush", "copilot": "gh", "cursor": "cursor-agent", "iac": "terraform"}.get(cli, binary)
+    return binary
+
+
 def _check_binary(cli: str, *, env: Mapping[str, str] | None = None) -> None:
     """Exit with an actionable message if the CLI binary is not in PATH.
 
     Args:
-        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
+        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen", "q_dev").
         env: Optional environment mapping containing PATH to resolve binary from.
 
     Raises:
@@ -96,7 +106,9 @@ def _check_binary(cli: str, *, env: Mapping[str, str] | None = None) -> None:
     """
     from bernstein.cli.errors import BernsteinError
 
-    binary = cli  # binary name matches adapter name for all supported adapters
+    binary = _resolve_cli_binary(cli)
+    if not binary:
+        return
     path_val = env.get("PATH") if env is not None else None
     if shutil.which(binary, path=path_val) is None:
         hint = _CLI_INSTALL_HINT.get(cli, f"See documentation for {binary!r}")
@@ -531,16 +543,60 @@ def _routing_note(agent_count: int) -> str:
     return "Using auto-routing." if agent_count > 1 else "Using as primary."
 
 
+def _abort_no_cli_agents() -> NoReturn:
+    """Print missing-CLI install guidance (with demo option) and exit."""
+    console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
+    for name, hint in _CLI_INSTALL_HINT.items():
+        console.print(f"  {name}: {hint}")
+    console.print("  Or run [bold]bernstein demo[/bold] (simulated agents, no CLI install or API key required).")
+    raise SystemExit(1)
+
+
+def resolve_effective_cli(
+    cli: str | None,
+    seed_cli: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Resolve effective CLI adapter matching orchestrator precedence.
+
+    An explicit concrete ``--cli`` wins unless omitted or ``"auto"``; next an
+    explicit concrete ``BERNSTEIN_ADAPTER`` pin overrides ``seed.cli``; finally
+    a concrete ``seed.cli`` applies, falling back to ``"auto"``.
+    """
+    environ = os.environ if env is None else env
+    explicit_cli = cli.strip() if isinstance(cli, str) else ""
+    env_adapter = environ.get("BERNSTEIN_ADAPTER", "").strip()
+    resolved_seed_cli = seed_cli.strip() if isinstance(seed_cli, str) else ""
+    if explicit_cli and explicit_cli != "auto":
+        return explicit_cli
+    if env_adapter and env_adapter != "auto":
+        return env_adapter
+    if explicit_cli == "auto":
+        return "auto"
+    return resolved_seed_cli or "auto"
+
+
+def ensure_cli_adapter_available(cli: str, *, env: Mapping[str, str] | None = None) -> None:
+    """Fail fast before planning or startup when no local CLI binary exists for *cli*."""
+    if cli == "mock":
+        return
+    if cli == "auto":
+        from bernstein.core.agent_discovery import discover_agents_cached
+
+        if not discover_agents_cached().agents:
+            _abort_no_cli_agents()
+        return
+    _check_binary(cli, env=env)
+
+
 def _preflight_auto_mode() -> None:
     """Run auto-discovery preflight for multi-agent mode."""
     from bernstein.core.agent_discovery import discover_agents_cached, short_model
 
     discovery = discover_agents_cached()
     if not discovery.agents:
-        console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
-        for name, hint in _CLI_INSTALL_HINT.items():
-            console.print(f"  {name}: {hint}")
-        raise SystemExit(1)
+        _abort_no_cli_agents()
 
     agent_parts: list[str] = []
     for agent in discovery.agents:

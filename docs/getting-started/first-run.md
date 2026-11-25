@@ -243,8 +243,10 @@ offline-verifiable receipt without configuring a provider.
 
 ### `No agents available`
 
-`bernstein doctor` shows every `Adapter:` row red. Install at least one CLI agent
-(Step 1) and run its login flow. Then:
+`bernstein doctor` shows every `Adapter:` row red, or `bernstein run` exits `1`
+before cost estimation or plan confirmation with `Error: No CLI agents found`
+(pointing to `bernstein demo`). Install at least one CLI agent (Step 1) and run
+its login flow (or run `bernstein demo` for simulated mock agents). Then:
 
 ```bash
 bernstein agents discover    # rescan agent-role catalogs
