@@ -614,6 +614,8 @@ class SSEBus:
 class SSEReconnectLimiterMiddleware:
     """Front-door limiter for the /events, /events/cost and /events/thread SSE endpoints.
 
+    The ``/api/v1`` aliases of these endpoints count against the same budget.
+
     Rejects requests from IPs that have reconnected more than
     ``RECONNECT_MAX_PER_WINDOW`` times inside ``RECONNECT_WINDOW_S`` for
     ``RECONNECT_COOLDOWN_S`` seconds. Reconnect counters live on the shared
@@ -632,7 +634,11 @@ class SSEReconnectLimiterMiddleware:
         if scope.get("type") != "http" or scope.get("method", "").upper() != "GET":
             await self.app(scope, receive, send)
             return
-        if scope.get("path") not in self._SSE_PATHS:
+        path = str(scope.get("path", ""))
+        # Versioned aliases share the canonical routes' reconnect budget.
+        if path.startswith("/api/v1/"):
+            path = path[len("/api/v1") :]
+        if path not in self._SSE_PATHS:
             await self.app(scope, receive, send)
             return
         fastapi_app = scope.get("app")

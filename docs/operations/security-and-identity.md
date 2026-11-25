@@ -42,7 +42,7 @@ Named buckets under the seed’s `rate_limit` mapping share counters across both
 Canonical rules take precedence; versioned-only rules remain supported when
 no canonical rule matches.
 The `/events`, `/events/cost` and `/events/thread` routes and their versioned
-aliases share the SSE concurrency cap.
+aliases share the SSE concurrency cap and the per-client SSE reconnect limit.
 
 ## Authentication attempt limits
 
