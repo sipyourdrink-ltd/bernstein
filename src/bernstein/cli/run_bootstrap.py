@@ -2855,6 +2855,7 @@ def _run_impl(
         _abort_if_no_cli_adapter(
             cli=cli,
             seed=validated_seed,
+            plan_file=plan_file or from_plan,
         )
         estimate = _estimate_run_preview(
             workdir=workdir,

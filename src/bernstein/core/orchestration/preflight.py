@@ -568,12 +568,13 @@ def resolve_effective_cli(
     explicit_cli = cli.strip() if isinstance(cli, str) else ""
     env_adapter = environ.get("BERNSTEIN_ADAPTER", "").strip()
     resolved_seed_cli = seed_cli.strip() if isinstance(seed_cli, str) else ""
-    return (
-        (explicit_cli if explicit_cli and explicit_cli != "auto" else None)
-        or (env_adapter if env_adapter and env_adapter != "auto" else None)
-        or (resolved_seed_cli if resolved_seed_cli and resolved_seed_cli != "auto" else None)
-        or "auto"
-    )
+    if explicit_cli and explicit_cli != "auto":
+        return explicit_cli
+    if env_adapter and env_adapter != "auto":
+        return env_adapter
+    if explicit_cli == "auto":
+        return "auto"
+    return resolved_seed_cli or "auto"
 
 
 def ensure_cli_adapter_available(cli: str, *, env: Mapping[str, str] | None = None) -> None:
