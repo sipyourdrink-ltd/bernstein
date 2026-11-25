@@ -1152,6 +1152,8 @@ jobs:
 
           tpl_pkg = ir.files("bernstein._default_templates")
           assert any(tpl_pkg.iterdir()), "no default templates shipped in wheel"
+          demo_test = ir.files("bernstein._demo_template") / "tests" / "test_app.py"
+          assert demo_test.is_file(), "demo template tests/test_app.py missing from wheel"
           print(f"packaged resources OK: {len(schemas)} MCP schemas")
           '
 
@@ -1269,8 +1271,17 @@ jobs:
 
           tpl_pkg = ir.files("bernstein._default_templates")
           assert any(tpl_pkg.iterdir()), "no default templates shipped in wheel"
+          demo_test = ir.files("bernstein._demo_template") / "tests" / "test_app.py"
+          assert demo_test.is_file(), "demo template tests/test_app.py missing from wheel"
           print(f"packaged resources OK: {len(schemas)} MCP schemas")
           '
+      - name: bernstein demo --timeout 120 (exit zero)
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEMO_CWD="$(mktemp -d)"
+          trap 'rm -rf "$DEMO_CWD"' EXIT
+          (cd "$DEMO_CWD" && bernstein demo --timeout 120)
 
   install-smoke-rpm:
     # RPM-channel counterpart of the pipx / uv smokes above (#3558, #3559).

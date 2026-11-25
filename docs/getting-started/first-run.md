@@ -208,6 +208,18 @@ bernstein demo --real     # use real agents (requires an authenticated CLI agent
 At the end of `bernstein demo`, copy the printed `cd <project-dir>`, `openssl`, `bernstein verify run`,
 and `bernstein verify receipt` commands to sign and verify your own demo run receipt offline.
 
+Summary and exit contract:
+
+- **Complete run (`done >= total` and `failed == 0`)**: the summary prints `Bugs fixed` in green,
+  shows `Fixed <done> bugs in <elapsed>.`, and exits `0`.
+- **Partial or failed run (`failed > 0` or `done < total`)**: the summary highlights `Bugs fixed` in
+  yellow (along with `Tasks failed` or `Task server: unreachable - counts unread` when applicable),
+  prints `Fixed <done> of <total> bugs in <elapsed> (<failed> unresolved).`, and exits non-zero.
+- **Audit-trail hints**: `bernstein audit verify --merkle-only` is suggested only when `.sdd/audit/`
+  contains `.jsonl` audit events and Merkle seal files; otherwise the summary tells you either to
+  seal existing `.jsonl` events (`bernstein audit seal` then `bernstein audit verify --merkle-only`)
+  or to enable auditing with `BERNSTEIN_AUDIT=1`.
+
 This is the fastest way to see the orchestrator move tasks through the lifecycle and produce an
 offline-verifiable receipt without configuring a provider.
 
