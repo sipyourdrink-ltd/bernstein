@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from bernstein.cli.main import cli
 from bernstein.core.planning.scenario_library import load_scenario_library
