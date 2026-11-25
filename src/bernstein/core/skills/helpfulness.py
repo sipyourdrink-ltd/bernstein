@@ -188,6 +188,7 @@ def write_helpfulness_report(
 class _TaskOutcome:
     success: bool
     role: str
+    timestamp: float
 
 
 def _freeze_skill(skill: str, counter: _Counter, roles: dict[str, _Counter]) -> SkillHelpfulness:
@@ -215,7 +216,14 @@ def _load_task_outcomes(metrics_dir: Path) -> dict[str, _TaskOutcome]:
             success = _success_field(labels, "success")
             if not task_id or success is None:
                 continue
-            outcomes[task_id] = _TaskOutcome(success=success, role=_string_field(labels, "role"))
+            timestamp = row.get("timestamp")
+            if isinstance(timestamp, bool) or not isinstance(timestamp, int | float):
+                timestamp = float("-inf")
+            previous = outcomes.get(task_id)
+            if previous is None or timestamp >= previous.timestamp:
+                outcomes[task_id] = _TaskOutcome(
+                    success=success, role=_string_field(labels, "role"), timestamp=timestamp
+                )
     return outcomes
 
 
