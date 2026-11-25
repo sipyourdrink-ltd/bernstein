@@ -648,15 +648,15 @@ def claim_resume_request(
         return None
     if record.dispatch_status == ResumeDispatchStatus.CLAIMED.value:
         return record
-    claimed = replace(
+    claimed_record = replace(
         record,
         dispatch_status=ResumeDispatchStatus.CLAIMED.value,
         claimed_at=_utc_now(),
         worker_id=worker_id,
     )
-    records[index] = claimed
+    records[index] = claimed_record
     _write_records(workdir, task_id, records)
-    return claimed
+    return claimed_record
 
 
 def record_resume_outcome(
