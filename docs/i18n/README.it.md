@@ -212,7 +212,7 @@ Perché lo scheduler è in puro Python e quali sono i compromessi adottati: [per
 Il controllo `can_spawn()` del modulo di monitoraggio dei costi restituisce `False` quando la spesa cumulativa dopo la rettifica raggiunge o supera la soglia di arresto configurata per il budget, anche se non sono stati segnalati nuovi token. Dopo un riavvio, i soli conteggi dei token salvati non consentono di ricostruire il costo cumulativo esatto comunicato in precedenza per una determinata combinazione di agente, attività e modello.
 
 ### comandi quotidiani
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project

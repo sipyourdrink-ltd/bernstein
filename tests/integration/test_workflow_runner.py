@@ -1097,3 +1097,86 @@ nodes:
         raise AssertionError("Expected WorkflowRunError for nonexistent run")
     except Exception as e:
         assert "no workflow run state" in str(e).lower()
+
+
+# ---------------------------------------------------------------------------
+# always_run cleanup/teardown nodes
+# ---------------------------------------------------------------------------
+
+
+def test_always_run_executes_cleanup_after_upstream_failure_without_passing_run(runner_workdir: Path) -> None:
+    """An ``always_run: true`` node still runs after an abort, while receipt stays skipped and run fails."""
+    spec = _spec_from(
+        """
+name: always-run-cleanup
+description: "Teardown still executes when restore fails"
+version: "1.0.0"
+nodes:
+  - id: restore
+    command: "exit 2"
+  - id: verify
+    depends_on: [restore]
+    command: "echo verified > verify.txt"
+  - id: cleanup
+    depends_on: [restore, verify]
+    always_run: true
+    command: "echo cleaned > cleanup.txt"
+  - id: receipt
+    depends_on: [verify, cleanup]
+    command: "echo receipt > receipt.txt"
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.run(spec, run_id="always-run-fail")
+    by_id = {n.node_id: n for n in execution.nodes}
+
+    assert execution.succeeded is False
+    assert by_id["restore"].status == NodeStatus.FAILED
+    assert by_id["verify"].status == NodeStatus.SKIPPED
+    assert by_id["cleanup"].status == NodeStatus.SUCCESS
+    assert by_id["receipt"].status == NodeStatus.SKIPPED
+    assert (runner_workdir / "cleanup.txt").read_text().strip() == "cleaned"
+    assert not (runner_workdir / "verify.txt").exists()
+    assert not (runner_workdir / "receipt.txt").exists()
+
+
+def test_always_run_executes_on_resume_after_aborted_layer(runner_workdir: Path) -> None:
+    """Resuming a run killed after a failure still dispatches unexecuted ``always_run`` cleanup."""
+    from bernstein.core.workflows.workflow_runner import NodeExecution, record_node_state
+
+    spec = _spec_from(
+        """
+name: always-run-resume
+description: "Resume runs always_run cleanup after persisted failure"
+version: "1.0.0"
+nodes:
+  - id: restore
+    command: "exit 1"
+  - id: cleanup
+    depends_on: [restore]
+    always_run: true
+    command: "echo resumed-cleanup > cleanup.txt"
+  - id: receipt
+    depends_on: [cleanup]
+    command: "echo receipt > receipt.txt"
+"""
+    )
+    run_id = "always-run-resume-1"
+    digest = record_spec_snapshot(runner_workdir, run_id, spec, manifest_source=spec.name)
+    record_node_state(
+        runner_workdir,
+        run_id,
+        NodeExecution(node_id="restore", status=NodeStatus.FAILED, iterations=1, exit_code=1, error="exit 1"),
+        digest,
+    )
+
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.resume(spec, run_id=run_id)
+    by_id = {n.node_id: n for n in execution.nodes}
+
+    assert execution.succeeded is False
+    assert by_id["restore"].status == NodeStatus.FAILED
+    assert by_id["cleanup"].status == NodeStatus.SUCCESS
+    assert by_id["receipt"].status == NodeStatus.SKIPPED
+    assert (runner_workdir / "cleanup.txt").read_text().strip() == "resumed-cleanup"
+    assert not (runner_workdir / "receipt.txt").exists()

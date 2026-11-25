@@ -53,6 +53,14 @@ nodes:
       max_attempts: 3
       until: "status == 'done'"
 
+  reverify-row-hash-parity:
+    phase: verify
+    role: qa
+    description: "Re-verify row counts, checksums, lock bounds, and dual-read parity after fix"
+    estimated_minutes: 25
+    depends_on:
+      - fix-migration-defect
+
   emit-cutover-runbook:
     phase: cutover
     role: docs
@@ -60,4 +68,6 @@ nodes:
     estimated_minutes: 20
     depends_on:
       - source: verify-row-hash-parity
+        condition: "status == 'done'"
+      - source: reverify-row-hash-parity
         condition: "status == 'done'"

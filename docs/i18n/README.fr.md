@@ -212,7 +212,7 @@ Pourquoi l'ordonnanceur est en pur Python et quels sont les compromis associés 
 La vérification `can_spawn()` du module de suivi des coûts renvoie `False` lorsque les dépenses cumulées après correction atteignent ou dépassent le seuil d’arrêt budgétaire configuré, même si aucun nouveau jeton n’a été signalé. Après un redémarrage, les compteurs de jetons enregistrés ne suffisent pas à reconstituer le coût cumulé exact précédemment déclaré pour une combinaison donnée d’agent, de tâche et de modèle.
 
 ### commandes courantes
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project

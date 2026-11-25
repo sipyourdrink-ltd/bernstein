@@ -1,25 +1,45 @@
+# Note: WorkflowRunner currently marks agent nodes as succeeded on dispatch
+# (#6639), so `always_run: true` guarantees execution after command-node or
+# agent-spawn failures. For orchestrator-enforced completion gating across
+# agent tasks, use the task-store-backed conditional DAG in
+# `.bernstein/workflows/disaster-recovery-drill.yaml` or substitute
+# deterministic `command:` scripts for restore and verification.
 name: disaster-recovery-drill
-description: "Rehearse isolated backup restore, measure RTO/RPO, and verify ledger and data integrity."
-version: "1.0.0"
+description: "Rehearse isolated backup restore, verify integrity, and run sandbox teardown (always_run on command/spawn failures; see #6639)."
+version: "1.1.0"
 nodes:
   - id: isolated-restore
     agent: devops
     prompt: |
-      Stand up an isolated restore target, execute the documented backup restore
-      procedure, and record elapsed RTO and RPO for: {goal}
+      Stand up an isolated restore target with a local cleanup trap, execute
+      the documented backup restore procedure, and write the RTO/RPO and
+      restore-status artifact for: {goal}
     timeout_seconds: 2400
   - id: integrity-verification
     depends_on: [isolated-restore]
     agent: qa
     prompt: |
-      Verify restored database checksums, audit-log hash chains, and smoke
-      probes for: {goal}
+      Confirm the restore-status artifact reports a completed restore, then
+      verify restored database checksums, audit-log hash chains, and smoke
+      probes, writing an integrity-verification artifact for: {goal}
     fresh_context: true
     timeout_seconds: 1800
-  - id: disposal-and-receipt
-    depends_on: [integrity-verification]
+  - id: sandbox-disposal
+    depends_on: [isolated-restore, integrity-verification]
+    always_run: true
     agent: security
     prompt: |
-      Confirm zero residual secrets/volumes remain after teardown and issue the
-      DR readiness receipt for: {goal}
+      Tear down temporary restore targets and volumes once restore/verification
+      artifacts exist (or after a command/dispatch abort), confirm zero residual
+      secrets or backup artifacts remain, and write a disposal attestation
+      artifact for: {goal}
     timeout_seconds: 1200
+  - id: dr-receipt
+    depends_on: [integrity-verification, sandbox-disposal]
+    agent: docs
+    prompt: |
+      Only if both the accepted integrity-verification pass artifact and the
+      disposal attestation artifact are present and green, issue the dated DR
+      readiness receipt with measured RTO/RPO for: {goal}; otherwise refuse and
+      record the drill failure.
+    timeout_seconds: 900

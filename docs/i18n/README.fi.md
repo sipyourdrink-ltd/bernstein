@@ -212,7 +212,7 @@ Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja s
 Kustannusseurannan `can_spawn()`-tarkistus palauttaa arvon `False`, kun korjatut kokonaiskulut saavuttavat budjetille asetetun pysäytysrajan tai ylittävät sen, vaikka uusia tokeneita ei olisi raportoitu. Uudelleenkäynnistyksen jälkeen pelkistä tallennetuista tokenimääristä ei voi päätellä tietylle agentin, tehtävän ja mallin yhdistelmälle aiemmin raportoitua tarkkaa kokonaiskustannusta.
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project

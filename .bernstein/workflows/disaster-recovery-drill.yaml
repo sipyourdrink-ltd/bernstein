@@ -1,6 +1,6 @@
-# Isolated backup restore rehearsal, RTO/RPO measurement, and integrity sign-off.
+# Isolated backup restore rehearsal, RTO/RPO measurement, always-run teardown, and integrity sign-off.
 name: disaster-recovery-drill
-version: "1.0.0"
+version: "1.1.0"
 
 phases:
   - name: prepare
@@ -9,6 +9,8 @@ phases:
     allowed_roles: [devops, backend]
   - name: verify
     allowed_roles: [qa, security]
+  - name: teardown
+    allowed_roles: [security, devops]
   - name: certify
     allowed_roles: [docs, reviewer]
 
@@ -35,19 +37,33 @@ nodes:
     depends_on:
       - execute-runbook-restore
 
-  verify-sandbox-disposal:
-    phase: verify
+  cleanup-sandbox-on-failure:
+    phase: teardown
     role: security
-    description: "Confirm zero leaked secrets and clean teardown of temporary volumes"
+    description: "Tear down partial or restored sandbox targets and purge temporary artifacts after provisioning, restore, or verification failure"
     estimated_minutes: 15
     depends_on:
-      - verify-ledger-and-data-integrity
+      - source: provision-isolated-target
+        condition: "status != 'done' and status != 'closed'"
+      - source: execute-runbook-restore
+        condition: "status != 'done' and status != 'closed'"
+      - source: verify-ledger-and-data-integrity
+        condition: "status != 'done' and status != 'closed'"
+
+  verify-sandbox-disposal:
+    phase: teardown
+    role: security
+    description: "Tear down temporary volumes and confirm zero leaked secrets after successful verification"
+    estimated_minutes: 15
+    depends_on:
+      - source: verify-ledger-and-data-integrity
+        condition: "status == 'done' or status == 'closed'"
 
   emit-dr-receipt:
     phase: certify
     role: docs
-    description: "Write dated DR drill receipt with measured RTO/RPO and action items"
+    description: "Write dated DR drill receipt with measured RTO/RPO, integrity evidence, and disposal sign-off"
     estimated_minutes: 15
     depends_on:
       - source: verify-sandbox-disposal
-        condition: "status == 'done'"
+        condition: "status == 'done' or status == 'closed'"

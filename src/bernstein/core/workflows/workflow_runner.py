@@ -464,15 +464,15 @@ class WorkflowRunner:
         aborted = False
 
         for layer in layers:
-            if aborted:
-                for node in layer:
+            layer_aborted = aborted
+            ready_nodes: list[WorkflowNode] = []
+            for node in layer:
+                if layer_aborted and not node.always_run:
                     skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED)
                     results[node.id] = skipped
                     execution.nodes.append(skipped)
-                continue
+                    continue
 
-            ready_nodes: list[WorkflowNode] = []
-            for node in layer:
                 # --- resume: check if node already completed ---
                 persisted = load_node_state(self._workdir, run_id, node.id)
                 if persisted is not None:
@@ -501,7 +501,9 @@ class WorkflowRunner:
                         pass  # continue - normal flow
                     continue  # node already done, skip re-execution
 
-                if not all(self._dep_satisfied(results.get(dep)) for dep in node.depends_on if dep in results):
+                if not node.always_run and not all(
+                    self._dep_satisfied(results.get(dep)) for dep in node.depends_on if dep in results
+                ):
                     skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED)
                     results[node.id] = skipped
                     execution.nodes.append(skipped)
@@ -626,16 +628,15 @@ class WorkflowRunner:
         aborted = False
 
         for layer in layers:
-            if aborted:
-                for node in layer:
+            layer_aborted = aborted
+            ready_nodes: list[WorkflowNode] = []
+            for node in layer:
+                if layer_aborted and not node.always_run:
                     skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED)
                     results[node.id] = skipped
                     execution.nodes.append(skipped)
-                # Skip the whole layer: dispatching it would run nodes off a green branch after the abort.
-                continue
+                    continue
 
-            ready_nodes: list[WorkflowNode] = []
-            for node in layer:
                 # --- resume: check if node already completed ---
                 persisted = load_node_state(self._workdir, rid, node.id)
                 if persisted is not None:
@@ -664,7 +665,9 @@ class WorkflowRunner:
                         pass  # continue - normal flow
                     continue  # node already done, skip re-execution
 
-                if not all(self._dep_satisfied(results.get(dep)) for dep in node.depends_on if dep in results):
+                if not node.always_run and not all(
+                    self._dep_satisfied(results.get(dep)) for dep in node.depends_on if dep in results
+                ):
                     skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED)
                     results[node.id] = skipped
                     execution.nodes.append(skipped)

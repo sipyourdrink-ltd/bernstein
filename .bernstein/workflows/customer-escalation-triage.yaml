@@ -45,6 +45,14 @@ nodes:
       max_attempts: 3
       until: "status == 'done'"
 
+  reverify-escalation-fix:
+    phase: verify
+    role: qa
+    description: "Re-run sanitized reproduction, adjacent edge cases, and regression suite after rework"
+    estimated_minutes: 20
+    depends_on:
+      - rework-escalation-fix
+
   draft-customer-rca:
     phase: communicate
     role: docs
@@ -52,4 +60,6 @@ nodes:
     estimated_minutes: 20
     depends_on:
       - source: verify-fix-and-boundaries
+        condition: "status == 'done'"
+      - source: reverify-escalation-fix
         condition: "status == 'done'"

@@ -233,7 +233,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Run state checkpoints to `.sdd/runs/<run_id>/` on every node. Resume validates the manifest digest at run start, so a spec change is refused rather than silently executing a different manifest. See [workflow manifests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Supply the same `-g` value again on resume so `{goal}` is substituted in prompts for unfinished nodes.
+Run state checkpoints to `.sdd/runs/<run_id>/` on every node. Resume validates the manifest digest at run start, so a spec change is refused rather than silently executing a different manifest. Cleanup nodes may set `always_run: true` to execute after a command or dispatch failure without turning an aborted run into a success (agent completion gating is tracked in [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). See [workflow manifests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Supply the same `-g` value again on resume so `{goal}` is substituted in prompts for unfinished nodes.
 
 `bernstein compliance controls` lists benchmark suites for each control and shows the latest complete measurement, when available. [Benchmark coverage](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

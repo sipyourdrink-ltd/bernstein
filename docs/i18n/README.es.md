@@ -212,7 +212,7 @@ Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué
 La comprobación `can_spawn()` del módulo de seguimiento de costes devuelve `False` cuando el gasto acumulado corregido alcanza o supera el umbral de parada configurado para el presupuesto, aunque no se haya informado de nuevos tokens. Tras un reinicio, los contadores de tokens guardados no bastan para reconstruir el coste acumulado exacto que se había comunicado para una combinación concreta de agente, tarea y modelo.
 
 ### comandos cotidianos
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project
