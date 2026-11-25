@@ -3750,13 +3750,15 @@ class TestMaybeRetryTask:
         *,
         max_retries: int = 2,
         default_model: str | None = "mock-model",
+        adapter_name: str | None = None,
     ) -> tuple[Orchestrator, list[dict]]:
         """Return (orchestrator, captured_post_bodies) with POST /tasks mocked.
 
         ``default_model`` is the run-level ``--model`` pin. Tests that assert
-        the Claude tier ladder must pass ``None``: a pinned model is carried
-        through retries verbatim rather than escalated (#4274), so with a pin
-        in place there is no ladder to observe.
+        the Claude tier ladder must pass ``default_model=None`` and a
+        Claude-compatible ``adapter_name`` (e.g. ``"claude"``): a pinned model
+        is carried through retries verbatim (#4274), and non-Claude adapters
+        do not use the Claude tier ladder (#6605).
         """
         posted: list[dict] = []
 
@@ -3768,7 +3770,10 @@ class TestMaybeRetryTask:
 
         transport = httpx.MockTransport(handler)
         cfg = OrchestratorConfig(server_url="http://testserver", max_task_retries=max_retries)
-        orch = _build_orchestrator(tmp_path, transport, config=cfg, default_model=default_model)
+        adapter = _mock_adapter()
+        if adapter_name is not None:
+            adapter.name.return_value = adapter_name
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=cfg, default_model=default_model)
         return orch, posted
 
     def test_first_retry_bumps_effort_keeps_model(self, tmp_path: Path) -> None:
@@ -3781,8 +3786,8 @@ class TestMaybeRetryTask:
             model="sonnet",
             effort="low",
         )
-        # No run-level pin: this test is about the tier ladder itself.
-        orch, posted = self._build(tmp_path, default_model=None)
+        # No run-level pin on a Claude adapter: this test is about the Claude tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None, adapter_name="claude")
 
         result = orch._maybe_retry_task(task)
 
@@ -3821,8 +3826,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        # No run-level pin: this test is about the tier ladder itself.
-        orch, posted = self._build(tmp_path, default_model=None)
+        # No run-level pin on a Claude adapter: this test is about the Claude tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None, adapter_name="claude")
 
         result = orch._maybe_retry_task(task)
 
@@ -3905,8 +3910,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        # No run-level pin: this test is about the tier ladder itself.
-        orch, posted = self._build(tmp_path, default_model=None)
+        # No run-level pin on a Claude adapter: this test is about the Claude tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None, adapter_name="claude")
 
         orch._maybe_retry_task(task)
 

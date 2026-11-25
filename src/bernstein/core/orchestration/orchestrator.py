@@ -4417,6 +4417,7 @@ class Orchestrator:
             session_id=session.id if session is not None else None,
             role_model_policy=getattr(self._spawner, "role_model_policy", None),
             run_pinned_model=getattr(self._spawner, "default_model", None),
+            default_adapter_name=getattr(self._spawner, "default_adapter_name", None),
         )
 
     def _handle_anomaly_signal(self, signal: object) -> None:

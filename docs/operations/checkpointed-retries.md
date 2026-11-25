@@ -28,8 +28,24 @@ attempt, without an invented `sonnet` or `opus` override. A supplied effort is
 preserved; it is never erased to bypass a missing-model refusal. Effort escalation
 continues when a model or operator pin is known. Reusing inputs does not prove an
 identical effective model if configuration or router state changes. An endpoint
-URL alone does not identify a model, and no provider catalog is queried. Unprefixed task models
-without an operator pin remain governed by the existing adapter/tier policy.
+URL alone does not identify a model, and no provider catalog is queried.
+
+## Gateway-only configurations
+
+When the retrying role's adapter is not Claude-compatible -- an
+OpenAI-compatible gateway (`OPENAI_API_BASE` set, models `openai/<combo>`),
+or a role pinned to a non-Claude `provider` -- the Claude tier ladder
+(`haiku`/`sonnet`/`opus`) has no route and both retry creators skip it
+entirely (#6605). An unpinned bare tier label on the failed task is an
+escalation artifact, not an operator pin: the first attempt's spawn coerced
+it to the adapter's configured default, so the retry leaves the model unset
+and the spawn re-resolves that same default -- the retry ladder resolves
+models from the same source the first attempt used. Any other unprefixed
+model name is a real model identity and is retained verbatim, never
+escalated into a tier. Two pin routes still win over the guard: an explicit
+role/run model pin (above), and a task carrying `metadata.pinned_model`
+(the A/B-test escape hatch). On a Claude-compatible adapter the historical
+tier ladder is unchanged.
 
 ## Per-adapter capability
 
