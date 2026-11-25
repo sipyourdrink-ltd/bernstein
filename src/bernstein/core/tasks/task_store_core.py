@@ -45,6 +45,7 @@ from bernstein.core.tasks.lifecycle import (
 )
 from bernstein.core.tasks.models import (
     AgentSession,
+    ApprovalSpec,
     CompletionSignal,
     DispatchTier,
     ProgressSnapshot,
@@ -165,6 +166,7 @@ class TaskRecord(TypedDict):
     batch_eligible: bool
     eu_ai_act_risk: str
     approval_required: bool
+    approval_spec: NotRequired[dict[str, Any] | None]
     risk_level: str
     slack_context: dict[str, Any] | None
     version: int
@@ -871,6 +873,35 @@ class TaskStore:
                         task.cli = record["cli"]
                     if "requires" in record:
                         task.requires = list(record["requires"])
+                    if "approval_spec" in record:
+                        # Keep this whole field atomic: never clear a gate just
+                        # because the new value is unusable. A task that was
+                        # meant to wait for human sign-off must not quietly
+                        # become ungated after a corrupt journal line.
+                        raw_spec: object = record["approval_spec"]
+                        if raw_spec is None:
+                            task.approval_spec = None
+                        elif isinstance(raw_spec, dict):
+                            try:
+                                task.approval_spec = ApprovalSpec.from_dict(raw_spec)
+                            except (KeyError, TypeError, ValueError) as exc:
+                                logger.warning(
+                                    "Ignoring malformed approval_spec for task %s at %s:%d; "
+                                    "keeping the last valid policy: %s",
+                                    task_id,
+                                    self._jsonl_path,
+                                    line_num,
+                                    exc,
+                                )
+                        else:
+                            logger.warning(
+                                "Ignoring invalid approval_spec for task %s at %s:%d; "
+                                "expected a mapping or null, got %s: keeping the last valid policy",
+                                task_id,
+                                self._jsonl_path,
+                                line_num,
+                                type(raw_spec).__name__,
+                            )
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
                     if isinstance(version := record.get("version"), int):
@@ -881,6 +912,23 @@ class TaskStore:
                     task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
                     self._index_add(task)
                 else:
+                    # First-seen record is a task creation. Fail closed on a
+                    # malformed gate: skipping the line leaves no task with a
+                    # silently dropped approval requirement. A later valid
+                    # creation line for the same id can still replay normally.
+                    raw_spec: object = record.get("approval_spec")
+                    if isinstance(raw_spec, dict):
+                        try:
+                            ApprovalSpec.from_dict(raw_spec)
+                        except (KeyError, TypeError, ValueError) as exc:
+                            logger.warning(
+                                "Skipping task creation with malformed approval_spec for task %s at %s:%d: %s",
+                                task_id,
+                                self._jsonl_path,
+                                line_num,
+                                exc,
+                            )
+                            continue
                     task = Task.from_dict(cast("dict[str, Any]", record))
                     self._tasks[task_id] = task
                     self._index_add(task)
@@ -1313,6 +1361,7 @@ class TaskStore:
             "batch_eligible": task.batch_eligible is True,
             "eu_ai_act_risk": task.eu_ai_act_risk,
             "approval_required": task.approval_required,
+            "approval_spec": task.approval_spec.to_dict() if task.approval_spec is not None else None,
             "risk_level": task.risk_level,
             "slack_context": task.slack_context,
             "version": task.version,
