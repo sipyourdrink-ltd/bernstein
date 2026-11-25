@@ -960,9 +960,8 @@ def test_stale_agent_detection(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_create_task_with_completion_signals_stored(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_task_with_completion_signals_stored(client: AsyncClient) -> None:
     """POST /tasks with completion_signals stores them and returns them."""
-    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"unit":["pytest","tests/","-x","-q"]}')
     payload = TASK_PAYLOAD | {
         "completion_signals": [
             {"type": "path_exists", "value": "src/foo.py"},
@@ -1828,12 +1827,13 @@ async def test_claim_next_skips_tasks_with_unmet_deps(client: AsyncClient) -> No
 
 
 @pytest.mark.anyio
-async def test_create_task_with_completion_signals(client: AsyncClient) -> None:
+async def test_create_task_with_completion_signals(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """POST /tasks with completion_signals field is accepted and task is created."""
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"unit":["pytest","tests/","-q"]}')
     payload = TASK_PAYLOAD | {
         "completion_signals": [
             {"type": "path_exists", "value": "src/foo.py"},
-            {"type": "test_passes", "value": "uv run pytest tests/ -q"},
+            {"type": "test_passes", "value": "unit"},
         ],
     }
     resp = await client.post("/tasks", json=payload)
