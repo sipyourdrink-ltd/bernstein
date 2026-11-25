@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -396,3 +398,62 @@ async def test_sse_middleware_blocks_reconnect_flood(app, _client) -> None:
         payload = resp.json()
         assert payload["bucket"] == "sse_reconnect"
         assert resp.headers.get("retry-after") == "300"
+
+
+async def _reconnect_limiter_result(bus: SSEBus, path: str, client_ip: str = "203.0.113.5") -> tuple[int, bool]:
+    """Send one GET through the reconnect limiter; return (status, reached the inner app)."""
+    from bernstein.core.server.server_app import SSEReconnectLimiterMiddleware
+
+    reached: list[str] = []
+    sent: list[dict[str, Any]] = []
+
+    async def inner(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        reached.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": path,
+        "client": (client_ip, 40000),
+        "app": SimpleNamespace(state=SimpleNamespace(sse_bus=bus)),
+    }
+    await SSEReconnectLimiterMiddleware(inner)(scope, receive, send)
+    return sent[0]["status"], bool(reached)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/api/v1/events", "/api/v1/events/cost", "/api/v1/events/thread"])
+async def test_sse_reconnect_limiter_covers_versioned_aliases(path: str) -> None:
+    bus = SSEBus()
+    for _ in range(3):
+        bus._record_connect_attempt("203.0.113.5")
+
+    assert await _reconnect_limiter_result(bus, path) == (429, False)
+
+
+@pytest.mark.anyio
+async def test_sse_reconnect_limiter_counts_aliases_with_canonical_paths() -> None:
+    bus = SSEBus()
+    paths = ["/events", "/api/v1/events/cost", "/events/thread", "/api/v1/events"]
+
+    results = [await _reconnect_limiter_result(bus, path) for path in paths]
+
+    assert results == [(200, True), (200, True), (200, True), (429, False)]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/api/v1/events/tasks", "/api/v1/webhooks/slack/events", "/api/v1x/events"])
+async def test_sse_reconnect_limiter_ignores_other_paths(path: str) -> None:
+    bus = SSEBus()
+    for _ in range(3):
+        bus._record_connect_attempt("203.0.113.5")
+
+    assert await _reconnect_limiter_result(bus, path) == (200, True)
