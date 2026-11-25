@@ -212,7 +212,7 @@ Dlaczego harmonogram został zaimplementowany w czystym Pythonie i jakie niesie 
 Funkcja `can_spawn()` w module śledzenia kosztów zwraca `False`, gdy łączne wydatki po korekcie osiągną lub przekroczą ustawiony próg zatrzymania dla budżetu, nawet jeśli nie zgłoszono nowych tokenów. Po ponownym uruchomieniu same zapisane liczniki tokenów nie pozwalają odtworzyć dokładnego łącznego kosztu zgłoszonego wcześniej dla danej kombinacji agenta, zadania i modelu.
 
 ### codzienne polecenia
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

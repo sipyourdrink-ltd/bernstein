@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 בדיקת `can_spawn()` במנגנון מעקב העלויות מחזירה `False` כאשר ההוצאה המצטברת לאחר התיקון מגיעה לסף העצירה שהוגדר לתקציב או חורגת ממנו, גם אם לא דווח על טוקנים חדשים. לאחר הפעלה מחדש, מוני הטוקנים שנשמרו לבדם אינם מאפשרים לשחזר את העלות המצטברת המדויקת שדווחה קודם לכן עבור שילוב מסוים של סוכן, משימה ומודל.
 
 ### פקודות יומיומיות
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

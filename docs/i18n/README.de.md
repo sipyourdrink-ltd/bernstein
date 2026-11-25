@@ -212,7 +212,7 @@ Warum der Scheduler in reinem Python geschrieben ist und welche Vor- und Nachtei
 Die Prüfung `can_spawn()` der Kostenerfassung gibt `False` zurück, wenn die korrigierten Gesamtausgaben die konfigurierte Budget-Stoppgrenze erreichen oder überschreiten, auch wenn keine neuen Tokens gemeldet wurden. Nach einem Neustart lässt sich der zuvor gemeldete genaue Gesamtbetrag für eine bestimmte Kombination aus Agent, Aufgabe und Modell allein aus den gespeicherten Tokenzählern nicht rekonstruieren.
 
 ### alltägliche Befehle
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

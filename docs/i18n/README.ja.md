@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 訂正後の累計支出が予算に設定した停止しきい値に達するか、それを上回ると、新しいトークンの報告がなくても、コスト追跡モジュールの `can_spawn()` は `False` を返します。再起動後、保存されたトークン数だけでは、特定のエージェント、タスク、モデルの組み合わせについて以前報告された正確な累計費用を復元できません。
 
 ### 日常のコマンド
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

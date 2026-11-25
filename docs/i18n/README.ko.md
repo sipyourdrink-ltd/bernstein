@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 정정된 누적 지출이 설정된 예산 중단 임계값에 도달하거나 이를 초과하면 새 토큰 사용량이 보고되지 않았더라도 비용 추적기의 `can_spawn()` 검사는 `False`를 반환합니다. 재시작 후에는 저장된 토큰 수만으로 특정 에이전트, 작업, 모델 조합에 대해 이전에 보고된 정확한 누적 비용을 복원할 수 없습니다.
 
 ### 일상적인 명령
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

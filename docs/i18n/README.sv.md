@@ -212,7 +212,7 @@ Varför schemaläggaren är i ren Python och vilka avvägningar det innebär: [v
 Kontrollen `can_spawn()` i kostnadsuppföljningen returnerar `False` när de korrigerade sammanlagda utgifterna når eller överskrider budgetens inställda stoppgräns, även om inga nya token har rapporterats. Efter en omstart räcker de sparade tokenantalen inte för att återskapa den exakta sammanlagda kostnad som tidigare rapporterats för en viss kombination av agent, uppgift och modell.
 
 ### vardagliga kommandon
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

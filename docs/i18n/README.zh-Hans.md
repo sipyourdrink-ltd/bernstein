@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果更正后的累计支出达到或超过配置的预算停止阈值，即使没有报告新增的词元，费用跟踪器的 `can_spawn()` 检查也会返回 `False`。重启后，仅凭保存的词元计数无法还原此前针对特定智能体、任务和模型组合报告的确切累计费用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

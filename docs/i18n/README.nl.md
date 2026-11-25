@@ -212,7 +212,7 @@ Waarom de planner in puur Python is geschreven en welke afwegingen daarbij horen
 De controle `can_spawn()` van de kostenregistratie geeft `False` terug wanneer de gecorrigeerde totale uitgaven de ingestelde stopgrens voor het budget bereiken of overschrijden, ook als er geen nieuwe tokens zijn gemeld. Na een herstart zijn de opgeslagen tokenaantallen alleen niet voldoende om de exacte cumulatieve kosten te reconstrueren die eerder voor een bepaalde combinatie van agent, taak en model zijn gemeld.
 
 ### dagelijkse commando's
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project

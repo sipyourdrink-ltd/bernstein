@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 如果修正後的累計支出達到或超過設定的預算停止門檻，即使沒有回報新增的 token，費用追蹤器的 `can_spawn()` 檢查也會傳回 `False`。重新啟動後，單憑已儲存的 token 計數，無法還原先前針對特定代理程式、任務與模型組合所回報的確切累計費用。
 
 ### 日常命令
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:254fa66255e2" -->
 
 ```bash
 cd your-project
