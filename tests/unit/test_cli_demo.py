@@ -834,3 +834,52 @@ def test_help_surfaces_golden_path_without_internal_docstrings() -> None:
     run_help = runner.invoke(cli, ["run", "--help"])
     assert run_help.exit_code == 0, run_help.output
     assert "sysexits.h" not in run_help.output
+
+
+def test_demo_and_quickstart_seeds_declare_quality_gates_for_trace_export(tmp_path) -> None:
+    """Demo and quickstart (checkout + inline fallback) declare quality_gates: enabled: false."""
+    from pathlib import Path
+
+    from bernstein.cli.commands import quickstart_cmd as qs
+    from bernstein.core.config.seed_parser import parse_seed
+
+    orig_exists = Path.exists
+
+    for label, hide_templates in (("checkout", False), ("fallback", True)):
+        demo_dir = tmp_path / f"demo_{label}"
+        demo_dir.mkdir()
+        if hide_templates:
+
+            def _hide_demo(self: Path) -> bool:
+                if self.name in {"demo", "_demo_template"}:
+                    return False
+                return orig_exists(self)
+
+            with patch.object(Path, "exists", _hide_demo):
+                setup_demo_project(demo_dir, "mock")
+        else:
+            setup_demo_project(demo_dir, "mock")
+
+        seed = parse_seed(demo_dir / "bernstein.yaml")
+        assert seed.quality_gates is not None
+        assert seed.quality_gates.enabled is False
+        assert seed.quality_gates.to_dict()["enabled"] is False
+
+        todo_dir = tmp_path / f"todo_{label}"
+        todo_dir.mkdir()
+        if hide_templates:
+
+            def _hide_qs(self: Path) -> bool:
+                if self.name == "quickstart":
+                    return False
+                return orig_exists(self)
+
+            with patch.object(Path, "exists", _hide_qs):
+                qs._setup_quickstart_project(todo_dir, "mock")
+        else:
+            qs._setup_quickstart_project(todo_dir, "mock")
+
+        qs_seed = parse_seed(todo_dir / "bernstein.yaml")
+        assert qs_seed.quality_gates is not None
+        assert qs_seed.quality_gates.enabled is False
+        assert qs_seed.quality_gates.to_dict()["enabled"] is False
