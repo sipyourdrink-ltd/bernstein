@@ -960,8 +960,9 @@ def test_stale_agent_detection(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_create_task_with_completion_signals_stored(client: AsyncClient) -> None:
+async def test_create_task_with_completion_signals_stored(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """POST /tasks with completion_signals stores them and returns them."""
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"unit":["pytest","tests/","-x","-q"]}')
     payload = TASK_PAYLOAD | {
         "completion_signals": [
             {"type": "path_exists", "value": "src/foo.py"},
@@ -995,12 +996,13 @@ async def test_get_task_returns_completion_signals(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_all_six_signal_types_accepted(client: AsyncClient) -> None:
+async def test_all_six_signal_types_accepted(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """POST /tasks accepts all 6 completion signal types."""
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"unit":["pytest","tests/","-x","-q"]}')
     all_signals = [
         {"type": "path_exists", "value": "src/main.py"},
         {"type": "glob_exists", "value": "dist/**/*.js"},
-        {"type": "test_passes", "value": "uv run pytest tests/ -x -q"},
+        {"type": "test_passes", "value": "unit"},
         {"type": "file_contains", "value": "class MyClass"},
         {"type": "llm_review", "value": "Verify the implementation is correct"},
         {"type": "llm_judge", "value": "Does the output satisfy the requirements?"},
@@ -1014,7 +1016,7 @@ async def test_all_six_signal_types_accepted(client: AsyncClient) -> None:
     returned_by_type = {s["type"]: s["value"] for s in returned}
     assert returned_by_type["path_exists"] == "src/main.py"
     assert returned_by_type["glob_exists"] == "dist/**/*.js"
-    assert returned_by_type["test_passes"] == "uv run pytest tests/ -x -q"
+    assert returned_by_type["test_passes"] == "unit"
     assert returned_by_type["file_contains"] == "class MyClass"
     assert returned_by_type["llm_review"] == "Verify the implementation is correct"
     assert returned_by_type["llm_judge"] == "Does the output satisfy the requirements?"
@@ -1088,10 +1090,13 @@ async def test_progress_on_missing_task_returns_404(client: AsyncClient) -> None
 
 
 @pytest.mark.anyio
-async def test_completion_signals_preserved_after_complete(client: AsyncClient) -> None:
+async def test_completion_signals_preserved_after_complete(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Completing a task does not discard completion_signals."""
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"unit":["pytest","tests/","-x","-q"]}')
     payload = TASK_PAYLOAD | {
-        "completion_signals": [{"type": "test_passes", "value": "pytest"}],
+        "completion_signals": [{"type": "test_passes", "value": "unit"}],
     }
     create_resp = await client.post("/tasks", json=payload)
     task_id = create_resp.json()["id"]
@@ -1102,7 +1107,7 @@ async def test_completion_signals_preserved_after_complete(client: AsyncClient) 
         json={"result_summary": "done"},
     )
     assert complete_resp.status_code == 200
-    assert complete_resp.json()["completion_signals"] == [{"type": "test_passes", "value": "pytest"}]
+    assert complete_resp.json()["completion_signals"] == [{"type": "test_passes", "value": "unit"}]
 
 
 @pytest.mark.anyio
