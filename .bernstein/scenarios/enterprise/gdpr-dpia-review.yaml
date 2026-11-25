@@ -1,0 +1,32 @@
+id: gdpr-dpia-review
+name: Data Protection Impact Assessment (DPIA)
+version: "1.0"
+description: |
+  Trace personal data flows across prompts, logs, traces, and storage backends,
+  verify retention and redaction controls, and produce an auditable DPIA pack.
+tags: [enterprise, privacy, gdpr, compliance, dlp]
+tasks:
+  - title: Inventory personal data fields across inputs, logs, and traces
+    role: analyst
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Enumerate every ingestion point, model prompt, audit log, and export bundle
+      where user identifiers or content can appear.
+  - title: Verify DLP redaction, encryption, and retention TTL enforcement
+    role: security
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Confirm redaction rules fire before persistence and egress, and verify
+      automated purge/archival behavior against configured retention windows.
+  - title: Document lawful basis, subprocessor table, and mitigation controls
+    role: docs
+    priority: 1
+    scope: medium
+    complexity: low
+    description: |
+      Compile the structured DPIA artifact mapping each identified risk to its
+      enforced technical control and residual-risk owner.

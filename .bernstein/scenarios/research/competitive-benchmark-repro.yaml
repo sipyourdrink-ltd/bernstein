@@ -1,0 +1,32 @@
+id: competitive-benchmark-repro
+name: Reproducible Benchmark Evaluation
+version: "1.0"
+description: |
+  Pin datasets, seeds, and harness versions, execute multi-trial evaluations,
+  and report pass@1 alongside pass^k reliability floors with offline artifacts.
+tags: [research, benchmark, evaluation, reproducibility]
+tasks:
+  - title: Pin benchmark corpus, environment lockfile, and scoring rubric
+    role: ml-engineer
+    priority: 0
+    scope: small
+    complexity: medium
+    description: |
+      Record exact dataset digests, model identifiers, temperature/effort flags,
+      and deterministic evaluator scripts before running trials.
+  - title: Run repeated trials and capture raw trace receipts
+    role: qa
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Execute k independent trials per case under fixed timeouts and budget caps,
+      archiving all raw outputs and failure classifications.
+  - title: Audit failure modes and publish reproducible methodology note
+    role: analyst
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Separate harness errors from capability misses, compute confidence bounds,
+      and document exact reproduction commands.

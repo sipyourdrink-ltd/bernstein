@@ -1,0 +1,67 @@
+# Coordinated security advisory reproduction, patch, SAST verification, and release note.
+name: security-advisory-remediation
+version: "1.0.0"
+
+phases:
+  - name: reproduce
+    allowed_roles: [security, adversary]
+  - name: patch
+  - name: audit
+    allowed_roles: [security, reviewer, qa]
+  - name: disclose
+    allowed_roles: [docs, manager]
+
+nodes:
+  confirm-exploitability:
+    phase: reproduce
+    role: security
+    description: "Build a minimal offline proof-of-concept test that fails on current HEAD"
+    estimated_minutes: 30
+
+  implement-hardening:
+    phase: patch
+    role: backend
+    description: "Patch the vulnerability and sweep sibling call sites for the same pattern"
+    estimated_minutes: 45
+    depends_on:
+      - confirm-exploitability
+
+  adversarial-bypass-check:
+    phase: audit
+    role: adversary
+    description: "Attempt boundary bypasses (encoding, symlinks, race windows) against the patch"
+    estimated_minutes: 30
+    depends_on:
+      - implement-hardening
+
+  static-and-regression-suite:
+    phase: audit
+    role: qa
+    description: "Run unit regressions, Semgrep/Bandit rules, and lockfile checks"
+    estimated_minutes: 25
+    depends_on:
+      - implement-hardening
+
+  harden-bypass:
+    phase: patch
+    role: backend
+    description: "Close bypasses surfaced during adversarial or regression testing"
+    depends_on:
+      - source: adversarial-bypass-check
+        condition: "status == 'failed' or status == 'changes_requested'"
+      - source: static-and-regression-suite
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  prepare-release-fragment:
+    phase: disclose
+    role: docs
+    description: "Draft the post-release upgrade note without exposing exploit details pre-release"
+    estimated_minutes: 20
+    depends_on:
+      - source: adversarial-bypass-check
+        condition: "status == 'done' or status == 'approved'"
+      - source: static-and-regression-suite
+        condition: "status == 'done'"

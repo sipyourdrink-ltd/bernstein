@@ -1,0 +1,26 @@
+name: deprecation-rollout
+description: "Phased deprecation rollout: warn, migrate callers, verify zero usage, remove shim."
+version: "1.0.0"
+nodes:
+  - id: add-deprecation-notice
+    agent: backend
+    prompt: |
+      Mark the target interface deprecated with clear migration guidance and
+      keep existing callers passing for: {goal}
+  - id: migrate-internal-callers
+    depends_on: [add-deprecation-notice]
+    agent: backend
+    prompt: |
+      Migrate all repository callers and examples off the deprecated interface
+      for: {goal}
+    fresh_context: true
+    timeout_seconds: 3600
+  - id: update-migration-docs
+    depends_on: [migrate-internal-callers]
+    agent: docs
+    prompt: |
+      Document the before/after migration path and release notes for: {goal}
+  - id: verify-clean-suite
+    depends_on: [migrate-internal-callers, update-migration-docs]
+    command: "pytest -x -q"
+    timeout_seconds: 1800
