@@ -44,6 +44,17 @@ no canonical rule matches.
 The `/events`, `/events/cost` and `/events/thread` routes and their versioned
 aliases share the SSE concurrency cap.
 
+## WebSocket handshakes
+
+A WebSocket handshake (`/ws` and `/api/v1/ws`) passes the same middleware
+gates as an HTTP `GET` to the same path: authentication, the dashboard
+gate, the IP allowlist and request limits. The handshake is admitted only
+when that request would reach routing. Otherwise the client receives the
+gate's HTTP response (for example 401, 403 or 429) when the server supports
+the ASGI WebSocket denial response, or a close with code 1008. Clients send
+credentials as an `Authorization: Bearer` header on the handshake. Request
+logs record each handshake as a `GET`.
+
 ## Authentication attempt limits
 
 `POST /dashboard/auth/login`, `GET /auth/login`, `GET /auth/oidc/callback`,

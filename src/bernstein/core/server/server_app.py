@@ -42,6 +42,8 @@ from bernstein.core.server.server_middleware import (
     CrashGuardMiddleware,
     IPAllowlistMiddleware,
     ReadOnlyMiddleware,
+    WebSocketAdmissionEndpoint,
+    WebSocketAdmissionMiddleware,
 )
 from bernstein.core.server.server_models import (
     A2AArtifactResponse,
@@ -1309,6 +1311,9 @@ def create_app(
         lifespan=lifespan,
     )
 
+    # Must stay first so probes stop after every gate and before routing.
+    application.add_middleware(WebSocketAdmissionEndpoint)
+
     # Crash guard - outermost middleware, catches unhandled exceptions
     application.add_middleware(CrashGuardMiddleware)
 
@@ -1442,6 +1447,9 @@ def create_app(
         cors_kwargs["allow_origin_regex"] = origin_regex
 
     application.add_middleware(CORSMiddleware, **cors_kwargs)
+
+    # Must stay last so WebSocket probes traverse every installed gate.
+    application.add_middleware(WebSocketAdmissionMiddleware)
 
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
