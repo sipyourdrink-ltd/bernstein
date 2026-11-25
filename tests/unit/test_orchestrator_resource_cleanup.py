@@ -179,3 +179,46 @@ def test_constructor_failure_still_joins_the_pool_it_created(tmp_path: Path) -> 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "1 passed" in result.stdout
     _assert_owned_workers_joined(rows, 1)
+
+
+def test_process_growth_ratchet_fails_the_leaking_test_by_name(tmp_path: Path) -> None:
+    """The #6042 process-growth ratchet must turn a leak into a located failure.
+
+    The intermittent no-summary shard kill was an external SIGKILL of this
+    file's subprocess near end-of-run; unbounded per-test growth made it the
+    OOM killer's victim. The ratchet converts that silent, file-wide death
+    into a located teardown error on the exact test that leaked, with the
+    diagnostic naming #6042. The probe shrinks the module budgets so a
+    small, fast leak trips them, and must see the leaking test error while
+    the run still reports normally (a summary is printed - the property
+    the original incident lacked).
+    """
+    result, _rows = _run_resource_probe(
+        tmp_path,
+        """
+        _resource_probe_pools = []
+        _leaked_probe_resources = []
+
+        def test_resource_probe_growth_ratchet_trips():
+            global _PROCESS_RSS_BUDGET_BYTES, _PROCESS_THREAD_BUDGET
+            import threading
+
+            _PROCESS_RSS_BUDGET_BYTES = 1
+            _PROCESS_THREAD_BUDGET = 1
+            for _ in range(4):
+                worker = threading.Thread(target=time.sleep, args=(30,), daemon=True)
+                worker.start()
+                _leaked_probe_resources.append(worker)
+            _leaked_probe_resources.append(bytearray(2 * 1024 * 1024))
+        """,
+        "resource_probe_growth_ratchet_trips",
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 1, combined
+    # A teardown assertion surfaces as an ERROR naming the exact test - the
+    # located failure this ratchet exists to produce (the run still prints a
+    # full pytest summary, the property the original incident lacked).
+    assert "1 error" in result.stdout
+    assert "ERROR at teardown of test_resource_probe_growth_ratchet_trips" in combined
+    assert "process-growth budget exceeded" in combined
+    assert "#6042" in combined

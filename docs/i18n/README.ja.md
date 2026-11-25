@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm9, C13(♭9), Fmaj9/A, F6/9." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -32,7 +32,7 @@
 Bernstein は AI エージェントのためのオープンソース・ガバナンスレイヤーです。policy as code の上で動きます。誰が何をしてよいか・何に承認が要るか・何を記録すべきかをポリシーとして書けば、Bernstein がそれを適用し、検証可能な記録を作ります。決定論的スケジューラ - 調整ループにモデルは入らない - がエージェントを並列に走らせ、成果物をゲートで検査し、全ステップを記録します。だから実行は事後に、オフラインで、アーティファクトだけから検証できます。CLI コーディングエージェントはそのまま動き(Claude Code, Codex, Gemini CLI)、同じレイヤーがあらゆるエージェントワークロードをガバナンスします: 成果物は diff でも、調査レポートでも、データセットでも、監査エビデンスパックでも構いません。エアギャップ用インストールプロファイル同梱。Apache-2.0。
 
 ### 概要
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 際立つ点は5つ。あとは詳細です。
 
@@ -132,28 +132,20 @@ flowchart LR
 再試行では `dispatch_tier` が維持され、タスクを再オープンする際には階層を明示的に選択できます。[ディスパッチ階層の仕様](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)を参照してください。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 作業用ブランチから実行してください。Bernstein は検証済みの変更を現在のブランチにマージします。デフォルトブランチでは、変更をマージする実行は開始できません。プルリクエストを開く前に、作業用ブランチで変更を確認してください。
 
-`bernstein doctor --json` は監査契約に基づく `findings` も出力します。同じインストール観測結果に対して、これらは `bernstein govern audit --only INS --json` の結果と同一です。通常の doctor レポートの表示は変わりません。安定したチェック ID については、[doctor 運用ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)を参照してください。
-
-Doctor は長時間残っている実行レーンを JSON で報告します。証拠を検証できない場合はチェックが失敗し、何も削除しません。
-
 pipx、pip、brew、dnf、npm、Docker については[インストールガイド](https://docs.bernstein.run/en/latest/getting-started/install/)を参照。エアギャップ環境向けの wheelhouse には専用の[エアギャップガイド](https://docs.bernstein.run/en/latest/installation/air-gap/)がある。
-
-`bernstein worktrees sweep` は、完了したタスクが残したワークツリーとサンドボックスセッションを、経過時間とディスク使用量とともにプレビューします。削除できるのはワークツリーのみで、`--apply` と別途の削除承認が必要です。サンドボックスはレポートへの記載のみです（削除については #6571）。`doctor` は長く残っているリソースについて警告します。[クリーンアップ手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)を参照してください。
-
-スキルの初期化に失敗すると、理由と監査イベントを永続化して[隔離](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)します。`bernstein status` は件数を表示し、`doctor` と `govern audit` は無効化された宣言を報告します。原因を修正した後、`bernstein quarantine re-enable DECLARATION_ID` でマーカーを明示的に解除してください。
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goo
 
 同じ実行の中でエージェントを混ぜられる。定型作業には安価なローカルモデル、設計には重いクラウドモデルというように。`bernstein integrations list --installed` は自分のマシンで使えるものを表示する。
 
-### ボランティア計算資源
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-プロジェクトは issue をボランティアに開放されているものとして印を付けられ、誰でもその一つを自分のマシンで実行できます。アカウントも調整役も必要ありません。タスクに何を許すかは `volunteer.json` マニフェストで宣言され — サンドボックスのバックエンド、許可するネットワーク先、実時間とメモリの上限 — 提供者自身の制限はそれを狭めることしかできず、広げることはできません。完了したタスクが生む受領書は、結果をそれが動いた封じ込めの決定に結び付けるため、メンテナは数か月後でも、その作業が実際に何に触れることを許されていたかを確認できます。
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-[提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。 `autopilot` は登録されていますが、`TaskSource` が実装されるまで実行を拒否します。
-
 ### 表紙の先へ
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 踏み込んだ内容はすべて[ドキュメントサイト](https://docs.bernstein.run/)にある:
 
@@ -281,36 +261,17 @@ bernstein volunteer browse --budget 60
 | [ワークフロー](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | エージェント / コマンド / ループのノードから成る宣言的 YAML DAG |
 | [Web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI と同じ API 上で動くブラウザダッシュボード (タスクの作成と確認) |
 | [クラスターワーカーの状態](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | ディスクの空き容量、メモリ使用率、ネットワーク遅延が設定範囲外にある間、ワーカーは新しいタスクを取得しません。 |
-| [クラウド実行](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 実験的: 自分のアカウントで Cloudflare Workers 上のエージェントを R2 ワークスペース同期とともに走らせる。ホステッドの `api.bernstein.run` サービスはまだ提供されていない |
 | [データソース](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 読み取り専用のクエリレシート、および各結果を導出元のスキーマスナップショットに結び付けるクエリドライバ |
 | [エージェントカタログ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 組み込みテンプレート以外のエージェント定義をロールから参照する。汎用の YAML/SKILL.md ディレクトリ、または Claude Code のプラグインレイアウトのツリー |
 | [セキュリティ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | スコアカード、ファジング、ハードニング |
 | [アーキテクチャ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 内部の仕組み |
 
 ### 名前の由来
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein の名は、アメリカの指揮者・作曲家レナード・バーンスタインに由来する。このプロジェクトのオーケストレーターが AI エージェントの一団を統制するさまは、バーンスタインがニューヨーク・フィルハーモニックを振ったのと同じである。奏者はそれぞれの合図で入り、スコアは決定論的で、指揮者は結果に責任を負う。指揮者の比喩は、コード、調査報告書、データセットを生成するエージェントのタスクをオーケストレーションする Bernstein の能力を表している。
 
-i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0、単独メンテナンス。稼働統計: [bernstein.run](https://bernstein.run)。
-
-### 掲載
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Augment Code の[オープンソースのエージェントオーケストレーター](https://www.augmentcode.com/tools/open-source-agent-orchestrators)まとめで紹介、[Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) にも掲載。このアプローチは awesome-agentic-patterns に [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) パターンとして書き起こしている。
-
-<details>
-<summary>掲載一覧: 20 以上の awesome リスト、ディレクトリ、ニュースレター、被引用</summary>
-<br>
-
-awesome リストの項目、カタログ掲載、先行研究としての引用、ニュースレター言及をすべて含む追跡中の全一覧は [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md) にある。見つかり次第追加している。訂正は issue または PR で歓迎する。
-
-</details>
-
-### 管理用の実行
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-これらは MCP ブリッジのツール呼び出しです。以降の呼び出しでは、返された `runId` の値を `run_id` として使います。 `bernstein_run(template="administrative", goal="Weekly sprint")` で、プランナーやエージェントのプロセスを起動せずに監査付きの空のコンテナを作成します。`bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` で手動タスクを追加し、`bernstein_run_status(run_id="<returned runId>")` で状態を確認します。タスクは通常の取得 API から取得できますが、自動オーケストレーションの対象外です。空でない実行は全タスクの状態が `done`、`closed`、または `cancelled` のいずれかになると完了します。空の実行は開いたままです。 [運用手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein は、並列コーディングエージェントによる非決定的なマージと未検証の状態を防ぐための決定論的ハーネスとして生まれました。Apache-2.0。リリースとドキュメント：[bernstein.run](https://bernstein.run)。
 
 ### コントリビュート、サポート、ライセンス
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

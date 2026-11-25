@@ -329,6 +329,15 @@ def _standalone_app_with_cap(max_bytes: int = _DEFAULT_MAX_BODY_BYTES) -> TestCl
     return TestClient(app)
 
 
+def test_task_author_cannot_admit_unapproved_executable_check() -> None:
+    with pytest.raises(ValidationError, match="operator-approved"):
+        TaskCreate(
+            title="Example",
+            description="Example",
+            completion_signals=[{"type": "test_passes", "value": "example-check"}],
+        )
+
+
 def test_content_length_reject_100mb_header_with_413() -> None:
     """A 100MB body (declared via Content-Length) is rejected with 413."""
     client = _standalone_app_with_cap()
@@ -403,6 +412,58 @@ def test_content_length_one_over_limit_rejected() -> None:
 # ---------------------------------------------------------------------------
 # Streaming body cap (no Content-Length header)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_streaming_cap_rejects_before_application_runs() -> None:
+    messages = iter(
+        [
+            {"type": "http.request", "body": b"12", "more_body": True},
+            {"type": "http.request", "body": b"34", "more_body": True},
+        ]
+    )
+    sent = []
+
+    async def receive():
+        return next(messages)
+
+    async def send(message):
+        sent.append(message)
+
+    async def application(scope, receive, send):
+        pytest.fail("the application ran before the write body was validated")
+
+    middleware = ContentLengthMiddleware(application, max_body_bytes=3)
+    await middleware({"type": "http", "method": "POST", "headers": []}, receive, send)
+    assert [message["type"] for message in sent] == ["http.response.start", "http.response.body"]
+    assert sent[0]["status"] == 413
+
+
+@pytest.mark.asyncio
+async def test_streaming_cap_replays_complete_body_at_limit() -> None:
+    messages = iter(
+        [
+            {"type": "http.request", "body": b"12", "more_body": True},
+            {"type": "http.request", "body": b"34", "more_body": False},
+            {"type": "http.disconnect"},
+        ]
+    )
+    observed = []
+
+    async def receive():
+        return next(messages)
+
+    async def application(scope, receive, send):
+        while True:
+            message = await receive()
+            observed.append(message)
+            if not message.get("more_body"):
+                break
+        assert await receive() == {"type": "http.disconnect"}
+
+    middleware = ContentLengthMiddleware(application, max_body_bytes=4)
+    await middleware({"type": "http", "method": "POST", "headers": []}, receive, None)
+    assert b"".join(message["body"] for message in observed) == b"1234"
 
 
 def test_content_length_streaming_body_over_cap_rejected() -> None:

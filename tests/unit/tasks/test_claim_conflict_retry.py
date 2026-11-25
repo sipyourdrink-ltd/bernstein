@@ -206,3 +206,48 @@ def test_claim_conflict_episode_sets_backoff_and_clears_on_success():
     _clear_claim_conflict_state(orch, "task-1")
     assert "task-1" not in orch._claim_conflict_state
     assert not _claim_conflict_backoff_active(orch, "task-1")
+
+
+# ---------------------------------------------------------------------------
+# #7853: the claim names the registered node so the server's health gate
+# can judge it while the parent session stays the recorded claim owner.
+# ---------------------------------------------------------------------------
+
+
+def test_claim_sends_registered_node_id_alongside_parent_session():
+    client = MagicMock(spec=httpx.Client)
+    orch = _FakeOrch(client)
+    task = _make_task(version=1)
+
+    client.post.side_effect = [
+        _resp(
+            200, {"id": "task-1", "title": "t", "description": "d", "role": "devops", "version": 2, "status": "claimed"}
+        )
+    ]
+
+    resp, reason = _claim_task_with_conflict_retry(orch, task, "http://test", "session-a", "node-7")
+
+    assert reason is None
+    assert resp is not None and resp.status_code == 200
+    params = client.post.call_args_list[0].kwargs["params"]
+    assert params["claimed_by_session"] == "session-a"
+    assert params["node_id"] == "node-7"
+
+
+def test_claim_omits_node_id_when_not_registered():
+    """Single-host runs have no registry node; the param must stay absent."""
+    client = MagicMock(spec=httpx.Client)
+    orch = _FakeOrch(client)
+    task = _make_task(version=1)
+
+    client.post.side_effect = [
+        _resp(
+            200, {"id": "task-1", "title": "t", "description": "d", "role": "devops", "version": 2, "status": "claimed"}
+        )
+    ]
+
+    _claim_task_with_conflict_retry(orch, task, "http://test", "session-a")
+
+    params = client.post.call_args_list[0].kwargs["params"]
+    assert params["claimed_by_session"] == "session-a"
+    assert "node_id" not in params

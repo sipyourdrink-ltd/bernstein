@@ -331,3 +331,18 @@ class TestSeedMetricsParsing:
         assert len(results) == 1
         assert results[0].name == "code_per_dollar"
         assert results[0].value == pytest.approx(300.0)
+
+
+def test_zero_remainder_divisor_preserves_following_metrics() -> None:
+    """A zero ``%`` divisor follows the ``/`` and ``//`` convention instead of aborting the batch (#8061)."""
+    definitions = [
+        {"name": "remainder", "formula": "5 % open_tasks"},
+        {"name": "next", "formula": "3 + 4"},
+    ]
+    evaluator = CustomMetricsEvaluator(definitions)
+
+    idle = evaluator.evaluate_all(tick_vars={"open_tasks": 0.0})
+    assert [(r.name, r.value, r.error) for r in idle] == [("remainder", 0.0, None), ("next", 7.0, None)]
+
+    busy = evaluator.evaluate_all(tick_vars={"open_tasks": 2.0})
+    assert [(r.name, r.value, r.error) for r in busy] == [("remainder", 1.0, None), ("next", 7.0, None)]

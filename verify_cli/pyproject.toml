@@ -56,7 +56,7 @@ bernstein-verify = "bernstein_verify.__main__:cli"
 
 [project.urls]
 Homepage = "https://bernstein.run"
-Repository = "https://github.com/sasha-c/bernstein"
+Repository = "https://github.com/sipyourdrink-ltd/bernstein"
 
 [tool.hatch.build.targets.wheel]
 packages = ["bernstein_verify"]

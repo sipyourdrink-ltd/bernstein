@@ -142,7 +142,9 @@ def _collect_styles(styles_dir: Path) -> list[OutputStyle]:
         path = styles_dir / default_name
         if path.is_file():
             style = load_style(path)
-            if style is not None:
+            # The same case-insensitive name check as the extras: two defaults naming one style
+            # both appeared in ``available`` (#8033). The earlier file in ``_DEFAULT_FILES`` wins.
+            if style is not None and style.name.lower() not in seen:
                 result.append(style)
                 seen.add(style.name.lower())
 

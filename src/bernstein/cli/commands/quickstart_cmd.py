@@ -124,6 +124,19 @@ def _setup_quickstart_project(project_dir: Path, adapter: str) -> None:
         )
         (project_dir / "requirements.txt").write_text("flask>=3.0.0\npytest>=8.0.0\n")
 
+    # Ensure bernstein.yaml exists with an explicit merge-gate policy even in
+    # the inline fallback (pip/wheel without examples/quickstart) so
+    # run_started journals gate_config and `bernstein trace export` works.
+    if not (project_dir / "bernstein.yaml").exists():
+        (project_dir / "bernstein.yaml").write_text(
+            'goal: "Add input validation, error handling, and tests to the TODO API"\n'
+            "cli: auto\n"
+            "max_agents: 2\n"
+            'budget: "$5"\n'
+            "quality_gates:\n"
+            "  enabled: false\n"
+        )
+
     # Create .sdd directory structure
     for d in SDD_DIRS:
         (project_dir / d).mkdir(parents=True, exist_ok=True)
@@ -144,6 +157,15 @@ def _setup_quickstart_project(project_dir: Path, adapter: str) -> None:
     backlog_open = project_dir / ".sdd" / "backlog" / "open"
     for task in _QUICKSTART_TASKS:
         (backlog_open / task["filename"]).write_text(task["content"])
+
+    # Keep runtime state out of git and initialise a repo so per-task
+    # worktree isolation and commits succeed (same contract as `bernstein demo`).
+    if not (project_dir / ".gitignore").exists():
+        (project_dir / ".gitignore").write_text(".sdd/\n__pycache__/\n*.pyc\n")
+
+    from bernstein.cli.run_confirm import _git_init_demo_repo
+
+    _git_init_demo_repo(project_dir)
 
 
 def _log_task_transitions(
@@ -300,6 +322,19 @@ def _print_quickstart_summary(
             "[dim]  Run the test suite:[/dim] "
             f"[bold]cd {project_dir} && pip install -r requirements.txt && pytest tests/ -q[/bold]"
         )
+        from bernstein.cli.run_confirm import _latest_run_id_with_journal
+
+        run_id = _latest_run_id_with_journal(project_dir)
+        if run_id is not None:
+            console.print("\n[bold cyan]Verify this run offline (your own signed receipt):[/bold cyan]")
+            console.print(f"  cd {project_dir}", soft_wrap=True)
+            console.print("  openssl genpkey -algorithm ED25519 -out demo.key", soft_wrap=True)
+            console.print("  openssl pkey -in demo.key -pubout -out demo.pub", soft_wrap=True)
+            console.print(f"  bernstein verify run {run_id} --signing-key-path demo.key", soft_wrap=True)
+            console.print(
+                f"  bernstein verify receipt .sdd/runs/{run_id}/run-receipt.json --public-key demo.pub",
+                soft_wrap=True,
+            )
     else:
         console.print("[dim]  (directory removed: use [bold]--keep[/bold] to preserve it)[/dim]")
 
@@ -351,10 +386,10 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
 
     detected = adapter or detect_available_adapter() or "mock"
     real_mode = detected != "mock"
-    cost_estimate = "~$0.20" if real_mode else "$0.00 (mock)"
+    cost_estimate = "real agents (uses configured provider)" if real_mode else "free (mock agents, no API calls)"
 
     console.print(
-        f"\n[bold yellow]Cost estimate:[/bold yellow] {cost_estimate} (3 tasks)\n"
+        f"\n[bold yellow]Mode:[/bold yellow] {cost_estimate} (3 tasks)\n"
         f"[dim]Adapter: {detected}  |  Timeout: {timeout}s[/dim]"
     )
 
@@ -368,6 +403,13 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
     server_url = f"http://127.0.0.1:{_QUICKSTART_PORT}"
     orchestration_start = time.monotonic()
 
+    import os
+
+    from bernstein.core.agents.spawner_merge import ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH
+
+    prior_allow_merge = os.environ.get(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH)
+    os.environ[ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH] = "1"
+
     outcome: _DemoOutcome | None = None
     bootstrap_error: Exception | None = None
     try:
@@ -375,7 +417,7 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
         from bernstein.core.bootstrap import bootstrap_from_goal
 
         bootstrap_from_goal(
-            goal=_QUICKSTART_GOAL,
+            goal="",
             workdir=project_dir,
             port=_QUICKSTART_PORT,
             cli=detected,
@@ -398,6 +440,10 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
         bootstrap_failed(exc).print()
         bootstrap_error = exc
     finally:
+        if prior_allow_merge is None:
+            os.environ.pop(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH, None)
+        else:
+            os.environ[ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH] = prior_allow_merge
         _stop_quickstart_processes(project_dir)
 
     if outcome is not None and outcome.all_fixed:

@@ -168,7 +168,7 @@ def load_run_snapshots(metrics_dir: Path) -> list[RunCostSnapshot]:
                     timestamp=float(data.get("timestamp", cost_file.stat().st_mtime)),
                 )
             )
-        except (json.JSONDecodeError, OSError, KeyError) as exc:
+        except (OSError, KeyError, TypeError, ValueError, OverflowError) as exc:
             logger.warning("Skipping corrupt cost file %s: %s", cost_file, exc)
 
     snapshots.sort(key=lambda s: s.timestamp)

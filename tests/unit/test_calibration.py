@@ -240,6 +240,22 @@ def test_reliability_zero_lands_in_first_bucket() -> None:
     assert buckets[0].count == 1
 
 
+@pytest.mark.parametrize(
+    ("probability", "expected_index"),
+    [
+        (math.nextafter(0.29, 0.0), 28),
+        (0.29, 29),
+        (math.nextafter(0.29, 1.0), 29),
+        (0.0, 0),
+        (1.0, 99),
+    ],
+)
+def test_reliability_assigns_an_exact_interior_edge_to_its_bucket(probability: float, expected_index: int) -> None:
+    buckets = reliability_diagram_data([probability], [True], bin_count=100)
+    assert buckets[28].upper == buckets[29].lower == 0.29
+    assert [i for i, bucket in enumerate(buckets) if bucket.count] == [expected_index]
+
+
 def test_reliability_empty_buckets_preserve_axis_structure() -> None:
     """Empty buckets are still emitted so plot axes line up."""
     buckets = reliability_diagram_data([0.5], [True], bin_count=4)

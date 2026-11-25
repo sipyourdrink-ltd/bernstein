@@ -54,6 +54,25 @@ class TestSchedulingDecision:
 # ---- Single tenant ----
 
 
+@pytest.mark.parametrize("weight", [0.5, 5e-324])
+def test_dequeue_serves_fractional_weight_without_polling(weight: float) -> None:
+    scheduler = FairScheduler([TenantQuota("A", weight=weight, max_concurrent=1)])
+    scheduler.enqueue("first", "A")
+
+    first = scheduler.dequeue()
+    assert first is not None and first.task_id == "first"
+    assert scheduler.stats()[0].queue_depth == 0
+    scheduler.mark_active(first.task_id)
+    assert scheduler.dequeue() is None
+
+    scheduler.enqueue("second", "A")
+    assert scheduler.dequeue() is None
+    assert scheduler.stats()[0].queue_depth == 1
+    scheduler.mark_done(first.task_id)
+    second = scheduler.dequeue()
+    assert second is not None and second.task_id == "second"
+
+
 class TestSingleTenant:
     def test_enqueue_dequeue_single_task(self) -> None:
         s = FairScheduler(quotas=[TenantQuota(tenant_id="A")])
@@ -101,6 +120,33 @@ class TestSingleTenant:
 
 
 class TestMultiTenantFairness:
+    def test_fractional_weights_keep_their_proportions(self) -> None:
+        scheduler = FairScheduler([TenantQuota("A", weight=0.5), TenantQuota("B", weight=0.25)])
+        for i in range(6):
+            scheduler.enqueue(f"A-{i}", "A")
+            scheduler.enqueue(f"B-{i}", "B")
+
+        tenants = []
+        for _ in range(6):
+            decision = scheduler.dequeue()
+            assert decision is not None
+            tenants.append(decision.tenant_id)
+        assert tenants.count("A") == 4
+        assert tenants.count("B") == 2
+
+    def test_tiny_weight_jump_clamps_peer_deficit_without_overflow(self) -> None:
+        """Skipping rounds for a subnormal weight must not overflow peer deficits."""
+        scheduler = FairScheduler([TenantQuota("A", weight=1.0), TenantQuota("B", weight=5e-324)])
+        scheduler.enqueue("b1", "B")
+
+        decision = scheduler.dequeue()
+        assert decision is not None and decision.task_id == "b1" and decision.tenant_id == "B"
+
+        # Peer tenant A remains finite and servable on subsequent work.
+        scheduler.enqueue("a1", "A")
+        next_decision = scheduler.dequeue()
+        assert next_decision is not None and next_decision.task_id == "a1" and next_decision.tenant_id == "A"
+
     def test_equal_weight_round_robin(self) -> None:
         """Two tenants with equal weight should alternate."""
         s = FairScheduler(
@@ -284,6 +330,47 @@ class TestMaxConcurrent:
 
         # Further dequeue returns None (both capped).
         assert s.dequeue() is None
+
+    def test_capped_tenant_keeps_accruing_deficit_during_jump(self) -> None:
+        """Skipped credit rounds must credit capped tenants too.
+
+        Regression: the multi-round jump credited only runnable tenants, so a
+        concurrency-capped tenant stopped accruing deficit while another tenant
+        kept serving. When the cap later released, the capped tenant was
+        short-changed (B,B,A instead of B,B,B for weights A=0.25, B=0.5).
+        """
+        s = FairScheduler(
+            quotas=[
+                TenantQuota(tenant_id="A", weight=0.25),
+                TenantQuota(tenant_id="B", weight=0.5, max_concurrent=1),
+            ]
+        )
+        # Occupy B's only concurrency slot.
+        s.enqueue("B-active", "B")
+        d = s.dequeue()
+        assert d is not None and d.tenant_id == "B"
+        s.mark_active(d.task_id)
+
+        for i in range(4):
+            s.enqueue(f"A-{i}", "A")
+        for i in range(3):
+            s.enqueue(f"B-{i}", "B")
+
+        # While B is capped, A keeps serving.
+        d1 = s.dequeue()
+        assert d1 is not None and d1.tenant_id == "A"
+        d2 = s.dequeue()
+        assert d2 is not None and d2.tenant_id == "A"
+
+        # Release the cap: B's accumulated deficit must buy it three straight
+        # serves before A's next turn.
+        s.mark_done("B-active")
+        served: list[str] = []
+        for _ in range(3):
+            decision = s.dequeue()
+            assert decision is not None
+            served.append(decision.tenant_id)
+        assert served == ["B", "B", "B"]
 
 
 # ---- mark_active / mark_done ----

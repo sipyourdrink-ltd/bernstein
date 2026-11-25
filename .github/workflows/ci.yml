@@ -224,6 +224,8 @@ jobs:
           # Using --depth=1 here previously caused `...` (merge-base) diffs to
           # fail when the merge-base wasn't in the shallow window, especially
           # after parallel main merges. Fetch the base ref WITHOUT --depth.
+          # Treat a rename as a deletion and an addition so that both paths
+          # participate in every classification.
           CHANGED=""
           diff_failed=false
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -240,7 +242,7 @@ jobs:
             echo "origin/${BASE_REF} -> $(git rev-parse "origin/${BASE_REF}" 2>&1 || echo UNRESOLVED)"
             echo "HEAD            -> $(git rev-parse HEAD 2>&1 || echo UNRESOLVED)"
             echo "::endgroup::"
-            if ! CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>&1); then
+            if ! CHANGED=$(git diff --no-renames --name-only "origin/${BASE_REF}...HEAD" 2>&1); then
               echo "::warning::git diff failed against origin/${BASE_REF}; falling back to safe over-broad result"
               echo "diff stderr: $CHANGED"
               diff_failed=true
@@ -292,7 +294,7 @@ jobs:
             if [ -z "$ROOT" ]; then
               echo "::warning::could not resolve the merge_group batch root; falling back to safe over-broad result"
               diff_failed=true
-            elif ! CHANGED=$(git diff --name-only "${ROOT}...HEAD" 2>&1); then
+            elif ! CHANGED=$(git diff --no-renames --name-only "${ROOT}...HEAD" 2>&1); then
               echo "::warning::git diff failed against the merge_group batch root; falling back to safe over-broad result"
               echo "diff stderr: $CHANGED"
               diff_failed=true
@@ -301,10 +303,14 @@ jobs:
             # `before` may be 000... on first push of a branch; fall back to HEAD~1.
             BEFORE="$PUSH_BEFORE_SHA"
             if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-              CHANGED=$(git diff --name-only "HEAD~1...HEAD" 2>/dev/null || git ls-files)
-            else
-              CHANGED=$(git diff --name-only "${BEFORE}...HEAD" 2>/dev/null || git ls-files)
+              BEFORE=HEAD~1
             fi
+            CHANGED=$(git diff --no-renames --name-only "${BEFORE}...HEAD") || diff_failed=true
+          fi
+          # Git quotes names with control characters or escapes. Prefix and
+          # suffix tests on their quoted representation cannot authorize skips.
+          if grep -q '^"' <<< "$CHANGED"; then
+            diff_failed=true
           fi
           # Fail-safe fallback: when diff fails for any reason, emit the safe
           # over-broad classification so downstream jobs run anyway. Correctness
@@ -737,7 +743,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: reviewdog/action-actionlint@a7d35aaf8c309203a4ae861d32b7bd490baa7bf3 # v1
+      - uses: reviewdog/action-actionlint@ae857e78c1b42b3d0a49637181b09d3d56d402b4 # v1
         with:
           reporter: github-check
           level: error
@@ -894,20 +900,7 @@ jobs:
       # make this gate red on an unrelated upstream release rather than on
       # a real drift between proto/ and the checked-in modules.
       - name: Regenerate and compare
-        run: |
-          uv run --with "grpcio-tools==1.83.0" python -m grpc_tools.protoc \
-            -Iproto \
-            --python_out=src/bernstein/core/grpc_gen \
-            --pyi_out=src/bernstein/core/grpc_gen \
-            --grpc_python_out=src/bernstein/core/grpc_gen \
-            proto/bernstein/v1/tasks.proto proto/bernstein/v1/cluster.proto
-          for f in src/bernstein/core/grpc_gen/*.py; do
-            sed -i 's/^from bernstein\.v1 import/from . import/' "$f"
-          done
-          git diff --exit-code -- src/bernstein/core/grpc_gen || {
-            echo "::error::checked-in gRPC modules differ from proto/. Run scripts/generate_proto.sh and commit the result."
-            exit 1
-          }
+        run: uv run --with "grpcio-tools==1.83.0" scripts/generate_proto.sh --check
 
   dead-code:
     # Skips only when a merge-queue group's combined diff is docs-only
@@ -1097,9 +1090,10 @@ jobs:
         # single bootstrap step without a maintained requirements file,
         # so we route the pipx install through SHA-pinned uv instead.
         # `uv tool install pipx` puts pipx on PATH via uv's tool dir.
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          enable-cache: true
+          # This job executes the downloaded wheel. Keep its cache local to the runner.
+          enable-cache: false
       - name: Install pipx via uv
         shell: bash
         run: |
@@ -2346,17 +2340,39 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-data-*
-          path: coverage-shards
-          merge-multiple: true
+          path: ${{ runner.temp }}/coverage-shards
       - name: Merge coverage shards
         run: |
-          shard_count=$(find coverage-shards -name '.coverage.*' -type f | wc -l | tr -d ' ')
-          if [ "$shard_count" -lt 4 ]; then
-            echo "::error::expected 4 coverage shard files, found $shard_count"
-            find coverage-shards -maxdepth 2 -type f -print
-            exit 1
-          fi
-          uv run python -m coverage combine coverage-shards/.coverage.*
+          shopt -s nullglob
+          shards=("$RUNNER_TEMP"/coverage-shards/coverage-data-*/.coverage.*)
+          uv run python - "${shards[@]}" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+          from coverage import CoverageData
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "coverage-shards"
+          expected = {root / f"coverage-data-{i}/.coverage.{i}" for i in range(1, 9)}
+          found = {Path(name) for name in sys.argv[1:]}
+          if found != expected:
+              sys.exit(f"::error::missing shards: {sorted(expected - found)}, extra shards: {sorted(found - expected)}")
+          for shard in sorted(expected):
+              if not shard.is_file() or not shard.stat().st_size:
+                  sys.exit(f"::error::empty or invalid coverage shard: {shard}")
+              data = CoverageData(basename=str(shard))
+              data.read()
+              if not any(data.lines(path) for path in data.measured_files()):
+                  sys.exit(f"::error::coverage shard contains no executed lines: {shard}")
+          PY
+          uv run python -m coverage combine "${shards[@]}"
+          # coverage can warn and continue on an unreadable shard. It removes
+          # inputs it consumed, so a remaining input means a partial report.
+          for shard in "${shards[@]}"; do
+            if [[ -e "$shard" ]]; then
+              echo "::error::coverage did not consume $shard"
+              exit 1
+            fi
+          done
           uv run python -m coverage xml --ignore-errors -o coverage.xml
           test -s coverage.xml
       - name: Upload coverage report artifact
@@ -2630,6 +2646,7 @@ jobs:
       - spelling
       - actionlint
       - lineage-gate
+      - proto-drift
       - dead-code
       - gate-evasion
       - dist-size
@@ -2681,8 +2698,7 @@ jobs:
           ref = os.environ.get("REF_NAME", "")
           head_commit_message = os.environ.get("HEAD_COMMIT_MESSAGE", "")
 
-          # Jobs that intentionally skip on docs-only changes (no python
-          # / tests / workflows touched). Mirrors paths-ignore at the top.
+          # Jobs whose if: excludes docs-only merge groups.
           DOCS_ONLY_SKIPPABLE = {
               "test",
               # integration-tests and adapter-conformance-windows carry the
@@ -2706,7 +2722,6 @@ jobs:
               "dist-size",
               "install-smoke-pipx",
               "install-smoke-uv",
-              "install-smoke-rpm",
           }
           # macOS-gated jobs (see #1468): on PRs these are skipped unless
           # the diff is macos_sensitive or the PR carries the
@@ -2755,6 +2770,9 @@ jobs:
           # safety net for the rest.
           MACOS_UNCONDITIONAL_SKIP_EVENTS = ("merge_group",)
 
+          for flag in ("docs_only", "macos_sensitive", "rpm_relevant_changed", "gate_evasion_relevant"):
+              if plan.get(flag) not in ("true", "false"):
+                  sys.exit(f"::error::Missing or invalid planner output: {flag}")
           docs_only = plan.get("docs_only") == "true"
           macos_sensitive = plan.get("macos_sensitive") == "true"
           rpm_relevant_changed = plan.get("rpm_relevant_changed") == "true"
@@ -2771,15 +2789,13 @@ jobs:
           # array used by the job `if:` is available here too. The
           # GITHUB_EVENT_PATH file is the canonical source.
           macos_labelled = False
-          try:
+          if event == "pull_request":
               with open(os.environ["GITHUB_EVENT_PATH"]) as fh:
-                  payload = json.load(fh)
-              labels = (payload.get("pull_request") or {}).get("labels") or []
-              macos_labelled = any(
-                  (lbl.get("name") == "macos-needed") for lbl in labels
-              )
-          except Exception:
-              macos_labelled = False
+                  labels = json.load(fh)["pull_request"]["labels"]
+              if not isinstance(labels, list):
+                  sys.exit("::error::Missing or invalid pull request labels")
+              # GitHub Actions contains() compares strings case-insensitively.
+              macos_labelled = any(label["name"].casefold() == "macos-needed" for label in labels)
 
           bad = []
           for name, info in data.items():
@@ -2798,7 +2814,7 @@ jobs:
                       continue
                   if name == "coverage-report" and not coverage_required:
                       continue
-                  if docs_only and name in DOCS_ONLY_SKIPPABLE:
+                  if event == "merge_group" and docs_only and name in DOCS_ONLY_SKIPPABLE:
                       continue
                   if name in RPM_SMOKE_SKIPPABLE and not rpm_relevant_changed:
                       continue

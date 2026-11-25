@@ -142,6 +142,30 @@ nodes:
     assert resolved == {"count": 7, "ratio": 1.25, "dry": False}
 
 
+def test_quoted_recipe_defaults_resolve_to_declared_types() -> None:
+    yaml = """\
+name: typed-defaults
+description: "Resolve quoted and typed defaults."
+params:
+  - {name: count, type: int, default: "03"}
+  - {name: dry, type: bool, default: "false"}
+  - {name: retries, type: int, default: 0}
+  - {name: verbose, type: bool, default: false}
+nodes:
+  - id: noop
+    command: "echo done"
+"""
+    spec = load_recipe_spec_from_text(yaml)
+    defaults = spec.resolve_params({})
+    assert defaults == spec.resolve_params({"count": "03", "dry": "false"})
+    assert type(defaults["count"]) is int
+    assert defaults["count"] == 3
+    assert defaults["dry"] is False
+    assert type(defaults["retries"]) is int
+    assert defaults["retries"] == 0
+    assert defaults["verbose"] is False
+
+
 def test_bad_type_value_raises_with_context() -> None:
     """A non-int CLI value for an int param produces a clean error."""
     yaml = """\

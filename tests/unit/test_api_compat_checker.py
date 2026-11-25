@@ -281,6 +281,16 @@ def process(data: str) -> None: ...
 # ---------------------------------------------------------------------------
 
 
+def test_keyword_only_reordering_is_compatible() -> None:
+    old = "def paint(*, width, height): pass"
+    new = "def paint(*, height, width): pass"
+
+    report = check_compatibility(old, new, "canvas.py")
+
+    assert report.is_compatible
+    assert report.breaking_changes == []
+
+
 class TestChangedParamPosition:
     def test_reordered_required_params_is_breaking(self) -> None:
         old = """\
@@ -294,6 +304,39 @@ def connect(port: int, host: str) -> None: ...
         # Both parameters moved, so two breaking changes
         position_changes = [bc for bc in report.breaking_changes if bc.change_type == ChangeType.CHANGED_PARAM_POSITION]
         assert len(position_changes) == 2
+
+    def test_positional_parameter_becomes_keyword_only(self) -> None:
+        old = "def paint(width, *, height): pass"
+        new = "def paint(*, height, width): pass"
+
+        report = check_compatibility(old, new, "canvas.py")
+
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.CHANGED_PARAM_POSITION
+        assert "'width'" in change.description
+
+    def test_keyword_only_promotion_shifts_positional_slot_is_breaking(self) -> None:
+        old = "def paint(width=0, *, height): pass"
+        new = "def paint(height, width=0): pass"
+
+        report = check_compatibility(old, new, "canvas.py")
+
+        assert not report.is_compatible
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.CHANGED_PARAM_POSITION
+        assert "'width'" in change.description
+        assert "moved from position 0 to 1" in change.description
+
+    def test_reordered_defaulted_params_is_breaking(self) -> None:
+        old = "def mix(flour=1, *, water): pass"
+        new = "def mix(water, flour=1): pass"
+
+        report = check_compatibility(old, new, "bakery.py")
+
+        assert not report.is_compatible
+        (change,) = report.breaking_changes
+        assert change.change_type == ChangeType.CHANGED_PARAM_POSITION
+        assert "'flour'" in change.description
 
 
 # ---------------------------------------------------------------------------

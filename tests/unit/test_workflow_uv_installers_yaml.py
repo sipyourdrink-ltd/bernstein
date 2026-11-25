@@ -124,6 +124,17 @@ def test_local_bootstrap_action_pins_setup_uv_version() -> None:
     assert len(pinned_versions) == 1, "bootstrap setup-uv steps must install the same uv version"
 
 
+def test_pipx_wheel_smoke_disables_shared_uv_cache() -> None:
+    jobs = _load_workflow(WORKFLOWS_DIR / "ci.yml")["jobs"]
+    assert isinstance(jobs, dict)
+    steps = _iter_steps(jobs["install-smoke-pipx"])
+    setup_steps = [step for step in steps if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")]
+    assert len(setup_steps) == 1
+    settings = setup_steps[0]["with"]
+    assert isinstance(settings, dict)
+    assert settings.get("enable-cache") is False
+
+
 def test_local_bootstrap_action_retries_transient_setup_uv_failure() -> None:
     """A single transient astral-sh/setup-uv fetch failure must not redden the
     job outright (issue #3360): the primary attempt tolerates one failure via

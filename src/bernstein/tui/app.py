@@ -22,6 +22,7 @@ import httpx
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
@@ -807,7 +808,9 @@ class BernsteinApp(App[None]):
         """Prune expired toasts and refresh the overlay."""
         pruned = self._toasts.prune()
         if pruned or self._toasts.count > 0:
-            self.query_one(_TOAST_OVERLAY_SELECTOR, _ToastOverlay).refresh()
+            # A pending tick can arrive after the overlay has been removed.
+            with suppress(NoMatches):
+                self.query_one(_TOAST_OVERLAY_SELECTOR, _ToastOverlay).refresh()
 
     def action_dismiss_toasts(self) -> None:
         """Dismiss all active toast notifications."""

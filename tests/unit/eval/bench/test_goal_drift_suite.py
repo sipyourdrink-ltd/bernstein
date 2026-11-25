@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -156,6 +157,66 @@ def recorded_intent_task(sample_drift_task: GoalDriftTask) -> GoalDriftTask:
 
 
 class TestRecordedIntentScores:
+    def test_optional_intent_scorer_records_once_and_replays(self, recorded_intent_task: GoalDriftTask) -> None:
+        task = recorded_intent_task.to_bench_task()
+        task_hash = task.content_hash()
+        events = [
+            {"step": 0, "touched_paths": ["src/example/item.py"], "intent_score": 0.5},
+            {"step": 1, "touched_paths": ["src/example/settings.py"]},
+        ]
+        trajectory = {"events": events, "diff": "change to settings"}
+        default = GoalDriftReplayAdapter(trajectory_data=trajectory)
+        baseline = default.run_task(task, {"threshold": 0.25})
+
+        def score(scored_task: GoalDriftTask, inputs: list[dict[str, Any]], diff: str) -> dict[str, Any]:
+            assert (scored_task.id, inputs, diff) == (task.id, events, trajectory["diff"])
+            inputs[1]["touched_paths"].clear()
+            scored_task.assertions[0]["kind"] = "annotation"
+            return {"step": 1, "intent_score": 0.75}
+
+        scorer = Mock(side_effect=score)
+        adapter = GoalDriftReplayAdapter(trajectory_data=trajectory, intent_scorer=scorer)
+        receipt = adapter.run_task(task, {"threshold": 0.25})
+        assert task.content_hash() == task_hash
+        assert events[1] == {"step": 1, "touched_paths": ["src/example/settings.py"]}
+        assert receipt["events"] == [events[0], {**events[1], "intent_score": 0.75}]
+        assert receipt["drift_curve"] == {
+            **baseline["drift_curve"],
+            "intent_scores": [{"step_index": 0, "intent_score": 0.5}, {"step_index": 1, "intent_score": 0.75}],
+        }
+        assert default.score_task(task, receipt)[2]["drift_curve"] == receipt["drift_curve"]
+        assert adapter.score_task(task, receipt) == default.score_task(task, receipt)
+        scorer.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("outcome", "diagnostic"),
+        [
+            (RuntimeError("scoring offline"), "scoring offline"),
+            ({"step": 0, "intent_score": float("nan")}, "finite"),
+            ({"step": 2, "intent_score": 1.0}, "step 2"),
+        ],
+    )
+    def test_optional_intent_scorer_error_preserves_hard_result(
+        self,
+        recorded_intent_task: GoalDriftTask,
+        outcome: Exception | dict[str, Any],
+        diagnostic: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        scorer = Mock(side_effect=[outcome])
+        task = recorded_intent_task.to_bench_task()
+        trajectory = {"events": [{"step": 0, "touched_paths": ["src/example/settings.py"]}]}
+        config = {"threshold": 0.25}
+        default = GoalDriftReplayAdapter(trajectory_data=trajectory)
+        baseline = default.run_task(task, config)
+        assert baseline["passed_gate"] is False
+        scorer.assert_not_called()
+
+        adapter = GoalDriftReplayAdapter(trajectory_data=trajectory, intent_scorer=scorer)
+        assert adapter.run_task(task, config) == baseline
+        assert task.id in caplog.text and diagnostic in caplog.text
+        scorer.assert_called_once()
+
     def test_missing_scores_preserve_hard_measurements(self, recorded_intent_task: GoalDriftTask) -> None:
         curve = evaluate_trajectory_drift(recorded_intent_task, [{"step": 0, "touched_paths": ["src/example/item.py"]}])
 

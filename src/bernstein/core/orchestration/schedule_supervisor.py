@@ -1104,8 +1104,8 @@ class ScheduleSupervisor:
         filename = f"{receipt.schedule_id}-{receipt.fire_time}-{suffix}.json"
         path = self._receipts_dir / filename
         payload = asdict(receipt)
-        # Tuples → lists for json. asdict already does this.
-        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2), mode=0o666)
+        # Tuples → lists for json. asdict already does this. Keep receipts owner-only (0600).
+        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2))
 
 
 # ---------------------------------------------------------------------------

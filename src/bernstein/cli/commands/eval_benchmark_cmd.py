@@ -198,7 +198,9 @@ def _run_programbench_command(
         compute_report,
         report_to_dict,
         save_results,
+        verify_benchmark_runtime,
     )
+    from bernstein.core.sandbox.isolated_process import IsolationUnavailable
 
     workdir = Path()
     harness = ProgramBenchHarness(
@@ -217,6 +219,13 @@ def _run_programbench_command(
             "set BERNSTEIN_PROGRAMBENCH_DATASET, or install the 'datasets' package.[/yellow]"
         )
         raise SystemExit(1)
+
+    try:
+        verify_benchmark_runtime()
+    except IsolationUnavailable as exc:
+        raise click.ClickException(
+            f"ProgramBench needs an isolated runtime and its locally installed image: {exc}"
+        ) from exc
 
     console.print(f"[bold]ProgramBench evaluation[/bold]: subset={subset} • adapter={adapter} • {len(tasks)} task(s)")
 

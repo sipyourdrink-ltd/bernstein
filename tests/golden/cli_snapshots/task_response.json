@@ -33,6 +33,7 @@
   "priority": 2,
   "progress_log": [],
   "repo": null,
+  "repo_root_commit": null,
   "requires": [],
   "result_summary": null,
   "retry_count": 0,

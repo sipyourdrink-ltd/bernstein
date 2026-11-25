@@ -1,8 +1,7 @@
 """Word-level diff rendering for Bernstein TUI.
 
-Provides utilities to compute word-level diffs between two lines and render
-them with Rich-compatible markup (green strikethrough for removed words,
-green bold for added words).
+Computes word-level diffs and displays changed words in green, with
+strikethrough for removals and bold for additions.
 """
 
 from __future__ import annotations
@@ -87,30 +86,6 @@ def word_diff(
     return old_result, new_result
 
 
-def _render_tokens(tokens: list[tuple[str, bool]], removed: bool) -> str:
-    """Render a list of ``(token, is_changed)`` as Rich markup.
-
-    Args:
-        tokens: List of (token, is_changed) tuples.
-        removed: If ``True``, mark changed tokens as removed (strikethrough);
-            otherwise mark them as added (bold green).
-
-    Returns:
-        A string containing Rich-compatible markup for the token list.
-    """
-    parts: list[str] = []
-    for token, is_changed in tokens:
-        escaped = token.replace("[", r"\[").replace("]", r"\]")
-        if is_changed:
-            if removed:
-                parts.append(f"[strike green]{escaped}[/]")
-            else:
-                parts.append(f"[bold green]{escaped}[/]")
-        else:
-            parts.append(escaped)
-    return "".join(parts)
-
-
 def render_word_diff(console: Console, old_line: str, new_line: str) -> None:
     """Render a word-level diff between two lines to the console.
 
@@ -122,10 +97,11 @@ def render_word_diff(console: Console, old_line: str, new_line: str) -> None:
         old_line: The original line text.
         new_line: The modified line text.
     """
+    from rich.text import Text
+
     old_tokens, new_tokens = word_diff(old_line, new_line)
-
-    old_markup = _render_tokens(old_tokens, removed=True)
-    new_markup = _render_tokens(new_tokens, removed=False)
-
-    console.print(f"  [dim]-[/] {old_markup}")
-    console.print(f"  [dim]+[/] {new_markup}")
+    for tokens, prefix, changed_style in ((old_tokens, "-", "strike green"), (new_tokens, "+", "bold green")):
+        line = Text.assemble("  ", (prefix, "dim"), " ")
+        for token, changed in tokens:
+            line.append(token, style=changed_style if changed else None)
+        console.print(line)

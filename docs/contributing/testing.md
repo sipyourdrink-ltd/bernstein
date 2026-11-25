@@ -526,6 +526,20 @@ sections; when those sections are absent, the job log retains the complete
 captured stdout and stderr under separate labels. These diagnostics do not
 establish the cause of an unexplained process exit.
 
+The recurring unexplained exit was #6042: `tests/unit/test_orchestrator.py`
+intermittently reported `FAIL` at ~53s with no summary at all. The death
+lands at end-of-run (the file legitimately takes ~50s), nothing prints —
+not even a traceback — so the subprocess was killed externally: pytest's
+own error paths all emit something, and the harness's only internal kill
+(the 600s per-file timeout) reports `TIMEOUT`. The killer is the kernel
+OOM killer on a memory-pressured shard runner, and a long-lived file with
+an unbounded footprint is its victim; this file leaked per-test thread
+pools until #6763 joined them deterministically. The file now carries a
+per-test process-growth ratchet (`_bound_process_growth`) that fails the
+leaking test by name, and
+`tests/unit/test_orchestrator_resource_cleanup.py` pins that the ratchet
+fires, so the silent death cannot return.
+
 `scripts/run_tests.py` runs each `tests/unit/test_*.py` file in its own
 subprocess (the OOM-avoidance model: a single `pytest --cov` over all
 files in one process exceeds the 7 GB runner ceiling). Each subprocess

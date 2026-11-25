@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,9 @@ from bernstein.core.run_report import (
     _fmt_duration,
     _render_ascii_timeline,
 )
+from click.testing import CliRunner
+
+from bernstein.cli.main import cli
 
 # ---------------------------------------------------------------------------
 # Helper: set up a fake .sdd directory with test data
@@ -334,3 +338,34 @@ def test_detect_latest_run_id(tmp_path: Path) -> None:
     workdir = _setup_sdd(tmp_path, run_id="run-latest")
     gen = RunReportGenerator(workdir)
     assert gen._run_id == "run-latest"
+
+
+def test_report_cli_prints_latest_run_without_saving(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workdir = _setup_sdd(tmp_path, run_id="run-latest", goal="Summarize the latest build")
+    monkeypatch.chdir(workdir)
+
+    result = CliRunner().invoke(cli, ["report"])
+
+    assert result.exit_code == 0, result.output
+    assert "# Run Report" in result.output
+    assert "Summarize the latest build" in result.output
+    assert not (workdir / ".sdd" / "reports").exists()
+
+
+@pytest.mark.parametrize(("save_option", "should_save"), [("--save", True), ("--no-save", False)])
+def test_report_cli_selects_a_run_in_the_given_workdir(tmp_path: Path, save_option: str, should_save: bool) -> None:
+    workdir = _setup_sdd(tmp_path, run_id="run-latest")
+    earlier_run = workdir / ".sdd" / "runs" / "run-earlier"
+    earlier_run.mkdir()
+    (earlier_run / "summary.json").write_text('{"goal": "Summarize the earlier build"}', encoding="utf-8")
+    os.utime(earlier_run, (1_700_000_000, 1_700_000_000))
+
+    result = CliRunner().invoke(cli, ["report", "--run-id", "run-earlier", "--workdir", str(workdir), save_option])
+
+    assert result.exit_code == 0, result.output
+    assert "# Run Report" in result.output
+    assert "Summarize the earlier build" in result.output
+    report_path = workdir / ".sdd" / "reports" / "run-earlier.md"
+    assert report_path.is_file() is should_save
+    if should_save:
+        assert "Summarize the earlier build" in report_path.read_text(encoding="utf-8")

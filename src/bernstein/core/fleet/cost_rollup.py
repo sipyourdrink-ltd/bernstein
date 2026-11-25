@@ -88,6 +88,7 @@ def _read_cost_history(sdd_dir: Path, window_days: int) -> list[float]:
     if not metrics_path.exists():
         return []
     cutoff = time.time() - window_days * 86400.0
+    cutoff_date = time.strftime("%Y-%m-%d", time.gmtime(cutoff))
     bucket: dict[str, float] = {}
     try:
         for raw_line in metrics_path.read_text(encoding="utf-8").splitlines():
@@ -107,6 +108,8 @@ def _read_cost_history(sdd_dir: Path, window_days: int) -> list[float]:
                 continue
             if "date" in entry and isinstance(entry["date"], str):
                 key = entry["date"]
+                if key < cutoff_date:
+                    continue
             elif "ts" in entry:
                 try:
                     ts = float(entry["ts"])

@@ -130,3 +130,30 @@ class TestStatusSummary:
         s = StatusSummary.from_api_response({})
         assert s.total == 0
         assert s.cost_usd == pytest.approx(0.0)
+
+
+def test_status_summary_decodes_dashboard_totals() -> None:
+    counts = {"total": 4, "open": 1, "claimed": 1, "done": 2, "failed": 0}
+    flat = {**counts, "agents": 2, "cost_usd": 4.5}
+    dashboard = {
+        **counts,
+        "summary": flat,
+        "agents": {
+            "count": 2,
+            "items": [
+                {"id": "one", "status": "running"},
+                {"id": "two", "status": "running"},
+            ],
+        },
+    }
+    status = StatusSummary.from_api_response(dashboard)
+    assert status == StatusSummary(
+        total=4, open=1, claimed=1, done=2, failed=0, agents=2, cost_usd=4.5
+    )
+    assert isinstance(status.agents, int)
+    assert StatusSummary.from_api_response(flat) == status
+
+    zero_totals = {"total": 0, "agents": 0, "cost_usd": 0.0}
+    zero = StatusSummary.from_api_response({**flat, "summary": zero_totals})
+    assert (zero.total, zero.agents, zero.cost_usd) == (0, 0, 0.0)
+    assert zero.done == 2

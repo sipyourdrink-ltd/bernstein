@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from bernstein.cli.plan_explain import (
     PlanSummary,
     analyze_plan,
@@ -70,6 +71,17 @@ NO_STAGES_PLAN: dict = {
 # ---------------------------------------------------------------------------
 # analyze_plan
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dependency_fields", [{}, {"depends_on": []}, {"depends_on": None}], ids=["omitted", "empty", "null"]
+)
+def test_null_stage_dependencies_match_an_empty_list(dependency_fields: dict[str, list[str] | None]) -> None:
+    build = {**SIMPLE_PLAN["stages"][0], **dependency_fields}
+    assert analyze_plan({"stages": [build]}).critical_path_length == 1
+
+    verify = {"name": "Verify", "depends_on": ["Build"], "steps": [{"title": "Run tests", "role": "qa"}]}
+    assert analyze_plan({"stages": [build, verify]}).critical_path_length == 2
 
 
 class TestAnalyzePlan:

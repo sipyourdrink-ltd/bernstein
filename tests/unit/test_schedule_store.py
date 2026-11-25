@@ -70,6 +70,13 @@ def _overlap_writes(
 # ---------------------------------------------------------------------------
 
 
+def test_cron_list_rejects_empty_members() -> None:
+    assert parse_cron("5,10 * * * *").minutes == {5, 10}
+    for minutes in (",5", "5,", "5,,10"):
+        with pytest.raises(CronParseError):
+            parse_cron(f"{minutes} * * * *")
+
+
 class TestValidateCron:
     def test_every_minute(self) -> None:
         validate_cron("* * * * *")

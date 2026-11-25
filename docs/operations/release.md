@@ -57,7 +57,7 @@ deployment as failed.
 
 ## Release Milestones
 
-Bernstein uses GitHub milestones to plan minor and major releases. Patch releases do not get milestones; they ship from `main` as the `auto-release.yml` workflow determines they have meaningful changes.
+Public GitHub milestones list the public issues targeted at a minor or major release; the maintainer's own plans are kept privately (see GOVERNANCE.md). Patch releases do not get milestones; they ship from `main` as the `auto-release.yml` workflow determines they have meaningful changes.
 
 Only open, version-numbered milestones are listed below -- a shipped version drops off this table rather than being marked done, and non-version tracking milestones (e.g. epics like "Volunteer workers") are out of scope since they don't follow this release cadence. Re-derive the rows from `gh api repos/sipyourdrink-ltd/bernstein/milestones` when this goes stale; don't hand-edit target dates.
 
@@ -120,20 +120,10 @@ manifest cannot fall out of the bump the same way. Note that `.mcp.json` is an
 
 ## Security supported-versions table
 
-`SECURITY.md`'s Supported Versions table names the current minor release line
-as the only supported one (no backport branch), so a **minor or major** bump
-changes it: `pyproject.toml` moves to the new `X.Y`, and the table must move
-with it. `scripts/bump_version.py` does not touch `SECURITY.md`, and
-`release-major-minor.yml`'s `add-paths` does not carry it either, so this is
-a manual edit on the bump PR, the same as writing the version's release-notes
-page is. A **patch** bump (`vX.Y.Z` with the same `X.Y`) needs no edit here.
-
-Update both rows to the new minor:
-
-```
-| X.Y.x | Yes |
-| < X.Y | No  |
-```
+`SECURITY.md` names the minor line that receives regular fixes. For a minor
+or major bump, update the table on the bump PR. Document any agreed backport
+by its exact version. For 4.0.x the single exception is the planned 3.24.2
+backport. A patch bump within the same line needs no table edit.
 
 `tests/unit/test_security_md.py` derives the expected line from
 `pyproject.toml`'s version at test time and fails on a stale table instead of
@@ -297,6 +287,7 @@ cancels the step mid-wait instead of ending it; a guard test enforces the gap.
 - `.github/workflows/auto-release.yml` only creates tags.
 - `.github/workflows/publish.yml` owns tag-triggered package and GitHub Release publication.
 - `.github/workflows/reconcile-release.yml` is the drift detector for every published channel: PyPI, Copr, npm, the Homebrew tap, and the GitHub Release's dist and SBOM assets.
+- The reconciliation job summary and its linked tracking issue list workflow runs waiting on a deployment environment for more than 24 hours, including active wait timers. The table shows the workflow, linked run, environment and minimum confirmed wait. If the table exceeds the summary limit, the summary lists run IDs and the issue holds the details. An incomplete scan retains verified waits and fails the job.
 - Events raised with `GITHUB_TOKEN` do not start further workflow runs, so every entrypoint that creates a GitHub Release dispatches the follow-up workflows explicitly rather than relying on `release: published`. `publish.yml` is currently the only one -- `release-major-minor.yml` no longer creates a release itself, it opens a version-bump PR and lets `publish.yml` handle the rest. A new follow-up workflow needs a dispatch step there plus its own `workflow_dispatch` inputs; a new release entrypoint needs the full dispatch set.
 - `release-major-minor.yml` decides readiness from **check runs**, not the combined status API. No lane in this repo posts a commit status, so `/commits/{sha}/status` answers `pending` with an empty `statuses` array on every commit here, green tags included. The gate reads `/commits/{sha}/check-runs`, requires `CI gate` (the sole required context) to be `success`, and refuses any other lane that ran to completion and failed. A cancelled lane is routine and does not block: queue-branch runs get cancelled to free runners.
 - `release-major-minor.yml` does not run the suite; it defers to the matrix that already did. The step that used to sit after the readiness gate re-ran every test unsharded on the release job's single runner, against the same tree the gate had just proved green. It did not fit: at 49 minutes it was still running when the job's 60-minute `timeout-minutes` cancelled it, and a cancelled step cancels the release. The tree is covered twice without it -- `Test` runs the full OS/Python shard matrix on `main`, and the bump PR clears that same required matrix again in the merge queue. Do not add a test step back here; add coverage to `Test`, where it runs in parallel and gates every change rather than only releases.

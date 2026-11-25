@@ -20,10 +20,12 @@ Log sources scanned (in priority order):
 
 from __future__ import annotations
 
+import heapq
 import re
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,8 +35,7 @@ if TYPE_CHECKING:
 # Data classes
 # ---------------------------------------------------------------------------
 
-_TIMESTAMP_RE = re.compile(r"^\[?(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?[Z+-]?(?:\d{2}:\d{2})?)")
-_ISO_FULL = re.compile(r"^(?P<y>\d{4})-(?P<mo>\d{2})-(?P<d>\d{2})[T ](?P<h>\d{2}):(?P<mi>\d{2}):(?P<s>\d{2})")
+_TIMESTAMP_RE = re.compile(r"^\[?(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)")
 
 
 @dataclass(frozen=True)
@@ -130,22 +131,8 @@ def _parse_log_timestamp(line: str) -> float:
     m = _TIMESTAMP_RE.match(line.strip())
     if not m:
         return 0.0
-    ts_str = m.group("ts")
-    iso_m = _ISO_FULL.match(ts_str)
-    if not iso_m:
-        return 0.0
-    import datetime
-
     try:
-        dt = datetime.datetime(
-            int(iso_m.group("y")),
-            int(iso_m.group("mo")),
-            int(iso_m.group("d")),
-            int(iso_m.group("h")),
-            int(iso_m.group("mi")),
-            int(iso_m.group("s")),
-        )
-        return dt.timestamp()
+        return datetime.fromisoformat(m.group("ts")).timestamp()
     except ValueError:
         return 0.0
 
@@ -290,27 +277,20 @@ class LogSearchIndex:
         role_lower = agent_role.lower()
         level_lower = level.lower()
 
-        matches: list[LogEntry] = []
-        for entry in entries:
+        def matches(entry: LogEntry) -> bool:
             if earliest_ts > 0 and entry.timestamp > 0 and entry.timestamp < earliest_ts:
-                continue
+                return False
             if role_lower and role_lower not in entry.agent_role.lower():
-                continue
+                return False
             if level_lower and entry.level != level_lower:
-                continue
-            if query_lower and query_lower not in entry.message.lower():
-                continue
-            matches.append(entry)
-            if len(matches) >= limit:
-                break
+                return False
+            return not query_lower or query_lower in entry.message.lower()
 
         # Newest first (entries with timestamp=0 go to the end)
-        matches.sort(key=lambda e: max(e.timestamp, 0), reverse=True)
-
         return LogSearchResult(
             query=query,
             total_scanned=total_scanned,
-            entries=matches[:limit],
+            entries=heapq.nlargest(limit, filter(matches, entries), key=lambda e: max(e.timestamp, 0)),
         )
 
     # -- scanning -----------------------------------------------------------

@@ -171,6 +171,9 @@ class StatusSummary:
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any]) -> StatusSummary:
+        summary = data.get("summary")
+        if isinstance(summary, dict):
+            data = data | summary
         return cls(
             total=data.get("total", 0),
             open=data.get("open", 0),

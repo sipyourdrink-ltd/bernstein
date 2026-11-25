@@ -159,6 +159,46 @@ def test_parse_duration_rejects_invalid(spec: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_discovered_command_requires_approval(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"dev": "example-check"}}))
+    runner = _FakeRunner(["Local: http://localhost:3000"])
+    with pytest.raises(PreviewError, match="approval"):
+        PreviewManager(store=PreviewStore(tmp_path / "state.json"), runner=runner, tunnel=_FakeTunnel()).start(
+            cwd=tmp_path, sandbox_session=_FakeSandbox()
+        )
+
+
+def test_isolated_preview_uses_argv_and_loopback_mapping(tmp_path, monkeypatch):
+    import subprocess
+    from unittest.mock import patch
+
+    from bernstein.core.preview.manager import ContainerDevServerRunner
+
+    monkeypatch.setenv("BERNSTEIN_PREVIEW_IMAGE", "preview-fixture")
+    monkeypatch.setenv("BERNSTEIN_PREVIEW_PORT", "4321")
+    with (
+        patch("bernstein.core.preview.manager.runtime_executable", return_value="/local/bin/docker"),
+        patch(
+            "bernstein.core.preview.manager.subprocess.run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0, b"container-id"),
+                subprocess.CompletedProcess([], 0, b"127.0.0.1:32123"),
+            ],
+        ) as run,
+    ):
+        handle = ContainerDevServerRunner().spawn(command='npm run dev -- "a b"', cwd=tmp_path)
+
+    args = run.call_args_list[0].args[0]
+    assert args[:3] == ["/local/bin/docker", "run", "--detach"]
+    assert args[-8:] == ["--entrypoint", "npm", "--", "preview-fixture", "run", "dev", "--", "a b"]
+    assert "--read-only" in args
+    assert "127.0.0.1::4321" in args
+    assert handle.host_port == 32123
+    assert handle.backend == "docker"
+    assert handle.container_name == args[args.index("--name") + 1]
+    assert not run.call_args_list[0].kwargs.get("shell", False)
+
+
 def test_start_persists_state_and_writes_audit_chain(tmp_path: Path) -> None:
     """Successful start emits 2 audit entries (start + link) and persists state."""
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"dev": "vite"}}), encoding="utf-8")
@@ -183,6 +223,7 @@ def test_start_persists_state_and_writes_audit_chain(tmp_path: Path) -> None:
         preview = manager.start(
             cwd=tmp_path,
             sandbox_session=_FakeSandbox(),
+            approve_discovered=True,
             auth_mode=AuthMode.TOKEN,
             expire_seconds="1h",
         )
@@ -236,7 +277,7 @@ def test_stop_removes_record_and_audits(tmp_path: Path) -> None:
             audit_log=audit,
             runner=runner,
         )
-        preview = manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox())
+        preview = manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox(), approve_discovered=True)
         assert manager.stop(preview.state.preview_id) is True
     finally:
         mgr_mod.probe_port = real_probe  # type: ignore[assignment]
@@ -273,7 +314,7 @@ def test_tunnel_failure_rolls_back_dev_server(tmp_path: Path) -> None:
             runner=runner,
         )
         with pytest.raises(PreviewError):
-            manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox())
+            manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox(), approve_discovered=True)
     finally:
         mgr_mod.probe_port = real_probe  # type: ignore[assignment]
 
@@ -302,7 +343,7 @@ def test_port_probe_failure_rolls_back(tmp_path: Path) -> None:
             runner=runner,
         )
         with pytest.raises(PreviewError, match="TCP probe failed"):
-            manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox())
+            manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox(), approve_discovered=True)
     finally:
         mgr_mod.probe_port = real_probe  # type: ignore[assignment]
 
@@ -321,7 +362,7 @@ def test_no_command_discovered_raises(tmp_path: Path) -> None:
         runner=runner,
     )
     with pytest.raises(PreviewError, match="No dev-server command"):
-        manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox())
+        manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox(), approve_discovered=True)
 
 
 # ---------------------------------------------------------------------------
@@ -404,3 +445,47 @@ def test_preview_state_round_trip_through_dict() -> None:
     raw = s.to_dict()
     raw["unknown_extra"] = 1  # Forward-compat: unknown keys must be ignored.
     assert PreviewState.from_dict(raw) == s
+
+
+def test_stop_keeps_state_when_container_cleanup_fails(tmp_path):
+    import subprocess
+    from unittest.mock import patch
+
+    store = PreviewStore(tmp_path / "state.json")
+    name = "bernstein-preview-0123456789abcdef"
+    state = PreviewState(
+        preview_id="prv-retry",
+        command="example",
+        cwd=str(tmp_path),
+        port=3000,
+        sandbox_backend="docker",
+        sandbox_session_id=name,
+        tunnel_provider="cloudflared",
+        tunnel_name="example",
+        public_url="https://example.invalid",
+        share_url="https://example.invalid",
+        auth_mode="none",
+        expires_at_epoch=1,
+        process_pid=0,
+        container_name=name,
+    )
+    raw = dict(state.to_dict(), runtime_path="/untrusted/workspace/docker")
+    store.upsert(PreviewState.from_dict(raw))
+    manager = PreviewManager(store=store, tunnel=_FakeTunnel(), audit_log=_audit_log(tmp_path))
+    with (
+        patch("bernstein.core.preview.manager.runtime_executable", return_value="/local/bin/docker") as resolve,
+        patch(
+            "bernstein.core.preview.manager.subprocess.run",
+            side_effect=[
+                subprocess.CompletedProcess([], 1, stderr=b"daemon unavailable"),
+                subprocess.CompletedProcess([], 0, stderr=b""),
+            ],
+        ) as run,
+    ):
+        with pytest.raises(PreviewError, match="cleanup could not be confirmed"):
+            manager.stop(state.preview_id)
+        assert store.get(state.preview_id) == state
+        assert manager.stop(state.preview_id)
+    assert store.get(state.preview_id) is None
+    assert all(call.args == ("docker",) for call in resolve.call_args_list)
+    assert all(call.args[0] == ["/local/bin/docker", "rm", "--force", name] for call in run.call_args_list)

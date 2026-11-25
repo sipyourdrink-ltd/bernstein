@@ -147,6 +147,12 @@ def test_find_collisions_detects_known_clash() -> None:
         assert is_run_name(name)
         assert len(ids) >= 2
         assert all(render_name(i) == name for i in ids)
+        first, second = ids[:2]
+        assert find_collisions([second, first, second, first]) == {name: [second, first]}
+
+
+def test_repeated_run_id_is_not_a_collision() -> None:
+    assert find_collisions([_FIXED_UUID, _FIXED_UUID]) == {}
 
 
 def test_find_collisions_empty_for_distinct_names() -> None:

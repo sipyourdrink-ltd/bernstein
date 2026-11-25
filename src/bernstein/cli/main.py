@@ -428,6 +428,7 @@ def print_rich_help() -> None:
         )
     )
     c.print("\n  [bold cyan]quick start[/bold cyan]")
+    c.print("  [dim]$[/dim] bernstein demo                               [dim]# zero-key demo + receipt[/dim]")
     c.print('  [dim]$[/dim] bernstein -g [green]"Add JWT auth with tests"[/green]     [dim]# inline goal[/dim]')
     c.print("  [dim]$[/dim] bernstein                                    [dim]# from bernstein.yaml[/dim]")
     c.print("  [dim]$[/dim] bernstein run plan.yaml                      [dim]# execute a plan file[/dim]")
@@ -454,6 +455,7 @@ def print_rich_help() -> None:
             "monitor",
             [
                 ("live", "interactive TUI dashboard (2 columns + activity panel)"),
+                ("gui serve", "standalone web dashboard (bernstein run also serves /ui/)"),
                 ("status", "task summary and agent health"),
                 ("ps", "running agent processes"),
                 ("cost", "spend breakdown by model and task"),
@@ -464,6 +466,8 @@ def print_rich_help() -> None:
             "diagnostics",
             [
                 ("doctor", "pre-flight: adapters, API keys, ports"),
+                ("verify run [dim]ID[/dim]", "sign a portable offline run receipt"),
+                ("verify receipt [dim]PATH[/dim]", "verify a run receipt offline (--public-key PEM)"),
                 ("recap", "post-run: tasks, pass/fail, cost"),
                 ("retro", "detailed retrospective report"),
                 ("plan", "show task backlog"),

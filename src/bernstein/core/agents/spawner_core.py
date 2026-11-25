@@ -3537,10 +3537,10 @@ class AgentSpawner:
         # inject an unexpected type into the manifest.
         role_sampling_before = derived.copy()
         temperature = role_policy.get("temperature")
-        if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        if isinstance(temperature, int | float) and not isinstance(temperature, bool):
             derived["temperature"] = float(temperature)
         top_p = role_policy.get("top_p")
-        if isinstance(top_p, (int, float)) and not isinstance(top_p, bool):
+        if isinstance(top_p, int | float) and not isinstance(top_p, bool):
             derived["top_p"] = float(top_p)
         top_k = role_policy.get("top_k")
         if isinstance(top_k, int) and not isinstance(top_k, bool):
@@ -5621,6 +5621,8 @@ class AgentSpawner:
                                 _extra_spawn_kwargs["task_id"] = tasks[0].id
                             if "task_title" in _spawn_params:
                                 _extra_spawn_kwargs["task_title"] = tasks[0].title
+                            if "task_titles" in _spawn_params:
+                                _extra_spawn_kwargs["task_titles"] = [t.title for t in tasks]
                             # Issue #1797: hand the attested attachments to the
                             # adapter. Only passed when something was declared,
                             # so an unattached spawn calls exactly the argument
@@ -6213,6 +6215,8 @@ class AgentSpawner:
             _resume_extra["task_id"] = tasks[0].id
         if "task_title" in _resume_params:
             _resume_extra["task_title"] = tasks[0].title
+        if "task_titles" in _resume_params:
+            _resume_extra["task_titles"] = [t.title for t in tasks]
         if _resume_attachments is not None:
             if "multimodal_context" not in _resume_params:
                 raise AttachmentDispatchError(

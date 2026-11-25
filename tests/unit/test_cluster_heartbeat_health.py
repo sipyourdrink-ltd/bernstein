@@ -18,7 +18,11 @@ from bernstein.core.server.server import create_app
 def cluster_app():
     """Create a cluster-mode app for testing."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        jsonl_path = Path(tmp_dir) / "tasks.jsonl"
+        # Keep the store under .sdd/runtime so the app's sdd_dir resolves
+        # inside the tempdir; a bare tmpdir makes it the tempdir's parent
+        # (e.g. /tmp), where the audit chain then collides with unrelated
+        # state.
+        jsonl_path = Path(tmp_dir) / ".sdd" / "runtime" / "tasks.jsonl"
         app = create_app(
             jsonl_path=jsonl_path,
             cluster_config=ClusterConfig(enabled=True),
@@ -231,3 +235,146 @@ def test_worker_waits_for_recovery_before_claiming_through_task_server(cluster_a
         # The worker has just freed a slot locally and polls before its next capacity heartbeat.
         assert client.post(path, json={"capacity": {"disk_free_mb": 4096, "available_slots": 0}}).status_code == 200
         assert worker._claim_task(client, "backend", node_id)["id"] == created.json()["id"]
+
+
+# ---------------------------------------------------------------------------
+# #7853: the by-ID claim path gates on registered node health too.
+# ---------------------------------------------------------------------------
+
+
+def _register_node(client, name="orch-node"):
+    """Register a node through the cluster-registry URL and return its ID."""
+    response = client.post(
+        "http://cluster.test/cluster/nodes",
+        json={"name": name, "url": f"http://{name}:9000"},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+def _create_task(client, title):
+    """Create a task through the task-server URL and return its ID."""
+    response = client.post(
+        "http://tasks.test/tasks",
+        json={"title": title, "description": "fixture", "role": "backend"},
+    )
+    assert response.status_code in (200, 201), response.text
+    return response.json()["id"]
+
+
+def test_orchestrator_claim_by_id_waits_for_node_recovery(cluster_app):
+    """An unhealthy registered node is refused a by-ID claim until it recovers.
+
+    The orchestrator reports capacity to the cluster registry under one
+    URL but claims through the task server under another, naming its
+    parent session as the claim owner. The registry assigned the node a
+    different ID, so the claim carries it explicitly as ``node_id``;
+    before #7853 this path never consulted the registry and an
+    unhealthy node claimed specific tasks unimpeded.
+    """
+    client = TestClient(cluster_app)
+    parent_session = "parent-session-7853"
+
+    # Registration goes to the cluster-registry URL; claims go to the
+    # separate task-server URL. The two base URLs never coincide, so the
+    # resolution under test cannot key on the request URL.
+    node_id = _register_node(client)
+    assert node_id != parent_session
+
+    def claim(task_id):
+        return client.post(
+            f"http://tasks.test/tasks/{task_id}/claim",
+            params={"claimed_by_session": parent_session, "node_id": node_id},
+        )
+
+    first = _create_task(client, "first task")
+    granted = claim(first)
+    assert granted.status_code == 200, granted.text
+    # The parent session -- not the registry node ID -- is the recorded owner.
+    assert granted.json()["claimed_by_session"] == parent_session
+
+    second = _create_task(client, "second task")
+    heartbeat_path = f"http://cluster.test/cluster/nodes/{node_id}/heartbeat"
+    assert client.post(heartbeat_path, json={"capacity": {"disk_free_mb": 1}}).status_code == 200
+
+    refused = claim(second)
+    assert refused.status_code == 409, refused.text
+    assert node_id in refused.json()["detail"]
+    # The refused task stays open and unowned, ready for a healthy claimant.
+    task_after_refusal = client.get(f"http://tasks.test/tasks/{second}").json()
+    assert task_after_refusal["status"] == "open"
+    assert task_after_refusal["claimed_by_session"] is None
+
+    # Recovery reported through the registry URL re-opens claiming.
+    assert client.post(heartbeat_path, json={"capacity": {"disk_free_mb": 4096}}).status_code == 200
+    recovered = claim(second)
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["claimed_by_session"] == parent_session
+
+
+def test_claim_by_id_gates_on_cordoned_node(cluster_app):
+    """Operator intent (cordon) also closes the by-ID path for a named node."""
+    client = TestClient(cluster_app)
+    node_id = _register_node(client, name="cordoned-node")
+    task_id = _create_task(client, "cordoned task")
+    assert client.post(f"/cluster/nodes/{node_id}/cordon").status_code == 200
+
+    refused = client.post(
+        f"/tasks/{task_id}/claim",
+        params={"claimed_by_session": "parent-session", "node_id": node_id},
+    )
+    assert refused.status_code == 409, refused.text
+
+    assert client.post(f"/cluster/nodes/{node_id}/uncordon").status_code == 200
+    granted = client.post(
+        f"/tasks/{task_id}/claim",
+        params={"claimed_by_session": "parent-session", "node_id": node_id},
+    )
+    assert granted.status_code == 200, granted.text
+
+
+def test_claim_by_id_without_registered_node_still_claims(cluster_app):
+    """Older clients and single-host runs are not gated by the registry.
+
+    A claimant the task server's registry does not know -- no
+    registration at all (single-host), a bare parent session (older
+    client), or a node ID from a separate registry deployment -- claims
+    exactly as before #7853.
+    """
+    client = TestClient(cluster_app)
+
+    single_host = _create_task(client, "single-host task")
+    granted = client.post(f"/tasks/{single_host}/claim")
+    assert granted.status_code == 200, granted.text
+
+    older_client = _create_task(client, "older-client task")
+    granted = client.post(
+        f"/tasks/{older_client}/claim",
+        params={"claimed_by_session": "session-never-registered"},
+    )
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["claimed_by_session"] == "session-never-registered"
+
+    separate_registry = _create_task(client, "separate-registry task")
+    granted = client.post(
+        f"/tasks/{separate_registry}/claim",
+        params={"claimed_by_session": "session-elsewhere", "node_id": "node-from-another-registry"},
+    )
+    assert granted.status_code == 200, granted.text
+
+
+def test_next_task_with_explicit_node_id_waits_for_recovery(cluster_app):
+    """The pull path resolves the registered node from ``node_id`` as well."""
+    client = TestClient(cluster_app)
+    node_id = _register_node(client, name="pull-node")
+    _create_task(client, "pull task")
+    heartbeat_path = f"/cluster/nodes/{node_id}/heartbeat"
+    params = {"claimed_by_session": "parent-session", "node_id": node_id}
+
+    assert client.post(heartbeat_path, json={"capacity": {"disk_free_mb": 1}}).status_code == 200
+    assert client.get("/tasks/next/backend", params=params).status_code == 404
+
+    assert client.post(heartbeat_path, json={"capacity": {"disk_free_mb": 4096}}).status_code == 200
+    claimed = client.get("/tasks/next/backend", params=params)
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["claimed_by_session"] == "parent-session"

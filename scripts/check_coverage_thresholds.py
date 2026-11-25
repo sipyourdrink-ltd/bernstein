@@ -94,7 +94,7 @@ def measure_coverage(module: str, threshold: int) -> CoverageResult:
         "-m",
         "pytest",
         *test_files[:5],  # Limit to avoid running too many files
-        f"--cov=src/{module_path.replace('.py', '').replace('/', '.')}",
+        f"--cov={module}",
         "--cov-report=json",
         "--cov-report=term",
         "-x",

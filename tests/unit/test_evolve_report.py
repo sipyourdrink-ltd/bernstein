@@ -216,6 +216,28 @@ class TestEvolutionReportLoad:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(("first", "last"), [(4, 0), (0, 4)], ids=["drop", "recovery"])
+def test_all_failing_cycle_contributes_a_zero_pass_sample(tmp_path: Path, first: int, last: int) -> None:
+    metrics_dir = tmp_path / "metrics"
+    metrics_dir.mkdir()
+    unmeasured = {"tests_passed": 0, "tests_failed": 0}
+    _write_cycles(
+        metrics_dir,
+        [
+            unmeasured,
+            {"tests_passed": first, "tests_failed": 4 - first},
+            unmeasured,
+            {"tests_passed": last, "tests_failed": 4 - last},
+            unmeasured,
+        ],
+    )
+    report = EvolutionReport(tmp_path)
+    report.load()
+
+    assert (report.first_tests_passed, report.last_tests_passed, report.test_delta) == (first, last, last - first)
+    assert report._tests_sparkline() == EvolutionReport._sparkline([float(first), float(last)])
+
+
 class TestEvolutionReportStats:
     @pytest.fixture()
     def report(self, tmp_path: Path) -> EvolutionReport:

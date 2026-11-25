@@ -19,8 +19,9 @@ Alternatively, a single top-level object {"events": [...], "diff": "..."} or lis
 may be supplied to apply across all evaluated tasks. Events may include an optional
 numeric "intent_score" from a recorded evaluator. Finite scores with non-negative
 integer steps are projected into "intent_scores" in step order (preserving event
-order within a step); missing or invalid scores are omitted. No evaluator is called,
-and intent scores do not participate in hard measurements or threshold decisions.
+order within a step); missing or invalid scores are omitted. The replay adapter
+can record one score from an explicitly supplied in-process scorer. Hard measurements
+and threshold decisions are independent of intent scores.
 Trajectory payloads may also supply intent_calibration_records in the existing
 calibration-log JSON shape. The separate quality report uses the recorded policy
 identifier and population; missing/ambiguous evidence is unavailable, never fitted.
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import posixpath
 from copy import deepcopy
@@ -40,7 +42,9 @@ from bernstein.eval.bench.suite import BenchSuite, BenchTask
 from bernstein.eval.calibration import CalibrationRecord, compute_report
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -656,6 +660,8 @@ class GoalDriftReplayAdapter:
         diff_text: str | None = None,
         threshold: float = 0.0,
         require_step_coverage: bool = False,
+        *,
+        intent_scorer: Callable[[GoalDriftTask, list[dict[str, Any]], str], dict[str, Any]] | None = None,
     ) -> None:
         self._task_map = task_map or get_goal_drift_task_map()
         self._simulate_drift = simulate_drift
@@ -664,11 +670,35 @@ class GoalDriftReplayAdapter:
         self._diff_text = diff_text
         self._threshold = threshold
         self._require_step_coverage = require_step_coverage
+        self._intent_scorer = intent_scorer
 
     @property
     def synthetic(self) -> bool:
         """Whether this adapter reports manufactured synthetic verdicts."""
         return bool(self._simulate_drift or self._smoke_synthetic)
+
+    def _record_intent_score(
+        self, task: GoalDriftTask, events: list[dict[str, Any]], diff: str
+    ) -> list[dict[str, Any]]:
+        """Attach the scorer's observation to an existing event so replay can read it."""
+        if self._intent_scorer is None:
+            return events
+        try:
+            record = self._intent_scorer(deepcopy(task), deepcopy(events), diff)
+            projected = _project_intent_scores([record])
+            if not projected:
+                raise ValueError("expected a non-negative integer step and a finite intent_score")
+            step, score = projected[0]
+            for index, event in enumerate(events):
+                event_step = event.get("step")
+                if type(event_step) is int and event_step == step and "intent_score" not in event:
+                    scored_events = events.copy()
+                    scored_events[index] = {**event, "intent_score": score}
+                    return scored_events
+            raise ValueError(f"no unscored event for step {step}")
+        except Exception as exc:
+            logger.warning("Optional intent scorer failed for %s: %s", task.id, exc)
+            return events
 
     def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
         """Execute goal drift simulation or replay and emit verified run receipt."""
@@ -715,6 +745,7 @@ class GoalDriftReplayAdapter:
             events = []
             diff = ""
 
+        events = self._record_intent_score(drift_task, events, diff)
         calibration_records = _recorded_intent_calibration(calibration_raw)
         curve = evaluate_trajectory_drift(
             drift_task,

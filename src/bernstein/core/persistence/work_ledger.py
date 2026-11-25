@@ -425,11 +425,20 @@ def _check_row(
     raw_seq = row.get("seq", -1)
     try:
         seq = int(raw_seq)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         seq = -1
     position = _row_position(seq if seq >= 0 else expected_seq, line_no)
     if seq != expected_seq:
         errors.append(f"{position}: seq mismatch (expected {expected_seq}, got {raw_seq!r})")
+
+    # These fields are outside the hash but must be readable by LedgerEntry.from_dict.
+    # Older rows can omit them and use the reader's defaults.
+    for field_name, convert in (("ts", float), ("redactions", int), ("schema_version", int)):
+        if field_name in row:
+            try:
+                convert(row[field_name])
+            except (TypeError, ValueError, OverflowError):
+                errors.append(f"{position}: invalid {field_name} metadata")
 
     stored_prev = str(row.get("prev_hash", ""))
     if stored_prev != prev_hash:
