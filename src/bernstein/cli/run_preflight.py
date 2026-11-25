@@ -128,13 +128,23 @@ def _abort_if_default_branch_merge_target(workdir: Path) -> None:
 
 
 def _iter_pinned_step_clis(seed: SeedConfig | None, plan_file: Path | None) -> list[str]:
+    from bernstein.adapters.registry import adapter_name_for_provider
+
     pins: list[str] = []
     policies = getattr(seed, "role_model_policy", None)
     if isinstance(policies, dict):
         for policy in policies.values():
-            raw = policy.get("cli") if isinstance(policy, dict) else None
-            if isinstance(raw, str) and raw.strip() not in ("", "auto"):
-                pins.append(raw.strip())
+            if not isinstance(policy, dict):
+                continue
+            raw_cli = policy.get("cli")
+            if isinstance(raw_cli, str) and raw_cli.strip() not in ("", "auto"):
+                pins.append(raw_cli.strip())
+                continue
+            raw_provider = policy.get("provider")
+            if isinstance(raw_provider, str) and raw_provider.strip() not in ("", "auto"):
+                mapped = adapter_name_for_provider(raw_provider.strip(), "")
+                if mapped is not None:
+                    pins.append(mapped)
     if plan_file is not None and plan_file.is_file():
         from bernstein.core.planning.plan_loader import load_plan_from_yaml
 
@@ -160,8 +170,6 @@ def _abort_if_no_cli_adapter(
     from bernstein.core.orchestration.preflight import ensure_cli_adapter_available, resolve_effective_cli
 
     effective_cli = resolve_effective_cli(cli, seed.cli if seed is not None else None)
-    if effective_cli == "mock":
-        return
     checked: set[str] = set()
     for target in [effective_cli, *_iter_pinned_step_clis(seed, plan_file)]:
         resolved = target if target in ("auto", "mock") else (adapter_name_for_provider(target, "") or target)

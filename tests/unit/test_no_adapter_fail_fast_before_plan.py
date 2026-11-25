@@ -200,11 +200,14 @@ def test_explicit_auto_cli_overrides_seed_cli(monkeypatch: pytest.MonkeyPatch) -
     assert resolve_effective_cli(None, "claude") == "claude"
 
 
-def test_per_role_cli_pin_fails_fast_before_preview(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Missing role_model_policy.<role>.cli executable aborts before preview even if seed.cli exists."""
+@pytest.mark.parametrize(("pin_key", "run_cli"), [("cli", None), ("provider", None), ("cli", "mock")])
+def test_per_role_cli_pin_fails_fast_before_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin_key: str, run_cli: str | None
+) -> None:
+    """Missing role_model_policy.<role>.cli/provider aborts before preview, even under cli=mock."""
     monkeypatch.delenv("BERNSTEIN_ADAPTER", raising=False)
     (tmp_path / "bernstein.yaml").write_text(
-        'goal: "Ship"\ncli: codex\nrole_model_policy:\n  qa:\n    cli: gemini\n',
+        f'goal: "Ship"\ncli: codex\nrole_model_policy:\n  qa:\n    {pin_key}: gemini\n',
         encoding="utf-8",
     )
     _assert_aborts_before_preview(
@@ -212,11 +215,15 @@ def test_per_role_cli_pin_fails_fast_before_preview(tmp_path: Path, monkeypatch:
         monkeypatch,
         which_fn=lambda name, path=None: "/usr/bin/codex" if name == "codex" else None,
         goal=None,
+        cli=run_cli,
     )
 
 
-def test_plan_step_cli_pin_fails_fast_before_preview(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Missing per-step cli: executable in PLAN_FILE aborts before preview."""
+@pytest.mark.parametrize("run_cli", [None, "mock"])
+def test_plan_step_cli_pin_fails_fast_before_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_cli: str | None
+) -> None:
+    """Missing per-step cli: executable in PLAN_FILE aborts before preview, even under cli=mock."""
     plan = tmp_path / "plan.yaml"
     plan.write_text(
         'name: "Plan"\nstages:\n  - name: build\n    steps:\n      - title: Build widget\n        role: backend\n        cli: gemini\n',
@@ -231,4 +238,5 @@ def test_plan_step_cli_pin_fails_fast_before_preview(tmp_path: Path, monkeypatch
         which_fn=lambda name, path=None: "/usr/bin/codex" if name == "codex" else None,
         goal=None,
         plan_file=plan,
+        cli=run_cli,
     )
