@@ -10,9 +10,7 @@ is the median time from PR opened to merged over the last 30 days, then a link t
 </picture>
 
 [`.github/workflows/project-pulse.yml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.github/workflows/project-pulse.yml)
-publishes it every Monday at 09:19 UTC into one rolling issue titled `Project pulse (weekly)`,
-labelled `docs` -- created on the first run, edited in place afterwards.
-Find it with [`is:issue "Project pulse (weekly)"`](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aissue+%22Project+pulse+%28weekly%29%22).
+runs on demand via `workflow_dispatch` and optionally updates a rolling issue when a target issue number is supplied.
 
 ## What it reports
 
