@@ -90,18 +90,30 @@ def write_atomic_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
             right for ``.sdd/runtime/`` state, which may carry task metadata
             or session tokens. A caller writing something that has to stay
             readable by another account -- templates shipped inside an
-            installed package, say -- passes ``0o644`` and says why.
+            installed package, say -- passes ``0o644`` and says why. Group- or
+            world-writable modes and special permission bits are refused.
 
     Raises:
+        ValueError: If *mode* sets group/world write bits (``0o022``) or
+            special/out-of-range bits outside ``0o777``.
         OSError: Propagated from the underlying filesystem calls after
             the temp file is cleaned up. Callers that prefer silent
             best-effort writes should catch this at the call site.
     """
+    if mode < 0 or (mode & ~0o777) or (mode & 0o022):
+        raise ValueError(f"refusing overly permissive file mode {oct(mode)}")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path_for(path)
     # Only clean up a staging file that this writer created.
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    # Always create the staging file owner-only, then apply a validated
+    # non-writable mode before rename so no permissive window exists.
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
+        if mode != 0o600:
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, mode)
+            else:
+                os.chmod(str(tmp), mode)
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
             fh.flush()

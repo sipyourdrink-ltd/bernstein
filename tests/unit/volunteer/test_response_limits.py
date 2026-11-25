@@ -55,6 +55,11 @@ def test_response_limit(monkeypatch: pytest.MonkeyPatch, endpoint: str, length: 
         return response
 
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    monkeypatch.setattr(
+        "bernstein.core.volunteer.runner.ensure_public_http_url",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr("urllib.request.build_opener", lambda *_args: SimpleNamespace(open=urlopen))
     if endpoint == "review":
         bundle: Any = SimpleNamespace(
             task=SimpleNamespace(issue_number=1, commit_sha="abc", repo="owner/repo"),

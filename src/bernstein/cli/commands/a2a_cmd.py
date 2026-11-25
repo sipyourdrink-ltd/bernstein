@@ -377,7 +377,8 @@ def _reissue_expired_card(card: SignedCapabilityCard, card_path: Path) -> Signed
             "restore the key the card was issued with, or mint a new card with "
             "'bernstein interop a2a card' and re-trust the new fingerprint"
         )
-    write_atomic_text(card_path, signed.to_json(), mode=card_path.stat().st_mode & 0o777)
+    # Preserve read bits on the public capability card, never execute/write/special bits.
+    write_atomic_text(card_path, signed.to_json(), mode=card_path.stat().st_mode & 0o644)
     return signed
 
 
