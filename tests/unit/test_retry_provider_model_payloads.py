@@ -315,3 +315,19 @@ def test_dropped_tier_label_reaches_the_same_adapter_default_as_the_first_attemp
     assert [model for model, _effort in resolved] == ["openai/configured-default"] * 2
     assert resolved[1] == ("openai/configured-default", "high")
     adapter.spawn.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["tick", "reap"])
+def test_provider_alias_anthropic_resolves_as_claude_compatible(path: str) -> None:
+    """role_model_policy.<role>.provider='anthropic' is an alias for claude, so
+    unpinned Claude tiers still advance along the Claude ladder (#6605)."""
+    body = _post_retry(
+        path,
+        model="sonnet",
+        effort="medium",
+        role_provider="anthropic",
+        adapter="codex",
+        scenario="large",
+    )
+    assert body["model"] == "opus"
+    assert body["effort"] == "max"

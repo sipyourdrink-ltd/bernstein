@@ -470,9 +470,11 @@ def _retry_adapter_is_claude_compatible(
     entry = role_model_policy.get(role) if isinstance(role_model_policy, dict) else None
     adapter_for_role = (entry.get("provider") if isinstance(entry, dict) else None) or default_adapter_name
     if isinstance(adapter_for_role, str) and adapter_for_role:
+        from bernstein.adapters.registry import adapter_name_for_provider
         from bernstein.core.bandit_router import BanditRouter
 
-        return BanditRouter.router_applicable(adapter_for_role)
+        resolved = adapter_name_for_provider(adapter_for_role, "") or adapter_for_role
+        return BanditRouter.router_applicable(resolved)
     return True
 
 
