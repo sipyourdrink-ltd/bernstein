@@ -18,6 +18,7 @@ from bernstein.cli.helpers import (
     print_banner,
 )
 from bernstein.cli.run_confirm import (
+    _config_cli_value,
     _demo_exit_code,
     _DemoOutcome,
     _fetch_demo_outcome,
@@ -149,7 +150,7 @@ def _setup_quickstart_project(project_dir: Path, adapter: str) -> None:
         "max_workers: 2\n"
         "default_model: sonnet\n"
         "default_effort: normal\n"
-        f"cli: {adapter}\n"
+        f"cli: {_config_cli_value(adapter)}\n"
     )
     (project_dir / ".sdd" / "runtime" / ".gitignore").write_text("*.pid\n*.log\ntasks.jsonl\n")
 

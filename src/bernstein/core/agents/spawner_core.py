@@ -4687,17 +4687,20 @@ class AgentSpawner:
 
         self._notify_cost_anomaly_spawn(tasks, model_config)
         provider_for_rate_limit = provider_name or self._adapter.name()
-        try:
-            self._spawn_rate_limiter.acquire(provider_for_rate_limit)
-        except SpawnRateLimitExceeded as exc:
-            logger.warning(
-                "Spawn rate limit exceeded for provider '%s' -- retry in %.1fs",
-                exc.provider,
-                exc.retry_after_s,
-            )
-            raise SpawnError(
-                f"Spawn rate limit exceeded for provider '{exc.provider}'. Retry after {exc.retry_after_s:.1f}s."
-            ) from exc
+        # Local mock runs simulate orchestration without calling external APIs;
+        # cloud burst rate limits should not throttle local mock tasks.
+        if provider_for_rate_limit != "mock" and self._adapter.name() != "mock":
+            try:
+                self._spawn_rate_limiter.acquire(provider_for_rate_limit)
+            except SpawnRateLimitExceeded as exc:
+                logger.warning(
+                    "Spawn rate limit exceeded for provider '%s' -- retry in %.1fs",
+                    exc.provider,
+                    exc.retry_after_s,
+                )
+                raise SpawnError(
+                    f"Spawn rate limit exceeded for provider '{exc.provider}'. Retry after {exc.retry_after_s:.1f}s."
+                ) from exc
 
         # Check catalog for a specialist agent before building from templates
         role = tasks[0].role

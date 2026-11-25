@@ -416,7 +416,8 @@ graph_trace_ingest = "bernstein.adapters.graph_trace_ingest:GraphTraceIngestPlug
 # redirect map / import chain points to files stripped from the wheel.
 exclude = [
     ".sdd/",
-    "tests/",
+    # Anchor top-level tests/ so templates/demo/tests/ survives into sdist and wheel.
+    "/tests/",
     "scripts/",
     "docs/",
     ".github/",

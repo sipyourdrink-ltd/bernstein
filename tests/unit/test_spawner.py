@@ -847,6 +847,26 @@ class TestSpawnerWithRouter:
 
         assert adapter.spawn.call_count == 1
 
+    def test_spawn_rate_limiter_skips_mock_adapter(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=321)
+        adapter.name.return_value = "mock"
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=60.0))
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            spawn_rate_limiter=limiter,
+            default_model="mock-model",
+        )
+
+        spawner.spawn_for_tasks([make_task()])
+        spawner.spawn_for_tasks([make_task(id="task-002")])
+
+        assert adapter.spawn.call_count == 2
+
 
 # --- Non-Claude adapter model coercion guard (issue: MiniMax-M3 child tasks) ---
 #

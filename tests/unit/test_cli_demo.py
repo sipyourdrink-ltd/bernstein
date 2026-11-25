@@ -883,3 +883,35 @@ def test_demo_and_quickstart_seeds_declare_quality_gates_for_trace_export(tmp_pa
         assert qs_seed.quality_gates is not None
         assert qs_seed.quality_gates.enabled is False
         assert qs_seed.quality_gates.to_dict()["enabled"] is False
+
+
+def test_pyproject_exclude_anchors_root_tests_so_demo_tests_ship() -> None:
+    """Global hatch exclude must anchor ``/tests/`` so ``templates/demo/tests/`` is kept."""
+    import tomllib
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    exclude = data["tool"]["hatch"]["build"]["exclude"]
+    assert "tests/" not in exclude, "unrooted 'tests/' strips templates/demo/tests/ from sdist and wheel"
+    assert "/tests/" in exclude
+
+
+def test_setup_demo_project_mock_writes_schema_valid_config_layer(tmp_path) -> None:
+    """``setup_demo_project(..., 'mock')`` must not fail project layer schema validation."""
+    from bernstein.core.config.home import BernsteinHome, resolve_config
+
+    setup_demo_project(tmp_path, "mock")
+    home = BernsteinHome(tmp_path / "home")
+    resolved = resolve_config("cli", home=home, project_dir=tmp_path, validate_layers=True)
+    assert resolved["value"] == "auto"
+
+
+def test_demo_summary_partial_failure_avoids_green_success_and_dead_audit_hint(tmp_path) -> None:
+    """Partial failures report unresolved count honestly and avoid dead audit hints."""
+    outcome = run_confirm._DemoOutcome(done=3, failed=1, total=4, cost_usd=0.0)
+    out = _render_summary(outcome, tmp_path)
+    assert "Fixed 3 of 4 bugs" in out
+    assert "1 unresolved" in out
+    assert "Every agent decision was logged" not in out
+    assert "BERNSTEIN_AUDIT=1" in out

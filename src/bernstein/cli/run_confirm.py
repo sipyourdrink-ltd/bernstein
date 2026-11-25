@@ -346,6 +346,19 @@ def detect_available_adapter() -> str | None:
     return None
 
 
+def _config_cli_value(adapter: str) -> str:
+    """Return a schema-valid ``cli:`` layer value for ``.sdd/config.yaml``.
+
+    Non-selectable stub adapters such as ``mock`` are pinned directly through
+    ``bootstrap_from_goal(..., cli="mock")`` at runtime, whereas writing
+    ``cli: mock`` into ``.sdd/config.yaml`` triggers ``LayerValidationError``
+    whenever config layers are resolved.
+    """
+    from bernstein.core.config.seed_parser import valid_cli_selections
+
+    return adapter if adapter in valid_cli_selections() else "auto"
+
+
 def setup_demo_project(project_dir: Path, adapter: str) -> None:
     """Copy demo template files, seed the backlog, and init a git repo.
 
@@ -451,7 +464,7 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
         "max_workers: 2\n"
         "default_model: sonnet\n"
         "default_effort: normal\n"
-        f"cli: {adapter}\n"
+        f"cli: {_config_cli_value(adapter)}\n"
     )
     (project_dir / ".sdd" / "runtime" / ".gitignore").write_text("*.pid\n*.log\ntasks.jsonl\n")
 
@@ -647,10 +660,12 @@ def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed
     ruler = "\u2500" * 42
     console.print(f"\n[bold cyan]\u2500\u2500 Demo Summary {ruler}[/bold cyan]")
 
+    all_done = total > 0 and done >= total and failed == 0
+    bugs_style = "green" if all_done else "yellow"
     table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA, show_lines=False)
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
-    table.add_row("Bugs fixed", f"[green]{done}[/green] / {total}")
+    table.add_row("Bugs fixed", f"[{bugs_style}]{done}[/{bugs_style}] / {total}")
     if failed:
         table.add_row("Tasks failed", f"[red]{failed}[/red]")
     if outcome is not None and not outcome.server_reachable:
@@ -663,11 +678,26 @@ def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed
     table.add_row("API cost", f"${total_cost:.4f}")
     console.print(table)
 
-    # Governance story
-    console.print(
-        "\n[dim]Every agent decision was logged. "
-        "Run [bold]bernstein audit verify --merkle-only[/bold] to inspect the audit trail.[/dim]"
-    )
+    # Governance story: direct `audit verify --merkle-only` only applies when a
+    # Merkle seal exists on disk; otherwise explain how to capture and seal one.
+    audit_dir = project_dir / ".sdd" / "audit"
+    merkle_dir = audit_dir / "merkle"
+    if merkle_dir.is_dir() and any(merkle_dir.iterdir()):
+        console.print(
+            "\n[dim]Every agent decision was logged. "
+            "Run [bold]bernstein audit verify --merkle-only[/bold] to inspect the audit trail.[/dim]"
+        )
+    elif audit_dir.is_dir():
+        console.print(
+            "\n[dim]Audit events were logged. "
+            "Run [bold]bernstein audit seal && bernstein audit verify --merkle-only[/bold] "
+            "to seal and inspect the audit trail.[/dim]"
+        )
+    else:
+        console.print(
+            "\n[dim]Set [bold]BERNSTEIN_AUDIT=1[/bold] on a run to record an HMAC+Merkle audit trail "
+            "([bold]bernstein audit seal && bernstein audit verify --merkle-only[/bold]).[/dim]"
+        )
 
     run_id = _latest_run_id_with_journal(project_dir)
     if run_id is not None:
@@ -682,7 +712,13 @@ def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed
         )
 
     # Primary CTA
-    console.print(f"\n[bold green]Fixed {done} bug{'s' if done != 1 else ''} in {elapsed_str}.[/bold green]")
+    if all_done:
+        console.print(f"\n[bold green]Fixed {done} bug{'s' if done != 1 else ''} in {elapsed_str}.[/bold green]")
+    else:
+        console.print(
+            f"\n[bold yellow]Fixed {done} of {total} bug{'s' if total != 1 else ''} "
+            f"in {elapsed_str} ({failed} unresolved).[/bold yellow]"
+        )
     console.print("Run [bold cyan]bernstein run[/bold cyan] in your own project to get started.\n")
 
     console.print(f"[dim]Project left at:[/dim] {project_dir}", soft_wrap=True)
