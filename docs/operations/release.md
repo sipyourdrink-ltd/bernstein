@@ -55,7 +55,7 @@ deployment as failed.
 
 ## Release Milestones
 
-Bernstein uses GitHub milestones to plan minor and major releases. Patch releases do not get milestones; they ship from `main` as the `auto-release.yml` workflow determines they have meaningful changes.
+Public GitHub milestones list the public issues targeted at a minor or major release; the maintainer's own plans are kept privately (see GOVERNANCE.md). Patch releases do not get milestones; they ship from `main` as the `auto-release.yml` workflow determines they have meaningful changes.
 
 Only open, version-numbered milestones are listed below -- a shipped version drops off this table rather than being marked done, and non-version tracking milestones (e.g. epics like "Volunteer workers") are out of scope since they don't follow this release cadence. Re-derive the rows from `gh api repos/sipyourdrink-ltd/bernstein/milestones` when this goes stale; don't hand-edit target dates.
 
