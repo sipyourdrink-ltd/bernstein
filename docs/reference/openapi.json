@@ -23975,6 +23975,17 @@
             ],
             "title": "Claimed By Session"
           },
+          "repo_root_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Root Commit"
+          },
           "retry_count": {
             "type": "integer",
             "title": "Retry Count",

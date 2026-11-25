@@ -556,6 +556,34 @@ def _fetch_remote_agent_branch(
         logger.warning("fetch_remote_agent_branch: %s: %s", for_log(agent_branch), type(exc).__name__)
 
 
+def _repo_root_commit(request: Request) -> str | None:
+    """Return the central workspace's repository identity (its root commit).
+
+    Stamped on claim responses (``GET /tasks/next/{role}``) so a worker node
+    can refuse a claim addressed to a repository its workspace does not hold
+    (#6538). Computed once and cached on ``app.state``: the root of the
+    central's history cannot change under a running server. A repository with
+    several roots (merged unrelated histories) yields the sorted-first, the
+    same rule the worker applies, so both sides agree.
+
+    Returns ``None`` when the central workspace has no resolvable git
+    history; the worker treats a missing identity as "not advertised" and
+    skips the check.
+    """
+    state = request.app.state
+    if not hasattr(state, "repo_root_commit"):
+        from bernstein.core.git.git_basic import run_git
+
+        identity: str | None = None
+        with suppress(Exception):
+            result = run_git(["rev-list", "--max-parents=0", "HEAD"], _get_workdir(request))
+            if result.ok:
+                roots = sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+                identity = roots[0] if roots else None
+        state.repo_root_commit = identity
+    return state.repo_root_commit  # type: ignore[no-any-return]
+
+
 def _run_auto_commit_pre_complete(
     request: Request,
     task: Task,
@@ -1448,7 +1476,12 @@ async def next_task(
         )
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     _record_claim_receipt(request, task, "next")
-    return task_to_response(task)
+    response = task_to_response(task)
+    # Remote execution (#6538): stamp the run's repository identity so the
+    # claiming worker can refuse the task when its own workspace is a
+    # checkout of a different repository.
+    response.repo_root_commit = _repo_root_commit(request)
+    return response
 
 
 @router.post("/tasks/claim-batch", responses={503: {"description": "Server is draining"}})

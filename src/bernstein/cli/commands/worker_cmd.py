@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import socket
 import time
@@ -36,6 +37,9 @@ from bernstein.core.capacity_wake import CapacityWake, WakeReason
 from bernstein.core.poll_config import PollConfig, validate_poll_config
 
 logger = logging.getLogger(__name__)
+
+#: Shape of a commit id a claim may pin as ``base_sha`` (SHA-1 or SHA-256).
+_CLAIM_SHA_RE = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
 
 
 def _detect_worker_adapter() -> str:
@@ -151,6 +155,15 @@ class WorkerLoop:
         # CLAIMED forever. ``delivery`` is an optional (branch, sha) tuple
         # for remote agent work that was pushed to the shared remote (#6538).
         self._pending_reports: list[tuple[str, bool, str, tuple[str, str] | None]] = []
+        # Repository identity of the workspace (its root commit), resolved
+        # lazily and cached: the claim response carries the central's identity
+        # as ``repo_root_commit`` and a mismatch refuses the claim (#6538).
+        self._repo_identity: str | None = None
+        self._repo_identity_resolved = False
+        # Latched on a repository mismatch: every later claim from this
+        # central would mismatch the same way, so the claim loop stops
+        # instead of bouncing tasks back to the pool every poll cycle.
+        self._repo_mismatch_refusal: str | None = None
         self._wake = CapacityWake()
 
     def _headers(self) -> dict[str, str]:
@@ -200,6 +213,150 @@ class WorkerLoop:
                 "'git worktree add' branches from HEAD, so the workspace repo needs at least "
                 "one commit before the worker can spawn agents."
             )
+        return None
+
+    def _workspace_repo_identity(self) -> str | None:
+        """Return this workspace's repository identity: its root commit.
+
+        Two clones of the same repository share their root commit; two
+        unrelated repositories never do, which makes it the identity the
+        claim response carries as ``repo_root_commit`` (#6538). A repository
+        with several roots (merged unrelated histories) yields the
+        sorted-first so every clone computes the same value. The result is
+        cached: a workspace's history root cannot change under a running
+        worker.
+
+        Returns:
+            The root commit SHA, or ``None`` when no commit is resolvable.
+        """
+        if self._repo_identity_resolved:
+            return self._repo_identity
+        import subprocess
+
+        from bernstein.core.git.git_basic import run_git
+
+        identity: str | None = None
+        try:
+            result = run_git(["rev-list", "--max-parents=0", "HEAD"], self._workdir)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("Could not compute workspace repository identity: %s", exc)
+        else:
+            if result.ok:
+                roots = sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+                identity = roots[0] if roots else None
+        self._repo_identity = identity
+        self._repo_identity_resolved = True
+        return identity
+
+    def _check_claim_repository(self, task: dict) -> str | None:
+        """Refuse a claim addressed to a repository this workspace does not hold.
+
+        The central stamps the run's repository identity (its root commit) on
+        the claim response as ``repo_root_commit`` (#6538). A claim carrying a
+        different identity means this node's workspace is a checkout of the
+        wrong repository: an agent would run against the wrong code and its
+        branch could never merge, so the claim is refused before any spawn.
+        Claims with no identity (an older central) are not checked.
+
+        Returns:
+            An operator-facing refusal reason, or ``None`` when the claim may
+            proceed. A mismatch also latches ``_repo_mismatch_refusal`` so the
+            claim loop stops: the mismatch is a property of the workspace, not
+            of one task, and every later claim would fail the same way.
+        """
+        expected = task.get("repo_root_commit")
+        if not expected or not isinstance(expected, str):
+            return None
+        actual = self._workspace_repo_identity()
+        if actual is None:
+            return "cannot compute this workspace's repository identity (no resolvable root commit)"
+        if actual == expected:
+            return None
+        refusal = (
+            f"repository mismatch: the run is on repository {expected[:12]}... but this "
+            f"worker's workspace is {actual[:12]}...; mount a checkout of the run's "
+            "repository and restart the worker"
+        )
+        self._repo_mismatch_refusal = refusal
+        return refusal
+
+    def _sync_task_base(self, task: dict) -> str | None:
+        """Fetch the run branch and fast-forward the workspace to its head.
+
+        Every task runs in a worktree branched from the workspace HEAD, so a
+        workspace left at its clone-time commit bases every task on stale
+        code (#6538). Before a claimed task spawns, the worker fetches the
+        run branch from its configured ``origin`` remote -- never a URL taken
+        from the claim -- and fast-forwards the workspace checkout to the
+        fetched head; the spawner's ``git worktree add`` then branches from
+        exactly that commit.
+
+        The claim may carry ``base_ref`` / ``base_sha`` (#6538): ``base_ref``
+        names the run branch to fetch (default: the workspace's checked-out
+        branch) and ``base_sha`` pins a commit that must be reachable from
+        the fetched head, so a claim issued against history this remote does
+        not have is refused rather than run on a guess.
+
+        Returns:
+            An operator-facing refusal reason, or ``None`` when the workspace
+            now sits on the fetched run-branch head and the task may spawn.
+            Refusing releases the claim so a correctly-configured node (or a
+            later, healed cycle) can take the task instead of it running on a
+            stale base.
+        """
+        import subprocess
+
+        from bernstein.core.git.git_basic import run_git
+
+        workdir = self._workdir
+        try:
+            current = run_git(["symbolic-ref", "--short", "HEAD"], workdir)
+            current_branch = current.stdout.strip() if current.ok else None
+
+            base_ref = task.get("base_ref")
+            if base_ref is not None and not isinstance(base_ref, str):
+                return "claim carries a malformed base_ref"
+            if base_ref is None:
+                base_ref = current_branch
+            if not base_ref:
+                return (
+                    "cannot determine the run branch to fetch: the workspace HEAD is "
+                    "detached and the claim carries no base_ref"
+                )
+            if base_ref.startswith("-") or not run_git(["check-ref-format", "--branch", base_ref], workdir).ok:
+                return f"claim carries an invalid base_ref {base_ref!r}"
+            if current_branch != base_ref:
+                return (
+                    f"claim base ref {base_ref!r} does not match the workspace branch "
+                    f"{current_branch or '(detached)'}; check out the run branch before starting the worker"
+                )
+
+            fetch = run_git(["fetch", "origin", base_ref], workdir, timeout=60)
+            if not fetch.ok:
+                return f"could not fetch run branch {base_ref!r} from origin: {fetch.stderr.strip()}"
+            head = run_git(["rev-parse", "FETCH_HEAD"], workdir)
+            if not head.ok:
+                return f"could not resolve the fetched head of {base_ref!r}: {head.stderr.strip()}"
+            fetched_sha = head.stdout.strip()
+
+            base_sha = task.get("base_sha")
+            if base_sha is not None:
+                if not isinstance(base_sha, str) or not _CLAIM_SHA_RE.fullmatch(base_sha):
+                    return "claim carries a malformed base_sha"
+                ancestor = run_git(["merge-base", "--is-ancestor", base_sha, fetched_sha], workdir)
+                if not ancestor.ok:
+                    return (
+                        f"claimed base {base_sha[:12]}... is not reachable from the fetched "
+                        f"{base_ref!r} head {fetched_sha[:12]}...; refusing to branch from an unverified base"
+                    )
+
+            ff = run_git(["merge", "--ff-only", fetched_sha], workdir, timeout=60)
+            if not ff.ok:
+                detail = ff.stderr.strip() or ff.stdout.strip()
+                return f"could not fast-forward the workspace to the fetched {base_ref!r} head: {detail}"
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return f"base sync failed: {exc}"
+        logger.info("Workspace synced to %s head %s", base_ref, fetched_sha[:12])
         return None
 
     @staticmethod
@@ -710,14 +867,37 @@ class WorkerLoop:
         return new_id, time.monotonic()
 
     def _claim_available_tasks(self, client: httpx.Client, node_id: str | None = None) -> None:
-        """Claim tasks for each role while slots remain."""
+        """Claim tasks for each role while slots remain.
+
+        A claimed task spawns only after the repository-identity check and
+        the run-branch base sync both pass (#6538); a refusal releases the
+        claim back to the pool instead of running the task on the wrong
+        repository or a stale base.
+        """
         for role in self._roles:
+            if self._repo_mismatch_refusal is not None:
+                # Latched by _check_claim_repository: every claim from this
+                # central addresses a repository this workspace does not
+                # hold, so stop claiming instead of bouncing tasks (#6538).
+                return
             if self.available_slots <= 0:
                 return
             task = self._claim_task(client, role, node_id)
             if task is None:
                 continue
             task_id = task.get("id", "unknown")
+            # Never run a task whose repository or base cannot be verified:
+            # release the claim so a correctly-configured node takes it
+            # instead of the task completing on work that cannot merge
+            # (#6538).
+            refusal = self._check_claim_repository(task)
+            if refusal is None:
+                refusal = self._sync_task_base(task)
+            if refusal is not None:
+                self._release_task(client, task_id, refusal)
+                style = "red" if self._repo_mismatch_refusal is not None else "yellow"
+                console.print(f"  [{style}]Refused[/{style}] {task_id}: {refusal}")
+                continue
             pid = self._spawn_agent(task)
             if pid is not None:
                 self._active_tasks[task_id] = pid
