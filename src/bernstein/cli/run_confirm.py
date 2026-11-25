@@ -682,10 +682,19 @@ def _latest_run_id_with_journal(project_dir: Path) -> str | None:
     Prefers top-level orchestration runs over per-task ``task-*`` directories so
     offline receipt verification binds the full run journal.
     """
+    from bernstein.core.replay.journal import contained_run_journal
+
     runs_dir = project_dir / ".sdd" / "runs"
     if not runs_dir.is_dir():
         return None
-    candidates = sorted(p.name for p in runs_dir.iterdir() if p.is_dir() and (p / "journal.jsonl").is_file())
+    candidates: list[str] = []
+    for entry in runs_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        journal = contained_run_journal(runs_dir, entry.name)
+        if journal is not None and journal.is_file():
+            candidates.append(entry.name)
+    candidates.sort()
     if not candidates:
         return None
     run_level = [name for name in candidates if not name.startswith("task-")]
