@@ -679,15 +679,17 @@ def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed
     console.print(table)
 
     # Governance story: direct `audit verify --merkle-only` only applies when a
-    # Merkle seal exists on disk; otherwise explain how to capture and seal one.
+    # Merkle seal and audit records exist on disk; `SDD_DIRS` creates an empty
+    # `.sdd/audit/` directory even when auditing is disabled.
     audit_dir = project_dir / ".sdd" / "audit"
     merkle_dir = audit_dir / "merkle"
-    if merkle_dir.is_dir() and any(merkle_dir.iterdir()):
+    has_audit_events = audit_dir.is_dir() and any(audit_dir.glob("*.jsonl"))
+    if has_audit_events and merkle_dir.is_dir() and any(merkle_dir.iterdir()):
         console.print(
             "\n[dim]Every agent decision was logged. "
             "Run [bold]bernstein audit verify --merkle-only[/bold] to inspect the audit trail.[/dim]"
         )
-    elif audit_dir.is_dir():
+    elif has_audit_events:
         console.print(
             "\n[dim]Audit events were logged. "
             "Run [bold]bernstein audit seal && bernstein audit verify --merkle-only[/bold] "

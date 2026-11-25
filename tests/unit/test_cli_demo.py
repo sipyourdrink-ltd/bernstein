@@ -915,3 +915,18 @@ def test_demo_summary_partial_failure_avoids_green_success_and_dead_audit_hint(t
     assert "1 unresolved" in out
     assert "Every agent decision was logged" not in out
     assert "BERNSTEIN_AUDIT=1" in out
+
+
+def test_demo_summary_checks_for_audit_jsonl_files_before_claiming_logged(tmp_path) -> None:
+    """Empty `.sdd/audit/` from `SDD_DIRS` must not trigger 'Audit events were logged'."""
+    setup_demo_project(tmp_path, "mock")
+    outcome = run_confirm._DemoOutcome(done=4, failed=0, total=4, cost_usd=0.0)
+    empty_out = _render_summary(outcome, tmp_path)
+    assert "Audit events were logged" not in empty_out
+    assert "Every agent decision was logged" not in empty_out
+    assert "BERNSTEIN_AUDIT=1" in empty_out
+
+    (tmp_path / ".sdd" / "audit" / "2026-11-25.jsonl").write_text('{"event": "test"}\n', encoding="utf-8")
+    logged_out = _render_summary(outcome, tmp_path)
+    assert "Audit events were logged" in logged_out
+    assert "bernstein audit seal && bernstein audit verify --merkle-only" in logged_out
