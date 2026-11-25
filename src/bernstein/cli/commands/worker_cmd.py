@@ -237,6 +237,17 @@ class WorkerLoop:
 
         identity: str | None = None
         try:
+            shallow = run_git(["rev-parse", "--is-shallow-repository"], self._workdir)
+            if shallow.ok and shallow.stdout.strip().lower() == "true":
+                unshallow = run_git(["fetch", "--unshallow"], self._workdir, timeout=60)
+                recheck = run_git(["rev-parse", "--is-shallow-repository"], self._workdir)
+                if not unshallow.ok or (recheck.ok and recheck.stdout.strip().lower() == "true"):
+                    logger.warning(
+                        "Workspace is a shallow clone and could not be deepened; "
+                        "refusing to treat shallow boundary as repository root: %s",
+                        unshallow.stderr.strip(),
+                    )
+                    return None
             result = run_git(["rev-list", "--max-parents=0", "HEAD"], self._workdir)
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning("Could not compute workspace repository identity: %s", exc)
@@ -354,6 +365,15 @@ class WorkerLoop:
             if not ff.ok:
                 detail = ff.stderr.strip() or ff.stdout.strip()
                 return f"could not fast-forward the workspace to the fetched {base_ref!r} head: {detail}"
+            after = run_git(["rev-parse", "HEAD"], workdir)
+            if not after.ok:
+                return f"could not verify workspace HEAD after syncing {base_ref!r}: {after.stderr.strip()}"
+            local_sha = after.stdout.strip()
+            if local_sha != fetched_sha:
+                return (
+                    f"workspace HEAD {local_sha[:12]}... is ahead of fetched {base_ref!r} "
+                    f"head {fetched_sha[:12]}...; refusing to branch from unaccepted local commits"
+                )
         except (subprocess.TimeoutExpired, OSError) as exc:
             return f"base sync failed: {exc}"
         logger.info("Workspace synced to %s head %s", base_ref, fetched_sha[:12])

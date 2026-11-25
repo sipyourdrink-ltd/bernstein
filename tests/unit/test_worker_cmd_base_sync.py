@@ -243,3 +243,42 @@ class TestClaimRepositoryIdentity:
 
         spawn.assert_called_once()
         assert loop._active_tasks["task-legacy"] == 4242
+
+    def test_workspace_ahead_of_fetched_base_is_refused(self, cluster_repos: tuple[Path, Path]) -> None:
+        """Unpushed local commits ahead of origin must be refused even when --ff-only says up to date."""
+        _central, worker = cluster_repos
+        (worker / "local_only.txt").write_text("unpushed\n", encoding="utf-8")
+        _git(worker, "add", "local_only.txt")
+        _git(worker, "commit", "-q", "-m", "unpushed local commit")
+        loop = _make_loop(worker)
+
+        refusal = loop._sync_task_base({"id": "task-ahead", "title": "t", "role": "backend"})
+
+        assert refusal is not None
+        assert "ahead of fetched" in refusal
+
+    def test_shallow_clone_deepens_and_matches_central_identity(
+        self, cluster_repos: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        """A depth-1 worker clone unshallows before computing repo identity rather than latching a mismatch."""
+        central, _worker = cluster_repos
+        (central / "extra.txt").write_text("second commit\n", encoding="utf-8")
+        _git(central, "add", "extra.txt")
+        _git(central, "commit", "-q", "-m", "second commit")
+        central_root = _root_commit(central)
+
+        shallow_worker = tmp_path / "shallow-worker"
+        subprocess.run(
+            ("git", "clone", "-q", "--depth", "1", f"file://{central}", str(shallow_worker)),
+            check=True,
+        )
+        assert _git(shallow_worker, "rev-parse", "--is-shallow-repository") == "true"
+
+        loop = _make_loop(shallow_worker)
+        refusal = loop._check_claim_repository(
+            {"id": "task-shallow", "title": "t", "role": "backend", "repo_root_commit": central_root}
+        )
+
+        assert refusal is None
+        assert loop._repo_mismatch_refusal is None
+        assert _git(shallow_worker, "rev-parse", "--is-shallow-repository") == "false"
