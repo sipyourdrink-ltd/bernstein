@@ -248,3 +248,22 @@ async def test_post_slo_reset_returns_200(client) -> None:
     resp = await client.post("/slo/reset")
     assert resp.status_code == 200
     assert resp.json()["status"] == "reset"
+
+
+def test_depleted_budget_at_target_rate_has_zero_tasks_left() -> None:
+    """A depleted budget reports zero tasks left, also at a burn rate of exactly 1.0 (#8026)."""
+    budget = ErrorBudget(total_tasks=12, failed_tasks=3, slo_target=0.75)
+    assert budget.is_depleted is True
+    assert budget.burn_rate == 1.0
+    assert budget.time_to_exhaustion_tasks == 0
+
+    # An empty history has nothing to project.
+    empty = ErrorBudget(total_tasks=0, failed_tasks=0, slo_target=0.75)
+    assert empty.is_depleted is False
+    assert empty.time_to_exhaustion_tasks is None
+
+    # Budget left at a sustainable rate never runs out.
+    sustainable = ErrorBudget(total_tasks=100, failed_tasks=5, slo_target=0.75)
+    assert sustainable.is_depleted is False
+    assert sustainable.burn_rate < 1.0
+    assert sustainable.time_to_exhaustion_tasks is None
