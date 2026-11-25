@@ -421,6 +421,12 @@ class TaskResponse(BaseModel):
     # Claim owner: the session or cluster worker node id that claimed the task,
     # so a cluster view can place in-flight tasks under the node running them.
     claimed_by_session: str | None = None
+    # Remote execution (#6538): claim responses (GET /tasks/next/{role}) stamp
+    # the central's repository identity - its root commit - so a worker node
+    # can refuse a claim addressed to a repository its workspace does not
+    # hold. None everywhere else, and on claims from a central whose
+    # workspace has no resolvable git history.
+    repo_root_commit: str | None = None
     # Retry bookkeeping: typed fields are the single source of truth.
     retry_count: int = 0
     max_retries: int = 3
