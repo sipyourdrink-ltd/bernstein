@@ -706,6 +706,10 @@ def _get_required_permission(path: str, method: str) -> str | None:
     if path == "/claim-admission" or path.startswith("/claim-admission/"):
         return _PERM_ADMIN_MANAGE
 
+    # Recorded decisions have no tenant ownership and the ledger spans the installation.
+    if path == "/governance/decisions" or path.startswith("/governance/decisions/"):
+        return _PERM_ADMIN_MANAGE
+
     # Check specific path patterns first (before prefix matching)
     if "/kill" in path:
         return "agents:read" if method in _READ_METHODS else "agents:kill"
