@@ -25,8 +25,8 @@ def main() -> None:
         linked = Path(directory) / "linked"
         repo.mkdir()
         git(repo, "init", "--quiet")
-        git(repo, "config", "--local", "user.name", "Snapshot demo")
-        git(repo, "config", "--local", "user.email", "demo@example.invalid")
+        git(repo, "config", "--local", "user.name", "github-actions[bot]")
+        git(repo, "config", "--local", "user.email", "41898282+github-actions[bot]@users.noreply.github.com")
         git(repo, "config", "--local", "commit.gpgsign", "false")
 
         filename = "note.txt"
