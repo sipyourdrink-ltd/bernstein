@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
@@ -546,11 +547,15 @@ def test_private_github_repository_is_refused_in_volunteer_mode(
         def __exit__(self, *exc_info: object) -> Literal[False]:
             return False
 
-    def mock_urlopen(req: urllib.request.Request, *, timeout: int = 10) -> _FakeResponse:
+    def mock_open(req: urllib.request.Request, *, timeout: int = 10) -> _FakeResponse:
         assert req.full_url.startswith("https://api.github.com/repos/owner/repo")
         return _FakeResponse()
 
-    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    monkeypatch.setattr(
+        "bernstein.core.volunteer.runner.ensure_public_http_url",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=mock_open))
 
     outcome = _run(
         "https://github.com/owner/repo",
@@ -562,6 +567,88 @@ def test_private_github_repository_is_refused_in_volunteer_mode(
     assert outcome.stage == RefusalStage.REPO_URL
     assert outcome.reason == "open_source_preflight_failed"
     assert "private" in outcome.detail.lower()
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "https://github.com/public-org/public-repo/../../other/repo",
+        "https://github.com/owner/repo?private=false",
+        "https://github.com/owner/repo#frag",
+        "https://user:pass@github.com/owner/repo",
+        "https://github.com:443/owner/repo",
+        "https://github.com/owner/..",
+        "https://github.com/owner/repo/extra/segment",
+    ],
+)
+def test_preflight_rejects_malformed_github_urls(bad_url: str) -> None:
+    from bernstein.core.volunteer.runner import _validate_open_source_preflight
+
+    problem = _validate_open_source_preflight(bad_url, "Apache-2.0")
+    assert problem is not None
+    assert "invalid github repository url" in problem.lower()
+
+
+def test_preflight_normalizes_git_suffix_and_uppercase_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import urllib.request
+
+    from bernstein.core.volunteer.runner import _validate_open_source_preflight
+
+    seen_urls: list[str] = []
+
+    class _FakeResp:
+        status = 200
+
+        def __init__(self, body: bytes) -> None:
+            self._buf = io.BytesIO(body)
+
+        def read(self, size: int = -1) -> bytes:
+            return self._buf.read(size)
+
+        def __enter__(self) -> _FakeResp:
+            return self
+
+        def __exit__(self, *exc_info: object) -> Literal[False]:
+            return False
+
+    def mock_open(req: urllib.request.Request, *, timeout: int = 10) -> _FakeResp:
+        seen_urls.append(req.full_url)
+        if req.full_url.endswith("/license"):
+            return _FakeResp(b'{"spdx_id": "MIT"}')
+        return _FakeResp(b'{"private": false}')
+
+    monkeypatch.setattr(
+        "bernstein.core.volunteer.runner.ensure_public_http_url",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=mock_open))
+
+    assert _validate_open_source_preflight("https://GITHUB.COM/Owner/Repo.git/", "MIT") is None
+    assert seen_urls == [
+        "https://api.github.com/repos/Owner/Repo",
+        "https://api.github.com/repos/Owner/Repo/license",
+    ]
+
+
+def test_preflight_fails_closed_when_url_allowlist_rejects_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.request
+
+    from bernstein.core.security.url_allowlist import UrlSchemeError
+    from bernstein.core.volunteer.runner import _validate_open_source_preflight
+
+    def raise_redirect(*_args: object, **_kwargs: object) -> object:
+        raise UrlSchemeError("blocked redirect to loopback")
+
+    monkeypatch.setattr(
+        "bernstein.core.volunteer.runner.ensure_public_http_url",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=raise_redirect))
+
+    problem = _validate_open_source_preflight("https://github.com/owner/repo", "MIT")
+    assert problem is not None
+    assert "UrlSchemeError" in problem
 
 
 # --------------------------------------------------------------------------

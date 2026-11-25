@@ -537,8 +537,8 @@ class ScheduleStore:
         """
         path = self._path_for(schedule.id)
         payload = asdict(schedule)
-        # Keep the schedule file's existing umask-based permissions.
-        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2), mode=0o666)
+        # Keep schedule definitions owner-only (0600) under .sdd/runtime/.
+        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2))
 
 
 def _load_schedule(path: Path) -> Schedule | None:

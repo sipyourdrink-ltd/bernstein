@@ -365,3 +365,51 @@ def test_promote_atomic_swaps_the_directory_entry_and_consumes_the_staged_file(
     assert published.read_text(encoding="utf-8") == "new\n"
     assert published.stat().st_ino != old_ino
     assert not staged.exists()
+
+
+@pytest.mark.parametrize("bad_mode", [0o666, 0o620, 0o602, 0o777, 0o4600, 0o2600, -1])
+def test_atomic_write_refuses_group_world_writable_or_special_modes(tmp_path: Path, bad_mode: int) -> None:
+    target = tmp_path / "runtime" / "secret.json"
+    with pytest.raises(ValueError, match="overly permissive"):
+        write_atomic_bytes(target, b"data", mode=bad_mode)
+    assert not target.exists()
+
+
+def test_atomic_write_accepts_owner_only_and_world_readable_modes(tmp_path: Path) -> None:
+    private_target = tmp_path / "private.json"
+    public_target = tmp_path / "public.json"
+    write_atomic_bytes(private_target, b"{}", mode=0o600)
+    write_atomic_bytes(public_target, b"{}", mode=0o644)
+    if os.name != "nt":
+        assert (private_target.stat().st_mode & 0o777) == 0o600
+        assert (public_target.stat().st_mode & 0o777) == 0o644
+
+
+def test_schedule_store_and_receipts_write_owner_only_files(tmp_path: Path) -> None:
+    from bernstein.core.orchestration.schedule_supervisor import FireReceipt, ScheduleSupervisor
+    from bernstein.core.planning.schedule_store import ScheduleStore
+
+    sdd = tmp_path / ".sdd"
+    store = ScheduleStore(sdd)
+    sched = store.add(cron="0 * * * *", goal="run check")
+    sched_path = sdd / "runtime" / "schedules" / f"{sched.id}.json"
+    assert sched_path.exists()
+    if os.name != "nt":
+        assert (sched_path.stat().st_mode & 0o777) == 0o600
+
+    sup = ScheduleSupervisor(store, dispatch=lambda _ev: None, audit_writer=None)
+    receipt = FireReceipt(
+        schedule_id=sched.id,
+        fire_time=1700000000,
+        projection_hash="proj",
+        rev="1",
+        prev_chain_digest="0",
+        chain_digest="1",
+        misfire_policy="skip",
+        dispatched=True,
+    )
+    sup._persist_receipt(receipt)  # pyright: ignore[reportPrivateUsage]
+    receipt_path = sup._receipts_dir / f"{sched.id}-1700000000-fire.json"  # pyright: ignore[reportPrivateUsage]
+    assert receipt_path.exists()
+    if os.name != "nt":
+        assert (receipt_path.stat().st_mode & 0o777) == 0o600
