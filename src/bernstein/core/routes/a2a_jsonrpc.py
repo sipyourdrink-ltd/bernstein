@@ -34,7 +34,7 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
@@ -54,6 +54,7 @@ from bernstein.core.protocols.a2a.jsonrpc import (
     parse_jsonrpc_request,
 )
 from bernstein.core.protocols.a2a.server_auth import A2AAuthError, A2AServerAuth
+from bernstein.core.security.auth_rate_limiter import check_auth_backoff, check_auth_rate_limit, record_auth_result
 
 if TYPE_CHECKING:
     from bernstein.core.protocols.a2a.a2a import A2AHandler
@@ -145,7 +146,7 @@ def _auth_error_response(exc: A2AAuthError) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post(A2A_TOKEN_PATH, include_in_schema=False)
+@router.post(A2A_TOKEN_PATH, include_in_schema=False, dependencies=[Depends(check_auth_rate_limit)])
 async def a2a_oauth_token(request: Request) -> JSONResponse:
     """Issue an OAuth2 client-credentials access token.
 
@@ -181,7 +182,9 @@ async def a2a_oauth_token(request: Request) -> JSONResponse:
     try:
         token = auth.issue_client_credentials_token(client_id=client_id, client_secret=client_secret)
     except A2AAuthError as exc:
+        record_auth_result(request, success=False)
         return _auth_error_response(exc)
+    record_auth_result(request, success=True)
 
     return JSONResponse(
         status_code=200,
@@ -212,7 +215,7 @@ def _extract_client_credentials(request: Request, form: dict[str, str]) -> tuple
 # ---------------------------------------------------------------------------
 
 
-@router.post(A2A_JSONRPC_PATH, include_in_schema=False)
+@router.post(A2A_JSONRPC_PATH, include_in_schema=False, dependencies=[Depends(check_auth_backoff)])
 async def a2a_jsonrpc(request: Request) -> Any:
     """Dispatch a single A2A JSON-RPC 2.0 request.
 
@@ -227,7 +230,9 @@ async def a2a_jsonrpc(request: Request) -> Any:
     try:
         caller = _get_auth(request).authenticate(dict(request.headers))
     except A2AAuthError as exc:
+        record_auth_result(request, success=False)
         return _auth_error_response(exc)
+    record_auth_result(request, success=True)
 
     # 2. Parse the JSON body into a JSON-RPC request.
     try:
