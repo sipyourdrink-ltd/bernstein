@@ -1,0 +1,55 @@
+# Parallel release readiness checks gating final release sign-off.
+name: release-readiness-gate
+version: "1.0.0"
+
+phases:
+  - name: preflight
+  - name: gate
+    allowed_roles: [manager, security]
+
+nodes:
+  check-changelog-and-docs:
+    phase: preflight
+    role: docs
+    description: "Verify release fragments, version pins, and strict docs build"
+    estimated_minutes: 20
+
+  check-supply-chain-and-cves:
+    phase: preflight
+    role: security
+    description: "Audit locked dependencies, SBOM generation, and signing readiness"
+    estimated_minutes: 25
+
+  wheel-smoke-and-compat:
+    phase: preflight
+    role: qa
+    description: "Install built wheel in a clean environment and run CLI + replay smoke checks"
+    estimated_minutes: 30
+
+  fix-release-blocker:
+    phase: preflight
+    role: ci-fixer
+    description: "Resolve release preflight failures before sign-off"
+    depends_on:
+      - source: check-changelog-and-docs
+        condition: "status == 'failed'"
+      - source: check-supply-chain-and-cves
+        condition: "status == 'failed'"
+      - source: wheel-smoke-and-compat
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 2
+      until: "status == 'done'"
+
+  sign-off-release:
+    phase: gate
+    role: manager
+    description: "Record release readiness receipt and rollback command"
+    estimated_minutes: 15
+    depends_on:
+      - source: check-changelog-and-docs
+        condition: "status == 'done'"
+      - source: check-supply-chain-and-cves
+        condition: "status == 'done'"
+      - source: wheel-smoke-and-compat
+        condition: "status == 'done'"

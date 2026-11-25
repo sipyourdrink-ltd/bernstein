@@ -1,0 +1,32 @@
+name: audit-evidence-pack
+description: "Collect logs, SBOM/provenance, and eval metrics into a verified audit evidence pack."
+version: "1.0.0"
+nodes:
+  - id: scope-controls
+    agent: architect
+    prompt: |
+      Define the control inventory and required evidence artifacts for: {goal}
+      List each control ID, its verification command, and target output path.
+  - id: collect-security-evidence
+    depends_on: [scope-controls]
+    agent: security
+    prompt: |
+      Collect journal integrity verification, dependency audit output, and
+      provenance checks for: {goal}
+    fresh_context: true
+    timeout_seconds: 2400
+  - id: collect-quality-evidence
+    depends_on: [scope-controls]
+    agent: qa
+    prompt: |
+      Run the test and evaluation verification suite required by the control
+      map for: {goal}
+    fresh_context: true
+    timeout_seconds: 2400
+  - id: assemble-and-verify
+    depends_on: [collect-security-evidence, collect-quality-evidence]
+    agent: docs
+    prompt: |
+      Assemble the auditor index and verify every referenced evidence file
+      exists and hashes cleanly for: {goal}
+    timeout_seconds: 1800

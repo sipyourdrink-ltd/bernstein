@@ -1,0 +1,49 @@
+# Built-in team manifest for security reviews, red-team passes, and advisory hardening.
+#
+# Pairs security, adversary, reviewer, and docs so findings are reproduced,
+# challenged, and documented with verifiable evidence.
+
+name = "security-audit"
+version = "1.0.0"
+
+[coordination]
+parallelism = 3
+review_chain = true
+
+[[roles]]
+response_profile = "balanced"
+role = "security"
+
+[roles.model_policy]
+effort = "max"
+model = "opus"
+
+[[roles]]
+response_profile = "balanced"
+role = "adversary"
+
+[roles.model_policy]
+effort = "high"
+model = "opus"
+
+[[roles]]
+response_profile = "terse"
+role = "reviewer"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[[roles]]
+response_profile = "balanced"
+role = "docs"
+
+[roles.model_policy]
+effort = "medium"
+model = "sonnet"
+
+[role_template_digests]
+"adversary" = "d142e910937d9f9232d3c1bf31a3d67ff57329088721e7d782ea932fb7b1a2d6"
+"docs" = "707e0a1ccdd95276139e7d8f6abe72827b2291c490285ba89405bb00d89981b9"
+"reviewer" = "321ccefac121aa79b1a403514d2a3f1c575080708a130ff0b2791ddcdfe55a6c"
+"security" = "0c56312e6096b44050aec3c7046d45b55663660db7592679a729030fe0aca463"

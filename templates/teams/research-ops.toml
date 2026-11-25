@@ -1,0 +1,48 @@
+# Built-in team manifest for non-code deliverables: research, RFPs, and audit packs.
+#
+# Pairs analyst, retrieval, architect, and docs for artifact-contract runs.
+
+name = "research-ops"
+version = "1.0.0"
+
+[coordination]
+parallelism = 4
+review_chain = true
+
+[[roles]]
+response_profile = "balanced"
+role = "analyst"
+
+[roles.model_policy]
+effort = "high"
+model = "opus"
+
+[[roles]]
+response_profile = "terse"
+role = "retrieval"
+
+[roles.model_policy]
+effort = "medium"
+model = "sonnet"
+
+[[roles]]
+response_profile = "balanced"
+role = "architect"
+
+[roles.model_policy]
+effort = "high"
+model = "opus"
+
+[[roles]]
+response_profile = "balanced"
+role = "docs"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[role_template_digests]
+"analyst" = "49cb9f50d635f29cc6b8c7df00d8c3adfe1913e613843b0a01d80c780ba4ae72"
+"architect" = "a584e03f3995da9fd985f7919e6bc0c8b25aa97a2fae91de66366f768518df08"
+"docs" = "707e0a1ccdd95276139e7d8f6abe72827b2291c490285ba89405bb00d89981b9"
+"retrieval" = "44a0ecdb57b7fd9deeacb219f19506a07eff59276a64b6bcfced7510cc33e2ef"
