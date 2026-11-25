@@ -667,8 +667,25 @@ The registry marks a worker `unhealthy:disk`, `unhealthy:memory` or
 `unhealthy:mesh-rtt` when its reported telemetry exceeds the configured
 thresholds. The registry skips unhealthy workers when selecting a node for a
 task or choosing a recipient for task stealing. A `bernstein worker` pull
-waits for recovery before claiming more work. The separate orchestrator path
-for claiming a task by ID is tracked in [#7853](https://github.com/sipyourdrink-ltd/bernstein/issues/7853).
+waits for recovery before claiming more work, and so does a claim for a
+specific task by ID (#7853).
+
+Both claim endpoints find the registered node behind a claim the same way.
+The registry assigns each node an ID at registration, which is not the parent
+orchestrator session a claim records as its owner, so the claim names the
+node explicitly in a `node_id` query parameter; `claimed_by_session` stays
+the recorded owner. A client that sends no `node_id` (older clients, the
+`bernstein worker` loop, which passes its node ID as `claimed_by_session`)
+is matched on `claimed_by_session` instead. The lookup keys on the presented
+identifiers, never on the request URL, so deployments serving the registry
+and the task server under separate URLs resolve the same node. A claimant
+the task server's registry does not know - a single-host run with no
+registration, or a node registered with a separate registry deployment -
+is not gated: the health check can only judge a node the server can see.
+A refused by-ID claim answers `409` and leaves the task open, so the
+orchestrator's bounded claim retry picks it up again once the node reports
+recovery.
+
 Multiple reasons are comma separated. Recovery resets `unhealthy_since`.
 
 Cluster seed keys `min_disk_free_mb` (512), `max_mem_used_pct` (95.0) and
