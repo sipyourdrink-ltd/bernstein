@@ -445,3 +445,43 @@ def test_preview_state_round_trip_through_dict() -> None:
     raw = s.to_dict()
     raw["unknown_extra"] = 1  # Forward-compat: unknown keys must be ignored.
     assert PreviewState.from_dict(raw) == s
+
+
+def test_stop_keeps_state_when_container_cleanup_fails(tmp_path):
+    import subprocess
+    from unittest.mock import patch
+
+    store = PreviewStore(tmp_path / "state.json")
+    name = "bernstein-preview-0123456789abcdef"
+    state = PreviewState(
+        preview_id="prv-retry",
+        command="example",
+        cwd=str(tmp_path),
+        port=3000,
+        sandbox_backend="docker",
+        sandbox_session_id=name,
+        tunnel_provider="cloudflared",
+        tunnel_name="example",
+        public_url="https://example.invalid",
+        share_url="https://example.invalid",
+        auth_mode="none",
+        expires_at_epoch=1,
+        process_pid=0,
+        container_name=name,
+        runtime_path="/local/bin/docker",
+    )
+    store.upsert(state)
+    manager = PreviewManager(store=store, tunnel=_FakeTunnel(), audit_log=_audit_log(tmp_path))
+    with patch(
+        "bernstein.core.preview.manager.subprocess.run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, stderr=b"daemon unavailable"),
+            subprocess.CompletedProcess([], 0, stderr=b""),
+        ],
+    ) as run:
+        with pytest.raises(PreviewError, match="cleanup could not be confirmed"):
+            manager.stop(state.preview_id)
+        assert store.get(state.preview_id) == state
+        assert manager.stop(state.preview_id)
+    assert store.get(state.preview_id) is None
+    assert all(call.args[0] == ["/local/bin/docker", "rm", "--force", name] for call in run.call_args_list)

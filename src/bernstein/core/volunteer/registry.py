@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -104,15 +105,21 @@ class _UrllibTransport:
                 return HTTPResponse(status=resp.status, body=body, etag=etag)
         except urllib.error.HTTPError as exc:
             with exc:
-                body = self._read_body(exc) if exc.fp is not None else b""
+                body = self._read_body(exc.fp) if exc.fp is not None else b""
                 etag = exc.headers.get("ETag") if exc.headers is not None else None
                 return HTTPResponse(status=exc.code, body=body, etag=etag)
 
     @staticmethod
     def _read_body(response: _ReadableResponse) -> bytes:
-        body = response.read(_MAX_REGISTRY_RESPONSE_BYTES + 1)
+        try:
+            body = response.read(_MAX_REGISTRY_RESPONSE_BYTES + 1)
+        except HTTPException as exc:
+            raise OSError("invalid volunteer registry response") from exc
         if len(body) > _MAX_REGISTRY_RESPONSE_BYTES:
             raise OSError(f"volunteer registry response exceeds {_MAX_REGISTRY_RESPONSE_BYTES}-byte limit")
+        remaining = getattr(response, "length", None)
+        if isinstance(remaining, int) and remaining > 0:
+            raise OSError("incomplete volunteer registry response")
         return body
 
 

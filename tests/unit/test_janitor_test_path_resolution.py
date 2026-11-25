@@ -98,7 +98,7 @@ def test_approved_signal_uses_resolved_test_path(tmp_path: Path, monkeypatch, te
     from bernstein.core.sandbox import isolated_process
 
     declared = "tests/unit/core/security/test_policy.py"
-    actual = "tests/unit/test_policy.py"
+    actual = "tests/unit/path with spaces/test_policy.py"
     if test_exists:
         _touch(tmp_path / actual, "def test_denies(): pass\n")
     argv = [sys.executable, "-m", "pytest", declared, "-q", "-p", "no:cacheprovider"]

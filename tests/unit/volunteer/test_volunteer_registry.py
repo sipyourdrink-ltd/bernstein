@@ -629,3 +629,29 @@ def test_transport_response_respects_byte_budget(monkeypatch, status, extra_byte
     else:
         assert transport.get("https://example.invalid", headers={}) == HTTPResponse(status, payload, "test-etag")
     assert body.closed
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_transport_rejects_truncated_http_frame(monkeypatch, status):
+    import io
+    import urllib.error
+    import urllib.request
+    from http.client import HTTPResponse as TransportResponse
+    from types import SimpleNamespace
+
+    from bernstein.core.volunteer import registry
+
+    wire = f"HTTP/1.1 {status} Fixture\r\nContent-Length: 4\r\n\r\n{{}}".encode()
+    response = TransportResponse(type("Socket", (), {"makefile": lambda *args: io.BytesIO(wire)})())
+    response.begin()
+    monkeypatch.setattr(registry, "ensure_public_http_url", lambda *a, **kw: None)
+
+    def open_response(*_args, **_kwargs):
+        if status != 200:
+            raise urllib.error.HTTPError("https://example.invalid", status, "status", response.headers, response)
+        return response
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_response))
+    with pytest.raises(OSError, match="incomplete"):
+        registry._UrllibTransport().get("https://example.invalid", headers={})
+    assert response.closed

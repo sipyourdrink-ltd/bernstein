@@ -219,14 +219,17 @@ def stop_cmd(preview_id: str | None, stop_all: bool) -> None:
     if not stop_all and not preview_id:
         raise click.UsageError("Provide a PREVIEW_ID or use --all.")
     manager = PreviewManager()
-    if stop_all:
-        n = manager.stop_all()
-        console.print(f"[yellow]Stopped {n} preview(s).[/yellow]")
-        return
-    assert preview_id is not None
-    if not manager.stop(preview_id):
-        console.print(f"[red]No preview with id {preview_id!r}.[/red]")
-        raise SystemExit(1)
+    try:
+        if stop_all:
+            n = manager.stop_all()
+            console.print(f"[yellow]Stopped {n} preview(s).[/yellow]")
+            return
+        assert preview_id is not None
+        if not manager.stop(preview_id):
+            console.print(f"[red]No preview with id {preview_id!r}.[/red]")
+            raise SystemExit(1)
+    except PreviewError as exc:
+        raise click.ClickException(str(exc)) from exc
     console.print(f"[yellow]Stopped[/yellow] {preview_id}")
 
 

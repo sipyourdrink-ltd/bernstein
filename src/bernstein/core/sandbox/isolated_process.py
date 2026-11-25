@@ -45,6 +45,8 @@ def run_isolated(
     workdir: str = "/tmp",
 ) -> subprocess.CompletedProcess[bytes]:
     """Run a bounded foreground job with an explicit image and mounts."""
+    if not argv or not argv[0] or argv[0].startswith("-"):
+        raise IsolationUnavailable("invalid isolated executable")
     if not image or image.startswith("-"):
         raise IsolationUnavailable("invalid isolated runtime image")
     runtime = runtime_executable()
@@ -73,7 +75,7 @@ def run_isolated(
     ]
     for mount in mounts:
         command.extend(("--mount", mount))
-    command.extend(("--", image, *argv))
+    command.extend(("--entrypoint", argv[0], "--", image, *argv[1:]))
     try:
         with tempfile.TemporaryFile() as source:
             source.write(input_data)

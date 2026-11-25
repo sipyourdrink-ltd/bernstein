@@ -59,6 +59,21 @@ class TestProgramBenchCLI:
     def test_command_registered(self) -> None:
         assert "programbench" in benchmark_group.commands
 
+    def test_runtime_failure_stops_before_adapter(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.benchmark import programbench
+        from bernstein.core.sandbox.isolated_process import IsolationUnavailable
+
+        def unavailable(*args, **kwargs):
+            raise IsolationUnavailable("test runtime unavailable")
+
+        monkeypatch.setattr(programbench, "run_isolated", unavailable)
+        dataset = _dataset(tmp_path, [{"task_id": "pb-001", "asserts": ["True"]}])
+        with patch.object(ProgramBenchHarness, "_invoke_adapter") as invoke:
+            result = _run_in_tmp(tmp_path, ["programbench", "--adapter", "mock", "--dataset", str(dataset)])
+        assert result.exit_code != 0
+        assert "test runtime unavailable" in result.output
+        invoke.assert_not_called()
+
     def test_runs_against_synthetic_dataset(self, tmp_path: Path) -> None:
         dataset = _dataset(
             tmp_path,

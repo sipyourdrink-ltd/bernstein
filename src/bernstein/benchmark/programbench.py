@@ -437,6 +437,7 @@ def save_results(report: ProgramBenchReport, sdd_dir: Path) -> Path:
 
 
 _SANDBOX_DEFAULT_TIMEOUT_SECONDS = 30
+_SANDBOX_IMAGE = "python:3.13-slim"
 
 
 _SANDBOX_RUNNER = """\
@@ -479,6 +480,16 @@ os.write(result_fd, json.dumps({"passed": passed, "total": len(assert_exprs), "e
 """
 
 
+def verify_benchmark_runtime() -> None:
+    """Check the configured isolation path before paying for candidate runs."""
+    try:
+        result = run_isolated(_SANDBOX_IMAGE, ["python", "-I", "-c", "print('ready')"], input_data=b"", timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        raise IsolationUnavailable("isolated benchmark runtime timed out") from exc
+    if result.returncode != 0 or result.stdout.strip() != b"ready":
+        raise IsolationUnavailable("isolated benchmark runtime failed its startup check")
+
+
 def _run_assert_sandbox(
     *,
     task_id: str,
@@ -499,7 +510,7 @@ def _run_assert_sandbox(
 
     try:
         proc = run_isolated(
-            "python:3.13-slim",
+            _SANDBOX_IMAGE,
             ["python", "-I", "-c", _SANDBOX_RUNNER],
             input_data=payload.encode("utf-8"),
             timeout=timeout_seconds,

@@ -660,6 +660,7 @@ def fetch_release_feed(url: str, *, timeout_s: float = 10.0) -> dict[str, Any]:
         NetworkPolicyDenied: The live egress policy forbids the feed host.
     """
     import urllib.request
+    from http.client import HTTPException
     from urllib.parse import urlparse
 
     from bernstein.core.security.network_policy import policy_from_env
@@ -675,10 +676,13 @@ def fetch_release_feed(url: str, *, timeout_s: float = 10.0) -> dict[str, Any]:
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
             payload = response.read(_MAX_RELEASE_FEED_BYTES + 1)
-    except OSError as exc:
+            remaining = getattr(response, "length", None)
+    except (OSError, HTTPException) as exc:
         raise ReleaseFeedError(f"cannot fetch release feed {url}: {exc}") from exc
     if len(payload) > _MAX_RELEASE_FEED_BYTES:
         raise ReleaseFeedError(f"release feed exceeds {_MAX_RELEASE_FEED_BYTES}-byte limit")
+    if isinstance(remaining, int) and remaining > 0:
+        raise ReleaseFeedError("incomplete release feed response")
     try:
         parsed: Any = json.loads(payload)
     except json.JSONDecodeError as exc:

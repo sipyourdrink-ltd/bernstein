@@ -327,9 +327,8 @@ def evaluate_signal(
             command = approved_check(signal.value)
             if command is None:
                 return False, "test_passes requires an operator-approved check identifier"
-            approved = shlex.join(command)
-            resolved = _resolve_test_path_command(_resolve_branch_check_command(approved, workdir), workdir)
-            ok = _check_test_passes(shlex.split(resolved), workdir)
+            resolved = _resolve_test_path_argv(_resolve_branch_check_argv(command, workdir), workdir)
+            ok = _check_test_passes(resolved, workdir)
             return ok, "exit 0" if ok else "check failed or isolation unavailable"
         case "file_contains":
             ok = _check_file_contains(signal.value, workdir)
@@ -2146,6 +2145,20 @@ def _resolve_branch_ref(expected: str, workdir: Path) -> tuple[str | None, list[
     return None, branches
 
 
+def _resolve_branch_check_argv(argv: list[str], workdir: Path) -> list[str]:
+    """Resolve a recognized git check's ref without reinterpreting other arguments."""
+    if argv[:3] != ["git", "rev-parse", "--verify"] and argv[:3] != ["git", "log", "-1"]:
+        return argv
+    if len(argv) < 4 or argv[-1].startswith("-") or argv[-1] in _SPECIAL_REFS or "--" in argv:
+        return argv
+    expected = argv[-1]
+    resolved, branches = _resolve_branch_ref(expected, workdir)
+    logger.info(
+        "janitor acceptance check: ref %r resolved to %r in %s (branches: %s)", expected, resolved, workdir, branches
+    )
+    return [*argv[:-1], resolved] if resolved else argv
+
+
 def _resolve_branch_check_command(command: str, workdir: Path) -> str:
     """Rewrite a branch-check ``test_passes`` command to the ref that actually exists.
 
@@ -2229,25 +2242,29 @@ def _resolve_test_path_command(command: str, workdir: Path) -> str:
         resolvable missing test path replaced by the path that does exist.
     """
     try:
-        tokens = shlex.split(command)
+        argv = shlex.split(command)
     except ValueError:
-        # Unbalanced quotes: not the janitor's to repair. Run it verbatim.
         return command
+    resolved = _resolve_test_path_argv(argv, workdir)
+    return shlex.join(resolved) if resolved != argv else command
 
-    resolved_command = command
-    for token in tokens:
+
+def _resolve_test_path_argv(argv: list[str], workdir: Path) -> list[str]:
+    """Resolve each uniquely moved test path within its original argument."""
+    resolved = argv.copy()
+    for index, token in enumerate(argv[1:], start=1):
         if token.startswith("-"):
             continue
         # ``path::node_id`` selects one test inside a file; only the path half
         # is a filesystem claim, and the node id must survive the rewrite.
-        declared = token.split("::", 1)[0]
+        declared, separator, node_id = token.partition("::")
         if not declared.endswith(".py") or (workdir / declared).exists():
             continue
         parts = Path(declared).parts
         # Search only under the declared top-level directory (``tests``), never
         # from the project root: a bare or dot-relative filename would walk the
         # virtualenv and could match a file in an installed package.
-        if len(parts) < 2 or parts[0] in (".", "..") or Path(declared).is_absolute():
+        if len(parts) < 2 or ".." in parts or Path(declared).is_absolute():
             continue
         root = workdir / parts[0]
         if not root.is_dir():
@@ -2273,8 +2290,8 @@ def _resolve_test_path_command(command: str, workdir: Path) -> str:
             workdir,
             actual,
         )
-        resolved_command = resolved_command.replace(declared, actual)
-    return resolved_command
+        resolved[index] = actual + separator + node_id
+    return resolved
 
 
 def _signal_timeout_s() -> int:

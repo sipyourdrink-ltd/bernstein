@@ -29,6 +29,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import signal
 import subprocess
 import threading
@@ -174,6 +175,7 @@ class PreviewState:
     process_pid: int
     created_at_epoch: float = field(default_factory=time.time)
     container_name: str | None = None
+    runtime_path: str | None = None
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when *now* is past :attr:`expires_at_epoch`."""
@@ -455,6 +457,7 @@ class PreviewManager:
             ),
             process_pid=run_handle.pid,
             container_name=run_handle.container_name,
+            runtime_path=run_handle.runtime_path,
             created_at_epoch=active_clock.now(),
         )
         try:
@@ -533,8 +536,12 @@ class PreviewManager:
         reaped = 0
         for state in self._store.list():
             if state.is_expired(now=ts):
-                self._teardown(state, reason="expired")
-                reaped += 1
+                try:
+                    self._teardown(state, reason="expired")
+                except PreviewError as exc:
+                    logger.warning("Could not reap preview %s: %s", state.preview_id, exc)
+                else:
+                    reaped += 1
         return reaped
 
     # ------------------------------------------------------------------
@@ -546,7 +553,11 @@ class PreviewManager:
         with contextlib.suppress(Exception):
             self._tunnel.close(state.tunnel_name)
         if state.container_name is not None:
-            _remove_preview_container(state.sandbox_backend, state.container_name)
+            runtime = state.runtime_path or shutil.which(state.sandbox_backend)
+            if runtime is None or not _remove_preview_container(runtime, state.container_name):
+                raise PreviewError(
+                    "Preview container cleanup could not be confirmed. Retry stop after restoring the runtime."
+                )
         elif state.process_pid > 0:
             with contextlib.suppress(ProcessLookupError, OSError):
                 # SIGTERM the dev server's process group so child
@@ -657,6 +668,7 @@ class DevServerHandle:
     backend: str | None = None
     container_name: str | None = None
     host_port: int | None = None
+    runtime_path: str | None = None
 
 
 class DevServerRunner:
@@ -674,11 +686,18 @@ class DevServerRunner:
         raise NotImplementedError
 
 
-def _remove_preview_container(backend: str, name: str) -> None:
-    if backend not in ("docker", "podman") or not re.fullmatch(r"bernstein-preview-[a-f0-9]{16}", name):
-        return
-    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-        subprocess.run([backend, "rm", "--force", name], capture_output=True, timeout=10, check=False)
+def _remove_preview_container(runtime: str, name: str) -> bool:
+    if Path(runtime).name not in ("docker", "podman") or not re.fullmatch(r"bernstein-preview-[a-f0-9]{16}", name):
+        return False
+    try:
+        # Podman can ignore an absent container. Docker reports absence.
+        command = [runtime, "rm", "--force"]
+        if Path(runtime).name == "podman":
+            command.append("--ignore")
+        result = subprocess.run([*command, name], capture_output=True, timeout=10, check=False)
+        return result.returncode == 0 or f"No such container: {name}".encode() in result.stderr
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 class ContainerDevServerRunner(DevServerRunner):
@@ -744,15 +763,21 @@ class ContainerDevServerRunner(DevServerRunner):
             match = re.fullmatch(rb"127\.0\.0\.1:([0-9]+)", mapping.stdout.strip())
             if match is None:
                 raise PreviewError("The preview runtime did not assign a loopback port")
-            return DevServerHandle(0, None, (), backend, name, int(match[1]))
+            return DevServerHandle(0, None, (), backend, name, int(match[1]), runtime)
         except (OSError, subprocess.SubprocessError, PreviewError) as exc:
-            _remove_preview_container(backend, name)
+            removed = _remove_preview_container(runtime, name)
+            if not removed:
+                logger.warning("Could not remove failed preview container %s", name)
             detail = str(exc) if isinstance(exc, PreviewError) else type(exc).__name__
             raise PreviewError(f"Could not start isolated dev server: {detail}") from exc
 
     def terminate(self, handle: DevServerHandle) -> None:
-        if handle.backend and handle.container_name:
-            _remove_preview_container(handle.backend, handle.container_name)
+        if (
+            handle.runtime_path
+            and handle.container_name
+            and not _remove_preview_container(handle.runtime_path, handle.container_name)
+        ):
+            logger.warning("Could not remove failed preview container %s", handle.container_name)
 
 
 def _await_port(handle: DevServerHandle, *, timeout_seconds: float) -> int:

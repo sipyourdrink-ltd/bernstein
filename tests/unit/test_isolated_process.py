@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -11,6 +12,8 @@ from bernstein.core.sandbox import isolated_process
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
+    if os.name != "posix":
+        pytest.skip("the fake OCI runtime uses a POSIX shell")
     executable = tmp_path / "docker"
     executable.write_text(
         f"""#!/bin/sh
@@ -19,9 +22,10 @@ if [ "$1" = rm ]; then
     exit 0
 fi
 printf '%s\\n' "$@" > '{tmp_path}/argv'
-while [ "$1" != -- ]; do shift; done
-shift 2
-exec "$@"
+while [ "$1" != --entrypoint ]; do shift; done
+entry="$2"
+shift 4
+exec "$entry" "$@"
 """
     )
     executable.chmod(0o755)
@@ -45,7 +49,7 @@ def test_runner_passes_only_explicit_mounts_and_bounds(runtime):
     assert "--security-opt=no-new-privileges" in args
     assert "--pids-limit=32" in args
     assert "--mount" not in args and "--env" not in args
-    assert args[-3:] == ["--", "fixture-image", "cat"]
+    assert args[-4:] == ["--entrypoint", "cat", "--", "fixture-image"]
     assert (runtime / "removed").read_text().strip() == args[args.index("--name") + 1]
 
 

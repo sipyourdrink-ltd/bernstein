@@ -274,6 +274,20 @@ class TestFetcherHonoursEgressPolicy:
             assert fetch_release_feed("https://example.invalid/release-feed.json") == {}
         assert response.closed
 
+    def test_rejects_truncated_http_frame(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import io
+        import urllib.request
+        from http.client import HTTPResponse
+
+        wire = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n{}"
+        response = HTTPResponse(type("Socket", (), {"makefile": lambda *args: io.BytesIO(wire)})())
+        response.begin()
+        monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "example.invalid")
+        monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: response)
+        with pytest.raises(ReleaseFeedError, match="incomplete"):
+            fetch_release_feed("https://example.invalid/release-feed.json")
+        assert response.closed
+
     def test_non_https_refused_before_any_policy_work(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.request
 
