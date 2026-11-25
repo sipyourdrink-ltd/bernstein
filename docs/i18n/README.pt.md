@@ -212,7 +212,7 @@ Por que o agendador é Python puro e quais são os trade-offs: [por que determin
 A verificação `can_spawn()` do módulo de acompanhamento de custos retorna `False` quando o gasto acumulado após a correção atinge ou ultrapassa o limite de parada configurado para o orçamento, mesmo que nenhum novo token tenha sido informado. Após uma reinicialização, as contagens de tokens salvas, por si só, não permitem reconstruir o custo acumulado exato informado anteriormente para uma determinada combinação de agente, tarefa e modelo.
 
 ### comandos do dia a dia
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project

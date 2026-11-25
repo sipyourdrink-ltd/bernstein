@@ -59,9 +59,9 @@ class TestGetScenarioDetail:
     def test_returns_task_ids_and_depends_on_for_sequenced_scenario(self) -> None:
         detail = get_scenario_detail("disaster-recovery-failover-drill", _SCENARIOS_DIR)
         assert detail is not None
-        assert [t["id"] for t in detail["tasks"]] == ["inventory-backups", "run-dr-workflow", "audit-dr-receipt"]
+        assert [t["id"] for t in detail["tasks"]] == ["inventory-backups", "execute-dr-drill", "audit-dr-receipt"]
         assert detail["tasks"][1]["depends_on"] == ["inventory-backups"]
-        assert detail["tasks"][2]["depends_on"] == ["run-dr-workflow"]
+        assert detail["tasks"][2]["depends_on"] == ["execute-dr-drill"]
 
 
 @pytest.mark.asyncio

@@ -256,9 +256,11 @@ def build_task_payloads(
 def estimate_minutes(scenario: ScenarioRecipe) -> int:
     """Conservative wall-clock estimate for a full scenario run.
 
-    Heuristic: scope and complexity each contribute base minutes, summed
-    across tasks; parallel execution divides the total by the number of
-    distinct roles (capped at four).
+    Heuristic: scope and complexity each contribute base minutes per task.
+    For unconstrained parallel scenarios, total effort is divided by the number
+    of distinct roles (capped at four). When any task declares ``depends_on``,
+    the estimate respects the dependency DAG critical path so sequential chains
+    are not discounted as if they ran in parallel.
 
     Args:
         scenario: Source scenario.
@@ -275,7 +277,20 @@ def estimate_minutes(scenario: ScenarioRecipe) -> int:
         total += scope_min.get(t.scope, 25) + complexity_min.get(t.complexity, 15)
     distinct_roles = len({t.role for t in scenario.tasks}) or 1
     parallel_factor = min(distinct_roles, 4)
-    return max(5, total // parallel_factor)
+    parallel_bound = total // parallel_factor
+    if not any(t.depends_on for t in scenario.tasks):
+        return max(5, parallel_bound)
+
+    earliest_finish: dict[str, int] = {}
+    critical_path = 0
+    for t in _order_scenario_tasks(scenario.tasks):
+        task_duration = scope_min.get(t.scope, 25) + complexity_min.get(t.complexity, 15)
+        parent_finish = max((earliest_finish.get(dep, 0) for dep in t.depends_on), default=0)
+        finish = parent_finish + task_duration
+        if t.id:
+            earliest_finish[t.id] = finish
+        critical_path = max(critical_path, finish)
+    return max(5, critical_path, parallel_bound)
 
 
 @dataclass

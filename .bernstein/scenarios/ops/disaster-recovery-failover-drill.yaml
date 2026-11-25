@@ -4,10 +4,10 @@ version: "1.1"
 description: |
   Prove backup and WAL restore readiness inside an isolated sandbox environment,
   measuring actual RTO/RPO and verifying hash-chain and schema integrity without
-  touching live production state. Ordered stages use explicit task dependencies
-  and delegate restore, verification, and always-run teardown to the
-  dependency-aware `disaster-recovery-drill` workflow so validation and cleanup
-  cannot race restore or be skipped on failure.
+  touching live production state. Stages chain via explicit task-store
+  `depends_on` edges (gated on accepted task completion), and the middle drill
+  stage executes restore, verification, and guaranteed teardown sequentially
+  without racing or leaving restored backup data behind on failure.
 tags: [ops, sre, disaster-recovery, backup, compliance]
 tasks:
   - id: inventory-backups
@@ -20,28 +20,29 @@ tasks:
       Perform a read-only pre-drill check of backup snapshot recency, encryption
       status, retention policy, and target RTO/RPO thresholds before provisioning
       any restore sandbox.
-  - id: run-dr-workflow
+  - id: execute-dr-drill
     depends_on: [inventory-backups]
-    title: Execute sequenced DR restore, verification, and always-run teardown workflow
+    title: Execute sequenced DR restore, verification, and guaranteed sandbox teardown
     role: devops
     priority: 1
     scope: large
     complexity: medium
     description: |
-      Run the dependency-aware `disaster-recovery-drill` workflow
-      (`bernstein workflow run disaster-recovery-drill`) against an isolated
-      sandbox so cold restore, ledger/checksum verification, guaranteed
-      `always_run` sandbox disposal, and receipt generation execute in strict
-      dependency order without racing or leaving restored backup data behind on
-      failure.
+      Provision the isolated sandbox, execute the documented cold restore,
+      verify database checksums and audit-log hash chains, and tear down all
+      temporary targets/volumes in a guaranteed finally/trap handler (or drive
+      the task-store-backed `.bernstein/workflows/disaster-recovery-drill.yaml`
+      DAG) so validation cannot race restore and teardown cannot be skipped on
+      provisioning, restore, or verification failure. Record measured RTO/RPO,
+      integrity results, and disposal confirmation before completing.
   - id: audit-dr-receipt
-    depends_on: [run-dr-workflow]
+    depends_on: [execute-dr-drill]
     title: Audit DR drill receipt, RTO/RPO deltas, and teardown confirmation
     role: security
     priority: 2
     scope: small
     complexity: low
     description: |
-      Review the completed DR drill receipt and teardown attestation from the
-      `disaster-recovery-drill` run, confirm zero residual secrets or temporary
-      volumes, and file remediation items for any RTO/RPO gap.
+      Review the accepted DR drill evidence and teardown attestation produced by
+      `execute-dr-drill`, confirm zero residual secrets or temporary volumes,
+      and file remediation items for any RTO/RPO gap.

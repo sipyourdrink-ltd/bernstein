@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.main import cli
 from bernstein.core.persistence.workspace import grant_workspace_trust
-from bernstein.core.planning.routine_bridge import build_task_payloads, spawn_scenario_tasks
+from bernstein.core.planning.routine_bridge import build_task_payloads, estimate_minutes, spawn_scenario_tasks
 from bernstein.core.planning.routine_provisioner import build_routine_prompt
 from bernstein.core.planning.scenario_library import load_scenario_library
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
@@ -131,8 +131,22 @@ def _assert_dr_dsl_teardown_runs_on_upstream_failure(
     receipt_node: str,
     cleanup_nodes: set[str],
 ) -> None:
-    """Assert teardown/cleanup cannot be skipped when restore or verify fails, while receipt stays gated."""
+    """Assert teardown/cleanup cannot be skipped when provisioning, restore, or verify fails, while receipt stays gated."""
     executor = DAGExecutor(dag)
+
+    # Case 0: Provisioning fails (may leave partial sandbox) -> cleanup runs; receipt never runs.
+    provision_fail_tasks = {
+        provision_node: _dsl_task(provision_node, TaskStatus.FAILED),
+    }
+    ready_on_provision_fail = set(executor.ready_nodes(provision_fail_tasks))
+    assert ready_on_provision_fail & cleanup_nodes, (
+        f"DR workflow {dag.definition.name!r} skipped teardown when {provision_node!r} failed "
+        f"(ready={sorted(ready_on_provision_fail)})"
+    )
+    assert receipt_node not in ready_on_provision_fail
+    for cleanup_id in ready_on_provision_fail & cleanup_nodes:
+        provision_fail_tasks[cleanup_id] = _dsl_task(cleanup_id, TaskStatus.DONE)
+    assert receipt_node not in executor.ready_nodes(provision_fail_tasks)
 
     # Case 1: Restore fails -> cleanup runs immediately AND after materialize_unreachable; receipt never runs.
     restore_fail_tasks = {
@@ -414,10 +428,12 @@ def test_dr_scenario_is_sequenced_and_synced_between_workspace_and_packaged() ->
     recipe = load_scenario_library(pkg_path.parent).get("disaster-recovery-failover-drill")
     assert recipe is not None
     assert len(recipe.tasks) >= 3
-    assert [t.id for t in recipe.tasks] == ["inventory-backups", "run-dr-workflow", "audit-dr-receipt"]
+    assert [t.id for t in recipe.tasks] == ["inventory-backups", "execute-dr-drill", "audit-dr-receipt"]
     assert recipe.tasks[1].depends_on == ("inventory-backups",)
-    assert recipe.tasks[2].depends_on == ("run-dr-workflow",)
-    assert "disaster-recovery-drill" in recipe.tasks[1].description
+    assert recipe.tasks[2].depends_on == ("execute-dr-drill",)
+    assert "disaster-recovery-drill.yaml" in recipe.tasks[1].description
+    # Sequenced chain (15 + 75 + 15) must not receive a parallel role discount.
+    assert estimate_minutes(recipe) == 105
 
     payloads = build_task_payloads(recipe)
     posted: list[dict[str, Any]] = []

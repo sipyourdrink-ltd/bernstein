@@ -212,7 +212,7 @@ Lý do bộ lập lịch được xây dựng bằng Python thuần túy và cá
 Phép kiểm tra `can_spawn()` của bộ theo dõi chi phí trả về `False` khi tổng chi phí lũy kế sau điều chỉnh đạt hoặc vượt ngưỡng dừng đã đặt cho ngân sách, ngay cả khi không có token mới nào được báo cáo. Sau khi khởi động lại, chỉ dựa vào số token đã lưu thì không thể khôi phục chính xác chi phí lũy kế đã được báo cáo trước đó cho một tổ hợp tác nhân, tác vụ và mô hình cụ thể.
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project

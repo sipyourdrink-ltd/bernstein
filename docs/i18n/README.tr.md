@@ -212,7 +212,7 @@ Zamanlayıcının neden saf Python olduğu ve bunun getirdiği ödünleşimler: 
 Düzeltilmiş toplam harcama bütçe için belirlenen durdurma eşiğine ulaştığında veya bu eşiği aştığında, yeni token bildirilmemiş olsa bile maliyet izleyicisinin `can_spawn()` denetimi `False` döndürür. Yeniden başlatıldıktan sonra, belirli bir ajan, görev ve model birleşimi için daha önce bildirilen kesin toplam maliyet yalnızca kayıtlı token sayılarından çıkarılamaz.
 
 ### günlük komutlar
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project

@@ -40,9 +40,11 @@ nodes:
   cleanup-sandbox-on-failure:
     phase: teardown
     role: security
-    description: "Tear down temporary restore sandbox and purge restored backup artifacts after restore or verification failure"
+    description: "Tear down partial or restored sandbox targets and purge temporary artifacts after provisioning, restore, or verification failure"
     estimated_minutes: 15
     depends_on:
+      - source: provision-isolated-target
+        condition: "status != 'done' and status != 'closed'"
       - source: execute-runbook-restore
         condition: "status != 'done' and status != 'closed'"
       - source: verify-ledger-and-data-integrity

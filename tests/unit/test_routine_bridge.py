@@ -170,6 +170,84 @@ class TestEstimateMinutes:
         )
         assert estimate_minutes(many_roles) < estimate_minutes(single_role)
 
+    def test_sequenced_chain_uses_critical_path_not_parallel_discount(self) -> None:
+        sequenced = ScenarioRecipe(
+            scenario_id="chain",
+            name="Chain",
+            description="",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(
+                    id="step-1",
+                    title="Step 1",
+                    description="",
+                    role="devops",
+                    scope="small",
+                    complexity="low",
+                ),
+                ScenarioTaskTemplate(
+                    id="step-2",
+                    title="Step 2",
+                    description="",
+                    role="devops",
+                    scope="large",
+                    complexity="medium",
+                    depends_on=("step-1",),
+                ),
+                ScenarioTaskTemplate(
+                    id="step-3",
+                    title="Step 3",
+                    description="",
+                    role="security",
+                    scope="small",
+                    complexity="low",
+                    depends_on=("step-2",),
+                ),
+            ),
+        )
+        # 15 + 75 + 15 = 105 minutes on the critical path despite 2 distinct roles.
+        assert estimate_minutes(sequenced) == 105
+
+    def test_diamond_dag_uses_longest_branch_plus_join(self) -> None:
+        diamond = ScenarioRecipe(
+            scenario_id="diamond",
+            name="Diamond",
+            description="",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(id="a", title="A", description="", role="devops", scope="small", complexity="low"),
+                ScenarioTaskTemplate(
+                    id="b",
+                    title="B",
+                    description="",
+                    role="backend",
+                    scope="large",
+                    complexity="low",
+                    depends_on=("a",),
+                ),
+                ScenarioTaskTemplate(
+                    id="c",
+                    title="C",
+                    description="",
+                    role="qa",
+                    scope="small",
+                    complexity="low",
+                    depends_on=("a",),
+                ),
+                ScenarioTaskTemplate(
+                    id="d",
+                    title="D",
+                    description="",
+                    role="security",
+                    scope="small",
+                    complexity="low",
+                    depends_on=("b", "c"),
+                ),
+            ),
+        )
+        # a (15) + max(b=65, c=15) + d (15) = 95 minutes.
+        assert estimate_minutes(diamond) == 95
+
 
 class TestRoutineBridgeInvoke:
     def test_invoke_unknown_raises(self, tmp_path: Path) -> None:
