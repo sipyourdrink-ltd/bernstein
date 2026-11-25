@@ -2697,7 +2697,7 @@ def _parse_seed(path: Path, *, apply_tuning: bool, mapping: dict[str, object] | 
     rate_limit = _parse_rate_limit_config(data.get("rate_limit"))
     tenants = _parse_tenants(data.get("tenants"))
 
-    internal_llm_provider_raw = _validate_optional_str(data, "internal_llm_provider", "openrouter_free")
+    internal_llm_provider_raw = _validate_optional_str(data, "internal_llm_provider", "none")
     internal_llm_model_raw = _validate_optional_str(data, "internal_llm_model", "nvidia/nemotron-3-super-120b-a12b")
     evolution_enabled_raw = _validate_optional_bool(data, "evolution_enabled", True)
     gate_repair_enabled_raw = _validate_optional_bool(data, "gate_repair_enabled", True)

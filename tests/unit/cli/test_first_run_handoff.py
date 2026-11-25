@@ -420,3 +420,27 @@ def test_malformed_budget_still_emits_setup_advice(tmp_path: Path) -> None:
 
     (tmp_path / "bernstein.yaml").write_text("goal: test\nbudget: []\n")
     assert any("config validate" in step for step in project_handoff(tmp_path).actions)
+
+
+def test_parse_seed_and_init_default_internal_llm_provider_to_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.cli.first_run_readiness import project_handoff
+    from bernstein.cli.main import cli
+    from bernstein.core.config.seed_parser import parse_seed
+
+    monkeypatch.delenv("OPENROUTER_API_KEY_FREE", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY_PAID", raising=False)
+
+    seed_path = tmp_path / "bernstein.yaml"
+    seed_path.write_text('goal: "Add greeting"\ncli: auto\n', encoding="utf-8")
+    seed = parse_seed(seed_path)
+    assert seed.internal_llm_provider == "none"
+
+    wizard_dir = tmp_path / "wizard"
+    wizard_dir.mkdir()
+    result = CliRunner().invoke(cli, ["init", "--wizard", "--non-interactive", "--dir", str(wizard_dir)])
+    assert result.exit_code == 0, result.output
+    assert "Internal planner: none" in result.output
+    assert "openrouter_free" not in result.output
+    assert project_handoff(wizard_dir).planner == "none"
