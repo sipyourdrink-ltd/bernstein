@@ -17,12 +17,14 @@ from bernstein.core.agents.agent_lifecycle import handle_orphaned_task
 from bernstein.core.persistence.wal import WALWriter
 from bernstein.core.tasks.artifact_completion import verify_task_completion
 
-_TEST_COMMAND = "./.venv/bin/python -m pytest tests/unit/test_deliverable.py -q"
+_TEST_COMMAND = ["python", "-m", "pytest", "tests/unit/test_deliverable.py", "-q"]
 
 
 @pytest.fixture
-def no_change_attempt(tmp_path: Path):
+def no_change_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Use the orphan-recovery fixtures' shape, with all git probes stubbed."""
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", json.dumps({"deliverable-test": _TEST_COMMAND}))
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECK_IMAGE", "test-image")
     worktree = tmp_path / "agent-worktree"
     worktree.mkdir()
     task = Task(
@@ -34,7 +36,7 @@ def no_change_attempt(tmp_path: Path):
         completion_signals=[
             CompletionSignal(type="path_exists", value="deliverable.txt"),
             CompletionSignal(type="file_contains", value="feature.txt :: implemented"),
-            CompletionSignal(type="test_passes", value=_TEST_COMMAND),
+            CompletionSignal(type="test_passes", value="deliverable-test"),
         ],
     )
     session = AgentSession(
@@ -69,10 +71,11 @@ def no_change_attempt(tmp_path: Path):
         (root / "feature.txt").write_text("implemented\n")
         (root / "test-result.txt").write_text("pass\n")
 
-    def run_gate(command, **kwargs):
+    def run_gate(image, command, **kwargs):
+        assert image == "test-image"
         # Only the test_passes subprocess is allowed; never execute git/network.
         assert command == _TEST_COMMAND
-        root = Path(kwargs["cwd"])
+        root = Path(kwargs["mounts"][0].split(",")[1].removeprefix("source="))
         passed = (root / "test-result.txt").read_text().strip() == "pass"
         return subprocess.CompletedProcess(command, 0 if passed else 1, stdout=b"", stderr=b"")
 
@@ -82,7 +85,7 @@ def no_change_attempt(tmp_path: Path):
         patch("bernstein.core.agents.agent_lifecycle._uncommitted_work_paths", return_value=[]),
         patch("bernstein.core.agents.agent_lifecycle._satisfied_on_base_is_safe", return_value=True),
         patch("bernstein.core.quality.janitor._gitignore_exclusion", return_value=None),
-        patch("bernstein.core.quality.janitor.subprocess.run", side_effect=run_gate) as gate_command,
+        patch("bernstein.core.sandbox.isolated_process.run_isolated", side_effect=run_gate) as gate_command,
         patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as retry,
         patch("bernstein.core.agents.agent_lifecycle.emit_orphan_metrics"),
     ):
@@ -109,7 +112,9 @@ def test_clean_no_change_completes_when_all_worktree_gates_pass(no_change_attemp
     assert "already satisfied on base" in summary
     assert "janitor" in summary
     gate_command.assert_called_once()
-    assert gate_command.call_args.kwargs["cwd"] == worktree
+    assert gate_command.call_args.kwargs["mounts"] == (
+        f"type=bind,source={worktree.resolve()},target=/workspace,readonly",
+    )
     row = _journal(orch)
     assert row["decision_type"] == "task_completed"
     assert row["output"]["success"] is True
@@ -137,7 +142,9 @@ def test_clean_no_change_retries_when_any_worktree_gate_fails(no_change_attempt,
     assert failed_gate in retry.call_args.args[1]
     assert retry.call_args.kwargs["max_task_retries"] == 3
     gate_command.assert_called_once()
-    assert gate_command.call_args.kwargs["cwd"] == worktree
+    assert gate_command.call_args.kwargs["mounts"] == (
+        f"type=bind,source={worktree.resolve()},target=/workspace,readonly",
+    )
     row = _journal(orch)
     assert row["decision_type"] == "task_failed"
     assert row["output"]["success"] is False
@@ -158,6 +165,23 @@ def real_worktree_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         ("GIT_COMMITTER_EMAIL", "test@example.invalid"),
     ):
         monkeypatch.setenv(key, value)
+    from bernstein.core.sandbox import isolated_process
+
+    monkeypatch.setenv(
+        "BERNSTEIN_COMPLETION_CHECKS",
+        json.dumps(
+            {"generated-input": ["test", "-f", "generated-input.txt"], "deliverable": ["test", "-f", "deliverable.txt"]}
+        ),
+    )
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECK_IMAGE", "test-image")
+
+    def run_gate(image, command, *, mounts, **kwargs):
+        assert image == "test-image"
+        assert command[:2] == ["test", "-f"]
+        root = Path(mounts[0].split(",")[1].removeprefix("source="))
+        return subprocess.CompletedProcess(command, 0 if (root / command[2]).is_file() else 1)
+
+    monkeypatch.setattr(isolated_process, "run_isolated", run_gate)
     repo = tmp_path / "repo"
     repo.mkdir()
 
@@ -336,7 +360,7 @@ def test_glob_worktree_only_match_retries(
 def test_test_passes_with_untracked_input_retries(real_worktree_attempt) -> None:
     orch, task, session, worktree, retry, git = real_worktree_attempt
     (worktree / "generated-input.txt").write_text("uncommitted test fixture\n")
-    task.completion_signals = [CompletionSignal(type="test_passes", value="test -f generated-input.txt")]
+    task.completion_signals = [CompletionSignal(type="test_passes", value="generated-input")]
     assert git("status", "--porcelain=v1", "--untracked-files=all", cwd=worktree) == "?? generated-input.txt\n"
     assert git("diff", "HEAD", cwd=worktree) == ""
     assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
@@ -355,7 +379,7 @@ def test_test_passes_with_untracked_input_retries(real_worktree_attempt) -> None
 def test_test_passes_status_failure_blocks_satisfied_base(real_worktree_attempt, failure: str) -> None:
     orch, task, session, worktree, retry, _git = real_worktree_attempt
     (worktree / "deliverable.txt").write_text("ignored test input\n")
-    task.completion_signals = [CompletionSignal(type="test_passes", value="test -f deliverable.txt")]
+    task.completion_signals = [CompletionSignal(type="test_passes", value="deliverable")]
     assert verify_task_completion(task, worktree) == (True, [])
     assert verify_task_completion(task, orch._workdir)[0] is False
     run = subprocess.run

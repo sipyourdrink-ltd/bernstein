@@ -16,11 +16,10 @@ The CLI is intentionally thin: every meaningful decision lives in
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 import click
 
@@ -33,9 +32,6 @@ from bernstein.core.preview import (
     list_candidates,
 )
 from bernstein.core.preview.manager import SandboxLike
-
-if TYPE_CHECKING:
-    from bernstein.core.sandbox.backend import SandboxSession
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +94,11 @@ def preview_group() -> None:
     help="Link expiry (e.g. 30m, 4h, 1d).",
 )
 @click.option(
+    "--approve-discovered",
+    is_flag=True,
+    help="Approve the discovered workspace command. Use --list-commands to inspect it first.",
+)
+@click.option(
     "--no-clipboard",
     "no_clipboard",
     is_flag=True,
@@ -112,6 +113,7 @@ def start_cmd(
     auth_mode: str,
     expire_arg: str,
     no_clipboard: bool,
+    approve_discovered: bool,
 ) -> None:
     """Boot the dev server and expose it through the existing tunnel wrapper."""
     cwd = (cwd_arg or _resolve_default_cwd()).resolve()
@@ -123,21 +125,13 @@ def start_cmd(
         _print_candidates(cwd)
         return
 
-    try:
-        sandbox_session = asyncio.run(_create_sandbox_session(cwd))
-    except Exception as exc:  # pragma: no cover - sandbox-specific
-        console.print(f"[red]Could not provision sandbox:[/red] {exc}")
-        raise SystemExit(1) from exc
-
     manager = PreviewManager()
     try:
         preview = manager.start(
             cwd=cwd,
-            # SandboxSession structurally satisfies SandboxLike (backend_name,
-            # session_id); SandboxLike is a plain class rather than a
-            # typing.Protocol, so mypy can't see the duck-typed match.
-            sandbox_session=cast(SandboxLike, sandbox_session),
+            sandbox_session=SandboxLike(),
             command=command_arg,
+            approve_discovered=approve_discovered,
             provider=provider,
             auth_mode=AuthMode(auth_mode),
             expire_seconds=expire_arg,
@@ -225,14 +219,17 @@ def stop_cmd(preview_id: str | None, stop_all: bool) -> None:
     if not stop_all and not preview_id:
         raise click.UsageError("Provide a PREVIEW_ID or use --all.")
     manager = PreviewManager()
-    if stop_all:
-        n = manager.stop_all()
-        console.print(f"[yellow]Stopped {n} preview(s).[/yellow]")
-        return
-    assert preview_id is not None
-    if not manager.stop(preview_id):
-        console.print(f"[red]No preview with id {preview_id!r}.[/red]")
-        raise SystemExit(1)
+    try:
+        if stop_all:
+            n = manager.stop_all()
+            console.print(f"[yellow]Stopped {n} preview(s).[/yellow]")
+            return
+        assert preview_id is not None
+        if not manager.stop(preview_id):
+            console.print(f"[red]No preview with id {preview_id!r}.[/red]")
+            raise SystemExit(1)
+    except PreviewError as exc:
+        raise click.ClickException(str(exc)) from exc
     console.print(f"[yellow]Stopped[/yellow] {preview_id}")
 
 
@@ -268,22 +265,6 @@ def _resolve_default_cwd() -> Path:
             candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
             return candidates[0]
     return Path.cwd()
-
-
-async def _create_sandbox_session(cwd: Path) -> SandboxSession:
-    """Provision a worktree-backed sandbox session anchored at *cwd*.
-
-    Reuses the existing :class:`WorktreeSandboxBackend` so the dev
-    server runs in the same isolation primitive the originating
-    session used. We deliberately don't try to "re-attach" - the
-    backend either reuses a warm worktree (when *cwd* already lives
-    under ``.sdd/worktrees/``) or carves out a new lightweight one.
-    """
-    from bernstein.core.sandbox import WorkspaceManifest, get_backend
-
-    backend = get_backend("worktree")
-    manifest = WorkspaceManifest(root=str(cwd))
-    return await backend.create(manifest, options={"repo_root": str(cwd)})
 
 
 def _state_to_payload(state: PreviewState) -> dict[str, Any]:

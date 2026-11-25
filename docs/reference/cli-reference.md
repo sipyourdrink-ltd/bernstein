@@ -669,7 +669,7 @@ only accepts the reliability options listed below.
 |---|---|
 | `run SPEC` | Drive the golden harness or a YAML eval spec (`--tier`, `--compare`, `--save/--no-save`, `--output`). |
 | `swe-bench` | SWE-bench runner (`--subset`, `--sample`, `--instance`, `--dataset`, `--save/--no-save`). |
-| `programbench` | ProgramBench runner (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
+| `programbench` | ProgramBench runner. Requires Docker or Podman and a local `python:3.13-slim` image (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
 | `simulate` | Replay the standard benchmark task set (`--tasks-dir`, `--seed`, `--task-id`, `--baseline`). |
 | `compare` | Compare eval runs (`--tasks-dir`, `--mode`). |
 | `golden` | Run the curated golden suite (`--workdir`). |
@@ -1716,7 +1716,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start a preview server in the current task's worktree. `--cwd`, `--command`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
+| `start` | Start an isolated preview server for the selected worktree. `--cwd`, `--command`, `--approve-discovered`, `--list-commands`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
 | `list` | List active previews. `--json`. |
 | `status ID` | Show a preview's URL and process. `--json`. |
 | `stop [ID]` | Stop one preview. `--all` stops every active preview. |

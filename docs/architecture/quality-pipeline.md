@@ -34,7 +34,7 @@ The janitor evaluates each `CompletionSignal` declared on the task
 | ---------------- | ----------------------------------------------------------------------- |
 | `path_exists`    | File or directory exists at the given relative path.                    |
 | `glob_exists`    | At least one file matches the glob.                                     |
-| `test_passes`    | The named shell command exits 0 (e.g. `pytest tests/foo.py`).            |
+| `test_passes`    | The operator-approved check ID resolves to an isolated argv invocation that exits 0.            |
 | `file_contains`  | The file exists and contains the given substring (value `path :: needle`). |
 | `llm_review`     | Synchronous LLM review against a written rubric.                        |
 | `llm_judge`      | Async LLM judge (`judge_task()` in `janitor.py`); used for ambiguous tasks. |

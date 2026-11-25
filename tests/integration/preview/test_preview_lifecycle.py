@@ -168,6 +168,7 @@ def test_full_lifecycle_with_real_socket(tmp_path: Path, local_server: _LocalSer
     preview = manager.start(
         cwd=tmp_path,
         sandbox_session=_FakeSandbox(),
+        approve_discovered=True,
         provider="cloudflared",
         auth_mode=AuthMode.TOKEN,
         expire_seconds="30m",
