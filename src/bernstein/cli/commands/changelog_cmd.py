@@ -166,7 +166,7 @@ def _format_keepachangelog(
     entries: list[CommitEntry],
     version: str,
     since_ref: str | None,
-    _until_ref: str,
+    until_ref: str,
     repo_url: str | None,
 ) -> str:
     """Render entries in Keep a Changelog format."""
@@ -177,9 +177,9 @@ def _format_keepachangelog(
     date = entries[0].date if entries else ""
     compare_url = ""
     if repo_url and since_ref:
-        compare_url = f" ({repo_url}/compare/{since_ref}...{version})"
+        compare_url = f" ({repo_url}/compare/{since_ref}...{until_ref})"
     elif repo_url:
-        compare_url = f" ({repo_url}/commits/{version})"
+        compare_url = f" ({repo_url}/commits/{until_ref})"
 
     lines.extend((f"## [{version}] - {date}{compare_url}", ""))
 
