@@ -153,14 +153,13 @@ def test_explicit_missing_cli_fails_fast_before_estimate(tmp_path: Path, monkeyp
     [
         {"dry_run": True},
         {"plan_only": True},
-        {"remote": True},
         {"idle": True, "auto_approve": True},
     ],
 )
 def test_exempt_modes_do_not_require_local_cli_binary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overrides: dict[str, object]
 ) -> None:
-    """--dry-run, --plan-only, --remote, and --idle skip local CLI binary checks."""
+    """--dry-run, --plan-only, and --idle skip local CLI binary checks."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("BERNSTEIN_ADAPTER", raising=False)
     monkeypatch.setattr(run_bootstrap, "_finalize_run_output", lambda **_: None)
@@ -174,3 +173,45 @@ def test_exempt_modes_do_not_require_local_cli_binary(
         patch("bernstein.core.bootstrap.bootstrap_from_goal"),
     ):
         run_bootstrap._run_impl(**_kwargs(**overrides))  # type: ignore[arg-type]
+
+
+def test_remote_flag_still_checks_local_cli_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--remote binds the server to 0.0.0.0 but still starts the local spawner."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BERNSTEIN_ADAPTER", raising=False)
+    estimate = MagicMock()
+    confirm = MagicMock()
+
+    with (
+        _run_env(discovery_agents=[]),
+        patch.object(run_bootstrap, "_estimate_run_preview", estimate),
+        patch.object(run_bootstrap, "_confirm_run", confirm),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_bootstrap._run_impl(**_kwargs(remote=True))  # type: ignore[arg-type]
+
+    assert exc.value.code == 1
+    estimate.assert_not_called()
+    confirm.assert_not_called()
+
+
+def test_auto_cli_validates_env_pinned_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--cli auto with BERNSTEIN_ADAPTER=codex checks codex even when another agent is discovered."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_ADAPTER", "codex")
+    estimate = MagicMock()
+    confirm = MagicMock()
+    other_agent = SimpleNamespace(name="claude", available_models=["sonnet"], logged_in=True)
+
+    with (
+        _run_env(discovery_agents=[other_agent]),
+        patch("bernstein.core.orchestration.preflight.shutil.which", return_value=None),
+        patch.object(run_bootstrap, "_estimate_run_preview", estimate),
+        patch.object(run_bootstrap, "_confirm_run", confirm),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_bootstrap._run_impl(**_kwargs(cli="auto"))  # type: ignore[arg-type]
+
+    assert exc.value.code == 1
+    estimate.assert_not_called()
+    confirm.assert_not_called()
