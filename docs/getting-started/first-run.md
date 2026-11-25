@@ -187,8 +187,9 @@ bernstein verify receipt .sdd/runs/<run-id>/run-receipt.json --public-key run.pu
 ```
 
 `bernstein verify receipt` prints `OK (provenance: pinned key)` and exits `0`. To prove tamper
-detection, copy the receipt, edit any field inside the copy, and re-run `bernstein verify receipt`
-against the modified copy — it exits `2` with `TAMPER DETECTED` naming the divergent step.
+detection, copy the receipt, edit a field inside the copy (for example, an entry in the embedded
+journal), and re-run `bernstein verify receipt` against the modified copy — it exits `2` with
+`TAMPER DETECTED` (and names the first divergent journal step when a journal entry was altered).
 
 ---
 
