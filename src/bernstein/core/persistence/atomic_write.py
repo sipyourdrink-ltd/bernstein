@@ -109,15 +109,12 @@ def write_atomic_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     # non-writable mode before rename so no permissive window exists.
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        if mode != 0o600:
-            if hasattr(os, "fchmod"):
-                os.fchmod(fd, mode)
-            else:
-                os.chmod(str(tmp), mode)
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
+        if mode != 0o600:
+            tmp.chmod(mode)
         os.replace(str(tmp), str(path))
     except BaseException:
         with contextlib.suppress(OSError):
