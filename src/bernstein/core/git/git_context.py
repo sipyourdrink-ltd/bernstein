@@ -71,6 +71,8 @@ def ls_files(cwd: Path) -> list[str]:
     except (OSError, subprocess.SubprocessError) as exc:
         logger.debug("git ls-files failed: %s", exc)
         return []
+    if not isinstance(paths, bytes):
+        return []
     return [os.fsdecode(path) for path in paths.split(b"\0") if path]
 
 
