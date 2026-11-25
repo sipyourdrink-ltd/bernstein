@@ -428,6 +428,19 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
             "    assert resp.status_code == 200\n"
         )
 
+    # Ensure bernstein.yaml exists with an explicit merge-gate policy even in
+    # the inline fallback (pip/wheel without templates/demo) so run_started
+    # journals gate_config and `bernstein trace export` works out of the box.
+    if not (project_dir / "bernstein.yaml").exists():
+        (project_dir / "bernstein.yaml").write_text(
+            'goal: "Demo: implement a Flask REST API with health check, echo endpoint, and tests"\n'
+            "cli: auto\n"
+            "max_agents: 2\n"
+            'budget: "$2.00"\n'
+            "quality_gates:\n"
+            "  enabled: false\n"
+        )
+
     # Create .sdd/ structure
     for d in SDD_DIRS:
         (project_dir / d).mkdir(parents=True, exist_ok=True)
