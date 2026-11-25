@@ -56,6 +56,12 @@ specific key is absent there, reads the legacy top-level `tests_passing` or
 ratio and shows 25%, not the test ratio of 80%. Without usable percentage or
 step counts, those test counts provide the percentage.
 
+Whichever source wins, the displayed percentage stays within 0-100. An
+explicit `progress.percentage` outside that range is clamped to it, and for
+the step and test ratios the numerator is bounded to `[0, total]` before
+division — so a negative `completed_steps` or `tests_passing` count shows
+0%, and a count past its total shows 100%.
+
 The table shows a dash (`—`) when the computed value is zero and neither a
 truthy `progress` object nor a nonzero top-level `files_changed` count is
 present. Thus a task with no progress fields, such as `{}`, shows a dash. A

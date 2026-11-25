@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from bernstein.core.fleet.cost_rollup import (
     render_sparkline,
@@ -20,6 +23,12 @@ def _write_history(sdd_dir: Path, samples: list[tuple[str, float]]) -> None:
             fh.write(json.dumps({"date": date, "cost_usd": cost}) + "\n")
 
 
+@pytest.fixture
+def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 4, 23, tzinfo=UTC).timestamp()
+    monkeypatch.setattr(time, "time", lambda: now)
+
+
 def test_render_sparkline_empty() -> None:
     spark = render_sparkline([])
     assert spark.glyphs == ""
@@ -32,6 +41,7 @@ def test_render_sparkline_monotonic() -> None:
     assert spark.peak == 8.0
 
 
+@pytest.mark.usefixtures("fixed_clock")
 def test_rollup_correctness(tmp_path: Path) -> None:
     """Per-project totals and fleet total agree with the underlying samples."""
     a = tmp_path / "alpha" / ".sdd"
@@ -60,6 +70,7 @@ def test_rollup_handles_missing_project(tmp_path: Path) -> None:
     assert rollup.fleet_total_usd == 0.0
 
 
+@pytest.mark.usefixtures("fixed_clock")
 def test_rollup_window_truncates(tmp_path: Path) -> None:
     """Only the last ``window_days`` daily samples are kept."""
     sdd = tmp_path / "alpha" / ".sdd"
@@ -78,6 +89,28 @@ def test_rollup_window_truncates(tmp_path: Path) -> None:
     history = rollup.per_project["alpha"]["history"]
     assert isinstance(history, list)
     assert len(history) == 7  # 7-day cap
+
+
+@pytest.mark.usefixtures("fixed_clock")
+@pytest.mark.parametrize(
+    ("days", "expected_history"),
+    [(["2000-01-01", "2026-04-22"], [5.0]), (["2000-01-01"], [])],
+    ids=["sparse", "stale-only"],
+)
+def test_sparse_date_history_respects_the_rolling_window(
+    tmp_path: Path, days: list[str], expected_history: list[float]
+) -> None:
+    metrics = tmp_path / "metrics"
+    metrics.mkdir()
+    with (metrics / "cost_history.jsonl").open("w", encoding="utf-8") as fh:
+        for day in days:
+            ts = datetime.fromisoformat(day).replace(tzinfo=UTC).timestamp()
+            fh.write(json.dumps({"date": day, "cost_usd": 2.0}) + "\n")
+            fh.write(json.dumps({"ts": ts, "cost_usd": 3.0}) + "\n")
+
+    rollup = rollup_costs({"example": tmp_path}, window_days=7)
+    assert rollup.per_project["example"]["history"] == expected_history
+    assert rollup.fleet_total_usd == sum(expected_history)
 
 
 def test_rollup_uses_ts_field(tmp_path: Path) -> None:

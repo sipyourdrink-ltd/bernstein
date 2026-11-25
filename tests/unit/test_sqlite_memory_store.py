@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -155,6 +156,23 @@ class TestSQLiteMemoryStorePrune:
 
         store.prune(max_entries=10, max_age_days=9999)
         assert len(store.list(limit=100)) <= 10
+
+
+@pytest.mark.parametrize("with_expired", [False, True], ids=["fresh-only", "with-expired"])
+def test_prune_zero_capacity_removes_remaining_rows(store: SQLiteMemoryStore, with_expired: bool) -> None:
+    store.add("learning", "Low priority", importance=0.1)
+    keep = store.add("learning", "High priority", importance=1.0)
+    assert store.prune(max_entries=1) == 1
+    assert [entry.id for entry in store.list()] == [keep]
+
+    if with_expired:
+        with patch.object(time, "time", return_value=time.time() - 40 * 86400):
+            store.add("learning", "Expired")
+
+    assert store.prune(max_entries=0) == (2 if with_expired else 1)
+    assert store.list() == []
+    assert store.prune(max_entries=0) == 0
+    assert store.list() == []
 
 
 class TestSQLiteMemoryStoreGetRelevant:

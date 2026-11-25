@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm9, C13(♭9), Fmaj9/A, F6/9." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -32,7 +32,7 @@
 Bernstein হলো AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার। এটি policy as code হিসেবে কাজ করে: আপনি নীতি লেখেন - কে কী করতে পারবে, কীসের জন্য অনুমোদন লাগবে, কী রেকর্ড করতে হবে - আর Bernstein তা প্রয়োগ করে যাচাইযোগ্য রেকর্ড তৈরি করে। একটি ডিটারমিনিস্টিক শিডিউলার - কো-অর্ডিনেশন লুপে কোনো মডেল নেই - এজেন্টদের সমান্তরালে চালায়, তাদের আউটপুট গেট দিয়ে যাচাই করে এবং প্রতিটি ধাপ রেকর্ড করে, তাই একটি রান পরে, অফলাইনে, শুধু আর্টিফ্যাক্ট থেকেই যাচাই করা যায়। CLI কোডিং এজেন্ট সরাসরি কাজ করে (Claude Code, Codex, Gemini CLI), আর একই লেয়ার যেকোনো এজেন্ট ওয়ার্কলোড গভর্ন করে: ডেলিভারেবল হতে পারে একটি diff, রিসার্চ রিপোর্ট, ডেটাসেট বা অডিট এভিডেন্স প্যাক। Air-gap ইনস্টল প্রোফাইল অন্তর্ভুক্ত। Apache-2.0.
 
 ### এক নজরে
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 পাঁচটি বিষয় একে আলাদা করে; বাকিটা বিশদ।
 
@@ -132,28 +132,20 @@ flowchart LR
 পুনঃচেষ্টায় `dispatch_tier` অক্ষুণ্ণ থাকে; কাজটি আবার খোলার সময় স্পষ্টভাবে স্তর বেছে নেওয়া যায়। দেখুন [ডিসপ্যাচ স্তরের চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 কাজটি একটি আলাদা শাখা থেকে চালান। Bernstein যাচাই করা পরিবর্তন বর্তমান শাখায় মার্জ করে। ডিফল্ট শাখায় থাকলে মার্জ করতে পারে এমন রান শুরু হয় না। পুল রিকোয়েস্ট খোলার আগে কাজের শাখায় পরিবর্তনগুলি পর্যালোচনা করুন।
 
-`bernstein doctor --json` অডিট চুক্তির `findings`-ও প্রকাশ করে, যা একই ইনস্টলেশন পর্যবেক্ষণের ক্ষেত্রে `bernstein govern audit --only INS --json`-এর ফলাফলের সঙ্গে অভিন্ন। সাধারণ doctor প্রতিবেদনের প্রদর্শন অপরিবর্তিত থাকে। স্থায়ী চেক আইডির জন্য [doctor পরিচালনা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) দেখুন।
-
-Doctor দীর্ঘদিন পড়ে থাকা এক্সিকিউশন লেনের তথ্য JSON-এ জানায়। লিকের প্রমাণ যাচাই করা না গেলে পরীক্ষা ব্যর্থ হয়; কিছুই মুছে ফেলা হয় না।
-
 pipx, pip, brew, dnf, npm এবং Docker আছে [ইনস্টল গাইডে](https://docs.bernstein.run/en/latest/getting-started/install/); এয়ার-গ্যাপড wheelhouse-এর জন্য আলাদা [এয়ার-গ্যাপ গাইড](https://docs.bernstein.run/en/latest/installation/air-gap/) আছে।
-
-`bernstein worktrees sweep` শেষ হওয়া কাজের রেখে যাওয়া ওয়ার্কট্রি ও স্যান্ডবক্স সেশনগুলোর বয়স এবং ডিস্ক ব্যবহারসহ পূর্বরূপ দেখায়। শুধু ওয়ার্কট্রি মুছে ফেলা যায়, যার জন্য `--apply` ও আলাদা মুছে ফেলার অনুমোদন দরকার। স্যান্ডবক্সের ক্ষেত্রে শুধু রিপোর্ট দেখানো হয় (মুছে ফেলা: #6571); `doctor` দীর্ঘদিন পড়ে থাকা রিসোর্স সম্পর্কে সতর্ক করে। [পরিষ্কারের প্রক্রিয়া](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep) দেখুন।
-
-স্কিল চালু করতে ব্যর্থ হলে কারণ ও অডিট ইভেন্ট স্থায়ীভাবে সংরক্ষণ করে সেটিকে [কোয়ারান্টিনে](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) রাখা হয়। `bernstein status` সংখ্যা দেখায়; `doctor` ও `govern audit` নিষ্ক্রিয় ঘোষণাগুলির প্রতিবেদন দেয়। কারণ ঠিক করার পরে `bernstein quarantine re-enable DECLARATION_ID` দিয়ে স্পষ্টভাবে চিহ্নটি সরান।
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 একই রানে এজেন্ট মেশান: বয়লারপ্লেটের জন্য সস্তা লোকাল মডেল, আর্কিটেকচারের জন্য ভারী ক্লাউড মডেল। `bernstein integrations list --installed` দেখায় আপনার মেশিনে কী কী আছে।
 
-### স্বেচ্ছাসেবী কম্পিউট
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-একটি প্রকল্প issue-গুলিকে স্বেচ্ছাসেবকদের জন্য খোলা হিসেবে চিহ্নিত করতে পারে, আর যে কেউ তার একটি নিজের মেশিনে চালাতে পারেন - অ্যাকাউন্ট ছাড়া, সমন্বয়কারী ছাড়া। কোনো কাজকে কী করার অনুমতি আছে, প্রকল্প তা `volunteer.json` ম্যানিফেস্টে ঘোষণা করে - স্যান্ডবক্স ব্যাকএন্ড, অনুমোদিত নেটওয়ার্ক তালিকা, ওয়াল-ক্লক ও মেমরির সর্বোচ্চ সীমা - আর দাতার নিজের সীমা কেবল সেটিকে সংকীর্ণ করতে পারে, কখনও প্রসারিত নয়। সম্পন্ন কাজ যে রসিদ তৈরি করে তা ফলাফলকে সেই সীমাবদ্ধতার সিদ্ধান্তের সঙ্গে বেঁধে দেয় যার অধীনে সেটি চলেছিল, ফলে রক্ষণাবেক্ষণকারী মাসখানেক পরেও যাচাই করতে পারেন কাজটি আসলে কী স্পর্শ করার অনুমতি পেয়েছিল।
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-[দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড। `autopilot` নিবন্ধিত আছে, কিন্তু `TaskSource` বাস্তবায়িত না হওয়া পর্যন্ত চলতে অস্বীকার করে।
-
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 
@@ -281,36 +261,17 @@ bernstein volunteer browse --budget 60
 | [ওয়ার্কফ্লো](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | এজেন্ট / কমান্ড / লুপ নোডের ডিক্লারেটিভ YAML DAG |
 | [ওয়েব UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI যে API ব্যবহার করে, সেই একই API-র উপর ব্রাউজার ড্যাশবোর্ড (কাজ তৈরি ও পর্যালোচনা) |
 | [কর্মী নোডের স্বাস্থ্য](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | ডিস্কের ফাঁকা স্থান, মেমরি ব্যবহার বা নেটওয়ার্কের বিলম্ব নির্ধারিত সীমার বাইরে গেলে কর্মী নতুন কাজ নেওয়া বন্ধ করে। |
-| [ক্লাউড এক্সিকিউশন](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | পরীক্ষামূলক: নিজের অ্যাকাউন্টে Cloudflare Workers-এ এজেন্ট চালান, R2 ওয়ার্কস্পেস সিংক সহ। হোস্ট করা `api.bernstein.run` সার্ভিসটি এখনও পাওয়া যাচ্ছে না |
 | [ডেটাসোর্স](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | শুধু-পড়ার কোয়েরি রসিদ, সঙ্গে এমন একটি কোয়েরি ড্রাইভার যা প্রতিটি ফলাফলকে যে স্কিমা স্ন্যাপশট থেকে সেটি এসেছে তার সঙ্গে বেঁধে দেয় |
 | [এজেন্ট ক্যাটালগ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | ভূমিকাগুলিকে বিল্ট-ইন টেমপ্লেটের বাইরের এজেন্ট সংজ্ঞার দিকে নির্দেশ করুন — একটি সাধারণ YAML/SKILL.md ডিরেক্টরি, বা Claude Code প্লাগইন-লেআউট ট্রি |
 | [নিরাপত্তা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | স্কোরকার্ড, ফাজিং, হার্ডেনিং |
 | [আর্কিটেকচার](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | ভিতরে এটি কীভাবে কাজ করে |
 
 ### নামটি কেন?
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein নামটি এসেছে মার্কিন কন্ডাক্টর ও সুরকার লিওনার্ড বার্নস্টাইন থেকে। এই প্রকল্পের অর্কেস্ট্রেটর AI এজেন্টদের দলটিকে ঠিক সেভাবেই নিয়ন্ত্রণ করে যেভাবে বার্নস্টাইন নিউ ইয়র্ক ফিলহারমোনিক পরিচালনা করতেন: প্রত্যেক বাদক নিজের সংকেতে, স্কোর ডিটারমিনিস্টিক, আর ফলাফলের দায় কন্ডাক্টরের। কন্ডাক্টরের এই উপমা কোড, গবেষণা প্রতিবেদন বা ডেটাসেট তৈরি করে এমন এজেন্টের কাজ সমন্বয় করার Bernstein-এর সক্ষমতা বোঝায়।
 
-i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, একজনই মেনটেইন করেন। লাইভ পরিসংখ্যান: [bernstein.run](https://bernstein.run)।
-
-### যেখানে উল্লেখ হয়েছে
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Augment Code-এর [ওপেন-সোর্স এজেন্ট অর্কেস্ট্রেটর](https://www.augmentcode.com/tools/open-source-agent-orchestrators) সংকলনে আলোচিত এবং [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026) এ তালিকাভুক্ত। এই পদ্ধতিটি আমরা awesome-agentic-patterns-এ [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) প্যাটার্ন হিসেবেও লিখেছি।
-
-<details>
-<summary>সব উল্লেখ: 20টির বেশি awesome তালিকা, ডিরেক্টরি, নিউজলেটার ও অন্য প্রকল্পের উদ্ধৃতি</summary>
-<br>
-
-প্রতিটি awesome-list এন্ট্রি, ক্যাটালগ তালিকাভুক্তি, পূর্বকাজ হিসেবে উদ্ধৃতি ও নিউজলেটার উল্লেখ সহ পুরো ট্র্যাক করা তালিকাটি আছে [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md) এ। যেমন যেমন আসে, এন্ট্রি যোগ হতে থাকে; সংশোধন issue বা PR-এ স্বাগত।
-
-</details>
-
-### প্রশাসনিক রান
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-এই কলগুলি MCP ব্রিজের টুল ব্যবহার করে। পরের কলগুলিতে ফেরত পাওয়া `runId` মানটি `run_id` হিসেবে ব্যবহার করুন। `bernstein_run(template="administrative", goal="Weekly sprint")` দিয়ে প্ল্যানার বা এজেন্ট প্রক্রিয়া চালু না করেই নিরীক্ষিত খালি কনটেইনার তৈরি করুন। `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` দিয়ে ম্যানুয়াল কাজ যোগ করুন এবং `bernstein_run_status(run_id="<returned runId>")` দিয়ে অবস্থা দেখুন। সাধারণ ক্লেইম API দিয়ে কাজ নেওয়া যায়, তবে সেগুলো স্বয়ংক্রিয় অর্কেস্ট্রেশনের বাইরে থাকে। প্রতিটি কাজের অবস্থা `done`, `closed` বা `cancelled` হলে অখালি রান সম্পূর্ণ হয়; খালি রান খোলা থাকে। [পরিচালনার নির্দেশনা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+সমান্তরাল কোডিং এজেন্টগুলোতে অনিশ্চিত মার্জ এবং যাচাইবিহীন অবস্থা প্রতিরোধ করতে একটি নির্ধারক হারনেস হিসেবে Bernstein শুরু হয়েছিল। Apache-2.0। রিলিজ ও ডকুমেন্টেশন: [bernstein.run](https://bernstein.run)।
 
 ### অবদান, সহায়তা, লাইসেন্স
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

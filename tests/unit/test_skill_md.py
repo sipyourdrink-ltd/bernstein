@@ -22,6 +22,16 @@ from bernstein.agents.catalog import _load_skill_md_files  # pyright: ignore[rep
 # ---------------------------------------------------------------------------
 
 
+def test_frontmatter_delimiters_occupy_a_whole_line() -> None:
+    document = "----\nRelease notes\n----\nParagraph"
+    assert parse_frontmatter(document) == ({}, document)
+
+    for newline in ("\n", "\r\n"):
+        body = f"# Heading{newline}{newline}Paragraph"
+        document = newline.join(("---", "---notes: keep", "description: example", "---", body))
+        assert parse_frontmatter(document) == ({"---notes": "keep", "description": "example"}, body)
+
+
 class TestParseFrontmatter:
     def test_empty_string_returns_empty_fm_and_body(self) -> None:
         fm, body = parse_frontmatter("")

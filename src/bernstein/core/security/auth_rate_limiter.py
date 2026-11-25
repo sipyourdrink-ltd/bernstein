@@ -130,6 +130,14 @@ class AuthRateLimiter:
         timestamps.append(now)
         return None
 
+    def retry_after(self, ip: str, *, bucket: str = "auth") -> float | None:
+        """Return remaining client backoff without recording an attempt."""
+        now = time.monotonic()
+        strikes, until = self._backoff.get((bucket, ip), (0, 0.0))
+        if strikes and now < until:
+            return max(until - now, 1.0)
+        return None
+
     def record_failure(self, ip: str, *, bucket: str = "auth", base_delay: float = 1.0) -> float:
         """Start a bounded exponential backoff for this client and bucket."""
         now = time.monotonic()
@@ -487,8 +495,21 @@ async def check_auth_rate_limit(request: Request) -> None:
         )
 
 
+async def check_auth_backoff(request: Request) -> None:
+    """Enforce client authentication backoff without consuming an attempt."""
+    limiter = _auth_limiter_for_request(request)
+    bucket, _, _ = _auth_bucket(request)
+    retry_after = limiter.retry_after(_request_client_id(request), bucket=bucket)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please try again later.",
+            headers={"Retry-After": str(math.ceil(retry_after))},
+        )
+
+
 def record_auth_result(request: Request, *, success: bool) -> None:
-    """Apply a dashboard credential result to this client's auth backoff."""
+    """Apply a credential result to this client's auth backoff."""
     limiter = _auth_limiter_for_request(request)
     bucket, _, _ = _auth_bucket(request)
     client_id = _request_client_id(request)

@@ -111,7 +111,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
     from pathlib import Path
 
-    from bernstein.core.models import Task
+    from bernstein.core.models import NodeInfo, Task
     from bernstein.core.tenanting import TenantRegistry
 
 router = APIRouter()
@@ -214,6 +214,71 @@ def _checked_claim_session(claimed_by_session: str | None) -> str | None:
             sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _checked_node_id(node_id: str | None) -> str | None:
+    """Return *node_id* once it is a usable opaque identifier.
+
+    Same boundary rule as :func:`_checked_claim_session`: the value only
+    keys a registry lookup, but a malformed one is refused with the
+    request's own 422 rather than silently matching nothing.
+
+    Args:
+        node_id: The raw query value, if any.
+
+    Returns:
+        The value, unchanged.
+
+    Raises:
+        HTTPException: 422 if the value is not a single safe identifier.
+    """
+    if not node_id:
+        return node_id
+    try:
+        return validate_path_segment(node_id, label="node_id")
+    except PathContainmentError as exc:
+        logger.warning(
+            "claim rejected: node_id=%s reason=%s",
+            for_log(str(node_id)),
+            sanitize_log(str(exc)),
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _resolve_claiming_node(
+    request: Request,
+    *,
+    claimed_by_session: str | None,
+    node_id: str | None,
+) -> NodeInfo | None:
+    """Find the registered cluster node behind a claim, if this server knows it.
+
+    The cluster registry assigns each node an ID at registration, and that
+    ID is not the parent orchestrator session a claim records as its owner.
+    A claiming client therefore names its registered node explicitly via
+    the ``node_id`` parameter; older clients that only send
+    ``claimed_by_session`` are matched on that value (the ``bernstein
+    worker`` loop passes its node ID there). The lookup keys on the
+    presented identifiers, never on the URL the request arrived on, so a
+    deployment serving the registry and the task server under separate
+    URLs resolves the same node (#7853).
+
+    A claimant this server's registry does not know - an older client, a
+    single-host run with no registration, or a node registered with a
+    separate registry deployment - resolves to ``None`` and the claim
+    proceeds unchecked: the health gate can only judge a node the server
+    can see.
+    """
+    registry = getattr(request.app.state, "node_registry", None)
+    if registry is None:
+        return None
+    if node_id:
+        node = registry.get(node_id)
+        if node is not None:
+            return node
+    if claimed_by_session:
+        return registry.get(claimed_by_session)
+    return None
 
 
 def _get_gate_report_path(request: Request, task_id: str) -> Path:
@@ -554,6 +619,47 @@ def _fetch_remote_agent_branch(
             )
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("fetch_remote_agent_branch: %s: %s", for_log(agent_branch), type(exc).__name__)
+
+
+def _compute_repo_root_commit(workdir: Path) -> str | None:
+    """Compute a workspace's true git root commit off the event loop.
+
+    Shallow clones report their shallow boundary rather than the true root,
+    so return ``None`` when the checkout is shallow rather than advertising
+    an unstable boundary SHA.
+    """
+    from bernstein.core.git.git_basic import run_git
+
+    with suppress(Exception):
+        shallow = run_git(["rev-parse", "--is-shallow-repository"], workdir)
+        if shallow.ok and shallow.stdout.strip().lower() == "true":
+            return None
+        result = run_git(["rev-list", "--max-parents=0", "HEAD"], workdir)
+        if result.ok:
+            roots = sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+            return roots[0] if roots else None
+    return None
+
+
+async def _repo_root_commit(request: Request) -> str | None:
+    """Return the central workspace's repository identity (its root commit).
+
+    Stamped on claim responses (``GET /tasks/next/{role}``) so a worker node
+    can refuse a claim addressed to a repository its workspace does not hold
+    (#6538). Computed once in a worker thread and cached on ``app.state`` so
+    git traversal never blocks the async event loop. A repository with
+    several roots (merged unrelated histories) yields the sorted-first, the
+    same rule the worker applies, so both sides agree.
+
+    Returns ``None`` when the central workspace has no resolvable full git
+    history (or is a shallow clone); the worker treats a missing identity as
+    "not advertised" and skips the check.
+    """
+    state = request.app.state
+    if not hasattr(state, "repo_root_commit"):
+        workdir = _get_workdir(request)
+        state.repo_root_commit = await asyncio.to_thread(_compute_repo_root_commit, workdir)
+    return state.repo_root_commit  # type: ignore[no-any-return]
 
 
 def _run_auto_commit_pre_complete(
@@ -1398,6 +1504,7 @@ async def next_task(
     request: Request,
     claimed_by_session: str | None = None,
     parent_session_id: str | None = None,
+    node_id: str | None = None,
 ) -> TaskResponse:
     """Claim the next available task for *role*.
 
@@ -1408,6 +1515,10 @@ async def next_task(
     created under that coordinator session.  Workers belonging to a
     coordinator should always pass their coordinator's session ID here
     to avoid stealing tasks from other namespaces.
+
+    Pass ``node_id`` to name the cluster node the claim is made for, so
+    the health gate judges the registered node even when the recorded
+    owner is a parent session ID (see :func:`_resolve_claiming_node`).
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
         raise HTTPException(
@@ -1415,6 +1526,7 @@ async def next_task(
             detail=_DRAINING_DETAIL,
         )
     claimed_by_session = _checked_claim_session(claimed_by_session)
+    node_id = _checked_node_id(node_id)
     agent_role = _caller_agent_role(request)
     if agent_role is not None and role != agent_role:
         raise HTTPException(
@@ -1427,9 +1539,8 @@ async def next_task(
     # candidate query, so a task outside its scope is never chosen.
     tenant_scope = _resolve_request_tenant_scope(request)
     allowed_tasks = agent_task_scope(request)
-    registry = getattr(request.app.state, "node_registry", None)
-    worker = registry.get(claimed_by_session) if registry is not None and claimed_by_session else None
     # A pull reports a slot that may have opened since the last heartbeat.
+    worker = _resolve_claiming_node(request, claimed_by_session=claimed_by_session, node_id=node_id)
     if worker is not None and not worker.can_accept_work:
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     task = await store.claim_next(
@@ -1448,7 +1559,12 @@ async def next_task(
         )
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     _record_claim_receipt(request, task, "next")
-    return task_to_response(task)
+    response = task_to_response(task)
+    # Remote execution (#6538): stamp the run's repository identity so the
+    # claiming worker can refuse the task when its own workspace is a
+    # checkout of a different repository.
+    response.repo_root_commit = await _repo_root_commit(request)
+    return response
 
 
 @router.post("/tasks/claim-batch", responses={503: {"description": "Server is draining"}})
@@ -1497,7 +1613,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
     "/tasks/{task_id}/claim",
     responses={
         404: {"description": "Task not found"},
-        409: {"description": "Version conflict or invalid state"},
+        409: {"description": "Version conflict, invalid state, or claiming node not accepting work"},
         503: {"description": "Server is draining"},
     },
 )
@@ -1506,6 +1622,7 @@ async def claim_task(
     request: Request,
     expected_version: int | None = None,
     claimed_by_session: str | None = None,
+    node_id: str | None = None,
 ) -> TaskResponse:
     """Claim a specific task by ID.
 
@@ -1514,6 +1631,12 @@ async def claim_task(
 
     Pass ``claimed_by_session`` to record which parent orchestrator
     session owns this claim.
+
+    Pass ``node_id`` to name the registered cluster node the claim is
+    made for. A node the registry knows but that cannot accept work
+    (unhealthy telemetry, cordoned, draining, offline) is refused with
+    409 until it recovers; the parent session stays the recorded claim
+    owner either way (#7853).
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
         raise HTTPException(
@@ -1521,6 +1644,31 @@ async def claim_task(
             detail=_DRAINING_DETAIL,
         )
     claimed_by_session = _checked_claim_session(claimed_by_session)
+    node_id = _checked_node_id(node_id)
+    # The by-ID path must not be a way around the pull path's health
+    # gate: a claimant the registry knows is refused while it cannot
+    # accept work, and claims again once it reports recovery. An unknown
+    # claimant (older client, single-host run) is not gated - see
+    # _resolve_claiming_node. 409 is the endpoint's "invalid state"
+    # answer and the one refusal the orchestrator's claim retry loop
+    # already treats as "leave the task open and retry later".
+    claiming_node = _resolve_claiming_node(request, claimed_by_session=claimed_by_session, node_id=node_id)
+    if claiming_node is not None and not claiming_node.can_accept_work:
+        logger.info(
+            "task.claim 409: node not accepting work: node=%s status=%s health=%s claimed_by_session=%s",
+            for_log(claiming_node.id),
+            claiming_node.status.value,
+            for_log(claiming_node.health),
+            for_log(str(claimed_by_session)),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Node '{claiming_node.id}' is not accepting work "
+                f"(status={claiming_node.status.value}, health={claiming_node.health}); "
+                "claim refused until the node recovers"
+            ),
+        )
     with start_span("task.claim", {"task.id": task_id}):
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)

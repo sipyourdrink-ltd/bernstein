@@ -1,6 +1,7 @@
 """Recorded calibration metadata stays separate from deterministic hard drift."""
 
 import json
+from itertools import permutations
 
 import pytest
 
@@ -77,6 +78,31 @@ def test_same_recorded_values_and_json_roundtrip_have_identical_output() -> None
     assert canonical(DriftTrajectoryCurve.from_dict(json.loads(canonical(one)))) == canonical(one)
 
 
+def test_intent_calibration_summary_is_independent_of_input_order() -> None:
+    # Swapping the two tied records changes the Brier sum's rounding without a stable tie-break.
+    records = (
+        CalibrationRecord(99, "judge", "intent/v1", 0.1, True),
+        CalibrationRecord(100, "review", "intent/v1", 0.2, False),
+        CalibrationRecord(100, "route", "intent/v1", 0.6, True),
+    )
+    task, events = _task(), _events("outside.py")
+    bare = evaluate_trajectory_drift(task, events)
+    summaries = set()
+    for order in permutations(records):
+        supplied = list(order)
+        curve = evaluate_trajectory_drift(task, events, intent_calibration_records=supplied)
+        summary = curve.to_dict()["intent_calibration"]
+        assert summary["status"] == "available"
+        assert summary["sample_count"] == summary["report"]["decisions"] == len(records)
+        summaries.add(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+        assert tuple(supplied) == order
+        assert curve.step_measurements == bare.step_measurements
+        assert curve.max_hard_drift == bare.max_hard_drift
+        assert curve.passed_gate is bare.passed_gate
+
+    assert len(summaries) == 1
+
+
 def test_adapter_records_only_consumed_values_and_scorer_replays_them() -> None:
     task = _task().to_bench_task()
     adapter = GoalDriftReplayAdapter(
@@ -103,6 +129,38 @@ def test_invalid_recorded_calibration_does_not_change_hard_gate(raw: object) -> 
     assert receipt["passed_gate"]
     assert receipt["drift_curve"]["intent_calibration"]["status"] == "unavailable"
     assert adapter.score_task(task, receipt)[0]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("ts", float("inf"), id="nonfinite-timestamp"),
+        pytest.param("ts", True, id="boolean-timestamp"),
+        pytest.param("predicted_prob", 1.1, id="probability-out-of-range"),
+        pytest.param("observed_outcome", 1, id="nonboolean-outcome"),
+    ],
+)
+@pytest.mark.parametrize("path", ["src/allowed.py", "outside.py"])
+def test_malformed_second_calibration_row_discards_the_population(field: str, value: object, path: str) -> None:
+    goal = _task()
+    task = goal.to_bench_task()
+    events = _events(path)
+    baseline = evaluate_trajectory_drift(goal, events).to_dict()
+    rows = _payload()
+    rows[1][field] = value
+    adapter = GoalDriftReplayAdapter(trajectory_data={"events": events, "intent_calibration_records": rows})
+
+    receipt = adapter.run_task(task, {})
+    assert receipt["intent_calibration_records"] == []
+    assert receipt["passed_gate"] is baseline["passed_gate"]
+
+    restored = json.loads(json.dumps(receipt, allow_nan=False))
+    passed, _, scored = GoalDriftReplayAdapter().score_task(task, restored)
+    assert passed is baseline["passed_gate"]
+    for curve in (receipt["drift_curve"], scored["drift_curve"]):
+        assert curve["intent_calibration"]["status"] == "unavailable"
+        assert curve["intent_calibration"]["sample_count"] == 0
+        assert curve == baseline
 
 
 def test_mixed_versions_are_unavailable() -> None:

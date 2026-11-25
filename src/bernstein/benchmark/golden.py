@@ -87,21 +87,21 @@ class GoldenEvalRunner:
         logger.info("Starting golden test suite (%d tasks)", len(tasks))
 
         start_time = time.time()
-        for gtask in tasks:
-            result = await self.run_task(gtask)
-            self.results.append(result)
+        results = [await self.run_task(gtask) for gtask in tasks]
 
         duration = time.time() - start_time
 
         summary = {
             "timestamp": datetime.now().isoformat(),
             "total_tasks": len(tasks),
-            "passed": sum(1 for r in self.results if r["passed"]),
-            "failed": sum(1 for r in self.results if not r["passed"]),
-            "total_cost_usd": sum(r.get("cost_usd", 0.0) for r in self.results),
+            "passed": sum(1 for r in results if r["passed"]),
+            "failed": sum(1 for r in results if not r["passed"]),
+            "total_cost_usd": sum(r.get("cost_usd", 0.0) for r in results),
             "duration_s": duration,
-            "tasks": self.results,
+            "tasks": results,
         }
+        # Keep the public results list as a separate view of the last completed run.
+        self.results[:] = results
         return summary
 
     async def run_task(self, gtask: GoldenTask) -> dict[str, Any]:

@@ -107,19 +107,28 @@ def _find_agent_by_session(session_id: str, agents: list[dict[str, Any]]) -> dic
     return None
 
 
-def _run_git(args: list[str], cwd: Path) -> str:
+def _git_text(output: bytes) -> str:
+    return output.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _display_patch(diff_text: str) -> str:
+    """Apply the usual terminal text conversions to a losslessly decoded patch."""
+    return _git_text(diff_text.encode("utf-8", errors="surrogateescape"))
+
+
+def _run_git(args: list[str], cwd: Path, *, patch: bool = False) -> str:
     """Run a git command and return stdout, or empty string on error."""
     try:
         result = subprocess.run(
             ["git", *args],
             cwd=cwd,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=30,
         )
-        return result.stdout.strip()
+        if patch:
+            # Keep every byte until the caller chooses raw or formatted output.
+            return result.stdout.decode("utf-8", errors="surrogateescape")
+        return _git_text(result.stdout)
     except (subprocess.TimeoutExpired, OSError):
         return ""
 
@@ -133,17 +142,17 @@ def _branch_exists(branch: str, workdir: Path) -> bool:
 def _get_diff_from_worktree(worktree: Path, base: str = "main") -> str:
     """Get uncommitted + committed diff from a live worktree vs base branch."""
     # Committed changes since branch point
-    diff = _run_git(["diff", f"{base}...HEAD", "--"], worktree)
+    diff = _run_git(["diff", f"{base}...HEAD", "--"], worktree, patch=True)
     if diff:
         return diff
     # Fallback: staged only
-    diff = _run_git(["diff", "--cached", "--"], worktree)
+    diff = _run_git(["diff", "--cached", "--"], worktree, patch=True)
     return diff
 
 
 def _get_diff_from_branch(branch: str, workdir: Path, base: str = "main") -> str:
     """Diff a local branch vs base, run from the main workdir."""
-    return _run_git(["diff", f"{base}...{branch}", "--"], workdir)
+    return _run_git(["diff", f"{base}...{branch}", "--"], workdir, patch=True)
 
 
 def _find_merge_commit(session_id: str, workdir: Path) -> str | None:
@@ -166,7 +175,7 @@ def _find_merge_commit(session_id: str, workdir: Path) -> str | None:
 
 def _get_diff_from_merge_commit(commit: str, workdir: Path) -> str:
     """Show the diff introduced by a merge commit."""
-    return _run_git(["diff", f"{commit}^..{commit}", "--"], workdir)
+    return _run_git(["diff", f"{commit}^..{commit}", "--"], workdir, patch=True)
 
 
 def _search_commits_by_task_id(task_id: str, workdir: Path) -> str:
@@ -178,7 +187,7 @@ def _search_commits_by_task_id(task_id: str, workdir: Path) -> str:
     if not log:
         return ""
     first_hash = log.splitlines()[0].split()[0]
-    return _run_git(["show", first_hash, "--", "--format="], workdir)
+    return _run_git(["show", first_hash, "--", "--format="], workdir, patch=True)
 
 
 def _get_stat_from_worktree(worktree: Path, base: str = "main") -> str:
@@ -448,8 +457,8 @@ def _render_compare(left: ResolvedDiff, right: ResolvedDiff, left_name: str, rig
         console.print()
 
     # -- File-level comparison --
-    left_files = _parse_diff_files(left.diff_text) if left.diff_text else {}
-    right_files = _parse_diff_files(right.diff_text) if right.diff_text else {}
+    left_files = _parse_diff_files(_display_patch(left.diff_text))
+    right_files = _parse_diff_files(_display_patch(right.diff_text))
     all_files = sorted(set(left_files) | set(right_files))
 
     if not all_files:
@@ -602,7 +611,7 @@ def _render_stat_only(resolved: ResolvedDiff, root: Path, base: str) -> None:
     help="Project root (parent of .sdd/).",
 )
 @click.option("--stat", "stat_only", is_flag=True, default=False, help="Show diff --stat summary only.")
-@click.option("--raw", is_flag=True, default=False, help="Print raw diff without syntax highlighting.")
+@click.option("--raw", is_flag=True, default=False, help="Write the unformatted Git patch to stdout.")
 @click.option("--fold", is_flag=True, default=False, help="Collapse each hunk to a summary plus a few lines.")
 @click.option(
     "--fold-lines",
@@ -698,6 +707,10 @@ def diff_cmd(
         console.print("[dim]The task may not have made any changes yet, or the branch/worktree was cleaned up.[/dim]")
         raise SystemExit(1)
 
+    if raw and not stat_only:
+        click.echo(resolved.diff_text.encode("utf-8", errors="surrogateescape"), nl=False)
+        return
+
     # Header
     if resolved.agent:
         task_ids_str = ", ".join(resolved.agent.get("task_ids", []))
@@ -708,24 +721,18 @@ def diff_cmd(
         console.print(resolved.source_label)
     console.print()
 
-    # Show file-level summary by default
-    if not stat_only and not raw:
-        _render_enhanced_summary(resolved)
-
     if stat_only:
         _render_stat_only(resolved, root, base)
         return
 
-    if raw:
-        console.print(resolved.diff_text)
-        return
-
+    _render_enhanced_summary(resolved)
+    diff_text = _display_patch(resolved.diff_text)
     if word_diff:
-        render_word_level(resolved.diff_text)
+        render_word_level(diff_text)
         return
 
     if fold:
-        folded = render_folded(resolved.diff_text, fold_lines)
+        folded = render_folded(diff_text, fold_lines)
         if folded:
             console.print(folded)
             return
@@ -734,5 +741,5 @@ def diff_cmd(
     # Syntax-highlighted diff
     from rich.syntax import Syntax
 
-    syntax = Syntax(resolved.diff_text, "diff", theme="monokai", line_numbers=False)
+    syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=False)
     console.print(syntax)

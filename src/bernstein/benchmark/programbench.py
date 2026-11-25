@@ -18,12 +18,15 @@ from __future__ import annotations
 import json
 import random
 import statistics
+import subprocess
 import time
 from collections import defaultdict
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
+
+from bernstein.core.sandbox.isolated_process import IsolationUnavailable, run_isolated
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -434,17 +437,24 @@ def save_results(report: ProgramBenchReport, sdd_dir: Path) -> Path:
 
 
 _SANDBOX_DEFAULT_TIMEOUT_SECONDS = 30
+_SANDBOX_IMAGE = "python:3.13-slim"
 
 
 _SANDBOX_RUNNER = """\
 import json
 import sys
+import os
 
 payload = json.loads(sys.stdin.read())
 setup_code = payload.get("setup_code", "")
 candidate_code = payload.get("candidate_code", "")
 assert_exprs = payload.get("asserts", [])
 task_id = payload.get("task_id", "task")
+
+result_fd = os.dup(1)
+with open(os.devnull, "wb") as sink:
+    os.dup2(sink.fileno(), 1)
+    os.dup2(sink.fileno(), 2)
 
 namespace = {}
 error = None
@@ -454,7 +464,7 @@ try:
     if candidate_code.strip():
         exec(compile(candidate_code, "<" + task_id + ":candidate>", "exec"), namespace)
 except BaseException as exc:
-    error = "setup/candidate error: " + repr(exc)
+    error = "setup/candidate error: " + type(exc).__name__
 
 passed = 0
 if error is None:
@@ -466,8 +476,18 @@ if error is None:
         except BaseException:
             continue
 
-print(json.dumps({"passed": passed, "total": len(assert_exprs), "error": error}))
+os.write(result_fd, json.dumps({"passed": passed, "total": len(assert_exprs), "error": error}).encode())
 """
+
+
+def verify_benchmark_runtime() -> None:
+    """Check the configured isolation path before paying for candidate runs."""
+    try:
+        result = run_isolated(_SANDBOX_IMAGE, ["python", "-I", "-c", "print('ready')"], input_data=b"", timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        raise IsolationUnavailable("isolated benchmark runtime timed out") from exc
+    if result.returncode != 0 or result.stdout.strip() != b"ready":
+        raise IsolationUnavailable("isolated benchmark runtime failed its startup check")
 
 
 def _run_assert_sandbox(
@@ -478,27 +498,7 @@ def _run_assert_sandbox(
     asserts: list[str],
     timeout_seconds: int = _SANDBOX_DEFAULT_TIMEOUT_SECONDS,
 ) -> tuple[int, int, str | None]:
-    """Evaluate a candidate's asserts in an isolated Python subprocess.
-
-    The runner script reads JSON on stdin, executes the setup and candidate
-    code in a fresh namespace, then evaluates each assert expression. The
-    harness process never executes candidate code; isolation is provided by
-    the subprocess boundary plus the timeout. This mirrors the call shape
-    used by :mod:`bernstein.core.sandbox` for runtime evaluation.
-
-    Args:
-        task_id: Task identifier used for diagnostic filenames.
-        setup_code: Initial setup Python source.
-        candidate_code: Candidate Python source.
-        asserts: List of Python expressions to evaluate.
-        timeout_seconds: Subprocess timeout in seconds.
-
-    Returns:
-        Tuple of ``(asserts_passed, asserts_total, error_or_None)``.
-    """
-    import subprocess
-    import sys
-
+    """Evaluate a candidate in an isolated Python container."""
     payload = json.dumps(
         {
             "task_id": task_id,
@@ -509,32 +509,35 @@ def _run_assert_sandbox(
     )
 
     try:
-        proc = subprocess.run(
-            [sys.executable, "-c", _SANDBOX_RUNNER],
-            input=payload,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+        proc = run_isolated(
+            _SANDBOX_IMAGE,
+            ["python", "-I", "-c", _SANDBOX_RUNNER],
+            input_data=payload.encode("utf-8"),
             timeout=timeout_seconds,
-            check=False,
         )
     except subprocess.TimeoutExpired:
         return 0, len(asserts), "sandbox timeout"
-    except OSError as exc:
-        return 0, len(asserts), f"sandbox spawn error: {exc!r}"
+    except IsolationUnavailable as exc:
+        return 0, len(asserts), str(exc)
 
     if proc.returncode != 0:
         return 0, len(asserts), f"sandbox exit {proc.returncode}: {proc.stderr[:200]}"
 
     try:
-        result_data = json.loads(proc.stdout.strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError) as exc:
-        return 0, len(asserts), f"sandbox output parse error: {exc!r}"
-
-    passed = int(result_data.get("passed", 0))
-    total = int(result_data.get("total", len(asserts)))
-    error: str | None = result_data.get("error")
+        result_data = json.loads(proc.stdout)
+        passed = result_data["passed"]
+        total = result_data["total"]
+        error = result_data["error"]
+        if (
+            type(passed) is not int
+            or type(total) is not int
+            or total != len(asserts)
+            or not 0 <= passed <= total
+            or (error is not None and type(error) is not str)
+        ):
+            raise ValueError("invalid isolated benchmark result")
+    except (ValueError, UnicodeError, KeyError, TypeError):
+        return 0, len(asserts), "sandbox output parse error"
     return passed, total, error
 
 

@@ -171,3 +171,39 @@ class TestAgyZeroConfigSpawn:
         assert session.model_config.model not in _CLAUDE_TIERS
         assert spawn_calls, "adapter.spawn was never invoked"
         assert spawn_calls[0].model == "default"
+
+
+class TestGeminiZeroConfigSpawn:
+    def test_gemini_declares_default_model(self) -> None:
+        """GeminiAdapter declares its documented default model so zero-config
+        and `bernstein demo --real --adapter gemini` runs coerce unpinned
+        Claude tier names instead of raising ModelNotConfiguredError."""
+        from bernstein.adapters.gemini import GeminiAdapter
+
+        assert GeminiAdapter.default_model == "gemini-3-flash"
+
+    def test_gemini_zero_config_spawn_resolves_model(self, tmp_path: Path, make_task, monkeypatch) -> None:
+        """A zero-config run with GeminiAdapter substitutes gemini-3-flash
+        for the heuristic Claude tier name (`opus` / `sonnet`)."""
+        from bernstein.adapters.gemini import GeminiAdapter
+
+        templates_dir = tmp_path / "templates" / "roles"
+        _write_manager_role_config(templates_dir)
+
+        adapter = GeminiAdapter()
+        spawn_calls: list[ModelConfig] = []
+
+        def _fake_spawn(*, model_config: ModelConfig, **_kwargs) -> SpawnResult:
+            spawn_calls.append(model_config)
+            return SpawnResult(pid=43, log_path=tmp_path / "agent.log")
+
+        monkeypatch.setattr(adapter, "spawn", _fake_spawn)
+
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        task = make_task(role="manager")
+        session = spawner.spawn_for_tasks([task])
+
+        assert session.model_config.model == "gemini-3-flash"
+        assert session.model_config.model not in _CLAUDE_TIERS
+        assert spawn_calls, "adapter.spawn was never invoked"
+        assert spawn_calls[0].model == "gemini-3-flash"

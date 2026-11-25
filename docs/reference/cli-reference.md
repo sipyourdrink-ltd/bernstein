@@ -226,7 +226,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan validate PLAN.yaml` | Validate a plan file's schema (`bernstein validate` is a deprecated alias, removed in 4.0.0). | `cli/plan_validate_cmd.py:142` |
 | `bernstein validate PLAN.yaml` | Deprecated alias of `bernstein plan validate`; removed in v4.0.0. | `cli/plan_validate_cmd.py` |
 | `bernstein task` | Durable task lifecycle: complete, park, and resume a task. | `cli/commands/task_cmd.py:837` |
-| `bernstein scenario` | Manage Bernstein scenarios. | `cli/commands/scenario_cmd.py` |
+| `bernstein scenario` | Manage Bernstein scenarios. `scenario list` skips malformed YAML and files it cannot decode as UTF-8. | `cli/commands/scenario_cmd.py` |
 
 #### `bernstein plan`
 
@@ -263,6 +263,14 @@ implements, so every artefact traces back to spec lines through lineage. An
 unreadable spec or a spec with no EARS-shaped requirements exits with status
 `1` and a diagnostic on stderr. Command-line usage errors exit with status
 `2`.
+
+The draft stage recognises a line as a requirement only when `shall` appears
+as a complete word; matching is case-insensitive, so `SHALL` and `Shall`
+count too. Words that merely contain those letters — `shallow`, `shallot`,
+`Marshall` — are prose and are skipped, as are headings, list markers, and
+checkbox decoration. A spec whose only `shall`-looking occurrences are such
+words extracts no requirements and exits `1` like any spec without
+EARS-shaped requirements.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -661,7 +669,7 @@ only accepts the reliability options listed below.
 |---|---|
 | `run SPEC` | Drive the golden harness or a YAML eval spec (`--tier`, `--compare`, `--save/--no-save`, `--output`). |
 | `swe-bench` | SWE-bench runner (`--subset`, `--sample`, `--instance`, `--dataset`, `--save/--no-save`). |
-| `programbench` | ProgramBench runner (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
+| `programbench` | ProgramBench runner. Requires Docker or Podman and a local `python:3.13-slim` image (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
 | `simulate` | Replay the standard benchmark task set (`--tasks-dir`, `--seed`, `--task-id`, `--baseline`). |
 | `compare` | Compare eval runs (`--tasks-dir`, `--mode`). |
 | `golden` | Run the curated golden suite (`--workdir`). |
@@ -776,7 +784,7 @@ its merged branch, or the merge commit.
 | `--base REV` | `main` | Base branch to diff against. |
 | `--workdir PATH` | `.` | Project root. |
 | `--stat` | off | Show the `--stat` summary only. |
-| `--raw` | off | Print the raw diff without syntax highlighting. |
+| `--raw` | off | Write only the Git patch to stdout, preserving its bytes for redirection or `git apply`. |
 | `--fold` | off | Collapse each hunk to its header plus a few lines. |
 | `--fold-lines N` | 3 | Lines kept per hunk when `--fold` is set. |
 | `--word-diff` | off | Highlight only the tokens that changed on replaced lines. |
@@ -941,7 +949,7 @@ digest. (`cli/commands/skill_cmd.py`.)
 |---|---|
 | `list` | List available templates. |
 | `show TEMPLATE_NAME` | Display the template on stdout. |
-| `use TEMPLATE_NAME [OUTPUT]` | Copy the template file to OUTPUT (default `plans/<name>.yaml`). |
+| `use TEMPLATE_NAME [OUTPUT]` | Copy the template to the given file path (default `plans/<name>.yaml`). An existing directory is rejected before the overwrite prompt. |
 | `compress ROLE\|--all` | Operator-gated LLM compression of role prompt templates (`cli/commands/templates_cmd.py`). Rewrite via the configured adapter (`--model`, `--provider`), then mechanical validators (fenced blocks, headings, URLs, inline code, placeholders, completion-contract block; at most two targeted fix retries), then apply. Originals are stored under `~/.local/share/bernstein/template-backups/` keyed by content hash with readback verification; the receipt `{role, pre_sha256, post_sha256, pre_tokens, post_tokens, validators, adapter, model}` is chained to the audit log and a `templates.lock` row lets `bernstein team drift` classify the change as intentional. Prints only the template token delta; per-spawn savings come from `bernstein cost` grouped by role. `--workdir DIR`, `--yes` skips the confirmation. |
 | `restore ROLE` | Reverse the most recent receipted compression byte-identically (backup hash, on-disk hash, and directory digest all verified). `--workdir DIR`. |
 | `hooks list` / `hooks use` | Browse and scaffold bundled command-hook templates. |
@@ -1708,7 +1716,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start a preview server in the current task's worktree. `--cwd`, `--command`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
+| `start` | Start an isolated preview server for the selected worktree. `--cwd`, `--command`, `--approve-discovered`, `--list-commands`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
 | `list` | List active previews. `--json`. |
 | `status ID` | Show a preview's URL and process. `--json`. |
 | `stop [ID]` | Stop one preview. `--all` stops every active preview. |
@@ -1755,7 +1763,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 | `bernstein ledger verify <run>` | Walk a run's durable work ledger (`.sdd/runtime/ledger/<run-id>/`) and recompute every entry hash against the canonical-JSON contract. A tampered entry is named at its exact position (`entry <seq> (line <n>)`). `--expected-head HASH` additionally pins the tail. `--json` for machine output. Exit 0 verified, 1 no ledger, 2 mismatch. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger anchor <run>` | Verify the run's chain, then publish it -- chunked, with a deterministic tree identity -- to `refs/bernstein/work-ledger/<run-id>` and mirror the anchor into the HMAC audit chain as a `work_ledger.anchor` event. Re-anchoring an extended chain adds a child commit; an identical chain is idempotent. Exit 0 anchored, 1 no ledger, 2 broken chain or git refusal, 3 the anchored chain diverges from the local one. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger fetch <run>` | Pull the anchored ledger ref from a remote (default `origin`) after a clone and materialize it into `.sdd/runtime/ledger/<run-id>/`. Verifies the anchored chain end to end before writing; an existing local chain is only ever fast-forwarded -- a diverged pair is refused with the exact fork entry named. Exit 0 materialized, 1 no anchored ledger on the remote, 2 broken anchored chain, 3 divergence. | `cli/commands/ledger_cmd.py` |
-| `bernstein ledger resume <run>` | Resume a run from its work ledger on any clone: verify the chain end to end, rebuild scheduler state by deterministic replay (completed / in-flight / scheduled / failed tasks), record the resume as a new chain entry, and write one resume signal per frontier task for the resume watcher. `--dry-run` prints the plan without recording anything; `--json` for machine output. Exit 0 resumed, 1 no ledger, 2 verification failed (exact entry position reported), 3 two divergent resumes detected and refused. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger resume <run>` | Verify the work ledger and replay its task state. A live resume records a chain entry and writes one local signal per frontier task. `--dry-run` prints the plan. `--json` reports the signal paths and dispatch status. Runtime acknowledgement is unavailable. Exit 0 means preparation succeeded, 1 indicates a missing ledger or I/O error, 2 indicates an invalid run ID, failed verification or a rejected entry, and 3 indicates divergent histories. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger runs` | List runs with an anchored work ledger in this repository. `--json` for machine output. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger gc <run>` | Squash the run's anchor history to a single commit, preserving the current anchored tree byte for byte. Superseded chunk blobs become unreachable so a normal `git gc` reclaims them -- the repo-bloat bound for long runs. Exit 0 done, 1 no anchored ledger. | `cli/commands/ledger_cmd.py` |
 | `bernstein seal publish <run>` | Anchor the run's sealed journal head to an RFC 3161 timestamping authority, so the head carries an external witness of when it existed. Refuses a run whose journal chain does not verify or whose recomputed head disagrees with the seal in its lineage spine. `--tsa-url <url>` requests a token (the only option that opens a socket); `--token <file>` stores a DER reply obtained on another host, for installs with no network. The reply is written to `.sdd/runs/<run>/seal_anchor.json`. Exit 0 anchored, 1 nothing to anchor / refused. | `cli/commands/seal_cmd.py` |
@@ -1798,7 +1806,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Subcommand | Purpose |
 |---|---|
-| `tasks` | Render the current task dependency graph as ASCII or Mermaid. |
+| `tasks` | Show the current task dependency graph as ASCII. Use `--format mermaid` to write a standalone Mermaid diagram to stdout. |
 | `impact FILE_QUERY` | Print downstream files impacted by changing FILE_QUERY. |
 
 #### `bernstein govern`

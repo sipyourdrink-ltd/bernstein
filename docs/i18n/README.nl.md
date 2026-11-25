@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm9, C13(♭9), Fmaj9/A, F6/9." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -32,7 +32,7 @@
 Bernstein is de open-source governancelaag voor AI-agents. Het draait op policy as code: jij schrijft het beleid - wie wat mag doen, wat goedkeuring nodig heeft, wat vastgelegd moet worden - en Bernstein handhaaft dat en levert het verifieerbare bewijs. Een deterministische scheduler - geen model in de coördinatielus - draait agents parallel, toetst wat ze opleveren aan gates en legt elke stap vast, zodat een run achteraf te verifiëren is: offline, puur uit de artefacten. CLI-code-agents werken out of the box (Claude Code, Codex, Gemini CLI), en dezelfde laag governt elke agent-workload: het resultaat kan een diff zijn, een onderzoeksrapport, een dataset of een audit-evidence-pack. Air-gap-installatieprofiel inbegrepen. Apache-2.0.
 
 ### in het kort
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 Vijf dingen onderscheiden het; de rest zijn details.
 
@@ -132,28 +132,20 @@ Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en
 Nieuwe pogingen behouden `dispatch_tier`; bij het heropenen van een taak kan het niveau expliciet worden gekozen. Zie het [contract voor dispatchniveaus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 Start de taak vanuit een werkbranch. Bernstein voegt gecontroleerde wijzigingen samen in de huidige branch en stopt uitvoeringen die wijzigingen in de standaardbranch zouden samenvoegen. Controleer de wijzigingen op de werkbranch voordat je een pull request opent.
 
-`bernstein doctor --json` toont ook de bevindingen `findings` van het auditcontract, die bij dezelfde installatieobservaties identiek zijn aan die van `bernstein govern audit --only INS --json`. Het normale doctor-rapport behoudt de bestaande weergave. Zie de [gebruikshandleiding voor doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) voor vaste controle-ID’s.
-
-Doctor rapporteert achtergebleven uitvoeringslanen die de leeftijdsgrens overschrijden als JSON. Als het bewijs niet kan worden geverifieerd, mislukt de controle; er wordt niets verwijderd.
-
 pipx, pip, brew, dnf, npm en Docker worden behandeld in de [installatiehandleiding](https://docs.bernstein.run/en/latest/getting-started/install/); de geïsoleerde wheelhouse heeft een eigen [air-gap-handleiding](https://docs.bernstein.run/en/latest/installation/air-gap/).
-
-`bernstein worktrees sweep` toont een voorvertoning van werkbomen en sandboxsessies die voltooide taken hebben achtergelaten, met ouderdom en schijfgebruik. Alleen werkbomen kunnen worden verwijderd, met `--apply` en een afzonderlijke verwijderingsgoedkeuring. Sandboxen worden alleen in het rapport vermeld (verwijdering: #6571); `doctor` waarschuwt voor oudere achtergebleven resources. Zie de [opruimprocedure](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
-
-Bij een mislukte initialisatie wordt de vaardigheid in [quarantaine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) geplaatst, met een blijvend opgeslagen reden en auditgebeurtenis. `bernstein status` toont het aantal; `doctor` en `govern audit` melden de uitgeschakelde declaraties. Verhelp de oorzaak en verwijder de markering expliciet met `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Combineer agents binnen dezelfde run: goedkope lokale modellen voor routinematige code, krachtigere cloudmodellen voor architectuur. `bernstein integrations list --installed` toont wat er beschikbaar is op uw machine.
 
-### vrijwillige rekenkracht
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-Een project kan issues markeren als open voor vrijwilligers, en iedereen kan er een uitvoeren op de eigen machine, zonder account en zonder coördinator. Wat een taak mag doen, verklaart het project in een `volunteer.json`-manifest - sandbox-backend, toegestane netwerklijst, plafonds voor looptijd en geheugen - en de eigen limieten van de donateur kunnen dat alleen versmallen, nooit verruimen. Het ontvangstbewijs van een voltooide taak bindt het resultaat aan de insluitingsbeslissing waaronder het tot stand kwam, zodat een maintainer maanden later kan nagaan waar het werk daadwerkelijk bij mocht.
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-De [donateursgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt het draaien van een worker en het budget dat je instelt, de [projectgids](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) behandelt het declareren van een manifest, en het [dreigingsmodel](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschrijft waartegen elke grens wel en niet beschermt. De runner met één commando is nog niet uitgebracht: vandaag zijn `verify`, `browse`, `budget`, `verify-bundle` en `hub` de werkende subcommando's. `autopilot` is geregistreerd, maar weigert te starten totdat een `TaskSource` is geïmplementeerd.
-
 ### voorbij de voorpagina
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernstein.run/):
 
@@ -281,36 +261,17 @@ Alle diepgaande documentatie staat op de [documentatiesite](https://docs.bernste
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declaratieve YAML-DAG's van agent- / commando- / lusknooppunten |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browserdashboard gebaseerd op dezelfde API als de TUI (taken aanmaken en bekijken) |
 | [status van clusterworkers](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Workers nemen geen nieuwe taken aan zolang de vrije schijfruimte, het geheugengebruik of de netwerkvertraging buiten de ingestelde grenzen valt. |
-| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimenteel: voer agents uit op Cloudflare Workers met R2-workspace-synchronisatie via uw eigen account. De gehoste dienst `api.bernstein.run` is nog niet beschikbaar |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | alleen-lezen query-ontvangstbewijzen, plus een querydriver die elk resultaat koppelt aan de gebruikte schemasnapshot |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | verwijs rollen naar externe agentdefinities buiten de ingebouwde sjablonen — een generieke YAML/SKILL.md-map of een Claude Code-plugin-structuur |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, beveiliging |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | hoe het onder de motorkap werkt |
 
 ### waarom deze naam?
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein is vernoemd naar Leonard Bernstein, de Amerikaanse dirigent en componist. De orkestrator van het project bestuurt een team van AI-agents zoals Bernstein het New York Philharmonic dirigeerde: elke muzikant op het juiste moment, de partituur deterministisch, de dirigent verantwoordelijk voor het eindresultaat. De dirigentenmetafoor beschrijft Bernsteins vermogen om agenttaken te orkestreren die code, onderzoeksrapporten of datasets opleveren.
 
-ik heb bernstein geschreven omdat ik maandelijks $400 aan claude-rekeningen betaalde door drie coding-agents parallel te draaien en niet-deterministische merges kreeg. Apache 2.0, onderhouden door één persoon. Live statistieken: [bernstein.run](https://bernstein.run).
-
-### vermeld in
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Besproken in het overzicht van [open-source agent-orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) van Augment Code en vermeld in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). We hebben de aanpak ook beschreven als het patroon [deterministische zero-LLM orkestratie](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) in awesome-agentic-patterns.
-
-<details>
-<summary>Alle vermeldingen: meer dan 20 awesome-lijsten, gidsen, nieuwsbrieven en citaties</summary>
-<br>
-
-De volledige overzichtslijst, inclusief elke vermelding op awesome-lijsten, in catalogi, citaties en nieuwsbrieven, staat in [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md). Nieuwe vermeldingen worden toegevoegd zodra ze verschijnen; correcties zijn welkom via issue of PR.
-
-</details>
-
-### Administratieve runs
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-Deze aanroepen gebruiken de MCP-bridge. Gebruik de teruggegeven waarde `runId` als `run_id` in latere aanroepen. Maak met `bernstein_run(template="administrative", goal="Weekly sprint")` een lege container met auditregistratie, zonder planner of agentprocessen. Voeg handmatige taken toe met `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` en bekijk de status met `bernstein_run_status(run_id="<returned runId>")`. Taken blijven via de gebruikelijke claim-API beschikbaar, maar zijn uitgesloten van automatische orkestratie. Een niet-lege run eindigt wanneer elke taak de status `done`, `closed` of `cancelled` heeft; een lege run blijft open. [Werkwijze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein begon als een deterministisch harnas om niet-deterministische merges en ongeverifieerde toestanden tussen parallelle code-agenten te voorkomen. Apache-2.0. Releases en documentatie: [bernstein.run](https://bernstein.run).
 
 ### bijdragen, ondersteuning, licentie
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

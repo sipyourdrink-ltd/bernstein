@@ -139,6 +139,7 @@ RELEASE_FEED_SCHEMA_VERSION: Final[int] = 1
 
 #: Distribution name this module reasons about.
 PACKAGE_NAME: Final[str] = "bernstein"
+_MAX_RELEASE_FEED_BYTES = 4 * 1024 * 1024
 
 #: ``kind`` discriminator on the advisory preimage; also the audit event type.
 ADVISORY_KIND: Final[str] = "update.advisory"
@@ -659,6 +660,7 @@ def fetch_release_feed(url: str, *, timeout_s: float = 10.0) -> dict[str, Any]:
         NetworkPolicyDenied: The live egress policy forbids the feed host.
     """
     import urllib.request
+    from http.client import HTTPException
     from urllib.parse import urlparse
 
     from bernstein.core.security.network_policy import policy_from_env
@@ -673,9 +675,14 @@ def fetch_release_feed(url: str, *, timeout_s: float = 10.0) -> dict[str, Any]:
     try:
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
-            payload = response.read()
-    except OSError as exc:
+            payload = response.read(_MAX_RELEASE_FEED_BYTES + 1)
+            remaining = getattr(response, "length", None)
+    except (OSError, HTTPException) as exc:
         raise ReleaseFeedError(f"cannot fetch release feed {url}: {exc}") from exc
+    if len(payload) > _MAX_RELEASE_FEED_BYTES:
+        raise ReleaseFeedError(f"release feed exceeds {_MAX_RELEASE_FEED_BYTES}-byte limit")
+    if isinstance(remaining, int) and remaining > 0:
+        raise ReleaseFeedError("incomplete release feed response")
     try:
         parsed: Any = json.loads(payload)
     except json.JSONDecodeError as exc:

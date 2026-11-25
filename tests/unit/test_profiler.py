@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import os
+import pstats
 import time
 from pathlib import Path
 
@@ -32,6 +34,36 @@ def test_profiler_session_creates_output_files(tmp_path: Path) -> None:
 
     assert len(prof_files) == 1, "Expected exactly one .prof file"
     assert len(txt_files) == 1, "Expected exactly one .txt file"
+
+
+@pytest.mark.parametrize("modes", [("explicit", "explicit"), ("session", "session"), ("explicit", "session")])
+def test_same_second_captures_keep_distinct_profile_pairs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, modes: tuple[str, str]
+) -> None:
+    monkeypatch.setattr(time, "strftime", lambda *_: "20260101-000000")
+    captures: dict[Path, str] = {}
+    for mode, workload in zip(modes, (sum, max), strict=True):
+        if mode == "explicit":
+            profiler = OrchestratorProfiler(tmp_path)
+            profiler.start()
+            workload(range(3))
+            profiler.stop()
+        else:
+            with ProfilerSession(tmp_path):
+                workload(range(3))
+
+        new_dumps = set(tmp_path.glob("profile-*.prof")) - captures.keys()
+        assert len(new_dumps) == 1
+        captures[new_dumps.pop()] = f"builtins.{workload.__name__}"
+
+    assert set(tmp_path.glob("*.txt")) == {path.with_suffix(".txt") for path in captures}
+    for path, marker in captures.items():
+        dump_text = io.StringIO()
+        pstats.Stats(str(path), stream=dump_text).print_stats()
+        assert marker in dump_text.getvalue()
+        report = path.with_suffix(".txt").read_text(encoding="utf-8")
+        assert "Bernstein orchestrator profile" in report
+        assert marker in report
 
 
 def test_profiler_session_creates_output_dir(tmp_path: Path) -> None:
@@ -95,8 +127,6 @@ def test_profiler_session_custom_top_n(tmp_path: Path) -> None:
 
 def test_profiler_session_prof_file_is_valid_pstats(tmp_path: Path) -> None:
     """The .prof file can be loaded with pstats.Stats."""
-    import pstats
-
     output_dir = tmp_path / "profiles"
 
     with ProfilerSession(output_dir):
@@ -169,8 +199,6 @@ def test_orchestrator_profiler_stop_without_start_raises(tmp_path: Path) -> None
 
 def test_orchestrator_profiler_save_stats_writes_file(tmp_path: Path) -> None:
     """save_stats() dumps a pstats binary to the given path."""
-    import pstats
-
     output_dir = tmp_path / "profiles"
     profiler = OrchestratorProfiler(output_dir)
 

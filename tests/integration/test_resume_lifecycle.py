@@ -16,6 +16,7 @@ surface directly (CLI runner + the storage + adapter contract).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,7 @@ from bernstein.adapters._contract import (
     resume_capability,
 )
 from bernstein.adapters.base import CLIAdapter
+from bernstein.cli.commands.ledger_cmd import ledger_group
 from bernstein.cli.commands.resume_cmd import (
     EXIT_CORRUPT,
     EXIT_NO_CHECKPOINT,
@@ -44,6 +46,7 @@ from bernstein.core.persistence.task_resume import (
     save_checkpoint,
     scratchpad_sha256,
 )
+from bernstein.core.persistence.work_ledger import KIND_TASK_SCHEDULED, WorkLedger, run_ledger_dir
 
 
 @pytest.fixture()
@@ -51,6 +54,41 @@ def project_root(tmp_path: Path) -> Path:
     """Standalone project root with the runtime tree pre-created."""
     (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
     return tmp_path
+
+
+@pytest.mark.parametrize("source", ["checkpoint", "ledger"])
+def test_failed_signal_replacement_preserves_previous_request(
+    source: str, project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task_id = "in-flight"
+    if source == "checkpoint":
+        save_checkpoint(project_root, TaskResumeCheckpoint(task_id=task_id, adapter="mock"))
+        command, args = resume_cmd, [task_id]
+    else:
+        run_id = "recovery"
+        ledger = WorkLedger.open(run_ledger_dir(project_root / ".sdd", run_id))
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id=task_id)
+        ledger.close()
+        command, args = ledger_group, ["resume", run_id]
+    args.extend(["--workdir", str(project_root), "--json"])
+    runner = CliRunner()
+    first = runner.invoke(command, args)
+    assert first.exit_code == 0, first.output
+    signal = Path(json.loads(first.stdout)["signal_paths"][0])
+    previous = signal.read_bytes()
+    replace = os.replace
+
+    def interrupt_publish(staging: str | Path, destination: str | Path) -> None:
+        if Path(destination) == signal:
+            assert json.loads(Path(staging).read_bytes())["task_id"] == task_id
+            raise OSError("interrupted before publishing the signal")
+        replace(staging, destination)
+
+    monkeypatch.setattr(os, "replace", interrupt_publish)
+    second = runner.invoke(command, args)
+    assert second.exit_code == 1, second.output
+    assert "interrupted before publishing" in json.loads(second.stdout)["error"]
+    assert signal.read_bytes() == previous
 
 
 def _simulate_step_transitions(

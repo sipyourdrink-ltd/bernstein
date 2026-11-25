@@ -349,6 +349,7 @@ nav:
           - Schedule: operations/schedule.md
           - Resume: operations/resume.md
           - Replay: operations/replay.md
+          - Compare render receipts: operations/render-pairs.md
           - Seal anchors: operations/seal.md
           - Fork from step: operations/fork-from-step.md
           - Simulate: operations/simulate.md
@@ -586,6 +587,7 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v4.0.1: release-notes/v4.0.1.md
           - v4.0.0: release-notes/v4.0.0.md
           - v3.24.0: release-notes/v3.24.0.md
           - v3.23.0: release-notes/v3.23.0.md

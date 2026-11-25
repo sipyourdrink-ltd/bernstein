@@ -197,7 +197,9 @@ def analyze_repo(root: Path) -> RepoAnalysis:
         if lines > 300:
             analysis.files_over_300_lines.append((path.relative_to(root), lines))
 
-        if _is_test_file(path):
+        # Relative to the analyzed root, as the module scan below does: an absolute path counted a
+        # `tests` folder ABOVE the checkout, so every file of a repo under it was a test (#8056).
+        if _is_test_file(path.relative_to(root)):
             analysis.test_files += 1
         elif lang == "Python" and not _has_type_hints(path):
             analysis.python_files_without_type_hints += 1

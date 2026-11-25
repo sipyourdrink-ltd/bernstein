@@ -156,6 +156,31 @@ def test_decorator_stack_is_kept_with_function(tmp_path: Path) -> None:
     assert text.index("@staticmethod") < text.index("def foo")
 
 
+@pytest.mark.parametrize(
+    ("decorators", "definition", "symbol"),
+    [
+        ("@outer\n@inner\n", "def measure():", "measure"),
+        ("@register\n", "class Sample:", "Sample"),
+        ("@(\n    wrapper\n)\n", "async def fetch():", "fetch"),
+    ],
+    ids=["stacked-function", "class", "multiline-async"],
+)
+def test_decorators_stay_with_oversized_definitions(
+    tmp_path: Path, decorators: str, definition: str, symbol: str
+) -> None:
+    decorated = f"{decorators}{definition}\n    value = {'x' * 300!r}\n"
+    source = "prefix = 1\n" + decorated
+    path = tmp_path / "decorated.py"
+    path.write_text(source, encoding="utf-8")
+
+    chunks = chunk_for_review(path, budget_tokens=64)
+    chunk = next(chunk for chunk in chunks if symbol in chunk.symbols)
+    assert chunk.symbols == (symbol,)
+    assert (chunk.start_line, chunk.end_line) == (2, len(source.splitlines()))
+    assert chunk.text == decorated
+    assert "".join(part.text for part in chunks) == source
+
+
 def test_nested_classes_belong_to_outer_class_chunk(tmp_path: Path) -> None:
     """Inner classes are part of the outer class's AST node - not separate symbols."""
     fp = tmp_path / "nest.py"

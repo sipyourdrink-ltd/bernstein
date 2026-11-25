@@ -48,11 +48,27 @@ The command passes the renderer:
 The renderer uses these inputs to produce three sections: **Top-level
 structure** (from tracked paths), **Public API summary** (public top-level
 Python functions and classes from the symbol graph, grouped by package), and
-**Test layout** (tracked Python test files and their directories). It does
+**Test layout** (tracked Python test files, grouped by directory with a
+per-directory file count). It does
 not read `agents.md`, instructions, or an agent-context IR. Non-Python files
 can contribute to the top-level structure, but are not listed as bare files
 or analyzed for symbols. No filesystem mutation happens unless `--write`
 or `--output` is set.
+
+The **Test layout** section opens with the total number of tracked Python
+test files, then lists every directory that holds test files as a
+`` `<dir>/` (N file(s)) `` row. Test modules that sit directly in the
+repository root (for example `test_smoke.py`) are grouped under a `` `./` ``
+row with the count of root-level test files, so they are accounted for
+instead of rendering as an empty directory:
+
+```markdown
+## Test layout
+
+- 3 test file(s) tracked.
+- `./` (1 file(s))
+- `tests/unit/` (2 file(s))
+```
 
 ## Configuration
 

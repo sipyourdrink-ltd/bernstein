@@ -726,3 +726,160 @@ def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
     )
     assert (project_dir / "spine.sealed").exists(), "lineage spine was not sealed"
     assert (project_dir / "run.receipt").exists(), "run receipt was not written"
+
+
+# ---------------------------------------------------------------------------
+# v4.0.1 golden-path regression guards
+# ---------------------------------------------------------------------------
+
+
+def test_pyproject_force_includes_demo_template_outside_init_bundle() -> None:
+    """Wheel builds must ship templates/demo without polluting bernstein init."""
+    import tomllib
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    force_include = data["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    target = force_include.get("templates/demo")
+    assert target == "bernstein/_demo_template", force_include
+
+
+def test_mock_adapter_fixes_fallback_bug_4_and_flask_todo_tasks(tmp_path) -> None:
+    """Mock worker must fix demo bug 4 (inline fallback) and all 3 --flask-todo tasks."""
+    from pathlib import Path
+
+    from bernstein.adapters.mock import MockAgentAdapter
+    from bernstein.cli.commands import quickstart_cmd as qs
+
+    ns: dict[str, object] = {}
+    exec(compile(MockAgentAdapter.agent_script_source(), "<mock-agent>", "exec"), ns)
+
+    # 1) Inline fallback of setup_demo_project (when templates/demo is absent)
+    demo_dir = tmp_path / "demo_fallback"
+    demo_dir.mkdir()
+    orig_exists = Path.exists
+
+    def _hide_templates(self: Path) -> bool:
+        if self.name in {"demo", "_demo_template"}:
+            return False
+        return orig_exists(self)
+
+    with patch.object(Path, "exists", _hide_templates):
+        setup_demo_project(demo_dir, "mock")
+
+    log_path = demo_dir / ".sdd" / "runtime" / "mock.log"
+    fix_broken_test = ns["fix_broken_test"]
+    assert callable(fix_broken_test)
+    assert fix_broken_test(demo_dir, log_path) == "tests/test_app.py"
+    assert "assert resp.status_code == 200" in (demo_dir / "tests" / "test_app.py").read_text(encoding="utf-8")
+
+    # 2) All 3 --flask-todo tasks on both checkout and inline fallback
+    for label, hide_examples in (("checkout", False), ("fallback", True)):
+        todo_dir = tmp_path / f"todo_{label}"
+        todo_dir.mkdir()
+        if hide_examples:
+
+            def _hide_examples(self: Path) -> bool:
+                if self.name == "quickstart":
+                    return False
+                return orig_exists(self)
+
+            with patch.object(Path, "exists", _hide_examples):
+                qs._setup_quickstart_project(todo_dir, "mock")
+        else:
+            qs._setup_quickstart_project(todo_dir, "mock")
+
+        todo_log = todo_dir / ".sdd" / "runtime" / "mock.log"
+        assert ns["fix_todo_input_validation"](todo_dir, todo_log) == "app.py"
+        assert ns["fix_todo_error_handling"](todo_dir, todo_log) == "app.py"
+        assert ns["fix_todo_write_tests"](todo_dir, todo_log) == "tests/test_api.py"
+        app_text = (todo_dir / "app.py").read_text(encoding="utf-8")
+        assert '"title is required"' in app_text
+        assert '"not found"' in app_text
+        assert (todo_dir / "tests" / "test_api.py").is_file()
+
+
+def test_demo_summary_prints_own_receipt_commands_when_journal_exists(tmp_path) -> None:
+    """When a demo run wrote journal.jsonl, summary prefers run-level id over task-* dirs."""
+    run_id = "20261125-120000"
+    for name in (run_id, "task-zzzzzzzzzzzz"):
+        run_dir = tmp_path / ".sdd" / "runs" / name
+        run_dir.mkdir(parents=True)
+        (run_dir / "journal.jsonl").write_text('{"seq": 0}\n', encoding="utf-8")
+
+    outcome = run_confirm._DemoOutcome(done=4, failed=0, total=4, cost_usd=0.0)
+    out = _render_summary(outcome, tmp_path)
+
+    assert "openssl genpkey -algorithm ED25519" in out
+    assert f"bernstein verify run {run_id} --signing-key-path demo.key" in out
+    assert f"bernstein verify receipt .sdd/runs/{run_id}/run-receipt.json --public-key demo.pub" in out
+    assert "task-zzzzzzzzzzzz" not in out
+
+
+def test_help_surfaces_golden_path_without_internal_docstrings() -> None:
+    """Top-level help shows verify/gui/demo; init/run help omit internal implementation notes."""
+    runner = CliRunner()
+    top = runner.invoke(cli, ["--help"])
+    assert top.exit_code == 0, top.output
+    assert "bernstein demo" in top.output
+    assert "verify run" in top.output
+    assert "verify receipt" in top.output
+    assert "gui serve" in top.output
+
+    init_help = runner.invoke(cli, ["init", "--help"])
+    assert init_help.exit_code == 0, init_help.output
+    assert "Raises:" not in init_help.output
+
+    run_help = runner.invoke(cli, ["run", "--help"])
+    assert run_help.exit_code == 0, run_help.output
+    assert "sysexits.h" not in run_help.output
+
+
+def test_demo_and_quickstart_seeds_declare_quality_gates_for_trace_export(tmp_path) -> None:
+    """Demo and quickstart (checkout + inline fallback) declare quality_gates: enabled: false."""
+    from pathlib import Path
+
+    from bernstein.cli.commands import quickstart_cmd as qs
+    from bernstein.core.config.seed_parser import parse_seed
+
+    orig_exists = Path.exists
+
+    for label, hide_templates in (("checkout", False), ("fallback", True)):
+        demo_dir = tmp_path / f"demo_{label}"
+        demo_dir.mkdir()
+        if hide_templates:
+
+            def _hide_demo(self: Path) -> bool:
+                if self.name in {"demo", "_demo_template"}:
+                    return False
+                return orig_exists(self)
+
+            with patch.object(Path, "exists", _hide_demo):
+                setup_demo_project(demo_dir, "mock")
+        else:
+            setup_demo_project(demo_dir, "mock")
+
+        seed = parse_seed(demo_dir / "bernstein.yaml")
+        assert seed.quality_gates is not None
+        assert seed.quality_gates.enabled is False
+        assert seed.quality_gates.to_dict()["enabled"] is False
+
+        todo_dir = tmp_path / f"todo_{label}"
+        todo_dir.mkdir()
+        if hide_templates:
+
+            def _hide_qs(self: Path) -> bool:
+                if self.name == "quickstart":
+                    return False
+                return orig_exists(self)
+
+            with patch.object(Path, "exists", _hide_qs):
+                qs._setup_quickstart_project(todo_dir, "mock")
+        else:
+            qs._setup_quickstart_project(todo_dir, "mock")
+
+        qs_seed = parse_seed(todo_dir / "bernstein.yaml")
+        assert qs_seed.quality_gates is not None
+        assert qs_seed.quality_gates.enabled is False
+        assert qs_seed.quality_gates.to_dict()["enabled"] is False

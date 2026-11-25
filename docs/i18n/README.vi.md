@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm9, C13(♭9), Fmaj9/A, F6/9." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -32,7 +32,7 @@
 Bernstein là tầng governance mã nguồn mở cho AI agent. Nó chạy trên policy as code: bạn viết chính sách - ai được làm gì, cái gì cần phê duyệt, cái gì phải được ghi lại - và Bernstein thực thi chính sách đó và tạo ra bản ghi có thể xác minh. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
 
 ### tổng quan nhanh
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 Năm điểm tạo nên sự khác biệt; phần còn lại là chi tiết.
 
@@ -132,28 +132,20 @@ Mỗi node được nhận bởi một agent có vai trò được phase cho ph�
 Các lần thử lại giữ nguyên `dispatch_tier`; khi mở lại tác vụ, có thể chọn cấp một cách tường minh. Xem [hợp đồng cấp điều phối](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 Chạy tác vụ từ một nhánh làm việc. Bernstein hợp nhất các thay đổi đã được kiểm tra vào nhánh hiện tại và dừng những lượt chạy có thể hợp nhất thay đổi vào nhánh mặc định. Hãy xem lại thay đổi trên nhánh làm việc trước khi mở yêu cầu hợp nhất.
 
-`bernstein doctor --json` cũng hiển thị các kết quả `findings` của hợp đồng kiểm toán, giống hệt kết quả của `bernstein govern audit --only INS --json` khi dùng cùng các quan sát về cài đặt. Báo cáo doctor thông thường giữ nguyên cách hiển thị. Xem [hướng dẫn vận hành doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) để biết các mã kiểm tra ổn định.
-
-Doctor báo cáo các luồng thực thi bị bỏ lại quá giới hạn thời gian ở dạng JSON. Kiểm tra thất bại nếu không thể xác minh bằng chứng; không có gì bị xóa.
-
 pipx, pip, brew, dnf, npm và Docker được trình bày trong [hướng dẫn cài đặt](https://docs.bernstein.run/en/latest/getting-started/install/); gói cài đặt cách ly mạng có [hướng dẫn air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) riêng.
-
-`bernstein worktrees sweep` xem trước các cây làm việc và phiên sandbox do tác vụ đã hoàn tất để lại, kèm thời gian tồn tại và dung lượng đĩa. Chỉ có thể xóa cây làm việc, bằng `--apply` và với phê duyệt xóa riêng. Sandbox chỉ được liệt kê trong báo cáo (xóa: #6571); `doctor` cảnh báo về tài nguyên bị bỏ lại lâu ngày. Xem [quy trình dọn dẹp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
-
-Khi khởi tạo kỹ năng thất bại, kỹ năng được [cách ly](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), đồng thời lưu bền vững nguyên nhân và sự kiện kiểm toán. `bernstein status` hiển thị số lượng; `doctor` và `govern audit` báo cáo các khai báo bị vô hiệu hóa. Sau khi sửa nguyên nhân, hãy gỡ dấu cách ly một cách tường minh bằng `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Kết hợp các tác tử trong cùng một phiên chạy: mô hình cục bộ chi phí thấp cho mã khuôn mẫu, mô hình đám mây mạnh mẽ hơn cho kiến trúc. `bernstein integrations list --installed` hiển thị những gì đang khả dụng trên máy của bạn.
 
-### tài nguyên tính toán tình nguyện
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-Một dự án có thể đánh dấu các issue là mở cho tình nguyện viên, và bất kỳ ai cũng có thể chạy một issue trên máy của mình mà không cần tài khoản hay người điều phối. Dự án khai báo những gì một tác vụ được phép làm trong tệp manifest `volunteer.json` - backend sandbox, danh sách mạng được phép, trần thời gian thực và bộ nhớ - còn giới hạn của chính người đóng góp chỉ có thể thu hẹp, không bao giờ nới rộng. Biên nhận mà một tác vụ hoàn tất tạo ra gắn kết quả với quyết định cô lập mà nó đã chạy dưới đó, nên nhiều tháng sau người bảo trì vẫn kiểm tra được công việc thực sự được phép chạm tới những gì.
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-[Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse`, `budget`, `verify-bundle` và `hub` là các lệnh con hoạt động. `autopilot` đã được đăng ký nhưng từ chối chạy cho đến khi có triển khai `TaskSource`.
-
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
@@ -281,36 +261,17 @@ Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | các DAG YAML khai báo gồm các nút tác tử / lệnh / vòng lặp |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | bảng điều khiển trình duyệt chạy trên cùng API mà TUI sử dụng (tạo và xem xét tác vụ) |
 | [tình trạng nút xử lý](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Nút tạm ngừng nhận tác vụ mới khi dung lượng đĩa trống, mức sử dụng bộ nhớ hoặc độ trễ mạng nằm ngoài ngưỡng đã đặt. |
-| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | thử nghiệm: chạy tác tử trên Cloudflare Workers với đồng bộ không gian làm việc R2 trên tài khoản của riêng bạn. Dịch vụ lưu trữ `api.bernstein.run` hiện chưa mở |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | biên lai truy vấn chỉ đọc cùng trình điều khiển truy vấn liên kết từng kết quả với ảnh chụp nhanh lược đồ tương ứng |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | trỏ vai trò tới định nghĩa tác tử ngoài các mẫu dựng sẵn — thư mục YAML/SKILL.md tổng quát hoặc cấu trúc plugin Claude Code |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | bảng điểm đánh giá, kiểm thử ngẫu nhiên (fuzzing), tăng cường bảo mật |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | nguyên lý hoạt động chi tiết bên trong |
 
 ### nguồn gốc tên gọi?
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein được đặt theo tên của Leonard Bernstein, nhạc trưởng và nhà soạn nhạc người Mỹ. Bộ điều phối của dự án quản trị một đội ngũ tác tử AI giống như cách Bernstein chỉ huy Dàn nhạc giao hưởng New York: mỗi nhạc công vào đúng nhịp, bản tổng phổ mang tính tất định, nhạc trưởng chịu trách nhiệm về kết quả cuối cùng. Ẩn dụ nhạc trưởng mô tả khả năng điều phối của Bernstein đối với các tác vụ của tác tử tạo ra mã, báo cáo nghiên cứu hoặc tập dữ liệu.
 
-tôi viết bernstein vì phải trả hóa đơn claude 400 đô la mỗi tháng khi chạy song song ba tác tử lập trình và nhận về các kết quả hợp nhất phi tất định. Giấy phép Apache 2.0, duy trì bởi một cá nhân. Thống kê trực tiếp: [bernstein.run](https://bernstein.run).
-
-### được nhắc đến tại
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Xuất hiện trong bài tổng hợp [bộ điều phối tác tử mã nguồn mở](https://www.augmentcode.com/tools/open-source-agent-orchestrators) của Augment Code và có mặt trong [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Chúng tôi cũng đã ghi lại phương pháp này dưới dạng mẫu [điều phối tất định không LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) trong awesome-agentic-patterns.
-
-<details>
-<summary>Tất cả các nguồn nhắc đến: hơn 20 danh sách awesome, danh mục, bản tin và trích dẫn chuyên môn</summary>
-<br>
-
-Danh sách theo dõi đầy đủ, bao gồm mọi mục trong danh sách awesome, thư mục, trích dẫn tài liệu trước đây và bản tin, có tại [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md). Các mục được cập nhật khi xuất hiện; hoan nghênh mọi đóng góp chỉnh sửa qua issue hoặc PR.
-
-</details>
-
-### Lượt chạy quản trị
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-Các lệnh gọi này dùng công cụ qua cầu nối MCP. Trong các lệnh gọi tiếp theo, dùng giá trị `runId` được trả về làm `run_id`. Dùng `bernstein_run(template="administrative", goal="Weekly sprint")` để tạo vùng chứa rỗng có nhật ký kiểm toán mà không khởi động bộ lập kế hoạch hay tiến trình tác tử. Thêm tác vụ thủ công bằng `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` và xem trạng thái bằng `bernstein_run_status(run_id="<returned runId>")`. Tác vụ vẫn có thể được nhận qua API thông thường nhưng không được điều phối tự động. Lượt chạy có tác vụ hoàn tất khi mỗi tác vụ có trạng thái `done`, `closed` hoặc `cancelled`; lượt chạy rỗng vẫn mở. [Quy trình vận hành](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein ra đời như một lớp điều phối tất định nhằm ngăn các bản hợp nhất thiếu tất định và trạng thái chưa kiểm chứng giữa các tác tử lập trình song song. Apache-2.0. Bản phát hành và tài liệu: [bernstein.run](https://bernstein.run).
 
 ### đóng góp, hỗ trợ, giấy phép
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

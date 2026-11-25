@@ -132,6 +132,19 @@ class TestCountChanges:
 # --- TestParseDiff ---
 
 
+def test_parse_diff_flushes_hunk_at_file_boundary() -> None:
+    patch = "".join(
+        f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n-old\n+new\n"
+        for name in ("one.txt", "two.txt")
+    )
+    files = parse_diff(patch)
+
+    assert [(f.filename, len(f.hunks), f.total_added, f.total_removed) for f in files] == [
+        ("one.txt", 1, 1, 1),
+        ("two.txt", 1, 1, 1),
+    ]
+
+
 class TestParseDiff:
     def test_parses_files(self, sample_diff: str) -> None:
         files = parse_diff(sample_diff)

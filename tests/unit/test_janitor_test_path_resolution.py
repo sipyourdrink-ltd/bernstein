@@ -17,9 +17,12 @@ write it) or when several files share the name.
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from bernstein.core.models import CompletionSignal
 
 from bernstein.core.quality.janitor import (
@@ -90,28 +93,24 @@ def test_search_never_leaves_the_declared_root(tmp_path: Path) -> None:
     assert _resolve_test_path_command(command, tmp_path) == command
 
 
-def test_signal_passes_once_the_moved_test_is_found(tmp_path: Path) -> None:
-    _touch(
-        tmp_path / "tests/unit/test_policy.py",
-        "def test_denies() -> None:\n    assert True\n",
-    )
-    signal = CompletionSignal(
-        type="test_passes",
-        value=f"{sys.executable} -m pytest tests/unit/core/security/test_policy.py -q -p no:cacheprovider",
-    )
+@pytest.mark.parametrize("test_exists", [False, True])
+def test_approved_signal_uses_resolved_test_path(tmp_path: Path, monkeypatch, test_exists: bool) -> None:
+    from bernstein.core.sandbox import isolated_process
 
+    declared = "tests/unit/core/security/test_policy.py"
+    actual = "tests/unit/path with spaces/test_policy.py"
+    if test_exists:
+        _touch(tmp_path / actual, "def test_denies(): pass\n")
+    argv = [sys.executable, "-m", "pytest", declared, "-q", "-p", "no:cacheprovider"]
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", json.dumps({"policy-unit": argv}))
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECK_IMAGE", "test-image")
+
+    def run_fixture(_image, command, **kwargs):
+        assert command[:3] == argv[:3]
+        assert command[3] == (actual if test_exists else declared)
+        return subprocess.CompletedProcess(command, 0 if test_exists else 4)
+
+    monkeypatch.setattr(isolated_process, "run_isolated", run_fixture)
+    signal = CompletionSignal(type="test_passes", value="policy-unit")
     passed, _ = evaluate_signal(signal, tmp_path)
-
-    assert passed
-
-
-def test_signal_still_fails_when_the_test_was_never_written(tmp_path: Path) -> None:
-    (tmp_path / "tests/unit").mkdir(parents=True)
-    signal = CompletionSignal(
-        type="test_passes",
-        value=f"{sys.executable} -m pytest tests/unit/evolution/test_applicator.py -q -p no:cacheprovider",
-    )
-
-    passed, _ = evaluate_signal(signal, tmp_path)
-
-    assert not passed
+    assert passed is test_exists

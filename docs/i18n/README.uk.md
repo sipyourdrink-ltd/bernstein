@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-dark.webp">
-  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm7, C7, Fmaj7, Fmaj7." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
+  <img alt="Bernstein: An open-source governance layer for AI agents. Chords: Gm9, C13(♭9), Fmaj9/A, F6/9." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/readme-banner-light.webp" width="820">
 </picture>
 
 <br>
@@ -32,7 +32,7 @@
 Bernstein — опенсорсний governance-шар для AI-агентів. Працює на policy as code: ти пишеш політику — хто що може робити, що потребує погодження, що має фіксуватися — а Bernstein застосовує її і формує запис, який можна перевірити. Детермінований планувальник — без моделі в циклі координації — запускає агентів паралельно, перевіряє результат на гейтах і записує кожен крок, тож запуск можна верифікувати постфактум, офлайн, лише за артефактами. CLI-агенти для коду працюють з коробки (Claude Code, Codex, Gemini CLI), і той самий шар говернить будь-яке агентне навантаження: результатом може бути диф, дослідницький звіт, датасет або пакет аудиторських свідчень. Профіль установки для air-gap у комплекті. Apache-2.0.
 
 ### короткий огляд
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 Його вирізняють п’ять речей; решта — деталі.
 
@@ -132,28 +132,20 @@ flowchart LR
 Повторні спроби зберігають `dispatch_tier`; під час повторного відкриття завдання можна явно вибрати рівень. Див. [контракт рівнів виконання](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:21359f31e683" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 Запускайте завдання з робочої гілки. Bernstein зливає перевірені зміни з поточною гілкою. У гілці за замовчуванням він зупиняє запуски, які можуть призвести до злиття. Перегляньте зміни в робочій гілці перед створенням pull request.
 
-`bernstein doctor --json` також виводить результати контракту аудиту `findings`, які збігаються з результатами `bernstein govern audit --only INS --json` за однакових спостережень за станом встановлення. Звичайний звіт doctor зберігає попередній вигляд. Стабільні ідентифікатори перевірок описано в [посібнику з експлуатації doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
-
-Doctor повідомляє про давно залишені ресурси виконання у JSON; якщо свідчення витоку неможливо перевірити, перевірка завершується помилкою. Нічого не видаляється.
-
 pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://docs.bernstein.run/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
-
-`bernstein worktrees sweep` показує попередній список робочих дерев і sandbox-сесій, що залишилися після завершених завдань, із віком та обсягом на диску. Видалити можна лише робочі дерева, використовуючи `--apply` і окреме схвалення видалення. Sandbox-сесії лише включаються до звіту (видалення: #6571); `doctor` попереджає про давні витоки. Див. [порядок очищення](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
-
-У разі збою ініціалізації навичка потрапляє до [карантину](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) зі збереженням причини та події аудиту. `bernstein status` показує кількість; `doctor` і `govern audit` повідомляють про вимкнені оголошення. Після усунення причини явно зніміть позначку командою `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Комбінуйте агентів в одному запуску: дешеві локальні моделі для шаблонного коду, потужніші хмарні моделі для архітектури. Команда `bernstein integrations list --installed` показує, що доступно на вашому комп'ютері.
 
-### добровільні обчислення
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-Проєкт може позначити задачі як відкриті для добровольців, і будь-хто може виконати одну з них на власній машині без облікового запису та без координатора. Що задачі дозволено робити, проєкт оголошує в маніфесті `volunteer.json` — бекенд пісочниці, перелік дозволених мережевих адрес, стелі за часом і пам'яттю, — а власні ліміти донора можуть лише звузити це, але не розширити. Квитанція завершеної задачі прив'язує результат до рішення про ізоляцію, під яким його отримано, тож супровідник і через місяці може перевірити, до чого робота справді мала доступ.
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-[Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`. `autopilot` зареєстровано, але він відмовляється запускатися, доки не реалізовано `TaskSource`.
-
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
@@ -281,36 +261,17 @@ bernstein volunteer browse --budget 60
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативні YAML DAG із вузлів agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI (створення й перегляд завдань) |
 | [стан робочих вузлів кластера](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Вузол припиняє брати нові завдання, доки обсяг вільного місця на диску, використання пам’яті чи затримка мережі виходять за встановлені межі. |
-| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | експериментально: запуск агентів на Cloudflare Workers із синхронізацією робочого простору в R2 під власним акаунтом. Хостинг-сервіс `api.bernstein.run` ще не доступний |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | квитанції запитів тільки для читання, а також драйвер запитів, який зв'язує кожен результат зі знімком схеми |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | спрямовуйте ролі на визначення агентів за межами вбудованих шаблонів — загальний каталог YAML/SKILL.md або дерево плагінів Claude Code |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | картка оцінки (scorecard), фазинг, посилення захисту |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | як система влаштована зсередини |
 
 ### чому саме така назва?
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein названо на честь Леонарда Бернстайна, американського диригента та композитора. Оркестратор проєкту керує командою AI-агентів так само, як Бернстайн керував Нью-Йоркським філармонічним: кожен виконавець вступає вчасно, партитура детермінована, диригент відповідає за підсумковий результат. Метафора диригента описує здатність Bernstein оркеструвати агентні завдання, результатом яких можуть бути код, дослідницькі звіти або набори даних.
 
-я написав bernstein, тому що платив по $400 на місяць за рахунками claude, запускаючи три агенти кодування паралельно й отримуючи недетерміновані злиття. Ліцензія Apache 2.0, підтримується однією людиною. Статистика наживо: [bernstein.run](https://bernstein.run).
-
-### згадки
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Розглянуто в огляді [open source оркестраторів агентів](https://www.augmentcode.com/tools/open-source-agent-orchestrators) від Augment Code та згадано в [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Ми також описали цей підхід як патерн [детермінованої оркестрації без LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) у збірці awesome-agentic-patterns.
-
-<details>
-<summary>Усі згадки: понад 20 списків awesome, каталогів, розсилок та цитувань</summary>
-<br>
-
-Повний перелік згадок, включно з кожним записом у списках awesome, каталогах та інформаційних бюлетенях, міститься у файлі [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md). Записи додаються в міру появи; виправлення вітаються через issue або PR.
-
-</details>
-
-### адміністративні запуски
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-Ці інструменти викликаються через міст MCP. У наступних викликах передавайте повернуте значення `runId` як `run_id`. Створіть порожній контейнер з аудитом без планувальника та процесів агентів: `bernstein_run(template="administrative", goal="Weekly sprint")`. Додавайте ручні завдання через `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` і перевіряйте стан через `bernstein_run_status(run_id="<returned runId>")`. Завдання можна брати через звичайний API призначення, але автоматична оркестрація їх не запускає. Непорожній запуск завершується, коли кожне завдання має статус `done`, `closed` або `cancelled`; порожній залишається відкритим. [Порядок роботи](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein створювався як детермінований шар керування, щоб усунути недетерміновані злиття та неперевірюваний стан під час паралельної роботи кодових агентів. Apache-2.0. Релізи та документація: [bernstein.run](https://bernstein.run).
 
 ### участь, підтримка, ліцензія
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

@@ -218,3 +218,15 @@ def test_scenario_list_leaves_no_state_directory(tmp_path: Path, monkeypatch: py
 
     assert result.exit_code == 0, result.output
     assert not (tmp_path / ".sdd").exists()
+
+
+def test_scenario_list_skips_undecodable_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _workspace_with_scenario(tmp_path, monkeypatch)
+    scenarios_dir = Path(".bernstein/scenarios")
+    (scenarios_dir / "broken.yaml").write_bytes(b"id: broken\nname: \xff\ntasks:\n  - title: Test\n")
+
+    result = CliRunner().invoke(cli, ["scenario", "list", "--scenarios-dir", str(scenarios_dir)])
+
+    assert result.exit_code == 0, result.exception
+    assert "three" in result.output
+    assert "broken" not in result.output

@@ -588,3 +588,70 @@ def test_browse_rejects_rebinding_manifest_url(
     assert len(dropped) == 1
     assert dropped[0].repo_url == repo
     assert "internal address" in dropped[0].reason
+
+
+@pytest.mark.parametrize("status", [200, 503])
+@pytest.mark.parametrize("extra_byte", [False, True])
+def test_transport_response_respects_byte_budget(monkeypatch, status, extra_byte):
+    import io
+    import urllib.error
+    import urllib.request
+    from email.message import Message
+    from types import SimpleNamespace
+
+    from bernstein.core.volunteer import registry
+
+    cap = 32
+    monkeypatch.setattr(registry, "_MAX_REGISTRY_RESPONSE_BYTES", cap, raising=False)
+    monkeypatch.setattr(registry, "ensure_public_http_url", lambda *a, **kw: None)
+    payload = b"x" * (cap + extra_byte)
+
+    class Body(io.BytesIO):
+        def read(self, size=-1):
+            assert size == cap + 1
+            return super().read(size)
+
+    body = Body(payload)
+    body.headers = Message()
+    body.headers["ETag"] = "test-etag"
+    body.status = status
+
+    def open_response(*_args, **_kwargs):
+        if status != 200:
+            raise urllib.error.HTTPError("https://example.invalid", status, "status", body.headers, body)
+        return body
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_response))
+    transport = registry._UrllibTransport()
+    if extra_byte:
+        with pytest.raises(OSError, match="exceeds"):
+            transport.get("https://example.invalid", headers={})
+    else:
+        assert transport.get("https://example.invalid", headers={}) == HTTPResponse(status, payload, "test-etag")
+    assert body.closed
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_transport_rejects_truncated_http_frame(monkeypatch, status):
+    import io
+    import urllib.error
+    import urllib.request
+    from http.client import HTTPResponse as TransportResponse
+    from types import SimpleNamespace
+
+    from bernstein.core.volunteer import registry
+
+    wire = f"HTTP/1.1 {status} Fixture\r\nContent-Length: 4\r\n\r\n{{}}".encode()
+    response = TransportResponse(type("Socket", (), {"makefile": lambda *args: io.BytesIO(wire)})())
+    response.begin()
+    monkeypatch.setattr(registry, "ensure_public_http_url", lambda *a, **kw: None)
+
+    def open_response(*_args, **_kwargs):
+        if status != 200:
+            raise urllib.error.HTTPError("https://example.invalid", status, "status", response.headers, response)
+        return response
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_response))
+    with pytest.raises(OSError, match="incomplete"):
+        registry._UrllibTransport().get("https://example.invalid", headers={})
+    assert response.closed

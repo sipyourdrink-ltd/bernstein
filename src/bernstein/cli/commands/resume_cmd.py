@@ -3,10 +3,9 @@
 Loads the per-task checkpoint written by the orchestrator after every
 successful step transition, or before an automatic stall kill (heartbeat
 staleness or identical-progress detection; issue #3376) discards the
-worker's state, validates it, bumps ``resume_count``, fires the
-``task.resume`` lifecycle event, and hands control back so the
-orchestrator can re-spawn the task from the next step boundary. A
-checkpoint written at a stall kill carries its ``stall_reason``.
+worker's state, validates it, bumps ``resume_count``, and writes a local
+resume signal. A checkpoint written at a stall kill carries its
+``stall_reason``.
 
 See ``feat-resume-from-checkpoint`` spec for the full contract. v1 scope
 is local-only - cross-machine resume, distributed checkpoint storage,
@@ -16,8 +15,10 @@ and resuming across role-definition changes are explicitly out of scope.
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 import click
 from rich.panel import Panel
@@ -27,6 +28,7 @@ from bernstein.adapters._contract import resume_capability, strategy_for
 from bernstein.cli.helpers import console
 from bernstein.core.lifecycle.hooks import HookRegistry, LifecycleContext, LifecycleEvent
 from bernstein.core.persistence.agent_checkpoint import (
+    AmbiguousAgentCheckpointError,
     discard_checkpoint,
     evaluate_observations,
     find_checkpoint_for_task,
@@ -40,11 +42,13 @@ from bernstein.core.persistence.task_resume import (
     bump_resume_count,
     checkpoint_path_for,
     load_checkpoint,
+    write_resume_signal,
 )
 
 # Exit codes used by `bernstein resume`. Kept tight so operators (and the
 # dashboard) can branch on the specific failure mode.
 EXIT_OK: int = 0
+EXIT_IO_ERROR: int = 1
 EXIT_NO_CHECKPOINT: int = 2
 EXIT_CORRUPT: int = 3
 EXIT_HOOK_FAILED: int = 4
@@ -76,11 +80,11 @@ def discard_agent_checkpoint(workdir: Path, task_id: str) -> bool:
     """Drop the agent checkpoint for ``task_id``; return whether one existed.
 
     Exposed so the dashboard and the API can take the discard path without
-    parsing CLI output. After the drop the next run of the task carries no
-    continuation entry, so the chain reads it as a new run.
+    parsing CLI output. The separate task checkpoint retains the saved
+    step and adapter session. Lookup or deletion I/O errors propagate.
     """
     runtime_dir = workdir / ".sdd" / "runtime"
-    checkpoint = find_checkpoint_for_task(task_id, runtime_dir)
+    checkpoint = find_checkpoint_for_task(task_id, runtime_dir, for_discard=True)
     if checkpoint is None:
         return False
     return discard_checkpoint(checkpoint.agent_id, runtime_dir)
@@ -195,29 +199,13 @@ def prepare_resume(
     )
 
 
-def _render_plan(workdir: Path, plan: ResumePlan, *, output_json: bool) -> None:
+def _render_plan(workdir: Path, plan: ResumePlan) -> None:
     """Pretty-print the resume plan to the operator."""
     cp = plan.checkpoint
-    if output_json:
-        payload = {
-            "task_id": cp.task_id,
-            "resume_count": cp.resume_count,
-            "last_completed_step_id": cp.last_completed_step_id,
-            "trace_cursor": cp.trace_cursor,
-            "adapter": cp.adapter,
-            "adapter_session_id": cp.adapter_session_id,
-            "capability": plan.capability,
-            "resume_strategy": plan.resume_strategy,
-            "worktree_path": cp.worktree_path,
-            "checkpoint_path": str(checkpoint_path_for(workdir, cp.task_id)),
-        }
-        console.print_json(json.dumps(payload))
-        return
-
     console.print()
     console.print(
         Panel(
-            f"[bold]Resuming task[/bold] [cyan]{cp.task_id}[/cyan]",
+            f"[bold]Resume plan for task[/bold] [cyan]{cp.task_id}[/cyan]",
             border_style="green",
             expand=False,
         )
@@ -235,8 +223,6 @@ def _render_plan(workdir: Path, plan: ResumePlan, *, output_json: bool) -> None:
         table.add_row("Worktree", cp.worktree_path)
     table.add_row("Checkpoint file", str(checkpoint_path_for(workdir, cp.task_id)))
     console.print(table)
-    console.print()
-    console.print("[dim]Adapter prompt will receive recovered scratchpad as preamble.[/dim]")
     console.print()
 
 
@@ -277,7 +263,7 @@ def _render_plan(workdir: Path, plan: ResumePlan, *, output_json: bool) -> None:
     "--discard",
     is_flag=True,
     default=False,
-    help="Drop the checkpoint first, so the task runs fresh instead of continuing.",
+    help="Discard the agent checkpoint before preparing the resume.",
 )
 def resume_cmd(
     task_id: str,
@@ -292,23 +278,46 @@ def resume_cmd(
 
     \b
     Exit codes:
-        0  resume prepared (and, when --dry-run is off, dispatched)
+        0  resume prepared (and, when --dry-run is off, signal queued)
+        1  resume preparation or signal write failed with an I/O error
         2  no checkpoint on disk
-        3  checkpoint corrupt / failed schema validation
+        3  invalid checkpoint data or ambiguous agent checkpoint for --discard
         4  task.resume lifecycle hook failed
         5  grant mismatch — role narrowed, task reassigned, or parent cancelled
-        6  observations moved — discard and respawn, or --override-observations
+        6  observations moved — see the hint for resume and fresh-run options
     """
     project_root = workdir or Path.cwd()
-    if discard:
-        dropped = discard_agent_checkpoint(project_root, task_id)
-        console.print(
-            f"[yellow]Checkpoint discarded for {task_id!r}.[/yellow] The task runs fresh; "
-            "the chain records a new run, not a continuation."
-            if dropped
-            else f"[dim]No agent checkpoint to discard for {task_id!r}.[/dim]"
-        )
+    report: dict[str, object] = {
+        "task_id": task_id,
+        "dry_run": dry_run,
+        "dispatch_status": "not_dispatched",
+        "signal_paths": [],
+        "runtime_acknowledged": False,
+    }
+
+    def fail(exit_code: int, message: str, hint: str | None = None) -> NoReturn:
+        if output_json:
+            report["error"] = message
+            if hint:
+                report["hint"] = hint
+            click.echo(json.dumps(report, indent=2))
+        else:
+            console.print(message, style="red", markup=False)
+            if hint:
+                console.print(hint, style="dim", markup=False, soft_wrap=True)
+        raise SystemExit(exit_code) from None
+
     try:
+        if discard:
+            report["checkpoint_discarded"] = False
+            dropped = discard_agent_checkpoint(project_root, task_id)
+            report["checkpoint_discarded"] = dropped
+            if not output_json:
+                console.print(
+                    f"[yellow]Agent checkpoint discarded for {task_id!r}.[/yellow]"
+                    if dropped
+                    else f"[dim]No agent checkpoint to discard for {task_id!r}.[/dim]"
+                )
         plan = prepare_resume(
             project_root,
             task_id,
@@ -316,44 +325,71 @@ def resume_cmd(
             override_observations=override_observations,
         )
     except CheckpointMissingError as exc:
-        console.print(f"[red]No checkpoint:[/red] {exc}")
-        _hint_work_ledger(project_root, task_id)
-        raise SystemExit(EXIT_NO_CHECKPOINT) from None
+        fail(EXIT_NO_CHECKPOINT, f"No checkpoint: {exc}", _work_ledger_hint(project_root, task_id))
+    except AmbiguousAgentCheckpointError as exc:
+        fail(
+            EXIT_CORRUPT,
+            str(exc),
+            "Inspect the checkpoints under .sdd/runtime/agents/ or start a new session with 'bernstein run --fresh'.",
+        )
     except CheckpointCorruptError as exc:
-        console.print(f"[red]Corrupt checkpoint for {task_id!r}:[/red] {exc}")
-        console.print(
-            "[dim]Inspect the file under .sdd/runtime/checkpoints/<task-id>/ and remove it to run the task fresh.[/dim]"
+        fail(
+            EXIT_CORRUPT,
+            f"Corrupt checkpoint for {task_id!r}: {exc}",
+            "Inspect the file under .sdd/runtime/checkpoints/<task-id>/ and remove it to run the task fresh.",
         )
-        raise SystemExit(EXIT_CORRUPT) from None
     except GrantRefusedError as exc:
-        console.print(f"[red]Grant mismatch — resume refused:[/red] {exc}")
-        console.print(
-            "[dim]The role's permissions, task assignment, or parent run changed since this"
-            " checkpoint was written. Re-run the task from scratch or restore the original grant.[/dim]"
+        fail(
+            EXIT_GRANT_REFUSED,
+            f"Grant mismatch — resume refused: {exc}",
+            "The role's permissions, task assignment, or parent run changed since this checkpoint was written. "
+            "Re-run the task from scratch or restore the original grant.",
         )
-        raise SystemExit(EXIT_GRANT_REFUSED) from None
     except ObservationsMovedError as exc:
-        console.print(f"[red]Observations moved — resume is not a continuation:[/red] {exc}")
-        console.print(
-            "[dim]Respawn the task from scratch with 'bernstein resume"
-            f" {task_id} --discard', or resume onto the changed bytes with"
-            " --override-observations (recorded in the chain).[/dim]"
+        fail(
+            EXIT_OBSERVATIONS_MOVED,
+            f"Observations moved — resume refused: {exc}",
+            "Start a new session with 'bernstein run --fresh'. "
+            "To resume from the task checkpoint, --discard removes the agent checkpoint, "
+            "or --override-observations keeps it and accepts the changed bytes.",
         )
-        raise SystemExit(EXIT_OBSERVATIONS_MOVED) from None
+    except OSError as exc:
+        fail(EXIT_IO_ERROR, f"Could not prepare resume: {exc}")
 
-    _render_plan(project_root, plan, output_json=output_json)
+    cp = plan.checkpoint
+    report.update(
+        task_id=cp.task_id,
+        resume_count=cp.resume_count,
+        last_completed_step_id=cp.last_completed_step_id,
+        trace_cursor=cp.trace_cursor,
+        adapter=cp.adapter,
+        adapter_session_id=cp.adapter_session_id,
+        capability=plan.capability,
+        resume_strategy=plan.resume_strategy,
+        worktree_path=cp.worktree_path,
+        checkpoint_path=str(checkpoint_path_for(project_root, cp.task_id)),
+    )
+    signal = None
+    if not dry_run:
+        try:
+            signal = _write_resume_signal(project_root, plan)
+        except OSError as exc:
+            fail(EXIT_IO_ERROR, f"Could not write resume signal: {exc}")
+        report.update(dispatch_status="queued", signal_paths=[str(signal)])
 
-    if dry_run:
+    if output_json:
+        click.echo(json.dumps(report, indent=2))
         return
 
-    # Re-spawn integration with the orchestrator. We keep the actual
-    # spawn deferred to the orchestrator path so this command is safe to
-    # call from the dashboard / API and stays unit-testable. The CLI
-    # signals intent by writing a one-line marker the spawner watches.
-    _write_resume_signal(project_root, plan)
+    _render_plan(project_root, plan)
+    if signal is not None:
+        console.print(f"[green]Resume signal queued:[/green] {signal}")
+        console.print("[dim]Runtime acknowledgement: unavailable.[/dim]")
+    else:
+        console.print("[dim]Dry run completed.[/dim]")
 
 
-def _hint_work_ledger(workdir: Path, resume_id: str) -> None:
+def _work_ledger_hint(workdir: Path, resume_id: str) -> str | None:
     """Point the operator at the durable work ledger when one matches.
 
     A per-task checkpoint is machine-local; a run whose state was anchored
@@ -363,41 +399,37 @@ def _hint_work_ledger(workdir: Path, resume_id: str) -> None:
     """
     from bernstein.core.persistence.ledger_git import LedgerGitError, ledger_ref, list_ledger_runs
     from bernstein.core.persistence.work_ledger import LedgerReader, run_ledger_dir
+    from bernstein.core.security.path_containment import PathContainmentError
 
     try:
         ledger_ref(resume_id)
     except LedgerGitError:
-        return
-    has_local = LedgerReader(run_ledger_dir(workdir / ".sdd", resume_id)).exists()
+        return None
+    try:
+        has_local = LedgerReader(run_ledger_dir(workdir / ".sdd", resume_id)).exists()
+    except (OSError, PathContainmentError):
+        has_local = False
     has_anchor = False
     if not has_local:
         try:
             has_anchor = resume_id in list_ledger_runs(workdir)
-        except LedgerGitError:
+        except (OSError, subprocess.TimeoutExpired, LedgerGitError):
             has_anchor = False
     if has_local or has_anchor:
-        console.print(
-            f"[yellow]A durable work ledger exists for {resume_id!r}.[/yellow] "
-            f"Resume the run from its verified chain with: bernstein ledger resume {resume_id}"
+        return (
+            f"A durable work ledger exists for {resume_id!r}. "
+            f"Resume the run with 'bernstein ledger resume {resume_id}'."
         )
+    return None
 
 
-def _write_resume_signal(workdir: Path, plan: ResumePlan) -> None:
-    """Drop a signal file the orchestrator's resume watcher picks up.
-
-    Kept tiny: any worker watching ``.sdd/runtime/resume/`` claims the
-    task by atomically renaming the signal. If no worker is running the
-    file persists until ``bernstein run`` starts.
-    """
-    signal_dir = workdir / ".sdd" / "runtime" / "resume"
-    signal_dir.mkdir(parents=True, exist_ok=True)
-    target = signal_dir / f"{plan.checkpoint.task_id}.signal"
-    payload = {
-        "task_id": plan.checkpoint.task_id,
-        "resume_count": plan.checkpoint.resume_count,
-        "capability": plan.capability,
-        "adapter": plan.checkpoint.adapter,
-        "adapter_session_id": plan.checkpoint.adapter_session_id,
-    }
-    target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    console.print(f"[green]Resume signal written:[/green] {target}")
+def _write_resume_signal(workdir: Path, plan: ResumePlan) -> Path:
+    """Write the local resume signal and return its path."""
+    return write_resume_signal(
+        workdir,
+        plan.checkpoint.task_id,
+        resume_count=plan.checkpoint.resume_count,
+        capability=plan.capability,
+        adapter=plan.checkpoint.adapter,
+        adapter_session_id=plan.checkpoint.adapter_session_id,
+    )

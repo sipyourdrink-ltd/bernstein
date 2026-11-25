@@ -28,6 +28,7 @@ Numbered properties:
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -299,6 +300,23 @@ class TestResumeCommand:
 
         assert result.exit_code == EXIT_OBSERVATIONS_MOVED
         assert "work.py" in result.output
+
+        runner = CliRunner()
+        args = ["t-cli", "--workdir", str(workdir), "--json"]
+        refused = runner.invoke(resume_cmd, args)
+        assert refused.exit_code == EXIT_OBSERVATIONS_MOVED
+        hint = json.loads(refused.stdout)["hint"]
+        assert "bernstein run --fresh" in hint
+        assert "--discard" in hint and "agent checkpoint" in hint and "task checkpoint" in hint
+        assert "--override-observations" in hint
+
+        resumed = runner.invoke(resume_cmd, [*args, "--discard"])
+        assert resumed.exit_code == 0, resumed.output
+        report = json.loads(resumed.stdout)
+        assert report["checkpoint_discarded"] is True
+        assert report["last_completed_step_id"] == "step-1"
+        signal = json.loads(Path(report["signal_paths"][0]).read_bytes())
+        assert signal["adapter_session_id"] == "sess-1"
 
     def test_discard_drops_the_checkpoint(self, tmp_path: Path) -> None:
         """12 (first half): the discard path really removes the checkpoint."""

@@ -37,9 +37,11 @@ import io
 import logging
 import pstats
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -109,9 +111,7 @@ class OrchestratorProfiler:
 
         top_functions = _extract_top_functions(self._profiler, self._top_n)
 
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        prof_path = self._output_dir / f"profile-{ts}.prof"
-        txt_path = self._output_dir / f"profile-{ts}.txt"
+        prof_path, txt_path = _reserve_profile_paths(self._output_dir)
 
         # Write binary dump
         self._profiler.dump_stats(str(prof_path))
@@ -190,6 +190,8 @@ class ProfilerSession:
     - ``profile-{timestamp}.prof`` - binary pstats dump (open with SnakeViz)
     - ``profile-{timestamp}.txt`` - top-N functions by cumulative time
 
+    Captures sharing a timestamp receive a suffix on subsequent pairs.
+
     Args:
         output_dir: Directory to write profile artifacts into.
         top_n: Number of functions to include in the text report.
@@ -218,9 +220,7 @@ class ProfilerSession:
         self._save(elapsed)
 
     def _save(self, elapsed_s: float) -> None:
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        prof_path = self._output_dir / f"profile-{ts}.prof"
-        txt_path = self._output_dir / f"profile-{ts}.txt"
+        prof_path, txt_path = _reserve_profile_paths(self._output_dir)
 
         # Binary dump - readable by pstats, SnakeViz, pyinstrument
         self._profiler.dump_stats(str(prof_path))
@@ -240,6 +240,19 @@ class ProfilerSession:
 
         logger.info("Profile saved to %s", prof_path)
         logger.info("Profile report saved to %s", txt_path)
+
+
+def _reserve_profile_paths(output_dir: Path) -> tuple[Path, Path]:
+    """Claim a new dump path and its matching report name for one capture."""
+    stem = f"profile-{time.strftime('%Y%m%d-%H%M%S')}"
+    prof_path = output_dir / f"{stem}.prof"
+    while True:
+        txt_path = prof_path.with_suffix(".txt")
+        if not txt_path.exists():
+            with suppress(FileExistsError):
+                prof_path.touch(exist_ok=False)
+                return prof_path, txt_path
+        prof_path = output_dir / f"{stem}-{uuid4().hex}.prof"
 
 
 def _extract_top_functions(

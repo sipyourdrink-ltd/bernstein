@@ -88,6 +88,22 @@ class TestComputePercentiles:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("timings", "expected"),
+    [
+        pytest.param([(10.0, 500.0), (10.0, 500.0)], 4.0, id="simultaneous"),
+        pytest.param([(10.0, 500.0)], 2.0, id="single"),
+        pytest.param([(10.25, 125.0), (10.0, 1000.0)], 2.0, id="earlier-start-finishes-last"),
+        pytest.param([], 0.0, id="empty"),
+        pytest.param([(10.0, 0.0), (10.0, 0.0)], 0.0, id="zero-span"),
+    ],
+)
+def test_throughput_includes_concurrent_request_completion(timings: list[tuple[float, float]], expected: float) -> None:
+    results = [_make_result(timestamp=start, duration_ms=duration) for start, duration in timings]
+    report = build_load_test_report(LoadTestConfig(), results)
+    assert report.requests_per_second == pytest.approx(expected)
+
+
 class TestBuildLoadTestReport:
     def test_all_successful(self) -> None:
         config = LoadTestConfig()
@@ -135,7 +151,7 @@ class TestBuildLoadTestReport:
         report = build_load_test_report(config, results)
 
         assert report.total_requests == 1
-        assert report.requests_per_second == pytest.approx(1.0)
+        assert report.requests_per_second == pytest.approx(1 / 0.042)
         assert report.p50_ms == pytest.approx(42.0)
 
     def test_rps_calculation(self) -> None:
@@ -150,8 +166,8 @@ class TestBuildLoadTestReport:
         ]
         report = build_load_test_report(config, results)
 
-        # 6 requests across 10 seconds (20 - 10) = 0.6 rps
-        assert report.requests_per_second == pytest.approx(0.6)
+        # The last request starts at 20 seconds and takes 5 ms.
+        assert report.requests_per_second == pytest.approx(6 / 10.005)
 
     def test_config_preserved(self) -> None:
         config = LoadTestConfig(target_url="http://test:9999", concurrent_agents=10)

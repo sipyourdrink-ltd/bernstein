@@ -345,3 +345,21 @@ def _sample_counter(counter: Any, *, strict: bool = False, **labels: str) -> flo
         if strict:
             raise
         return 0.0
+
+
+def test_cli_replay_ignores_legacy_records(tmp_path: Path) -> None:
+    import json
+    import pickle
+
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.cache_cmd import action_cache_replay
+    from bernstein.core.persistence.action_cache import ActionRecord, default_store
+
+    store = default_store(tmp_path)
+    entry = store._path_for(b"\x11" * 32)
+    entry.parent.mkdir(parents=True)
+    entry.write_bytes(pickle.dumps(ActionRecord("model", "prompt", "output", run_id="legacy")))
+    result = CliRunner().invoke(action_cache_replay, ["legacy", "--workdir", str(tmp_path), "--as-json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["count"] == 0

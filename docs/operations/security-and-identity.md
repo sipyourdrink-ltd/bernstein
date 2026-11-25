@@ -42,12 +42,24 @@ Named buckets under the seed’s `rate_limit` mapping share counters across both
 Canonical rules take precedence; versioned-only rules remain supported when
 no canonical rule matches.
 The `/events`, `/events/cost` and `/events/thread` routes and their versioned
-aliases share the SSE concurrency cap.
+aliases share the SSE concurrency cap and the per-client SSE reconnect limit.
+
+## WebSocket handshakes
+
+A WebSocket handshake (`/ws` and `/api/v1/ws`) passes the same middleware
+gates as an HTTP `GET` to the same path: authentication, the dashboard
+gate, the IP allowlist and request limits. The handshake is admitted only
+when that request would reach routing. Otherwise the client receives the
+gate's HTTP response (for example 401, 403 or 429) when the server supports
+the ASGI WebSocket denial response, or a close with code 1008. Clients send
+credentials as an `Authorization: Bearer` header on the handshake. Request
+logs record each handshake as a `GET`.
 
 ## Authentication attempt limits
 
 `POST /dashboard/auth/login`, `GET /auth/login`, `GET /auth/oidc/callback`,
-`POST /auth/saml/acs`, and `POST /auth/cli/{device,token,authorize}` share a
+`POST /auth/saml/acs`, `POST /auth/cli/{device,token,authorize}` and
+`POST /a2a/v1/oauth/token` share a
 default budget of 10 attempts per client per 60 seconds. Their `/api/v1`
 aliases use the same counters. Limits apply even to loopback clients and
 unconfigured providers. Client identity uses the TCP peer unless the peer
@@ -63,6 +75,12 @@ dashboard login clears only that client's backoff, retaining attempt counts.
 Backoff history expires 900 seconds after the lockout ends. State is held
 in memory per application process and is cleared on restart; deployments
 with multiple processes should also enforce limits at their ingress.
+
+The A2A token endpoint records failed client secrets like failed dashboard
+credentials. `POST /a2a/v1` (JSON-RPC) carries a credential on every call,
+so it has no attempt window: a failed API key or bearer token starts the
+same per-client backoff, calls are rejected with HTTP 429 while it lasts,
+and a successful call clears it.
 
 Existing seed buckets override the default attempt count and window:
 

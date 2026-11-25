@@ -219,7 +219,7 @@ def write_cache(cache_path: Path, entry: CacheEntry) -> None:
             "reason": entry.rejected.reason,
         }
     try:
-        write_atomic_text(cache_path, json.dumps(payload, sort_keys=True), mode=0o644)
+        write_atomic_text(cache_path, json.dumps(payload, sort_keys=True))
     except OSError as exc:
         logger.warning("Could not write catalog cache %s: %s", cache_path, exc)
 
