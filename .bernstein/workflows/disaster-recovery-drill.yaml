@@ -1,0 +1,53 @@
+# Isolated backup restore rehearsal, RTO/RPO measurement, and integrity sign-off.
+name: disaster-recovery-drill
+version: "1.0.0"
+
+phases:
+  - name: prepare
+    allowed_roles: [devops, security]
+  - name: restore
+    allowed_roles: [devops, backend]
+  - name: verify
+    allowed_roles: [qa, security]
+  - name: certify
+    allowed_roles: [docs, reviewer]
+
+nodes:
+  provision-isolated-target:
+    phase: prepare
+    role: devops
+    description: "Stand up network-isolated restore sandbox and record snapshot age"
+    estimated_minutes: 20
+
+  execute-runbook-restore:
+    phase: restore
+    role: devops
+    description: "Restore datastore and .sdd ledger from snapshot and measure RTO/RPO"
+    estimated_minutes: 35
+    depends_on:
+      - provision-isolated-target
+
+  verify-ledger-and-data-integrity:
+    phase: verify
+    role: qa
+    description: "Verify row checksums, HMAC audit chain continuity, and health probes"
+    estimated_minutes: 25
+    depends_on:
+      - execute-runbook-restore
+
+  verify-sandbox-disposal:
+    phase: verify
+    role: security
+    description: "Confirm zero leaked secrets and clean teardown of temporary volumes"
+    estimated_minutes: 15
+    depends_on:
+      - verify-ledger-and-data-integrity
+
+  emit-dr-receipt:
+    phase: certify
+    role: docs
+    description: "Write dated DR drill receipt with measured RTO/RPO and action items"
+    estimated_minutes: 15
+    depends_on:
+      - source: verify-sandbox-disposal
+        condition: "status == 'done'"

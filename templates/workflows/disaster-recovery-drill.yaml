@@ -1,0 +1,25 @@
+name: disaster-recovery-drill
+description: "Rehearse isolated backup restore, measure RTO/RPO, and verify ledger and data integrity."
+version: "1.0.0"
+nodes:
+  - id: isolated-restore
+    agent: devops
+    prompt: |
+      Stand up an isolated restore target, execute the documented backup restore
+      procedure, and record elapsed RTO and RPO for: {goal}
+    timeout_seconds: 2400
+  - id: integrity-verification
+    depends_on: [isolated-restore]
+    agent: qa
+    prompt: |
+      Verify restored database checksums, audit-log hash chains, and smoke
+      probes for: {goal}
+    fresh_context: true
+    timeout_seconds: 1800
+  - id: disposal-and-receipt
+    depends_on: [integrity-verification]
+    agent: security
+    prompt: |
+      Confirm zero residual secrets/volumes remain after teardown and issue the
+      DR readiness receipt for: {goal}
+    timeout_seconds: 1200

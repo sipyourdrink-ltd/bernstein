@@ -1,0 +1,32 @@
+name: zero-downtime-migration
+description: "Design, implement, and verify an expand-backfill-contract migration with rehearsed rollback."
+version: "1.0.0"
+nodes:
+  - id: migration-design
+    agent: architect
+    prompt: |
+      Design an N/N-1 compatible expand-backfill-contract migration plan and
+      explicit rollback procedure for: {goal}
+    timeout_seconds: 1200
+  - id: migration-implementation
+    depends_on: [migration-design]
+    agent: backend
+    prompt: |
+      Implement forward migration, throttled idempotent backfill, and explicit
+      down-migration scripts with lock-timeout guards for: {goal}
+    timeout_seconds: 2400
+  - id: parity-and-rollback-check
+    depends_on: [migration-implementation]
+    agent: qa
+    prompt: |
+      Rehearse forward migration and rollback on test fixtures and assert row
+      counts, checksums, and dual-read compatibility for: {goal}
+    fresh_context: true
+    timeout_seconds: 1800
+  - id: cutover-runbook
+    depends_on: [parity-and-rollback-check]
+    agent: devops
+    prompt: |
+      Produce the gated production cutover checklist, monitoring queries, and
+      abort thresholds for: {goal}
+    timeout_seconds: 1200
