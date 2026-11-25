@@ -87,11 +87,10 @@ _QWEN_API_KEY_VARS: tuple[str, ...] = (
 def _resolve_cli_binary(cli: str) -> str:
     """Resolve an adapter registry name (e.g. ``q_dev``, ``cursor``) to its CLI binary."""
     from bernstein.adapters.report import _binary_for_adapter
-    from bernstein.cli.doctor.adapter_checks import ADAPTER_BINARIES
 
     binary = _binary_for_adapter(cli)
-    if binary == cli and cli in ADAPTER_BINARIES:
-        return ADAPTER_BINARIES[cli]
+    if binary == cli:
+        return {"charm": "crush", "copilot": "gh", "cursor": "cursor-agent", "iac": "terraform"}.get(cli, binary)
     return binary
 
 
