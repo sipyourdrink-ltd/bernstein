@@ -1,0 +1,1 @@
+The documentation toolchain pins in `docs/requirements.txt` (what Read the Docs installs) are refreshed to a fresh resolve, including mkdocs-material 9.8.2 and pymdown-extensions 13.1.2. The site builds with `mkdocs build --strict` on these pins exactly as it did before.
