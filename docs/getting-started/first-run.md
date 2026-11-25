@@ -8,8 +8,8 @@ search:
 **What this page does**: Takes you from "Bernstein is installed" to "I just watched
 my first orchestrated task complete." About 5 minutes.
 
-**You'll end up with**: A `.sdd/` workspace, a one-line goal that ran, and a clear
-`bernstein recap` summary of what the agents did.
+**You'll end up with**: A `.sdd/` workspace, a completed orchestrated run, a `bernstein recap`
+summary, and your own Ed25519-signed run receipt verified offline.
 
 If `bernstein --version` doesn't work yet, finish the [install page](install.md) first.
 
@@ -89,7 +89,7 @@ goal: "Add a hello() function to src/greeting.py that returns Hello, world!"
 cli: codex                      # choose the worker you installed and signed in to
 model: gpt-5.4                  # use a model supported by the chosen worker
 internal_llm_provider: none     # leave optional internal LLM calls disabled
-budget: "$5"                    # spending cap for the run (accepts "$5", 5, or 5.0)
+budget: 5                       # run budget cap (numeric limit)
 ```
 
 `cli` selects the installed coding agent used for worker tasks. The separate
@@ -129,8 +129,9 @@ for a simple goal.
 ```bash
 bernstein status     # one-shot snapshot
 bernstein live       # full TUI dashboard (attach to a running session)
-bernstein gui serve  # opens http://127.0.0.1:8052/ui/ in your browser
 ```
+
+While `bernstein run` is active, its task server already mounts the browser dashboard at `http://127.0.0.1:8052/ui/` (do not start `bernstein gui serve` on the same port concurrently; `bernstein gui serve` is for inspecting a workspace when no run is active).
 
 `bernstein status` prints a banner, the task counts, and a **Bernstein Agents**
 table with one row per running session — session, role, CLI, model, worker,
@@ -172,20 +173,42 @@ bernstein logs tail -a <session-id>  # agent stdout for one session
 
 ---
 
-## Try the demo first (no API key needed)
+## Step 7: Verify your own run receipt offline
 
-If you don't have an API key set up, run the zero-config demo instead. It creates a temp
-Flask app with 4 intentional bugs and runs **mock** agents to fix them - no provider calls,
-no spend.
+Every run records its replay journal under `.sdd/runs/<run-id>/journal.jsonl`. Sign a portable
+Ed25519 receipt for your run and verify it offline with the pinned public key:
 
 ```bash
-bernstein demo            # mock agents (about a minute or two)
-bernstein demo --dry-run  # preview the plan without spawning
-bernstein demo --real     # use real agents (requires API key, ~$0.15)
+ls .sdd/runs/                                   # find your <run-id>
+openssl genpkey -algorithm ED25519 -out run.key \
+    && openssl pkey -in run.key -pubout -out run.pub
+bernstein verify run <run-id> --signing-key-path run.key
+bernstein verify receipt .sdd/runs/<run-id>/run-receipt.json --public-key run.pub
 ```
 
-This is the fastest way to see the orchestrator move tasks through the lifecycle without
-configuring anything.
+`bernstein verify receipt` prints `OK (provenance: pinned key)` and exits `0`. To prove tamper
+detection, copy the receipt, edit any field inside the copy, and re-run `bernstein verify receipt`
+against the modified copy — it exits `2` with `TAMPER DETECTED` naming the divergent step.
+
+---
+
+## Try the demo first (no API key needed)
+
+If you do not have an API key or CLI agent set up, run the zero-config demo instead. It creates a
+temp Flask app with 4 intentional bugs and runs **mock** agents to fix them — no external provider
+calls.
+
+```bash
+bernstein demo            # mock agents (about a minute)
+bernstein demo --dry-run  # preview the plan without spawning
+bernstein demo --real     # use real agents (requires an authenticated CLI agent)
+```
+
+At the end of `bernstein demo`, copy the printed `cd <project-dir>`, `openssl`, `bernstein verify run`,
+and `bernstein verify receipt` commands to sign and verify your own demo run receipt offline.
+
+This is the fastest way to see the orchestrator move tasks through the lifecycle and produce an
+offline-verifiable receipt without configuring a provider.
 
 > **Preview.** Two known first-run failures: a cold run can exceed the task-server
 > readiness budget and exit 1 (tracked from

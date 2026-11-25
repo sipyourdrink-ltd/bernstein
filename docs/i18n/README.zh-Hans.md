@@ -32,7 +32,7 @@
 Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code 之上:你编写策略——谁可以做什么、什么需要审批、什么必须被记录——Bernstein 据此执行并生成可验证的记录。确定性调度器 - 协调环路中没有模型 - 并行运行智能体,用门禁把关它们的产出,并记录每一步,因此一次运行可以在事后离线验证,仅凭工件本身。CLI 编码智能体开箱即用(Claude Code, Codex, Gemini CLI),同一治理层管辖任何智能体工作负载:交付物可以是 diff、研究报告、数据集,或一份审计证据包。附带 air-gap 安装配置。Apache-2.0。
 
 ### 一览
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 五点使它与众不同；其余都是细节。
 
@@ -132,28 +132,20 @@ flowchart LR
 重试会保留 `dispatch_tier`；重新打开任务时可以显式选择层级。参见[调度层级契约](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)。
 
 ### 30 秒安装
-<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 请在工作分支上运行任务。Bernstein 会将通过验证的更改合并到当前分支。如果当前是默认分支，它会停止可能合并更改的运行。请在工作分支上检查更改，再创建拉取请求。
 
-`bernstein doctor --json` 还会输出审计契约的 `findings`；对于相同的安装观测结果，它们与 `bernstein govern audit --only INS --json` 的结果完全相同。常规 doctor 报告的显示保持不变。有关稳定的检查 ID，请参阅 [doctor 运维指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)。
-
-Doctor 会以 JSON 报告超龄的泄漏执行通道；无法验证泄漏证据时检查失败，不会删除任何内容。
-
 pipx、pip、brew、dnf、npm 和 Docker 都涵盖在[安装指南](https://docs.bernstein.run/en/latest/getting-started/install/)中；离线 wheelhouse 有单独的 [air-gap 指南](https://docs.bernstein.run/en/latest/installation/air-gap/)。
-
-`bernstein worktrees sweep` 预览已完成任务遗留的工作树和沙箱会话，并显示存续时间和磁盘用量。只有工作树可以删除，且需要使用 `--apply` 并获得单独的删除批准。沙箱仅列入报告（删除功能：#6571）；`doctor` 会对长期遗留的资源发出警告。参见[清理流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)。
-
-技能初始化失败时会被[隔离](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)，并持久保存原因和审计事件。`bernstein status` 显示数量；`doctor` 和 `govern audit` 报告被禁用的声明。修复原因后，使用 `bernstein quarantine re-enable DECLARATION_ID` 显式解除标记。
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goo
 
 在同一运行中混用智能体：用便宜的本地模型处理样板，用更重的云模型处理架构。`bernstein integrations list --installed` 显示你的机器上可用的内容。
 
-### 志愿算力
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-项目可以把 issue 标记为向志愿者开放，任何人都可以在自己的机器上运行其中一个，无需账号，也无需协调者。任务被允许做什么，由项目在 `volunteer.json` 清单中声明 —— 沙箱后端、允许访问的网络列表、挂钟时间与内存上限 —— 而捐献者自己的限制只能把它收紧，永远不能放宽。已完成任务产生的回执把结果绑定到它运行时所依据的隔离决策上，因此维护者在数月之后仍能核对这项工作当时究竟被允许触碰什么。
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-[捐献者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 讲运行 worker 以及你设定的预算，[项目指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 讲声明清单，[威胁模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 说明每一层边界防护什么、不防护什么。单条命令的运行器尚未发布：目前可用的子命令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。 `autopilot` 已注册，但在实现 `TaskSource` 之前会拒绝运行。
-
 ### 首页之外
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 所有深入内容都在[文档站点](https://docs.bernstein.run/)上：
 
@@ -281,36 +261,17 @@ bernstein volunteer browse --budget 60
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 智能体/命令/循环节点的声明式 YAML DAG |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | 与 TUI 使用同一 API 的浏览器仪表盘 (创建和查看任务) |
 | [集群工作节点健康状态](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | 当可用磁盘空间、内存使用率或网络延迟超出设定范围时，工作节点暂停领取新任务。 |
-| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 实验性：在你的账户上通过 R2 workspace 同步在 Cloudflare Workers 上运行智能体。托管的 `api.bernstein.run` 服务尚不可用 |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 只读查询收据，外加把每个结果绑定到其推导时所依据的 schema 快照的查询驱动 |
 | [智能体目录](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 让角色指向内置模板之外的智能体定义：通用的 YAML/SKILL.md 目录，或 Claude Code 插件布局的目录树 |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard、模糊测试、加固 |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 底层工作原理 |
 
 ### 为什么叫这个名字？
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目的编排器像 Bernstein 指挥纽约爱乐乐团那样治理一支 AI 智能体队伍：每个乐手准时到位，乐谱确定，指挥对结果负责。指挥家的比喻描述了 Bernstein 对生成代码、研究报告或数据集的智能体任务进行编排的能力。
 
-我写 bernstein 是因为我每月为并行运行三个编码智能体支付 400 美元的 claude 账单，却得到不确定性的合并。Apache 2.0，单人维护。实时数据：[bernstein.run](https://bernstein.run)。
-
-### 被提及的地方
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-被 Augment Code 的[开源智能体编排器](https://www.augmentcode.com/tools/open-source-agent-orchestrators)综述提及，并收录于 [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026)。我们也把这一方法写成了 awesome-agentic-patterns 中的[确定性零 LLM 编排](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md)模式条目。
-
-<details>
-<summary>全部覆盖：20 多个 awesome 列表、目录、通讯和同行引用</summary>
-<br>
-
-完整跟踪列表，包括每一条 awesome-list 条目、目录收录、先前引用和通讯提及，都在 [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md) 中。条目出现即添加；欢迎通过 issue 或 PR 更正。
-
-</details>
-
-### 管理运行
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-这些调用使用 MCP 桥接工具。后续调用中，请将返回的 `runId` 值用作 `run_id`。 使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 创建经过审计的空容器，不启动规划器或代理进程。通过 `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` 添加手动任务，并用 `bernstein_run_status(run_id="<returned runId>")` 查询状态。成员任务可通过常规认领 API 领取，但不会自动编排。非空运行在所有成员的状态均为 `done`、`closed` 或 `cancelled` 时结束；空运行保持开放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein 最初是一个确定性编排层，用于解决并行编码代理导致的非确定性合并和未验证状态问题。Apache-2.0。版本与文档：[bernstein.run](https://bernstein.run)。
 
 ### 贡献、支持与许可
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

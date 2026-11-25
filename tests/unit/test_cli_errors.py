@@ -83,6 +83,11 @@ class TestErrorFactories:
         assert "parse" in err.what.lower() or "seed" in err.what.lower()
         assert "Invalid YAML" in err.why
 
+    def test_seed_parse_error_missing_goal_names_goal_key(self) -> None:
+        err = seed_parse_error(ValueError("Seed file must contain a non-empty 'goal' string."))
+        assert "goal:" in err.fix
+        assert "bernstein demo" in err.fix
+
     def test_server_error(self) -> None:
         err = server_error(RuntimeError("Connection refused"))
         assert "server" in err.what.lower()

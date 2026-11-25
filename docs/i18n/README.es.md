@@ -32,7 +32,7 @@
 Bernstein es la capa de gobernanza open source para agentes de IA. Funciona con policy as code: tú escribes la política - quién puede hacer qué, qué necesita aprobación, qué debe quedar registrado - y Bernstein la aplica y produce el registro verificable. Un planificador determinista - sin modelo en el bucle de coordinación - ejecuta agentes en paralelo, filtra lo que producen con gates y registra cada paso, de modo que una ejecución puede verificarse a posteriori, offline, solo con los artefactos. Los agentes CLI de código funcionan de serie (Claude Code, Codex, Gemini CLI), y la misma capa gobierna cualquier carga agéntica: el entregable puede ser un diff, un informe de investigación, un dataset o un paquete de evidencias de auditoría. Perfil de instalación air-gap incluido. Apache-2.0.
 
 ### de un vistazo
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 Cinco cosas lo distinguen; el resto son detalles.
 
@@ -132,28 +132,20 @@ Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los
 Los reintentos conservan `dispatch_tier`; al reabrir una tarea se puede seleccionar el nivel explícitamente. Consulta el [contrato de niveles de despacho](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 Ejecuta la tarea desde una rama de trabajo. Bernstein incorpora los cambios verificados a la rama activa y detiene las ejecuciones que podrían fusionar cambios en la rama predeterminada. Revisa los cambios en la rama de trabajo antes de abrir una solicitud de incorporación.
 
-`bernstein doctor --json` también expone los hallazgos del contrato de auditoría (`findings`), idénticos a los de `bernstein govern audit --only INS --json` para las mismas observaciones de instalación. El informe habitual de doctor conserva su presentación actual. Consulta la [guía de operaciones de doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) para conocer los identificadores estables de las comprobaciones.
-
-Doctor informa en JSON de los carriles de ejecución abandonados que superan el límite de antigüedad; la comprobación falla si no puede verificar las pruebas y no elimina nada.
-
 pipx, pip, brew, dnf, npm y Docker están cubiertos en la [guía de instalación](https://docs.bernstein.run/en/latest/getting-started/install/); el wheelhouse air-gap tiene su propia [guía air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
-
-`bernstein worktrees sweep` muestra una vista previa de los árboles de trabajo y sesiones sandbox que dejaron las tareas terminadas, con su antigüedad y uso de disco. Solo se pueden eliminar los árboles de trabajo, con `--apply` y una aprobación de eliminación independiente. Los entornos sandbox solo se incluyen en el informe (eliminación: #6571); `doctor` avisa de los recursos abandonados antiguos. Consulta el [procedimiento de limpieza](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
-
-Los fallos de inicialización de habilidades se ponen en [cuarentena](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), con el motivo y un evento de auditoría guardados de forma persistente. `bernstein status` muestra la cantidad; `doctor` y `govern audit` informan de las declaraciones deshabilitadas. Tras corregir la causa, retira explícitamente la marca con `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Combina agentes en la misma ejecución: modelos locales económicos para código repetitivo, modelos en la nube más pesados para arquitectura. `bernstein integrations list --installed` muestra lo que está disponible en tu máquina.
 
-### cómputo voluntario
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-Un proyecto puede marcar incidencias como abiertas a voluntarios, y cualquiera puede ejecutar una en su propia máquina sin cuenta ni coordinador. El proyecto declara lo que una tarea tiene permitido hacer en un manifiesto `volunteer.json` - backend de sandbox, lista de red permitida, techos de tiempo de reloj y memoria - y los límites propios del donante solo pueden estrecharlo, nunca ampliarlo. El recibo que produce una tarea terminada vincula el resultado a la decisión de contención bajo la que se ejecutó, de modo que un mantenedor puede comprobar meses después a qué se le permitió realmente acceder al trabajo.
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-La [guía del donante](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cubre la ejecución de un worker y el presupuesto que fijas, la [guía del proyecto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cubre la declaración de un manifiesto, y el [modelo de amenazas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica qué protege y qué no cada frontera. El ejecutor de un solo comando aún no se ha publicado: hoy `verify`, `browse`, `budget`, `verify-bundle` y `hub` son los subcomandos que funcionan. `autopilot` está registrado, pero se niega a ejecutarse hasta que se implemente un `TaskSource`.
-
 ### más allá de la portada
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run/):
 
@@ -281,36 +261,17 @@ Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs declarativos en YAML de nodos de agente / comando / bucle |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel de navegador sobre la misma API que utiliza la TUI (crear y revisar tareas) |
 | [estado de los nodos del clúster](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Los nodos dejan de aceptar tareas nuevas mientras el espacio libre, el uso de memoria o la latencia de la red estén fuera de los límites configurados. |
-| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: ejecuta agentes en Cloudflare Workers con sincronización de workspace en R2 contra tu propia cuenta. El servicio alojado `api.bernstein.run` aún no está disponible |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | recibos de consulta de solo lectura, más un controlador de consultas que vincula cada resultado con la instantánea del esquema a partir de la cual se obtuvo |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | apunta roles a definiciones de agentes fuera de las plantillas integradas: un directorio YAML/SKILL.md genérico o un árbol con estructura de plugin de Claude Code |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, securización |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | cómo funciona por dentro |
 
 ### ¿por qué este nombre?
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein lleva el nombre de Leonard Bernstein, el director de orquesta y compositor estadounidense. El orquestador del proyecto coordina un equipo de agentes de IA de la misma manera que Bernstein dirigía la Filarmónica de Nueva York: cada músico a tiempo, la partitura determinista, el director responsable del resultado. La metáfora del director describe la capacidad de orquestación de Bernstein para tareas de agentes que producen código, informes de investigación o conjuntos de datos.
 
-escribí bernstein porque pagaba $400 al mes en facturas de claude ejecutando tres agentes de codificación en paralelo y obteniendo merges no deterministas. Apache 2.0, mantenido por una sola persona. Estadísticas en vivo: [bernstein.run](https://bernstein.run).
-
-### mencionado en
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Cubierto en el resumen de Augment Code de [orquestadores de agentes de código abierto](https://www.augmentcode.com/tools/open-source-agent-orchestrators) y listado en [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). También documentamos el enfoque como el patrón de [orquestación determinista sin LLM](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) en awesome-agentic-patterns.
-
-<details>
-<summary>Toda la cobertura: más de 20 listas awesome, directorios, boletines y citas de colegas</summary>
-<br>
-
-La lista completa rastreada, incluyendo cada entrada en listas awesome, listados en catálogos, citas de estado del arte y menciones en boletines, se encuentra en [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md). Las entradas se añaden a medida que aparecen; las correcciones son bienvenidas mediante issue o PR.
-
-</details>
-
-### ejecuciones administrativas
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-Estas llamadas usan el puente MCP. Reutiliza el valor `runId` devuelto como `run_id` en las llamadas posteriores. Usa `bernstein_run(template="administrative", goal="Weekly sprint")` para crear un contenedor vacío y auditado sin planificador ni procesos de agentes. Añade tareas manuales con `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` y consulta `bernstein_run_status(run_id="<returned runId>")`. Las tareas se pueden reclamar mediante la API habitual, pero quedan fuera de la orquestación automática. Una ejecución con tareas termina cuando cada tarea tiene el estado `done`, `closed` o `cancelled`; una ejecución vacía permanece abierta. [Flujo operativo](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein nació como un arnés determinista para evitar fusiones no deterministas y estados sin verificar al ejecutar agentes de código en paralelo. Apache-2.0. Versiones y documentación: [bernstein.run](https://bernstein.run).
 
 ### contribución, soporte, licencia
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
