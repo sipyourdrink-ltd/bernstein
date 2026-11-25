@@ -322,10 +322,15 @@ def evaluate_signal(
                 lineage_store=lineage_store,
             )
         case "test_passes":
-            command = _resolve_branch_check_command(signal.value, workdir)
-            command = _resolve_test_path_command(command, workdir)
-            ok = _check_test_passes(command, workdir)
-            return ok, "exit 0" if ok else "non-zero exit"
+            from bernstein.core.quality.completion_check_policy import approved_check
+
+            command = approved_check(signal.value)
+            if command is None:
+                return False, "test_passes requires an operator-approved check identifier"
+            approved = shlex.join(command)
+            resolved = _resolve_test_path_command(_resolve_branch_check_command(approved, workdir), workdir)
+            ok = _check_test_passes(shlex.split(resolved), workdir)
+            return ok, "exit 0" if ok else "check failed or isolation unavailable"
         case "file_contains":
             ok = _check_file_contains(signal.value, workdir)
             if ok:
@@ -2280,27 +2285,24 @@ def _signal_timeout_s() -> int:
         return 120
 
 
-def _check_test_passes(command: str, workdir: Path) -> bool:
-    """Run a shell command and check for exit code 0.
+def _check_test_passes(command: list[str], workdir: Path) -> bool:
+    """Run an operator-approved argv in an isolated, read-only checkout."""
+    from bernstein.core.sandbox.isolated_process import IsolationUnavailable, readonly_bind, run_isolated
 
-    Args:
-        command: Shell command to execute (e.g. "pytest tests/unit/test_foo.py -x").
-        workdir: Working directory for the subprocess.
+    image = os.environ.get("BERNSTEIN_COMPLETION_CHECK_IMAGE")
+    if not image:
+        logger.warning("janitor test_passes unavailable: configure an isolated check image")
+        return False
 
-    Returns:
-        True if exit code is 0.
-    """
     timeout_s = _signal_timeout_s()
     try:
-        # SECURITY: shell=True required because janitor commands are internally
-        # constructed test invocations (e.g. "pytest tests/...") that may use shell
-        # features; not user input.
-        result = subprocess.run(
+        result = run_isolated(
+            image,
             command,
-            shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
-            cwd=workdir,
-            capture_output=True,
+            input_data=b"",
             timeout=timeout_s,
+            workdir="/workspace",
+            mounts=(readonly_bind(workdir, "/workspace"),),
         )
         if result.returncode != 0:
             logger.warning("janitor test_passes FAIL: exit=%d", result.returncode)
@@ -2308,8 +2310,8 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
     except subprocess.TimeoutExpired:
         logger.warning("janitor test_passes TIMEOUT: timeout=%ss", timeout_s)
         return False
-    except OSError as exc:
-        logger.warning("janitor test_passes ERROR: error_type=%s", type(exc).__name__)
+    except IsolationUnavailable:
+        logger.warning("janitor test_passes unavailable: isolated runner failed")
         return False
 
 

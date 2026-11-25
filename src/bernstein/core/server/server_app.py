@@ -134,69 +134,37 @@ class ContentLengthMiddleware:
             )
             return
 
-        # Streaming enforcement: when the client omits Content-Length (e.g.
-        # chunked transfer encoding), wrap the receive channel so we tally
-        # bytes and reject once the cap is crossed.  This guarantees the cap
-        # cannot be bypassed by omitting the header.
-        max_bytes = self._max_body_bytes
-        seen_bytes = 0
-        cap_exceeded = False
-
-        async def limited_receive() -> Any:
-            nonlocal seen_bytes, cap_exceeded
+        # Validate the complete write body before the handler can consume it
+        # or act on a partial request. Retain at most the configured byte cap.
+        body = bytearray()
+        while True:
             message = await receive()
-            if message.get("type") == "http.request":
-                chunk = message.get("body", b"")
-                if chunk:
-                    seen_bytes += len(chunk)
-                    if seen_bytes > max_bytes:
-                        cap_exceeded = True
-            return message
-
-        # Track whether the wrapped app has started its response so we don't
-        # double-send if the body overflow is detected after headers were sent.
-        response_started = False
-        response_finished = False
-
-        async def wrapped_send(message: Any) -> None:
-            nonlocal response_started, response_finished
-            if response_finished:
-                # Inner app is still trying to send after we've already
-                # emitted our 413 - drop its messages on the floor.
+            if message["type"] == "http.disconnect":
                 return
-            msg_type = message.get("type")
-            if msg_type == "http.response.start":
-                if cap_exceeded:
-                    # Body already crossed the cap - discard the inner app's
-                    # response and emit our 413 instead.
-                    await self._send_json(
-                        send,
-                        413,
-                        {
-                            "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
-                        },
-                    )
-                    response_started = True
-                    response_finished = True
-                    return
-                response_started = True
-            elif msg_type == "http.response.body" and cap_exceeded:
-                # Shouldn't happen (we already finished), but guard anyway.
-                return
-            await send(message)
-
-        try:
-            await self.app(scope, limited_receive, wrapped_send)
-        finally:
-            if cap_exceeded and not response_started:
-                # Inner app finished without emitting a response - send 413.
+            chunk = message.get("body", b"")
+            seen_bytes = len(body) + len(chunk)
+            if seen_bytes > self._max_body_bytes:
                 await self._send_json(
                     send,
                     413,
-                    {
-                        "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
-                    },
+                    {"detail": f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"},
                 )
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        buffered: bytes | None = bytes(body)
+        del body, chunk, message
+
+        async def validated_receive() -> Any:
+            nonlocal buffered
+            if buffered is None:
+                return await receive()
+            payload, buffered = buffered, None
+            return {"type": "http.request", "body": payload, "more_body": False}
+
+        await self.app(scope, validated_receive, send)
 
     @staticmethod
     async def _send_json(send: Any, status: int, body: dict[str, Any]) -> None:

@@ -86,6 +86,16 @@ class TestMemoStore:
         store.put(digest, {"answer": 42})
         assert store.get(digest) == {"answer": 42}
 
+    def test_legacy_entry_is_a_miss(self, tmp_path: Path) -> None:
+        import pickle
+
+        store = MemoStore(root=tmp_path / "memo", max_mb=1)
+        digest = b"\x11" * 32
+        entry = store._path_for(digest)
+        entry.parent.mkdir(parents=True)
+        entry.write_bytes(pickle.dumps({"legacy": "fixture"}))
+        assert store.get(digest) is None
+
     def test_eviction_caps_total_size(self, tmp_path: Path) -> None:
         store = MemoStore(root=tmp_path / "memo", max_mb=0)
         store._max_bytes = 1024  # 1 KiB cap for test speed

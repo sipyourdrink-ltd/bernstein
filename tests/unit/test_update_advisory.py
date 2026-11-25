@@ -248,6 +248,32 @@ class TestFetcherHonoursEgressPolicy:
         with pytest.raises(NetworkPolicyDenied):
             fetch_release_feed("https://example.invalid/release-feed.json")
 
+    @pytest.mark.parametrize("extra_byte", [False, True])
+    def test_feed_response_respects_byte_budget(self, monkeypatch: pytest.MonkeyPatch, extra_byte: bool) -> None:
+        import io
+        import urllib.request
+
+        from bernstein.core.distribution import update_advisory
+
+        cap = 32
+        monkeypatch.setattr(update_advisory, "_MAX_RELEASE_FEED_BYTES", cap, raising=False)
+        monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "example.invalid")
+        payload = b"{}" + b" " * (cap - 2 + extra_byte)
+
+        class Response(io.BytesIO):
+            def read(self, size=-1):
+                assert size == cap + 1
+                return super().read(size)
+
+        response = Response(payload)
+        monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: response)
+        if extra_byte:
+            with pytest.raises(ReleaseFeedError, match="exceeds"):
+                fetch_release_feed("https://example.invalid/release-feed.json")
+        else:
+            assert fetch_release_feed("https://example.invalid/release-feed.json") == {}
+        assert response.closed
+
     def test_non_https_refused_before_any_policy_work(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.request
 

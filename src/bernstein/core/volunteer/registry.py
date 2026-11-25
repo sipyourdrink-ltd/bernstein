@@ -49,6 +49,7 @@ MANIFEST_SUBPATH = ".bernstein/volunteer.json"
 
 #: Default revalidation window (6 hours).
 DEFAULT_REVALIDATE_SECONDS = 6 * 3600
+_MAX_REGISTRY_RESPONSE_BYTES = 1024 * 1024
 
 #: Environment variable that overrides the cache TTL.
 TTL_ENV = "BERNSTEIN_VOLUNTEER_TTL"
@@ -81,6 +82,10 @@ class HTTPTransport(Protocol):
     def get(self, url: str, *, headers: dict[str, str]) -> HTTPResponse: ...
 
 
+class _ReadableResponse(Protocol):
+    def read(self, size: int, /) -> bytes: ...
+
+
 class _UrllibTransport:
     def get(self, url: str, *, headers: dict[str, str]) -> HTTPResponse:
         ensure_public_http_url(url, allow_http=False, source="volunteer.registry")
@@ -94,13 +99,21 @@ class _UrllibTransport:
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with opener.open(request, timeout=15) as resp:
-                body = resp.read()
+                body = self._read_body(resp)
                 etag = resp.headers.get("ETag")
                 return HTTPResponse(status=resp.status, body=body, etag=etag)
         except urllib.error.HTTPError as exc:
-            body = exc.read() if exc.fp is not None else b""
-            etag = exc.headers.get("ETag") if exc.headers is not None else None
-            return HTTPResponse(status=exc.code, body=body, etag=etag)
+            with exc:
+                body = self._read_body(exc) if exc.fp is not None else b""
+                etag = exc.headers.get("ETag") if exc.headers is not None else None
+                return HTTPResponse(status=exc.code, body=body, etag=etag)
+
+    @staticmethod
+    def _read_body(response: _ReadableResponse) -> bytes:
+        body = response.read(_MAX_REGISTRY_RESPONSE_BYTES + 1)
+        if len(body) > _MAX_REGISTRY_RESPONSE_BYTES:
+            raise OSError(f"volunteer registry response exceeds {_MAX_REGISTRY_RESPONSE_BYTES}-byte limit")
+        return body
 
 
 @dataclass(frozen=True)

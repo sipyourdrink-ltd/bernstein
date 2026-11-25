@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from bernstein.cli.eval_benchmark_cmd import benchmark_group
 from click.testing import CliRunner
 
@@ -36,6 +37,22 @@ def _run_in_tmp(tmp_path: Path, args: list[str]) -> Any:
         return runner.invoke(benchmark_group, args)
     finally:
         os.chdir(old_cwd)
+
+
+@pytest.fixture(autouse=True)
+def isolated_benchmark_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run fixed synthetic fixtures at the isolated-executor boundary."""
+    import subprocess
+    import sys
+
+    from bernstein.benchmark import programbench
+
+    def run_fixture(_image, argv, *, input_data, timeout):
+        return subprocess.run(
+            [sys.executable, *argv[1:]], input=input_data, capture_output=True, timeout=timeout, check=False
+        )
+
+    monkeypatch.setattr(programbench, "run_isolated", run_fixture)
 
 
 class TestProgramBenchCLI:

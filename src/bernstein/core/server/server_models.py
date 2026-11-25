@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.quality.completion_check_policy import approved_check
 from bernstein.core.security.tenanting import is_valid_tenant_id
 from bernstein.core.tasks.models import CompletionSignalType, DispatchTier
 from bernstein.core.tasks.task_store import ProgressEntry
@@ -28,7 +29,13 @@ class CompletionSignalSchema(BaseModel):
     """Pydantic schema for a single completion signal in API requests."""
 
     type: _SIGNAL_TYPE
-    value: str
+    value: str = Field(description="Signal input. For test_passes, an operator-approved check identifier.")
+
+    @model_validator(mode="after")
+    def validate_executable_check(self) -> Self:
+        if self.type == "test_passes" and approved_check(self.value) is None:
+            raise ValueError("test_passes requires an operator-approved check identifier")
+        return self
 
 
 # input-size caps for TaskCreate (prevents OOM via 200MB descriptions).

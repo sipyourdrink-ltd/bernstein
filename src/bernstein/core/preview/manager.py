@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import secrets
+import shlex
 import signal
 import subprocess
 import threading
@@ -57,6 +58,7 @@ from bernstein.core.preview.port_capture import (
 )
 from bernstein.core.preview.token_issuer import IssuedAuth, PreviewTokenIssuer
 from bernstein.core.preview.tunnel_bridge import TunnelBridge, TunnelBridgeError
+from bernstein.core.sandbox.isolated_process import IsolationUnavailable, readonly_bind, runtime_executable
 from bernstein.core.security.audit import AuditLog
 
 if TYPE_CHECKING:
@@ -171,6 +173,7 @@ class PreviewState:
     expires_at_epoch: float
     process_pid: int
     created_at_epoch: float = field(default_factory=time.time)
+    container_name: str | None = None
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when *now* is past :attr:`expires_at_epoch`."""
@@ -335,7 +338,7 @@ class PreviewManager:
             secret=_default_token_secret(),
         )
         self._audit = audit_log
-        self._runner = runner or SubprocessDevServerRunner()
+        self._runner = runner or ContainerDevServerRunner()
         self._clock: Clock = clock or _SystemClock()
 
     # ------------------------------------------------------------------
@@ -360,6 +363,7 @@ class PreviewManager:
         cwd: Path,
         sandbox_session: SandboxLike,
         command: str | None = None,
+        approve_discovered: bool = False,
         provider: str = "auto",
         auth_mode: AuthMode | str = AuthMode.TOKEN,
         expire_seconds: int | str | None = None,
@@ -396,6 +400,8 @@ class PreviewManager:
         """
         active_clock = clock or self._clock
         chosen = _resolve_command(cwd, command)
+        if chosen.source != "--command" and not approve_discovered:
+            raise PreviewError("Workspace-discovered commands require explicit approval")
         expire_total = parse_duration(expire_seconds, default=DEFAULT_EXPIRE_SECONDS)
         normalised_mode = _normalise_auth(auth_mode)
         preview_id = f"prv-{secrets.token_hex(4)}"
@@ -437,8 +443,8 @@ class PreviewManager:
             command=chosen.command or "",
             cwd=str(cwd.resolve()),
             port=port,
-            sandbox_backend=getattr(sandbox_session, "backend_name", "unknown"),
-            sandbox_session_id=getattr(sandbox_session, "session_id", "unknown"),
+            sandbox_backend=run_handle.backend or getattr(sandbox_session, "backend_name", "unknown"),
+            sandbox_session_id=run_handle.container_name or getattr(sandbox_session, "session_id", "unknown"),
             tunnel_provider=handle.provider,
             tunnel_name=handle.name,
             public_url=handle.public_url,
@@ -448,9 +454,16 @@ class PreviewManager:
                 issued.expires_at_epoch if issued.expires_at_epoch > 0 else active_clock.now() + expire_total
             ),
             process_pid=run_handle.pid,
+            container_name=run_handle.container_name,
             created_at_epoch=active_clock.now(),
         )
-        self._store.upsert(state)
+        try:
+            self._store.upsert(state)
+        except OSError as exc:
+            with contextlib.suppress(Exception):
+                self._tunnel.close(handle.name)
+            self._runner.terminate(run_handle)
+            raise PreviewError("Could not persist preview state") from exc
 
         # Audit + metrics - issued before returning so observers see the
         # preview the moment ``start`` returns.
@@ -532,7 +545,9 @@ class PreviewManager:
         """Close the tunnel, kill the dev server, drop the record, audit."""
         with contextlib.suppress(Exception):
             self._tunnel.close(state.tunnel_name)
-        if state.process_pid > 0:
+        if state.container_name is not None:
+            _remove_preview_container(state.sandbox_backend, state.container_name)
+        elif state.process_pid > 0:
             with contextlib.suppress(ProcessLookupError, OSError):
                 # SIGTERM the dev server's process group so child
                 # processes die too. Sandbox-managed PIDs are always
@@ -639,12 +654,15 @@ class DevServerHandle:
     pid: int
     process: object
     stdout_lines: Any
+    backend: str | None = None
+    container_name: str | None = None
+    host_port: int | None = None
 
 
 class DevServerRunner:
     """Strategy for launching the dev-server process.
 
-    Tests inject fakes; production uses :class:`SubprocessDevServerRunner`.
+    Tests inject fakes; production uses :class:`ContainerDevServerRunner`.
     """
 
     def spawn(self, *, command: str | None, cwd: Path) -> DevServerHandle:
@@ -656,62 +674,85 @@ class DevServerRunner:
         raise NotImplementedError
 
 
-class SubprocessDevServerRunner(DevServerRunner):
-    """Real :class:`DevServerRunner` using :class:`subprocess.Popen`.
+def _remove_preview_container(backend: str, name: str) -> None:
+    if backend not in ("docker", "podman") or not re.fullmatch(r"bernstein-preview-[a-f0-9]{16}", name):
+        return
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        subprocess.run([backend, "rm", "--force", name], capture_output=True, timeout=10, check=False)
 
-    The runner streams stdout into a queue so the manager can read
-    lines incrementally without blocking on the child process.
-    """
+
+class ContainerDevServerRunner(DevServerRunner):
+    """Start the approved argv with only a read-only workspace and loopback port."""
 
     def spawn(self, *, command: str | None, cwd: Path) -> DevServerHandle:
-        if not command:
-            raise PreviewError("Cannot spawn an empty command")
-        # The dev server may be a free-form shell pipeline (``npm run
-        # dev`` is fine, ``cd foo && npm run dev`` is not - we forbid
-        # ``;`` and ``&&`` chaining to keep the audit trail honest).
-        if any(token in command for token in (";", "&&", "||")):
-            raise PreviewError("Pipeline / chained commands are not allowed")
-        # SECURITY: shell=True required because the dev-server command (e.g. "npm run dev")
-        # is operator-configured and may use shell argument parsing. Pipeline tokens
-        # (`;`, `&&`, `||`) are explicitly rejected above to keep the audit trail honest.
-        proc = subprocess.Popen(
-            command,
-            cwd=str(cwd),
-            shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=True,
-        )
-        # The reader goroutine accumulates stdout; the main thread can
-        # poll it via ``stdout_lines`` (a generator).
-        return DevServerHandle(
-            pid=proc.pid,
-            process=proc,
-            stdout_lines=_iter_stdout(proc),
-        )
+        try:
+            argv = shlex.split(command or "")
+            runtime = runtime_executable()
+            mount = readonly_bind(cwd, "/workspace")
+            container_port = int(os.environ.get("BERNSTEIN_PREVIEW_PORT", "3000"))
+        except (ValueError, IsolationUnavailable) as exc:
+            raise PreviewError(str(exc)) from exc
+        image = os.environ.get("BERNSTEIN_PREVIEW_IMAGE", "")
+        if not argv or argv[0].startswith("-") or not image or image.startswith("-"):
+            raise PreviewError("An explicit argv and operator-configured BERNSTEIN_PREVIEW_IMAGE are required")
+        if not 1 <= container_port <= 65535:
+            raise PreviewError("Invalid BERNSTEIN_PREVIEW_PORT")
+        backend = Path(runtime).name
+        name = f"bernstein-preview-{secrets.token_hex(8)}"
+        # Only the loopback-published application port leaves the container.
+        # The selected image is operator-owned and already installed locally.
+        cmd = [
+            runtime,
+            "run",
+            "--detach",
+            "--name",
+            name,
+            "--pull=never",
+            "--read-only",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--user=65534:65534",
+            "--memory=1g",
+            "--cpus=2",
+            "--pids-limit=128",
+            "--tmpfs=/tmp:rw,nosuid,nodev,size=128m",
+            "--log-driver=none",
+            "--mount",
+            mount,
+            "--workdir=/workspace",
+            "--env=HOME=/tmp",
+            "--env=HOST=0.0.0.0",
+            f"--env=PORT={container_port}",
+            "--publish",
+            f"127.0.0.1::{container_port}",
+            "--entrypoint",
+            argv[0],
+            "--",
+            image,
+            *argv[1:],
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=30, check=False)
+            if result.returncode != 0:
+                raise PreviewError("The isolated preview runtime could not start the configured image")
+            mapping = subprocess.run(
+                [runtime, "port", name, f"{container_port}/tcp"],
+                capture_output=True,
+                timeout=10,
+                check=True,
+            )
+            match = re.fullmatch(rb"127\.0\.0\.1:([0-9]+)", mapping.stdout.strip())
+            if match is None:
+                raise PreviewError("The preview runtime did not assign a loopback port")
+            return DevServerHandle(0, None, (), backend, name, int(match[1]))
+        except (OSError, subprocess.SubprocessError, PreviewError) as exc:
+            _remove_preview_container(backend, name)
+            detail = str(exc) if isinstance(exc, PreviewError) else type(exc).__name__
+            raise PreviewError(f"Could not start isolated dev server: {detail}") from exc
 
     def terminate(self, handle: DevServerHandle) -> None:
-        if handle.pid <= 0:
-            return
-        with contextlib.suppress(ProcessLookupError, OSError):
-            _terminate_pid(handle.pid)
-        # Wait briefly so we don't leak a zombie.
-        proc = handle.process
-        wait = getattr(proc, "wait", None)
-        if callable(wait):
-            with contextlib.suppress(Exception):
-                wait(timeout=5)
-
-
-def _iter_stdout(proc: subprocess.Popen[str]):  # type: ignore[no-untyped-def]
-    """Yield decoded stdout lines from *proc* until it exits."""
-    stream = proc.stdout
-    if stream is None:
-        return
-    for raw in iter(stream.readline, ""):
-        yield raw.rstrip("\n")
-    stream.close()
+        if handle.backend and handle.container_name:
+            _remove_preview_container(handle.backend, handle.container_name)
 
 
 def _await_port(handle: DevServerHandle, *, timeout_seconds: float) -> int:
@@ -730,6 +771,8 @@ def _await_port(handle: DevServerHandle, *, timeout_seconds: float) -> int:
         PortNotDetectedError: When the stdout iterable is exhausted (or
             the budget elapsed) without yielding a port.
     """
+    if handle.host_port is not None:
+        return handle.host_port
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     buffered: list[str] = []
     for line in handle.stdout_lines:
@@ -801,6 +844,7 @@ __all__ = [
     "PREVIEW_STATE_FILE",
     "AuthMode",
     "Clock",
+    "ContainerDevServerRunner",
     "DevServerHandle",
     "DevServerRunner",
     "Preview",
@@ -809,6 +853,5 @@ __all__ = [
     "PreviewState",
     "PreviewStore",
     "SandboxLike",
-    "SubprocessDevServerRunner",
     "parse_duration",
 ]

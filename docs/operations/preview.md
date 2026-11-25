@@ -5,7 +5,7 @@
 staging.
 
 **What:** `bernstein preview` boots a sandboxed dev server inside the
-originating session's worktree, captures the bound port, opens a public
+an isolated container with a read-only view of the selected workspace, opens a public
 tunnel through the existing `bernstein tunnel` wrapper, mints a short-lived
 auth credential, and prints a single shareable URL.
 
@@ -27,13 +27,11 @@ Source: `src/bernstein/core/preview/manager.py:1-21`. One run-through:
     2. `Procfile` - first `web:` line, otherwise the first process.
     3. `.tool-versions` - surfaces runtime hint only.
     4. `bernstein.yaml::preview.command`.
-2. **Provision sandbox**: reuse a worktree session under
-   `.sdd/worktrees/` (most-recent mtime) or carve a fresh lightweight one
-   via `WorktreeSandboxBackend`
-   (`cli/commands/preview_cmd.py:269-282`).
-3. **Spawn** the dev server inside the sandbox, stream stdout, and capture
-   the bound port via regex
-   (`src/bernstein/core/preview/port_capture.py`).
+2. **Approve the command** with `--command` or inspect the discovered command
+   with `--list-commands` before passing `--approve-discovered`.
+3. **Start an isolated dev server** using Docker or Podman and the local
+   image named by `BERNSTEIN_PREVIEW_IMAGE`. The launcher passes argv directly
+   and publishes `BERNSTEIN_PREVIEW_PORT` (default 3000) only on host loopback.
 4. **Probe** `localhost:<port>` over TCP for up to 30 s before opening the
    tunnel (`src/bernstein/core/preview/__init__.py:79-95`).
 5. **Tunnel** through `TunnelBridge` - primary provider, then
@@ -57,15 +55,16 @@ State file shape - `PreviewState`
       "command": "pnpm dev",
       "cwd": "/repo/.sdd/worktrees/task-42",
       "port": 5173,
-      "sandbox_backend": "worktree",
-      "sandbox_session_id": "ws-...",
+      "sandbox_backend": "docker",
+      "sandbox_session_id": "bernstein-preview-0123456789abcdef",
+      "container_name": "bernstein-preview-0123456789abcdef",
       "tunnel_provider": "cloudflared",
       "tunnel_name": "...",
       "public_url": "https://abc.trycloudflare.com",
       "share_url": "https://abc.trycloudflare.com/?token=eyJ...",
       "auth_mode": "token",
       "expires_at_epoch": 1714857600,
-      "process_pid": 12345,
+      "process_pid": 0,
       "created_at_epoch": 1714843200
     }
   ]
@@ -85,7 +84,7 @@ $ bernstein preview start [--cwd PATH] [--command "pnpm dev"]
                           [--provider auto|cloudflared|ngrok|bore|tailscale]
                           [--auth basic|token|none]
                           [--expire 30m|4h|1d]
-                          [--list-commands]
+                          [--list-commands | --approve-discovered]
                           [--no-clipboard]
 ```
 
@@ -94,16 +93,18 @@ Defaults: `--cwd` = most recent worktree under `.sdd/worktrees/`,
 `--expire` = `4h`. The URL is auto-copied to the clipboard (best-effort)
 unless `--no-clipboard`.
 
-`--list-commands` prints every discovered candidate without starting
-anything - useful when discovery picked the wrong script
-(`cli/commands/preview_cmd.py:240-251`).
+`--list-commands` prints discovered candidates without starting a process.
+Set `BERNSTEIN_PREVIEW_IMAGE` to an installed application image with its
+runtime and dependencies. Configure the dev server to listen on its container
+interface and the selected port. The workspace is read-only. Use `/tmp` for
+temporary application state.
 
 Output:
 
 ```
 Started preview p-abc12345 (cloudflared -> localhost:5173)
 URL: https://abc.trycloudflare.com/?token=eyJ...
-auth=token  sandbox=worktree/ws-...  expires_epoch=1714857600
+auth=token  sandbox=docker/bernstein-preview-0123456789abcdef  expires_epoch=1714857600
 URL copied to clipboard.
 ```
 
@@ -175,9 +176,9 @@ Other guarantees:
   entry to `.sdd/audit` so a misuse trail survives even after the
   preview row is deleted
   (`src/bernstein/core/preview/manager.py:17-19`).
-- The dev server runs inside the **same sandbox primitive** as the
-  originating agent run - Worktree by default, never the bare repo. The
-  preview process inherits filesystem isolation from `WorktreeSandboxBackend`.
+- The preview runtime mounts the selected workspace read-only and publishes its
+  assigned application port on host loopback. It passes no host environment
+  variables to the application. The operator selects the application image.
 - Tokens expire by default at 4 h. Increase only when you have a reason;
   reviewers leaking a 24 h URL on Slack is a real failure mode.
 - The `share_url` field in `state.json` includes the token. Treat
@@ -191,10 +192,12 @@ Other guarantees:
 
 ## Configuration
 
-Three knobs live outside the CLI:
+The preview uses these settings and state files:
 
 | Where                                 | Knob                          | Effect                                              |
 |---------------------------------------|-------------------------------|-----------------------------------------------------|
+| Operator environment | `BERNSTEIN_PREVIEW_IMAGE` | Installed Docker or Podman image containing the dev runtime |
+| Operator environment | `BERNSTEIN_PREVIEW_PORT` | Container application port, default 3000 |
 | `bernstein.yaml`                      | `preview.command`             | 4th-precedence dev-server command override          |
 | `.sdd/runtime/preview/state.json`     | persisted on every start      | live registry consumed by `list`/`status`/`stop`    |
 | `.sdd/audit/`                         | HMAC chain                    | audit log for every preview lifecycle transition    |

@@ -20735,7 +20735,8 @@
           },
           "value": {
             "type": "string",
-            "title": "Value"
+            "title": "Value",
+            "description": "Signal input. For test_passes, an operator-approved check identifier."
           }
         },
         "type": "object",

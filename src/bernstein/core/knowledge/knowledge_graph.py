@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -15,6 +15,7 @@ from bernstein.core.git_context import ls_files as _git_ls_files
 from bernstein.core.knowledge import ast_symbol_graph as _ast_symbol_graph
 from bernstein.core.knowledge.ast_symbol_graph import (
     FileSymbols,
+    SymbolNode,
     build_semantic_graph,
     parse_file_symbols,
 )
@@ -86,7 +87,7 @@ _kg_memo_store: MemoStore | None = None
 _memoized_extract: Any = None
 
 
-def _extract_symbols_for_memo(*, file_sha: str, rel_path: str, abs_path: str) -> FileSymbols | None:
+def _extract_symbols_for_memo(*, file_sha: str, rel_path: str, abs_path: str) -> dict[str, Any] | None:
     """Memoization shim around :func:`parse_file_symbols`.
 
     Keyed by (file_sha, rel_path, this-function-body-hash, hash of the
@@ -101,9 +102,10 @@ def _extract_symbols_for_memo(*, file_sha: str, rel_path: str, abs_path: str) ->
     Hashing the whole module (rather than ``parse_file_symbols`` alone)
     also covers its private helpers - the import-resolution rules live
     in one of them - and the :class:`FileSymbols` dataclass itself, so a
-    new field cannot be missing from an unpickled entry.
+    new field cannot be missing from an entry decoded with the new schema.
     """
-    return parse_file_symbols(Path(abs_path), rel_path)
+    symbols = parse_file_symbols(Path(abs_path), rel_path)
+    return asdict(symbols) if symbols is not None else None
 
 
 def _get_memoized_extract(workdir: Path) -> Any:
@@ -131,10 +133,18 @@ def _parse_file_symbols_memoized(workdir: Path, filepath: Path, rel_path: str) -
         return parse_file_symbols(filepath, rel_path)
     file_sha = hashlib.sha256(source_bytes).hexdigest()
     extractor = _get_memoized_extract(workdir)
-    return cast(
-        "FileSymbols | None",
-        extractor(file_sha=file_sha, rel_path=rel_path, abs_path=str(filepath)),
-    )
+    entry = extractor(file_sha=file_sha, rel_path=rel_path, abs_path=str(filepath))
+    if entry is None:
+        return None
+    try:
+        return FileSymbols(
+            path=entry["path"],
+            imports=entry["imports"],
+            symbols=[SymbolNode(**item) for item in entry["symbols"]],
+            calls=entry["calls"],
+        )
+    except (KeyError, TypeError):
+        return parse_file_symbols(filepath, rel_path)
 
 
 def _db_path(workdir: Path) -> Path:

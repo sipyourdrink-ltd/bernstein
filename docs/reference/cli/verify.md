@@ -266,8 +266,13 @@ properties defined (nothing to check); exits 0 on a pass and 1 on any
 violation, printing each violated property and its counterexample (if one
 was found before the checker timed out).
 
-The CLI surface ships with Bernstein; the Z3 and Lean4 binaries themselves
-must be installed separately and on `PATH` — they are not bundled.
+Scalar properties support boolean and numeric literals, the documented task
+facts, comparisons, boolean operators, and addition, subtraction and
+multiplication. Bernstein can check these facts without Z3. To enable Lean4
+properties, set `BERNSTEIN_FORMAL_LEAN_IMAGE` in the operator environment to a
+local Docker or Podman image containing Lean. Lean receives the property and
+optional workspace lemma source in a read-only mount with networking disabled.
+A missing image or verifier fails the check.
 
 ## Unified Verification Exit-Code Reference
 

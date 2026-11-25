@@ -453,6 +453,11 @@ class TestGlobExists:
 
 
 class TestTestPasses:
+    @pytest.fixture(autouse=True)
+    def policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"check-package":["check-package","--ci"]}')
+        monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECK_IMAGE", "checks-fixture")
+
     @pytest.mark.parametrize(
         ("configured", "expected"),
         [(None, 120), ("300", 300), ("1", 1), ("0", 1), ("-5", 1), ("invalid", 120), ("", 120), ("1.5", 120)],
@@ -466,13 +471,16 @@ class TestTestPasses:
             monkeypatch.setenv("BERNSTEIN_SIGNAL_TIMEOUT_S", configured)
         signal = CompletionSignal(type="test_passes", value="check-package")
         with patch(
-            "bernstein.core.quality.janitor.subprocess.run",
-            return_value=subprocess.CompletedProcess("check-package", 0),
+            "bernstein.core.sandbox.isolated_process.run_isolated",
+            return_value=subprocess.CompletedProcess([], 0),
         ) as run:
             passed, _ = evaluate_signal(signal, tmp_path)
 
         assert passed is True
+        assert run.call_args.args == ("checks-fixture", ["check-package", "--ci"])
         assert run.call_args.kwargs["timeout"] == expected
+        assert run.call_args.kwargs["workdir"] == "/workspace"
+        assert run.call_args.kwargs["mounts"] == (f"type=bind,source={tmp_path.resolve()},target=/workspace,readonly",)
 
     def test_timeout_logs_configured_limit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -480,7 +488,7 @@ class TestTestPasses:
         monkeypatch.setenv("BERNSTEIN_SIGNAL_TIMEOUT_S", "300")
         signal = CompletionSignal(type="test_passes", value="check-package")
         with patch(
-            "bernstein.core.quality.janitor.subprocess.run",
+            "bernstein.core.sandbox.isolated_process.run_isolated",
             side_effect=subprocess.TimeoutExpired(cmd="check-package", timeout=300),
         ):
             passed, _ = evaluate_signal(signal, tmp_path)
@@ -492,41 +500,34 @@ class TestTestPasses:
         assert "check-package" not in caplog.text
         assert str(tmp_path) not in caplog.text
 
-    def test_passes_on_exit_zero(self, tmp_path: Path) -> None:
-        signal = CompletionSignal(
-            type="test_passes",
-            value=f'{sys.executable} -c "raise SystemExit(0)"',
-        )
-        passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is True
+    @pytest.mark.parametrize("returncode", [0, 1])
+    def test_result_matches_isolated_exit_code(self, tmp_path: Path, returncode: int) -> None:
+        with patch(
+            "bernstein.core.sandbox.isolated_process.run_isolated",
+            return_value=subprocess.CompletedProcess([], returncode),
+        ):
+            assert evaluate_signal(CompletionSignal(type="test_passes", value="check-package"), tmp_path)[0] == (
+                returncode == 0
+            )
 
-    def test_fails_on_nonzero_exit(self, tmp_path: Path) -> None:
-        signal = CompletionSignal(
-            type="test_passes",
-            value=f'{sys.executable} -c "raise SystemExit(1)"',
-        )
-        passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is False
-
-    def test_fails_on_bad_command(self, tmp_path: Path) -> None:
-        signal = CompletionSignal(
-            type="test_passes",
-            value="nonexistent_command_xyz_12345",
-        )
-        passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is False
+    def test_unapproved_legacy_command_never_launches(self, tmp_path: Path) -> None:
+        with patch("bernstein.core.sandbox.isolated_process.run_isolated") as run:
+            passed, detail = evaluate_signal(CompletionSignal(type="test_passes", value="example-check --ci"), tmp_path)
+        run.assert_not_called()
+        assert not passed
+        assert "operator-approved" in detail
 
     def test_nonzero_exit_logs_failure_metadata(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """Keep the exit code visible while omitting command and output."""
         caplog.set_level("INFO", logger="bernstein.core.quality.janitor")
-        signal = CompletionSignal(
-            type="test_passes",
-            value=f"{sys.executable} -c \"import sys; sys.stderr.write('boom'); raise SystemExit(1)\"",
-        )
-        passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is False
+        signal = CompletionSignal(type="test_passes", value="check-package")
+        with patch(
+            "bernstein.core.sandbox.isolated_process.run_isolated",
+            return_value=subprocess.CompletedProcess([], 1, b"", b"boom"),
+        ):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert not passed
         fail_records = [r for r in caplog.records if "test_passes FAIL" in r.message]
-        assert fail_records, f"expected a test_passes FAIL log line, got: {[r.message for r in caplog.records]}"
+        assert len(fail_records) == 1
         assert "exit=1" in fail_records[0].message
         assert fail_records[0].levelname == "WARNING"
         assert "boom" not in caplog.text
@@ -633,41 +634,26 @@ class TestBranchCheckAcceptanceEndToEnd:
 
     def test_janitor_accepts_slash_branch_when_signal_expects_hyphens(self, tmp_path: Path) -> None:
         _init_git_repo_with_branch(tmp_path, "fix/905-demo-worker-record")
-        signal = CompletionSignal(
-            type="test_passes",
-            value="git rev-parse --verify fix-905-demo-worker-record",
-        )
-        passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is True
+        command = "git rev-parse --verify fix-905-demo-worker-record"
+        assert _resolve_branch_check_command(command, tmp_path) == ("git rev-parse --verify fix/905-demo-worker-record")
 
     def test_janitor_accepts_commit_message_check_across_naming_drift(self, tmp_path: Path) -> None:
         _init_git_repo_with_branch(tmp_path, "fix/905-demo-worker-record")
-        signal = CompletionSignal(
-            type="test_passes",
-            value="git log -1 --format=%s fix-905-demo-worker-record | grep -q '#905'",
-        )
-        passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is True
+        command = "git log -1 --format=%s fix-905-demo-worker-record | grep -q '#905'"
+        assert _resolve_branch_check_command(command, tmp_path) == command.replace("fix-905-", "fix/905-")
 
     def test_janitor_still_fails_when_branch_never_pushed(self, tmp_path: Path) -> None:
         _init_git_repo_with_branch(tmp_path, "feat/unrelated-branch")
-        signal = CompletionSignal(
-            type="test_passes",
-            value="git rev-parse --verify fix-905-demo-worker-record",
-        )
-        passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is False
+        command = "git rev-parse --verify fix-905-demo-worker-record"
+        assert _resolve_branch_check_command(command, tmp_path) == command
 
     def test_logs_expected_and_found_branches_with_verdict(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         _init_git_repo_with_branch(tmp_path, "fix/905-demo-worker-record")
-        signal = CompletionSignal(
-            type="test_passes",
-            value="git rev-parse --verify fix-905-demo-worker-record",
-        )
+        command = "git rev-parse --verify fix-905-demo-worker-record"
         with caplog.at_level("INFO", logger="bernstein.core.quality.janitor"):
-            evaluate_signal(signal, tmp_path)
+            _resolve_branch_check_command(command, tmp_path)
         combined = "\n".join(rec.getMessage() for rec in caplog.records)
         assert "fix-905-demo-worker-record" in combined
         assert "fix/905-demo-worker-record" in combined
@@ -1088,18 +1074,19 @@ class TestCreateFixTasks:
         assert ids == ["fix-001"]
 
     @pytest.mark.asyncio
-    async def test_retry_preserves_signals_owned_files_and_dependencies(self) -> None:
+    async def test_retry_preserves_signals_owned_files_and_dependencies(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import httpx
 
         from bernstein.core.server.server_models import TaskCreate
 
+        monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"example-unit":["pytest","tests/test_example.py"]}')
         task = Task(
             id="T-SIGNALS",
             title="Implement feature",
             description="Implement and verify the feature.",
             role="backend",
             completion_signals=[
-                CompletionSignal(type="test_passes", value="pytest tests/test_example.py"),
+                CompletionSignal(type="test_passes", value="example-unit"),
                 CompletionSignal(type="file_contains", value="feature is ready"),
                 CompletionSignal(type="path_exists", value="src/feature.py"),
             ],
@@ -1107,7 +1094,7 @@ class TestCreateFixTasks:
             depends_on=["T-DEP-1", "T-DEP-2"],
         )
         expected_signals = [
-            {"type": "test_passes", "value": "pytest tests/test_example.py"},
+            {"type": "test_passes", "value": "example-unit"},
             {"type": "file_contains", "value": "feature is ready"},
             {"type": "path_exists", "value": "src/feature.py"},
         ]
@@ -1128,7 +1115,7 @@ class TestCreateFixTasks:
             return httpx.Response(status_code=201, json={"id": "fix-signals-001"}, request=httpx.Request("POST", url))
 
         with patch.object(httpx.AsyncClient, "post", mock_post):
-            ids = await create_fix_tasks(task, ["test_passes: pytest tests/test_example.py"], "http://localhost:8052")
+            ids = await create_fix_tasks(task, ["test_passes: example-unit"], "http://localhost:8052")
 
         assert ids == ["fix-signals-001"]
 
@@ -1706,12 +1693,12 @@ class TestEmptyDiffGuardAndAttribution:
 
     @pytest.mark.asyncio
     async def test_unattributable_diff_with_nontrivial_signal_accepted_with_warning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A task that landed real work in a commit whose message omits the
         task id and which has no owned_files (attribution returns empty) must
         NOT be hard-rejected when it has a passing non-trivial completion
-        signal (a passing test_passes). Instead it is accepted and flagged for
+        signal. Instead it is accepted and flagged for
         review, so real completions are not false-rejected just because the
         commit did not stamp the task id."""
         _init_git_repo(tmp_path)
@@ -1725,17 +1712,24 @@ class TestEmptyDiffGuardAndAttribution:
             check=True,
             capture_output=True,
         )
+        monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"example-unit":["pytest"]}')
+        monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECK_IMAGE", "check-fixture")
         task = _make_task(
             id="NOSTAMP-1",
             signals=[
                 CompletionSignal(
                     type="test_passes",
-                    value=f'{sys.executable} -c "raise SystemExit(0)"',
+                    value="example-unit",
                 )
             ],
         )
 
-        with caplog.at_level("WARNING"):
+        with (
+            caplog.at_level("WARNING"),
+            patch(
+                "bernstein.core.sandbox.isolated_process.run_isolated", return_value=subprocess.CompletedProcess([], 0)
+            ),
+        ):
             results = await run_janitor([task], tmp_path)
 
         assert len(results) == 1

@@ -31,7 +31,12 @@ Example bernstein.yaml:
 
 from __future__ import annotations
 
+import ast
 import logging
+import math
+import operator
+import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -55,7 +60,7 @@ class FormalProperty:
 
     Attributes:
         name: Human-readable identifier for this property.
-        invariant: Property expression. For Z3: Python boolean expression
+        invariant: Property expression. For Z3: restricted scalar expression
             referencing context variables. For Lean4: theorem statement.
         checker: Solver to use - ``"z3"`` (default) or ``"lean4"``.
         lemmas_file: Path to a Lean4 lemmas file (lean4 only).
@@ -152,113 +157,117 @@ def _build_context(task: Task, files_modified: int = 0, test_passed: bool = True
 # ---------------------------------------------------------------------------
 
 
+_COMPARISONS = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+}
+_ARITHMETIC = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul}
+
+
+def _scalar(value: Any) -> bool:
+    return type(value) in (bool, int) or (type(value) is float and math.isfinite(value))
+
+
+def _evaluate_scalar(node: ast.AST, context: dict[str, Any], depth: int = 0) -> bool | int | float:
+    if depth > 16:
+        raise ValueError("property expression is too deeply nested")
+    match node:
+        case ast.Constant(value=value) if _scalar(value):
+            return value
+        case ast.Name(id=name) if name in context and _scalar(context[name]):
+            return context[name]
+        case ast.BoolOp(op=ast.And() | ast.Or(), values=values):
+            # Validate all operands even when the result is already known.
+            conditions = [_evaluate_scalar(value, context, depth + 1) for value in values]
+            if any(type(condition) is not bool for condition in conditions):
+                raise ValueError("logical operators need boolean operands")
+            return all(conditions) if isinstance(node.op, ast.And) else any(conditions)
+        case ast.UnaryOp(op=ast.Not(), operand=operand):
+            condition = _evaluate_scalar(operand, context, depth + 1)
+            if type(condition) is not bool:
+                raise ValueError("not needs a boolean operand")
+            return not condition
+        case ast.UnaryOp(op=ast.UAdd() | ast.USub(), operand=operand):
+            number = _evaluate_scalar(operand, context, depth + 1)
+            if type(number) is bool:
+                raise ValueError("sign needs a numeric operand")
+            return -number if isinstance(node.op, ast.USub) else number
+        case ast.BinOp(left=left, op=op, right=right) if type(op) in _ARITHMETIC:
+            lhs = _evaluate_scalar(left, context, depth + 1)
+            rhs = _evaluate_scalar(right, context, depth + 1)
+            if type(lhs) is bool or type(rhs) is bool:
+                raise ValueError("arithmetic needs numeric operands")
+            value = _ARITHMETIC[type(op)](lhs, rhs)
+            if not _scalar(value):
+                raise ValueError("non-finite arithmetic result")
+            return value
+        case ast.Compare(left=left, ops=ops, comparators=comparators):
+            values = [_evaluate_scalar(current, context, depth + 1) for current in (left, *comparators)]
+            comparisons = []
+            for operation, lhs, rhs in zip(ops, values, values[1:], strict=False):
+                compare = _COMPARISONS.get(type(operation))
+                if compare is None:
+                    raise ValueError("unsupported comparison")
+                comparisons.append(compare(lhs, rhs))
+            return all(comparisons)
+        case _:
+            raise ValueError("unsupported property syntax or symbol")
+
+
+def _property_value(source: str, context: dict[str, Any]) -> bool:
+    if len(source) > 512:
+        raise ValueError("property expression is too long")
+    node = ast.parse(source.strip(), mode="eval").body
+    result = _evaluate_scalar(node, context)
+    if type(result) is not bool:
+        raise ValueError("property must produce a boolean")
+    return result
+
+
+def _invalid_property(prop: FormalProperty, detail: str, *, checker: str | None = None) -> PropertyViolation:
+    return PropertyViolation(prop.name, "", checker or prop.checker, detail)
+
+
 def _verify_z3(
     prop: FormalProperty,
     context: dict[str, Any],
     timeout_s: int,
 ) -> PropertyViolation | None:
-    """Verify a property using the Z3 SMT solver.
-
-    Approach:
-      1. Create Z3 symbolic variables matching each context key by type.
-      2. Assert context values as axioms (concrete facts).
-      3. Evaluate the invariant expression in the Z3 namespace to obtain a
-         Z3 Boolean term.
-      4. Assert the *negation* of that term.
-      5. If the solver returns SAT → a violation is possible → fail.
-         If UNSAT → the invariant always holds → pass.
-
-    Falls back to direct Python ``eval`` if the invariant cannot be parsed
-    as a Z3 expression (e.g. if z3-solver is not installed).
-
-    Args:
-        prop: The property to check.
-        context: Task context variables with concrete values.
-        timeout_s: Solver timeout in seconds.
-
-    Returns:
-        None if the property holds, PropertyViolation otherwise.
-    """
+    """Check the parsed property over the concrete task facts."""
     try:
         import z3  # type: ignore[import-untyped]
     except ImportError:
-        logger.debug("z3-solver not installed; falling back to Python eval for %r", prop.name)
         return _verify_python_eval(prop, context)
 
+    try:
+        holds = _property_value(prop.invariant, context)
+    except (SyntaxError, ValueError, OverflowError, RecursionError) as exc:
+        return _invalid_property(prop, f"Invalid property: {exc}")
+    # All facts are concrete. A negation of this closed Boolean obligation
+    # is satisfiable exactly when the invariant is false.
     solver = z3.Solver()
-    solver.set("timeout", timeout_s * 1000)  # z3 timeout is in milliseconds
-
-    # Build Z3 namespace: one typed variable per context key + axiom asserting its value
-    z3_ns: dict[str, Any] = {}
-    for key, val in context.items():
-        if isinstance(val, bool):
-            var = z3.Bool(key)
-            solver.add(var == val)
-        elif isinstance(val, int):
-            var = z3.Int(key)
-            solver.add(var == val)
-        elif isinstance(val, float):
-            var = z3.Real(key)
-            solver.add(var == val)
-        else:
-            continue  # skip non-numeric/boolean types for Z3
-        z3_ns[key] = var
-
-    # Evaluate invariant as Z3 expression
-    try:
-        invariant_expr = eval(prop.invariant, {"__builtins__": {}}, z3_ns)
-    except Exception as exc:
-        logger.debug("Cannot parse invariant %r as Z3 expression (%s); using Python eval", prop.invariant, exc)
-        return _verify_python_eval(prop, context)
-
-    # Check whether the negation is satisfiable (i.e. property can be violated)
-    solver.push()
-    try:
-        solver.add(z3.Not(invariant_expr))
-        check_result = solver.check()
-        if check_result == z3.sat:
-            model = solver.model()
-            return PropertyViolation(
-                property_name=prop.name,
-                counterexample=str(model),
-                checker="z3",
-                detail=f"Invariant can be violated: {prop.invariant}",
-            )
-        if check_result == z3.unsat:
-            return None  # property always holds
-        # z3.unknown - timeout or undecidable; treat as warning, not failure
-        logger.warning("Z3 returned unknown for property %r (timeout or undecidable)", prop.name)
+    solver.set("timeout", timeout_s * 1000)
+    solver.add(z3.Not(z3.BoolVal(holds)))
+    verdict = solver.check()
+    if verdict == z3.unsat:
         return None
-    finally:
-        solver.pop()
+    if verdict == z3.sat:
+        return PropertyViolation(prop.name, str(context), "z3", "Invariant evaluated to false")
+    return _invalid_property(prop, "Solver could not establish the property")
 
 
 def _verify_python_eval(prop: FormalProperty, context: dict[str, Any]) -> PropertyViolation | None:
-    """Evaluate the invariant as a plain Python boolean expression.
-
-    Used as a fallback when z3-solver is unavailable. No symbolic reasoning -
-    just evaluates the expression against the concrete context values.
-
-    Args:
-        prop: The property to evaluate.
-        context: Concrete context variable values.
-
-    Returns:
-        None if the expression evaluates to True, PropertyViolation otherwise.
-    """
+    """Check the same parsed property when Z3 is unavailable."""
     try:
-        result = eval(prop.invariant, {"__builtins__": {}}, context.copy())
-        if not result:
-            return PropertyViolation(
-                property_name=prop.name,
-                counterexample=str(context),
-                checker="python_eval",
-                detail=f"Invariant evaluated to False: {prop.invariant}",
-            )
-        return None
-    except Exception as exc:
-        logger.warning("Failed to evaluate invariant %r: %s", prop.invariant, exc)
-        return None  # evaluation error → skip rather than block
+        if _property_value(prop.invariant, context):
+            return None
+        return PropertyViolation(prop.name, str(context), "python_eval", "Invariant evaluated to false")
+    except (SyntaxError, ValueError, OverflowError, RecursionError) as exc:
+        return _invalid_property(prop, f"Invalid property: {exc}", checker="python_eval")
 
 
 # ---------------------------------------------------------------------------
@@ -323,56 +332,59 @@ def _verify_lean4(
     Returns:
         None if Lean4 proves the theorem, PropertyViolation otherwise.
     """
+    from bernstein.core.sandbox.isolated_process import IsolationUnavailable, readonly_bind, run_isolated
+
+    image = os.environ.get("BERNSTEIN_FORMAL_LEAN_IMAGE")
+    if not image:
+        return _invalid_property(prop, "Lean4 requires an operator-configured isolated image")
+
     lemmas_path: Path | None = None
     if prop.lemmas_file is not None:
-        candidate = workdir / prop.lemmas_file
-        if candidate.exists():
-            lemmas_path = candidate
-        else:
-            logger.warning("lean4: lemmas_file %r not found at %s; ignoring", prop.lemmas_file, candidate)
+        root = workdir.resolve()
+        candidate = (root / prop.lemmas_file).resolve()
+        if not candidate.is_relative_to(root) or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*\.lean", candidate.name):
+            return _invalid_property(prop, "Lean4 lemmas must be a Lean source file inside the workspace")
+        lemmas_path = candidate
 
     lean_source = _generate_lean4_theorem(prop, context, lemmas_path)
-
     with tempfile.TemporaryDirectory() as tmpdir:
-        lean_file = Path(tmpdir) / f"{prop.name.replace(' ', '_')}.lean"
-        lean_file.write_text(lean_source, encoding="utf-8")
-
-        # Copy lemmas file into tmpdir if provided
+        fixture_dir = Path(tmpdir)
+        fixture_dir.chmod(0o755)
+        (fixture_dir / "Property.lean").write_text(lean_source, encoding="utf-8")
         if lemmas_path is not None:
-            import shutil
-
-            shutil.copy2(lemmas_path, Path(tmpdir) / lemmas_path.name)
-
+            with lemmas_path.open("rb") as source:
+                lemmas = source.read(1_048_577)
+            if len(lemmas) > 1_048_576:
+                return _invalid_property(prop, "Lean4 lemmas exceed the input limit")
+            if lemmas_path.name == "Property.lean":
+                return _invalid_property(prop, "Lean4 lemmas use a reserved filename")
+            (fixture_dir / lemmas_path.name).write_bytes(lemmas)
+        for fixture in fixture_dir.iterdir():
+            fixture.chmod(0o644)
         try:
-            result = subprocess.run(
-                ["lean", str(lean_file)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+            argv = ["lean", "/proof/Property.lean"]
+            if lemmas_path is not None:
+                argv = [
+                    "sh",
+                    "-ec",
+                    'lean -o "/tmp/$1.olean" "/proof/$1.lean"; LEAN_PATH=/tmp lean /proof/Property.lean',
+                    "lean-check",
+                    lemmas_path.stem,
+                ]
+            result = run_isolated(
+                image,
+                argv,
+                input_data=b"",
                 timeout=timeout_s,
-                cwd=tmpdir,
+                mounts=(readonly_bind(fixture_dir, "/proof"),),
             )
-        except FileNotFoundError:
-            logger.warning("lean4 CLI not found; skipping property %r (install Lean4 to enable)", prop.name)
-            return None  # non-fatal: treat as skipped
+        except IsolationUnavailable as exc:
+            return _invalid_property(prop, str(exc))
         except subprocess.TimeoutExpired:
-            logger.warning("lean4 timed out (%ds) for property %r", timeout_s, prop.name)
-            return PropertyViolation(
-                property_name=prop.name,
-                counterexample="(timeout)",
-                checker="lean4",
-                detail=f"Lean4 timed out after {timeout_s}s proving: {prop.invariant}",
-            )
-
+            return PropertyViolation(prop.name, "(timeout)", "lean4", f"Lean4 timed out after {timeout_s}s")
         if result.returncode != 0:
-            error_text = (result.stderr or result.stdout or "")[:500]
-            return PropertyViolation(
-                property_name=prop.name,
-                counterexample=error_text,
-                checker="lean4",
-                detail=f"Lean4 could not prove: {prop.invariant}",
-            )
+            diagnostic = result.stdout[:500].decode("utf-8", errors="replace")
+            return PropertyViolation(prop.name, diagnostic, "lean4", "Lean4 could not prove the property")
 
     return None
 
@@ -424,6 +436,7 @@ def run_formal_verification(
                 violation = _verify_z3(prop, context, config.timeout_s)
         except Exception as exc:
             logger.warning("formal_verification: unexpected error checking property %r: %s", prop.name, exc)
+            violation = _invalid_property(prop, "Verifier failed to check property")
 
         checked += 1
         if violation is not None:

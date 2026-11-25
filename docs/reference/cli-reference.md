@@ -669,7 +669,7 @@ only accepts the reliability options listed below.
 |---|---|
 | `run SPEC` | Drive the golden harness or a YAML eval spec (`--tier`, `--compare`, `--save/--no-save`, `--output`). |
 | `swe-bench` | SWE-bench runner (`--subset`, `--sample`, `--instance`, `--dataset`, `--save/--no-save`). |
-| `programbench` | ProgramBench runner (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
+| `programbench` | ProgramBench runner. Requires Docker or Podman and a local `python:3.13-slim` image (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
 | `simulate` | Replay the standard benchmark task set (`--tasks-dir`, `--seed`, `--task-id`, `--baseline`). |
 | `compare` | Compare eval runs (`--tasks-dir`, `--mode`). |
 | `golden` | Run the curated golden suite (`--workdir`). |
