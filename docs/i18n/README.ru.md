@@ -49,7 +49,17 @@ Bernstein — опенсорсный governance-слой для AI-агенто�
 В политике адаптеров можно задать список разрешённых адаптеров по умолчанию для ролей, не указанных отдельно; см. [руководство](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### как выглядит прогон
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Чтобы посмотреть список локальных задач или план для заданной цели, укажите глобальный флаг `--json`. Каждая команда выводит в stdout один JSON-объект и завершается до запуска исполнителей.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` возвращает массив объектов задач в поле `tasks`. Если список пуст, результатом будет `{"tasks": []}`. `--plan-only` возвращает две строки. В поле `plan` находится текст в формате Markdown, а в `saved_plan` — путь к сохранённому файлу.
 
 Один YAML-файл объявляет весь прогон: фазы, роли, зависимости и условия, при которых узел вообще запускается. Планировщик исполняет его как обычный Python — в файле нет ни одного промпта, и ни одна модель не решает, что будет дальше. Этот граф собирает пакет аудиторских свидетельств; полный файл лежит в [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

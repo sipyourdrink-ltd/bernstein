@@ -49,7 +49,17 @@ Bernstein هو طبقة الحوكمة مفتوحة المصدر لوكلاء ا
 تدعم سياسة المهايئات حسب الدور قائمة سماح افتراضية اختيارية للأدوار غير المدرجة؛ راجع [الدليل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### كيف يبدو التشغيل
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+استخدم الخيار العام `--json` لمعاينة قائمة المهام المحلية أو هدف محدد. يطبع كل أمر كائن JSON واحدًا إلى الخرج القياسي وينتهي قبل بدء أي عامل.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+يعيد `--dry-run` مصفوفة `tasks` من كائنات المهام. إذا كانت قائمة المهام فارغة فالنتيجة هي `{"tasks": []}`. يعيد `--plan-only` سلسلتين نصيتين. تحتوي `plan` على نص Markdown وتشير `saved_plan` إلى مسار الملف المحفوظ.
 
 ملف YAML واحد يعلن التشغيل كاملًا: المراحل والأدوار والاعتماديات والشروط التي يعمل بموجبها كل عقدة أصلًا. المجدوِل ينفّذه كـ Python خالص - لا شيء في الملف موجّه نصي، ولا يقرر أي نموذج ما يحدث تاليًا. هذا المخطط ينتج حزمة أدلة تدقيق؛ الملف الكامل في [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

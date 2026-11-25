@@ -49,7 +49,17 @@ Bernstein — опенсорсний governance-шар для AI-агентів.
 У політиці адаптерів можна задати типовий список дозволених адаптерів для ролей, не вказаних окремо; див. [посібник](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### як виглядає запуск
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Щоб переглянути локальну чергу завдань або план для заданої цілі, укажіть глобальний прапорець `--json`. Кожна команда виводить у стандартний потік виводу один об’єкт JSON і завершується до запуску виконавців.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` повертає масив об’єктів завдань у полі `tasks`. Якщо черга порожня, результатом буде `{"tasks": []}`. `--plan-only` повертає два рядки. Поле `plan` містить текст у форматі Markdown, а `saved_plan` — шлях до збереженого файлу.
 
 Один YAML-файл оголошує весь запуск: фази, ролі, залежності та умови, за яких вузол узагалі виконується. Планувальник виконує його як звичайний Python — у файлі немає жодного промпта, і жодна модель не вирішує, що буде далі. Цей граф збирає пакет аудиторських свідчень; повний файл лежить у [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

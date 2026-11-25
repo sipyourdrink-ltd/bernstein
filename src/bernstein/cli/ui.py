@@ -19,7 +19,6 @@ from rich.table import Table
 from rich.text import Text
 
 from bernstein.cli.icons import get_agent_icon, get_status_icon
-from bernstein.core.tasks.lifecycle import is_agent_alive
 
 _STYLE_BOLD_CYAN = "bold cyan"
 
@@ -621,6 +620,8 @@ def create_summary_table(stats: RunStats) -> Table:
     Returns:
         A Rich Table renderable.
     """
+    from bernstein.core.tasks.lifecycle import is_agent_alive
+
     table = Table(
         title="Run Summary",
         show_lines=False,
@@ -656,6 +657,8 @@ def create_summary_plain(stats: RunStats) -> str:
     Returns:
         A multi-line plain string.
     """
+    from bernstein.core.tasks.lifecycle import is_agent_alive
+
     s = stats.summary
     lines: list[str] = []
     if stats.run_name:

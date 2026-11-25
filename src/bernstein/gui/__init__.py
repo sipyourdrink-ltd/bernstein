@@ -21,6 +21,7 @@ home screen.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -95,11 +96,10 @@ def mount(app: FastAPI) -> None:
 
     manifest_payload = pwa.build_manifest()
 
-    # Pre-render icons once at mount time - small (a few KB) and the
-    # generator is deterministic, so caching the bytes here is a wash
-    # vs. a disk read.
-    icon_192 = pwa.render_icon_png(192)
-    icon_512 = pwa.render_icon_png(512)
+    # Rasterize only the requested icon and retain it for later requests.
+    @lru_cache(maxsize=2)
+    def icon(size: int) -> bytes:
+        return pwa.render_icon_png(size)
 
     # The closure-defined handlers are registered with FastAPI via the
     # ``@app.get`` decorator; pyright cannot see that traversal so it flags
@@ -139,11 +139,11 @@ def mount(app: FastAPI) -> None:
 
     @app.get("/ui/icon-192.png", include_in_schema=False)
     def pwa_icon_192() -> Response:  # pyright: ignore[reportUnusedFunction]
-        return Response(content=icon_192, media_type="image/png")
+        return Response(content=icon(192), media_type="image/png")
 
     @app.get("/ui/icon-512.png", include_in_schema=False)
     def pwa_icon_512() -> Response:  # pyright: ignore[reportUnusedFunction]
-        return Response(content=icon_512, media_type="image/png")
+        return Response(content=icon(512), media_type="image/png")
 
     @app.get("/ui", include_in_schema=False, response_class=FileResponse)
     @app.get("/ui/{full_path:path}", include_in_schema=False, response_class=FileResponse)

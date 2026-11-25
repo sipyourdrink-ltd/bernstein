@@ -25,7 +25,6 @@ from bernstein.core.runtime_state import (
     read_supervisor_state,
 )
 from bernstein.core.tasks.lifecycle import is_agent_alive
-from bernstein.core.worktree import WorktreeManager
 
 _SDD_NOT_CONFIGURED = "sdd_dir not configured"
 
@@ -155,6 +154,8 @@ def _active_worktree_count(request: Request) -> int:
         return 0
     with suppress(OSError, subprocess.SubprocessError):
         if (workdir / ".git").exists():
+            from bernstein.core.worktree import WorktreeManager
+
             return len(WorktreeManager(workdir).list_active())
     return sum(1 for entry in worktrees_dir.iterdir() if entry.is_dir())
 

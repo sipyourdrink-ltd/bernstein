@@ -68,7 +68,6 @@ def test_dry_run_flag_validates_bad_seed(tmp_path: Path, monkeypatch: pytest.Mon
     _write_seed(tmp_path / "bernstein.yaml", 'goal: "ship it"\ncli: definitely-not-a-real-adapter\n')
 
     # Keep the heavy startup path out of the unit test.
-    monkeypatch.setattr(main_mod, "_background_startup", lambda _workdir: {"agents": [], "task_count": 0})
     import bernstein.cli.splash_screen as splash_mod
 
     monkeypatch.setattr(splash_mod, "splash", lambda *a, **k: False)

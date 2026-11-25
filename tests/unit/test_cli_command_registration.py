@@ -43,7 +43,9 @@ _EXPLICIT_ADD_COMMAND = re.compile(
 def _explicit_add_command_pairs() -> list[tuple[str, str]]:
     """``(receiver, name)`` for every explicitly-named ``add_command`` in main.py."""
     source = _MAIN_PY.read_text(encoding="utf-8")
-    return [(m.group("receiver"), m.group("name")) for m in _EXPLICIT_ADD_COMMAND.finditer(source)]
+    eager = [(m.group("receiver"), m.group("name")) for m in _EXPLICIT_ADD_COMMAND.finditer(source)]
+    deferred = [("cli", name) for name in re.findall(r'^_commands\.defer\(\s*"([^"]+)"', source, re.MULTILINE)]
+    return [*eager, *deferred]
 
 
 def test_no_command_registered_twice_on_the_same_group() -> None:
@@ -137,6 +139,17 @@ def _tree_wide_registrations() -> dict[tuple[str, str, str], list[str]]:
                 name = _literal_name(node, 1)
                 if name:
                     record(node.func.value.id, name, node.lineno)
+            elif (
+                path == _MAIN_PY
+                and isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "defer"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "_commands"
+            ):
+                name = _literal_name(node, 0)
+                if name:
+                    record("cli", name, node.lineno)
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for deco in node.decorator_list:
                     if not (

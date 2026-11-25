@@ -8,6 +8,22 @@ locally without waiting for the cloud runner.
 > harness MUST update this page in the same PR. See the project-wide
 > [Documentation duty](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md#docs-alongside-code) rule.
 
+## CLI startup
+
+Run the import and process-lifetime tests with:
+
+```bash
+uv run pytest tests/unit/cli/test_adapters_cmd.py tests/unit/cli/test_nonblocking_startup.py
+```
+
+These subprocess tests check the modules loaded by root help and verify a
+short-lived run exits when optional discovery or indexing is slow.
+When a public command or its short help changes, run
+`uv run python scripts/gen_cli_completion.py` to refresh root completion metadata. They do
+not set millisecond budgets on shared CI machines. Measure the installed
+wheel on the same reference host, lockfile and fixture for both revisions
+using the [operations benchmark](../operations/performance-tuning.md#measure-cli-startup).
+
 ## Workflow dispatch crash and restart characterization
 
 `tests/integration/test_workflow_dispatch_restart.py` uses the real

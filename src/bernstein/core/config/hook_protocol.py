@@ -7,8 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from jsonschema import Draft202012Validator
-
 
 class HookValidationError(ValueError):
     """Raised when a hook payload or hook response payload is invalid."""
@@ -46,6 +44,8 @@ def validate_hook_payload(hook_name: str, payload: Mapping[str, object]) -> None
     schema = _HOOK_EVENT_SCHEMAS.get(hook_name)
     if schema is None:
         return
+    from jsonschema import Draft202012Validator
+
     try:
         validator = Draft202012Validator(cast("dict[str, Any]", schema))
         validator.validate(dict(payload))

@@ -7196,6 +7196,8 @@ if __name__ == "__main__":
                 )
             except Exception as _exc:
                 logger.warning("Failed to load Agency agents into catalog: %s", _exc)
+        else:
+            logger.info("No optional Agency catalog installed. Run 'bernstein agents sync' to download it.")
 
         from bernstein import get_templates_dir
         from bernstein.core.mcp_registry import MCPRegistry
@@ -7394,6 +7396,13 @@ if __name__ == "__main__":
                 max_slots=max(1, min(2, seed.max_agents if seed else 2)),
             ),
         )
+
+        # The spawner owns optional indexing. Its process lifetime covers the run
+        # even when the interactive launcher detaches. Readers can use the last
+        # committed index while its SQLite transaction builds the next one.
+        from bernstein.core.knowledge.rag import start_background_index
+
+        start_background_index(workdir)
 
         spawner = AgentSpawner(
             adapter=adapter_inst,

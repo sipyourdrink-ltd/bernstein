@@ -49,7 +49,17 @@ De taakserver ondersteunt een blijvende, door de beheerder ingestelde controle o
 Het adapterbeleid per rol ondersteunt een optionele standaardlijst met toegestane adapters voor niet afzonderlijk vermelde rollen; zie de [handleiding](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### hoe een run eruitziet
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Gebruik de globale optie `--json` voor een voorvertoning van de lokale takenlijst of van een doel. Elke opdracht schrijft één JSON-object naar de standaarduitvoer en stopt voordat er workers starten.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` geeft een array `tasks` met taakobjecten terug. Bij een lege takenlijst is de uitvoer `{"tasks": []}`. `--plan-only` geeft twee tekenreeksen terug. `plan` bevat de Markdown-tekst en `saved_plan` het pad naar het opgeslagen bestand.
 
 Eén YAML-bestand declareert de run: fasen, rollen, afhankelijkheden en de voorwaarden waaronder een node überhaupt draait. De scheduler voert het uit als gewoon Python - niets in het bestand is een prompt, en geen model beslist wat er daarna gebeurt. Deze graaf produceert een audit-evidence-pack; het volledige bestand staat in [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

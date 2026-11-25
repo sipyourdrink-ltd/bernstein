@@ -39,11 +39,9 @@ REDIRECT_LEDGER_POLICY: Final[RedirectLedgerPolicy] = RedirectLedgerPolicy(
     ),
 )
 
-#: Bumped when the ``agent_identity`` entry was retargeted from
-#: ``bernstein.core.agents.agent_identity`` to ``bernstein.core.identity.agent_jwt``
-#: after the identity modules were consolidated (#5097). The legacy
-#: ``bernstein.core.agent_identity`` path keeps resolving; only its destination moved.
-REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "06963f10e4de5deea456719b1924082ed0604b8664911ee72bcee3cff729dc01"
+#: JSON logging moved from the server package to observability. Both the legacy
+#: flat import and the former server path now point to the same implementation.
+REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "6bb4db3db488f2030e2477ba19ca75199720bcc238aafc8eee29fbe89e80adbf"
 
 
 def redirect_map_digest(redirects: Mapping[str, str]) -> str:

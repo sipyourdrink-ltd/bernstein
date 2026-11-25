@@ -23,13 +23,21 @@ def _registered_adapter_modules() -> set[str]:
     modules: set[str] = set()
 
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or node.module is None:
-            continue
-        if not node.module.startswith("bernstein.adapters."):
-            continue
-        if node.module == "bernstein.adapters.base":
-            continue
-        modules.add(node.module)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_AdapterRegistry":
+            # Built-ins are module:class targets so listing names never imports their implementations.
+            targets = ast.literal_eval(node.args[0])
+            for target in targets.values():
+                module, separator, class_name = target.partition(":")
+                assert separator and class_name.isidentifier(), f"Invalid adapter target: {target!r}"
+                modules.add(module)
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("bernstein.adapters.")
+            and node.module != "bernstein.adapters.base"
+        ):
+            # The generic adapter and the profile-built adapters are registered directly.
+            modules.add(node.module)
 
     return modules
 

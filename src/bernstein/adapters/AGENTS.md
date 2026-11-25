@@ -7,7 +7,7 @@ CLI agent adapters (claude, codex, gemini, aider, goose and others): a task prom
 | File | Purpose |
 |---|---|
 | `base.py` | Base adapter: spawn, timeout, and kill discipline; lineage write boundary |
-| `registry.py` | `_ADAPTERS` name -> class map, plus adapters built from capability profiles |
+| `registry.py` | `_ADAPTERS` maps names to lazy class targets and profile-built adapters. Root help reads names and installed plugin declarations. Selection or detailed inspection loads plugin implementations. |
 | `_contract.py` | Loads the per-adapter YAML capability contracts and asserts them |
 | `capability_profile.py`, `draft.py` | Declarative capability profiles; `draft.py` drafts one from probe evidence during onboarding |
 | `admission.py`, `env_isolation.py` | Receipt-gated adapter admission; spawned-agent environment allowlisting and credential filtering |

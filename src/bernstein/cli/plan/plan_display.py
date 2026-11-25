@@ -28,6 +28,7 @@ else:
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING
 
+import click
 from rich.console import Console
 from rich.text import Text
 
@@ -536,6 +537,7 @@ def display_plan_and_confirm(
     tasks: list[Task] | None = None,
     *,
     console: Console | None = None,
+    plain: bool = False,
 ) -> bool:
     """Display the execution plan in futuristic style and ask for approval.
 
@@ -554,6 +556,7 @@ def display_plan_and_confirm(
         tasks: Optional Task objects for richer detail (agent assignments,
             effort levels, dependency info).
         console: Rich Console instance.  Creates one if not provided.
+        plain: Send a brief interactive prompt to stderr and keep stdout free.
 
     Returns:
         True if the user approved, False if cancelled.
@@ -561,30 +564,28 @@ def display_plan_and_confirm(
     if console is None:
         console = Console()
 
-    # Non-TTY: auto-approve
     is_tty = console.is_terminal and sys.stdin.isatty()
     is_ci = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
-    if not is_tty or is_ci:
+    if not plain:
         render_plan(plan, tasks, console=console)
-        console.print(f"\n  [{C_DIM}]Non-interactive mode {_ICON_DASH} auto-approved[/{C_DIM}]")
+    if not is_tty or is_ci:
+        if not plain:
+            console.print(f"\n  [{C_DIM}]Non-interactive mode {_ICON_DASH} auto-approved[/{C_DIM}]")
         return True
 
-    # Interactive: render plan, then wait for keypress
-    render_plan(plan, tasks, console=console)
-
-    # Prompt hint
-    console.print(
-        f"\n  [{C_DIM}]Press[/{C_DIM}] "
-        f"[bold {C_GREEN}]Enter[/bold {C_GREEN}] "
-        f"[{C_DIM}]or[/{C_DIM}] "
-        f"[bold {C_GREEN}]Y[/bold {C_GREEN}] "
-        f"[{C_DIM}]to approve,[/{C_DIM}] "
-        f"[bold {C_ERR}]N[/bold {C_ERR}] "
-        f"[{C_DIM}]or[/{C_DIM}] "
-        f"[bold {C_ERR}]Esc[/bold {C_ERR}] "
-        f"[{C_DIM}]to cancel[/{C_DIM}]"
-    )
+    if not plain:
+        console.print(
+            f"\n  [{C_DIM}]Press[/{C_DIM}] "
+            f"[bold {C_GREEN}]Enter[/bold {C_GREEN}] "
+            f"[{C_DIM}]or[/{C_DIM}] "
+            f"[bold {C_GREEN}]Y[/bold {C_GREEN}] "
+            f"[{C_DIM}]to approve,[/{C_DIM}] "
+            f"[bold {C_ERR}]N[/bold {C_ERR}] "
+            f"[{C_DIM}]or[/{C_DIM}] "
+            f"[bold {C_ERR}]Esc[/bold {C_ERR}] "
+            f"[{C_DIM}]to cancel[/{C_DIM}]"
+        )
 
     _approve_keys: set[str] = {"enter", "y"}
     _cancel_keys: set[str] = {"n", "escape", "q"}
@@ -592,6 +593,15 @@ def display_plan_and_confirm(
     try:
         with _raw_mode():
             _drain_input()
+            if plain:
+                try:
+                    click.echo(
+                        f"Goal: {plan.goal}\nEstimated cost: {_fmt_cost(plan.total_estimated_cost_usd)}. "
+                        "Press Enter or Y to approve, N or Esc to cancel.",
+                        err=True,
+                    )
+                except (OSError, ValueError) as exc:
+                    raise click.ClickException("Could not display the confirmation prompt.") from exc
             key = _read_key()
     except (OSError, ValueError):
         # Terminal issues -- fall back to approve
@@ -600,7 +610,9 @@ def display_plan_and_confirm(
     _drain_input()
 
     approved = key in _approve_keys
-    if approved:
+    if plain:
+        click.echo("Plan approved." if approved else "Cancelled.", err=True)
+    elif approved:
         console.print(f"\n  [bold {C_GREEN}]{_ICON_CHECK} Plan approved[/bold {C_GREEN}]")
     else:
         console.print(f"\n  [{C_DIM}]{_ICON_X} Cancelled[/{C_DIM}]")

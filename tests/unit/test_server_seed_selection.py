@@ -57,8 +57,6 @@ def launch_harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
         "ensure_sdd",
         "_reconcile_dead_owner_before_runtime_cleanup",
         "_clean_stale_runtime",
-        "_discover_catalog",
-        "_index_codebase_with_timeout",
         "_check_safety_invariants",
         "_apply_storage_env",
         "_apply_compliance_env",

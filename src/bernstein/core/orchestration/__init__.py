@@ -1,4 +1,4 @@
-"""orchestration sub-package."""
+"""Run preparation and execution, with bootstrap errors routed by `bootstrap_output.py`."""
 
 import importlib
 import pkgutil

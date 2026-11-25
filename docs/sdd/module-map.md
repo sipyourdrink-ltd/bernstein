@@ -22,6 +22,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
 | `registry_guard.py`         | Shared duplicate-registration guard for the registry classes under ``bernstein`` |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
+| `startup_timing.py`         | Opt-in process timestamps for CLI startup diagnostics |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
 | `verify_dispatch.py`        | Kind-detecting dispatcher for a single ``bernstein verify <artefact>`` entry point (#5103) |
 | `verify_result.py`          | The one shape an offline verification answers in |
@@ -58,7 +59,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `memory/`                   | Persistent memory stores and tamper-evident MemoryChain provenance |
 | `notifications/`            | Outbound notification subsystem (release 1.9) |
 | `observability/`            | observability sub-package |
-| `orchestration/`            | orchestration sub-package |
+| `orchestration/`            | Run preparation and execution, with bootstrap errors routed by `bootstrap_output.py` |
 | `payments/`                 | Sub-package: enforce, mandate, receipt |
 | `persistence/`              | persistence sub-package |
 | `planning/`                 | planning sub-package |

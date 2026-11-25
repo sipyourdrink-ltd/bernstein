@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from bernstein.core.process_utils import is_process_alive
-from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
 from bernstein.core.runtime_state import rotate_log_file
 from bernstein.core.seed import SeedConfig, seed_to_initial_task
 from bernstein.core.server.seed_selection import _apply_selected_seed
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.protocols.cluster.cluster_tls import TLSConfig
+    from bernstein.core.router import TierAwareRouter
 
 logger = logging.getLogger(__name__)
 
@@ -202,57 +202,6 @@ def _is_alive(pid: int) -> bool:
     return is_process_alive(pid)
 
 
-def _discover_catalog(workdir: Path) -> None:
-    """Run CatalogRegistry.discover() and sync Agency catalog on startup.
-
-    Loads the agent catalog from cache (if fresh) or re-fetches from providers.
-    Also attempts to sync the Agency GitHub catalog (TTL-protected, 24h).
-    On failure the error is logged and startup continues - catalog is optional.
-
-    Args:
-        workdir: Project root directory.
-    """
-    from bernstein.agents.catalog import CatalogRegistry
-
-    cache_path = workdir / ".sdd" / "agents" / "catalog.json"
-    try:
-        registry = CatalogRegistry.default()
-        registry._cache_path = cache_path  # type: ignore[reportPrivateUsage]
-        registry.discover()
-    except Exception:
-        logger.warning("Catalog auto-discovery failed (non-fatal)", exc_info=True)
-
-    # Auto-sync Agency catalog (TTL = 24h - skipped if synced recently)
-    try:
-        from bernstein.agents.agency_provider import AgencyProvider
-
-        ok, msg = AgencyProvider.sync_catalog()
-        if ok:
-            logger.debug("Agency catalog sync: %s", msg)
-        else:
-            logger.debug("Agency catalog sync skipped or failed: %s", msg)
-    except Exception:
-        logger.debug("Agency catalog auto-sync failed (non-fatal)", exc_info=True)
-
-
-def _build_codebase_index(workdir: Path) -> None:
-    """Build or incrementally update the codebase search index.
-
-    Uses SQLite FTS5 for BM25-ranked full-text search so agents can find
-    relevant code without trial-and-error grepping.  On failure the error
-    is logged and startup continues - the index is optional.
-
-    Args:
-        workdir: Project root directory.
-    """
-    from bernstein.core.rag import build_or_update_index
-
-    try:
-        build_or_update_index(workdir)
-    except Exception:
-        logger.warning("Codebase index build failed (non-fatal)", exc_info=True)
-
-
 def create_router(workdir: Path) -> TierAwareRouter | None:
     """Create a TierAwareRouter from providers.yaml if it exists.
 
@@ -265,6 +214,8 @@ def create_router(workdir: Path) -> TierAwareRouter | None:
     providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
     if not providers_yaml.exists():
         return None
+    from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
+
     router = TierAwareRouter()
     load_providers_from_yaml(providers_yaml, router)
     return router
@@ -399,18 +350,18 @@ def _start_server(
 
 
 def _wait_for_server(port: int, server_url: str | None = None) -> bool:
-    """Block until the server responds to /health, or timeout.
+    """Block until the task server reports ready, or timeout.
 
     Args:
         port: Server port (used to build URL if server_url is None).
         server_url: Explicit base URL to check (overrides port).
 
     Returns:
-        True if the server is reachable, False on timeout.
+        True if its readiness probe succeeds, False on timeout.
     """
     deadline = time.monotonic() + _SERVER_READY_TIMEOUT_S
     base = server_url or f"http://127.0.0.1:{port}"
-    url = f"{base}/health"
+    url = f"{base}/health/ready"
     while time.monotonic() < deadline:
         with suppress(httpx.ConnectError, httpx.ReadTimeout, httpx.TimeoutException):
             resp = httpx.get(url, timeout=5.0)

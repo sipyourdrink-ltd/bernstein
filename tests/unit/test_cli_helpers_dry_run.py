@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import io
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
 from bernstein.cli import helpers
@@ -115,3 +120,45 @@ def test_print_dry_run_table_no_backlog(
     helpers.print_dry_run_table(tmp_path)
 
     assert "No open tasks found" in buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("args", "required"),
+    [
+        (["run", "--quiet", "--dry-run", "--goal", "fixture"], ["fixture", "Total tasks:", "Estimated cost:"]),
+        (["--headless", "--dry-run"], ["Add hello function", "Improve CLI output", "Provider", "Total: 2"]),
+    ],
+)
+def test_dry_run_in_plain_mode_on_a_terminal(tmp_path: Path, args: list[str], required: list[str]) -> None:
+    _setup_backlog(tmp_path)
+    env = {**os.environ, "HOME": str(tmp_path), "TERM": "xterm-256color", "FORCE_COLOR": "1"}
+    env.pop("NO_COLOR", None)
+    # Force both streams to behave like a terminal, including the Rich console
+    # initialized during the CLI import.
+    script = (
+        "import sys\n"
+        "sys.stdout.isatty = sys.stderr.isatty = lambda: True\n"
+        "from bernstein.cli.main import cli\n"
+        "cli.main(args=sys.argv[1:])"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, *args], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20
+    )
+    assert result.returncode == 0, result.stderr
+    assert all(field in result.stdout for field in required), result.stdout
+    assert "Role\tTitle" in result.stdout
+    assert all(ch not in result.stdout + result.stderr for ch in ("\x1b", "┏", "┃", "╭")), (
+        result.stdout,
+        result.stderr,
+    )
+
+    structured = subprocess.run(
+        [sys.executable, "-c", script, "--json", *args],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert structured.returncode == 0, structured.stderr
+    assert json.loads(structured.stdout)["tasks"]

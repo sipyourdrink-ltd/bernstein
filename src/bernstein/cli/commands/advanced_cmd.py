@@ -25,6 +25,7 @@ from typing import Any
 
 import click
 
+from bernstein.cli.commands.doctor import code_scanning, migrations, observe
 from bernstein.cli.helpers import (
     ServerAuthError,
     console,
@@ -3571,3 +3572,8 @@ def _quarantine_clear(workdir: str, task_title: str | None, confirm: bool) -> No
 
     store.clear(task_title)
     console.print(f"[green]Cleared {len(target)} task(s).[/green]")
+
+
+# Extensions belong to the group so direct and root imports expose the same commands.
+for _doctor_extension in (code_scanning, observe, migrations):
+    _doctor_extension.register(doctor)

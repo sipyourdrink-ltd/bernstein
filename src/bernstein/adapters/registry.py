@@ -4,68 +4,18 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import MutableMapping
+from importlib import import_module
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from threading import RLock
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from bernstein.adapters.agy import AgyAdapter
-from bernstein.adapters.aichat import AIChatAdapter
-from bernstein.adapters.aider import AiderAdapter
-from bernstein.adapters.amp import AmpAdapter
-from bernstein.adapters.auggie import AuggieAdapter
-from bernstein.adapters.autohand import AutohandAdapter
 from bernstein.adapters.base import CLIAdapter
 from bernstein.adapters.capability_profile import profile_built_adapter_classes
-from bernstein.adapters.charm import CharmAdapter
-from bernstein.adapters.claude import ClaudeCodeAdapter
-from bernstein.adapters.cline import ClineAdapter
-from bernstein.adapters.clm import ClmAdapter
-from bernstein.adapters.codebuff import CodebuffAdapter
-from bernstein.adapters.codex import CodexAdapter
-from bernstein.adapters.cody import CodyAdapter
-from bernstein.adapters.composio import ComposioAdapter
-from bernstein.adapters.computer_use import ReferenceComputerUseAdapter
-from bernstein.adapters.continue_dev import ContinueDevAdapter
-from bernstein.adapters.copilot import CopilotAdapter
-from bernstein.adapters.cursor import CursorAdapter
-from bernstein.adapters.devin_terminal import DevinTerminalAdapter
-from bernstein.adapters.droid import DroidAdapter
-from bernstein.adapters.forge import ForgeAdapter
-from bernstein.adapters.garak import GarakAdapter
-from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
-from bernstein.adapters.goose import GooseAdapter
-from bernstein.adapters.gpt_researcher import GPTResearcherAdapter
-from bernstein.adapters.gptme import GptmeAdapter
-from bernstein.adapters.hermes import HermesAdapter
-from bernstein.adapters.holmesgpt import HolmesGPTAdapter
-from bernstein.adapters.iac import IaCAdapter
-from bernstein.adapters.junie import JunieAdapter
-from bernstein.adapters.kilo import KiloAdapter
-from bernstein.adapters.kimchi import KimchiAdapter
-from bernstein.adapters.kimi import KimiAdapter
-from bernstein.adapters.kiro import KiroAdapter
-from bernstein.adapters.letta_code import LettaCodeAdapter
-from bernstein.adapters.mistral import MistralAdapter
-from bernstein.adapters.mock import MockAgentAdapter
-from bernstein.adapters.muse import MuseAdapter
-from bernstein.adapters.ollama import OllamaAdapter
-from bernstein.adapters.open_interpreter import OpenInterpreterAdapter
-from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
-from bernstein.adapters.openclaw import OpenClawAdapter
-from bernstein.adapters.opencode import OpenCodeAdapter
-from bernstein.adapters.openhands import OpenHandsAdapter
-from bernstein.adapters.pi import PiAdapter
-from bernstein.adapters.plandex import PlandexAdapter
-from bernstein.adapters.python_runtime import PythonRuntimeAdapter
-from bernstein.adapters.q_dev import QDevAdapter
-from bernstein.adapters.qwen import QwenAdapter
-from bernstein.adapters.ralphex import RalphexAdapter
-from bernstein.adapters.rovo import RovoAdapter
-from bernstein.adapters.skyvern import SkyvernAdapter
-from bernstein.adapters.tongyi_deepresearch import TongyiDeepResearchAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -86,70 +36,104 @@ class AdmissionGateLike(Protocol):
         ...
 
 
-_ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
-    # Successor CLI for the discontinued non-enterprise hosted gemini
-    # backend. Separate adapter from "gemini" (which stays on GeminiAdapter
-    # for the enterprise / API-key lane); see docs/adapters/agy.md for the
-    # split. "antigravity" is the product name of the same CLI, so it is a
-    # second key for AgyAdapter, not for GeminiAdapter.
-    "agy": AgyAdapter,
-    "antigravity": AgyAdapter,
-    "aichat": AIChatAdapter,
-    "aider": AiderAdapter,
-    "amp": AmpAdapter,
-    "auggie": AuggieAdapter,
-    "autohand": AutohandAdapter,
-    "charm": CharmAdapter,
-    "claude": ClaudeCodeAdapter,
-    "cline": ClineAdapter,
-    "clm": ClmAdapter,
-    "codebuff": CodebuffAdapter,
-    "codex": CodexAdapter,
-    "cody": CodyAdapter,
-    "composio": ComposioAdapter,
-    # Fronts a third-party autonomous browser / computer-use agent; per-action
-    # lineage anchoring lives in the boundary layer (issue #2606).
-    "computer_use": ReferenceComputerUseAdapter,
-    "continue": ContinueDevAdapter,
-    "copilot": CopilotAdapter,
-    "cursor": CursorAdapter,
-    "devin_terminal": DevinTerminalAdapter,
-    "droid": DroidAdapter,
-    "forge": ForgeAdapter,
-    "garak": GarakAdapter,
-    "gemini": GeminiAdapter,
-    "generic": GenericAdapter,
-    "goose": GooseAdapter,
-    "gptme": GptmeAdapter,
-    "hermes": HermesAdapter,
-    "gpt_researcher": GPTResearcherAdapter,
-    "holmesgpt": HolmesGPTAdapter,
-    "iac": IaCAdapter,
-    "junie": JunieAdapter,
-    "kilo": KiloAdapter,
-    "kimchi": KimchiAdapter,
-    "kimi": KimiAdapter,
-    "kiro": KiroAdapter,
-    "letta_code": LettaCodeAdapter,
-    "mistral": MistralAdapter,
-    "mock": MockAgentAdapter,
-    "muse": MuseAdapter,
-    "ollama": OllamaAdapter,
-    "open_interpreter": OpenInterpreterAdapter,
-    "openai_agents": OpenAIAgentsAdapter,
-    "openclaw": OpenClawAdapter,
-    "opencode": OpenCodeAdapter,
-    "openhands": OpenHandsAdapter,
-    "pi": PiAdapter,
-    "plandex": PlandexAdapter,
-    "python_runtime": PythonRuntimeAdapter,
-    "q_dev": QDevAdapter,
-    "qwen": QwenAdapter,
-    "ralphex": RalphexAdapter,
-    "rovo": RovoAdapter,
-    "skyvern": SkyvernAdapter,
-    "tongyi_deepresearch": TongyiDeepResearchAdapter,
-}
+type _AdapterEntry = type[CLIAdapter] | CLIAdapter
+
+
+class _AdapterRegistry(MutableMapping[str, _AdapterEntry]):
+    """Resolve built-in adapter classes on lookup while keeping names cheap to list."""
+
+    def __init__(self, targets: dict[str, str]) -> None:
+        self._entries: dict[str, _AdapterEntry | str] = {**targets}
+
+    def __getitem__(self, name: str) -> _AdapterEntry:
+        entry = self._entries[name]
+        if isinstance(entry, str):
+            module, _, attribute = entry.partition(":")
+            return cast("type[CLIAdapter]", getattr(import_module(module), attribute))
+        return entry
+
+    def __setitem__(self, name: str, entry: _AdapterEntry) -> None:
+        self._entries[name] = entry
+
+    def __delitem__(self, name: str) -> None:
+        del self._entries[name]
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._entries
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
+_ADAPTERS = _AdapterRegistry(
+    {
+        # Successor CLI for the discontinued non-enterprise hosted gemini
+        # backend. Separate adapter from "gemini" (which stays on GeminiAdapter
+        # for the enterprise / API-key lane); see docs/adapters/agy.md for the
+        # split. "antigravity" is the product name of the same CLI, so it is a
+        # second key for AgyAdapter, not for GeminiAdapter.
+        "agy": "bernstein.adapters.agy:AgyAdapter",
+        "antigravity": "bernstein.adapters.agy:AgyAdapter",
+        "aichat": "bernstein.adapters.aichat:AIChatAdapter",
+        "aider": "bernstein.adapters.aider:AiderAdapter",
+        "amp": "bernstein.adapters.amp:AmpAdapter",
+        "auggie": "bernstein.adapters.auggie:AuggieAdapter",
+        "autohand": "bernstein.adapters.autohand:AutohandAdapter",
+        "charm": "bernstein.adapters.charm:CharmAdapter",
+        "claude": "bernstein.adapters.claude:ClaudeCodeAdapter",
+        "cline": "bernstein.adapters.cline:ClineAdapter",
+        "clm": "bernstein.adapters.clm:ClmAdapter",
+        "codebuff": "bernstein.adapters.codebuff:CodebuffAdapter",
+        "codex": "bernstein.adapters.codex:CodexAdapter",
+        "cody": "bernstein.adapters.cody:CodyAdapter",
+        "composio": "bernstein.adapters.composio:ComposioAdapter",
+        # Fronts a third-party autonomous browser / computer-use agent; per-action
+        # lineage anchoring lives in the boundary layer (issue #2606).
+        "computer_use": "bernstein.adapters.computer_use:ReferenceComputerUseAdapter",
+        "continue": "bernstein.adapters.continue_dev:ContinueDevAdapter",
+        "copilot": "bernstein.adapters.copilot:CopilotAdapter",
+        "cursor": "bernstein.adapters.cursor:CursorAdapter",
+        "devin_terminal": "bernstein.adapters.devin_terminal:DevinTerminalAdapter",
+        "droid": "bernstein.adapters.droid:DroidAdapter",
+        "forge": "bernstein.adapters.forge:ForgeAdapter",
+        "garak": "bernstein.adapters.garak:GarakAdapter",
+        "gemini": "bernstein.adapters.gemini:GeminiAdapter",
+        "generic": "bernstein.adapters.generic:GenericAdapter",
+        "goose": "bernstein.adapters.goose:GooseAdapter",
+        "gptme": "bernstein.adapters.gptme:GptmeAdapter",
+        "hermes": "bernstein.adapters.hermes:HermesAdapter",
+        "gpt_researcher": "bernstein.adapters.gpt_researcher:GPTResearcherAdapter",
+        "holmesgpt": "bernstein.adapters.holmesgpt:HolmesGPTAdapter",
+        "iac": "bernstein.adapters.iac:IaCAdapter",
+        "junie": "bernstein.adapters.junie:JunieAdapter",
+        "kilo": "bernstein.adapters.kilo:KiloAdapter",
+        "kimchi": "bernstein.adapters.kimchi:KimchiAdapter",
+        "kimi": "bernstein.adapters.kimi:KimiAdapter",
+        "kiro": "bernstein.adapters.kiro:KiroAdapter",
+        "letta_code": "bernstein.adapters.letta_code:LettaCodeAdapter",
+        "mistral": "bernstein.adapters.mistral:MistralAdapter",
+        "mock": "bernstein.adapters.mock:MockAgentAdapter",
+        "muse": "bernstein.adapters.muse:MuseAdapter",
+        "ollama": "bernstein.adapters.ollama:OllamaAdapter",
+        "open_interpreter": "bernstein.adapters.open_interpreter:OpenInterpreterAdapter",
+        "openai_agents": "bernstein.adapters.openai_agents:OpenAIAgentsAdapter",
+        "openclaw": "bernstein.adapters.openclaw:OpenClawAdapter",
+        "opencode": "bernstein.adapters.opencode:OpenCodeAdapter",
+        "openhands": "bernstein.adapters.openhands:OpenHandsAdapter",
+        "pi": "bernstein.adapters.pi:PiAdapter",
+        "plandex": "bernstein.adapters.plandex:PlandexAdapter",
+        "python_runtime": "bernstein.adapters.python_runtime:PythonRuntimeAdapter",
+        "q_dev": "bernstein.adapters.q_dev:QDevAdapter",
+        "qwen": "bernstein.adapters.qwen:QwenAdapter",
+        "ralphex": "bernstein.adapters.ralphex:RalphexAdapter",
+        "rovo": "bernstein.adapters.rovo:RovoAdapter",
+        "skyvern": "bernstein.adapters.skyvern:SkyvernAdapter",
+        "tongyi_deepresearch": "bernstein.adapters.tongyi_deepresearch:TongyiDeepResearchAdapter",
+    }
+)
 
 # Agents tracked as declarative capability profiles rather than as
 # hand-written modules (see
@@ -186,6 +170,8 @@ _REMOVED_ADAPTERS: dict[str, str] = {
 }
 
 _entrypoints_loaded = False
+_loaded_plugin_names: set[str] = set()
+_entrypoint_lock = RLock()
 
 #: provider-alias (lower-cased) -> adapter registry name. Built lazily from
 #: each adapter's ``provides`` class attribute the first time
@@ -207,29 +193,37 @@ _ALIAS_SUBSTRING_EXCLUSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _load_entrypoint_adapters() -> None:
+def _load_entrypoint_adapters(name: str | None = None) -> None:
     """Discover and register adapters from the ``bernstein.adapters`` entry-point group.
 
-    Called once on first use. Silently skips malformed plugins.
+    A selected name loads every matching declaration in entry-point order.
+    Detailed enumeration loads the remaining names. Malformed plugins leave
+    a previously registered implementation in place.
     """
     global _entrypoints_loaded
-    if _entrypoints_loaded:
-        return
-    _entrypoints_loaded = True
-    for ep in entry_points(group="bernstein.adapters"):
-        try:
-            loaded = ep.load()
-            name = ep.name
-            if (inspect.isclass(loaded) and issubclass(loaded, CLIAdapter)) or isinstance(loaded, CLIAdapter):
-                _ADAPTERS[name] = loaded
-            else:
-                logger.warning(
-                    "Ignoring entry-point adapter %r: expected CLIAdapter subclass or instance, got %r",
-                    name,
-                    loaded,
-                )
-        except Exception as exc:  # pragma: no cover
-            logger.warning("Failed to load entry-point adapter %r: %s", ep.name, exc)
+    with _entrypoint_lock:
+        if _entrypoints_loaded or name in _loaded_plugin_names:
+            return
+        loaded_before = _loaded_plugin_names.copy()
+        if name is None:
+            _entrypoints_loaded = True
+        else:
+            _loaded_plugin_names.add(name)
+        for ep in entry_points(group="bernstein.adapters"):
+            if ep.name in loaded_before or (name is not None and ep.name != name):
+                continue
+            try:
+                loaded = ep.load()
+                if (inspect.isclass(loaded) and issubclass(loaded, CLIAdapter)) or isinstance(loaded, CLIAdapter):
+                    _ADAPTERS[ep.name] = loaded
+                else:
+                    logger.warning(
+                        "Ignoring entry-point adapter %r: expected CLIAdapter subclass or instance, got %r",
+                        ep.name,
+                        loaded,
+                    )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Failed to load entry-point adapter %r: %s", ep.name, exc)
 
 
 def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = None) -> CLIAdapter:
@@ -273,7 +267,7 @@ def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = Non
         instance.registry_name = cli_name
         return instance
 
-    _load_entrypoint_adapters()
+    _load_entrypoint_adapters(cli_name)
 
     adapter_cls = _ADAPTERS.get(cli_name)
     if adapter_cls is None:
@@ -283,6 +277,7 @@ def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = Non
         removed = removed_adapter_message(cli_name)
         if removed is not None:
             raise ValueError(removed)
+        _load_entrypoint_adapters()
         available = ", ".join(sorted([*_ADAPTERS.keys(), "generic"]))
         raise ValueError(f"Unknown adapter '{cli_name}'. Available: {available}")
 
@@ -384,6 +379,24 @@ def iter_adapter_specs() -> Iterator[tuple[str, type[CLIAdapter] | CLIAdapter]]:
 _NON_AGENT_STUBS: frozenset[str] = frozenset({"mock"})
 
 
+def advertised_adapter_names() -> tuple[frozenset[str], frozenset[str]]:
+    """Return registered names and additional, unvalidated plugin declarations.
+
+    Root help must work even when importing a third-party entry point is
+    expensive or fails. Selection and the detailed listing still validate
+    installed plugins before treating their names as selectable.
+    """
+    registered = frozenset(_ADAPTERS).difference(_NON_AGENT_STUBS)
+    declared = frozenset(ep.name for ep in entry_points(group="bernstein.adapters"))
+    return registered, declared.difference(registered, _NON_AGENT_STUBS)
+
+
+def is_selectable_adapter_name(name: str) -> bool:
+    """Validate only this adapter's entry points, including overrides of built-in names."""
+    _load_entrypoint_adapters(name)
+    return name not in _NON_AGENT_STUBS and name in _ADAPTERS
+
+
 def selectable_adapter_names() -> frozenset[str]:
     """Return the adapter registry names an operator may select for a run.
 
@@ -401,7 +414,8 @@ def selectable_adapter_names() -> frozenset[str]:
     Returns:
         Frozen set of selectable adapter registry names.
     """
-    return frozenset(name for name, _ in iter_adapter_specs() if name not in _NON_AGENT_STUBS)
+    _load_entrypoint_adapters()
+    return frozenset(_ADAPTERS).difference(_NON_AGENT_STUBS)
 
 
 def _register_provider_alias(alias: str, adapter_name: str) -> None:

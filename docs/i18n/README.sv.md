@@ -49,7 +49,17 @@ Uppgiftsservern stöder en beständig, operatörsstyrd spärr för att ta nya up
 Adapterpolicyn för roller stöder en valfri standardlista över tillåtna adaptrar för roller som inte anges separat; se [guiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### hur en körning ser ut
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Använd den globala flaggan `--json` för att förhandsgranska den lokala uppgiftskön eller planen för ett mål. Varje kommando skriver ett JSON-objekt till standardutmatningen och avslutas innan några arbetsprocesser startar.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` returnerar en array med uppgiftsobjekt i fältet `tasks`. En tom kö ger `{"tasks": []}`. `--plan-only` returnerar två strängar. `plan` innehåller Markdown-texten och `saved_plan` sökvägen till den sparade filen.
 
 En enda YAML-fil deklarerar körningen: faser, roller, beroenden och villkoren under vilka en nod alls körs. Schemaläggaren exekverar den som ren Python - inget i filen är en prompt, och ingen modell bestämmer vad som händer härnäst. Den här grafen bygger ett paket med revisionsbevis; hela filen finns i [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

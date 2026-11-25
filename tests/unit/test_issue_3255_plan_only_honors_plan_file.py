@@ -200,8 +200,10 @@ class TestPlanOnlyRendersTheLoadedPlan:
         """``--from-plan`` reads only the ``**Goal:**`` line out of the saved
         markdown and re-decomposes from the plan name, dropping every task just
         previewed. The plan-file preview must not send the operator there."""
+        from bernstein.core.config.platform_compat import shell_quote
+
         monkeypatch.chdir(tmp_path)
-        plan = tmp_path / "plan.yaml"
+        plan = tmp_path / "execution plan.yaml"
         plan.write_text(PLAN_YAML, encoding="utf-8")
 
         with _run_impl_environment(), _no_execution():
@@ -209,7 +211,9 @@ class TestPlanOnlyRendersTheLoadedPlan:
 
         out = capsys.readouterr().out
         assert "--from-plan" not in out
-        assert "bernstein run" in out
+        rerun = f"bernstein run {shell_quote(str(plan))}"
+        assert rerun in out
+        assert rerun in _written_plan(tmp_path)
 
 
 class TestExecutingPathUnchanged:

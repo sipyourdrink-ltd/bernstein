@@ -49,7 +49,17 @@ Il server delle attività supporta un controllo persistente dell’operatore sul
 La policy degli adattatori per ruolo supporta un elenco predefinito facoltativo di adattatori consentiti per i ruoli non elencati; consulta la [guida](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/role-adapter-policy.md).
 
 ### come appare un run
-<!-- l10n: en="what a run looks like" hash="sha256:8279488abf5a" -->
+<!-- l10n: en="what a run looks like" hash="sha256:e04e8618b950" -->
+
+Usa l’opzione globale `--json` per visualizzare un’anteprima delle attività locali in sospeso o di un obiettivo. Ogni comando scrive un oggetto JSON sullo standard output e termina prima di avviare i worker.
+
+```bash
+bernstein --json --dry-run
+bernstein --json run --dry-run --goal "Add a greeting"
+bernstein --json run --plan-only --goal "Add a greeting"
+```
+
+`--dry-run` restituisce un array `tasks` di oggetti che rappresentano le attività. Se la coda è vuota, il risultato è `{"tasks": []}`. `--plan-only` restituisce due stringhe. `plan` contiene il testo Markdown e `saved_plan` il percorso del file salvato.
 
 Un unico file YAML dichiara il run: fasi, ruoli, dipendenze e le condizioni sotto cui un nodo viene eseguito. Lo scheduler lo esegue come Python puro - nulla nel file è un prompt e nessun modello decide cosa succede dopo. Questo grafo produce un pacchetto di evidenze di audit; il file completo è in [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
