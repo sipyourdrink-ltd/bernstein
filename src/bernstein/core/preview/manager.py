@@ -29,7 +29,6 @@ import os
 import re
 import secrets
 import shlex
-import shutil
 import signal
 import subprocess
 import threading
@@ -175,7 +174,6 @@ class PreviewState:
     process_pid: int
     created_at_epoch: float = field(default_factory=time.time)
     container_name: str | None = None
-    runtime_path: str | None = None
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when *now* is past :attr:`expires_at_epoch`."""
@@ -457,7 +455,6 @@ class PreviewManager:
             ),
             process_pid=run_handle.pid,
             container_name=run_handle.container_name,
-            runtime_path=run_handle.runtime_path,
             created_at_epoch=active_clock.now(),
         )
         try:
@@ -553,8 +550,11 @@ class PreviewManager:
         with contextlib.suppress(Exception):
             self._tunnel.close(state.tunnel_name)
         if state.container_name is not None:
-            runtime = state.runtime_path or shutil.which(state.sandbox_backend)
-            if runtime is None or not _remove_preview_container(runtime, state.container_name):
+            try:
+                runtime = runtime_executable(state.sandbox_backend)
+            except IsolationUnavailable as exc:
+                raise PreviewError("Restore the preview runtime before retrying stop") from exc
+            if not _remove_preview_container(runtime, state.container_name):
                 raise PreviewError(
                     "Preview container cleanup could not be confirmed. Retry stop after restoring the runtime."
                 )
@@ -687,12 +687,14 @@ class DevServerRunner:
 
 
 def _remove_preview_container(runtime: str, name: str) -> bool:
-    if Path(runtime).name not in ("docker", "podman") or not re.fullmatch(r"bernstein-preview-[a-f0-9]{16}", name):
+    if Path(runtime).stem.lower() not in ("docker", "podman") or not re.fullmatch(
+        r"bernstein-preview-[a-f0-9]{16}", name
+    ):
         return False
     try:
         # Podman can ignore an absent container. Docker reports absence.
         command = [runtime, "rm", "--force"]
-        if Path(runtime).name == "podman":
+        if Path(runtime).stem.lower() == "podman":
             command.append("--ignore")
         result = subprocess.run([*command, name], capture_output=True, timeout=10, check=False)
         return result.returncode == 0 or f"No such container: {name}".encode() in result.stderr
@@ -716,7 +718,7 @@ class ContainerDevServerRunner(DevServerRunner):
             raise PreviewError("An explicit argv and operator-configured BERNSTEIN_PREVIEW_IMAGE are required")
         if not 1 <= container_port <= 65535:
             raise PreviewError("Invalid BERNSTEIN_PREVIEW_PORT")
-        backend = Path(runtime).name
+        backend = Path(runtime).stem.lower()
         name = f"bernstein-preview-{secrets.token_hex(8)}"
         # Only the loopback-published application port leaves the container.
         # The selected image is operator-owned and already installed locally.

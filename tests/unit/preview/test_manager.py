@@ -468,20 +468,24 @@ def test_stop_keeps_state_when_container_cleanup_fails(tmp_path):
         expires_at_epoch=1,
         process_pid=0,
         container_name=name,
-        runtime_path="/local/bin/docker",
     )
-    store.upsert(state)
+    raw = dict(state.to_dict(), runtime_path="/untrusted/workspace/docker")
+    store.upsert(PreviewState.from_dict(raw))
     manager = PreviewManager(store=store, tunnel=_FakeTunnel(), audit_log=_audit_log(tmp_path))
-    with patch(
-        "bernstein.core.preview.manager.subprocess.run",
-        side_effect=[
-            subprocess.CompletedProcess([], 1, stderr=b"daemon unavailable"),
-            subprocess.CompletedProcess([], 0, stderr=b""),
-        ],
-    ) as run:
+    with (
+        patch("bernstein.core.preview.manager.runtime_executable", return_value="/local/bin/docker") as resolve,
+        patch(
+            "bernstein.core.preview.manager.subprocess.run",
+            side_effect=[
+                subprocess.CompletedProcess([], 1, stderr=b"daemon unavailable"),
+                subprocess.CompletedProcess([], 0, stderr=b""),
+            ],
+        ) as run,
+    ):
         with pytest.raises(PreviewError, match="cleanup could not be confirmed"):
             manager.stop(state.preview_id)
         assert store.get(state.preview_id) == state
         assert manager.stop(state.preview_id)
     assert store.get(state.preview_id) is None
+    assert all(call.args == ("docker",) for call in resolve.call_args_list)
     assert all(call.args[0] == ["/local/bin/docker", "rm", "--force", name] for call in run.call_args_list)

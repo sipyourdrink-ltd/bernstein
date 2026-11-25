@@ -9,22 +9,23 @@ import threading
 import time
 import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
 
 
 class IsolationUnavailable(RuntimeError):
     """The isolated process could not be started."""
 
 
-def runtime_executable() -> str:
+def runtime_executable(backend: str | None = None) -> str:
     """Resolve a local supported OCI runtime without a host-exec fallback."""
-    executable = shutil.which("docker") or shutil.which("podman")
-    if executable is None:
-        raise IsolationUnavailable("no isolated runtime available; install Docker or Podman")
-    return executable
+    if backend is not None and backend not in ("docker", "podman"):
+        raise IsolationUnavailable("unsupported isolated runtime")
+    names = (backend,) if backend is not None else ("docker", "podman")
+    for name in names:
+        executable = shutil.which(name)
+        if executable and Path(executable).is_absolute():
+            return executable
+    raise IsolationUnavailable("no isolated runtime available; install Docker or Podman")
 
 
 def readonly_bind(source: Path, destination: str) -> str:
