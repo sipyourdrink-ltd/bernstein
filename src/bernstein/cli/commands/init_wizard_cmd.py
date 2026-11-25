@@ -77,6 +77,7 @@ def generate_yaml(
         token_line = render_yaml_comment()
         if DISABLED_SENTINEL not in token_line:
             lines.append(token_line)
+    merge_strategy = "direct" if approval == "auto" else "pr"
     auto_merge = approval == "auto"
     lines.extend(
         [
@@ -87,22 +88,13 @@ def generate_yaml(
             f"cli: {adapter}",
             f"max_agents: {max_agents}",
             f"budget: {budget:.2f}",
-            "merge_strategy: pr",
+            f"merge_strategy: {merge_strategy}",
             f"auto_merge: {'true' if auto_merge else 'false'}",
             "",
             "orchestration:",
             "  test_followup: true",
         ]
     )
-
-    if approval == "review":
-        lines.extend(
-            [
-                "",
-                "approvals:",
-                "  interactive: true",
-            ]
-        )
 
     if adapter != "auto":
         lines.extend(
@@ -205,6 +197,7 @@ def init_wizard_cmd(target_dir: str, non_interactive: bool) -> None:
     # Write config
     yaml_content = generate_yaml(goal, project_type, max_agents, budget, adapter, approval)
     yaml_path = find_seed_file(root) or (root / "bernstein.yaml")
+    wrote_yaml = False
     if yaml_path.exists():
         overwrite = not non_interactive and click.confirm(
             f"  {yaml_path.name} already exists. Overwrite?", default=False
@@ -213,9 +206,11 @@ def init_wizard_cmd(target_dir: str, non_interactive: bool) -> None:
             console.print("[dim]  Skipped bernstein.yaml[/dim]")
         else:
             yaml_path.write_text(yaml_content)
+            wrote_yaml = True
             console.print(f"  [green]Updated[/green] {yaml_path.name}")
     else:
         yaml_path.write_text(yaml_content)
+        wrote_yaml = True
         console.print(f"  [green]Created[/green] {yaml_path.name}")
 
     # Write .sdd/config.yaml if not present
@@ -229,6 +224,24 @@ def init_wizard_cmd(target_dir: str, non_interactive: bool) -> None:
             "default_effort: high\n"
         )
         console.print("  [green]Created[/green] .sdd/config.yaml")
+
+    # Persist post-completion gate settings where Orchestrator reads them
+    # (`.sdd/runtime/run_config.json`) when creating or overwriting the setup.
+    if wrote_yaml:
+        run_config_path = root / ".sdd" / "runtime" / "run_config.json"
+        existing_run_cfg: dict[str, object] = {}
+        if run_config_path.exists():
+            try:
+                loaded = json.loads(run_config_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing_run_cfg = loaded
+            except (OSError, ValueError):
+                existing_run_cfg = {}
+        existing_run_cfg["approval"] = approval
+        existing_run_cfg["merge_strategy"] = "direct" if approval == "auto" else "pr"
+        existing_run_cfg["auto_merge"] = approval == "auto"
+        run_config_path.parent.mkdir(parents=True, exist_ok=True)
+        run_config_path.write_text(json.dumps(existing_run_cfg, indent=2) + "\n", encoding="utf-8")
 
     # Write .gitignore for runtime
     gi_path = root / ".sdd" / "runtime" / ".gitignore"

@@ -199,7 +199,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `--add-badge` | off | Insert a shields.io "powered by bernstein" badge into `README.md`. |
 | `--badge-variant NAME` | `signed` | Badge wording when `--add-badge` is passed. |
 
-`init-wizard` adds an interactive prompt flow (project type, default agent, budget, etc.) and is preferred for first-time users.
+`bernstein init --wizard` adds an interactive prompt flow (project goal, agent budget, adapter, approval gate mode) and writes schema-valid `bernstein.yaml` (`orchestration:`, `merge_strategy`, `auto_merge`, optional `routing:`), `.sdd/config.yaml`, `.sdd/runtime/run_config.json`, bundled `templates/`, and the `.sdd/runtime/` entry in root `.gitignore`. Both `bernstein init` and `bernstein init --wizard` leave `internal_llm_provider` at its `"none"` default unless explicitly configured.
 
 ---
 

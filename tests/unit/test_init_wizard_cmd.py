@@ -62,6 +62,7 @@ class TestInitWizardCmd:
             assert "orchestration:" in content
             assert "orchestrator:" not in content
             assert ".sdd/runtime/" in (root / ".gitignore").read_text()
+            assert (root / "templates" / "roles" / "backend").is_dir()
 
             seed = parse_seed(root / "bernstein.yaml")
             assert seed.internal_llm_provider == "none"
@@ -100,7 +101,7 @@ class TestInitWizardCmd:
         assert "orchestration:" in yaml
         assert "orchestrator:" not in yaml
 
-    def test_generate_yaml_review_approval_sets_interactive_approvals(self) -> None:
+    def test_generate_yaml_review_approval_sets_pr_non_automerge(self) -> None:
         yaml = generate_yaml(
             goal="Test review goal",
             project_type="python",
@@ -109,8 +110,27 @@ class TestInitWizardCmd:
             adapter="auto",
             approval="review",
         )
+        assert "merge_strategy: pr" in yaml
         assert "auto_merge: false" in yaml
-        assert "approvals:\n  interactive: true" in yaml
+        assert "approvals:" not in yaml
+
+    def test_init_wizard_review_persists_post_completion_run_config(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            runner = CliRunner()
+            # Interactive prompts: goal, max_agents, budget, adapter, approval
+            result = runner.invoke(
+                init_wizard_cmd,
+                ["--dir", td],
+                input="Ship review gate\n2\n5\nauto\nreview\n",
+            )
+            assert result.exit_code == 0, result.output
+            run_cfg = json.loads((root / ".sdd" / "runtime" / "run_config.json").read_text(encoding="utf-8"))
+            assert run_cfg["approval"] == "review"
+            assert run_cfg["merge_strategy"] == "pr"
+            assert run_cfg["auto_merge"] is False
 
     def testgenerate_yaml_with_adapter(self) -> None:
         yaml = generate_yaml(
