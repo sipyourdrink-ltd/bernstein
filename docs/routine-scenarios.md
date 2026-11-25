@@ -66,17 +66,16 @@ bernstein orchestrates parallel
 multi-agent work in worktrees
 ```
 
-Scenarios live in `templates/scenarios/`. The repo currently ships eight
-ready-to-use templates covering:
+Scenarios live in `templates/scenarios/` (packaged into the wheel under
+`bernstein/_default_templates/scenarios/`) with an extended repository library
+in `.bernstein/scenarios/`. The packaged wheel library ships **24** ready-to-use
+templates covering:
 
-- comprehensive PR review
-- security-focused PR review
-- nightly maintenance
-- deploy verification
-- issue decomposition
-- docs sync
-- dependency audit
-- test coverage boost
+- PR review (`pr-review-comprehensive`, `pr-review-security-focused`)
+- AI governance and MCP security (`owasp-agentic-threat-review`, `eu-ai-act-iso42001-readiness`, `mcp-server-security-vetting`)
+- Security and supply chain (`cve-zero-day-hotfix`, `dependency-audit`, `supply-chain-hardening`, `vendor-security-assessment`)
+- Reliability, FinOps, and migrations (`zero-downtime-db-migration`, `disaster-recovery-failover-drill`, `incident-postmortem-pack`, `release-readiness-audit`, `deploy-verification`, `ai-token-and-cloud-cost-audit`, `nightly-maintenance`)
+- Quality, docs, research, and compliance (`flaky-test-quarantine-fix`, `test-coverage-boost`, `issue-decomposition`, `customer-escalation-rca`, `docs-sync`, `rfc-drafting`, `market-scan`, `regulator-audit-evidence-pack`)
 
 ## Auto-provisioning
 

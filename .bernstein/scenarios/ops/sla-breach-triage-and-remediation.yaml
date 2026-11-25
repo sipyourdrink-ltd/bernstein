@@ -1,0 +1,32 @@
+id: sla-breach-triage-and-remediation
+name: SLO Error-Budget Burn and Latency Triage
+version: "1.0"
+description: |
+  Diagnose p95/p99 latency or availability SLO burn across recent deploys,
+  dependency saturation, and query regressions, then verify a targeted fix.
+tags: [ops, sre, slo, latency, reliability]
+tasks:
+  - title: Correlate SLO burn window with deploys, traces, and saturation
+    role: analyst
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Compare golden signals (latency, traffic, errors, saturation) across the
+      burn onset window to isolate the offending endpoint or dependency.
+  - title: Reproduce bottleneck and implement bounded remediation
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: high
+    description: |
+      Add missing timeout, index, cache, or concurrency guard and benchmark
+      before/after latency on a reproducible load fixture.
+  - title: Verify error-budget recovery criteria and alert thresholds
+    role: qa
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      Run regression and load smoke checks and confirm burn-rate alert rules
+      fire accurately on synthetic faults.

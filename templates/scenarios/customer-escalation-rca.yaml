@@ -1,0 +1,39 @@
+id: customer-escalation-rca
+name: Customer Production Escalation and Verified RCA
+version: "1.0"
+description: |
+  Turn a high-priority customer bug escalation into a sanitized minimal
+  reproduction, a verified code fix, and an accurate, jargon-free RCA draft.
+tags: [growth, support, escalation, rca, quality]
+tasks:
+  - title: Distill sanitized reproduction from support logs and config shape
+    role: analyst
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Strip all customer-identifiable data and isolate the minimal configuration
+      and input sequence that triggers the reported failure.
+  - title: Fix root cause and add permanent regression coverage
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Implement the fix and add a regression test mirroring the sanitized
+      customer scenario.
+  - title: Independently verify fix and edge-case interactions
+    role: qa
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      Confirm both the reported case and adjacent boundary conditions pass.
+  - title: Draft factual customer RCA and upgrade instructions
+    role: docs
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Write a concise, accurate root-cause summary, affected version range, and
+      remediation steps gated on human review before external send.

@@ -1,0 +1,55 @@
+# Built-in team manifest for zero-downtime schema migrations, ETL modernization, and parity proofs.
+
+name = "data-migration"
+version = "1.0.0"
+
+[coordination]
+parallelism = 3
+review_chain = true
+
+[[roles]]
+response_profile = "balanced"
+role = "architect"
+
+[roles.model_policy]
+effort = "max"
+model = "opus"
+
+[[roles]]
+response_profile = "balanced"
+role = "backend"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[[roles]]
+response_profile = "terse"
+role = "devops"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[[roles]]
+response_profile = "balanced"
+role = "qa"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[[roles]]
+response_profile = "terse"
+role = "reviewer"
+
+[roles.model_policy]
+effort = "high"
+model = "opus"
+
+[role_template_digests]
+"architect" = "a584e03f3995da9fd985f7919e6bc0c8b25aa97a2fae91de66366f768518df08"
+"backend" = "f65d22622b5c27ecb252deebeaea527f5c62035ee5a8d24ee86967cbb7bc6ce7"
+"devops" = "5a62546eb8d5cf53e86cee0d7983215c87192b1b215dbfe2e2066db4fe21b508"
+"qa" = "22deacee87d27ccfab1f526c2954bfed807a32437c7a1dd61c34b947de682bc7"
+"reviewer" = "321ccefac121aa79b1a403514d2a3f1c575080708a130ff0b2791ddcdfe55a6c"
