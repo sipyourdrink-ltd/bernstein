@@ -1109,6 +1109,30 @@ def _is_verbose() -> bool:
     return bool(obj.get("VERBOSE", False))
 
 
+def ensure_workspace_templates_and_gitignore(root: Path) -> None:
+    """Copy bundled templates and add ``.sdd/runtime/`` to root ``.gitignore`` if needed."""
+    templates_dst = root / INIT_TEMPLATES_DIR
+    if not templates_dst.exists():
+        import shutil
+
+        from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
+
+        if _BUNDLED_TEMPLATES_DIR.is_dir():
+            shutil.copytree(_BUNDLED_TEMPLATES_DIR, templates_dst)
+            console.print("[green]Created[/green] templates/ (default roles & prompts)")
+
+    root_gi_path = root / INIT_ROOT_GITIGNORE
+    gitignore_entry = INIT_GITIGNORE_ENTRY
+    if root_gi_path.exists():
+        existing = root_gi_path.read_text()
+        if gitignore_entry not in existing:
+            root_gi_path.write_text(existing.rstrip("\n") + f"\n{gitignore_entry}\n")
+            console.print(f"[green]Updated[/green] .gitignore (added {gitignore_entry})")
+    else:
+        root_gi_path.write_text(f"{gitignore_entry}\n")
+        console.print(f"[green]Created[/green] .gitignore (added {gitignore_entry})")
+
+
 def _init_impl(
     target_dir: str,
     *,
@@ -1167,28 +1191,7 @@ def _init_impl(
         yaml_path.write_text(_generate_default_yaml(project_type))
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
 
-    # Copy bundled default templates if the project doesn't have its own
-    templates_dst = root / INIT_TEMPLATES_DIR
-    if not templates_dst.exists():
-        import shutil
-
-        from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
-
-        if _BUNDLED_TEMPLATES_DIR.is_dir():
-            shutil.copytree(_BUNDLED_TEMPLATES_DIR, templates_dst)
-            console.print("[green]Created[/green] templates/ (default roles & prompts)")
-
-    # Append .sdd/runtime/ to root .gitignore if not already present
-    root_gi_path = root / INIT_ROOT_GITIGNORE
-    gitignore_entry = INIT_GITIGNORE_ENTRY
-    if root_gi_path.exists():
-        existing = root_gi_path.read_text()
-        if gitignore_entry not in existing:
-            root_gi_path.write_text(existing.rstrip("\n") + f"\n{gitignore_entry}\n")
-            console.print(f"[green]Updated[/green] .gitignore (added {gitignore_entry})")
-    else:
-        root_gi_path.write_text(f"{gitignore_entry}\n")
-        console.print(f"[green]Created[/green] .gitignore (added {gitignore_entry})")
+    ensure_workspace_templates_and_gitignore(root)
 
     # Optional: inject a "powered by bernstein" badge into README.md
     if add_badge:
