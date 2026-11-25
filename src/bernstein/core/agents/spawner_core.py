@@ -3077,14 +3077,15 @@ class AgentSpawner:
         is used. Model-name inference applies only when nothing is pinned
         anywhere.
         """
+        adapter_pinned = bool(getattr(self, "_adapter_pinned", False))
         logger.debug(
             "_infer_adapter_name_for_provider: provider_name=%r model=%r current_adapter=%r adapter_pinned=%r",
             provider_name,
             model,
             self._adapter.name(),
-            self._adapter_pinned,
+            adapter_pinned,
         )
-        if self._adapter_pinned:
+        if adapter_pinned:
             resolved = adapter_name_for_provider(provider_name, "") if provider_name else None
             if resolved is not None:
                 logger.info(
@@ -3118,7 +3119,7 @@ class AgentSpawner:
         # ``CachingAdapter``, which is not itself registered, so re-resolving
         # here reports a registered adapter as unregistered and falls back to
         # the display name -- the exact defect this path fixes (#5348).
-        fallback = self._adapter_registry_name
+        fallback = getattr(self, "_adapter_registry_name", None)
         if fallback is None:
             logger.warning(
                 "_infer_adapter_name_for_provider: no registry match for provider_name=%r model=%r; "

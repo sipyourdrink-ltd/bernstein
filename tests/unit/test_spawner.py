@@ -920,6 +920,25 @@ class TestSpawnerWithRouter:
         assert opencode_adapter.spawn.call_count == 1
         assert codex_adapter.spawn.call_count == 1
 
+    def test_spawn_rate_limiter_tolerates_spawner_bypassing_init(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        adapter = mock_adapter_factory(pid=321)
+        adapter.name.return_value = "claude"
+        spawner = AgentSpawner.__new__(AgentSpawner)
+        spawner._adapter = adapter
+        spawner._default_model = "opus"
+        spawner._role_model_policy = {}
+        spawner._templates_dir = tmp_path / "templates"
+        spawner._workdir = tmp_path
+        spawner._router = None
+        spawner._catalog = None
+        spawner._policy_hook_registry = None
+        spawner._spawn_rate_limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=60.0))
+
+        assert spawner._infer_adapter_name_for_provider(None, "opus") == "claude"
+        assert spawner._infer_adapter_name_for_provider("codex", "mock-model") == "codex"
+
 
 # --- Non-Claude adapter model coercion guard (issue: MiniMax-M3 child tasks) ---
 #
