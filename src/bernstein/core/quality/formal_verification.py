@@ -377,6 +377,7 @@ def _verify_lean4(
                 input_data=b"",
                 timeout=timeout_s,
                 mounts=(readonly_bind(fixture_dir, "/proof"),),
+                workdir="/proof",
             )
         except IsolationUnavailable as exc:
             return _invalid_property(prop, str(exc))

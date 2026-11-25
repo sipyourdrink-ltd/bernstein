@@ -1716,7 +1716,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start a preview server in the current task's worktree. `--cwd`, `--command`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
+| `start` | Start an isolated preview server for the selected worktree. `--cwd`, `--command`, `--approve-discovered`, `--list-commands`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
 | `list` | List active previews. `--json`. |
 | `status ID` | Show a preview's URL and process. `--json`. |
 | `stop [ID]` | Stop one preview. `--all` stops every active preview. |

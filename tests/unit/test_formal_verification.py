@@ -242,6 +242,18 @@ class TestRunFormalVerificationLean4:
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
         assert result.passed is True
 
+    def test_lean4_compiles_lemmas_from_readonly_proof_root(self, tmp_path: Path) -> None:
+        (tmp_path / "Facts.lean").write_text("def value : Nat := 1")
+        property = FormalProperty("example", "value = 1", "lean4", "Facts.lean")
+        config = FormalVerificationConfig(properties=[property])
+        with patch("bernstein.core.sandbox.isolated_process.run_isolated") as run:
+            run.return_value = MagicMock(returncode=0, stdout=b"")
+            result = run_formal_verification(_fake_task(), tmp_path, config)
+        assert result.passed
+        assert run.call_args.kwargs["workdir"] == "/proof"
+        assert run.call_args.kwargs["mounts"][0].endswith("target=/proof,readonly")
+        assert run.call_args.args[1][-1] == "Facts"
+
     def test_lean4_fail_when_cli_fails(self, tmp_path: Path) -> None:
         task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop("False")])

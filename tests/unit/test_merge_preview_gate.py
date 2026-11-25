@@ -14,6 +14,7 @@ out for ``worktree add``, ``merge``, and ``worktree remove``.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -51,9 +52,24 @@ def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _py(snippet: str) -> str:
-    """A shell command that runs *snippet* with the running interpreter."""
-    return f'"{sys.executable}" -c "{snippet}"'
+@pytest.fixture
+def approved_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.core.sandbox import isolated_process
+
+    policy = {
+        "fixture-present": ["test", "-f", "tests/unit/test_goal_persistence.py"],
+        "fixture-missing": ["test", "-f", "tests/unit/missing.py"],
+    }
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", json.dumps(policy))
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECK_IMAGE", "test-image")
+
+    def run_check(image, argv, *, mounts, **kwargs):
+        assert image == "test-image"
+        assert argv[:2] == ["test", "-f"]
+        root = Path(mounts[0].split(",")[1].removeprefix("source="))
+        return subprocess.CompletedProcess(argv, 0 if (root / argv[2]).is_file() else 1)
+
+    monkeypatch.setattr(isolated_process, "run_isolated", run_check)
 
 
 @pytest.fixture
@@ -128,6 +144,7 @@ def _log(repo: Path) -> str:
 
 def test_signal_naming_a_file_created_by_the_agent_passes_and_merge_proceeds(
     repo: Path,
+    approved_checks: None,
 ) -> None:
     """The verdict sees the agent's new file, so the gate passes and merge runs.
 
@@ -140,7 +157,7 @@ def test_signal_naming_a_file_created_by_the_agent_passes_and_merge_proceeds(
 
     task = _task(
         "0c6c6f3004cb",
-        _py("import pathlib,sys; sys.exit(0 if pathlib.Path('tests/unit/test_goal_persistence.py').exists() else 1)"),
+        "fixture-present",
     )
     orch = _orch(repo, session_id, wt)
 
@@ -162,6 +179,7 @@ def test_signal_naming_a_file_created_by_the_agent_passes_and_merge_proceeds(
 
 def test_failing_tests_on_the_merged_tree_are_still_held_and_run_branch_is_clean(
     repo: Path,
+    approved_checks: None,
 ) -> None:
     """A real failure stays a failure, and the preview never lands anything."""
     session_id = "backend-deadbeef"
@@ -169,7 +187,7 @@ def test_failing_tests_on_the_merged_tree_are_still_held_and_run_branch_is_clean
     _commit(wt, "src/feature.py", "broken = True\n", "add feature")
 
     before_head = _run(["git", "rev-parse", "main"], repo).stdout.strip()
-    task = _task("task-fails", _py("import sys; sys.exit(1)"))
+    task = _task("task-fails", "fixture-missing")
     orch = _orch(repo, session_id, wt)
 
     future = _enqueue_alive_exit_janitor_pass(orch, task, reason="alive_exit_tick")
@@ -207,7 +225,7 @@ def test_conflicting_preview_is_reported_as_a_conflict(
     _run(["git", "add", "shared.txt"], repo)
     _run(["git", "commit", "-m", "run branch edits shared.txt"], repo)
 
-    task = _task("task-conflict", _py("import sys; sys.exit(0)"))
+    task = _task("task-conflict", "fixture-present")
     orch = _orch(repo, session_id, wt)
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
