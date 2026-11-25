@@ -1,8 +1,10 @@
 name: Publish PR observability and autosync
 
-# workflow_run executes this definition and github.sha from the default branch.
+# Safety note (zizmor dangerous-triggers): workflow_run executes this definition
+# and github.sha from the default branch after checking head_repository.id ==
+# repository.id and validating the bounded artifact in scripts/prepare_pr_publication.py.
 # A PR can supply observations or a diff, never the publishing steps or destination.
-on:
+on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["PR observability summary", "PR policy"]
     types: [completed]
