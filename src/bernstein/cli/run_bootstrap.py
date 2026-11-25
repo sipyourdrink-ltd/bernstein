@@ -36,6 +36,7 @@ from bernstein.cli.helpers import (
 from bernstein.cli.run_preflight import (
     _CLI_RUN_EPOCH,
     _abort_if_default_branch_merge_target,
+    _abort_if_no_cli_adapter,
     _configure_quality_gate_bypass,
     _emit_preflight_runtime_warnings,
     _estimate_run_preview,
@@ -2851,6 +2852,11 @@ def _run_impl(
         validated_seed = None
         if goal is None and plan_file is None and from_plan is None:
             validated_seed = validate_seed_or_exit(seed_file)
+        _abort_if_no_cli_adapter(
+            cli=cli,
+            seed=validated_seed,
+            remote=remote,
+        )
         estimate = _estimate_run_preview(
             workdir=workdir,
             plan_file=plan_file,

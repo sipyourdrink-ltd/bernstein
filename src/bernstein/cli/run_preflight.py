@@ -127,6 +127,27 @@ def _abort_if_default_branch_merge_target(workdir: Path) -> None:
     raise SystemExit(1)
 
 
+def _abort_if_no_cli_adapter(
+    *,
+    cli: str | None,
+    seed: SeedConfig | None = None,
+    remote: bool = False,
+) -> None:
+    """Fail fast before cost preview, planning, or auto-approval when no local CLI adapter exists."""
+    if remote:
+        return
+    env_adapter = os.environ.get("BERNSTEIN_ADAPTER", "").strip()
+    effective_cli = (
+        cli
+        or (env_adapter if env_adapter and env_adapter != "auto" else None)
+        or (seed.cli if seed is not None else None)
+        or "auto"
+    )
+    from bernstein.core.orchestration.preflight import ensure_cli_adapter_available
+
+    ensure_cli_adapter_available(effective_cli)
+
+
 def _surface_merge_refusals(workdir: Path, *, since_ts: float, console: Console) -> None:
     """Print a loud warning for agent merges the merge guard refused this run.
 

@@ -14,7 +14,7 @@ import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from rich.console import Console
 
@@ -531,16 +531,35 @@ def _routing_note(agent_count: int) -> str:
     return "Using auto-routing." if agent_count > 1 else "Using as primary."
 
 
+def _abort_no_cli_agents() -> NoReturn:
+    """Print missing-CLI install guidance (with demo option) and exit."""
+    console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
+    for name, hint in _CLI_INSTALL_HINT.items():
+        console.print(f"  {name}: {hint}")
+    console.print("  Or run [bold]bernstein demo[/bold] (simulated agents, no CLI install or API key required).")
+    raise SystemExit(1)
+
+
+def ensure_cli_adapter_available(cli: str, *, env: Mapping[str, str] | None = None) -> None:
+    """Fail fast before planning or startup when no local CLI binary exists for *cli*."""
+    if cli == "mock":
+        return
+    if cli == "auto":
+        from bernstein.core.agent_discovery import discover_agents_cached
+
+        if not discover_agents_cached().agents:
+            _abort_no_cli_agents()
+        return
+    _check_binary(cli, env=env)
+
+
 def _preflight_auto_mode() -> None:
     """Run auto-discovery preflight for multi-agent mode."""
     from bernstein.core.agent_discovery import discover_agents_cached, short_model
 
     discovery = discover_agents_cached()
     if not discovery.agents:
-        console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
-        for name, hint in _CLI_INSTALL_HINT.items():
-            console.print(f"  {name}: {hint}")
-        raise SystemExit(1)
+        _abort_no_cli_agents()
 
     agent_parts: list[str] = []
     for agent in discovery.agents:
