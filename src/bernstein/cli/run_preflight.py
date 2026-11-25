@@ -133,17 +133,9 @@ def _abort_if_no_cli_adapter(
     seed: SeedConfig | None = None,
 ) -> None:
     """Fail fast before cost preview, planning, or auto-approval when no local CLI adapter exists."""
-    explicit_cli = cli.strip() if isinstance(cli, str) else ""
-    env_adapter = os.environ.get("BERNSTEIN_ADAPTER", "").strip()
-    seed_cli = seed.cli.strip() if seed is not None and isinstance(seed.cli, str) else ""
-    effective_cli = (
-        (explicit_cli if explicit_cli and explicit_cli != "auto" else None)
-        or (env_adapter if env_adapter and env_adapter != "auto" else None)
-        or (seed_cli if seed_cli and seed_cli != "auto" else None)
-        or "auto"
-    )
-    from bernstein.core.orchestration.preflight import ensure_cli_adapter_available
+    from bernstein.core.orchestration.preflight import ensure_cli_adapter_available, resolve_effective_cli
 
+    effective_cli = resolve_effective_cli(cli, seed.cli if seed is not None else None)
     ensure_cli_adapter_available(effective_cli)
 
 

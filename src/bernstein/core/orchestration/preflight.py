@@ -84,11 +84,22 @@ _QWEN_API_KEY_VARS: tuple[str, ...] = (
 )
 
 
+def _resolve_cli_binary(cli: str) -> str:
+    """Resolve an adapter registry name (e.g. ``q_dev``, ``cursor``) to its CLI binary."""
+    from bernstein.adapters.report import _binary_for_adapter
+    from bernstein.cli.doctor.adapter_checks import ADAPTER_BINARIES
+
+    binary = _binary_for_adapter(cli)
+    if binary == cli and cli in ADAPTER_BINARIES:
+        return ADAPTER_BINARIES[cli]
+    return binary
+
+
 def _check_binary(cli: str, *, env: Mapping[str, str] | None = None) -> None:
     """Exit with an actionable message if the CLI binary is not in PATH.
 
     Args:
-        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
+        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen", "q_dev").
         env: Optional environment mapping containing PATH to resolve binary from.
 
     Raises:
@@ -96,7 +107,9 @@ def _check_binary(cli: str, *, env: Mapping[str, str] | None = None) -> None:
     """
     from bernstein.cli.errors import BernsteinError
 
-    binary = cli  # binary name matches adapter name for all supported adapters
+    binary = _resolve_cli_binary(cli)
+    if not binary:
+        return
     path_val = env.get("PATH") if env is not None else None
     if shutil.which(binary, path=path_val) is None:
         hint = _CLI_INSTALL_HINT.get(cli, f"See documentation for {binary!r}")
@@ -538,6 +551,30 @@ def _abort_no_cli_agents() -> NoReturn:
         console.print(f"  {name}: {hint}")
     console.print("  Or run [bold]bernstein demo[/bold] (simulated agents, no CLI install or API key required).")
     raise SystemExit(1)
+
+
+def resolve_effective_cli(
+    cli: str | None,
+    seed_cli: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Resolve effective CLI adapter matching orchestrator precedence.
+
+    An explicit concrete ``--cli`` wins unless omitted or ``"auto"``; next an
+    explicit concrete ``BERNSTEIN_ADAPTER`` pin overrides ``seed.cli``; finally
+    a concrete ``seed.cli`` applies, falling back to ``"auto"``.
+    """
+    environ = os.environ if env is None else env
+    explicit_cli = cli.strip() if isinstance(cli, str) else ""
+    env_adapter = environ.get("BERNSTEIN_ADAPTER", "").strip()
+    resolved_seed_cli = seed_cli.strip() if isinstance(seed_cli, str) else ""
+    return (
+        (explicit_cli if explicit_cli and explicit_cli != "auto" else None)
+        or (env_adapter if env_adapter and env_adapter != "auto" else None)
+        or (resolved_seed_cli if resolved_seed_cli and resolved_seed_cli != "auto" else None)
+        or "auto"
+    )
 
 
 def ensure_cli_adapter_available(cli: str, *, env: Mapping[str, str] | None = None) -> None:

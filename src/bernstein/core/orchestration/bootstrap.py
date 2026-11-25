@@ -42,6 +42,7 @@ from bernstein.core.orchestration.preflight import (
     check_adapter_configured,
     gemini_has_auth,
     preflight_checks,
+    resolve_effective_cli,
 )
 from bernstein.core.orchestration.process_utils import (
     LIVENESS_ALIVE,
@@ -682,8 +683,8 @@ def bootstrap_from_seed(
 
     # 1. Parse seed
     seed = parse_seed(seed_path)
-    if cli is not None:
-        object.__setattr__(seed, "cli", cli)
+    effective_cli = resolve_effective_cli(cli, getattr(seed, "cli", None))
+    object.__setattr__(seed, "cli", effective_cli)
     if model is not None:
         object.__setattr__(seed, "model", model)
     preflight_checks(seed.cli, port)

@@ -215,3 +215,68 @@ def test_auto_cli_validates_env_pinned_adapter(tmp_path: Path, monkeypatch: pyte
     assert exc.value.code == 1
     estimate.assert_not_called()
     confirm.assert_not_called()
+
+
+def test_pinned_alias_adapter_resolves_to_actual_executable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """BERNSTEIN_ADAPTER=q_dev resolves to the ``q`` binary rather than looking for ``q_dev``."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_ADAPTER", "q_dev")
+    seen_binaries: list[str] = []
+
+    def fake_which(name: str, path: str | None = None) -> str | None:
+        seen_binaries.append(name)
+        return "/usr/local/bin/q" if name == "q" else None
+
+    with (
+        _run_env(discovery_agents=[]),
+        patch("bernstein.core.orchestration.preflight.shutil.which", side_effect=fake_which),
+        patch.object(run_bootstrap, "_estimate_run_preview", side_effect=SystemExit(0)),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_bootstrap._run_impl(**_kwargs(cli="auto"))  # type: ignore[arg-type]
+
+    assert exc.value.code == 0
+    assert seen_binaries == ["q"]
+
+
+def test_guard_matches_bootstrap_from_seed_with_env_pin_over_seed_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With bernstein.yaml cli=claude and BERNSTEIN_ADAPTER=codex, both guard and bootstrap resolve codex."""
+    from bernstein.core.seed import parse_seed
+
+    from bernstein.cli.run_preflight import _abort_if_no_cli_adapter
+    from bernstein.core.orchestration import bootstrap as bootstrap_mod
+
+    seed_path = tmp_path / "bernstein.yaml"
+    seed_path.write_text('goal: "Ship feature"\ncli: claude\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_ADAPTER", "codex")
+
+    checked_binaries: list[str] = []
+
+    def fake_which(name: str, path: str | None = None) -> str | None:
+        checked_binaries.append(name)
+        return "/usr/local/bin/codex" if name == "codex" else None
+
+    class StopAfterPreflight(RuntimeError):
+        pass
+
+    preflight_seen: list[str] = []
+
+    def fake_preflight(cli_arg: str, port: int, **_kw: object) -> None:
+        preflight_seen.append(cli_arg)
+        raise StopAfterPreflight
+
+    with (
+        patch("bernstein.core.orchestration.preflight.shutil.which", side_effect=fake_which),
+        patch("bernstein.core.orchestration.bootstrap._acquire_pid_lock"),
+        patch("bernstein.core.orchestration.bootstrap._run_git_hygiene"),
+        patch("bernstein.core.orchestration.bootstrap.preflight_checks", side_effect=fake_preflight),
+    ):
+        _abort_if_no_cli_adapter(cli=None, seed=parse_seed(seed_path))
+        with pytest.raises(StopAfterPreflight):
+            bootstrap_mod.bootstrap_from_seed(seed_path, tmp_path, cli=None)
+
+    assert checked_binaries == ["codex"]
+    assert preflight_seen == ["codex"]

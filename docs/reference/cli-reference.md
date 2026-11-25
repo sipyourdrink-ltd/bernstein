@@ -126,6 +126,14 @@ The full flag list is large (see `bernstein run --help` and `cli/run_bootstrap.p
 The merge strategy is not a `run` flag: set `merge_strategy: pr|direct` in
 `bernstein.yaml` (default `pr`).
 
+Before computing a cost estimate, planning, or prompting for plan approval
+(including under `--auto-approve` and `--remote`), `bernstein run` verifies that
+the resolved CLI executable (`--cli`, `BERNSTEIN_ADAPTER`, or `cli:` in
+`bernstein.yaml`) is installed on `PATH`, or that at least one CLI agent is
+discoverable when resolved to `auto`. When none is installed, it exits `1` with
+install instructions and suggests `bernstein demo` (`--dry-run`, `--plan-only`,
+`--idle`, and `mock` skip the local binary check).
+
 `--max-cost-usd` is a hard cap, separate from the soft `--budget`
 threshold model. It writes the value to `BERNSTEIN_MAX_COST_USD`
 before bootstrap; the orchestrator drains live agents and aborts
