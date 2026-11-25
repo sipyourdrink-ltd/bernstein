@@ -4686,10 +4686,11 @@ class AgentSpawner:
         )
 
         self._notify_cost_anomaly_spawn(tasks, model_config)
-        provider_for_rate_limit = provider_name or self._adapter.name()
-        # Local mock runs simulate orchestration without calling external APIs;
-        # cloud burst rate limits should not throttle local mock tasks.
-        if provider_for_rate_limit != "mock" and self._adapter.name() != "mock":
+        effective_adapter_name = self._infer_adapter_name_for_provider(provider_name, model_config.model)
+        provider_for_rate_limit = provider_name or effective_adapter_name
+        # Local mock spawns simulate orchestration without calling external APIs;
+        # only skip burst rate limiting when the resolved spawn target itself is mock.
+        if effective_adapter_name != "mock" and provider_for_rate_limit != "mock":
             try:
                 self._spawn_rate_limiter.acquire(provider_for_rate_limit)
             except SpawnRateLimitExceeded as exc:
