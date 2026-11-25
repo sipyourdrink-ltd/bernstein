@@ -134,6 +134,19 @@ class TestMultiTenantFairness:
         assert tenants.count("A") == 4
         assert tenants.count("B") == 2
 
+    def test_tiny_weight_jump_clamps_peer_deficit_without_overflow(self) -> None:
+        """Skipping rounds for a subnormal weight must not overflow peer deficits."""
+        scheduler = FairScheduler([TenantQuota("A", weight=1.0), TenantQuota("B", weight=5e-324)])
+        scheduler.enqueue("b1", "B")
+
+        decision = scheduler.dequeue()
+        assert decision is not None and decision.task_id == "b1" and decision.tenant_id == "B"
+
+        # Peer tenant A remains finite and servable on subsequent work.
+        scheduler.enqueue("a1", "A")
+        next_decision = scheduler.dequeue()
+        assert next_decision is not None and next_decision.task_id == "a1" and next_decision.tenant_id == "A"
+
     def test_equal_weight_round_robin(self) -> None:
         """Two tenants with equal weight should alternate."""
         s = FairScheduler(

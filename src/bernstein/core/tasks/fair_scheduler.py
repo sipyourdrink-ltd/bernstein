@@ -23,11 +23,12 @@ Usage::
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from fractions import Fraction
-from math import ceil
+from math import ceil, isfinite
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -247,7 +248,8 @@ class FairScheduler:
 
         # --- credit phase: add weight to every tenant's deficit -----------
         for tid in self._rr_order:
-            self._tenants[tid].deficit += self._tenants[tid].quota.weight
+            state = self._tenants[tid]
+            state.deficit = min(state.deficit + state.quota.weight, sys.float_info.max)
 
         result = self._try_serve(n)
         if result is not None:
@@ -264,9 +266,13 @@ class FairScheduler:
         # Credit every tenant for the skipped rounds, matching the ordinary
         # per-round credit loop above. Capped tenants keep accruing deficit
         # while they wait so a cap release does not reshuffle fairness.
+        # Clamp to sys.float_info.max so a large jump for a tiny-weight tenant
+        # never overflows float conversion for a normal-weight peer tenant.
+        max_deficit = Fraction(sys.float_info.max)
         for tid in self._rr_order:
             state = self._tenants[tid]
-            state.deficit = float(Fraction(state.deficit) + rounds * Fraction(state.quota.weight))
+            current = Fraction(state.deficit) if isfinite(state.deficit) else max_deficit
+            state.deficit = float(min(current + rounds * Fraction(state.quota.weight), max_deficit))
         return self._try_serve(n)
 
     def _try_serve(self, n: int) -> SchedulingDecision | None:
