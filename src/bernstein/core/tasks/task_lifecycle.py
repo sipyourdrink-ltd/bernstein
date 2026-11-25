@@ -2201,6 +2201,7 @@ def _claim_task_with_conflict_retry(
     task: Task,
     base: str,
     session_id: str | None,
+    node_id: str | None = None,
 ) -> tuple[httpx.Response | None, str | None]:
     """POST ``/tasks/{id}/claim``, recovering from stale-version 409s instead of looping forever.
 
@@ -2231,6 +2232,13 @@ def _claim_task_with_conflict_retry(
          bounded retries rather than an infinite tight loop.
     Retries within one call are capped at ``_CLAIM_CONFLICT_MAX_ATTEMPTS``.
 
+    ``node_id`` is the cluster-registry ID this orchestrator registered
+    under (from its heartbeat client), sent alongside the parent
+    ``session_id`` so the server's health gate can judge the registered
+    node while the parent session stays the recorded claim owner (#7853).
+    ``None`` on a single-host run with no registration; the param is then
+    omitted and the claim behaves as before.
+
     Per-attempt status and retry preparation are logged at DEBUG. Conflict
     outcomes are logged at INFO or WARNING.
 
@@ -2247,6 +2255,8 @@ def _claim_task_with_conflict_retry(
         params: dict[str, Any] = {"expected_version": current_task.version}
         if session_id is not None:
             params["claimed_by_session"] = session_id
+        if node_id is not None:
+            params["node_id"] = node_id
         resp = orch._client.post(f"{base}/tasks/{current_task.id}/claim", params=params)
         logger.debug(
             "claim attempt %d/%d task=%s sent_version=%s -> HTTP %d",
@@ -2807,6 +2817,11 @@ def claim_and_spawn_batches(
         claim_failed = False
         claimed_tasks: list[Task] = []
         _orch_session_id: str | None = getattr(orch, "session_id", None)
+        # The registry-assigned node ID, distinct from the parent session
+        # recorded as claim owner: the server's by-ID health gate keys on
+        # it (#7853). None until the heartbeat client has registered (and
+        # on single-host runs, where no gate applies).
+        _orch_node_id: str | None = getattr(getattr(orch, "_heartbeat_client", None), "node_id", None)
         for task in batch:
             if _claim_conflict_backoff_active(orch, task.id):
                 logger.debug(
@@ -2817,7 +2832,9 @@ def claim_and_spawn_batches(
                 claim_failed = True
                 break
             try:
-                resp, conflict_reason = _claim_task_with_conflict_retry(orch, task, base, _orch_session_id)
+                resp, conflict_reason = _claim_task_with_conflict_retry(
+                    orch, task, base, _orch_session_id, _orch_node_id
+                )
                 if conflict_reason is not None:
                     _record_claim_conflict_episode(orch, task.id)
                     result.errors.append(f"claim:{task.id}: {conflict_reason}")

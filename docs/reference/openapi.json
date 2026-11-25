@@ -1048,7 +1048,7 @@
     "/tasks/next/{role}": {
       "get": {
         "summary": "Next Task",
-        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.",
+        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.\n\nPass ``node_id`` to name the cluster node the claim is made for, so\nthe health gate judges the registered node even when the recorded\nowner is a parent session ID (see :func:`_resolve_claiming_node`).",
         "operationId": "next_task_tasks_next__role__get",
         "parameters": [
           {
@@ -1090,6 +1090,22 @@
                 }
               ],
               "title": "Parent Session Id"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
             }
           }
         ],
@@ -1171,7 +1187,7 @@
     "/tasks/{task_id}/claim": {
       "post": {
         "summary": "Claim Task",
-        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.",
+        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.\n\nPass ``node_id`` to name the registered cluster node the claim is\nmade for. A node the registry knows but that cannot accept work\n(unhealthy telemetry, cordoned, draining, offline) is refused with\n409 until it recovers; the parent session stays the recorded claim\nowner either way (#7853).",
         "operationId": "claim_task_tasks__task_id__claim_post",
         "parameters": [
           {
@@ -1214,6 +1230,22 @@
               ],
               "title": "Claimed By Session"
             }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
+            }
           }
         ],
         "responses": {
@@ -1231,7 +1263,7 @@
             "description": "Task not found"
           },
           "409": {
-            "description": "Version conflict or invalid state"
+            "description": "Version conflict, invalid state, or claiming node not accepting work"
           },
           "503": {
             "description": "Server is draining"
@@ -10587,7 +10619,7 @@
     "/api/v1/tasks/next/{role}": {
       "get": {
         "summary": "Next Task",
-        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.",
+        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.\n\nPass ``node_id`` to name the cluster node the claim is made for, so\nthe health gate judges the registered node even when the recorded\nowner is a parent session ID (see :func:`_resolve_claiming_node`).",
         "operationId": "next_task_api_v1_tasks_next__role__get",
         "parameters": [
           {
@@ -10629,6 +10661,22 @@
                 }
               ],
               "title": "Parent Session Id"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
             }
           }
         ],
@@ -10710,7 +10758,7 @@
     "/api/v1/tasks/{task_id}/claim": {
       "post": {
         "summary": "Claim Task",
-        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.",
+        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.\n\nPass ``node_id`` to name the registered cluster node the claim is\nmade for. A node the registry knows but that cannot accept work\n(unhealthy telemetry, cordoned, draining, offline) is refused with\n409 until it recovers; the parent session stays the recorded claim\nowner either way (#7853).",
         "operationId": "claim_task_api_v1_tasks__task_id__claim_post",
         "parameters": [
           {
@@ -10753,6 +10801,22 @@
               ],
               "title": "Claimed By Session"
             }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
+            }
           }
         ],
         "responses": {
@@ -10770,7 +10834,7 @@
             "description": "Task not found"
           },
           "409": {
-            "description": "Version conflict or invalid state"
+            "description": "Version conflict, invalid state, or claiming node not accepting work"
           },
           "503": {
             "description": "Server is draining"
