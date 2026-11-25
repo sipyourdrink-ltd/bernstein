@@ -548,6 +548,9 @@ artifacts = [
 # install exited 2 with "can't open file .../tools/verify_audit_receipt.py".
 # Loader: bernstein.core.verifier.audit_receipt_verifier.VERIFIER_SCRIPT.
 "tools/verify_audit_receipt.py" = "bernstein/_default_templates/tools/verify_audit_receipt.py"
+# Built-in demo app for `bernstein demo`. Kept outside `_default_templates/`
+# so `bernstein init` never copies the Flask demo into a user project.
+"templates/demo" = "bernstein/_demo_template"
 # ascii_logo.md now lives in-package at src/bernstein/_default_templates/ -
 # no force-include needed. The dev-repo copy at docs/assets/ascii_logo.md is
 # the display fallback read by cli/display/splash_v2.py when running from a

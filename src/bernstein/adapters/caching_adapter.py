@@ -112,6 +112,7 @@ class CachingAdapter(CLIAdapter):
         multimodal_context: Any | None = None,
         task_id: str = "",
         task_title: str = "",
+        task_titles: list[str] | None = None,
         explicit_max_turns: int | None = None,
     ) -> SpawnResult:
         """Spawn agent with caching: process prompt, check response cache, then delegate.
@@ -206,6 +207,8 @@ class CachingAdapter(CLIAdapter):
             _identity_kwargs["task_id"] = task_id
         if task_title and "task_title" in _inner_params:
             _identity_kwargs["task_title"] = task_title
+        if task_titles and "task_titles" in _inner_params:
+            _identity_kwargs["task_titles"] = task_titles
         if explicit_max_turns is not None:
             if "explicit_max_turns" in _inner_params:
                 _identity_kwargs["explicit_max_turns"] = explicit_max_turns

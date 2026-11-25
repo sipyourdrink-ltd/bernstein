@@ -32,7 +32,7 @@
 Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니다. policy as code로 동작합니다. 누가 무엇을 해도 되는지, 무엇에 승인이 필요한지, 무엇을 기록해야 하는지를 정책으로 작성하면 Bernstein이 이를 적용하고 검증 가능한 기록을 만듭니다. 결정론적 스케줄러 - 조정 루프에 모델이 없음 - 가 에이전트를 병렬로 돌리고, 산출물을 게이트로 검사하고, 모든 단계를 기록합니다. 그래서 실행은 사후에, 오프라인으로, 아티팩트만으로 검증할 수 있습니다. CLI 코딩 에이전트는 바로 동작하고(Claude Code, Codex, Gemini CLI), 같은 레이어가 모든 에이전트 워크로드를 거버닝합니다: 결과물은 diff일 수도, 리서치 보고서일 수도, 데이터셋일 수도, 감사 증적 패키지일 수도 있습니다. 에어갭 설치 프로파일 포함. Apache-2.0.
 
 ### 한눈에 보기
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 다섯 가지가 차별점이며, 나머지는 세부 사항입니다.
 
@@ -132,28 +132,20 @@ flowchart LR
 재시도는 `dispatch_tier`를 유지하며, 작업을 다시 열 때 계층을 명시적으로 선택할 수 있습니다. [디스패치 계층 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen)을 참조하세요.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 작업 브랜치에서 실행하세요. Bernstein은 검증을 마친 변경 사항을 현재 브랜치에 병합합니다. 기본 브랜치에서는 변경 사항을 병합하는 실행을 시작할 수 없습니다. 풀 리퀘스트를 열기 전에 작업 브랜치에서 변경 사항을 검토하세요.
 
-`bernstein doctor --json`은 감사 계약의 `findings`도 출력하며, 동일한 설치 관측 결과에 대해 `bernstein govern audit --only INS --json`의 결과와 일치합니다. 일반 doctor 보고서의 표시는 그대로 유지됩니다. 안정적인 검사 ID는 [doctor 운영 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)를 참조하세요.
-
-Doctor는 오래 남아 있는 실행 레인을 JSON으로 보고합니다. 누수 증거를 검증할 수 없으면 검사가 실패하며 아무것도 삭제하지 않습니다.
-
 pipx, pip, brew, dnf, npm, Docker는 [설치 가이드](https://docs.bernstein.run/en/latest/getting-started/install/)를 보라. 에어갭 환경용 wheelhouse는 별도의 [에어갭 가이드](https://docs.bernstein.run/en/latest/installation/air-gap/)가 있다.
-
-`bernstein worktrees sweep`는 완료된 작업이 남긴 워크트리와 샌드박스 세션을 경과 시간 및 디스크 사용량과 함께 미리 보여 줍니다. 워크트리만 삭제할 수 있으며, `--apply`와 별도의 삭제 승인이 필요합니다. 샌드박스는 보고서에만 표시됩니다(삭제: #6571). `doctor`는 오래 남아 있는 리소스에 대해 경고합니다. [정리 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)를 참조하세요.
-
-스킬 초기화에 실패하면 원인과 감사 이벤트를 영구 기록하고 [격리](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)합니다. `bernstein status`는 개수를 표시하고, `doctor`와 `govern audit`는 비활성화된 선언을 보고합니다. 원인을 수정한 후 `bernstein quarantine re-enable DECLARATION_ID`로 표시를 명시적으로 해제하세요.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 한 실행 안에서 에이전트를 섞을 수 있다. 정형 작업에는 값싼 로컬 모델을, 설계에는 무거운 클라우드 모델을. `bernstein integrations list --installed`는 자기 머신에서 쓸 수 있는 것을 보여준다.
 
-### 자원봉사 컴퓨팅
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-프로젝트는 이슈를 자원봉사자에게 열린 것으로 표시할 수 있고, 누구나 그중 하나를 계정이나 조정자 없이 자기 컴퓨터에서 실행할 수 있습니다. 작업이 무엇을 해도 되는지는 프로젝트가 `volunteer.json` 매니페스트에 선언합니다 - 샌드박스 백엔드, 허용 네트워크 목록, 실행 시간과 메모리 상한 - 그리고 기여자 자신의 한도는 그것을 좁힐 수만 있을 뿐 넓힐 수는 없습니다. 완료된 작업이 만드는 영수증은 결과를 그것이 실행된 격리 결정에 묶으므로, 관리자는 몇 달 뒤에도 그 작업이 실제로 무엇에 접근할 수 있었는지 확인할 수 있습니다.
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-[기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `budget`, `verify-bundle`, `hub` 입니다. `autopilot`은 등록되어 있지만 `TaskSource`가 구현될 때까지 실행을 거부합니다.
-
 ### 표지 너머
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 깊이 들어가는 내용은 모두 [문서 사이트](https://docs.bernstein.run/)에 있다:
 
@@ -281,36 +261,17 @@ bernstein volunteer browse --budget 60
 | [워크플로](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 에이전트 / 커맨드 / 루프 노드로 이루어진 선언적 YAML DAG |
 | [웹 UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI와 같은 API 위에서 도는 브라우저 대시보드 (작업 생성 및 검토) |
 | [클러스터 워커 상태](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | 디스크 여유 공간, 메모리 사용률 또는 네트워크 지연 시간이 설정 범위를 벗어나면 워커는 새 작업을 가져오지 않습니다. |
-| [클라우드 실행](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | 실험적: 자기 계정의 Cloudflare Workers에서 R2 워크스페이스 동기화와 함께 에이전트를 실행한다. 호스팅되는 `api.bernstein.run` 서비스는 아직 제공되지 않는다 |
 | [데이터 소스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | 읽기 전용 쿼리 영수증, 그리고 각 결과를 유도된 스키마 스냅숏에 묶는 쿼리 드라이버 |
 | [에이전트 카탈로그](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | 내장 템플릿 밖의 에이전트 정의를 역할이 가리키게 한다. 범용 YAML/SKILL.md 디렉터리, 또는 Claude Code 플러그인 레이아웃 트리 |
 | [보안](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | 스코어카드, 퍼징, 하드닝 |
 | [아키텍처](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | 내부 동작 |
 
 ### 이름의 유래
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein이라는 이름은 미국의 지휘자이자 작곡가인 레너드 번스타인에서 왔다. 이 프로젝트의 오케스트레이터가 AI 에이전트 무리를 통제하는 방식이 번스타인이 뉴욕 필하모닉을 지휘한 방식과 같기 때문이다. 연주자는 각자의 신호에 들어오고, 악보는 결정론적이며, 지휘자는 결과에 책임을 진다. 지휘자 비유는 코드, 연구 보고서 또는 데이터셋을 생성하는 에이전트 작업을 오케스트레이션하는 Bernstein의 기능을 설명한다.
 
-i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, 단독 메인테이너. 가동 통계: [bernstein.run](https://bernstein.run).
-
-### 언급된 곳
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Augment Code의 [오픈소스 에이전트 오케스트레이터](https://www.augmentcode.com/tools/open-source-agent-orchestrators) 정리에 소개되었으며, [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026)에도 실렸다. 이 접근은 awesome-agentic-patterns에 [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) 패턴으로 정리되어 있다.
-
-<details>
-<summary>전체 목록: 20개가 넘는 awesome 리스트, 디렉터리, 뉴스레터, 인용</summary>
-<br>
-
-awesome 리스트 항목, 카탈로그 등재, 선행 연구로서의 인용, 뉴스레터 언급을 모두 포함해 추적 중인 전체 목록은 [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md)에 있다. 발견하는 대로 추가하고 있다. 정정은 issue나 PR로 환영한다.
-
-</details>
-
-### 관리용 실행
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-이 호출들은 MCP 브리지의 도구를 사용한다. 이후 호출에서는 반환된 `runId` 값을 `run_id`로 사용한다. `bernstein_run(template="administrative", goal="Weekly sprint")`으로 계획기나 에이전트 프로세스를 시작하지 않고 감사 기록이 있는 빈 컨테이너를 만듭니다. `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")`으로 수동 작업을 추가하고 `bernstein_run_status(run_id="<returned runId>")`으로 상태를 확인합니다. 작업은 일반 할당 API로 가져올 수 있지만 자동 오케스트레이션에서는 제외됩니다. 비어 있지 않은 실행은 모든 작업의 상태가 `done`, `closed` 또는 `cancelled` 중 하나이면 완료됩니다. 빈 실행은 열린 상태로 유지됩니다. [운영 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein은 병렬 코딩 에이전트에서 발생하는 비결정적 병합과 미검증 상태를 방지하기 위한 결정론적 하네스로 시작되었습니다. Apache-2.0. 릴리스 및 문서: [bernstein.run](https://bernstein.run).
 
 ### 기여, 지원, 라이선스
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

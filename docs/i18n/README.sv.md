@@ -32,7 +32,7 @@
 Bernstein är governance-lagret med öppen källkod för AI-agenter. Det körs på policy as code: du skriver policyn - vem som får göra vad, vad som kräver godkännande, vad som måste loggas - och Bernstein tillämpar den och tar fram det verifierbara beviset. En deterministisk schemaläggare - ingen modell i koordinationsloopen - kör agenter parallellt, grindar det de producerar och loggar varje steg, så att en körning kan verifieras i efterhand, offline, enbart från artefakterna. CLI-kodagenter fungerar direkt (Claude Code, Codex, Gemini CLI), och samma lager governar vilken agentlast som helst: leveransen kan vara en diff, en forskningsrapport, ett dataset eller ett paket med revisionsbevis. Air-gap-installationsprofil ingår. Apache-2.0.
 
 ### i korthet
-<!-- l10n: en="at a glance" hash="sha256:1b8e3b26778a" -->
+<!-- l10n: en="at a glance" hash="sha256:3c95f239d9cf" -->
 
 Fem saker skiljer det från andra; resten är detaljer.
 
@@ -132,28 +132,20 @@ Varje nod tas av en agent vars roll fasen tillåter; rollstängsel och godkänna
 Nya försök behåller `dispatch_tier`; när en uppgift öppnas igen kan nivån väljas uttryckligen. Se [kontraktet för körningsnivåer](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/task-tier-classification.md#retry-and-reopen).
 
 ### installera på 30 sekunder
-<!-- l10n: en="install in 30 seconds" hash="sha256:94e8cce44164" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:b24c255f61fb" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
-bernstein init
-# Set goal, cli, model and budget in bernstein.yaml. Use internal_llm_provider: none for the single-worker example.
-git switch -c bernstein/first-run  # skip if already on a working branch
-bernstein doctor             # shows setup steps for the current project
-bernstein run --worker backend
+bernstein demo               # zero-key local run (4 mock tasks); prints project path & run_id
+# Inside the printed demo directory, sign and verify your own receipt offline:
+openssl genpkey -algorithm ED25519 -out demo.key && openssl pkey -in demo.key -pubout -out demo.pub
+bernstein verify run <run_id> --signing-key-path demo.key
+bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json --public-key demo.pub
 ```
 
 Starta körningen från en arbetsgren. Bernstein slår ihop verifierade ändringar med den utcheckade grenen och stoppar körningar som kan slå ihop ändringar med standardgrenen. Granska ändringarna i arbetsgrenen innan du öppnar en pull request.
 
-`bernstein doctor --json` visar också auditkontraktets resultat `findings`, som är identiska med resultaten från `bernstein govern audit --only INS --json` för samma installationsobservationer. Den vanliga doctor-rapportens visning ändras inte. Se [driftguiden för doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) för stabila kontroll-ID:n.
-
-Doctor rapporterar kvarlämnade körningsbanor som överskrider åldersgränsen i JSON. Kontrollen misslyckas om underlaget inte kan verifieras; ingenting tas bort.
-
 pipx, pip, brew, dnf, npm och Docker beskrivs i [installationsguiden](https://docs.bernstein.run/en/latest/getting-started/install/); det isolerade paketet har en egen [air-gap-guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
-
-`bernstein worktrees sweep` förhandsvisar arbetsträd och sandboxsessioner som avslutade uppgifter lämnat kvar, med ålder och diskanvändning. Endast arbetsträd kan tas bort, med `--apply` och ett separat godkännande för borttagning. Sandboxar tas endast med i rapporten (borttagning: #6571); `doctor` varnar för äldre kvarlämnade resurser. Se [rensningsflödet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
-
-Fel vid initiering av färdigheter leder till [karantän](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), med beständigt sparad orsak och granskningshändelse. `bernstein status` visar antalet; `doctor` och `govern audit` rapporterar de inaktiverade deklarationerna. Åtgärda orsaken och ta sedan uttryckligen bort markeringen med `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
@@ -255,20 +247,8 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Kombinera agenter i samma körning: billiga lokala modeller för standardkod, tyngre molnmodeller för arkitektur. `bernstein integrations list --installed` visar vad som finns tillgängligt på din maskin.
 
-### frivillig beräkningskraft
-<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
-
-Ett projekt kan märka ärenden som öppna för frivilliga, och vem som helst kan köra ett av dem på sin egen maskin, utan konto och utan samordnare. Vad en uppgift får göra deklarerar projektet i ett `volunteer.json`-manifest - sandlådebackend, tillåten nätverkslista, tak för väggklockstid och minne - och givarens egna gränser kan bara snäva åt detta, aldrig vidga det. Kvittot som en färdig uppgift ger binder resultatet till det inneslutningsbeslut det kördes under, så att en underhållare månader senare kan kontrollera vad arbetet faktiskt fick röra.
-
-```bash
-bernstein volunteer verify .
-bernstein volunteer browse --budget 60
-```
-
-[Givarguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) täcker hur du kör en worker och budgeten du sätter, [projektguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) täcker att deklarera ett manifest, och [hotmodellen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) anger vad varje gräns skyddar mot och inte. Körning med ett enda kommando är ännu inte släppt: i dag är `verify`, `browse`, `budget`, `verify-bundle` och `hub` de underkommandon som fungerar. `autopilot` är registrerat men vägrar att köras tills en `TaskSource` har implementerats.
-
 ### bortom förstasidan
-<!-- l10n: en="beyond the front page" hash="sha256:e43a324d53c8" -->
+<!-- l10n: en="beyond the front page" hash="sha256:63d7eefff374" -->
 
 All fördjupad information finns på [dokumentationswebbplatsen](https://docs.bernstein.run/):
 
@@ -281,36 +261,17 @@ All fördjupad information finns på [dokumentationswebbplatsen](https://docs.be
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklarativa YAML-DAG:ar av agent- / kommando- / loop-noder |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | webbläsardashboard baserad på samma API som TUI använder (skapa och granska uppgifter) |
 | [klusterarbetarnas status](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cluster-mode.md#worker-health-telemetry) (`bernstein worker`) | Arbetarna hämtar inga nya uppgifter så länge ledigt diskutrymme, minnesanvändning eller nätverksfördröjning ligger utanför de konfigurerade gränserna. |
-| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimentellt: kör agenter på Cloudflare Workers med R2-synkronisering av arbetsytan mot ditt eget konto. Den hostade tjänsten `api.bernstein.run` är ännu inte tillgänglig |
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | skrivskyddade frågekvitton plus en frågedrivrutin som binder varje resultat till den schemaögonblicksbild det härleddes mot |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | peka roller mot agentdefinitioner utanför de inbyggda mallarna — en generisk YAML/SKILL.md-katalog eller Claude Code-plugin-struktur |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, härdning |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | hur det fungerar under huven |
 
 ### varför namnet?
-<!-- l10n: en="why the name?" hash="sha256:e533b42dac5c" -->
+<!-- l10n: en="why the name?" hash="sha256:e9839a1c718d" -->
 
 Bernstein är uppkallat efter Leonard Bernstein, den amerikanske dirigenten och kompositören. Projektets orkestrerare styr en ensemble av AI-agenter på samma sätt som Bernstein ledde New York Philharmonic: varje musiker på rätt insats, partituret deterministiskt, dirigenten ansvarig för slutresultatet. Dirigentmetaforen beskriver Bernsteins förmåga att orkestrera agentuppgifter som producerar kod, forskningsrapporter eller datamängder.
 
-jag skrev bernstein eftersom jag betalade 400 dollar i månaden i claude-räkningar för att köra tre kodningsagenter parallellt och fick icke-deterministiska sammanslagningar. Apache 2.0, underhålls av en person. Realtidsstatistik: [bernstein.run](https://bernstein.run).
-
-### omnämnanden
-<!-- l10n: en="mentioned in" hash="sha256:dc39001819d4" -->
-
-Omskriven i Augment Codes sammanställning över [open source-agentorkestrerare](https://www.augmentcode.com/tools/open-source-agent-orchestrators) och listad i [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). Vi har också dokumenterat tillvägagångssättet som mönstret [deterministisk noll-LLM-orkestrering](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) i awesome-agentic-patterns.
-
-<details>
-<summary>Alla omnämnanden: 20+ awesome-listor, kataloger, nyhetsbrev och citeringar</summary>
-<br>
-
-Den fullständiga listan, inklusive varje awesome-list-post, kataloglistning, tidigare referens och omnämnande i nyhetsbrev, finns i [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md). Nya poster läggs till efter hand; korrigeringar välkomnas via issue eller PR.
-
-</details>
-
-### Administrativa körningar
-<!-- l10n: en="Administrative runs" hash="sha256:c50777e49cc8" -->
-
-Dessa anrop använder MCP-bryggan. Använd det returnerade värdet `runId` som `run_id` i efterföljande anrop. Skapa en tom, revisionsloggad behållare utan planerare eller agentprocesser med `bernstein_run(template="administrative", goal="Weekly sprint")`. Lägg till manuella uppgifter med `bernstein_create_task(title="Review brief", description="...", run_id="<returned runId>")` och kontrollera status med `bernstein_run_status(run_id="<returned runId>")`. Uppgifterna kan hämtas via det vanliga claim-API:et men undantas från automatisk orkestrering. En körning med uppgifter avslutas när varje uppgift har status `done`, `closed` eller `cancelled`; en tom körning förblir öppen. [Operatörsflöde](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+Bernstein startade som en deterministisk ram för att förhindra icke-deterministiska sammanslagningar och overifierat tillstånd mellan parallella kodagenter. Apache-2.0. Utgåvor och dokumentation: [bernstein.run](https://bernstein.run).
 
 ### bidra, support, licens
 <!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->

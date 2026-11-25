@@ -200,7 +200,12 @@ def _enforce_dashboard_posture(host: str, workdir: Path) -> None:
         )
         click.echo("Dashboard token (operator scope, printed once - the journal keeps only its digest):")
         click.echo(f"  Token: {raw}")
-        click.echo("  Use it as `Authorization: Bearer <token>` or in the dashboard login form.")
+        click.echo(
+            "  Use it in the dashboard login form or on /api/v1/dashboard/*; "
+            "general API endpoints (/api/v1/tasks, /status) require BERNSTEIN_AUTH_TOKEN "
+            "(auto-minted on local browser open; set BERNSTEIN_AUTH_TOKEN explicitly with --no-open). "
+            "Note: `bernstein run` already serves /ui/ on its own port."
+        )
         return
     click.echo(
         "Dashboard auth: configured (scoped token or password). Manage tokens with `bernstein auth dashboard-token`."

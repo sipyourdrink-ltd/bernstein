@@ -398,7 +398,7 @@ def _parse_budget_spec(raw: str | float | None) -> float | None:
     """
     if raw is None:
         return None
-    if isinstance(raw, (int, float)):
+    if isinstance(raw, int | float):
         return max(0.0, float(raw))
     s = str(raw).strip().lower()
     if not s:
@@ -1065,12 +1065,7 @@ def init(
     wizard: bool = False,
     non_interactive: bool = False,
 ) -> None:
-    """Init workspace -- create .sdd/ structure.
-
-    Raises:
-        click.UsageError: When --wizard is combined with a flag the wizard
-            path does not implement.
-    """
+    """Init workspace -- create .sdd/ structure and bernstein.yaml."""
     if wizard:
         # The wizard is a separate implementation, not a mode of _init_impl:
         # it writes its own bernstein.yaml and never reaches the badge or
@@ -2511,12 +2506,7 @@ def run(
     refresh_cache: bool = False,
     force_fresh: bool = False,
 ) -> None:
-    """Parse seed, init workspace, start server, launch agents.
-
-    Top-level wrapper: routes any uncaught exception through the
-    first-run categorisation guard so the operator sees a structured
-    hint panel and a sysexits.h exit code instead of a raw traceback.
-    """
+    """Parse bernstein.yaml (or plan file), start the task server, and run agents."""
     try:
         _run_impl(
             plan_file=plan_file,

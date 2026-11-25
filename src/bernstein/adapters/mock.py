@@ -47,6 +47,7 @@ class MockAgentAdapter(CLIAdapter):
         multimodal_context: Any | None = None,
         task_id: str = "",
         task_title: str = "",
+        task_titles: list[str] | None = None,
     ) -> SpawnResult:
         """Spawn a mock agent subprocess that applies demo changes.
 
@@ -79,12 +80,14 @@ class MockAgentAdapter(CLIAdapter):
             tmp.flush()
             script_path = tmp.name
 
+        resolved_titles = list(task_titles) if task_titles else ([task_title] if task_title else [])
         task_info = json.dumps(
             {
                 "workdir": str(workdir),
                 "log_path": str(log_path),
                 "task_id": task_id,
                 "task_title": task_title,
+                "task_titles": resolved_titles,
             }
         )
 
@@ -267,6 +270,9 @@ def fix_broken_test(workdir: Path, log_path: Path) -> str | None:
     fixed = content.replace(
         "assert resp.status_code == 404  # wrong - should be 200",
         "assert resp.status_code == 200",
+    ).replace(
+        "assert resp.status_code == 404  # wrong: should be 200",
+        "assert resp.status_code == 200",
     )
     fixed = fixed.replace(
         '\n    BUG 4: asserts 404 instead of 200.\n    ',
@@ -277,6 +283,120 @@ def fix_broken_test(workdir: Path, log_path: Path) -> str | None:
         write_log(log_path, "✓ Fixed broken test: status_code 404 → 200")
         return "tests/test_app.py"
     return None
+
+
+def fix_todo_input_validation(workdir: Path, log_path: Path) -> str | None:
+    """Add JSON and title validation to create_todo in the Flask TODO demo."""
+    import re
+
+    app_file = workdir / "app.py"
+    if not app_file.exists():
+        return None
+    content = app_file.read_text()
+    pattern = re.compile(
+        r"(def create_todo\(\)(?: -> object)?:\n)"
+        r"    data = request\.get_json\(\)\n"
+        r'    todo = \{"id": store\.next_id, "title": data\["title"\], "done": False\}\n'
+    )
+    replacement = (
+        r"\1"
+        "    data = request.get_json(silent=True)\n"
+        "    if not isinstance(data, dict):\n"
+        '        return jsonify({"error": "invalid JSON"}), 400\n'
+        '    title = data.get("title")\n'
+        "    if not isinstance(title, str) or not title.strip():\n"
+        '        return jsonify({"error": "title is required"}), 400\n'
+        '    todo = {"id": store.next_id, "title": title.strip(), "done": False}\n'
+    )
+    fixed, count = pattern.subn(replacement, content, count=1)
+    if count and fixed != content:
+        app_file.write_text(fixed)
+        write_log(log_path, "✓ Added input validation to create_todo in app.py")
+        return "app.py"
+    return None
+
+
+def fix_todo_error_handling(workdir: Path, log_path: Path) -> str | None:
+    """Add 404 error handling to update_todo and delete_todo in the Flask TODO demo."""
+    import re
+
+    app_file = workdir / "app.py"
+    if not app_file.exists():
+        return None
+    content = app_file.read_text()
+    fixed = re.sub(
+        r"(def update_todo\(todo_id: int\)(?: -> object)?:\n)"
+        r"    todo = store\.items\[todo_id\]\n",
+        (
+            r"\1"
+            "    todo = store.items.get(todo_id)\n"
+            "    if todo is None:\n"
+            '        return jsonify({"error": "not found"}), 404\n'
+        ),
+        content,
+        count=1,
+    )
+    fixed = re.sub(
+        r"(def delete_todo\(todo_id: int\)(?: -> object)?:\n)"
+        r"    del store\.items\[todo_id\]\n",
+        (
+            r"\1"
+            "    if todo_id not in store.items:\n"
+            '        return jsonify({"error": "not found"}), 404\n'
+            "    del store.items[todo_id]\n"
+        ),
+        fixed,
+        count=1,
+    )
+    if fixed != content:
+        app_file.write_text(fixed)
+        write_log(log_path, "✓ Added 404 error handling to update_todo and delete_todo in app.py")
+        return "app.py"
+    return None
+
+
+def fix_todo_write_tests(workdir: Path, log_path: Path) -> str | None:
+    """Write pytest suite for the Flask TODO API demo."""
+    tests_dir = workdir / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    test_file = tests_dir / "test_api.py"
+    test_file.write_text(
+        '"""Pytest suite for the Flask TODO API demo."""\n\n'
+        "from __future__ import annotations\n\n"
+        "import sys\n"
+        "from pathlib import Path\n\n"
+        "import pytest\n\n"
+        "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n"
+        "from app import app, store\n\n\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def reset_store():\n"
+        "    store.items.clear()\n"
+        "    store.next_id = 1\n\n\n"
+        "@pytest.fixture\n"
+        "def client():\n"
+        '    app.config["TESTING"] = True\n'
+        "    with app.test_client() as c:\n"
+        "        yield c\n\n\n"
+        "def test_list_todos_returns_200_list(client):\n"
+        '    resp = client.get("/todos")\n'
+        "    assert resp.status_code == 200\n"
+        "    assert resp.get_json() == []\n\n\n"
+        "def test_create_todo_valid_returns_201(client):\n"
+        '    resp = client.post("/todos", json={"title": "Ship release"})\n'
+        "    assert resp.status_code == 201\n"
+        '    assert resp.get_json()["title"] == "Ship release"\n\n\n'
+        "def test_create_todo_missing_title_returns_400(client):\n"
+        '    resp = client.post("/todos", json={})\n'
+        "    assert resp.status_code == 400\n\n\n"
+        "def test_update_missing_todo_returns_404(client):\n"
+        '    resp = client.patch("/todos/999", json={"done": True})\n'
+        "    assert resp.status_code == 404\n\n\n"
+        "def test_delete_missing_todo_returns_404(client):\n"
+        '    resp = client.delete("/todos/999")\n'
+        "    assert resp.status_code == 404\n"
+    )
+    write_log(log_path, "✓ Created pytest suite at tests/test_api.py")
+    return "tests/test_api.py"
 
 
 def _idle_mode(log_path: Path) -> None:
@@ -348,34 +468,48 @@ def main():
 
     time.sleep(1.5)
 
-    # Determine which fix to apply based on the task title (unique per task)
+    # Determine which fixes to apply based on the exact task title(s)
     # rather than fragile prompt substring matching (issue #3629).
-    title_lower = task_title.lower()
-    fix_name = "unknown"
-    if "off-by-one" in title_lower:
-        fix_name = "off_by_one"
-    elif "missing" in title_lower and "import" in title_lower:
-        fix_name = "missing_import"
-    elif "health" in title_lower:
-        fix_name = "health_status"
-    elif "broken" in title_lower or "assertion" in title_lower:
-        fix_name = "broken_test"
+    raw_titles = task_info.get("task_titles")
+    titles = [str(t) for t in raw_titles if t] if isinstance(raw_titles, list) and raw_titles else [task_title]
 
-    modified = None
-    if fix_name == "off_by_one":
-        modified = fix_off_by_one(workdir, log_path)
-    elif fix_name == "missing_import":
-        modified = fix_missing_import(workdir, log_path)
-    elif fix_name == "health_status":
-        modified = fix_health_status(workdir, log_path)
-    elif fix_name == "broken_test":
-        modified = fix_broken_test(workdir, log_path)
-    else:
-        write_log(log_path, f"Unknown task title: {task_title} - no-op")
+    handlers = {
+        "off_by_one": fix_off_by_one,
+        "missing_import": fix_missing_import,
+        "health_status": fix_health_status,
+        "broken_test": fix_broken_test,
+        "todo_input_validation": fix_todo_input_validation,
+        "todo_error_handling": fix_todo_error_handling,
+        "todo_write_tests": fix_todo_write_tests,
+    }
 
-    if modified is not None:
-        commit_fix(workdir, log_path, f"demo: {fix_name.replace('_', ' ')}", modified)
-        record_modified(log_path, modified)
+    for current_title in titles:
+        title_lower = current_title.lower()
+        fix_name = "unknown"
+        if "off-by-one" in title_lower:
+            fix_name = "off_by_one"
+        elif "missing" in title_lower and "import" in title_lower:
+            fix_name = "missing_import"
+        elif "health" in title_lower:
+            fix_name = "health_status"
+        elif "broken" in title_lower or "assertion" in title_lower:
+            fix_name = "broken_test"
+        elif "input validation" in title_lower:
+            fix_name = "todo_input_validation"
+        elif "404" in title_lower or "error handling" in title_lower:
+            fix_name = "todo_error_handling"
+        elif "pytest" in title_lower or "test suite" in title_lower:
+            fix_name = "todo_write_tests"
+
+        handler = handlers.get(fix_name)
+        if handler is None:
+            write_log(log_path, f"Unknown task title: {current_title} - no-op")
+            continue
+
+        modified = handler(workdir, log_path)
+        if modified is not None:
+            commit_fix(workdir, log_path, f"demo: {fix_name.replace('_', ' ')}", modified)
+            record_modified(log_path, modified)
 
     time.sleep(0.5)
     write_log(log_path, "Mock agent completed successfully")
