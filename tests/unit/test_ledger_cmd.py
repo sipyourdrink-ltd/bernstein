@@ -24,6 +24,7 @@ from click.testing import CliRunner
 from bernstein.cli.commands.ledger_cmd import ledger_group
 from bernstein.core.git.git_basic import GitResult
 from bernstein.core.persistence.ledger_git import anchor_ledger, fetch_ledger_ref, ledger_ref
+from bernstein.core.persistence.task_resume import SOURCE_WORK_LEDGER, claim_resume_request, record_resume_outcome
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_OPEN,
     KIND_RUN_RESUMED,
@@ -714,3 +715,69 @@ class TestGcAndRuns:
         result = CliRunner().invoke(ledger_group, ["runs", "--workdir", str(project)])
         assert result.exit_code == 0, result.output
         assert "run-a" in result.output
+
+    def _resume_json(self, project: Path) -> dict[str, Any]:
+        result = CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project), "--json"])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    def test_duplicate_ledger_resume_keeps_request_ids_stable(self, project: Path) -> None:
+        _seed(project)
+        first = self._resume_json(project)
+        second = self._resume_json(project)
+
+        assert [item["request_id"] for item in first["resume_requests"]] == [
+            item["request_id"] for item in second["resume_requests"]
+        ]
+        assert [item["dispatch_status"] for item in second["resume_requests"]] == ["queued"]
+        assert second["runtime_acknowledged"] is False
+        entries = list(LedgerReader(run_ledger_dir(project / ".sdd", "run-a")).entries())
+        assert sum(entry.kind == KIND_RUN_RESUMED for entry in entries) == 2
+
+    def test_mixed_ledger_requests_only_the_resume_frontier(self, project: Path) -> None:
+        ledger = _seed(project)
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t3")
+        ledger.append(kind=KIND_TASK_COMPLETED, task_id="t3")
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t4")
+        ledger.close()
+
+        report = self._resume_json(project)
+        assert report["completed_tasks"] == ["t1", "t3"]
+        assert report["resume_frontier"] == ["t2", "t4"]
+        assert {item["task_id"] for item in report["resume_requests"]} == {"t2", "t4"}
+        assert all(item["runtime_acknowledged"] is False for item in report["resume_requests"])
+        assert not (project / ".sdd" / "runtime" / "resume" / "t1.signal").exists()
+
+    def test_ledger_resume_derives_top_level_dispatch_status_from_requests(self, project: Path) -> None:
+        ledger = _seed(project)
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t3")
+        ledger.close()
+
+        first = self._resume_json(project)
+        assert first["dispatch_status"] == "queued"
+        assert first["runtime_acknowledged"] is False
+        by_task = {item["task_id"]: item["request_id"] for item in first["resume_requests"]}
+
+        # One claimed, one still queued -> top-level stays "queued".
+        claim_resume_request(project, "t2", by_task["t2"], source=SOURCE_WORK_LEDGER, run_id="run-a")
+        mixed = self._resume_json(project)
+        assert mixed["dispatch_status"] == "queued"
+        assert mixed["runtime_acknowledged"] is False
+
+        # Both claimed (none queued) -> top-level reports "claimed".
+        claim_resume_request(project, "t3", by_task["t3"], source=SOURCE_WORK_LEDGER, run_id="run-a")
+        all_claimed = self._resume_json(project)
+        assert all_claimed["dispatch_status"] == "claimed"
+        assert all_claimed["runtime_acknowledged"] is False
+
+        # One resumed, one claimed -> top-level stays "claimed".
+        record_resume_outcome(project, "t2", by_task["t2"])
+        partial_resumed = self._resume_json(project)
+        assert partial_resumed["dispatch_status"] == "claimed"
+        assert partial_resumed["runtime_acknowledged"] is False
+
+        # All resumed -> top-level reports "resumed" and runtime_acknowledged is True.
+        record_resume_outcome(project, "t3", by_task["t3"])
+        all_resumed = self._resume_json(project)
+        assert all_resumed["dispatch_status"] == "resumed"
+        assert all_resumed["runtime_acknowledged"] is True
