@@ -50,6 +50,9 @@ def mount(app: FastAPI) -> None:
         raise RuntimeError(
             f"GUI static assets not found at {STATIC_DIR}. Build them with: `cd web && npm install && npm run build`"
         )
+    if getattr(app.state, "_bernstein_gui_mounted", False):
+        return
+    app.state._bernstein_gui_mounted = True
 
     # Bidirectional parity: register on BOTH the root app AND under /api/v1/.
     # AUDIT-126's ``test_every_v1_route_has_root_counterpart`` asserts every

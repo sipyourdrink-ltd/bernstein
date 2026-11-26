@@ -177,7 +177,12 @@ class LoopbackHostMiddleware:
 
         response = JSONResponse(
             status_code=403,
-            content={"detail": "Invalid Host header for loopback bind"},
+            content={
+                "detail": (
+                    "Invalid Host header for loopback bind; set BERNSTEIN_ALLOWED_HOSTS "
+                    "to allow additional hostnames (comma-separated)."
+                )
+            },
         )
         await response(scope, receive, send)
 

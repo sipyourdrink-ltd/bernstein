@@ -200,7 +200,7 @@
     "/agents/{session_id}/logs": {
       "get": {
         "summary": "Agent Logs",
-        "description": "Return log file content for a session.\n\nArgs:\n    session_id: Agent session ID.\n    tail_bytes: If > 0, return only the last N bytes of the log.",
+        "description": "Return the log content for a running or finished agent session.\n\nArgs:\n    session_id: Agent session identifier (e.g. ``backend-abc12345``).\n    tail_bytes: When > 0, only the last *tail_bytes* of the file are\n        returned (partial leading line is stripped).  0 means full file.\n\nReturns:\n    JSON with ``session_id``, ``content`` string, and ``size`` in bytes.\n\nRaises:\n    HTTPException: 400 when session_id contains illegal characters,\n        404 when no log file exists for the session.",
         "operationId": "agent_logs_agents__session_id__logs_get",
         "parameters": [
           {
@@ -235,7 +235,7 @@
             }
           },
           "404": {
-            "description": "No log file for session"
+            "description": "No log for session"
           },
           "422": {
             "description": "Validation Error",
@@ -253,7 +253,7 @@
     "/agents/{session_id}/kill": {
       "post": {
         "summary": "Agent Kill",
-        "description": "Request that an agent session be killed.\n\nWrites a ``.kill`` signal file that the orchestrator picks up on\nits next tick.",
+        "description": "Request termination of an agent by writing a ``.kill`` signal file.\n\nThe orchestrator polls for these files on each tick and calls\n``spawner.kill(session)`` for the matching session.\n\nArgs:\n    session_id: Agent session to terminate.\n\nReturns:\n    JSON with ``session_id`` and ``kill_requested: true``.\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_kill_agents__session_id__kill_post",
         "parameters": [
           {
@@ -293,7 +293,7 @@
     "/agents/{session_id}/stream": {
       "get": {
         "summary": "Agent Stream",
-        "description": "SSE stream of live log output for a session.",
+        "description": "Server-Sent Events stream of agent output for the given session.\n\nReplays all existing log content first, then tails the file for new\nlines.  Closes automatically after ``_MAX_IDLE_TICKS`` consecutive\npolls with no new data (or no log file).\n\nFor synthetic agents (no real log file) the stream emits a single\n``unavailable`` event and closes immediately, avoiding an infinite\nreconnect loop in the browser.\n\nSSE event format::\n\n    data: {\"type\": \"connected\", \"session_id\": \"<id>\"}\n\n    data: {\"line\": \"<log line>\"}\n\n    data: {\"type\": \"unavailable\", \"reason\": \"synthetic\"}\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_stream_agents__session_id__stream_get",
         "parameters": [
           {
@@ -7953,97 +7953,11 @@
         }
       }
     },
-    "/tasks/{task_id}/detail": {
-      "get": {
-        "summary": "Task Detail",
-        "description": "Return detailed task view including log tail and progress.\n\nArgs:\n    task_id: Task identifier.",
-        "operationId": "task_detail_tasks__task_id__detail_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/dashboard/tasks/{task_id}/logs/stream": {
       "get": {
         "summary": "Task Log Stream",
         "description": "Stream agent logs for a task via Server-Sent Events.\n\nThe stream sends new log content as ``log`` events and closes\nafter the task completes or ``_MAX_IDLE_TICKS`` seconds of no new data.",
         "operationId": "task_log_stream_dashboard_tasks__task_id__logs_stream_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Server-Sent Events stream. The response body does not terminate.",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tasks/{task_id}/logs/stream": {
-      "get": {
-        "summary": "Task Log Stream",
-        "description": "Stream agent logs for a task via Server-Sent Events.\n\nThe stream sends new log content as ``log`` events and closes\nafter the task completes or ``_MAX_IDLE_TICKS`` seconds of no new data.",
-        "operationId": "task_log_stream_tasks__task_id__logs_stream_get",
         "parameters": [
           {
             "name": "task_id",
@@ -8125,120 +8039,11 @@
         }
       }
     },
-    "/tasks/{task_id}/diff": {
-      "get": {
-        "summary": "Task Diff",
-        "description": "Return the diff for a task's working branch against the base ref.\n\nStrategy:\n    1. Resolve the working branch from the task's ``assigned_agent`` --\n       ``agent/<session-id>``. If no agent is assigned (or the branch\n       does not exist yet), fall back to ``git diff HEAD`` so the user\n       still sees uncommitted scratch work.\n    2. Run ``git diff <base>...<branch>`` (three-dot, symmetric\n       difference relative to the merge base) and parse the output into\n       a structured per-file representation.\n    3. Cap the unified diff at ``_DIFF_MAX_BYTES`` to keep payloads sane.\n\nThe sync ``_run_git`` helper is reused (it is also called from other\nsync helpers in this module). To keep the event loop responsive under\nload (issue #1723) every blocking ``_run_git`` invocation is offloaded\nto the default executor via ``asyncio.to_thread``. The helper itself\nstays sync so non-route callers keep working.",
-        "operationId": "task_diff_tasks__task_id__diff_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDiffResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/dashboard/tasks/{task_id}/trace": {
       "get": {
         "summary": "Task Trace",
         "description": "Return the timeline of trace events for *task_id*.\n\nThe endpoint is read-only and idempotent. A missing task returns 404; a\nvalid task with no trace returns 200 + an empty events list (the FE\nrenders an empty-state card in that case).",
         "operationId": "task_trace_dashboard_tasks__task_id__trace_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 2000,
-              "minimum": 1,
-              "default": 500,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Cursor"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TraceTimelineResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tasks/{task_id}/trace": {
-      "get": {
-        "summary": "Task Trace",
-        "description": "Return the timeline of trace events for *task_id*.\n\nThe endpoint is read-only and idempotent. A missing task returns 404; a\nvalid task with no trace returns 200 + an empty events list (the FE\nrenders an empty-state card in that case).",
-        "operationId": "task_trace_tasks__task_id__trace_get",
         "parameters": [
           {
             "name": "task_id",
@@ -9966,7 +9771,7 @@
     "/api/v1/agents/{session_id}/logs": {
       "get": {
         "summary": "Agent Logs",
-        "description": "Return log file content for a session.\n\nArgs:\n    session_id: Agent session ID.\n    tail_bytes: If > 0, return only the last N bytes of the log.",
+        "description": "Return the log content for a running or finished agent session.\n\nArgs:\n    session_id: Agent session identifier (e.g. ``backend-abc12345``).\n    tail_bytes: When > 0, only the last *tail_bytes* of the file are\n        returned (partial leading line is stripped).  0 means full file.\n\nReturns:\n    JSON with ``session_id``, ``content`` string, and ``size`` in bytes.\n\nRaises:\n    HTTPException: 400 when session_id contains illegal characters,\n        404 when no log file exists for the session.",
         "operationId": "agent_logs_api_v1_agents__session_id__logs_get",
         "parameters": [
           {
@@ -10001,7 +9806,7 @@
             }
           },
           "404": {
-            "description": "No log file for session"
+            "description": "No log for session"
           },
           "422": {
             "description": "Validation Error",
@@ -10019,7 +9824,7 @@
     "/api/v1/agents/{session_id}/kill": {
       "post": {
         "summary": "Agent Kill",
-        "description": "Request that an agent session be killed.\n\nWrites a ``.kill`` signal file that the orchestrator picks up on\nits next tick.",
+        "description": "Request termination of an agent by writing a ``.kill`` signal file.\n\nThe orchestrator polls for these files on each tick and calls\n``spawner.kill(session)`` for the matching session.\n\nArgs:\n    session_id: Agent session to terminate.\n\nReturns:\n    JSON with ``session_id`` and ``kill_requested: true``.\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_kill_api_v1_agents__session_id__kill_post",
         "parameters": [
           {
@@ -10059,7 +9864,7 @@
     "/api/v1/agents/{session_id}/stream": {
       "get": {
         "summary": "Agent Stream",
-        "description": "SSE stream of live log output for a session.",
+        "description": "Server-Sent Events stream of agent output for the given session.\n\nReplays all existing log content first, then tails the file for new\nlines.  Closes automatically after ``_MAX_IDLE_TICKS`` consecutive\npolls with no new data (or no log file).\n\nFor synthetic agents (no real log file) the stream emits a single\n``unavailable`` event and closes immediately, avoiding an infinite\nreconnect loop in the browser.\n\nSSE event format::\n\n    data: {\"type\": \"connected\", \"session_id\": \"<id>\"}\n\n    data: {\"line\": \"<log line>\"}\n\n    data: {\"type\": \"unavailable\", \"reason\": \"synthetic\"}\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_stream_api_v1_agents__session_id__stream_get",
         "parameters": [
           {
@@ -17719,97 +17524,11 @@
         }
       }
     },
-    "/api/v1/tasks/{task_id}/detail": {
-      "get": {
-        "summary": "Task Detail",
-        "description": "Return detailed task view including log tail and progress.\n\nArgs:\n    task_id: Task identifier.",
-        "operationId": "task_detail_api_v1_tasks__task_id__detail_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDetailResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/dashboard/tasks/{task_id}/logs/stream": {
       "get": {
         "summary": "Task Log Stream",
         "description": "Stream agent logs for a task via Server-Sent Events.\n\nThe stream sends new log content as ``log`` events and closes\nafter the task completes or ``_MAX_IDLE_TICKS`` seconds of no new data.",
         "operationId": "task_log_stream_api_v1_dashboard_tasks__task_id__logs_stream_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Server-Sent Events stream. The response body does not terminate.",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/tasks/{task_id}/logs/stream": {
-      "get": {
-        "summary": "Task Log Stream",
-        "description": "Stream agent logs for a task via Server-Sent Events.\n\nThe stream sends new log content as ``log`` events and closes\nafter the task completes or ``_MAX_IDLE_TICKS`` seconds of no new data.",
-        "operationId": "task_log_stream_api_v1_tasks__task_id__logs_stream_get",
         "parameters": [
           {
             "name": "task_id",
@@ -17891,120 +17610,11 @@
         }
       }
     },
-    "/api/v1/tasks/{task_id}/diff": {
-      "get": {
-        "summary": "Task Diff",
-        "description": "Return the diff for a task's working branch against the base ref.\n\nStrategy:\n    1. Resolve the working branch from the task's ``assigned_agent`` --\n       ``agent/<session-id>``. If no agent is assigned (or the branch\n       does not exist yet), fall back to ``git diff HEAD`` so the user\n       still sees uncommitted scratch work.\n    2. Run ``git diff <base>...<branch>`` (three-dot, symmetric\n       difference relative to the merge base) and parse the output into\n       a structured per-file representation.\n    3. Cap the unified diff at ``_DIFF_MAX_BYTES`` to keep payloads sane.\n\nThe sync ``_run_git`` helper is reused (it is also called from other\nsync helpers in this module). To keep the event loop responsive under\nload (issue #1723) every blocking ``_run_git`` invocation is offloaded\nto the default executor via ``asyncio.to_thread``. The helper itself\nstays sync so non-route callers keep working.",
-        "operationId": "task_diff_api_v1_tasks__task_id__diff_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskDiffResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/dashboard/tasks/{task_id}/trace": {
       "get": {
         "summary": "Task Trace",
         "description": "Return the timeline of trace events for *task_id*.\n\nThe endpoint is read-only and idempotent. A missing task returns 404; a\nvalid task with no trace returns 200 + an empty events list (the FE\nrenders an empty-state card in that case).",
         "operationId": "task_trace_api_v1_dashboard_tasks__task_id__trace_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 2000,
-              "minimum": 1,
-              "default": 500,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Cursor"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TraceTimelineResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Task not found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/tasks/{task_id}/trace": {
-      "get": {
-        "summary": "Task Trace",
-        "description": "Return the timeline of trace events for *task_id*.\n\nThe endpoint is read-only and idempotent. A missing task returns 404; a\nvalid task with no trace returns 200 + an empty events list (the FE\nrenders an empty-state card in that case).",
-        "operationId": "task_trace_api_v1_tasks__task_id__trace_get",
         "parameters": [
           {
             "name": "task_id",

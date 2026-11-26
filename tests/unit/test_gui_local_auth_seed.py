@@ -21,6 +21,8 @@ in-process; no port is bound.
 from __future__ import annotations
 
 import os
+import stat
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -257,6 +259,10 @@ def test_serve_loopback_uninit_dir_no_sdd_pollution(tmp_path: Path, monkeypatch:
 
     minted = os.environ.get("BERNSTEIN_AUTH_TOKEN", "")
     assert minted
+    assert "server process environment only" in result.output
+    assert "BERNSTEIN_AUTH_TOKEN" in result.output
+    assert "paste BERNSTEIN_AUTH_TOKEN" not in result.output
+    assert minted not in result.output
     with TestClient(apps[0], base_url="http://127.0.0.1:8052") as c:
         assert c.get("/api/v1/tasks").status_code == 401
         assert c.get("/api/v1/tasks", headers={"Authorization": f"Bearer {minted}"}).status_code == 200
@@ -443,3 +449,107 @@ def test_negative_security_guards_on_loopback_gui_app(tmp_path: Path, monkeypatc
     assert asyncio.run(_raw_host_probe("http", dup_headers))[0]["status"] == 403
     assert asyncio.run(_raw_host_probe("http", []))[0]["status"] == 403
     assert asyncio.run(_raw_host_probe("websocket", dup_headers))[0] == {"type": "websocket.close", "code": 1008}
+
+
+def test_serve_loopback_refuses_and_rotates_unsafe_token_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unsafe .sdd/runtime/auth.token (symlink, group/other bits, or foreign uid) is never reused and gets rotated."""
+    from bernstein.core.run_auth_token import persist_run_auth_token, run_auth_token_path
+
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    monkeypatch.chdir(tmp_path)
+
+    # Case 1: symlink target must never be read or modified; link is rotated into a 0600 regular file.
+    decoy = tmp_path / "decoy.txt"
+    decoy.write_text("stale-unsafe-token", encoding="utf-8")
+    token_path = run_auth_token_path(tmp_path)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.symlink_to(decoy)
+
+    _capture_uvicorn_app(monkeypatch)
+    res_sym = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+    assert res_sym.exit_code == 0, res_sym.output
+    minted_sym = os.environ.pop("BERNSTEIN_AUTH_TOKEN", "")
+    assert minted_sym
+    assert minted_sym != "stale-unsafe-token"
+    assert not token_path.is_symlink()
+    assert token_path.read_text(encoding="utf-8").strip() == minted_sym
+    assert decoy.read_text(encoding="utf-8") == "stale-unsafe-token"
+
+    if sys.platform != "win32":
+        # Case 2: permissive mode (0644) must be refused and rotated back to 0600.
+        persist_run_auth_token(tmp_path, "weak-mode-token")
+        token_path.chmod(0o644)
+        res_mode = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+        assert res_mode.exit_code == 0, res_mode.output
+        minted_mode = os.environ.pop("BERNSTEIN_AUTH_TOKEN", "")
+        assert minted_mode
+        assert minted_mode != "weak-mode-token"
+        assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+        assert token_path.read_text(encoding="utf-8").strip() == minted_mode
+
+        # Case 3: foreign owner uid must be refused and rotated cleanly.
+        persist_run_auth_token(tmp_path, "foreign-owner-token")
+        foreign_uid = token_path.stat().st_uid + 1
+        monkeypatch.setattr(os, "getuid", lambda: foreign_uid)
+        res_uid = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+        assert res_uid.exit_code == 0, res_uid.output
+        rotated = os.environ.pop("BERNSTEIN_AUTH_TOKEN", "")
+        assert rotated
+        assert rotated != "foreign-owner-token"
+
+
+def test_loopback_host_403_names_allowed_hosts_and_allowlist_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """403 names BERNSTEIN_ALLOWED_HOSTS; allowlisted proxy/localhost variants pass while unknown hosts stay 403."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.delenv("BERNSTEIN_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    (tmp_path / ".sdd").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    apps = _capture_uvicorn_app(monkeypatch)
+    res_default = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+    assert res_default.exit_code == 0, res_default.output
+    minted_default = os.environ.pop("BERNSTEIN_AUTH_TOKEN", "")
+    assert minted_default
+
+    with TestClient(apps[-1], base_url="http://127.0.0.1:8052") as c:
+        for rejected_host in ("evil.example:8052", "localhost.:8052", "foo.localhost:8052"):
+            resp = c.get("/ui/", headers={"Host": rejected_host})
+            assert resp.status_code == 403, f"expected 403 for {rejected_host}, got {resp.status_code}"
+            assert "BERNSTEIN_ALLOWED_HOSTS" in resp.json()["detail"]
+
+    monkeypatch.setenv("BERNSTEIN_ALLOWED_HOSTS", "host.docker.internal, foo.localhost, localhost.")
+    res_allowed = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+    assert res_allowed.exit_code == 0, res_allowed.output
+    minted_allowed = os.environ["BERNSTEIN_AUTH_TOKEN"]
+
+    with TestClient(apps[-1], base_url="http://127.0.0.1:8052") as c:
+        for allowed_host in ("host.docker.internal:8052", "foo.localhost:8052", "localhost.:8052"):
+            assert c.get("/ui/", headers={"Host": allowed_host}).status_code == 200
+            assert (
+                c.get(
+                    "/api/v1/tasks", headers={"Host": allowed_host, "Authorization": f"Bearer {minted_allowed}"}
+                ).status_code
+                == 200
+            )
+        with c.websocket_connect(
+            "/ws",
+            headers={"Host": "host.docker.internal:8052", "Authorization": f"Bearer {minted_allowed}"},
+        ):
+            pass
+
+        still_rejected = c.get("/ui/", headers={"Host": "evil.example:8052"})
+        assert still_rejected.status_code == 403
+        assert "BERNSTEIN_ALLOWED_HOSTS" in still_rejected.json()["detail"]
+        with pytest.raises(WebSocketDenialResponse) as ws_rejected:
+            with c.websocket_connect(
+                "/ws",
+                headers={"Host": "evil.example:8052", "Authorization": f"Bearer {minted_allowed}"},
+            ):
+                pass
+        assert ws_rejected.value.status_code == 403

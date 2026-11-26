@@ -2847,6 +2847,7 @@ def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> 
 @router.get(
     "/agents/{session_id}/logs",
     responses={404: {"description": "No log file for session"}},
+    include_in_schema=False,
 )
 def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> AgentLogsResponse:
     """Return log file content for a session.
@@ -2865,7 +2866,7 @@ def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> AgentL
     return AgentLogsResponse(session_id=session_id, content=content, size=size)
 
 
-@router.post("/agents/{session_id}/kill")
+@router.post("/agents/{session_id}/kill", include_in_schema=False)
 def agent_kill(session_id: str, request: Request) -> AgentKillResponse:
     """Request that an agent session be killed.
 
@@ -2883,7 +2884,9 @@ def agent_kill(session_id: str, request: Request) -> AgentKillResponse:
     return AgentKillResponse(session_id=session_id, kill_requested=True)
 
 
-@router.get("/agents/{session_id}/stream", response_class=StreamingResponse, responses=SSE_RESPONSES)
+@router.get(
+    "/agents/{session_id}/stream", response_class=StreamingResponse, responses=SSE_RESPONSES, include_in_schema=False
+)
 def agent_stream(session_id: str, request: Request) -> StreamingResponse:
     """SSE stream of live log output for a session."""
     runtime_dir = _get_runtime_dir(request)
