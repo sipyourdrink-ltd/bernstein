@@ -232,3 +232,39 @@ def test_no_duplicate_openapi_operation_ids() -> None:
         assert f"{prefix}/dashboard/tasks/{{task_id}}/diff" in spec["paths"]
         assert f"{prefix}/dashboard/tasks/{{task_id}}/trace" in spec["paths"]
         assert f"{prefix}/dashboard/tasks/{{task_id}}/logs/stream" in spec["paths"]
+
+
+def test_agent_session_routes_registered_once_via_agents_router() -> None:
+    """Shadowed task_crud agent handlers stay deleted; agents.py owns /agents/{session_id}/{logs,kill,stream}."""
+    from collections.abc import Iterator
+
+    from fastapi.routing import APIRoute
+
+    from bernstein.core.routes import task_crud
+    from bernstein.core.server import create_app
+
+    for removed in ("agent_logs", "agent_kill", "agent_stream"):
+        assert not hasattr(task_crud, removed)
+
+    def _walk_api_routes(router: Any, prefix: str = "") -> Iterator[tuple[str, str]]:
+        for item in router.routes:
+            if isinstance(item, APIRoute):
+                yield prefix + item.path, item.endpoint.__module__
+            elif hasattr(item, "original_router"):
+                sub_prefix = prefix + getattr(getattr(item, "include_context", None), "prefix", "")
+                yield from _walk_api_routes(item.original_router, sub_prefix)
+
+    app = create_app()
+    expected_paths = {
+        f"{prefix}/agents/{{session_id}}/{suffix}"
+        for prefix in ("", "/api/v1")
+        for suffix in ("logs", "kill", "stream")
+    }
+    matched: dict[str, list[str]] = {}
+    for path, module_name in _walk_api_routes(app.router):
+        if path in expected_paths:
+            matched.setdefault(path, []).append(module_name)
+
+    assert set(matched) == expected_paths
+    for path, modules in matched.items():
+        assert modules == ["bernstein.core.routes.agents"], f"Unexpected registrations for {path}: {modules}"
