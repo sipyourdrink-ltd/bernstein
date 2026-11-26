@@ -484,6 +484,8 @@ def decode_jwt_header_unverified(token: str) -> dict[str, Any] | None:
     up a verification key in a JWKS. It must NEVER be used to select the
     verification algorithm or make authorization decisions.
     """
+    if not token.isascii():
+        return None
     parts = token.split(".")
     if len(parts) != 3:
         return None
@@ -502,6 +504,8 @@ def decode_jwt_unverified(token: str) -> dict[str, Any] | None:
     This is used only for local cache metadata such as expiry timestamps.
     It must not be used for authorization decisions.
     """
+    if not token.isascii():
+        return None
     parts = token.split(".")
     if len(parts) != 3:
         return None
@@ -690,6 +694,8 @@ def verify_jwt(
     must be public key material (``Ed25519PublicKey``, SPKI PEM, 32-byte raw
     public key, or OKP/Ed25519 JWK).
     """
+    if not token.isascii():
+        return None
     parts = token.split(".")
     if len(parts) != 3:
         return None

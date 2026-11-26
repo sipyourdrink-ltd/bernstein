@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -702,6 +703,21 @@ _AGENT_JWT_KID_PREFIX: Final[str] = "agent-jwt-"
 #: Algorithms permitted on a persisted JWT credential record.
 _ALLOWED_JWT_ALGORITHMS: Final[frozenset[str]] = frozenset({"EdDSA", "HS256"})
 
+#: In-process cache for ``BERNSTEIN_AGENT_JWT_KMS_ADAPTER=env`` adapters,
+#: keyed by ``(env_var, kid)``. ``EnvBasedKMSAdapter`` scrubs the raw key
+#: env var on first read so spawned agent subprocesses cannot inherit the
+#: private signing key; caching the loaded adapter lets subsequent
+#: ``AgentIdentityStore`` instances and JWKS lookups in the same process
+#: reuse the in-memory signer instead of failing on the scrubbed env var.
+_ENV_KMS_CACHE_LOCK = threading.Lock()
+_ENV_KMS_ADAPTER_CACHE: dict[tuple[str, str | None], KMSAdapter] = {}
+
+
+def _reset_env_kms_adapter_cache_for_tests() -> None:
+    """Clear the in-process env KMS adapter cache between tests."""
+    with _ENV_KMS_CACHE_LOCK:
+        _ENV_KMS_ADAPTER_CACHE.clear()
+
 
 class IdentityKeyError(RuntimeError):
     """The install key that authenticates identity records or signs tokens is unusable."""
@@ -833,6 +849,30 @@ def load_or_create_agent_jwt_signer(
 
     kms_kind = os.environ.get(AGENT_JWT_KMS_ADAPTER_ENV, "").strip()
     if kms_kind:
+        env_var_name = os.environ.get(AGENT_JWT_KMS_KEY_ENV_VAR, "").strip() or None
+        kms_kid = os.environ.get(AGENT_JWT_KMS_KID_ENV, "").strip() or None
+        if kms_kind.lower() == "env" and env_var_name is not None:
+            cache_key = (env_var_name, kms_kid)
+            with _ENV_KMS_CACHE_LOCK:
+                raw_env_value = os.environ.get(env_var_name)
+                if raw_env_value is not None and raw_env_value.strip():
+                    adapter = kms_adapter_from_config(
+                        enabled=True,
+                        kind=kms_kind,
+                        env_var=env_var_name,
+                        kid=kms_kid,
+                    )
+                    if adapter is None:
+                        msg = "agent JWT KMSAdapter resolved to None"
+                        raise IdentityKeyError(msg)
+                    for stale_key in [k for k in _ENV_KMS_ADAPTER_CACHE if k[0] == env_var_name]:
+                        del _ENV_KMS_ADAPTER_CACHE[stale_key]
+                    _ENV_KMS_ADAPTER_CACHE[cache_key] = adapter
+                    return adapter
+                cached = _ENV_KMS_ADAPTER_CACHE.get(cache_key)
+                if cached is not None:
+                    return cached
+
         configured_path = os.environ.get(AGENT_JWT_SIGNING_KEY_ENV, "").strip() or None
         if configured_path is not None:
             checked = _validate_signing_key_custody_path(Path(configured_path), base_dir)
@@ -843,9 +883,9 @@ def load_or_create_agent_jwt_signer(
             enabled=True,
             kind=kms_kind,
             key_path=configured_path,
-            env_var=os.environ.get(AGENT_JWT_KMS_KEY_ENV_VAR, "").strip() or None,
+            env_var=env_var_name,
             token_uri=os.environ.get(AGENT_JWT_KMS_TOKEN_URI_ENV, "").strip() or None,
-            kid=os.environ.get(AGENT_JWT_KMS_KID_ENV, "").strip() or None,
+            kid=kms_kid,
         )
         if adapter is None:
             msg = "agent JWT KMSAdapter resolved to None"

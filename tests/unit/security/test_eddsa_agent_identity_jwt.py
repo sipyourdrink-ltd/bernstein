@@ -29,6 +29,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import socket
 import sys
 import time
@@ -37,6 +38,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from bernstein.core.identity.agent_jwt import (
@@ -44,13 +47,25 @@ from bernstein.core.identity.agent_jwt import (
     AgentIdentity,
     AgentIdentityStore,
     IdentityKeyError,
+    _reset_env_kms_adapter_cache_for_tests,
+    load_or_create_agent_jwt_public_jwk,
     permissions_for_role,
 )
 from bernstein.core.interop.a2a_conformance import check_agent_card_v1_conformance, resolve_jwk
+from bernstein.core.persistence.lineage_signer import LineageSignerError
 from bernstein.core.routes.well_known import _DEFAULT_KID, _reset_signing_keypair_for_tests
 from bernstein.core.security.agent_card_signer import ed25519_public_jwk, generate_ed25519_keypair
 from bernstein.core.security.audit import AuditKeyPermissionError, load_or_create_audit_key
-from bernstein.core.security.auth import create_jwt, decode_jwt_unverified, verify_jwt
+from bernstein.core.security.auth import (
+    AuthService,
+    AuthStore,
+    AuthUser,
+    SSOConfig,
+    create_jwt,
+    decode_jwt_unverified,
+    verify_jwt,
+)
+from bernstein.core.security.auth_middleware import SSOAuthMiddleware
 from bernstein.core.security.key_custody import (
     EnvBasedKMSAdapter,
     FileBasedKMSAdapter,
@@ -62,8 +77,6 @@ from tests.unit._identity_record_helpers import seal
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from fastapi import FastAPI
 
 
 def _make_app(jsonl_path: Path, *, auth_token: str | None = None) -> FastAPI:
@@ -213,6 +226,39 @@ class TestEdDSAJWTPrimitives:
         # Wrong public key must fail signature verification.
         _other_priv, other_pub = generate_ed25519_keypair()
         assert verify_jwt(token, other_pub, algorithm="EdDSA") is None
+
+    @pytest.mark.auth_enabled
+    def test_non_ascii_jwt_payload_returns_none_and_http_401(self, tmp_path: Path) -> None:
+        """Non-ASCII JWT segments return None (HTTP 401), never UnicodeEncodeError (HTTP 500)."""
+        _priv, public_pem = generate_ed25519_keypair()
+        hs256_hdr = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode("ascii"))
+        eddsa_hdr = _b64url_encode(json.dumps({"alg": "EdDSA", "typ": "JWT"}, separators=(",", ":")).encode("ascii"))
+        sig_64 = _b64url_encode(b"\x00" * 64)
+
+        non_ascii_hs256 = f"{hs256_hdr}.caf\u00e9.{sig_64}"
+        non_ascii_eddsa = f"{eddsa_hdr}.caf\u00e9.{sig_64}"
+
+        assert verify_jwt(non_ascii_hs256, "shared-secret", algorithm="HS256") is None  # NOSONAR - test fixture
+        assert verify_jwt(non_ascii_eddsa, public_pem, algorithm="EdDSA") is None
+
+        # End-to-end through AuthMiddleware -> SSO AuthService.validate_token -> verify_jwt.
+        sso_cfg = SSOConfig(jwt_secret="sso-non-ascii-secret", enabled=True)  # NOSONAR - test fixture
+        sso_store = AuthStore(tmp_path / "sso")
+        sso_store.save_user(AuthUser(id="u1", email="u1@example.com", display_name="User 1"))
+        sso_service = AuthService(sso_cfg, sso_store)
+
+        app = FastAPI()
+        app.add_middleware(SSOAuthMiddleware, auth_service=sso_service)
+
+        @app.get("/protected")
+        async def _protected() -> JSONResponse:
+            return JSONResponse({"ok": True})
+
+        client = TestClient(app, raise_server_exceptions=False)
+        raw_auth = f"Bearer {non_ascii_hs256}".encode("latin-1")
+        resp = client.get("/protected", headers=[(b"authorization", raw_auth)])  # type: ignore[arg-type]
+        assert resp.status_code == 401
+        assert sso_service.validate_token(non_ascii_hs256) is None
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +548,47 @@ class TestSigningKeyCustodyAndInvariants:
         _id2, tok2 = store_hsm.create_identity("worker-hsm", "backend", task_ids=["t-hsm"])
         assert _jwt_header(tok2)["kid"] == "hsm-agent-kid-1"
         assert store_hsm.authenticate(tok2) is not None
+
+    def test_env_kms_adapter_supports_multiple_stores_and_scrubs_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env KMS adapter caches per process after scrubbing the env var so multiple stores work."""
+        private_pem_1, _ = generate_ed25519_keypair()
+        env_var = "TEST_MULTI_STORE_AGENT_JWT_PEM"
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_KMS_ADAPTER", "env")
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_KMS_ENV_VAR", env_var)
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_KMS_KID", "env-multi-kid-1")
+        monkeypatch.setenv(env_var, private_pem_1.decode("ascii"))
+
+        auth_dir = tmp_path / "shared-auth"
+        store1 = AgentIdentityStore(auth_dir)
+        # First load scrubs the raw private key from os.environ so child subprocesses cannot inherit it.
+        assert env_var not in os.environ
+
+        # Second store in the same process (e.g. orchestrator + spawner) and JWKS lookup must succeed.
+        store2 = AgentIdentityStore(auth_dir)
+        published_jwk = load_or_create_agent_jwt_public_jwk()
+
+        assert store1.signing_kid == "env-multi-kid-1"
+        assert store2.signing_kid == "env-multi-kid-1"
+        assert store1.public_key_jwk() == store2.public_key_jwk() == published_jwk
+
+        _id1, tok1 = store1.create_identity("worker-multi-env", "backend", task_ids=["t-multi"])
+        authed = store2.authenticate(tok1)
+        assert authed is not None
+        assert authed.id == "worker-multi-env"
+
+        # Setting a new PEM in the env var loads the rotated key and scrubs it again.
+        private_pem_2, _ = generate_ed25519_keypair()
+        monkeypatch.setenv(env_var, private_pem_2.decode("ascii"))
+        store3 = AgentIdentityStore(tmp_path / "rotated-auth")
+        assert env_var not in os.environ
+        assert store3.public_key_jwk()["x"] != store1.public_key_jwk()["x"]
+
+        # Without a cached adapter or env var, construction still fails closed.
+        _reset_env_kms_adapter_cache_for_tests()
+        with pytest.raises(LineageSignerError):
+            AgentIdentityStore(tmp_path / "missing-env-auth")
 
     def test_invariants_preserved_record_mac_authority_offline_and_lifecycle(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
