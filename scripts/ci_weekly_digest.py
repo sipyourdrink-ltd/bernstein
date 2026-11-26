@@ -72,8 +72,13 @@ _PERFLINT_CLI_NOISE_RE = re.compile(
     r"^Command line:\d+: \[W0012\(unknown-option-value\), \] Unknown option value for '--enable',"
 )
 _PERFLINT_LINE_RE = re.compile(
-    r"^[^:]+:\d+(?::\d+)?:\s*(?:\[(?P<code>[A-Za-z0-9_./-]+)(?:\([^)]*\))?[^\]]*\]|(?P<pcode>[A-Z]\d+):)"
+    r"^[^:]+:\d+(?::\d+)?:\s*(?:\[(?P<code>[^(\],:\r\n]+)(?:\([^)]*\))?[^\]]*\]|(?P<pcode>[^:\s]+):)"
 )
+_RULE_ID_PATTERNS: dict[str, re.Pattern[str]] = {
+    "vulture": re.compile(r"\Avulture/[a-z-]+\Z", re.ASCII),
+    "refurb": re.compile(r"\AFURB[0-9]{3}\Z", re.ASCII),
+    "perflint": re.compile(r"\AW8[0-9]{3}\Z", re.ASCII),
+}
 
 
 class _QualityValidationError(ValueError):
@@ -275,13 +280,13 @@ def select_quality_artifacts(artifacts: Iterable[dict[str, object]]) -> dict[str
     return {name: by_name[name] for name in QUALITY_ARTIFACT_NAMES if name in by_name}
 
 
-def _check_rule(rule_id: object, prefix: str, context: str) -> str:
-    if not isinstance(rule_id, str) or not rule_id or not rule_id.startswith(prefix):
+def _check_rule(rule_id: object, pattern: re.Pattern[str], context: str) -> str:
+    if not isinstance(rule_id, str) or pattern.fullmatch(rule_id) is None:
         raise _QualityValidationError(f"disallowed rule ID in {context}")
     return rule_id
 
 
-def _parse_sarif_counts(raw_bytes: bytes, *, expected_tool: str, rule_prefix: str) -> Counter[str]:
+def _parse_sarif_counts(raw_bytes: bytes, *, expected_tool: str, rule_pattern: re.Pattern[str]) -> Counter[str]:
     try:
         doc = json.loads(raw_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -300,11 +305,11 @@ def _parse_sarif_counts(raw_bytes: bytes, *, expected_tool: str, rule_prefix: st
             raise _QualityValidationError("invalid SARIF arrays")
         for r in rules:
             if isinstance(r, dict) and "id" in r:
-                _check_rule(r["id"], rule_prefix, expected_tool)
+                _check_rule(r["id"], rule_pattern, expected_tool)
         for res in results:
             if not isinstance(res, dict):
                 raise _QualityValidationError("invalid SARIF result")
-            counts[_check_rule(res.get("ruleId"), rule_prefix, expected_tool)] += 1
+            counts[_check_rule(res.get("ruleId"), rule_pattern, expected_tool)] += 1
     return counts
 
 
@@ -314,13 +319,14 @@ def _parse_perflint_text(raw_bytes: bytes) -> Counter[str]:
     except UnicodeDecodeError as exc:
         raise _QualityValidationError("invalid perflint encoding") from exc
     counts: Counter[str] = Counter()
+    perflint_pattern = _RULE_ID_PATTERNS["perflint"]
     for line in (ln.strip() for ln in text.splitlines()):
         if not line or line.startswith("*************") or _PERFLINT_CLI_NOISE_RE.match(line):
             continue
         match = _PERFLINT_LINE_RE.match(line)
         if not match:
             raise _QualityValidationError("unexpected line format in perflint output")
-        counts[_check_rule(match.group("code") or match.group("pcode"), "W8", "perflint")] += 1
+        counts[_check_rule(match.group("code") or match.group("pcode"), perflint_pattern, "perflint")] += 1
     return counts
 
 
@@ -351,23 +357,25 @@ def parse_quality_artifact_files(files_by_artifact: dict[str, dict[str, bytes]],
         return QualityReport("unavailable", run=run)
     try:
         parsed: dict[str, dict[str, int]] = {}
-        for art, primary, tool, prefix in (
-            ("vulture-sarif", "vulture.sarif", "vulture", "vulture/"),
-            ("refurb-sarif", "refurb.sarif", "refurb", "FURB"),
+        for art, primary, tool in (
+            ("vulture-sarif", "vulture.sarif", "vulture"),
+            ("refurb-sarif", "refurb.sarif", "refurb"),
         ):
             files = files_by_artifact[art]
             sarifs = sorted(n for n in files if n.endswith(".sarif"))
             if primary not in files or not sarifs:
                 raise _QualityValidationError(f"missing {primary}")
             for n in sarifs:
-                counts = _parse_sarif_counts(files[n], expected_tool=tool, rule_prefix=prefix)
+                counts = _parse_sarif_counts(files[n], expected_tool=tool, rule_pattern=_RULE_ID_PATTERNS[tool])
                 if n == primary:
                     parsed[art] = dict(counts)
         p_files = files_by_artifact["perflint-sarif"]
         p_sarifs = sorted(n for n in p_files if n.endswith(".sarif"))
         sarif_counts = Counter()
         for n in p_sarifs:
-            sarif_counts = _parse_sarif_counts(p_files[n], expected_tool="perflint", rule_prefix="W8")
+            sarif_counts = _parse_sarif_counts(
+                p_files[n], expected_tool="perflint", rule_pattern=_RULE_ID_PATTERNS["perflint"]
+            )
         if "perflint.txt" in p_files:
             p_counts = dict(_parse_perflint_text(p_files["perflint.txt"]))
         elif p_sarifs:

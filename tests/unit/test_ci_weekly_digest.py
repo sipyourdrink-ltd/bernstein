@@ -378,22 +378,57 @@ def test_quality_fetch_requests_exact_three_allowlisted_artifacts_only() -> None
     "bad",
     [
         {"vulture-sarif": {"vulture.sarif": _sarif_bytes("semgrep", ["vulture/dead-code"])}},
+        {"vulture-sarif": {"vulture.sarif": _sarif_bytes("vulture", ["vulture/unused-import\n"])}},
         {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB123", "B101"])}},
+        {
+            "refurb-sarif": {
+                "refurb.sarif": _sarif_bytes("refurb", ["FURB101` [x](https://evil)\n# pwned src/secrets.py:12"])
+            }
+        },
+        {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB101\n"])}},
+        {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB1234"])}},
+        {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB\u0661\u0662\u0663"])}},
+        {"perflint-sarif": {"perflint.sarif": _sarif_bytes("perflint", ["W8101\n"])}},
         {
             "perflint-sarif": {
                 "perflint.sarif": _sarif_bytes("perflint", []),
                 "perflint.txt": b"src/a.py:9: [W9001(other), fn] nope\n",
             }
         },
+        {
+            "perflint-sarif": {
+                "perflint.sarif": _sarif_bytes("perflint", []),
+                "perflint.txt": b"src/a.py:9: [W8101` [x](https://evil), fn] msg\n# pwned src/secrets.py:12\n",
+            }
+        },
+        {
+            "perflint-sarif": {
+                "perflint.sarif": _sarif_bytes("perflint", []),
+                "perflint.txt": b"src/a.py:9: [W81012(x), fn] nope\n",
+            }
+        },
     ],
-    ids=["foreign-tool", "bad-sarif-rule", "bad-perflint-rule"],
+    ids=[
+        "foreign-tool",
+        "vulture-trailing-newline",
+        "bad-sarif-rule",
+        "refurb-markdown-injection",
+        "refurb-trailing-newline",
+        "refurb-four-digits",
+        "refurb-unicode-digits",
+        "perflint-sarif-trailing-newline",
+        "bad-perflint-rule",
+        "perflint-txt-markdown-injection",
+        "perflint-txt-four-digits",
+    ],
 )
 def test_quality_fail_closed_omits_section_with_neutral_line(bad: dict[str, dict[str, bytes]]) -> None:
     meta = QualityRunMeta(45027559316, "schedule", "2026-11-22T13:27:13Z", "22d40089c7", "https://example/run")
     report = parse_quality_artifact_files(_base_files() | bad, meta)
     section = render_quality_section(report)
     assert report.status == "rejected" and "\n" not in section and "omitted" in section
-    assert "FURB" not in section and "W8201" not in section
+    for forbidden in ("FURB", "W8201", "W8101", "evil", "pwned", "secrets.py"):
+        assert forbidden not in section
 
 
 def test_quality_render_omits_paths_lines_messages_and_snippets() -> None:
