@@ -20,9 +20,9 @@ packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
     # via pipx
-pipx==1.18.16 \
-    --hash=sha256:06795f5cd689f3ea36b574a7d1ddfc7b4c1ebee66116db7b70ded868f95d5057 \
-    --hash=sha256:348061797d001fd487868eaade8fb4949979c91b2da1c35c4ae0161f7019cc0f
+pipx==1.18.19 \
+    --hash=sha256:2ee63572a0ba01ebb977781db3ece8df61c66b750b9ee9ced3effdbca34da861 \
+    --hash=sha256:f93b4c137a9424a311aa98090ef220f560e470092d30b43eb824722479a4e589
     # via -r .github/requirements/pipx-requirements.in
 platformdirs==4.14.5 \
     --hash=sha256:32e9921db7385aa8169bee4fe9501923e5715ba9fb7ea3b9c69b0d8e0639f7a1 \
