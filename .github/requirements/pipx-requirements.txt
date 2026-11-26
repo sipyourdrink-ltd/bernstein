@@ -24,9 +24,9 @@ pipx==1.18.16 \
     --hash=sha256:06795f5cd689f3ea36b574a7d1ddfc7b4c1ebee66116db7b70ded868f95d5057 \
     --hash=sha256:348061797d001fd487868eaade8fb4949979c91b2da1c35c4ae0161f7019cc0f
     # via -r .github/requirements/pipx-requirements.in
-platformdirs==4.14.5 \
-    --hash=sha256:32e9921db7385aa8169bee4fe9501923e5715ba9fb7ea3b9c69b0d8e0639f7a1 \
-    --hash=sha256:8e778c6fa421516f4d3369449f8df3b0e1b72c0e0005fe88e3ec772d0a14e750
+platformdirs==4.14.7 \
+    --hash=sha256:391513b74707c42335fff3ea17eaac657a7ee9ffcadd809634d34ea594d0122c \
+    --hash=sha256:5472257c1cf97a14658af52997011c7e59e4aebf3a24950b973c11b579e1b074
     # via pipx
 userpath==1.9.2 \
     --hash=sha256:2cbf01a23d655a1ff8fc166dfb78da1b641d1ceabf0fe5f970767d380b14e89d \
