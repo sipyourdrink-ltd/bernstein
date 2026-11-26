@@ -165,6 +165,11 @@ def _try_read_session_log(
 
 
 @router.get(
+    "/tasks/{task_id}/logs/stream",
+    response_class=StreamingResponse,
+    responses={**SSE_RESPONSES, 404: {"description": "Task not found"}},
+)
+@router.get(
     "/dashboard/tasks/{task_id}/logs/stream",
     response_class=StreamingResponse,
     responses={**SSE_RESPONSES, 404: {"description": "Task not found"}},

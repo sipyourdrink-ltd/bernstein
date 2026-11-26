@@ -20,6 +20,7 @@ import contextlib
 import json
 import os
 import signal
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -201,9 +202,8 @@ def _enforce_dashboard_posture(host: str, workdir: Path) -> None:
         click.echo("Dashboard token (operator scope, printed once - the journal keeps only its digest):")
         click.echo(f"  Token: {raw}")
         click.echo(
-            "  Use it in the dashboard login form or on /api/v1/dashboard/*; "
-            "general API endpoints (/api/v1/tasks, /status) require BERNSTEIN_AUTH_TOKEN "
-            "(auto-minted on local browser open; set BERNSTEIN_AUTH_TOKEN explicitly with --no-open). "
+            "  Use it only in /dashboard/review-board or on /api/v1/dashboard/*; "
+            "the SPA (/ui/, /api/v1/tasks) uses BERNSTEIN_AUTH_TOKEN. "
             "Note: `bernstein run` already serves /ui/ on its own port."
         )
         return
@@ -227,42 +227,30 @@ def _effective_api_token() -> str:
     return os.environ.get("BERNSTEIN_AUTH_TOKEN", "").strip()
 
 
-def _ensure_loopback_api_token(host: str) -> str | None:
-    """Mint + export an ephemeral operator bearer on an unconfigured loopback bind.
+def _ensure_loopback_api_token(
+    host: str,
+    *,
+    workdir: Path | None = None,
+    persist: bool | None = None,
+) -> str | None:
+    """Mint, reuse, and export an operator bearer on a local loopback bind.
 
-    Closes the local-dashboard lockout: the SPA's data panels poll the
-    SSO-gated *general* API (``/api/v1/agents`` / ``/api/v1/tasks`` / ...),
-    which accepts only the process ``BERNSTEIN_AUTH_TOKEN`` bearer. A #2366
-    dashboard scoped token (or ``BERNSTEIN_DASHBOARD_PASSWORD``) unlocks the
-    ``/api/v1/dashboard/*`` mirror but *not* those general routes, so an
-    operator who configured dashboard auth yet left ``BERNSTEIN_AUTH_TOKEN``
-    unset hit a 401 wall on every panel.
+    Closes the local-dashboard lockout across default, ``--no-open``, and
+    ``--dev`` loopback serves: the SPA's data panels poll the SSO-gated general
+    API (``/api/v1/agents``, ``/api/v1/tasks``, ...), which accepts
+    ``BERNSTEIN_AUTH_TOKEN`` rather than a #2366 dashboard scoped token.
 
-    On a loopback bind with no bearer supplied, this mints a fresh URL-safe
-    token (the same primitive the tunnel onboarding uses), exports it into
-    ``BERNSTEIN_AUTH_TOKEN`` so a subsequent :func:`create_app` resolves it as
-    the general-API bearer, and returns it so the caller can seed the operator's
-    own browser with the identical token. The token is a standalone process
-    credential - it is deliberately *not* written to the #2366 dashboard token
-    journal, so an already-configured install's signed grant count is untouched.
-
-    Posture is preserved, not weakened:
-
-    * A **non-loopback** bind never auto-mints (returns ``None``) - a routable
-      interface still refuses to start without operator-configured auth
-      (enforced upstream in :func:`_enforce_dashboard_posture`), and a bearer
-      is never conjured for it.
-    * When ``BERNSTEIN_AUTH_TOKEN`` is **already supplied**, it is respected
-      verbatim (returns ``None``; no fresh mint).
-    * When auth is **explicitly disabled** (``BERNSTEIN_AUTH_DISABLED``) there
-      is no gate to satisfy, so nothing is minted (returns ``None``).
-
-    Args:
-        host: Bind host the server is about to listen on.
-
-    Returns:
-        The freshly minted bearer when one was exported, else ``None``.
+    Resolution order on loopback:
+    1. Return ``None`` immediately on non-loopback binds or when
+       ``BERNSTEIN_AUTH_TOKEN`` / ``BERNSTEIN_AUTH_DISABLED`` is already set.
+    2. If ``.sdd/runtime/auth.token`` exists inside an initialized workspace,
+       reuse it via ``BERNSTEIN_AUTH_TOKEN`` without overwriting it.
+    3. Otherwise mint an ephemeral URL-safe bearer into ``BERNSTEIN_AUTH_TOKEN``,
+       persisting it ``0600`` to ``.sdd/runtime/auth.token`` only when
+       ``.sdd/`` already existed (never creating ``.sdd/`` in uninitialized
+       directories solely for a token).
     """
+    from bernstein.core.run_auth_token import persist_run_auth_token, read_run_auth_token
     from bernstein.core.security.auth_middleware import auth_disabled_via_opt_out
     from bernstein.core.server.dashboard_tokens import is_loopback_host
     from bernstein.gui import pwa
@@ -273,8 +261,18 @@ def _ensure_loopback_api_token(host: str) -> str | None:
         return None
     if auth_disabled_via_opt_out():
         return None
+    resolved_workdir = workdir if workdir is not None else Path.cwd()
+    has_sdd = (resolved_workdir / ".sdd").is_dir()
+    should_persist = has_sdd if persist is None else persist
+    if should_persist:
+        existing = read_run_auth_token(resolved_workdir)
+        if existing:
+            os.environ["BERNSTEIN_AUTH_TOKEN"] = existing
+            return existing
     token = pwa.new_auth_token()
     os.environ["BERNSTEIN_AUTH_TOKEN"] = token
+    if should_persist:
+        persist_run_auth_token(resolved_workdir, token)
     return token
 
 
@@ -408,38 +406,55 @@ def serve(
     import uvicorn
     from fastapi import FastAPI
 
+    from bernstein.core.run_auth_token import run_auth_token_path
+    from bernstein.core.security.auth_middleware import auth_disabled_via_opt_out
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+    from bernstein.core.server.server_middleware import LoopbackHostMiddleware
     from bernstein.gui import mount, pwa
+
+    cwd = Path.cwd()
+    had_sdd = (cwd / ".sdd").is_dir()
 
     # Startup posture (#2366): non-loopback binds refuse to start without
     # dashboard auth configured; unconfigured loopback binds get a scoped
     # operator token issued and printed once.
-    _enforce_dashboard_posture(host, Path.cwd())
+    _enforce_dashboard_posture(host, cwd)
 
-    # We auto-open (and seed) the operator's own browser only on a plain local
-    # serve - never with --no-open / --dev / --tunnel, which have their own
-    # onboarding story. The loopback bearer mint is coupled to that path: an
-    # auto-minted token is only useful when it is actually delivered to a
-    # browser via the opened URL, so mint only when we will open one. Export it
-    # BEFORE create_app() so the general /api/v1 surface the SPA's panels poll
-    # accepts it; _resolve_local_open_url below seeds the identical token into
-    # the opened URL. No-op on routable binds and when a bearer already exists.
+    # Loopback binds without --tunnel always ensure a general-API bearer
+    # (including --no-open and --dev) so /api/v1/* stays fail-closed while the
+    # SPA does not hit a 401 wall. Tunnel and non-loopback binds never auto-mint.
     auto_open = not no_open and not dev and not tunnel
-    if auto_open:
-        _ensure_loopback_api_token(host)
+    loopback_no_tunnel = is_loopback_host(host) and not tunnel
+    minted_token: str | None = None
+    if loopback_no_tunnel:
+        minted_token = _ensure_loopback_api_token(host, workdir=cwd, persist=had_sdd)
 
     if minimal:
         app = FastAPI(title="Bernstein", description="Operator GUI (minimal)")
+        if loopback_no_tunnel:
+            app.add_middleware(LoopbackHostMiddleware)
     else:
         try:
             from bernstein.core.server.server_app import create_app  # pyright: ignore[reportUnknownVariableType]
         except ImportError as exc:  # pragma: no cover
             raise SystemExit(f"Failed to import Bernstein API factory: {exc}") from exc
-        app = create_app()
+        app = create_app(enforce_loopback_host=loopback_no_tunnel)
 
     mount(app)
 
     local_url = f"http://{host}:{port}/ui/"
     click.echo(f"Bernstein GUI - {local_url}")
+    if not auto_open and loopback_no_tunnel and not auth_disabled_via_opt_out():
+        token_file = run_auth_token_path(cwd)
+        if had_sdd and token_file.is_file():
+            click.echo(f"API bearer token (for /ui/ and /api/v1/*): {token_file}")
+        elif minted_token is not None and sys.stdout.isatty():
+            click.echo(f"API bearer (BERNSTEIN_AUTH_TOKEN, for /ui/ and /api/v1/*): {minted_token}")
+        elif _effective_api_token():
+            click.echo(
+                "API bearer (BERNSTEIN_AUTH_TOKEN) active for /ui/ and /api/v1/* "
+                "(paste BERNSTEIN_AUTH_TOKEN in the UI prompt)."
+            )
     if dev:
         click.echo(
             "Dev mode: run `cd web && npm run dev` in a second terminal for HMR. "

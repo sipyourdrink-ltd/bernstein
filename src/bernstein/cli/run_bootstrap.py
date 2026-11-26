@@ -2463,6 +2463,13 @@ def exec_restart() -> None:
         "cache policy are unaffected."
     ),
 )
+@click.option(
+    "--open-ui",
+    "open_ui",
+    is_flag=True,
+    default=False,
+    help="Open the Web GUI in your browser once the local task server is ready.",
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -2509,6 +2516,7 @@ def run(
     attach: tuple[Path, ...] = (),
     refresh_cache: bool = False,
     force_fresh: bool = False,
+    open_ui: bool = False,
 ) -> None:
     """Parse bernstein.yaml (or plan file), start the task server, and run agents."""
     try:
@@ -2558,6 +2566,7 @@ def run(
             attach=attach,
             refresh_cache=refresh_cache,
             force_fresh=force_fresh,
+            open_ui=open_ui,
         )
     except (click.UsageError, SystemExit):
         raise
@@ -2612,6 +2621,7 @@ def _run_impl(
     attach: tuple[Path, ...] = (),
     refresh_cache: bool = False,
     force_fresh: bool = False,
+    open_ui: bool = False,
 ) -> None:
     """Concrete ``run`` implementation; wrapped by :func:`run` for hinting.
 
@@ -2986,6 +2996,7 @@ def _run_impl(
                     tasks=tasks,
                     ab_test=ab_test,
                     force_fresh=force_fresh,
+                    open_ui=open_ui,
                 )
                 persist_server_port(port, workdir)
 
@@ -3031,6 +3042,7 @@ def _run_impl(
                     cli=cli or "auto",  # Default to "auto" if not specified
                     model=model,
                     force_fresh=force_fresh,
+                    open_ui=open_ui,
                 )
                 persist_server_port(port, workdir)
         except RuntimeError as exc:
@@ -3070,6 +3082,7 @@ def _run_impl(
                 model=model,
                 worker_role=worker_role,
                 force_fresh=force_fresh,
+                open_ui=open_ui,
             )
             persist_server_port(port, workdir)
     except SeedError as exc:

@@ -41,6 +41,7 @@ from bernstein.core.server.json_logging import setup_json_logging
 from bernstein.core.server.server_middleware import (
     CrashGuardMiddleware,
     IPAllowlistMiddleware,
+    LoopbackHostMiddleware,
     ReadOnlyMiddleware,
     WebSocketAdmissionEndpoint,
     WebSocketAdmissionMiddleware,
@@ -1018,6 +1019,7 @@ def create_app(
     slack_signing_secret: str | None = None,
     claim_control_path: Path | None = None,
     claim_controller_id: str | None = None,
+    enforce_loopback_host: bool | None = None,
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -1327,7 +1329,7 @@ def create_app(
     from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     _auth_dir = sdd_dir / "auth"
-    _agent_identity_store = AgentIdentityStore(_auth_dir)
+    _agent_identity_store = AgentIdentityStore(_auth_dir, create_dir=False)
     application.state.identity_store = _agent_identity_store  # type: ignore[attr-defined]
 
     # RFC 8707: optional resource-indicator binding. Configured via the
@@ -1422,6 +1424,16 @@ def create_app(
 
     application.add_middleware(CORSMiddleware, **cors_kwargs)
 
+    # DNS-rebinding defense on loopback binds: rejects non-loopback Host
+    # headers (including static /ui/ requests) before CORS/auth/routing run.
+    loopback_guard = (
+        enforce_loopback_host
+        if enforce_loopback_host is not None
+        else os.environ.get("BERNSTEIN_LOOPBACK_HOST_GUARD", "").strip().lower() in ("1", "true", "yes")
+    )
+    if loopback_guard:
+        application.add_middleware(LoopbackHostMiddleware)
+
     # Must stay last so WebSocket probes traverse every installed gate.
     application.add_middleware(WebSocketAdmissionMiddleware)
 
@@ -1445,9 +1457,13 @@ def create_app(
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.a2a_federation = a2a_federation  # type: ignore[attr-defined]
     # Mints the lineage receipt every inbound A2A response carries (#2609).
-    # ``None`` when key material or the lineage root is unavailable, in which
-    # case responses are served unattested rather than not at all.
-    application.state.a2a_receipt_issuer = build_receipt_issuer(sdd_dir)  # type: ignore[attr-defined]
+    # Built eagerly only when A2A server mode is enabled or keys already exist;
+    # otherwise deferred until an A2A route needs it so uninitialized workdirs
+    # are not populated with key material on passive `gui serve` boots.
+    a2a_enabled = os.environ.get("BERNSTEIN_A2A_SERVER_ENABLED", "").strip().lower() in ("1", "true", "yes")
+    application.state.a2a_receipt_issuer = (  # type: ignore[attr-defined]
+        build_receipt_issuer(sdd_dir) if (a2a_enabled or (sdd_dir / "a2a").is_dir()) else None
+    )
     # Inbound A2A JSON-RPC auth (#2609): API key + OAuth2 client-credentials,
     # both declared in the agent card. Built from ``BERNSTEIN_A2A_*`` env at
     # app creation; the JSON-RPC surface is inert unless

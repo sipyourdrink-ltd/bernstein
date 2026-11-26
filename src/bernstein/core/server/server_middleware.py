@@ -7,6 +7,8 @@ The parent ``server`` module re-exports every name for backward compatibility.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import os
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -114,6 +116,75 @@ class WebSocketAdmissionEndpoint:
             await send({"type": "http.response.body", "body": b""})
         else:
             await self.app(scope, receive, send)
+
+
+def _extract_host_without_port(raw_host: str) -> str:
+    """Return the normalized hostname/IP literal from an HTTP Host header."""
+    value = raw_host.strip().lower()
+    if not value:
+        return ""
+    if value.startswith("["):
+        end = value.find("]")
+        if end == -1:
+            return ""
+        rest = value[end + 1 :]
+        if rest and not (rest.startswith(":") and rest[1:].isdigit()):
+            return ""
+        return value[1:end]
+    if value.count(":") == 1:
+        host_part, port_part = value.split(":", 1)
+        return host_part if port_part.isdigit() else ""
+    if ":" in value:
+        return value
+    return value
+
+
+def _is_allowed_loopback_host_header(raw_host: str, extra_hosts: frozenset[str]) -> bool:
+    """Return True when *raw_host* targets loopback or an explicitly allowed host."""
+    hostname = _extract_host_without_port(raw_host)
+    if not hostname:
+        return False
+    if hostname in ("localhost", "localhost.localdomain") or hostname in extra_hosts:
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+class LoopbackHostMiddleware:
+    """Reject non-loopback HTTP Host headers on loopback binds (DNS-rebinding guard)."""
+
+    def __init__(self, app: ASGIApp, allowed_hosts: tuple[str, ...] = ()) -> None:
+        self.app = app
+        env_hosts = os.environ.get("BERNSTEIN_ALLOWED_HOSTS", "")
+        configured = {item.strip().lower() for item in (*allowed_hosts, *env_hosts.split(",")) if item and item.strip()}
+        self._allowed_hosts = frozenset(configured)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        raw_host = ""
+        for name, value in scope.get("headers", ()):
+            if name.lower() == b"host":
+                raw_host = value.decode("latin-1")
+                break
+
+        if _is_allowed_loopback_host_header(raw_host, self._allowed_hosts):
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get("type") == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+
+        response = JSONResponse(
+            status_code=403,
+            content={"detail": "Invalid Host header for loopback bind"},
+        )
+        await response(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
