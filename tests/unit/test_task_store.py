@@ -12,6 +12,8 @@ from bernstein.core.models import TaskStatus
 from bernstein.core.task_store import TaskStore
 from fastapi import HTTPException
 
+from bernstein.core.tasks.models import ApprovalSpec
+
 
 def _task_request(
     *,
@@ -400,3 +402,156 @@ async def test_count_tasks_matches_len_list_tasks(tmp_path: Path) -> None:
     assert store.count_tasks(status="done") == len(store.list_tasks(status="done"))
     assert store.count_tasks(status="nonexistent") == len(store.list_tasks(status="nonexistent"))
     assert store.count_tasks(tenant_id=t2.tenant_id) == len(store.list_tasks(tenant_id=t2.tenant_id))
+
+
+def _approval_spec() -> ApprovalSpec:
+    """Return the valid gate spec used by the journal replay tests."""
+    return ApprovalSpec(prompt="Approve the deploy", timeout_seconds=42, default_action="approve")
+
+
+def _record_line(store: TaskStore, task: Any, **overrides: Any) -> str:
+    """Serialise a task record with field overrides as one JSONL line."""
+    record = dict(store._task_to_record(task))
+    record.update(overrides)
+    return json.dumps(record) + "\n"
+
+
+async def _task_with_spec(store: TaskStore, jsonl_path: Path, spec: ApprovalSpec | dict[str, Any] | None) -> Any:
+    """Create a task and write a creation line carrying the given approval spec."""
+    task = await store.create(_task_request())
+    if isinstance(spec, ApprovalSpec):
+        task.approval_spec = spec
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_path.write_text(
+        _record_line(
+            store,
+            task,
+            approval_spec=(spec.to_dict() if isinstance(spec, ApprovalSpec) else spec),
+        ),
+        encoding="utf-8",
+    )
+    return task
+
+
+@pytest.mark.anyio
+async def test_replay_round_trips_approval_spec(tmp_path: Path) -> None:
+    """A valid approval_spec survives the JSONL write/replay round-trip."""
+    jsonl_path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(jsonl_path)
+    spec = _approval_spec()
+    task = await _task_with_spec(store, jsonl_path, spec)
+
+    assert store._task_to_record(task).get("approval_spec") == spec.to_dict()
+
+    replayed = TaskStore(jsonl_path)
+    replayed.replay_jsonl()
+    restored = replayed.get_task(task.id)
+
+    assert restored is not None
+    assert restored.approval_spec == spec
+
+
+@pytest.mark.anyio
+async def test_replay_explicit_none_clears_approval_spec(tmp_path: Path) -> None:
+    """An explicit null approval_spec in a later record clears the gate."""
+    jsonl_path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(jsonl_path)
+    task = await _task_with_spec(store, jsonl_path, _approval_spec())
+    with jsonl_path.open("a", encoding="utf-8") as handle:
+        handle.write(_record_line(store, task, approval_spec=None))
+
+    replayed = TaskStore(jsonl_path)
+    replayed.replay_jsonl()
+    restored = replayed.get_task(task.id)
+
+    assert restored is not None
+    assert restored.approval_spec is None
+
+
+@pytest.mark.parametrize(
+    ("malformed", "reason"),
+    [
+        ("a string", "str"),
+        ([], "list"),
+        (False, "bool"),
+        (0, "int"),
+        ({}, "prompt"),
+        ({"prompt": "", "timeout_seconds": 10, "default_action": "reject"}, "non-empty"),
+        ({"prompt": "Next gate", "timeout_seconds": None, "default_action": "reject"}, "NoneType"),
+    ],
+)
+@pytest.mark.anyio
+async def test_replay_malformed_approval_spec_keeps_valid_policy(
+    tmp_path: Path, malformed: object, reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Malformed approval_spec values keep the last valid gate and do not abort replay."""
+    jsonl_path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(jsonl_path)
+    original = _approval_spec()
+    task = await _task_with_spec(store, jsonl_path, original)
+    with jsonl_path.open("a", encoding="utf-8") as handle:
+        handle.write(_record_line(store, task, approval_spec=malformed))
+
+    replayed = TaskStore(jsonl_path)
+    with caplog.at_level("WARNING"):
+        replayed.replay_jsonl()
+    restored = replayed.get_task(task.id)
+
+    assert restored is not None
+    assert restored.approval_spec == original
+    warning = caplog.text
+    assert task.id in warning
+    assert str(jsonl_path) in warning
+    assert "2" in warning
+    assert reason in warning
+
+    # A valid record after the corrupt line must still be replayed.
+    replacement = ApprovalSpec(prompt="Second gate", timeout_seconds=7, default_action="reject")
+    with jsonl_path.open("a", encoding="utf-8") as handle:
+        handle.write(_record_line(store, task, approval_spec=replacement.to_dict()))
+    replayed_again = TaskStore(jsonl_path)
+    replayed_again.replay_jsonl()
+    latest = replayed_again.get_task(task.id)
+
+    assert latest is not None
+    assert latest.approval_spec == replacement
+
+
+@pytest.mark.parametrize(
+    ("malformed", "reason"),
+    [
+        ({"prompt": "", "timeout_seconds": 10, "default_action": "reject"}, "non-empty"),
+        ({}, "prompt"),
+        ({"prompt": "Gate", "timeout_seconds": None, "default_action": "reject"}, "NoneType"),
+        ("a string", "str"),
+        ([], "list"),
+        (False, "bool"),
+        (0, "int"),
+    ],
+)
+@pytest.mark.anyio
+async def test_replay_skips_creation_line_with_malformed_approval_spec(
+    tmp_path: Path, malformed: object, reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fail closed: a creation line with a malformed or non-mapping gate is skipped, never dropped to no gate."""
+    jsonl_path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(jsonl_path)
+    corrupt = await store.create(_task_request(title="gated"))
+    other = await store.create(_task_request(title="ungated"))
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_path.write_text(
+        _record_line(store, corrupt, approval_spec=malformed) + _record_line(store, other, approval_spec=None),
+        encoding="utf-8",
+    )
+
+    replayed = TaskStore(jsonl_path)
+    with caplog.at_level("WARNING"):
+        replayed.replay_jsonl()
+
+    assert replayed.get_task(corrupt.id) is None
+    assert replayed.get_task(other.id) is not None
+    warning = caplog.text
+    assert corrupt.id in warning
+    assert str(jsonl_path) in warning
+    assert "1" in warning
+    assert reason in warning
