@@ -702,13 +702,6 @@ _AGENT_JWT_KID_PREFIX: Final[str] = "agent-jwt-"
 #: Algorithms permitted on a persisted JWT credential record.
 _ALLOWED_JWT_ALGORITHMS: Final[frozenset[str]] = frozenset({"EdDSA", "HS256"})
 
-#: Deprecation notice logged when ``BERNSTEIN_AUTH_JWT_SECRET`` is configured.
-_LEGACY_JWT_SECRET_DEPRECATION_MSG: Final[str] = (
-    "BERNSTEIN_AUTH_JWT_SECRET is deprecated for agent identity tokens and only "
-    "verifies pre-existing HS256 credentials during the migration window; it "
-    "will be removed one minor release later."
-)
-
 
 class IdentityKeyError(RuntimeError):
     """The install key that authenticates identity records or signs tokens is unusable."""
@@ -916,7 +909,11 @@ def _resolve_jwt_secret(master_key: bytes, *, warn_deprecated: bool = False) -> 
     env_secret = os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip()
     if env_secret:
         if warn_deprecated:
-            logger.warning(_LEGACY_JWT_SECRET_DEPRECATION_MSG)
+            logger.warning(
+                "BERNSTEIN_AUTH_JWT_SECRET is deprecated for agent identity tokens and only "
+                "verifies pre-existing HS256 credentials during the migration window; it "
+                "will be removed one minor release later."
+            )
         return env_secret
     from bernstein.core.security.key_derivation import DOMAIN_AGENT_IDENTITY_JWT, derive_store_key
 
@@ -1007,9 +1004,13 @@ class AgentIdentityStore:
         self._signing_kid, self._public_key, self._public_pem, self._public_jwk = _resolve_signing_kid_and_public_key(
             self._signer
         )
-        self._warned_legacy_jwt_secret = False
+        self._warned_legacy_hs256_env = False
         if os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip():
-            logger.warning(_LEGACY_JWT_SECRET_DEPRECATION_MSG)
+            logger.warning(
+                "BERNSTEIN_AUTH_JWT_SECRET is deprecated for agent identity tokens and only "
+                "verifies pre-existing HS256 credentials during the migration window; it "
+                "will be removed one minor release later."
+            )
         _retire_legacy_jwt_secret(base_dir)
         # In-memory index keyed by token_hash → identity_id for fast auth.
         self._token_index: dict[str, str] = {}
@@ -1031,10 +1032,10 @@ class AgentIdentityStore:
 
     def _resolve_legacy_hs256_secret(self) -> str:
         """Resolve the legacy HS256 verification secret during the migration window."""
-        warn = not self._warned_legacy_jwt_secret
+        warn = not self._warned_legacy_hs256_env
         secret = _resolve_jwt_secret(self._master_key, warn_deprecated=warn)
         if warn and os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip():
-            self._warned_legacy_jwt_secret = True
+            self._warned_legacy_hs256_env = True
         return secret
 
     # -- persistence --------------------------------------------------------

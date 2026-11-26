@@ -711,11 +711,16 @@ def _resolve_agent_jwt_jwk(request: Request | None) -> dict[str, str] | None:
     if store is not None and hasattr(store, "public_key_jwk"):
         return cast("dict[str, str]", store.public_key_jwk())
 
-    from bernstein.core.identity.agent_jwt import load_or_create_agent_jwt_public_jwk
+    from bernstein.core.identity.agent_jwt import (
+        IdentityKeyError,
+        load_or_create_agent_jwt_public_jwk,
+    )
+    from bernstein.core.persistence.lineage_signer import LineageSignerError
+    from bernstein.core.security.audit import AuditKeyPermissionError
 
     try:
         return load_or_create_agent_jwt_public_jwk()
-    except Exception:
+    except (AuditKeyPermissionError, IdentityKeyError, LineageSignerError, OSError, ValueError):
         return None
 
 
