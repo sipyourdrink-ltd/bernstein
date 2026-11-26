@@ -18,22 +18,31 @@ and every reader refuses a record whose MAC is missing or does not verify.
 Role, permissions, task scope and file scope are read only from authenticated
 records; the token's own claims must match them and never add to them.
 
-The default token-signing secret is derived from the same out-of-tree key, so
-nothing under ``.sdd/`` signs a token either.  ``BERNSTEIN_AUTH_JWT_SECRET``
-still overrides the signing secret; it does not affect record authentication.
+The default token-signing key is an install-scoped Ed25519 private key held
+outside the workdir with the same ``0600`` custody rules as the install audit
+key and loaded through :mod:`bernstein.core.security.key_custody`
+(:class:`~bernstein.core.security.key_custody.KMSAdapter`), so nothing under
+``.sdd/`` can sign a token and verification uses public key material alone.
+Existing unexpired ``HS256`` credentials continue verifying during the short
+migration window; ``BERNSTEIN_AUTH_JWT_SECRET`` logs a deprecation warning and
+is scheduled for removal one minor release later.
 """
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import hashlib
 import hmac
 import json
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
 from bernstein.core.log_safe import for_log
@@ -43,7 +52,12 @@ from bernstein.core.path_scope import (
     pattern_subsumes,
     validate_repo_relative_pattern,
 )
-from bernstein.core.security.auth import create_jwt, verify_jwt
+from bernstein.core.security.auth import (
+    create_jwt,
+    decode_jwt_header_unverified,
+    decode_jwt_unverified,
+    verify_jwt,
+)
 from bernstein.core.security.path_containment import PathContainmentError, contained_path
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import (
@@ -54,7 +68,10 @@ from bernstein.core.security.tenanting import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
-    from pathlib import Path
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from bernstein.core.security.key_custody import KMSAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -668,9 +685,42 @@ _LEGACY_JWT_SECRET_NAME: Final[str] = "agent_identity_jwt_secret"
 _KEY_READ_ATTEMPTS: Final[int] = 20
 _KEY_READ_BACKOFF_S: Final[float] = 0.05
 
+#: Environment override for the out-of-workdir Ed25519 agent-JWT signing key file.
+AGENT_JWT_SIGNING_KEY_ENV: Final[str] = "BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH"
+
+#: Optional KMS adapter selector (``file``, ``env``, ``hsm``) and parameters.
+AGENT_JWT_KMS_ADAPTER_ENV: Final[str] = "BERNSTEIN_AGENT_JWT_KMS_ADAPTER"
+AGENT_JWT_KMS_KEY_ENV_VAR: Final[str] = "BERNSTEIN_AGENT_JWT_KMS_ENV_VAR"
+AGENT_JWT_KMS_TOKEN_URI_ENV: Final[str] = "BERNSTEIN_AGENT_JWT_KMS_TOKEN_URI"
+AGENT_JWT_KMS_KID_ENV: Final[str] = "BERNSTEIN_AGENT_JWT_KMS_KID"
+
+#: Default Ed25519 signing key filename in the out-of-workdir state directory.
+_AGENT_JWT_KEY_FILENAME: Final[str] = "agent_identity_jwt.ed25519"
+
+#: Distinct ``kid`` prefix for the agent-token key published in the install JWKS.
+_AGENT_JWT_KID_PREFIX: Final[str] = "agent-jwt-"
+
+#: Algorithms permitted on a persisted JWT credential record.
+_ALLOWED_JWT_ALGORITHMS: Final[frozenset[str]] = frozenset({"EdDSA", "HS256"})
+
+#: In-process cache for ``BERNSTEIN_AGENT_JWT_KMS_ADAPTER=env`` adapters,
+#: keyed by ``(env_var, kid)``. ``EnvBasedKMSAdapter`` scrubs the raw key
+#: env var on first read so spawned agent subprocesses cannot inherit the
+#: private signing key; caching the loaded adapter lets subsequent
+#: ``AgentIdentityStore`` instances and JWKS lookups in the same process
+#: reuse the in-memory signer instead of failing on the scrubbed env var.
+_ENV_KMS_CACHE_LOCK = threading.Lock()
+_ENV_KMS_ADAPTER_CACHE: dict[tuple[str, str | None], KMSAdapter] = {}
+
+
+def _reset_env_kms_adapter_cache_for_tests() -> None:
+    """Clear the in-process env KMS adapter cache between tests."""
+    with _ENV_KMS_CACHE_LOCK:
+        _ENV_KMS_ADAPTER_CACHE.clear()
+
 
 class IdentityKeyError(RuntimeError):
-    """The install key that authenticates identity records is unusable."""
+    """The install key that authenticates identity records or signs tokens is unusable."""
 
 
 def _load_identity_master_key() -> bytes:
@@ -701,16 +751,268 @@ def _load_identity_master_key() -> bytes:
     raise IdentityKeyError(msg)
 
 
-def _resolve_jwt_secret(master_key: bytes) -> str:
-    """Return the agent-identity JWT secret.
+def _default_agent_jwt_signing_key_path() -> Path:
+    """Return the default out-of-workdir Ed25519 signing key path for agent JWTs.
 
-    ``BERNSTEIN_AUTH_JWT_SECRET`` wins when set.  Otherwise the secret is
-    derived from the out-of-tree install key, so no file under ``.sdd/`` can
-    sign an agent token.  The secret only authenticates the token; what the
-    token is allowed to do comes from the authenticated record.
+    Resolution order mirrors :func:`bernstein.core.security.audit._default_audit_key_path`:
+
+    1. ``$BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH`` (explicit file override).
+    2. Sibling of ``$BERNSTEIN_AUDIT_KEY_PATH`` when set, so multi-process and
+       isolated test deployments share one out-of-workdir state directory.
+    3. ``$XDG_STATE_HOME/bernstein/agent_identity_jwt.ed25519`` (or
+       ``~/.local/state/bernstein/agent_identity_jwt.ed25519``).
+    """
+    override = os.environ.get(AGENT_JWT_SIGNING_KEY_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+
+    audit_override = os.environ.get("BERNSTEIN_AUDIT_KEY_PATH", "").strip()
+    if audit_override:
+        return Path(audit_override).expanduser().parent / _AGENT_JWT_KEY_FILENAME
+
+    xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
+    base = Path(xdg_state).expanduser() if xdg_state else Path.home() / ".local" / "state"
+    return base / "bernstein" / _AGENT_JWT_KEY_FILENAME
+
+
+def _validate_signing_key_custody_path(key_path: Path, base_dir: Path | None = None) -> Path:
+    """Ensure a file-backed agent-token signing key lives outside ``.sdd/`` and *base_dir*."""
+    expanded = key_path.expanduser()
+    resolved = expanded.resolve(strict=False)
+    if ".sdd" in expanded.parts or ".sdd" in resolved.parts:
+        msg = f"agent JWT signing key {key_path} must live outside .sdd/"
+        raise IdentityKeyError(msg)
+    if base_dir is not None:
+        resolved_base = base_dir.expanduser().resolve(strict=False)
+        if resolved == resolved_base or resolved.is_relative_to(resolved_base):
+            msg = f"agent JWT signing key {key_path} must live outside the identity store directory"
+            raise IdentityKeyError(msg)
+    return expanded
+
+
+def _jwk_thumbprint(jwk: Mapping[str, Any]) -> str:
+    """Compute the RFC 7638 SHA-256 thumbprint for an OKP/Ed25519 JWK."""
+    canonical = json.dumps(
+        {"crv": str(jwk["crv"]), "kty": str(jwk["kty"]), "x": str(jwk["x"])},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return base64.urlsafe_b64encode(hashlib.sha256(canonical).digest()).rstrip(b"=").decode("ascii")
+
+
+def _resolve_signing_kid_and_public_key(
+    signer: KMSAdapter,
+) -> tuple[str, Ed25519PublicKey, bytes, dict[str, str]]:
+    """Extract the verifying public key, SPKI PEM, ``kid``, and published JWK from *signer*."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from bernstein.core.security.agent_card_signer import ed25519_pem_from_jwk, ed25519_public_jwk
+    from bernstein.core.security.key_custody import EnvBasedKMSAdapter, FileBasedKMSAdapter
+
+    raw_jwk = signer.public_key_jwk()
+    public_pem = ed25519_pem_from_jwk(dict(raw_jwk))
+    loaded = serialization.load_pem_public_key(public_pem)
+    if not isinstance(loaded, Ed25519PublicKey):
+        msg = "agent JWT KMSAdapter public key is not Ed25519"
+        raise IdentityKeyError(msg)
+
+    thumbprint = _jwk_thumbprint(raw_jwk)
+    if isinstance(signer, FileBasedKMSAdapter | EnvBasedKMSAdapter) and signer.kid is None:
+        kid = f"{_AGENT_JWT_KID_PREFIX}{thumbprint}"
+    else:
+        explicit_kid = str(raw_jwk.get("kid", "")).strip()
+        kid = explicit_kid if explicit_kid else f"{_AGENT_JWT_KID_PREFIX}{thumbprint}"
+
+    published_jwk = ed25519_public_jwk(public_pem, kid=kid)
+    return kid, loaded, public_pem, published_jwk
+
+
+def load_or_create_agent_jwt_signer(
+    *,
+    key_path: Path | None = None,
+    base_dir: Path | None = None,
+) -> KMSAdapter:
+    """Load or atomically create the out-of-workdir Ed25519 agent-JWT ``KMSAdapter``.
+
+    Enforces the same custody rules as the install audit key: private key files
+    under ``.sdd/`` or with POSIX permissions wider than ``0600`` are refused,
+    and operators may route signing through ``file``, ``env``, or ``hsm``
+    adapters via :func:`bernstein.core.security.key_custody.kms_adapter_from_config`.
+    """
+    from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
+    from bernstein.core.security.key_custody import (
+        FileBasedKMSAdapter,
+        enforce_private_key_permissions,
+        kms_adapter_from_config,
+    )
+
+    kms_kind = os.environ.get(AGENT_JWT_KMS_ADAPTER_ENV, "").strip()
+    if kms_kind:
+        env_var_name = os.environ.get(AGENT_JWT_KMS_KEY_ENV_VAR, "").strip() or None
+        kms_kid = os.environ.get(AGENT_JWT_KMS_KID_ENV, "").strip() or None
+        if kms_kind.lower() == "env" and env_var_name is not None:
+            cache_key = (env_var_name, kms_kid)
+            with _ENV_KMS_CACHE_LOCK:
+                raw_env_value = os.environ.get(env_var_name)
+                if raw_env_value is not None and raw_env_value.strip():
+                    adapter = kms_adapter_from_config(
+                        enabled=True,
+                        kind=kms_kind,
+                        env_var=env_var_name,
+                        kid=kms_kid,
+                    )
+                    if adapter is None:
+                        msg = "agent JWT KMSAdapter resolved to None"
+                        raise IdentityKeyError(msg)
+                    for stale_key in [k for k in _ENV_KMS_ADAPTER_CACHE if k[0] == env_var_name]:
+                        del _ENV_KMS_ADAPTER_CACHE[stale_key]
+                    _ENV_KMS_ADAPTER_CACHE[cache_key] = adapter
+                    return adapter
+                cached = _ENV_KMS_ADAPTER_CACHE.get(cache_key)
+                if cached is not None:
+                    return cached
+
+        configured_path = os.environ.get(AGENT_JWT_SIGNING_KEY_ENV, "").strip() or None
+        if configured_path is not None:
+            checked = _validate_signing_key_custody_path(Path(configured_path), base_dir)
+            if checked.exists():
+                enforce_private_key_permissions(checked)
+            configured_path = str(checked)
+        adapter = kms_adapter_from_config(
+            enabled=True,
+            kind=kms_kind,
+            key_path=configured_path,
+            env_var=env_var_name,
+            token_uri=os.environ.get(AGENT_JWT_KMS_TOKEN_URI_ENV, "").strip() or None,
+            kid=kms_kid,
+        )
+        if adapter is None:
+            msg = "agent JWT KMSAdapter resolved to None"
+            raise IdentityKeyError(msg)
+        if isinstance(adapter, FileBasedKMSAdapter):
+            _validate_signing_key_custody_path(adapter.key_path, base_dir)
+            enforce_private_key_permissions(adapter.key_path)
+        return adapter
+
+    resolved = _validate_signing_key_custody_path(
+        key_path if key_path is not None else _default_agent_jwt_signing_key_path(),
+        base_dir,
+    )
+    if not resolved.exists():
+        parent = resolved.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(PermissionError, OSError):
+            parent.chmod(0o700)
+        private_pem, _public_pem = generate_ed25519_keypair()
+        try:
+            fd = os.open(str(resolved), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            try:
+                os.write(fd, private_pem)
+            except Exception:
+                os.close(fd)
+                resolved.unlink(missing_ok=True)
+                raise
+            os.close(fd)
+            resolved.chmod(0o600)
+            logger.info("Generated new Ed25519 agent JWT signing key")
+
+    for _ in range(_KEY_READ_ATTEMPTS):
+        if resolved.exists():
+            enforce_private_key_permissions(resolved)
+            if resolved.read_bytes().strip():
+                initial = FileBasedKMSAdapter(resolved, require_owner_only=True)
+                kid = f"{_AGENT_JWT_KID_PREFIX}{_jwk_thumbprint(initial.public_key_jwk())}"
+                return FileBasedKMSAdapter(resolved, kid=kid, require_owner_only=True)
+        time.sleep(_KEY_READ_BACKOFF_S)
+
+    msg = "install agent JWT signing key is empty; refusing to sign agent identity tokens"
+    raise IdentityKeyError(msg)
+
+
+def load_existing_agent_jwt_public_jwk() -> dict[str, str] | None:
+    """Return the install's agent-JWT public JWK strictly read-only, or ``None``.
+
+    Unlike :func:`load_or_create_agent_jwt_signer`, this never creates a
+    private key file on disk and never scrubs an environment variable, so an
+    unauthenticated ``GET /.well-known/agent.json/keys`` fallback without an
+    attached ``AgentIdentityStore`` has zero side effects.
+    """
+    from bernstein.core.security.key_custody import (
+        EnvBasedKMSAdapter,
+        FileBasedKMSAdapter,
+        enforce_private_key_permissions,
+        kms_adapter_from_config,
+    )
+
+    kms_kind = os.environ.get(AGENT_JWT_KMS_ADAPTER_ENV, "").strip()
+    if kms_kind:
+        kind_lower = kms_kind.lower()
+        env_var_name = os.environ.get(AGENT_JWT_KMS_KEY_ENV_VAR, "").strip() or None
+        kms_kid = os.environ.get(AGENT_JWT_KMS_KID_ENV, "").strip() or None
+        if kind_lower == "env":
+            if env_var_name is None:
+                return None
+            raw_env_value = os.environ.get(env_var_name)
+            if raw_env_value is not None and raw_env_value.strip():
+                adapter: KMSAdapter = EnvBasedKMSAdapter(env_var_name, kid=kms_kid, scrub_env=False)
+                return _resolve_signing_kid_and_public_key(adapter)[3]
+            with _ENV_KMS_CACHE_LOCK:
+                cached = _ENV_KMS_ADAPTER_CACHE.get((env_var_name, kms_kid))
+            if cached is not None:
+                return _resolve_signing_kid_and_public_key(cached)[3]
+            return None
+        if kind_lower == "file":
+            configured_path = os.environ.get(AGENT_JWT_SIGNING_KEY_ENV, "").strip() or None
+            if configured_path is None:
+                return None
+            checked = _validate_signing_key_custody_path(Path(configured_path), None)
+            if not checked.exists():
+                return None
+            enforce_private_key_permissions(checked)
+            if not checked.read_bytes().strip():
+                return None
+            file_adapter = FileBasedKMSAdapter(checked, kid=kms_kid, require_owner_only=True)
+            return _resolve_signing_kid_and_public_key(file_adapter)[3]
+        hsm_adapter = kms_adapter_from_config(
+            enabled=True,
+            kind=kms_kind,
+            token_uri=os.environ.get(AGENT_JWT_KMS_TOKEN_URI_ENV, "").strip() or None,
+            kid=kms_kid,
+        )
+        if hsm_adapter is None:
+            return None
+        return _resolve_signing_kid_and_public_key(hsm_adapter)[3]
+
+    resolved = _validate_signing_key_custody_path(_default_agent_jwt_signing_key_path(), None)
+    if not resolved.exists():
+        return None
+    enforce_private_key_permissions(resolved)
+    if not resolved.read_bytes().strip():
+        return None
+    initial = FileBasedKMSAdapter(resolved, require_owner_only=True)
+    kid = f"{_AGENT_JWT_KID_PREFIX}{_jwk_thumbprint(initial.public_key_jwk())}"
+    return _resolve_signing_kid_and_public_key(FileBasedKMSAdapter(resolved, kid=kid, require_owner_only=True))[3]
+
+
+def _resolve_jwt_secret(master_key: bytes, *, warn_deprecated: bool = False) -> str:
+    """Return the legacy HS256 secret used only to verify pre-existing credentials.
+
+    ``BERNSTEIN_AUTH_JWT_SECRET`` wins when set, logs a deprecation warning,
+    and is retained for one minor release so unexpired HS256 tokens issued
+    before upgrade finish their window cleanly. No new HS256 token is issued.
     """
     env_secret = os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip()
     if env_secret:
+        if warn_deprecated:
+            logger.warning(
+                "BERNSTEIN_AUTH_JWT_SECRET is deprecated for agent identity tokens and only "
+                "verifies pre-existing HS256 credentials during the migration window; it "
+                "will be removed one minor release later."
+            )
         return env_secret
     from bernstein.core.security.key_derivation import DOMAIN_AGENT_IDENTITY_JWT, derive_store_key
 
@@ -770,7 +1072,17 @@ class AgentIdentityStore:
     a spawned agent - is never an identity.  See the module docstring.
     """
 
-    def __init__(self, base_dir: Path, *, create_dir: bool = True) -> None:
+    def __init__(
+        self,
+        base_dir: Path,
+        *,
+        create_dir: bool = True,
+        signer: KMSAdapter | None = None,
+    ) -> None:
+        from bernstein.core.security.key_custody import (
+            FileBasedKMSAdapter,
+            enforce_private_key_permissions,
+        )
         from bernstein.core.security.key_derivation import DOMAIN_AGENT_IDENTITY_RECORD, derive_store_key
 
         self._base_dir = base_dir
@@ -779,12 +1091,51 @@ class AgentIdentityStore:
             self._identities_dir.mkdir(parents=True, exist_ok=True)
         self._audit_path = base_dir / "agent_identity_audit.jsonl"
         master_key = _load_identity_master_key()
+        self._master_key = master_key
         self._record_key = derive_store_key(master_key, DOMAIN_AGENT_IDENTITY_RECORD)
-        self._jwt_secret = _resolve_jwt_secret(master_key)
+        if signer is not None:
+            if isinstance(signer, FileBasedKMSAdapter):
+                _validate_signing_key_custody_path(signer.key_path, base_dir)
+                enforce_private_key_permissions(signer.key_path)
+            self._signer: KMSAdapter = signer
+        else:
+            self._signer = load_or_create_agent_jwt_signer(base_dir=base_dir)
+        self._signing_kid, self._public_key, self._public_pem, self._public_jwk = _resolve_signing_kid_and_public_key(
+            self._signer
+        )
+        self._warned_legacy_hs256_env = False
+        if os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip():
+            logger.warning(
+                "BERNSTEIN_AUTH_JWT_SECRET is deprecated for agent identity tokens and only "
+                "verifies pre-existing HS256 credentials during the migration window; it "
+                "will be removed one minor release later."
+            )
         _retire_legacy_jwt_secret(base_dir)
         # In-memory index keyed by token_hash → identity_id for fast auth.
         self._token_index: dict[str, str] = {}
         self._rebuild_token_index()
+
+    @property
+    def signing_kid(self) -> str:
+        """Return the ``kid`` stamped into newly issued EdDSA agent JWTs."""
+        return self._signing_kid
+
+    @property
+    def public_key_pem(self) -> bytes:
+        """Return the SPKI PEM public key for offline EdDSA token verification."""
+        return self._public_pem
+
+    def public_key_jwk(self) -> dict[str, str]:
+        """Return a copy of the RFC 8037 OKP/Ed25519 JWK for JWKS publication."""
+        return dict(self._public_jwk)
+
+    def _resolve_legacy_hs256_secret(self) -> str:
+        """Resolve the legacy HS256 verification secret during the migration window."""
+        warn = not self._warned_legacy_hs256_env
+        secret = _resolve_jwt_secret(self._master_key, warn_deprecated=warn)
+        if warn and os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip():
+            self._warned_legacy_hs256_env = True
+        return secret
 
     # -- persistence --------------------------------------------------------
 
@@ -1139,10 +1490,12 @@ class AgentIdentityStore:
                 "task_ids": scoped_task_ids,
                 "allowed_files": scoped_files,
             },
-            secret=self._jwt_secret,
+            secret=self._signer,
+            algorithm="EdDSA",
             expiry_seconds=expiry_s,
+            kid=self._signing_kid,
         )
-        claims = verify_jwt(raw_token, self._jwt_secret)
+        claims = verify_jwt(raw_token, self._public_key, algorithm="EdDSA", kid=self._signing_kid)
         if claims is None:
             msg = "failed to verify freshly issued agent JWT"
             raise RuntimeError(msg)
@@ -1153,7 +1506,7 @@ class AgentIdentityStore:
             created_at=now,
             expires_at=float(claims.get("exp", now + expiry_s)),
             token_type="jwt",
-            algorithm="HS256",
+            algorithm="EdDSA",
             jti=str(claims.get("jti", "")),
             tenant_id=tenant_id,
             task_ids=scoped_task_ids,
@@ -1278,20 +1631,49 @@ class AgentIdentityStore:
         return identity
 
     def _authenticate_jwt(self, token: str) -> AgentIdentity | None:
-        """Authenticate a JWT token when the credential was issued in JWT mode."""
+        """Authenticate a JWT token strictly under the credential's stored algorithm.
 
-        claims = verify_jwt(token, self._jwt_secret)
+        The subject claim is read unverified only to locate the MAC-authenticated
+        identity record on disk; the verification algorithm is selected strictly
+        from ``identity.credential.algorithm`` (``EdDSA`` for current tokens,
+        ``HS256`` only for pre-existing unexpired migration tokens), never from
+        the unverified JOSE header.
+        """
+        unverified = decode_jwt_unverified(token)
+        if not isinstance(unverified, dict):
+            return None
+
+        sub = unverified.get("sub")
+        if not isinstance(sub, str) or not sub:
+            return None
+
+        identity = self._load(sub)
+        if identity is None or identity.credential is None:
+            return None
+        cred = identity.credential
+        if cred.token_type != "jwt":
+            return None
+
+        recorded_alg = cred.algorithm
+        if recorded_alg not in _ALLOWED_JWT_ALGORITHMS:
+            return None
+
+        header = decode_jwt_header_unverified(token)
+        if not isinstance(header, dict) or header.get("alg") != recorded_alg:
+            return None
+
+        if recorded_alg == "EdDSA":
+            header_kid = header.get("kid")
+            if header_kid is not None and header_kid != self._signing_kid:
+                return None
+            claims = verify_jwt(token, self._public_key, algorithm="EdDSA")
+        else:
+            claims = verify_jwt(token, self._resolve_legacy_hs256_secret(), algorithm="HS256")
+
         if not claims:
             return None
 
-        identity_id = str(claims.get("sub", ""))
-        if not identity_id:
-            return None
-
-        identity = self._load(identity_id)
-        if identity is None or identity.credential is None:
-            return None
-
+        identity_id = identity.id
         if not self._validate_jwt_claims(claims, identity, token):
             return None
 
@@ -1299,7 +1681,7 @@ class AgentIdentityStore:
             self._audit_denial(identity_id, f"identity status: {identity.status}")
             return None
 
-        if not identity.credential.is_valid:
+        if not cred.is_valid:
             self._audit_denial(identity_id, "credential expired or revoked")
             return None
 
@@ -1311,7 +1693,7 @@ class AgentIdentityStore:
                 identity_id=identity_id,
                 action="authenticated",
                 actor="auth",
-                details={"token_type": "jwt"},
+                details={"token_type": "jwt", "algorithm": recorded_alg},
             )
         )
         return identity

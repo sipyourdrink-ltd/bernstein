@@ -136,9 +136,14 @@ user_id, scopes)`. Three issuers exist:
   `localStorage`. Device flow (`/auth/cli/device`, `/auth/cli/token`)
   issues the same token via polling for CLI-based logins
   (`routes/auth.py:324-372`).
-- **Agent identity** - `core/identity/agent_jwt.py` issues task-scoped JWTs
-  with claims `{session_id, user_id=identity_id, task_ids: [...],
-  permissions: [...]}`. Stored in `.sdd/auth/identities/`.
+- **Agent identity** - `core/identity/agent_jwt.py` issues short-lived
+  task-scoped `EdDSA` (Ed25519) JWTs carrying a `kid` published in
+  `/.well-known/agent.json/keys`, signed through `KMSAdapter` with an
+  out-of-workdir `0600` key and verified from the authenticated credential
+  record's stored `algorithm` using public key material only. Existing unexpired
+  `HS256` credentials continue verifying until expiry (`BERNSTEIN_AUTH_JWT_SECRET`
+  logs a deprecation warning and will be removed one minor release later).
+  Records are stored in `.sdd/auth/agent_identities/`.
 - **Cluster nodes** - `ClusterAuthenticator.issue_node_token(node_id)`
   (`core/protocols/cluster/cluster_auth.py:70-93`); see
   [Cluster mode](cluster-mode.md).
