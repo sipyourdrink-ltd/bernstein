@@ -133,7 +133,8 @@ requests whose `Host` header is not loopback (`localhost`,
 `localhost.localdomain`, loopback IP literals) with HTTP `403`. To expose a
 loopback server behind a reverse proxy, tunnel hostname, or container alias
 such as `host.docker.internal`, set `BERNSTEIN_ALLOWED_HOSTS` to a
-comma-separated list of permitted hostnames.
+comma-separated list of permitted hostnames. `BERNSTEIN_ALLOWED_HOSTS` accepts
+hostnames only, with no port and no wildcard (exact lowercase hostname matching).
 
 Before computing a cost estimate, planning, or prompting for plan approval
 (including under `--auto-approve` and `--remote`), `bernstein run` verifies that
