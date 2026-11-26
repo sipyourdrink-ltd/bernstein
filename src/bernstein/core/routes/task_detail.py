@@ -162,7 +162,8 @@ def _try_read_session_log(
     log_path = _get_agent_log_path(runtime_dir, session_id)
     if log_path is None or not log_path.exists():
         return None
-    return read_fn(log_path, last_size)
+    result: tuple[str, int] | None = read_fn(log_path, last_size)
+    return result
 
 
 @router.get(
@@ -220,7 +221,9 @@ async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
                 yield f'event: complete\ndata: {{"status": "{current_task.status.value}"}}\n\n'
                 break
 
-            new_data = _try_read_session_log(session_id, runtime_dir, _read_new_log_content, last_size)
+            new_data = await asyncio.to_thread(
+                _try_read_session_log, session_id, runtime_dir, _read_new_log_content, last_size
+            )
             if new_data is not None:
                 new_content, last_size = new_data
                 idle_ticks = 0
