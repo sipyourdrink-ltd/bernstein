@@ -1020,6 +1020,7 @@ def create_app(
     claim_control_path: Path | None = None,
     claim_controller_id: str | None = None,
     enforce_loopback_host: bool | None = None,
+    defer_auth_dirs: bool = False,
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -1329,7 +1330,7 @@ def create_app(
     from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     _auth_dir = sdd_dir / "auth"
-    _agent_identity_store = AgentIdentityStore(_auth_dir, create_dir=False)
+    _agent_identity_store = AgentIdentityStore(_auth_dir, create_dir=not defer_auth_dirs)
     application.state.identity_store = _agent_identity_store  # type: ignore[attr-defined]
 
     # RFC 8707: optional resource-indicator binding. Configured via the

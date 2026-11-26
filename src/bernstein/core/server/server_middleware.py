@@ -166,13 +166,8 @@ class LoopbackHostMiddleware:
             await self.app(scope, receive, send)
             return
 
-        raw_host = ""
-        for name, value in scope.get("headers", ()):
-            if name.lower() == b"host":
-                raw_host = value.decode("latin-1")
-                break
-
-        if _is_allowed_loopback_host_header(raw_host, self._allowed_hosts):
+        host_headers = [value.decode("latin-1") for name, value in scope.get("headers", ()) if name.lower() == b"host"]
+        if len(host_headers) == 1 and _is_allowed_loopback_host_header(host_headers[0], self._allowed_hosts):
             await self.app(scope, receive, send)
             return
 

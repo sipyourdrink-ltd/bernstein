@@ -308,6 +308,40 @@ def test_serve_unconfigured_non_loopback_and_tunnel_never_auto_mint(
     assert res_tunnel.exit_code == 0, res_tunnel.output
     assert not os.environ.get("BERNSTEIN_AUTH_TOKEN")
 
+    import webbrowser
+
+    opened: list[str] = []
+    monkeypatch.setattr(webbrowser, "open", lambda u, *a, **k: opened.append(u) or True)
+    res_tunnel_default = CliRunner().invoke(
+        gui_cli.serve,
+        ["--host", "127.0.0.1", "--port", "8052", "--tunnel", "--tunnel-provider", "cloudflared"],
+    )
+    assert res_tunnel_default.exit_code == 0, res_tunnel_default.output
+    assert not os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    assert opened == []
+    assert apps, "expected uvicorn.run to receive the tunnel app"
+    with TestClient(apps[-1], base_url="http://evil.example:8052") as tunnel_client:
+        assert tunnel_client.get("/ui/").status_code == 200
+
+
+def test_serve_explicit_env_token_ignores_stale_token_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When BERNSTEIN_AUTH_TOKEN is set explicitly, stale .sdd/runtime/auth.token is not printed."""
+    from bernstein.core.run_auth_token import persist_run_auth_token
+
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    (tmp_path / ".sdd").mkdir()
+    persist_run_auth_token(tmp_path, "stale-old-token")
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "explicit-override-token")
+    monkeypatch.chdir(tmp_path)
+
+    _capture_uvicorn_app(monkeypatch)
+    res = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+    assert res.exit_code == 0, res.output
+    assert ".sdd/runtime/auth.token" not in res.output
+    assert "BERNSTEIN_AUTH_TOKEN" in res.output
+    assert "explicit-override-token" not in res.output
+
 
 def test_negative_security_guards_on_loopback_gui_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify #2366 scope separation, /docs closure, CORS/XFF/Host rejection, and WS admission."""
@@ -332,7 +366,15 @@ def test_negative_security_guards_on_loopback_gui_app(tmp_path: Path, monkeypatc
     with TestClient(app, base_url="http://127.0.0.1:8052") as c:
         for dash_tok in (viewer_tok, operator_tok):
             hdr = {"Authorization": f"Bearer {dash_tok}"}
-            for route in ("/api/v1/tasks", "/api/v1/agents", "/api/v1/events", "/api/v1/tasks/t-1/logs/stream"):
+            for route in (
+                "/api/v1/tasks",
+                "/api/v1/agents",
+                "/api/v1/events",
+                "/api/v1/tasks/t-1/detail",
+                "/api/v1/tasks/t-1/diff",
+                "/api/v1/tasks/t-1/trace",
+                "/api/v1/tasks/t-1/logs/stream",
+            ):
                 assert c.get(route, headers=hdr).status_code == 401
 
         for doc_path in ("/docs", "/redoc", "/openapi.json"):
@@ -372,3 +414,32 @@ def test_negative_security_guards_on_loopback_gui_app(tmp_path: Path, monkeypatc
             ):
                 pass
         assert ws_host.value.status_code == 403
+
+    import asyncio
+
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+    from bernstein.core.server.server_middleware import LoopbackHostMiddleware
+
+    assert is_loopback_host("LOCALHOST") is True
+    assert is_loopback_host("[::1]") is True
+
+    async def _raw_host_probe(scope_type: str, headers: list[tuple[bytes, bytes]]) -> list[dict[str, Any]]:
+        sent: list[dict[str, Any]] = []
+
+        async def _app(_s: Any, _r: Any, send: Any) -> None:
+            await send({"type": "accepted"})
+
+        async def _recv() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        async def _send(msg: dict[str, Any]) -> None:
+            sent.append(msg)
+
+        mw = LoopbackHostMiddleware(_app)
+        await mw({"type": scope_type, "headers": headers}, _recv, _send)
+        return sent
+
+    dup_headers = [(b"host", b"127.0.0.1:8052"), (b"host", b"evil.example:8052")]
+    assert asyncio.run(_raw_host_probe("http", dup_headers))[0]["status"] == 403
+    assert asyncio.run(_raw_host_probe("http", []))[0]["status"] == 403
+    assert asyncio.run(_raw_host_probe("websocket", dup_headers))[0] == {"type": "websocket.close", "code": 1008}

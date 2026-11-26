@@ -3222,11 +3222,14 @@ def serve(bind_host: str | None, port: int, log_level: str) -> None:
     """
     import uvicorn
 
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+
     host = bind_host or os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1")
     # Keep the cluster config's advertised bind host aligned with the socket we
     # actually bind, and pin single-worker mode - the TaskStore is
     # single-process and multi-worker mode corrupts JSONL / double-claims tasks.
     os.environ["BERNSTEIN_BIND_HOST"] = host
+    os.environ["BERNSTEIN_LOOPBACK_HOST_GUARD"] = "1" if is_loopback_host(host) else "0"
     os.environ.setdefault("BERNSTEIN_WORKERS", "1")
 
     console.print(f"[green]Task server (foreground):[/green] http://{host}:{port}/  (Ctrl-C or SIGTERM to stop)")

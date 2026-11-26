@@ -474,10 +474,13 @@ def is_loopback_host(host: str) -> bool:
     hostname other than ``localhost`` is treated as routable -- posture
     fails closed on names it cannot prove local.
     """
-    if host == "localhost":
+    normalized = host.strip().lower()
+    if normalized == "localhost":
         return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
     try:
-        return ipaddress.ip_address(host).is_loopback
+        return ipaddress.ip_address(normalized).is_loopback
     except ValueError:
         return False
 

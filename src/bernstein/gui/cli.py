@@ -406,7 +406,7 @@ def serve(
     import uvicorn
     from fastapi import FastAPI
 
-    from bernstein.core.run_auth_token import run_auth_token_path
+    from bernstein.core.run_auth_token import read_run_auth_token, run_auth_token_path
     from bernstein.core.security.auth_middleware import auth_disabled_via_opt_out
     from bernstein.core.server.dashboard_tokens import is_loopback_host
     from bernstein.core.server.server_middleware import LoopbackHostMiddleware
@@ -438,7 +438,7 @@ def serve(
             from bernstein.core.server.server_app import create_app  # pyright: ignore[reportUnknownVariableType]
         except ImportError as exc:  # pragma: no cover
             raise SystemExit(f"Failed to import Bernstein API factory: {exc}") from exc
-        app = create_app(enforce_loopback_host=loopback_no_tunnel)
+        app = create_app(enforce_loopback_host=loopback_no_tunnel, defer_auth_dirs=not had_sdd)
 
     mount(app)
 
@@ -446,7 +446,7 @@ def serve(
     click.echo(f"Bernstein GUI - {local_url}")
     if not auto_open and loopback_no_tunnel and not auth_disabled_via_opt_out():
         token_file = run_auth_token_path(cwd)
-        if had_sdd and token_file.is_file():
+        if minted_token is not None and had_sdd and read_run_auth_token(cwd) == minted_token:
             click.echo(f"API bearer token (for /ui/ and /api/v1/*): {token_file}")
         elif minted_token is not None and sys.stdout.isatty():
             click.echo(f"API bearer (BERNSTEIN_AUTH_TOKEN, for /ui/ and /api/v1/*): {minted_token}")

@@ -239,7 +239,13 @@ async def test_e2e_authenticated_spa_sse_and_task_log_stream(tmp_path: Path, mon
         assert (await c.get("/ui/")).status_code == 200
         assert (await c.get("/api/v1/tasks")).status_code == 401
         assert (await c.get("/api/v1/events")).status_code == 401
-        assert (await c.get("/api/v1/tasks/missing/logs/stream")).status_code == 401
+        for unauth_route in (
+            "/api/v1/tasks/missing/detail",
+            "/api/v1/tasks/missing/diff",
+            "/api/v1/tasks/missing/trace",
+            "/api/v1/tasks/missing/logs/stream",
+        ):
+            assert (await c.get(unauth_route)).status_code == 401
 
         assert (await c.get("/api/v1/tasks", headers=hdr)).status_code == 200
         created = await c.post(
@@ -262,7 +268,16 @@ async def test_e2e_authenticated_spa_sse_and_task_log_stream(tmp_path: Path, mon
             assert "event: heartbeat" in first_line
             asyncio.get_running_loop().call_later(0.05, app.state.sse_bus.publish, "heartbeat")
 
-        assert (await c.get(f"/api/v1/tasks/{task_id}/logs/stream", headers=dash_hdr)).status_code == 401
+        for task_route in (
+            f"/api/v1/tasks/{task_id}/detail",
+            f"/api/v1/tasks/{task_id}/diff",
+            f"/api/v1/tasks/{task_id}/trace",
+            f"/api/v1/tasks/{task_id}/logs/stream",
+        ):
+            assert (await c.get(task_route, headers=dash_hdr)).status_code == 401
+            if not task_route.endswith("/logs/stream"):
+                assert (await c.get(task_route, headers=hdr)).status_code == 200
+
         async with c.stream("GET", f"/api/v1/tasks/{task_id}/logs/stream", headers=hdr) as logs_resp:
             assert logs_resp.status_code == 200
             assert "text/event-stream" in logs_resp.headers.get("content-type", "")

@@ -323,11 +323,14 @@ def _start_server(
     # Build env for the server subprocess - inherit parent env and overlay
     # cluster-specific and storage vars so the server's module-level app
     # factory picks them up.
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+
     env = os.environ.copy()
     _apply_selected_seed(env, seed_path)
     if cluster_enabled:
         env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
     env["BERNSTEIN_BIND_HOST"] = bind_host
+    env["BERNSTEIN_LOOPBACK_HOST_GUARD"] = "1" if is_loopback_host(bind_host) else "0"
     if auth_token:
         env["BERNSTEIN_AUTH_TOKEN"] = auth_token
     # pin the child to single-worker even if the parent env had

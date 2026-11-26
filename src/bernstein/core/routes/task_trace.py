@@ -218,6 +218,10 @@ def _flatten_trace_events(traces: list[dict[str, Any]]) -> list[TraceTimelineEve
 
 
 @router.get(
+    "/tasks/{task_id}/trace",
+    responses={404: {"description": "Task not found"}},
+)
+@router.get(
     "/dashboard/tasks/{task_id}/trace",
     responses={404: {"description": "Task not found"}},
 )
