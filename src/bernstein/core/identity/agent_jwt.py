@@ -933,10 +933,69 @@ def load_or_create_agent_jwt_signer(
     raise IdentityKeyError(msg)
 
 
-def load_or_create_agent_jwt_public_jwk() -> dict[str, str]:
-    """Return the install's published OKP/Ed25519 JWK for agent-token verification."""
-    signer = load_or_create_agent_jwt_signer()
-    return _resolve_signing_kid_and_public_key(signer)[3]
+def load_existing_agent_jwt_public_jwk() -> dict[str, str] | None:
+    """Return the install's agent-JWT public JWK strictly read-only, or ``None``.
+
+    Unlike :func:`load_or_create_agent_jwt_signer`, this never creates a
+    private key file on disk and never scrubs an environment variable, so an
+    unauthenticated ``GET /.well-known/agent.json/keys`` fallback without an
+    attached ``AgentIdentityStore`` has zero side effects.
+    """
+    from bernstein.core.security.key_custody import (
+        EnvBasedKMSAdapter,
+        FileBasedKMSAdapter,
+        enforce_private_key_permissions,
+        kms_adapter_from_config,
+    )
+
+    kms_kind = os.environ.get(AGENT_JWT_KMS_ADAPTER_ENV, "").strip()
+    if kms_kind:
+        kind_lower = kms_kind.lower()
+        env_var_name = os.environ.get(AGENT_JWT_KMS_KEY_ENV_VAR, "").strip() or None
+        kms_kid = os.environ.get(AGENT_JWT_KMS_KID_ENV, "").strip() or None
+        if kind_lower == "env":
+            if env_var_name is None:
+                return None
+            raw_env_value = os.environ.get(env_var_name)
+            if raw_env_value is not None and raw_env_value.strip():
+                adapter: KMSAdapter = EnvBasedKMSAdapter(env_var_name, kid=kms_kid, scrub_env=False)
+                return _resolve_signing_kid_and_public_key(adapter)[3]
+            with _ENV_KMS_CACHE_LOCK:
+                cached = _ENV_KMS_ADAPTER_CACHE.get((env_var_name, kms_kid))
+            if cached is not None:
+                return _resolve_signing_kid_and_public_key(cached)[3]
+            return None
+        if kind_lower == "file":
+            configured_path = os.environ.get(AGENT_JWT_SIGNING_KEY_ENV, "").strip() or None
+            if configured_path is None:
+                return None
+            checked = _validate_signing_key_custody_path(Path(configured_path), None)
+            if not checked.exists():
+                return None
+            enforce_private_key_permissions(checked)
+            if not checked.read_bytes().strip():
+                return None
+            file_adapter = FileBasedKMSAdapter(checked, kid=kms_kid, require_owner_only=True)
+            return _resolve_signing_kid_and_public_key(file_adapter)[3]
+        hsm_adapter = kms_adapter_from_config(
+            enabled=True,
+            kind=kms_kind,
+            token_uri=os.environ.get(AGENT_JWT_KMS_TOKEN_URI_ENV, "").strip() or None,
+            kid=kms_kid,
+        )
+        if hsm_adapter is None:
+            return None
+        return _resolve_signing_kid_and_public_key(hsm_adapter)[3]
+
+    resolved = _validate_signing_key_custody_path(_default_agent_jwt_signing_key_path(), None)
+    if not resolved.exists():
+        return None
+    enforce_private_key_permissions(resolved)
+    if not resolved.read_bytes().strip():
+        return None
+    initial = FileBasedKMSAdapter(resolved, require_owner_only=True)
+    kid = f"{_AGENT_JWT_KID_PREFIX}{_jwk_thumbprint(initial.public_key_jwk())}"
+    return _resolve_signing_kid_and_public_key(FileBasedKMSAdapter(resolved, kid=kid, require_owner_only=True))[3]
 
 
 def _resolve_jwt_secret(master_key: bytes, *, warn_deprecated: bool = False) -> str:

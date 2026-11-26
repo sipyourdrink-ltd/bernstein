@@ -702,8 +702,9 @@ def _resolve_agent_jwt_jwk(request: Request | None) -> dict[str, str] | None:
 
     Prefers the ``AgentIdentityStore`` bound on ``request.app.state`` so apps
     configured with an explicit ``KMSAdapter`` signer publish that exact key;
-    falls back to the install signing-key loader when invoked directly without
-    an application container.
+    falls back strictly read-only to an already-configured signing key when
+    invoked without an application container (never creating key files on disk
+    or scrubbing environment variables).
     """
     app = getattr(request, "app", None)
     state = getattr(app, "state", None)
@@ -713,13 +714,13 @@ def _resolve_agent_jwt_jwk(request: Request | None) -> dict[str, str] | None:
 
     from bernstein.core.identity.agent_jwt import (
         IdentityKeyError,
-        load_or_create_agent_jwt_public_jwk,
+        load_existing_agent_jwt_public_jwk,
     )
     from bernstein.core.persistence.lineage_signer import LineageSignerError
     from bernstein.core.security.audit import AuditKeyPermissionError
 
     try:
-        return load_or_create_agent_jwt_public_jwk()
+        return load_existing_agent_jwt_public_jwk()
     except (AuditKeyPermissionError, IdentityKeyError, LineageSignerError, OSError, ValueError):
         return None
 

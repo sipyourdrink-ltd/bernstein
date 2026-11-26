@@ -48,7 +48,7 @@ from bernstein.core.identity.agent_jwt import (
     AgentIdentityStore,
     IdentityKeyError,
     _reset_env_kms_adapter_cache_for_tests,
-    load_or_create_agent_jwt_public_jwk,
+    load_existing_agent_jwt_public_jwk,
     permissions_for_role,
 )
 from bernstein.core.interop.a2a_conformance import check_agent_card_v1_conformance, resolve_jwk
@@ -235,11 +235,12 @@ class TestEdDSAJWTPrimitives:
         eddsa_hdr = _b64url_encode(json.dumps({"alg": "EdDSA", "typ": "JWT"}, separators=(",", ":")).encode("ascii"))
         sig_64 = _b64url_encode(b"\x00" * 64)
 
-        non_ascii_hs256 = f"{hs256_hdr}.caf\u00e9.{sig_64}"
-        non_ascii_eddsa = f"{eddsa_hdr}.caf\u00e9.{sig_64}"
+        non_ascii_hs256 = f"{hs256_hdr}.payload\u00e9.{sig_64}"
+        non_ascii_eddsa = f"{eddsa_hdr}.токен.{sig_64}"
 
         assert verify_jwt(non_ascii_hs256, "shared-secret", algorithm="HS256") is None  # NOSONAR - test fixture
         assert verify_jwt(non_ascii_eddsa, public_pem, algorithm="EdDSA") is None
+        assert verify_jwt(f"{eddsa_hdr}.payload\u00e9.{sig_64}", public_pem, algorithm="EdDSA") is None
 
         # End-to-end through AuthMiddleware -> SSO AuthService.validate_token -> verify_jwt.
         sso_cfg = SSOConfig(jwt_secret="sso-non-ascii-secret", enabled=True)  # NOSONAR - test fixture
@@ -415,6 +416,68 @@ class TestJWKSPublicationAndOfflineVerification:
         assert verified_claims["sub"] == "worker-jwks-1"
         assert verified_claims["task_ids"] == ["task-42"]
 
+    def test_jwks_fallback_without_store_is_read_only_and_preserves_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unauthenticated GET /.well-known/agent.json/keys without store never creates keys or scrubs env."""
+        from bernstein.core.routes.well_known import router as well_known_router
+
+        _reset_signing_keypair_for_tests(tmp_path / "card-keys")
+        bare_app = FastAPI()
+        bare_app.include_router(well_known_router)
+        client = TestClient(bare_app)
+
+        # Case 1: No identity_store and no key file on disk -> 200, no agent-jwt JWK, file not created, env intact.
+        missing_key = tmp_path / "never-created" / "agent_identity_jwt.ed25519"
+        monkeypatch.delenv("BERNSTEIN_AGENT_JWT_KMS_ADAPTER", raising=False)
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH", str(missing_key))
+
+        resp = client.get("/.well-known/agent.json/keys")
+        assert resp.status_code == 200
+        keys = resp.json()["keys"]
+        assert all(not str(k.get("kid", "")).startswith("agent-jwt-") for k in keys)
+        assert not missing_key.exists()
+        assert not missing_key.parent.exists()
+        assert os.environ.get("BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH") == str(missing_key)
+
+        # Case 2: Existing key file on disk (0600, outside .sdd/) -> read-only fallback serves its public JWK.
+        priv_pem, _pub_pem = generate_ed25519_keypair()
+        existing_key = tmp_path / "existing-keys" / "agent_identity_jwt.ed25519"
+        existing_key.parent.mkdir(parents=True, exist_ok=True)
+        existing_key.write_bytes(priv_pem)
+        existing_key.chmod(0o600)
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH", str(existing_key))
+
+        resp_existing = client.get("/.well-known/agent.json/keys")
+        assert resp_existing.status_code == 200
+        agent_keys = [k for k in resp_existing.json()["keys"] if str(k.get("kid", "")).startswith("agent-jwt-")]
+        assert len(agent_keys) == 1
+
+        # Case 3: env KMS adapter without store -> serves public JWK without scrubbing the env var or creating files.
+        env_priv_pem, _ = generate_ed25519_keypair()
+        env_var = "TEST_WELL_KNOWN_READONLY_JWT_PEM"
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_KMS_ADAPTER", "env")
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_KMS_ENV_VAR", env_var)
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_KMS_KID", "env-ro-kid")
+        monkeypatch.setenv(env_var, env_priv_pem.decode("ascii"))
+        monkeypatch.setenv("BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH", str(missing_key))
+
+        resp_env = client.get("/.well-known/agent.json/keys")
+        assert resp_env.status_code == 200
+        assert any(k.get("kid") == "env-ro-kid" for k in resp_env.json()["keys"])
+        assert os.environ.get(env_var) == env_priv_pem.decode("ascii")
+        assert not missing_key.exists()
+
+        # Case 4: env KMS adapter with unset key env var and empty cache -> 200, no agent-jwt JWK, no file created.
+        monkeypatch.delenv(env_var, raising=False)
+        resp_env_missing = client.get("/.well-known/agent.json/keys")
+        assert resp_env_missing.status_code == 200
+        assert all(
+            k.get("kid") != "env-ro-kid" and not str(k.get("kid", "")).startswith("agent-jwt-")
+            for k in resp_env_missing.json()["keys"]
+        )
+        assert not missing_key.exists()
+
 
 # ---------------------------------------------------------------------------
 # 5. Migration window: unexpired vs expired HS256 + deprecation warning
@@ -567,7 +630,8 @@ class TestSigningKeyCustodyAndInvariants:
 
         # Second store in the same process (e.g. orchestrator + spawner) and JWKS lookup must succeed.
         store2 = AgentIdentityStore(auth_dir)
-        published_jwk = load_or_create_agent_jwt_public_jwk()
+        published_jwk = load_existing_agent_jwt_public_jwk()
+        assert published_jwk is not None
 
         assert store1.signing_kid == "env-multi-kid-1"
         assert store2.signing_kid == "env-multi-kid-1"
