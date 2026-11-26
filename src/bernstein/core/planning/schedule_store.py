@@ -337,10 +337,11 @@ class ScheduleStore:
     triple twice returns the existing schedule unchanged.
     """
 
-    def __init__(self, sdd_dir: Path) -> None:
+    def __init__(self, sdd_dir: Path, *, create: bool = True) -> None:
         self._sdd_dir = sdd_dir
         self._dir = sdd_dir / "runtime" / "schedules"
-        self._dir.mkdir(parents=True, exist_ok=True)
+        if create:
+            self._dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def directory(self) -> Path:
@@ -455,6 +456,8 @@ class ScheduleStore:
         consumers that diff-compare two operator hosts.
         """
         out: list[Schedule] = []
+        if not self._dir.is_dir():
+            return out
         for path in sorted(self._dir.glob("*.json")):
             schedule = _load_schedule(path)
             if schedule is not None:

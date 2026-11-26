@@ -236,13 +236,24 @@ def operator_installation_checks(
             )
     matching = any(rows.get(f"Auth: {worker}", {}).get("ok") for worker in installed)
     if "Ready to run" in rows:
-        ok = bool(rows.get("Python version", {}).get("ok") and matching)
+        py_ok = bool(rows.get("Python version", {}).get("ok"))
+        ok = bool(py_ok and matching)
+        if ok:
+            detail = "Python and a matching worker are configured"
+            fix = ""
+        elif not py_ok and not matching:
+            detail = "Python 3.12+ and a matching worker login are missing"
+            fix = "Upgrade to Python 3.12+ and configure the login for an installed worker."
+        elif not py_ok:
+            detail = "Python 3.12+ is required"
+            fix = "Install Python 3.12 or newer."
+        else:
+            detail = "matching worker login is missing"
+            fix = "Configure an API key or login for an installed worker."
         rows["Ready to run"].update(
             ok=ok,
-            detail="Python and a matching worker are configured"
-            if ok
-            else "Python or a matching worker login is missing",
-            fix="" if ok else "Check the Python version and configure the login for an installed worker.",
+            detail=detail,
+            fix=fix,
         )
     return result
 
