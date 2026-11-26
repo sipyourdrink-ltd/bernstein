@@ -32,6 +32,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import warnings
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -201,3 +202,33 @@ def test_snapshot_responses_match_live_app() -> None:
     assert live == committed, "docs/reference/openapi.json responses are stale.\n" + _format(
         "response", live - committed, committed - live
     )
+
+
+def test_no_duplicate_openapi_operation_ids() -> None:
+    """OpenAPI schema generation emits zero Duplicate Operation ID warnings and keeps operationIds unique."""
+    from bernstein.core.server import create_app
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        spec = create_app().openapi()
+
+    dup_warnings = [str(item.message) for item in caught if "Duplicate Operation ID" in str(item.message)]
+    assert dup_warnings == [], f"Unexpected Duplicate Operation ID warnings: {dup_warnings}"
+
+    seen_ids: dict[str, str] = {}
+    for path, operations in spec.get("paths", {}).items():
+        for method, operation in operations.items():
+            if method in _METHODS and isinstance(operation, dict) and "operationId" in operation:
+                op_id = operation["operationId"]
+                route_sig = f"{method.upper()} {path}"
+                assert op_id not in seen_ids, f"Duplicate operationId {op_id!r} on {seen_ids[op_id]} and {route_sig}"
+                seen_ids[op_id] = route_sig
+
+    # Task panel compatibility aliases stay callable at runtime while excluded from OpenAPI schema.
+    for prefix in ("", "/api/v1"):
+        for suffix in ("detail", "diff", "trace", "logs/stream"):
+            assert f"{prefix}/tasks/{{task_id}}/{suffix}" not in spec["paths"]
+        assert f"{prefix}/dashboard/tasks/{{task_id}}" in spec["paths"]
+        assert f"{prefix}/dashboard/tasks/{{task_id}}/diff" in spec["paths"]
+        assert f"{prefix}/dashboard/tasks/{{task_id}}/trace" in spec["paths"]
+        assert f"{prefix}/dashboard/tasks/{{task_id}}/logs/stream" in spec["paths"]

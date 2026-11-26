@@ -243,9 +243,11 @@ def _ensure_loopback_api_token(
     Resolution order on loopback:
     1. Return ``None`` immediately on non-loopback binds or when
        ``BERNSTEIN_AUTH_TOKEN`` / ``BERNSTEIN_AUTH_DISABLED`` is already set.
-    2. If ``.sdd/runtime/auth.token`` exists inside an initialized workspace,
-       reuse it via ``BERNSTEIN_AUTH_TOKEN`` without overwriting it.
-    3. Otherwise mint an ephemeral URL-safe bearer into ``BERNSTEIN_AUTH_TOKEN``,
+    2. If ``.sdd/runtime/auth.token`` exists inside an initialized workspace
+       and passes regular-file/mode/owner checks, reuse it via
+       ``BERNSTEIN_AUTH_TOKEN`` without overwriting it (unsafe files are
+       refused and rotated).
+    3. Otherwise mints a bearer (URL-safe) into ``BERNSTEIN_AUTH_TOKEN``,
        persisting it ``0600`` to ``.sdd/runtime/auth.token`` only when
        ``.sdd/`` already existed (never creating ``.sdd/`` in uninitialized
        directories solely for a token).
@@ -450,6 +452,11 @@ def serve(
             click.echo(f"API bearer token (for /ui/ and /api/v1/*): {token_file}")
         elif minted_token is not None and sys.stdout.isatty():
             click.echo(f"API bearer (BERNSTEIN_AUTH_TOKEN, for /ui/ and /api/v1/*): {minted_token}")
+        elif minted_token is not None:
+            click.echo(
+                "BERNSTEIN_AUTH_TOKEN is active only in process env and must be supplied "
+                "explicitly for non-interactive runs outside .sdd/."
+            )
         elif _effective_api_token():
             click.echo(
                 "API bearer (BERNSTEIN_AUTH_TOKEN) active for /ui/ and /api/v1/* "

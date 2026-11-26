@@ -645,7 +645,8 @@ def _resolve_auth_token(workdir: Path | None = None) -> str | None:
 
     Precedence:
         1. Explicit ``BERNSTEIN_AUTH_TOKEN`` env var (operator-configured).
-        2. Ephemeral auto-generated token when auth is enabled but no token is
+        2. Auto-generated token (mints a bearer stored under ``.sdd/runtime``
+           when *workdir* is given) when auth is enabled but no token is
            set and no opt-out is active. The generated token is written into
            ``os.environ`` so both the server subprocess (which inherits env in
            ``_start_server``) and the bootstrap client see the same value, and
