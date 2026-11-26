@@ -24,13 +24,13 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { apiGet } from '@/lib/api';
+import { formatGuiMetaLabel, useGuiMeta } from '@/lib/guiMeta';
 import { formatUSD } from '@/lib/format';
 import { useTheme } from './ThemeProvider';
 import { CommandPalette } from './CommandPalette';
 import { BrandMark } from './BrandMark';
 import { AuthTokenPrompt } from './AuthTokenPrompt';
-
-type GuiMeta = { version: string; commit: string; build_time: string };
+import { MonitorModeBanner } from './MonitorModeBanner';
 
 export const NAV = [
   { to: '/tasks', label: 'Tasks', icon: ListChecks, key: 'tasks' as const },
@@ -145,34 +145,12 @@ function useApprovalsBadge(): number {
   return q.data?.pending?.length ?? q.data?.items?.length ?? 0;
 }
 
-function useGuiMetaLabel(): string {
-  // Was a one-shot `fetch` with no retry + no auth header - a single 401/5xx
-  // would lock the build chip on "connecting…" forever. React Query gives us
-  // exponential backoff for free, and apiGet attaches the bearer token.
-  const q = useQuery({
-    queryKey: ['gui-meta'],
-    queryFn: () => apiGet<GuiMeta>('/gui-meta'),
-    retry: 3,
-    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000),
-    staleTime: 5 * 60_000,
-  });
-  if (q.data) {
-    const commit = q.data.commit ? ` · ${q.data.commit.slice(0, 7)}` : '';
-    return `v${q.data.version}${commit}`;
-  }
-  // While the very first fetch is still in flight show "connecting…"; once
-  // every retry is exhausted, fall back to "version unknown" so the chip
-  // doesn't pretend to still be working.
-  if (q.isFetching && !q.isFetched) return 'connecting…';
-  if (q.isError) return 'version unknown';
-  return 'connecting…';
-}
-
 export default function AppShell({ children }: { children: ReactNode }) {
   const { resolvedTheme, setTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
-  const metaText = useGuiMetaLabel();
+  const guiMetaQ = useGuiMeta();
+  const metaText = formatGuiMetaLabel(guiMetaQ);
   const [searchParams, setSearchParams] = useSearchParams();
   const [fleetMode, setFleetMode] = useState<boolean>(readInitialFleetMode);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -479,6 +457,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
           {/* One prompt for a refused token, instead of a dead end per screen */}
           <AuthTokenPrompt />
+          <MonitorModeBanner runnerActive={guiMetaQ.data?.runner_active ?? null} />
 
           {/* Page body */}
           <div className="flex-1 min-h-0 overflow-auto">{children}</div>
