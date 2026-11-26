@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -111,6 +112,64 @@ async def test_replay_jsonl_reconstructs_latest_task_state(tmp_path: Path) -> No
     assert restored is not None
     assert restored.status == TaskStatus.CLAIMED
     assert restored.version == task.version
+
+
+@pytest.mark.anyio
+async def test_replay_jsonl_preserves_claim_for_cooperative_stop(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(jsonl_path)
+
+    task = await store.create(_task_request())
+    claimed = await store.claim_by_id(task.id, expected_version=task.version, claimed_by_session="node-a")
+    claimed_at = claimed.claimed_at
+    claimed_by_session = claimed.claimed_by_session
+    assert claimed_at is not None
+    assert claimed_by_session == "node-a"
+    await store.cancel_cascade(task.id, "operator", cooperative=True)
+    await store.flush_buffer()
+
+    replayed = TaskStore(jsonl_path)
+    replayed.replay_jsonl()
+    restored = replayed.get_task(task.id)
+
+    assert restored is not None
+    assert restored.status == TaskStatus.STOP_REQ
+    assert (restored.claimed_at, restored.claimed_by_session) == (claimed_at, claimed_by_session)
+
+
+@pytest.mark.parametrize(
+    ("claim_update", "expected_claim"),
+    [
+        pytest.param({"claimed_at": 20.0}, (20.0, "node-a"), id="replace-timestamp"),
+        pytest.param({"claimed_at": None}, (None, "node-a"), id="clear-timestamp"),
+        pytest.param({"claimed_by_session": "node-b"}, (10.0, "node-b"), id="replace-session"),
+        pytest.param({"claimed_by_session": None}, (10.0, None), id="clear-session"),
+    ],
+)
+def test_replay_jsonl_merges_sparse_claim_updates(
+    tmp_path: Path,
+    claim_update: dict[str, float | str | None],
+    expected_claim: tuple[float | None, str | None],
+) -> None:
+    jsonl_path = tmp_path / "tasks.jsonl"
+    first_record = {
+        "id": "T-1",
+        "title": "Implement parser",
+        "description": "Write the parser module.",
+        "role": "backend",
+        "status": "stop_req",
+        "claimed_at": 10.0,
+        "claimed_by_session": "node-a",
+    }
+    later_record = {"id": "T-1", "status": "stop_req", **claim_update}
+    jsonl_path.write_text(f"{json.dumps(first_record)}\n{json.dumps(later_record)}\n", encoding="utf-8")
+
+    replayed = TaskStore(jsonl_path)
+    replayed.replay_jsonl()
+    restored = replayed.get_task("T-1")
+
+    assert restored is not None
+    assert (restored.claimed_at, restored.claimed_by_session) == expected_claim
 
 
 @pytest.mark.anyio
