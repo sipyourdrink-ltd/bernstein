@@ -81,7 +81,8 @@ bernstein chaos status [--limit 20]
 
 Reads `.sdd/runtime/chaos/chaos_log.jsonl` and prints a table of recent
 events: timestamp, scenario, target, success/error
-(`chaos_cmd.py:139-175`).
+(`chaos_cmd.py:139-175`). `--limit` must be zero or greater; `0` prints an
+empty history.
 
 ### `slo` - read the SLO dashboard during the experiment
 

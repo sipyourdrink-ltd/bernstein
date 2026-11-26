@@ -137,9 +137,12 @@ def file_remove(pattern: str) -> None:
 
 
 @chaos_group.command("status")
-@click.option("--limit", default=20, help="Number of recent events to show.")
+@click.option("--limit", default=20, help="Number of recent events to show (0 shows none).")
 def chaos_status(limit: int) -> None:
     """Show chaos experiment history."""
+    if limit < 0:
+        raise click.BadParameter("must be zero or greater", param_hint="--limit")
+
     log_path = CHAOS_DIR / "chaos_log.jsonl"
     if not log_path.exists():
         console.print("[yellow]No chaos experiments recorded yet.[/yellow]")
@@ -155,7 +158,7 @@ def chaos_status(limit: int) -> None:
         console.print(f"[red]Error reading chaos log: {exc}[/red]")
         return
 
-    events = events[-limit:]
+    events = events[-limit:] if limit > 0 else []
 
     table = Table(title="Chaos Experiment History")
     table.add_column("Time", style="dim")
