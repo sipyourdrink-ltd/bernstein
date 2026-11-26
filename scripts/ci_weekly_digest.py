@@ -400,9 +400,10 @@ def _select_latest_quality_run(runs: Iterable[dict[str, object]]) -> QualityRunM
 
 
 def fetch_quality_report(
-    repo: str, *, now: datetime | None = None, api_get_bytes: Callable[[str], bytes] = _gh_api_bytes
+    repo: str, *, now: datetime | None = None, api_get_bytes: Callable[[str], bytes] | None = None
 ) -> QualityReport:
     """Fetch newest completed weekly quality run and parse its 3 allowlisted artifacts."""
+    fetch_bytes = api_get_bytes or _gh_api_bytes
     now_utc = (now or datetime.now(UTC)).astimezone(UTC)
     candidates: list[dict[str, object]] = []
     try:
@@ -411,7 +412,7 @@ def fetch_quality_report(
                 f"repos/{repo}/actions/workflows/{QUALITY_WORKFLOW_FILE}/runs"
                 f"?branch=main&event={ev}&status=completed&per_page=5"
             )
-            payload = json.loads(api_get_bytes(ep).decode("utf-8"))
+            payload = json.loads(fetch_bytes(ep).decode("utf-8"))
             if isinstance(payload, dict) and isinstance(payload.get("workflow_runs"), list):
                 candidates.extend(r for r in payload["workflow_runs"] if isinstance(r, dict))
         run_meta = _select_latest_quality_run(candidates)
@@ -420,7 +421,7 @@ def fetch_quality_report(
         if now_utc - _parse_iso_utc(run_meta.created_at) > timedelta(days=QUALITY_MAX_AGE_DAYS):
             return QualityReport("stale", run=run_meta)
         art_payload = json.loads(
-            api_get_bytes(f"repos/{repo}/actions/runs/{run_meta.run_id}/artifacts?per_page=30").decode("utf-8")
+            fetch_bytes(f"repos/{repo}/actions/runs/{run_meta.run_id}/artifacts?per_page=30").decode("utf-8")
         )
     except (subprocess.CalledProcessError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return QualityReport("unavailable")
@@ -437,7 +438,7 @@ def fetch_quality_report(
         if not isinstance(aid, (int, str)) or not str(aid).isdigit():
             return QualityReport("rejected", run=run_meta)
         try:
-            zbytes = api_get_bytes(f"repos/{repo}/actions/artifacts/{int(aid)}/zip")
+            zbytes = fetch_bytes(f"repos/{repo}/actions/artifacts/{int(aid)}/zip")
         except (subprocess.CalledProcessError, OSError, ValueError):
             return QualityReport("unavailable", run=run_meta)
         try:

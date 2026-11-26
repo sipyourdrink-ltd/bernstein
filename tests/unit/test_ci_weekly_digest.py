@@ -417,6 +417,7 @@ def test_quality_render_omits_paths_lines_messages_and_snippets() -> None:
 
 
 def test_quality_staleness_guard_via_cli(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("PATH", "")
     monkeypatch.setattr(_MOD, "_gh_api_bytes", _mock_gh_bytes())
     runs_file, stale_out, fresh_out = tmp_path / "runs.jsonl", tmp_path / "stale.md", tmp_path / "fresh.md"
     runs_file.write_text(json.dumps(_run(conclusion="success")), encoding="utf-8")
@@ -439,3 +440,6 @@ def test_quality_staleness_guard_via_cli(tmp_path: Path, capsys, monkeypatch) ->
     fresh_text = fresh_out.read_text(encoding="utf-8")
     assert "## Weekly code quality summary (advisory)" in fresh_text and "(2026-11-22, `22d4008`)" in fresh_text
     assert json.loads(capsys.readouterr().out)["quality_status"] == "ok"
+
+    monkeypatch.setattr(_MOD, "_gh_api_bytes", lambda _ep: (_ for _ in ()).throw(OSError("offline")))
+    assert fetch_quality_report("sipyourdrink-ltd/bernstein").status == "unavailable"
