@@ -44,7 +44,7 @@ URL after launch: `http://127.0.0.1:8052/ui/`.
 
 ## First-run notes
 
-1. **Auth token.** On a loopback bind (`127.0.0.1`, `localhost`, `::1`), if `BERNSTEIN_AUTH_TOKEN` is unset, `bernstein gui serve` (default, `--no-open`, or `--dev`) reuses `.sdd/runtime/auth.token` when `.sdd/` exists or mints an ephemeral bearer for `/api/v1/*` (never auto-minting on `--tunnel` or non-loopback binds). Auto-open seeds the browser via `/ui/#t=<token>` (scrubbed after capture); non-TTY `--no-open`/`--dev` output points to `.sdd/runtime/auth.token` without logging raw tokens. Note that the printed `#2366` `Dashboard token` authorizes only `/dashboard/review-board` and `/api/v1/dashboard/*`, not `/api/v1/*`. When the browser has no token or a stale one, the UI shows a prompt banner to paste it (the same field is under **Settings → Auth token**). From devtools instead:
+1. **Auth token.** On a loopback bind (`127.0.0.1`, `localhost`, `::1`), if `BERNSTEIN_AUTH_TOKEN` is unset, `bernstein gui serve` (default, `--no-open`, or `--dev`) reuses `.sdd/runtime/auth.token` when `.sdd/` exists or mints an ephemeral bearer for `/api/v1/*` (never auto-minting on `--tunnel` or non-loopback binds). Auto-open seeds the browser via `/ui/#t=<token>` (scrubbed after capture); non-TTY `--no-open`/`--dev` output points to `.sdd/runtime/auth.token` without logging the raw API bearer. Note that the printed `#2366` `Dashboard token` authorizes `/dashboard*` and `/api/v1/dashboard/*`, not `/api/v1/*`. When the browser has no token or a stale one, the UI shows a prompt banner to paste it (the same field is under **Settings → Auth token**). From devtools instead:
 
     ```js
     localStorage.setItem("bernstein_token", "<token>")
