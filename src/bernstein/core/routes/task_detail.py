@@ -161,7 +161,8 @@ def _try_read_session_log(
     log_path = _get_agent_log_path(runtime_dir, session_id)
     if log_path is None or not log_path.exists():
         return None
-    return read_fn(log_path, last_size)
+    result: tuple[str, int] | None = read_fn(log_path, last_size)
+    return result
 
 
 @router.get(

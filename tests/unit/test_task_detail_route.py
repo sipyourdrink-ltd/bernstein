@@ -103,50 +103,51 @@ class TestTaskLogStream:
         assert "text/event-stream" in resp.headers.get("content-type", "")
         assert resp.text == 'event: complete\ndata: {"status": "done"}\n\nevent: close\ndata: {}\n\n'
 
-    @pytest.mark.anyio()
+    @pytest.mark.asyncio
     async def test_running_stream_reads_off_loop(
-        self, app: FastAPI, client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, app: FastAPI, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        created = await client.post(
-            "/tasks", json={"title": "Synthetic stream", "description": "test", "role": "backend"}
-        )
-        task_id = created.json()["id"]
-        store = app.state.store
-        running = replace(store.get_task(task_id), status=TaskStatus.IN_PROGRESS, assigned_agent="synthetic-agent")
-        done = replace(running, status=TaskStatus.DONE)
-        monkeypatch.setattr(store, "get_task", Mock(side_effect=[running, running, running, running, done]))
-        monkeypatch.setattr(app.state, "runtime_dir", tmp_path)
-        monkeypatch.setattr(task_detail, "_POLL_INTERVAL", 0)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                "/tasks", json={"title": "Synthetic stream", "description": "test", "role": "backend"}
+            )
+            task_id = created.json()["id"]
+            store = app.state.store
+            running = replace(store.get_task(task_id), status=TaskStatus.IN_PROGRESS, assigned_agent="synthetic-agent")
+            done = replace(running, status=TaskStatus.DONE)
+            monkeypatch.setattr(store, "get_task", Mock(side_effect=[running, running, running, running, done]))
+            monkeypatch.setattr(app.state, "runtime_dir", tmp_path)
+            monkeypatch.setattr(task_detail, "_POLL_INTERVAL", 0)
 
-        # Exercise the real open/seek/read callback with a synthetic log and append.
-        log = tmp_path / "synthetic.log"
-        log.write_text("one\ntwo\n", encoding="utf-8")
-        loop_thread = get_ident()
-        reads: list[tuple[int, int]] = []
+            # Exercise the real open/seek/read callback with a synthetic log and append.
+            log = tmp_path / "synthetic.log"
+            log.write_text("one\ntwo\n", encoding="utf-8")
+            loop_thread = get_ident()
+            reads: list[tuple[int, int]] = []
 
-        def read_log(
-            session_id: str, directory: Path, reader: Callable[[Path, int], tuple[str, int] | None], offset: int
-        ) -> tuple[str, int] | None:
-            assert (session_id, directory) == ("synthetic-agent", tmp_path)
-            reads.append((get_ident(), offset))
-            if len(reads) == 3:
-                with log.open("a", encoding="utf-8") as handle:
-                    handle.write("three\n")
-            return reader(log, offset)
+            def read_log(
+                session_id: str, directory: Path, reader: Callable[[Path, int], tuple[str, int] | None], offset: int
+            ) -> tuple[str, int] | None:
+                assert (session_id, directory) == ("synthetic-agent", tmp_path)
+                reads.append((get_ident(), offset))
+                if len(reads) == 3:
+                    with log.open("a", encoding="utf-8") as handle:
+                        handle.write("three\n")
+                return reader(log, offset)
 
-        monkeypatch.setattr(task_detail, "_try_read_session_log", read_log)
-        resp = await client.get(f"/dashboard/tasks/{task_id}/logs/stream")
-        events = resp.text.split("\n\n")
-        assert events[:2] == ["event: log\ndata: one", "event: log\ndata: two"]
-        assert events[2].startswith('event: ping\ndata: {"ts": ')
-        assert events[3:] == [
-            "event: log\ndata: three",
-            'event: complete\ndata: {"status": "done"}',
-            "event: close\ndata: {}",
-            "",
-        ]
-        assert [offset for _, offset in reads] == [0, 8, 8]
-        assert all(thread != loop_thread for thread, _ in reads)
+            monkeypatch.setattr(task_detail, "_try_read_session_log", read_log)
+            resp = await client.get(f"/dashboard/tasks/{task_id}/logs/stream")
+            events = resp.text.split("\n\n")
+            assert events[:2] == ["event: log\ndata: one", "event: log\ndata: two"]
+            assert events[2].startswith('event: ping\ndata: {"ts": ')
+            assert events[3:] == [
+                "event: log\ndata: three",
+                'event: complete\ndata: {"status": "done"}',
+                "event: close\ndata: {}",
+                "",
+            ]
+            assert [offset for _, offset in reads] == [0, 8, 8]
+            assert all(thread != loop_thread for thread, _ in reads)
 
 
 class TestTaskDiff:

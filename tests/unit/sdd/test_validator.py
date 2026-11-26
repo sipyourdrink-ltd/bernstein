@@ -166,6 +166,11 @@ class _Severity(StrEnum):
         ({"const": {1: "one"}}, {1: "one"}),
         ({"enum": [_Severity.HIGH]}, "low"),
         ({"enum": [_Severity.HIGH]}, "high"),
+        ({"const": "\ud83d\ude00"}, "\U0001f600"),
+        ({"const": "\ud83d\ude00"}, "\ud83d\ude00"),
+        ({"enum": ["\ud800"]}, "\ud800"),
+        ({"type": "object", "required": ["\ud83d\ude00"]}, {"\U0001f600": 1}),
+        ({"type": "object", "properties": {"\ud83d\ude00": {"type": "integer"}}}, {"\ud83d\ude00": "bad"}),
     ],
 )
 @pytest.mark.parametrize("strict", [False, True])

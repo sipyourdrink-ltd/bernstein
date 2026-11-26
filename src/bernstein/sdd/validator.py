@@ -145,6 +145,7 @@ class ValidationReport:
 
 def _members(value: Any) -> Iterator[Collection[Any]]:
     """Yield live, ordered views of the containers in a freshly decoded JSON schema."""
+    children: Collection[Any]
     if isinstance(value, dict):
         yield value.keys()
         children = value.values()
@@ -355,11 +356,16 @@ def _json_copy(value: Any) -> Any:
         for key, item in value.items():
             if type(key) is not str:
                 raise TypeError("Python object key in public schema")
+            key.encode("utf-8")
             copied[key] = _json_copy(item)
         return copied
     if type(value) is list:
         return [_json_copy(item) for item in value]
-    if type(value) in (str, int, bool, type(None)) or (type(value) is float and math.isfinite(value)):
+    if type(value) is str:
+        # Reject lone surrogates or surrogate pairs that json.loads would recombine or alter.
+        value.encode("utf-8")
+        return value
+    if type(value) in (int, bool, type(None)) or (type(value) is float and math.isfinite(value)):
         return value
     raise TypeError("public schema contains a Python override")
 
