@@ -28,7 +28,9 @@ import sys
 import pytest
 from rich.console import Console
 
-from bernstein.cli.display.splash_screen import splash
+from bernstein.cli.display.splash import _print_status_lines
+from bernstein.cli.display.splash_screen import BootData, splash
+from bernstein.cli.display.splash_screen import SplashRenderer as BootSplashRenderer
 from bernstein.cli.display.splash_v2 import (
     SplashContext,
     SplashRenderer,
@@ -259,3 +261,41 @@ def test_main_cli_imports_splash_from_aliased_path() -> None:
     assert "from bernstein.cli.splash_screen import splash" in text, (
         "main.py no longer imports splash from the expected alias path; TUI startup banner will regress"
     )
+
+
+# ---------------------------------------------------------------------------
+# (7) Narrow terminals drop the goal preview instead of slicing from the end
+# ---------------------------------------------------------------------------
+
+
+def test_compact_splash_truncates_goal_to_zero_on_narrow_terminal() -> None:
+    """A width below the label budget must print no goal characters."""
+    goal = "Z" * 60
+    buf = io.StringIO()
+    console = Console(file=buf, width=10)
+
+    _print_status_lines(
+        console,
+        width=10,
+        seed_file=None,
+        goal_preview=goal,
+        budget=0.0,
+        task_count=0,
+    )
+
+    output = buf.getvalue()
+    assert "goal" in output
+    assert "Z" not in output
+    assert len([line for line in output.splitlines() if line.strip()]) == 1
+
+
+def test_premium_splash_truncates_goal_to_zero_on_narrow_terminal() -> None:
+    """The premium renderer must not leak a negative-sliced goal."""
+    data = BootData(goal_preview="Z" * 60)
+    renderer = BootSplashRenderer(data, width=19, height=40)
+
+    renderer.phase3_status(0.0)
+    output = renderer.render().plain
+
+    assert "Goal:" in output
+    assert "Z" not in output

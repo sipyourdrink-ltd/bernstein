@@ -74,6 +74,9 @@ internal_llm_model: gemini-pro
 
 See [Cost envelopes](cost-envelopes.md) for `cost.envelopes`.
 
+When the terminal is too narrow for the goal preview, Bernstein prints no
+goal text instead of wrapping the tail of a long goal into extra rows.
+
 ### Model fallback
 
 `model_fallback` is an optional mapping for fallback after provider errors.
