@@ -38,12 +38,19 @@ from bernstein.core.persistence.resume_prompt import build_resume_context
 from bernstein.core.persistence.task_resume import (
     CheckpointCorruptError,
     CheckpointMissingError,
+    ResumeDispatchStatus,
+    ResumeRequestCorruptError,
+    ResumeRequestRecord,
     TaskResumeCheckpoint,
     bump_resume_count,
     checkpoint_path_for,
+    checkpoint_source_digest,
     load_checkpoint,
-    write_resume_signal,
+    load_resume_request,
+    publish_resume_request,
+    resume_request_id,
 )
+from bernstein.core.security.path_containment import PathContainmentError
 
 # Exit codes used by `bernstein resume`. Kept tight so operators (and the
 # dashboard) can branch on the specific failure mode.
@@ -105,6 +112,10 @@ class ResumePlan:
     #: enum rather than the adapter name; ``capability`` is the legacy
     #: two-state view retained for the ``bernstein resume`` env contract.
     resume_strategy: str = ""
+    #: Deterministic digest and request id for this attempt (#7854). Excludes
+    #: ``resume_count``/``updated_at`` so a duplicate command reuses the id.
+    source_digest: str = ""
+    request_id: str = ""
 
 
 def prepare_resume(
@@ -141,6 +152,8 @@ def prepare_resume(
     # Reading once before the bump gives us a clear error path: if the
     # file is corrupt we exit before incrementing the counter.
     checkpoint = load_checkpoint(workdir, task_id)
+    source_digest = checkpoint_source_digest(checkpoint)
+    request_id = resume_request_id(task_id, source_digest)
 
     # --- Grant + interpreter authority checks (issues #3649, #3852) ---
     # Look up the AgentCheckpoint for this task (written by the orchestrator
@@ -171,7 +184,13 @@ def prepare_resume(
             if _verdict.discard_candidate:
                 raise ObservationsMovedError(_verdict.reason)
 
-    checkpoint = bump_resume_count(workdir, task_id)
+    existing_request = load_resume_request(workdir, task_id, request_id)
+    # Only a genuinely new attempt (unseen request_id) increments resume_count;
+    # re-running the CLI on a queued, claimed, or resumed request checks status
+    # and refreshes the wake-up hint without mutating checkpoint.json again.
+    # This stays after the authority gate so a refusal has no side effects.
+    if existing_request is None:
+        checkpoint = bump_resume_count(workdir, task_id)
     adapter_name = checkpoint.adapter or ""
     capability = resume_capability(adapter_name)
     resume_strategy = str(strategy_for(adapter_name).resume)
@@ -196,6 +215,8 @@ def prepare_resume(
         capability=capability,
         resume_context=resume_context,
         resume_strategy=resume_strategy,
+        source_digest=source_digest,
+        request_id=request_id,
     )
 
 
@@ -355,6 +376,8 @@ def resume_cmd(
         )
     except OSError as exc:
         fail(EXIT_IO_ERROR, f"Could not prepare resume: {exc}")
+    except (ResumeRequestCorruptError, PathContainmentError) as exc:
+        fail(EXIT_IO_ERROR, f"Could not read resume requests: {exc}")
 
     cp = plan.checkpoint
     report.update(
@@ -368,14 +391,22 @@ def resume_cmd(
         resume_strategy=plan.resume_strategy,
         worktree_path=cp.worktree_path,
         checkpoint_path=str(checkpoint_path_for(project_root, cp.task_id)),
+        request_id=plan.request_id,
+        source_digest=plan.source_digest,
     )
-    signal = None
+    record: ResumeRequestRecord | None = None
+    signal: Path | None = None
     if not dry_run:
         try:
-            signal = _write_resume_signal(project_root, plan)
-        except OSError as exc:
+            signal, record = _write_resume_signal(project_root, plan)
+        except (OSError, ResumeRequestCorruptError, PathContainmentError) as exc:
             fail(EXIT_IO_ERROR, f"Could not write resume signal: {exc}")
-        report.update(dispatch_status="queued", signal_paths=[str(signal)])
+        report.update(
+            dispatch_status=record.dispatch_status,
+            signal_paths=[str(signal)],
+            request_id=record.request_id,
+            runtime_acknowledged=record.dispatch_status == ResumeDispatchStatus.RESUMED.value,
+        )
 
     if output_json:
         click.echo(json.dumps(report, indent=2))
@@ -384,7 +415,10 @@ def resume_cmd(
     _render_plan(project_root, plan)
     if signal is not None:
         console.print(f"[green]Resume signal queued:[/green] {signal}")
-        console.print("[dim]Runtime acknowledgement: unavailable.[/dim]")
+        if record is not None and record.dispatch_status == ResumeDispatchStatus.RESUMED.value:
+            console.print(f"[green]Runtime acknowledgement: resumed for request {record.request_id}.[/green]")
+        else:
+            console.print("[dim]Runtime acknowledgement: unavailable.[/dim]")
     else:
         console.print("[dim]Dry run completed.[/dim]")
 
@@ -423,13 +457,23 @@ def _work_ledger_hint(workdir: Path, resume_id: str) -> str | None:
     return None
 
 
-def _write_resume_signal(workdir: Path, plan: ResumePlan) -> Path:
-    """Write the local resume signal and return its path."""
-    return write_resume_signal(
+def _write_resume_signal(workdir: Path, plan: ResumePlan) -> tuple[Path, ResumeRequestRecord]:
+    """Publish the wake-up signal and return its path with the request record.
+
+    The signal keeps its legacy fields so existing readers still work; the
+    companion ``<task_id>.requests.json`` holds the claim/outcome state.
+    """
+    cp = plan.checkpoint
+    record = publish_resume_request(
         workdir,
-        plan.checkpoint.task_id,
-        resume_count=plan.checkpoint.resume_count,
-        capability=plan.capability,
-        adapter=plan.checkpoint.adapter,
-        adapter_session_id=plan.checkpoint.adapter_session_id,
+        cp.task_id,
+        source_digest=plan.source_digest,
+        signal_fields={
+            "resume_count": cp.resume_count,
+            "capability": plan.capability,
+            "adapter": cp.adapter,
+            "adapter_session_id": cp.adapter_session_id,
+        },
     )
+    signal = workdir / ".sdd" / "runtime" / "resume" / f"{cp.task_id}.signal"
+    return signal, record

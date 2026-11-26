@@ -29,8 +29,27 @@ bernstein resume TASK_ID
 
 Each signal is published with an atomic rename under `.sdd/runtime/resume/`.
 Readers see a complete request even if a later write is interrupted. A queued signal
-confirms the file write. Runtime acknowledgement is currently unavailable
-for these signals.
+confirms the file write only; it is not proof that a worker ran.
+
+The durable request and its outcome live in a companion
+`.sdd/runtime/resume/<task-id>.requests.json` file. The signal keeps its existing
+fields (so older readers still work) and adds `request_id` and `source_digest`.
+`request_id` is derived from the attempt-identifying checkpoint fields, excluding
+`resume_count` and `updated_at`, so repeating the CLI command for the same
+interrupted attempt reuses the same id without bumping `resume_count` again. A newer
+checkpoint mints a distinct id. Requests move `queued -> claimed -> resumed` and
+the state survives restarts: a worker claims before running and records the
+outcome afterwards. Legacy signals without a `request_id` are read as
+unacknowledged wake-up hints and gain the new structure on the next publish.
+`runtime_acknowledged` is `true` only when `resumed` is recorded for the exact
+`request_id` the command reported.
+
+`bernstein ledger resume` uses the same companion records. Its request ids are
+derived from `(run_id, task_id, last task-level ledger transition)`, so repeated
+resumes with no worker in between keep the same id, run-level `KIND_RUN_RESUMED`
+nonces do not change it, and completed tasks are not requested. Its JSON adds a
+`resume_requests` list with one `task_id`, `request_id`, `source_digest`,
+`run_id`, `dispatch_status` and `runtime_acknowledged` per frontier task.
 
 ## Exit codes
 
@@ -97,9 +116,12 @@ bernstein resume task-9f3a --json > /tmp/resume-9f3a.json
 ```
 
 Stdout contains one JSON object. `dispatch_status` is `queued` after
-writing a signal and `not_dispatched` if no signal was written.
+writing a signal (`claimed` or `resumed` once a worker advances that request)
+and `not_dispatched` if no signal was written.
 `signal_paths` lists the files written by this invocation.
-`runtime_acknowledged` is currently `false`. A refusal or write failure
+`runtime_acknowledged` is `false` while the request is `queued` or left
+`claimed`, and `true` only once a worker records `resumed` for the
+`request_id` in this report. A refusal or write failure
 includes an `error` field and a nonzero exit status. With `--discard`,
 `checkpoint_discarded` reports whether the agent checkpoint was removed.
 A deletion or lookup I/O error stops the command before it increments
@@ -123,4 +145,6 @@ new session. To continue from the saved task step and adapter session,
 `--override-observations` keeps it and accepts the changed bytes.
 
 **Resume signal queued.** Check `signal_paths` for the file written by
-the command. The runtime currently provides no receipt for that signal.
+the command and `request_id` for the attempt. The companion
+`<task-id>.requests.json` shows `queued` until a worker claims and resumes it;
+re-run the CLI command later to see `runtime_acknowledged: true`.
