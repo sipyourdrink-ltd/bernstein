@@ -403,7 +403,7 @@ def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
         return {
             "name": name,
             "ok": "False",
-            "detail": f"could not run uv: {exc}"[:80],
+            "detail": f"could not run uv: {exc}",
             "fix": "Check that uv is executable and on PATH",
         }
 
@@ -411,9 +411,25 @@ def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
     return {
         "name": name,
         "ok": str(ok),
-        "detail": result.stdout.strip()[:detail_limit] if ok else result.stderr.strip()[:80],
+        "detail": result.stdout.strip()[:detail_limit] if ok else result.stderr.strip(),
         "fix": "" if ok else f"Add {name} to [dependency-groups] dev in pyproject.toml",
     }
+
+
+_PYTHON_PROJECT_MARKERS = (
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "requirements.txt",
+    "uv.lock",
+    "pytest.ini",
+    "tox.ini",
+)
+
+
+def has_python_project_markers(workdir: Path) -> bool:
+    """Return True if *workdir* looks like a Python project."""
+    return any((workdir / marker).exists() for marker in _PYTHON_PROJECT_MARKERS)
 
 
 def check_test_dependencies() -> list[dict[str, str]]:

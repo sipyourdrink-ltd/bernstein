@@ -327,7 +327,8 @@ def _check_gemini_auth(env: Mapping[str, str] | None = None) -> tuple[str, str, 
             "None of GEMINI_API_KEY, GOOGLE_API_KEY, "
             "GOOGLE_APPLICATION_CREDENTIALS, gcloud auth, or "
             "~/.config/gemini/ were detected",
-            "export GOOGLE_API_KEY=your-key, or run: gcloud auth login",
+            "export GEMINI_API_KEY=your-key (or GOOGLE_API_KEY), "
+            "run 'gemini' to sign in, or run: gcloud auth application-default login",
         )
     return None
 
