@@ -40,11 +40,17 @@ from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
     from signxml import VerifyResult
 
     from bernstein.core.identity.spiffe.svid import SvidReference
+    from bernstein.core.security.agent_card_signer import DetachedSigner
     from bernstein.core.security.token_binding import BindingRefusal
 
 _PERM_BULLETIN_READ = "bulletin:read"
@@ -471,6 +477,25 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s)
 
 
+def decode_jwt_header_unverified(token: str) -> dict[str, Any] | None:
+    """Decode the JOSE header of a compact JWT without verifying its signature.
+
+    Callers may use this to read routing metadata such as ``kid`` when looking
+    up a verification key in a JWKS. It must NEVER be used to select the
+    verification algorithm or make authorization decisions.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        header: object = json.loads(_b64url_decode(parts[0]))
+    except Exception:
+        return None
+    if not isinstance(header, dict):
+        return None
+    return cast("dict[str, Any]", header)
+
+
 def decode_jwt_unverified(token: str) -> dict[str, Any] | None:
     """Decode JWT claims without verifying the signature.
 
@@ -481,10 +506,12 @@ def decode_jwt_unverified(token: str) -> dict[str, Any] | None:
     if len(parts) != 3:
         return None
     try:
-        claims: dict[str, Any] = json.loads(_b64url_decode(parts[1]))
+        claims: object = json.loads(_b64url_decode(parts[1]))
     except Exception:
         return None
-    return claims
+    if not isinstance(claims, dict):
+        return None
+    return cast("dict[str, Any]", claims)
 
 
 def extract_jwt_expiry(token: str) -> float | None:
@@ -493,22 +520,135 @@ def extract_jwt_expiry(token: str) -> float | None:
     if claims is None:
         return None
     exp = claims.get("exp")
-    if isinstance(exp, int | float):
+    if isinstance(exp, int | float) and not isinstance(exp, bool):
         return float(exp)
+    return None
+
+
+def _sign_eddsa_jwt_input(signing_input: bytes, key: object) -> bytes:
+    """Sign *signing_input* with Ed25519 private key material or a KMS signer.
+
+    Routes PEM parsing through the lineage signer custody boundary so private
+    key loading stays confined to that single module. Public keys and arbitrary
+    shared-secret strings are explicitly rejected.
+    """
+    from pathlib import Path
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from bernstein.core.persistence.lineage_signer import (
+        LineageSignerError,
+        _load_ed25519_private,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    if isinstance(key, Ed25519PublicKey):
+        msg = "EdDSA signing requires a private key, got Ed25519PublicKey"
+        raise TypeError(msg)
+
+    if isinstance(key, str | bytes):
+        raw = key.encode("utf-8") if isinstance(key, str) else key
+        if not raw.lstrip().startswith(b"-----BEGIN PRIVATE KEY-----"):
+            msg = "EdDSA signing requires a PKCS#8 PEM Ed25519 private key or KMSAdapter"
+            raise ValueError(msg)
+        try:
+            private_key = _load_ed25519_private(raw, Path("<jwt-eddsa-private-key>"))
+        except LineageSignerError as exc:
+            msg = f"EdDSA signing key is not a valid Ed25519 private key: {exc}"
+            raise ValueError(msg) from exc
+        return private_key.sign(signing_input)
+
+    sign_fn = getattr(key, "sign", None)
+    if callable(sign_fn):
+        try:
+            signature = sign_fn(signing_input)
+        except TypeError as exc:
+            msg = "EdDSA signing requires an Ed25519 private key or KMSAdapter"
+            raise TypeError(msg) from exc
+        if not isinstance(signature, bytes) or len(signature) != 64:
+            msg = "EdDSA signer must return a 64-byte raw Ed25519 signature"
+            raise ValueError(msg)
+        return signature
+
+    msg = f"EdDSA signing requires an Ed25519 private key or KMSAdapter, got {type(key).__name__}"
+    raise TypeError(msg)
+
+
+def _coerce_ed25519_public_key(key: object) -> Ed25519PublicKey | None:
+    """Coerce supported public-key representations to ``Ed25519PublicKey``.
+
+    Accepts an ``Ed25519PublicKey`` instance, SPKI PEM (``bytes`` or ``str``),
+    raw 32-byte public key ``bytes``, or an RFC 8037 OKP/Ed25519 public JWK
+    mapping. Private keys, KMS signers, and JWKs carrying private ``d``
+    material are rejected so verification operates strictly on public material.
+    """
+    from collections.abc import Mapping
+
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
+
+    if isinstance(key, Ed25519PrivateKey) or callable(getattr(key, "sign", None)):
+        return None
+    if isinstance(key, Ed25519PublicKey):
+        return key
+    if isinstance(key, Mapping):
+        jwk = cast("Mapping[str, Any]", key)
+        if "d" in jwk:
+            return None
+        if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":
+            return None
+        x_val = jwk.get("x")
+        if not isinstance(x_val, str) or not x_val:
+            return None
+        try:
+            raw_pub = _b64url_decode(x_val)
+        except Exception:
+            return None
+        if len(raw_pub) != 32:
+            return None
+        try:
+            return Ed25519PublicKey.from_public_bytes(raw_pub)
+        except ValueError:
+            return None
+    if isinstance(key, str | bytes):
+        raw = key.encode("utf-8") if isinstance(key, str) else key
+        if raw.lstrip().startswith(b"-----BEGIN PUBLIC KEY-----"):
+            try:
+                loaded = serialization.load_pem_public_key(raw)
+            except (ValueError, TypeError, UnsupportedAlgorithm):
+                return None
+            return loaded if isinstance(loaded, Ed25519PublicKey) else None
+        if isinstance(key, bytes) and len(key) == 32:
+            try:
+                return Ed25519PublicKey.from_public_bytes(key)
+            except ValueError:
+                return None
     return None
 
 
 def create_jwt(
     claims: dict[str, Any],
-    secret: str,
+    secret: str | bytes | Ed25519PrivateKey | DetachedSigner,
     algorithm: str = "HS256",
     expiry_seconds: int = 86400,
+    *,
+    kid: str | None = None,
 ) -> str:
     """Create a signed JWT token.
 
-    Uses HMAC-SHA256 by default. No external JWT library required.
+    Supports symmetric HMAC (``HS256``, ``HS384``, ``HS512``) and asymmetric
+    Ed25519 (``EdDSA``). When *kid* is supplied it is stamped into the JOSE
+    header so verifiers can resolve the matching key in a JWKS.
     """
-    header = {"alg": algorithm, "typ": "JWT"}
+    header: dict[str, str] = {"alg": algorithm, "typ": "JWT"}
+    if kid is not None:
+        if not kid.strip():
+            msg = "JWT kid must be a non-empty string"
+            raise ValueError(msg)
+        header["kid"] = kid
     now = int(time.time())
     payload = claims | {
         "iat": now,
@@ -520,12 +660,15 @@ def create_jwt(
     payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode())
     signing_input = f"{header_b64}.{payload_b64}"
 
-    if algorithm == "HS256":
-        sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
-    elif algorithm == "HS384":
-        sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha384).digest()
-    elif algorithm == "HS512":
-        sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha512).digest()
+    if algorithm in {"HS256", "HS384", "HS512"}:
+        if not isinstance(secret, str | bytes):
+            msg = f"{algorithm} signing requires a str or bytes secret, got {type(secret).__name__}"
+            raise TypeError(msg)
+        key_bytes = secret.encode("utf-8") if isinstance(secret, str) else secret
+        digest = {"HS256": hashlib.sha256, "HS384": hashlib.sha384, "HS512": hashlib.sha512}[algorithm]
+        sig = hmac.new(key_bytes, signing_input.encode("ascii"), digest).digest()
+    elif algorithm == "EdDSA":
+        sig = _sign_eddsa_jwt_input(signing_input.encode("ascii"), secret)
     else:
         msg = f"Unsupported algorithm: {algorithm}"
         raise ValueError(msg)
@@ -535,34 +678,36 @@ def create_jwt(
 
 def verify_jwt(
     token: str,
-    secret: str,
+    secret: str | bytes | Ed25519PublicKey | Mapping[str, Any],
     algorithm: str = "HS256",
+    *,
+    kid: str | None = None,
 ) -> dict[str, Any] | None:
-    """Verify and decode a JWT token. Returns claims dict or None if invalid."""
+    """Verify and decode a JWT token. Returns claims dict or None if invalid.
+
+    The verification algorithm is selected strictly by the caller's *algorithm*
+    argument, never by the unverified token header. For ``EdDSA``, *secret*
+    must be public key material (``Ed25519PublicKey``, SPKI PEM, 32-byte raw
+    public key, or OKP/Ed25519 JWK).
+    """
     parts = token.split(".")
     if len(parts) != 3:
         return None
 
     header_b64, payload_b64, sig_b64 = parts
 
-    # Verify header
     try:
-        header = json.loads(_b64url_decode(header_b64))
+        raw_header: object = json.loads(_b64url_decode(header_b64))
     except Exception:
         return None
-
-    if header.get("alg") != algorithm:
+    if not isinstance(raw_header, dict):
         return None
+    header = cast("dict[str, Any]", raw_header)
 
-    # Verify signature
-    signing_input = f"{header_b64}.{payload_b64}"
-    if algorithm == "HS256":
-        expected = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
-    elif algorithm == "HS384":
-        expected = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha384).digest()
-    elif algorithm == "HS512":
-        expected = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha512).digest()
-    else:
+    header_alg = header.get("alg")
+    if not isinstance(header_alg, str) or header_alg.lower() == "none" or header_alg != algorithm:
+        return None
+    if kid is not None and header.get("kid") != kid:
         return None
 
     try:
@@ -570,18 +715,38 @@ def verify_jwt(
     except Exception:
         return None
 
-    if not hmac.compare_digest(expected, actual):
+    signing_input = f"{header_b64}.{payload_b64}"
+    if algorithm in {"HS256", "HS384", "HS512"}:
+        if not isinstance(secret, str | bytes):
+            return None
+        key_bytes = secret.encode("utf-8") if isinstance(secret, str) else secret
+        digest = {"HS256": hashlib.sha256, "HS384": hashlib.sha384, "HS512": hashlib.sha512}[algorithm]
+        expected = hmac.new(key_bytes, signing_input.encode("ascii"), digest).digest()
+        if not hmac.compare_digest(expected, actual):
+            return None
+    elif algorithm == "EdDSA":
+        from cryptography.exceptions import InvalidSignature
+
+        public_key = _coerce_ed25519_public_key(secret)
+        if public_key is None or len(actual) != 64:
+            return None
+        try:
+            public_key.verify(actual, signing_input.encode("ascii"))
+        except InvalidSignature:
+            return None
+    else:
         return None
 
-    # Decode payload
     try:
-        claims: dict[str, Any] = json.loads(_b64url_decode(payload_b64))
+        raw_claims: object = json.loads(_b64url_decode(payload_b64))
     except Exception:
         return None
+    if not isinstance(raw_claims, dict):
+        return None
+    claims = cast("dict[str, Any]", raw_claims)
 
-    # Check expiry
     exp = claims.get("exp", 0)
-    if time.time() > exp:
+    if not isinstance(exp, int | float) or isinstance(exp, bool) or time.time() > exp:
         return None
 
     return claims

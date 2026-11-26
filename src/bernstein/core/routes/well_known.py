@@ -697,9 +697,31 @@ def agent_card_json(request: Request) -> Response:
     return _serve_agent_card(request)
 
 
+def _resolve_agent_jwt_jwk(request: Request | None) -> dict[str, str] | None:
+    """Return the install's agent-identity JWT Ed25519 public JWK (#8193).
+
+    Prefers the ``AgentIdentityStore`` bound on ``request.app.state`` so apps
+    configured with an explicit ``KMSAdapter`` signer publish that exact key;
+    falls back to the install signing-key loader when invoked directly without
+    an application container.
+    """
+    app = getattr(request, "app", None)
+    state = getattr(app, "state", None)
+    store = getattr(state, "identity_store", None)
+    if store is not None and hasattr(store, "public_key_jwk"):
+        return cast("dict[str, str]", store.public_key_jwk())
+
+    from bernstein.core.identity.agent_jwt import load_or_create_agent_jwt_public_jwk
+
+    try:
+        return load_or_create_agent_jwt_public_jwk()
+    except Exception:
+        return None
+
+
 @router.get("/.well-known/agent.json/keys", include_in_schema=False)
 def agent_json_keys(request: Request) -> dict[str, Any]:
-    """Return the JWKS for verifying ``/.well-known/agent.json`` signatures.
+    """Return the JWKS for verifying ``/.well-known/agent.json`` and agent JWT signatures.
 
     JWKS shape per RFC 7517 - ``{"keys": [<jwk>, ...]}``. The current
     orchestrator key always appears first under the historical fixed kid, so
@@ -713,7 +735,9 @@ def agent_json_keys(request: Request) -> dict[str, Any]:
     key is current. Verifiers cached on the old JWKS keep validating until
     their HTTP cache (``Cache-Control: public, max-age=3600`` on the agent
     card route) ages out and they refetch. The JWKS is tenant-scoped: tenant
-    A's card never verifies against tenant B's keys.
+    A's card never verifies against tenant B's keys. The install's agent-token
+    Ed25519 public key is also published under its own distinct ``kid`` so
+    separate or third-party verifiers can check agent JWTs offline.
     """
     tenant_id = _resolve_tenant(request)
     # Ensure both the cached PEM and the keystore binding exist before we
@@ -735,6 +759,9 @@ def agent_json_keys(request: Request) -> dict[str, Any]:
         # not under the timestamped keystore id, which nothing on the wire
         # names. Routing by kid is the whole point of the grace window.
         jwks.append(ed25519_public_jwk(archived.public_pem, kid=install_identity_keyid(archived.public_pem)))
+    agent_jwt_jwk = _resolve_agent_jwt_jwk(request)
+    if agent_jwt_jwk is not None and all(k.get("kid") != agent_jwt_jwk.get("kid") for k in jwks):
+        jwks.append(agent_jwt_jwk)
     return {"keys": jwks}
 
 

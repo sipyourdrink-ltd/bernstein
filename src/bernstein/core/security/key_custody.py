@@ -167,6 +167,29 @@ def public_key_jwk_for(public_key: Ed25519PublicKey, *, kid: str | None = None) 
 # ---------------------------------------------------------------------------
 
 
+def enforce_private_key_permissions(key_path: Path) -> None:
+    """Reject a private key file on POSIX if group or world permission bits are set.
+
+    Mirrors the ``0600`` custody invariant enforced on the install audit key
+    (:class:`~bernstein.core.security.audit.AuditKeyPermissionError`).
+    """
+    import stat
+    import sys
+
+    from bernstein.core.security.audit import AuditKeyPermissionError
+
+    if sys.platform == "win32":
+        return
+    try:
+        file_mode = stat.S_IMODE(key_path.stat().st_mode)
+    except OSError as exc:
+        raise AuditKeyPermissionError(f"Cannot stat signing key {key_path}: {exc}") from exc
+    if file_mode & 0o077:
+        raise AuditKeyPermissionError(
+            f"Signing key {key_path} has insecure permissions {file_mode:04o}; required 0600 (owner-only)."
+        )
+
+
 class FileBasedKMSAdapter:
     """KMS adapter that reads an Ed25519 private key from disk.
 
@@ -186,9 +209,11 @@ class FileBasedKMSAdapter:
 
     __slots__ = ("_signer", "key_path", "kid")
 
-    def __init__(self, key_path: Path, *, kid: str | None = None) -> None:
+    def __init__(self, key_path: Path, *, kid: str | None = None, require_owner_only: bool = False) -> None:
         self.key_path = key_path
         self.kid = kid
+        if require_owner_only and key_path.exists():
+            enforce_private_key_permissions(key_path)
         self._signer = Ed25519FileKeySigner.from_path(key_path)
 
     def sign(self, payload: bytes) -> bytes:
