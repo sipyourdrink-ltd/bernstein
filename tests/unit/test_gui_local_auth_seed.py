@@ -120,7 +120,7 @@ def test_legacy_token_unlocks_spa_and_posture_holds(tmp_path: Path, monkeypatch:
 # password) but no ``BERNSTEIN_AUTH_TOKEN`` in the environment, a loopback
 # ``gui serve`` opened ``/ui/`` with no bearer - the shell loaded (200) but
 # every ``/api/v1/*`` panel call 401'd, because a dashboard scoped token does
-# not unlock the general API. The fix mints an ephemeral operator bearer on
+# not unlock the general API. The fix mints a bearer on
 # loopback when none is supplied, exports it *before* ``create_app`` so the
 # general API accepts it, and seeds the same token into the opened browser
 # URL fragment. These end-to-end tests drive the real ``serve`` command.
@@ -167,7 +167,7 @@ def test_serve_loopback_configured_mints_and_seeds(tmp_path: Path, monkeypatch: 
     # (a) A bearer was minted and exported so create_app resolves it.
     minted = os.environ.get("BERNSTEIN_AUTH_TOKEN", "")
     assert minted, "no operator bearer was minted for the loopback general API"
-    # The mint is a standalone ephemeral bearer - it must NOT pollute the
+    # The mint is a standalone bearer - it must NOT pollute the
     # #2366 dashboard journal (that stays at its configured count).
     assert len(reg.records()) == records_before
 
@@ -259,8 +259,33 @@ def test_serve_loopback_uninit_dir_no_sdd_pollution(tmp_path: Path, monkeypatch:
 
     minted = os.environ.get("BERNSTEIN_AUTH_TOKEN", "")
     assert minted
-    assert "server process environment only" in result.output
-    assert "BERNSTEIN_AUTH_TOKEN" in result.output
+    assert "BERNSTEIN_AUTH_TOKEN is active only in process env" in result.output
+    assert "must be supplied explicitly" in result.output
+    assert "paste BERNSTEIN_AUTH_TOKEN" not in result.output
+    assert minted not in result.output
+    with TestClient(apps[0], base_url="http://127.0.0.1:8052") as c:
+        assert c.get("/api/v1/tasks").status_code == 401
+        assert c.get("/api/v1/tasks", headers={"Authorization": f"Bearer {minted}"}).status_code == 200
+
+
+@pytest.mark.parametrize("flag", ["--no-open", "--dev"])
+def test_serve_loopback_non_tty_without_sdd_warns_explicit_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    """Non-interactive serve outside .sdd/ warns that BERNSTEIN_AUTH_TOKEN is process-env-only."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    monkeypatch.chdir(tmp_path)
+
+    apps = _capture_uvicorn_app(monkeypatch)
+    result = CliRunner().invoke(gui_cli.serve, [flag, "--host", "127.0.0.1", "--port", "8052"])
+    assert result.exit_code == 0, result.output
+    minted = os.environ.get("BERNSTEIN_AUTH_TOKEN", "")
+    assert minted
+    assert not (tmp_path / ".sdd" / "runtime" / "auth.token").exists()
+    assert "BERNSTEIN_AUTH_TOKEN is active only in process env" in result.output
+    assert "must be supplied explicitly" in result.output
     assert "paste BERNSTEIN_AUTH_TOKEN" not in result.output
     assert minted not in result.output
     with TestClient(apps[0], base_url="http://127.0.0.1:8052") as c:

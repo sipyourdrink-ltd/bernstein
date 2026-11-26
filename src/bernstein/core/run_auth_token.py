@@ -1,7 +1,7 @@
 """Persist and read the auto-generated run Bearer token (issue #2794).
 
 When the launcher starts a server without an operator-configured
-``BERNSTEIN_AUTH_TOKEN`` it auto-generates an ephemeral token. Historically
+``BERNSTEIN_AUTH_TOKEN`` it mints a bearer token and stores it for reuse. Historically
 that token lived only in the launcher process environment, so any CLI monitor
 invoked from a *different* shell (``status``/``recap``/``checkpoint``) or the
 TUI poller could not authenticate and the server answered ``401`` - which the
