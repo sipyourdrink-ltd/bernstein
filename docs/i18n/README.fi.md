@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
+Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Siivoussolmut voivat asettaa arvon `always_run: true` suoritettavaksi komento- tai jakeluvirheen jälkeen muuttamatta keskeytettyä ajoa onnistuneeksi (agentin valmistumisen portitusta seurataan tiketissä [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
 
 `bernstein compliance controls` näyttää kunkin kontrollin testikokoelmat ja viimeisimmän täydellisen mittauksen, jos sellainen on saatavilla. [Vertailutestien kattavuus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

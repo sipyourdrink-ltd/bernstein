@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-O estado da execução grava checkpoints em `.sdd/runs/<run_id>/` a cada nó. A retomada valida o digest do manifesto no início da execução, de modo que uma mudança na especificação é recusada em vez de executar silenciosamente um manifesto diferente. Veja [manifestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Ao retomar, forneça novamente o mesmo valor de `-g` para substituir `{goal}` nos prompts dos nós ainda não concluídos.
+O estado da execução grava checkpoints em `.sdd/runs/<run_id>/` a cada nó. A retomada valida o digest do manifesto no início da execução, de modo que uma mudança na especificação é recusada em vez de executar silenciosamente um manifesto diferente. Nós de limpeza podem definir `always_run: true` para executar após uma falha de comando ou de despacho sem transformar uma execução abortada em sucesso (o controle de conclusão de agente é acompanhado em [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Veja [manifestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Ao retomar, forneça novamente o mesmo valor de `-g` para substituir `{goal}` nos prompts dos nós ainda não concluídos.
 
 `bernstein compliance controls` mostra os conjuntos de testes de cada controle e a última medição completa disponível. [Cobertura dos testes](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

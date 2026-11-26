@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-실행 상태는 노드마다 `.sdd/runs/<run_id>/`에 체크포인트된다. 재개는 실행 시작 시 매니페스트 다이제스트를 검증하므로, 명세가 바뀌었다면 다른 매니페스트를 조용히 실행하는 대신 거부된다. [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)를 보라. 재개할 때 같은 `-g` 값을 다시 지정해야 미완료 노드의 프롬프트에서 `{goal}`이 치환된다.
+실행 상태는 노드마다 `.sdd/runs/<run_id>/`에 체크포인트된다. 재개는 실행 시작 시 매니페스트 다이제스트를 검증하므로, 명세가 바뀌었다면 다른 매니페스트를 조용히 실행하는 대신 거부된다. 정리 노드는 `always_run: true`를 설정하여 커맨드 또는 디스패치 실패 이후에도 실행할 수 있으며, 중단된 실행을 성공으로 바꾸지 않는다(에이전트 완료 게이팅은 [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)에서 추적 중이다). [워크플로 매니페스트](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)를 보라. 재개할 때 같은 `-g` 값을 다시 지정해야 미완료 노드의 프롬프트에서 `{goal}`이 치환된다.
 
 `bernstein compliance controls` 명령은 각 통제 항목의 벤치마크 모음과 가장 최근에 완료된 측정 결과가 있으면 그 결과를 표시합니다. [벤치마크 범위](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

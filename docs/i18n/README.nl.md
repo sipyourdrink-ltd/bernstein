@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-De runstatus wordt bij elk knooppunt als checkpoint onder `.sdd/runs/<run_id>/` vastgelegd. Hervatten valideert de manifest-digest bij de start van de run, zodat een wijziging van de specificatie wordt geweigerd in plaats van stilzwijgend een ander manifest uit te voeren. Zie [workflow-manifesten](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Geef bij het hervatten opnieuw dezelfde `-g`-waarde op, zodat `{goal}` wordt vervangen in de prompts van onvoltooide knooppunten.
+De runstatus wordt bij elk knooppunt als checkpoint onder `.sdd/runs/<run_id>/` vastgelegd. Hervatten valideert de manifest-digest bij de start van de run, zodat een wijziging van de specificatie wordt geweigerd in plaats van stilzwijgend een ander manifest uit te voeren. Opruimknooppunten kunnen `always_run: true` instellen om na een commando- of dispatchfout uit te voeren zonder een afgebroken run in een succes te veranderen (gating voor agentvoltooiing wordt bijgehouden in [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Zie [workflow-manifesten](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Geef bij het hervatten opnieuw dezelfde `-g`-waarde op, zodat `{goal}` wordt vervangen in de prompts van onvoltooide knooppunten.
 
 `bernstein compliance controls` toont per controle de testsuites en de laatste volledige meting, indien beschikbaar. [Benchmarkdekking](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
