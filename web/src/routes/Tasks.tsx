@@ -16,9 +16,11 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { MoreHorizontal, Plus, Command as CommandIcon, Search, X } from 'lucide-react';
+import { Check, Copy, MoreHorizontal, Plus, Command as CommandIcon, Search, X } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '@/lib/api';
+import { useGuiMeta } from '@/lib/guiMeta';
 import { useEventStream } from '@/lib/sse';
+import { MONITOR_COMMANDS } from '@/components/MonitorModeBanner';
 import { TaskLogsPanel } from '@/components/logs';
 import { TaskDiffPanel } from '@/components/diff/TaskDiffPanel';
 import { TaskGatesPanel } from '@/components/gates/TaskGatesPanel';
@@ -436,6 +438,8 @@ function buildListPath(opts: {
 
 export default function Tasks() {
   const qc = useQueryClient();
+  const guiMetaQ = useGuiMeta();
+  const runnerActive = guiMetaQ.data?.runner_active;
 
   const [queryStr, setQueryStr] = useState<string>('');
   const [activeChip, setActiveChip] = useState<ChipKey>('all');
@@ -448,6 +452,7 @@ export default function Tasks() {
   const headerCreateButton = useRef<HTMLButtonElement | null>(null);
 
   const parsed = useMemo(() => parseQuery(queryStr), [queryStr]);
+  const hasFilter = activeChip !== 'all' || queryStr.trim().length > 0;
   const chip = CHIPS.find((c) => c.key === activeChip) ?? CHIPS[0];
 
   const listPath = buildListPath({
@@ -634,14 +639,36 @@ export default function Tasks() {
             </div>
           ) : items.length === 0 ? (
             <div className="p-4">
-              <EmptyState
-                title="No tasks yet"
-                description="Spin up the first run to populate this list."
-                action={{
-                  label: 'Create task',
-                  onClick: (event) => openCreate('title', event.currentTarget, true),
-                }}
-              />
+              {hasFilter ? (
+                <EmptyState
+                  title="No matching tasks"
+                  description="No tasks match the current filter."
+                  action={{
+                    label: 'Clear filters',
+                    variant: 'secondary',
+                    onClick: () => {
+                      setQueryStr('');
+                      setActiveChip('all');
+                    },
+                  }}
+                />
+              ) : runnerActive === false ? (
+                <EmptyState
+                  title="No tasks recorded"
+                  description="No active task runner is attached to this server. Start a run from the CLI in your project directory to populate this list:"
+                >
+                  <MonitorEmptyGuide />
+                </EmptyState>
+              ) : (
+                <EmptyState
+                  title="No tasks yet"
+                  description="Spin up the first run to populate this list."
+                  action={{
+                    label: 'Create task',
+                    onClick: (event) => openCreate('title', event.currentTarget, true),
+                  }}
+                />
+              )}
             </div>
           ) : (
             <TasksTable
@@ -656,6 +683,7 @@ export default function Tasks() {
       {createFocus && (
         <CreateTaskDialog
           initialFocus={createFocus}
+          runnerActive={runnerActive}
           onRestoreFocus={() => {
             const trigger = createTrigger.current;
             if (trigger?.isConnected) {
@@ -1028,6 +1056,55 @@ function Header({
           New from prompt
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Monitor-only empty-state command list ───────────────────────────────────
+
+function MonitorEmptyGuide() {
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+
+  const copyCommand = async (cmd: string) => {
+    try {
+      await navigator.clipboard?.writeText(cmd);
+      setCopiedCmd(cmd);
+      window.setTimeout(() => {
+        setCopiedCmd((cur) => (cur === cmd ? null : cur));
+      }, 1500);
+    } catch {
+      // Ignore clipboard write failures when permissions or HTTPS are unavailable.
+    }
+  };
+
+  return (
+    <div className="mt-1 flex w-full max-w-md flex-col gap-2">
+      {MONITOR_COMMANDS.map((cmd) => (
+        <div
+          key={cmd}
+          className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-1.5"
+        >
+          <code className="font-mono text-[12px] text-foreground">{cmd}</code>
+          <button
+            type="button"
+            onClick={() => void copyCommand(cmd)}
+            aria-label={`Copy ${cmd}`}
+            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {copiedCmd === cmd ? (
+              <>
+                <Check className="size-3" strokeWidth={1.5} />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="size-3" strokeWidth={1.5} />
+                Copy
+              </>
+            )}
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

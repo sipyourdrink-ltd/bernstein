@@ -69,11 +69,13 @@ function taskCreationError(error: Error | null): string | undefined {
 
 export function CreateTaskDialog({
   initialFocus,
+  runnerActive,
   onRestoreFocus,
   onClose,
   onCreated,
 }: {
   initialFocus: 'title' | 'prompt';
+  runnerActive?: boolean;
   onRestoreFocus: () => void;
   onClose: (outcomeUnknown: boolean) => void;
   onCreated: (taskId: string) => void;
@@ -229,6 +231,11 @@ export function CreateTaskDialog({
           <Dialog.Description className="mt-1 text-body text-muted-foreground">
             Add a task to this project's queue.
           </Dialog.Description>
+          {runnerActive === false && (
+            <p className="mt-2 rounded-md border border-border-subtle bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
+              Monitor-only mode: no active task runner is attached, so a created task stays queued until a runner starts.
+            </p>
+          )}
           <form ref={formRef} onSubmit={submit} className="mt-4 space-y-4" aria-busy={busy}>
             <fieldset disabled={busy || recoveryId !== null} className="space-y-3">
               <label className="block space-y-1 text-body-md">
