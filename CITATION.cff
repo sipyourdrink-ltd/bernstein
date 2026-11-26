@@ -32,8 +32,8 @@ keywords:
   - gemini-cli
   - aider
   - software-engineering
-version: "4.0.1"
-date-released: "2026-11-25"
+version: "4.0.2"
+date-released: "2026-11-26"
 preferred-citation:
   type: software
   title: "Bernstein: a deterministic, open-source governance layer for AI agents"

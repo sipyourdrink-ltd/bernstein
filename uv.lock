@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
@@ -93,7 +93,7 @@ dependencies = [
     { name = "frozenlist" },
     { name = "multidict" },
     { name = "propcache" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "yarl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6c/4c/bdccd81e9ee225b69c60e7766c9a5b05364f118f4d383713b89a682d772d/aiohttp-3.14.5.tar.gz", hash = "sha256:5558a7f5a05af9ecf744af91e5baefc436f93c9333e656c27ec253f9a6bbe178", size = 8078052, upload-time = "2026-10-11T01:05:12.408Z" }
@@ -242,7 +242,7 @@ version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "frozenlist" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
@@ -273,7 +273,7 @@ version = "4.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/cc/a381afa6efea9f496eff839d4a6a1aed3bfafc7b3ab4b0d1b243a12573dd/anyio-4.14.2.tar.gz", hash = "sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f", size = 260176, upload-time = "2026-07-12T20:29:07.082Z" }
 wheels = [
@@ -499,7 +499,7 @@ name = "bandit"
 version = "1.9.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "stevedore" },
@@ -520,7 +520,7 @@ wheels = [
 
 [[package]]
 name = "bernstein"
-version = "4.0.1"
+version = "4.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "asn1crypto" },
@@ -1124,7 +1124,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -1457,7 +1457,7 @@ name = "cryptography"
 version = "50.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz", hash = "sha256:7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5", size = 880623, upload-time = "2026-09-30T15:30:04.884Z" }
 wheels = [
@@ -1562,7 +1562,7 @@ dependencies = [
     { name = "packageurl-python" },
     { name = "py-serializable" },
     { name = "sortedcontainers" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/21/0d/64f02d3fd9c116d6f50a540d04d1e4f2e3c487f5062d2db53733ddb25917/cyclonedx_python_lib-11.7.0.tar.gz", hash = "sha256:fb1bc3dedfa31208444dbd743007f478ab6984010a184e5bd466bffd969e936e", size = 1411174, upload-time = "2026-03-17T15:19:16.606Z" }
 wheels = [
@@ -1631,7 +1631,7 @@ version = "2.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
+    { name = "audioop-lts", marker = "python_full_version >= '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ef/57/9a2d9abdabdc9db8ef28ce0cf4129669e1c8717ba28d607b5ba357c4de3b/discord_py-2.7.1.tar.gz", hash = "sha256:24d5e6a45535152e4b98148a9dd6b550d25dc2c9fb41b6d670319411641249da", size = 1106326, upload-time = "2026-03-03T18:40:46.24Z" }
 wheels = [
@@ -1643,7 +1643,7 @@ name = "docker"
 version = "7.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "requests" },
     { name = "urllib3" },
 ]
@@ -2391,12 +2391,12 @@ name = "httpx2"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "sys_platform != 'emscripten'" },
-    { name = "httpcore2", marker = "sys_platform != 'emscripten'" },
-    { name = "httpx2-jsfetch", marker = "sys_platform == 'emscripten'" },
+    { name = "anyio", marker = "sys_platform != 'emscripten' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
+    { name = "httpcore2", marker = "sys_platform != 'emscripten' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
+    { name = "httpx2-jsfetch", marker = "sys_platform == 'emscripten' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "idna" },
-    { name = "truststore", marker = "sys_platform != 'emscripten'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d5/44/474bef2a0e9d90f1715d32cb98b0738695ca17ba324095fb2497ed7fbd59/httpx2-2.13.1.tar.gz", hash = "sha256:e48744a19e3af5ee48313d0ce5fe941d5422fae5705ea922a4aabf94d7800dfa", size = 100405, upload-time = "2026-09-23T07:47:23.052Z" }
 wheels = [
@@ -2420,7 +2420,7 @@ dependencies = [
     { name = "click" },
     { name = "filelock" },
     { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
+    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "httpx2" },
     { name = "packaging" },
     { name = "pyyaml" },
@@ -2809,9 +2809,9 @@ dependencies = [
     { name = "jaraco-classes" },
     { name = "jaraco-context" },
     { name = "jaraco-functools" },
-    { name = "jeepney", marker = "sys_platform == 'linux'" },
-    { name = "pywin32-ctypes", marker = "sys_platform == 'win32'" },
-    { name = "secretstorage", marker = "sys_platform == 'linux'" },
+    { name = "jeepney", marker = "sys_platform == 'linux' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
+    { name = "pywin32-ctypes", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
+    { name = "secretstorage", marker = "sys_platform == 'linux' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/43/4b/674af6ef2f97d56f0ab5153bf0bfa28ccb6c3ed4d1babf4305449668807b/keyring-25.7.0.tar.gz", hash = "sha256:fe01bd85eb3f8fb3dd0405defdeac9a5b4f6f0439edbb3149577f244a2e8245b", size = 63516, upload-time = "2025-11-16T16:26:09.482Z" }
 wheels = [
@@ -2846,8 +2846,8 @@ name = "libcst"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyyaml", marker = "python_full_version != '3.13.*'" },
-    { name = "pyyaml-ft", marker = "python_full_version == '3.13.*'" },
+    { name = "pyyaml", marker = "python_full_version != '3.13.*' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
+    { name = "pyyaml-ft", marker = "python_full_version == '3.13.*' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/c0/098e5c91ff1537f00c85a6438b6cb1863d17144680cc91f47c87f104a200/libcst-1.9.0.tar.gz", hash = "sha256:087b58a9afe076bb08e2d726478e1f16cb928d67ffa9092817e033c335de522a", size = 914739, upload-time = "2026-07-29T21:28:43.153Z" }
 wheels = [
@@ -3254,12 +3254,12 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyjwt" },
     { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "typing-extensions" },
     { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
+    { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9d/8d/e0d339616f4810e9051d4aba6887afab289ab1f81875fe908b606cdfd0e3/mcp-2.3.0.tar.gz", hash = "sha256:8b147a50441cf059dc88c684e0aeed3687f0aa0f39c6cde7b90330effd2b34d8", size = 4171955, upload-time = "2026-10-02T22:06:56.091Z" }
 wheels = [
@@ -3315,7 +3315,7 @@ version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "ghp-import" },
     { name = "jinja2" },
     { name = "markdown" },
@@ -3723,7 +3723,7 @@ version = "2.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ast-serialize" },
-    { name = "librt", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "mypy-extensions" },
     { name = "pathspec" },
     { name = "typing-extensions" },
@@ -4131,7 +4131,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "python-dateutil" },
-    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
+    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/da/99/b342345300f13440fe9fe385c3c481e2d9a595ee3bab4d3219247ac94e9a/pandas-3.0.2.tar.gz", hash = "sha256:f4753e73e34c8d83221ba58f232433fca2748be8b18dbca02d242ed153945043", size = 4645855, upload-time = "2026-03-31T06:48:30.816Z" }
 wheels = [
@@ -4487,7 +4487,7 @@ name = "protobuf-py"
 version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf-py-ext", marker = "(platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')" },
+    { name = "protobuf-py-ext", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (platform_machine != 'AMD64' and platform_machine != 'ARM64' and sys_platform == 'win32' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_machine != 'AMD64' and platform_machine != 'ARM64' and sys_platform == 'win32' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine != 'arm64' and sys_platform == 'darwin' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_machine != 'arm64' and sys_platform == 'darwin' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (platform_machine == 'ARM64' and sys_platform == 'win32' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_machine == 'ARM64' and sys_platform == 'win32' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (platform_python_implementation != 'CPython' and sys_platform == 'darwin' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (platform_python_implementation != 'CPython' and sys_platform == 'darwin' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/72/ed/02fd902d9c51b7ff53dfc9a745eb11490722edfd30073af889e171f07b8e/protobuf_py-0.1.1.tar.gz", hash = "sha256:6bd08ac4d8f1661965bbe2685429d79043704cdd1ee720a7a89617331742240b", size = 133525, upload-time = "2026-06-24T19:02:15.271Z" }
 wheels = [
@@ -4935,7 +4935,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -4952,7 +4952,7 @@ version = "1.4.1.post1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/73/7f/c60a4338420b33453d4f814ac0c930abd399f162b9bdd21af4b9e363037f/pytest_asyncio-1.4.1.post1.tar.gz", hash = "sha256:f582d9ea4a1c082195abe8bd29a1fe106aeb1cd435e3dad2d3bc2749935c36a2", size = 145360, upload-time = "2026-11-01T18:26:03.732Z" }
 wheels = [
@@ -5074,7 +5074,7 @@ name = "python-telegram-bot"
 version = "22.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "httpcore", marker = "python_full_version >= '3.14'" },
+    { name = "httpcore", marker = "python_full_version >= '3.14' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
     { name = "httpx" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ba/77/153517bb1ac1bba670c6fb1dbf09e1fd0730494b1705934e715391413a0d/python_telegram_bot-22.8.tar.gz", hash = "sha256:f9d3847fcb23ee603477e442800b33bb4adf851a73e0619d2050be879decf1ef", size = 1551700, upload-time = "2026-06-12T08:10:29.1Z" }
@@ -5194,7 +5194,7 @@ name = "qrcode"
 version = "8.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8f/b2/7fc2931bfae0af02d5f53b174e9cf701adbb35f39d69c2af63d4a39f81a9/qrcode-8.2.tar.gz", hash = "sha256:35c3f2a4172b33136ab9f6b3ef1c00260dd2f66f858f24d88418a015f446506c", size = 43317, upload-time = "2025-05-01T15:44:24.726Z" }
 wheels = [
@@ -5208,7 +5208,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "rpds-py" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
@@ -5558,8 +5558,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
+    { name = "jeepney", marker = "sys_platform != 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -5776,7 +5776,7 @@ version = "1.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/48/bb/3d8757f21e9a53d9035c9eb039a777047139a16bfdbedfc7a58241c3d914/starlette-1.10.0.tar.gz", hash = "sha256:b8399098d4c1e3522734f7235dc79b1fc967f96cf139c81e0fa30479e0685f9b", size = 2734356, upload-time = "2026-10-24T15:04:12.342Z" }
 wheels = [
@@ -5953,7 +5953,7 @@ name = "tqdm"
 version = "4.67.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-9-bernstein-grpc' and extra == 'extra-9-bernstein-modal') or (extra == 'extra-9-bernstein-modal' and extra == 'extra-9-bernstein-otel')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
