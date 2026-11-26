@@ -27,7 +27,7 @@ Auth source: `src/bernstein/core/security/auth_middleware.py`. Idle source: `src
 operator shell  ──BERNSTEIN_AUTH_TOKEN (or .sdd/runtime/auth.token)──▶  bernstein gui serve / run  ──▶  /api/v1/*
                                                                               │
                                                                               ├── auto-open loopback: /ui/#t=<token> (scrubbed on load)
-                                                                              └── --no-open / --dev: API token path .sdd/runtime/auth.token
+                                                                              └── --no-open / --dev: .sdd/runtime/auth.token in a .sdd/ workspace, else printed on a terminal
 operator browser  ──localStorage.bernstein_token──▶  Authorization: Bearer ...
 ```
 
