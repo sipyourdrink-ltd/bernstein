@@ -5,7 +5,7 @@
   "dependencies": {
     "@ampcode/cli": "0.0.1795089646-g8be92a",
     "@anthropic-ai/claude-code": "2.1.328",
-    "@charmland/crush": "0.101.0",
+    "@charmland/crush": "0.102.0",
     "@continuedev/cli": "1.5.47",
     "@google/gemini-cli": "0.70.0",
     "@openai/codex": "0.171.0",
