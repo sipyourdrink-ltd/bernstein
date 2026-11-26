@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
+from starlette.testclient import WebSocketDenialResponse
 
 from bernstein.core.server.dashboard_tokens import (
     SCOPE_OPERATOR,
@@ -171,7 +172,7 @@ def test_serve_loopback_configured_mints_and_seeds(tmp_path: Path, monkeypatch: 
     # create_app (built inside serve with the minted env) accepts the bearer
     # on the SPA's general route; an external tokenless request still 401s.
     app = apps[0]
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8052") as c:
         assert c.get("/api/v1/agents").status_code == 401
         assert c.get("/api/v1/agents", headers={"Authorization": f"Bearer {minted}"}).status_code == 200
 
@@ -207,3 +208,238 @@ def test_serve_non_loopback_configured_never_auto_mints(tmp_path: Path, monkeypa
     assert not os.environ.get("BERNSTEIN_AUTH_TOKEN"), "must not auto-mint on a non-loopback bind"
     # If a browser was opened at all, it carried no token fragment.
     assert all("#t=" not in u for u in opened), opened
+
+
+@pytest.mark.parametrize("flag", ["--no-open", "--dev"])
+def test_serve_no_open_and_dev_loopback_mint_api_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    """Loopback --no-open and --dev mint/export BERNSTEIN_AUTH_TOKEN for the SPA."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    (tmp_path / ".sdd").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    apps = _capture_uvicorn_app(monkeypatch)
+    result = CliRunner().invoke(gui_cli.serve, [flag, "--host", "127.0.0.1", "--port", "8052"])
+    assert result.exit_code == 0, result.output
+
+    minted = os.environ.get("BERNSTEIN_AUTH_TOKEN", "")
+    assert minted, f"expected BERNSTEIN_AUTH_TOKEN minted under {flag}"
+    token_file = tmp_path / ".sdd" / "runtime" / "auth.token"
+    assert token_file.is_file()
+    assert token_file.stat().st_mode & 0o777 == 0o600
+    assert token_file.read_text(encoding="utf-8").strip() == minted
+    assert ".sdd/runtime/auth.token" in result.output or str(token_file) in result.output
+    assert minted not in result.output
+    assert "only in /dashboard/review-board" in result.output
+
+    with TestClient(apps[0], base_url="http://127.0.0.1:8052") as c:
+        for path in ("/api/v1/agents", "/api/v1/tasks", "/api/v1/gui-meta"):
+            assert c.get(path).status_code == 401
+            assert c.get(path, headers={"Authorization": f"Bearer {minted}"}).status_code == 200
+
+
+def test_serve_loopback_uninit_dir_no_sdd_pollution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """gui serve --no-open in an empty dir must not create .sdd/a2a, agent_identities, or runtime token."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    monkeypatch.chdir(tmp_path)
+
+    apps = _capture_uvicorn_app(monkeypatch)
+    result = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / ".sdd" / "a2a").exists()
+    assert not (tmp_path / ".sdd" / "auth" / "agent_identities").exists()
+    assert not (tmp_path / ".sdd" / "runtime" / "auth.token").exists()
+
+    minted = os.environ.get("BERNSTEIN_AUTH_TOKEN", "")
+    assert minted
+    with TestClient(apps[0], base_url="http://127.0.0.1:8052") as c:
+        assert c.get("/api/v1/tasks").status_code == 401
+        assert c.get("/api/v1/tasks", headers={"Authorization": f"Bearer {minted}"}).status_code == 200
+
+
+def test_serve_unconfigured_non_loopback_and_tunnel_never_auto_mint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unconfigured 0.0.0.0 exits non-zero; --tunnel never auto-mints BERNSTEIN_AUTH_TOKEN."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    monkeypatch.chdir(tmp_path)
+
+    apps = _capture_uvicorn_app(monkeypatch)
+    res_unconf = CliRunner().invoke(gui_cli.serve, ["--host", "0.0.0.0", "--no-open"])
+    assert res_unconf.exit_code != 0
+    assert apps == []
+    assert not os.environ.get("BERNSTEIN_AUTH_TOKEN")
+
+    from bernstein.core.tunnels.protocol import TunnelHandle, TunnelProvider
+    from bernstein.core.tunnels.registry import TunnelRegistry
+
+    class _FakeTunnel(TunnelProvider):
+        name = "cloudflared"
+        binary = "cloudflared"
+
+        def detect(self) -> Any:  # pragma: no cover
+            raise NotImplementedError
+
+        def start(self, port: int, name: str) -> TunnelHandle:
+            return TunnelHandle(name=name, provider="cloudflared", port=port, public_url="https://t.example", pid=1)
+
+        def stop(self, name: str) -> None:
+            return None
+
+    monkeypatch.setattr(gui_cli, "PASSPHRASE_FILE", tmp_path / "passphrase")
+
+    def _build_reg() -> Any:
+        reg = TunnelRegistry(state_path=tmp_path / "tunnels.json")
+        reg.register(_FakeTunnel())
+        return reg
+
+    monkeypatch.setattr(gui_cli, "_build_tunnel_registry", _build_reg)
+    res_tunnel = CliRunner().invoke(
+        gui_cli.serve,
+        ["--host", "127.0.0.1", "--minimal", "--no-open", "--tunnel", "--tunnel-provider", "cloudflared"],
+    )
+    assert res_tunnel.exit_code == 0, res_tunnel.output
+    assert not os.environ.get("BERNSTEIN_AUTH_TOKEN")
+
+    import webbrowser
+
+    opened: list[str] = []
+    monkeypatch.setattr(webbrowser, "open", lambda u, *a, **k: opened.append(u) or True)
+    res_tunnel_default = CliRunner().invoke(
+        gui_cli.serve,
+        ["--host", "127.0.0.1", "--port", "8052", "--tunnel", "--tunnel-provider", "cloudflared"],
+    )
+    assert res_tunnel_default.exit_code == 0, res_tunnel_default.output
+    assert not os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    assert opened == []
+    assert apps, "expected uvicorn.run to receive the tunnel app"
+    with TestClient(apps[-1], base_url="http://evil.example:8052") as tunnel_client:
+        assert tunnel_client.get("/ui/").status_code == 200
+
+
+def test_serve_explicit_env_token_ignores_stale_token_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When BERNSTEIN_AUTH_TOKEN is set explicitly, stale .sdd/runtime/auth.token is not printed."""
+    from bernstein.core.run_auth_token import persist_run_auth_token
+
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    (tmp_path / ".sdd").mkdir()
+    persist_run_auth_token(tmp_path, "stale-old-token")
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "explicit-override-token")
+    monkeypatch.chdir(tmp_path)
+
+    _capture_uvicorn_app(monkeypatch)
+    res = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+    assert res.exit_code == 0, res.output
+    assert ".sdd/runtime/auth.token" not in res.output
+    assert "BERNSTEIN_AUTH_TOKEN" in res.output
+    assert "explicit-override-token" not in res.output
+
+
+def test_negative_security_guards_on_loopback_gui_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify #2366 scope separation, /docs closure, CORS/XFF/Host rejection, and WS admission."""
+    from bernstein.core.server.dashboard_tokens import SCOPE_VIEWER
+
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    sdd = tmp_path / ".sdd"
+    key = resolve_dashboard_hmac_key(sdd)
+    reg = DashboardTokenRegistry(sdd / "auth" / "dashboard_tokens.jsonl", hmac_key=key)
+    viewer_tok, _ = reg.issue(principal="v", scope=SCOPE_VIEWER, now=1000)
+    operator_tok, _ = reg.issue(principal="o", scope=SCOPE_OPERATOR, now=1001)
+
+    monkeypatch.chdir(tmp_path)
+    apps = _capture_uvicorn_app(monkeypatch)
+    res = CliRunner().invoke(gui_cli.serve, ["--no-open", "--host", "127.0.0.1", "--port", "8052"])
+    assert res.exit_code == 0, res.output
+    minted = os.environ["BERNSTEIN_AUTH_TOKEN"]
+    app = apps[0]
+
+    with TestClient(app, base_url="http://127.0.0.1:8052") as c:
+        for dash_tok in (viewer_tok, operator_tok):
+            hdr = {"Authorization": f"Bearer {dash_tok}"}
+            for route in (
+                "/api/v1/tasks",
+                "/api/v1/agents",
+                "/api/v1/events",
+                "/api/v1/tasks/t-1/detail",
+                "/api/v1/tasks/t-1/diff",
+                "/api/v1/tasks/t-1/trace",
+                "/api/v1/tasks/t-1/logs/stream",
+            ):
+                assert c.get(route, headers=hdr).status_code == 401
+
+        for doc_path in ("/docs", "/redoc", "/openapi.json"):
+            assert c.get(doc_path).status_code == 401
+            assert c.get(doc_path, headers={"Authorization": f"Bearer {minted}"}).status_code in (200, 307)
+
+        cors_resp = c.get("/api/v1/tasks", headers={"Origin": "https://evil.example"})
+        assert cors_resp.status_code == 401
+        assert "access-control-allow-origin" not in {k.lower() for k in cors_resp.headers}
+
+        xff_resp = c.post(
+            "/api/v1/tasks",
+            json={"title": "x", "description": "x", "role": "backend"},
+            headers={"X-Forwarded-For": "127.0.0.1"},
+        )
+        assert xff_resp.status_code == 401
+
+        assert c.get("/ui/", headers={"Host": "testserver"}).status_code == 403
+        assert c.get("/ui/", headers={"Host": "evil.example:8052"}).status_code == 403
+        assert (
+            c.post(
+                "/api/v1/tasks",
+                json={"title": "x", "description": "x", "role": "backend"},
+                headers={"Host": "evil.example:8052", "Authorization": f"Bearer {minted}"},
+            ).status_code
+            == 403
+        )
+
+        with pytest.raises(WebSocketDenialResponse) as ws_unauth:
+            with c.websocket_connect("/ws"):
+                pass
+        assert ws_unauth.value.status_code in (401, 403)
+        with pytest.raises(WebSocketDenialResponse) as ws_host:
+            with c.websocket_connect(
+                "/ws",
+                headers={"Host": "evil.example:8052", "Authorization": f"Bearer {minted}"},
+            ):
+                pass
+        assert ws_host.value.status_code == 403
+
+    import asyncio
+
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+    from bernstein.core.server.server_middleware import LoopbackHostMiddleware
+
+    assert is_loopback_host("LOCALHOST") is True
+    assert is_loopback_host("[::1]") is True
+
+    async def _raw_host_probe(scope_type: str, headers: list[tuple[bytes, bytes]]) -> list[dict[str, Any]]:
+        sent: list[dict[str, Any]] = []
+
+        async def _app(_s: Any, _r: Any, send: Any) -> None:
+            await send({"type": "accepted"})
+
+        async def _recv() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        async def _send(msg: dict[str, Any]) -> None:
+            sent.append(msg)
+
+        mw = LoopbackHostMiddleware(_app)
+        await mw({"type": scope_type, "headers": headers}, _recv, _send)
+        return sent
+
+    dup_headers = [(b"host", b"127.0.0.1:8052"), (b"host", b"evil.example:8052")]
+    assert asyncio.run(_raw_host_probe("http", dup_headers))[0]["status"] == 403
+    assert asyncio.run(_raw_host_probe("http", []))[0]["status"] == 403
+    assert asyncio.run(_raw_host_probe("websocket", dup_headers))[0] == {"type": "websocket.close", "code": 1008}

@@ -162,7 +162,7 @@ def check_governance_receipt(page: Page, base: str) -> None:
 
 
 def check_trace_highlight_contrast(page: Page, drawer: Locator, base: str, task_id: str) -> None:
-    trace_url = f"{base}/api/v1/dashboard/tasks/{task_id}/trace?**"
+    trace_url = f"{base}/api/v1/tasks/{task_id}/trace?**"
     timestamp = 1_768_000_000
     response = {
         "task_id": task_id,

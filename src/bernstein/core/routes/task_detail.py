@@ -76,6 +76,7 @@ def _get_agent_log_path(runtime_dir: Path, session_id: str) -> Path | None:
     return None
 
 
+@router.get("/tasks/{task_id}/detail", responses={404: {"description": "Task not found"}})
 @router.get("/dashboard/tasks/{task_id}", responses={404: {"description": "Task not found"}})
 def task_detail(request: Request, task_id: str) -> TaskDetailResponse:
     """Return detailed task view including log tail and progress.
@@ -164,6 +165,11 @@ def _try_read_session_log(
     return read_fn(log_path, last_size)
 
 
+@router.get(
+    "/tasks/{task_id}/logs/stream",
+    response_class=StreamingResponse,
+    responses={**SSE_RESPONSES, 404: {"description": "Task not found"}},
+)
 @router.get(
     "/dashboard/tasks/{task_id}/logs/stream",
     response_class=StreamingResponse,
@@ -484,6 +490,10 @@ def _resolve_branch_for_task(workdir: Path, assigned_agent: str | None) -> str |
     return None
 
 
+@router.get(
+    "/tasks/{task_id}/diff",
+    responses={404: {"description": "Task not found"}},
+)
 @router.get(
     "/dashboard/tasks/{task_id}/diff",
     responses={404: {"description": "Task not found"}},

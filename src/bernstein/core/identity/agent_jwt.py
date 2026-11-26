@@ -770,12 +770,13 @@ class AgentIdentityStore:
     a spawned agent - is never an identity.  See the module docstring.
     """
 
-    def __init__(self, base_dir: Path) -> None:
+    def __init__(self, base_dir: Path, *, create_dir: bool = True) -> None:
         from bernstein.core.security.key_derivation import DOMAIN_AGENT_IDENTITY_RECORD, derive_store_key
 
         self._base_dir = base_dir
         self._identities_dir = base_dir / "agent_identities"
-        self._identities_dir.mkdir(parents=True, exist_ok=True)
+        if create_dir:
+            self._identities_dir.mkdir(parents=True, exist_ok=True)
         self._audit_path = base_dir / "agent_identity_audit.jsonl"
         master_key = _load_identity_master_key()
         self._record_key = derive_store_key(master_key, DOMAIN_AGENT_IDENTITY_RECORD)
@@ -808,6 +809,7 @@ class AgentIdentityStore:
         another process never sees a half-written record (which would fail its
         MAC and read as an unauthenticated one).
         """
+        self._identities_dir.mkdir(parents=True, exist_ok=True)
         path = self._identity_path(identity.id)
         record = identity.to_dict()
         record[_RECORD_MAC_FIELD] = _record_mac(self._record_key, record)
@@ -891,6 +893,7 @@ class AgentIdentityStore:
                 self._token_index[cred.token_hash] = identity.id
 
     def _append_audit(self, event: IdentityAuditEvent) -> None:
+        self._base_dir.mkdir(parents=True, exist_ok=True)
         with self._audit_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event.to_dict()) + "\n")
 

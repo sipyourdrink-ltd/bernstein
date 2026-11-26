@@ -218,6 +218,10 @@ def _flatten_trace_events(traces: list[dict[str, Any]]) -> list[TraceTimelineEve
 
 
 @router.get(
+    "/tasks/{task_id}/trace",
+    responses={404: {"description": "Task not found"}},
+)
+@router.get(
     "/dashboard/tasks/{task_id}/trace",
     responses={404: {"description": "Task not found"}},
 )
@@ -236,6 +240,9 @@ def task_trace(
     task = _get_store(request).get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    from bernstein.core.routes.task_crud import _require_task_access
+
+    _require_task_access(task, request)
 
     workdir = _get_workdir(request)
     traces_dir = workdir / ".sdd" / "traces"

@@ -121,6 +121,7 @@ The full flag list is large (see `bernstein run --help` and `cli/run_bootstrap.p
 | `--task PATTERN` | none | Run only matching backlog tasks. |
 | `--wait [SECONDS]` | off | Block until the run reaches a terminal state and exit with its outcome. Optional ceiling in seconds, default 3600. |
 | `--port N` | 8052 | Task server port. |
+| `--open-ui` | off | Open `/ui/` in your browser once the local task server is ready. |
 | `-v / -q` | off | Verbosity. |
 
 The merge strategy is not a `run` flag: set `merge_strategy: pr|direct` in

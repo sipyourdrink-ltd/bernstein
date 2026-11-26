@@ -748,3 +748,62 @@ def test_watchdog_still_restarts_a_crashed_spawner(tmp_path: Path) -> None:
 
     restart_fn.assert_called_once()
     assert restarts == 1
+
+
+def test_run_bootstrap_prints_ui_hint_without_raw_token(
+    tmp_path: Path,
+    invariants_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run/bootstrap prints /ui/ URL and .sdd/runtime/auth.token path with 0o600 mode and no leaked secret."""
+    import stat
+
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_SERVER_URL", raising=False)
+
+    printed: list[str] = []
+    fake_console = MagicMock()
+    fake_console.print.side_effect = lambda *args, **kwargs: printed.append(" ".join(str(a) for a in args))
+    opened: list[str] = []
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", fake_console))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=True))
+        stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))
+        stack.enter_context(
+            patch("bernstein.core.sync.sync_backlog_to_server", return_value=SimpleNamespace(created=[], skipped=[]))
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._inject_manager_task", return_value="mgr-1"))
+        stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
+        stack.enter_context(patch("webbrowser.open", side_effect=lambda u, *a, **k: opened.append(u) or True))
+
+        bootstrap_from_seed(tmp_path / "bernstein.yaml", tmp_path, port=8052, open_ui=True)
+
+    token_file = tmp_path / ".sdd" / "runtime" / "auth.token"
+    assert token_file.is_file()
+    assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
+    raw_token = token_file.read_text(encoding="utf-8").strip()
+    assert raw_token
+
+    combined_output = "\n".join(printed)
+    assert "http://127.0.0.1:8052/ui/" in combined_output
+    assert ".sdd/runtime/auth.token" in combined_output
+    assert raw_token not in combined_output
+    assert opened == [f"http://127.0.0.1:8052/ui/#t={raw_token}"]
