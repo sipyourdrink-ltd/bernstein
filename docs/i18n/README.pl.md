@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym węźle. Wznowienie weryfikuje skrót manifestu na starcie przebiegu, więc zmieniona specyfikacja zostaje odrzucona, zamiast po cichu wykonać inny manifest. Zobacz [manifesty workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Przy wznawianiu ponownie podaj tę samą wartość `-g`, aby zastąpić `{goal}` w promptach niedokończonych węzłów.
+Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym węźle. Wznowienie weryfikuje skrót manifestu na starcie przebiegu, więc zmieniona specyfikacja zostaje odrzucona, zamiast po cichu wykonać inny manifest. Węzły czyszczące mogą ustawić `always_run: true`, aby wykonać się po błędzie polecenia lub dyspozycji, nie zamieniając przerwanego przebiegu w sukces (bramkowanie ukończenia agenta jest śledzone w [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Zobacz [manifesty workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Przy wznawianiu ponownie podaj tę samą wartość `-g`, aby zastąpić `{goal}` w promptach niedokończonych węzłów.
 
 `bernstein compliance controls` pokazuje zestawy testów dla poszczególnych mechanizmów kontroli oraz ostatni pełny pomiar, jeśli jest dostępny. [Pokrycie testami](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
