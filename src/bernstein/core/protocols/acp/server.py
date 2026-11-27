@@ -131,7 +131,12 @@ class ACPServer:
         await transport.serve_forever()
 
     def http_transport(self) -> HttpAcpTransport:
-        """Return an :class:`HttpAcpTransport` bound to this server."""
+        """Return an :class:`HttpAcpTransport` bound to this server.
+
+        Raises:
+            ValueError: If ``self.registry.require_auth`` is ``True`` (HTTP
+                requires token-bound authentication before enforcing auth).
+        """
         return HttpAcpTransport(registry=self.registry)
 
 

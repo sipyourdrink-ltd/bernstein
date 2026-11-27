@@ -15,6 +15,7 @@ import contextlib
 import logging
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -202,11 +203,23 @@ def _client_supports_terminal_auth(client_caps: dict[str, Any]) -> bool:
 
 @dataclass(frozen=True)
 class ACPRequestContext:
-    """Context passed to every handler invocation."""
+    """Context passed to every handler invocation.
+
+    Attributes:
+        method: Validated ACP method name.
+        request_id: JSON-RPC request ``id`` (``None`` for notifications).
+        peer: Peer identifier (``"stdio"`` or ``"http://<ip>"``).
+        connection_scoped: ``True`` for stateful single-connection transports
+            such as stdio where connection-wide legacy/v1 lockouts apply;
+            ``False`` for stateless HTTP POSTs where multiple clients may share
+            a loopback or reverse-proxy IP and protocol isolation is enforced
+            per session instead.
+    """
 
     method: str
     request_id: str | int | None
     peer: str = "stdio"
+    connection_scoped: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +241,14 @@ class _PeerState:
 
 @dataclass
 class ACPHandlerRegistry:
-    """Bundle of ACP method handlers supporting ACP v1 and legacy 2025-04-01."""
+    """Bundle of ACP method handlers supporting ACP v1 and legacy 2025-04-01.
+
+    Connection-level handshake and authentication state is stored per peer in a
+    bounded LRU map (:data:`_MAX_PEER_STATES`).  Re-calling ``initialize`` on an
+    existing peer resets ``authenticated = False`` for that peer only, so a
+    re-initialized stdio connection must call ``authenticate`` again when
+    ``require_auth=True``.
+    """
 
     sessions: ACPSessionStore = field(default_factory=ACPSessionStore)
     adapters: tuple[str, ...] = ()
@@ -247,18 +267,29 @@ class ACPHandlerRegistry:
     extra_auth_methods: tuple[dict[str, Any], ...] = ()
     require_auth: bool = False
 
-    _peer_states: dict[str, _PeerState] = field(default_factory=dict[str, _PeerState], init=False, repr=False)
+    _peer_states: OrderedDict[str, _PeerState] = field(
+        default_factory=OrderedDict[str, _PeerState],
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if self.permission_asker is None:
             object.__setattr__(self, "permission_asker", self._default_permission_asker)
 
-    def _get_or_create_peer_state(self, peer: str) -> _PeerState:
-        """Return existing per-peer state or allocate a bounded entry for *peer*."""
+    def _get_peer_state(self, peer: str) -> _PeerState | None:
+        """Return existing per-peer state and refresh its LRU recency."""
         state = self._peer_states.get(peer)
+        if state is not None:
+            self._peer_states.move_to_end(peer)
+        return state
+
+    def _get_or_create_peer_state(self, peer: str) -> _PeerState:
+        """Return existing per-peer state (MRU) or allocate a bounded LRU entry for *peer*."""
+        state = self._get_peer_state(peer)
         if state is None:
-            if len(self._peer_states) >= _MAX_PEER_STATES:
-                self._peer_states.pop(next(iter(self._peer_states)))
+            while len(self._peer_states) >= _MAX_PEER_STATES:
+                self._peer_states.popitem(last=False)
             state = _PeerState()
             self._peer_states[peer] = state
         return state
@@ -267,7 +298,7 @@ class ACPHandlerRegistry:
 
     async def dispatch(self, ctx: ACPRequestContext, params: dict[str, Any]) -> Any:
         """Dispatch *ctx.method* and return the JSON-serialisable result."""
-        peer_state = self._peer_states.get(ctx.peer)
+        peer_state = self._get_peer_state(ctx.peer)
         is_initialized = peer_state.initialized if peer_state is not None else False
         negotiated_version = peer_state.negotiated_version if peer_state is not None else None
         is_authenticated = peer_state.authenticated if peer_state is not None else False
@@ -280,7 +311,7 @@ class ACPHandlerRegistry:
                 {"method": ctx.method},
             )
 
-        if negotiated_version == ACP_V1_PROTOCOL_VERSION and ctx.method in ACP_LEGACY_METHODS:
+        if ctx.connection_scoped and negotiated_version == ACP_V1_PROTOCOL_VERSION and ctx.method in ACP_LEGACY_METHODS:
             record_acp_message(ctx.method, "error")
             raise ACPSchemaError(
                 INVALID_REQUEST,
@@ -347,7 +378,12 @@ class ACPHandlerRegistry:
         ctx: ACPRequestContext,
         params: dict[str, Any],
     ) -> dict[str, Any]:
-        """Negotiate ACP v1 (integer ``protocolVersion``) or legacy string dialect."""
+        """Negotiate ACP v1 (integer ``protocolVersion``) or legacy string dialect.
+
+        Re-calling ``initialize`` on an existing peer resets ``authenticated`` to
+        ``False`` for that peer only, so a stdio connection must call
+        ``authenticate`` again after re-initializing when ``require_auth=True``.
+        """
         raw_version = params.get("protocolVersion")
         client_caps_raw = params.get("clientCapabilities")
         client_caps: dict[str, Any] = (
@@ -438,7 +474,7 @@ class ACPHandlerRegistry:
     ) -> dict[str, Any]:
         """Handle ACP v1 ``authenticate({methodId}) -> {}``."""
         method_id: str = params["methodId"]
-        state = self._peer_states.get(ctx.peer)
+        state = self._get_peer_state(ctx.peer)
         advertised: set[str] = state.advertised_auth_method_ids if state is not None else set()
         if method_id not in advertised:
             raise ACPSchemaError(
@@ -472,7 +508,7 @@ class ACPHandlerRegistry:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle ACP v1 ``session/new`` and return ``{sessionId, modes}``."""
-        state = self._peer_states.get(ctx.peer)
+        state = self._get_peer_state(ctx.peer)
         if self.require_auth and not (state is not None and state.authenticated):
             raise ACPSchemaError(
                 AUTH_REQUIRED,

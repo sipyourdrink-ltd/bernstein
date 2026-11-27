@@ -1,9 +1,10 @@
-"""Regression tests for ACP v1 PR 1 review findings (B1, S1-S6, N1-N7)."""
+"""Regression tests for ACP v1 PR 1 review findings (B1, S1-S6, N1-N10)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 import pytest
@@ -17,7 +18,6 @@ from bernstein.core.protocols.acp.handlers import (
 from bernstein.core.protocols.acp.metrics import acp_messages_total
 from bernstein.core.protocols.acp.schema import (
     AUTH_REQUIRED,
-    INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
@@ -541,11 +541,20 @@ def test_n4_acp_protocol_version_keeps_legacy_str_and_v1_uses_new_constant() -> 
 
 
 # ---------------------------------------------------------------------------
-# S6: HTTP multi-peer isolation (negotiated protocol version, pre-init, auth)
+# S6: HTTP same-IP legacy/v1 coexistence, per-session guards, fail-closed auth
 # ---------------------------------------------------------------------------
 
 
-def test_s6_http_two_peers_isolate_protocol_version_and_auth() -> None:
+def test_s6_http_same_ip_allows_legacy_and_v1_coexistence_with_per_session_guards() -> None:
+    """Two HTTP clients sharing 127.0.0.1 must not lock each other out; sessions stay version-gated."""
+    import http.server
+    import socket
+    import subprocess
+    import sys
+    import threading
+    import time
+    from pathlib import Path
+
     async def _post(
         transport: HttpAcpTransport,
         peer: str,
@@ -560,8 +569,7 @@ def test_s6_http_two_peers_isolate_protocol_version_and_auth() -> None:
         assert isinstance(body, bytes)
         return json.loads(body)
 
-    async def _run() -> None:
-        # Part 1: legacy lock-out and pre-init isolation across two HTTP peers.
+    async def _run_inproc() -> None:
         created: list[str] = []
 
         async def _creator(prompt: str, cwd: str, role: str) -> PromptResult:
@@ -571,132 +579,377 @@ def test_s6_http_two_peers_isolate_protocol_version_and_auth() -> None:
 
         registry = ACPHandlerRegistry(sessions=ACPSessionStore(), task_creator=_creator)
         http = HttpAcpTransport(registry=registry)
-        peer_a = "http://10.0.0.1"
-        peer_b = "http://10.0.0.2"
+        shared_peer = "http://127.0.0.1"
 
-        # peerA negotiates ACP v1.
-        init_a = await _post(
+        # Client 1 initializes ACP v1 on shared loopback peer key.
+        init_v1 = await _post(
             http,
-            peer_a,
+            shared_peer,
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}},
         )
-        assert init_a["result"]["protocolVersion"] == 1
+        assert init_v1["result"]["protocolVersion"] == 1
 
-        # peerB (separate HTTP peer) can still use legacy prompt without getting locked out.
-        legacy_b = await _post(
+        # Client 2 on the SAME peer key sends legacy prompt without getting locked out.
+        legacy_p = await _post(
             http,
-            peer_b,
+            shared_peer,
             {"jsonrpc": "2.0", "id": 2, "method": "prompt", "params": {"prompt": "legacy work"}},
         )
-        assert "result" in legacy_b, legacy_b
-        assert legacy_b["result"]["sessionId"] == "task-1"
+        assert "result" in legacy_p, legacy_p
+        legacy_sid = legacy_p["result"]["sessionId"]
+        assert legacy_sid == "task-1"
 
-        # peerA itself is still locked out of legacy methods after negotiating ACP v1.
-        legacy_a = await _post(
+        # Client 1 creates an ACP v1 session.
+        v1_sess = await _post(
             http,
-            peer_a,
-            {"jsonrpc": "2.0", "id": 3, "method": "prompt", "params": {"prompt": "disallowed"}},
+            shared_peer,
+            {"jsonrpc": "2.0", "id": 3, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
         )
-        assert legacy_a["error"]["code"] == INVALID_REQUEST
+        assert "result" in v1_sess, v1_sess
+        v1_sid = v1_sess["result"]["sessionId"]
 
-        # peerB has NOT called initialize yet, so pre-init v1 methods still fail for peerB.
-        pre_init_b = await _post(
+        # Per-session version checks block cross-dialect session mutations.
+        bad_legacy_mode = await _post(
             http,
-            peer_b,
-            {"jsonrpc": "2.0", "id": 4, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
+            shared_peer,
+            {"jsonrpc": "2.0", "id": 4, "method": "setMode", "params": {"sessionId": v1_sid, "mode": "auto"}},
         )
-        assert pre_init_b["error"]["code"] == INVALID_REQUEST
+        assert bad_legacy_mode["error"]["code"] == INVALID_REQUEST
 
-        # Part 2: shared-auth and advertised-auth-method isolation with require_auth=True.
-        auth_calls: list[str] = []
-
-        async def _auth(method_id: str) -> bool:
-            auth_calls.append(method_id)
-            return method_id in {"token-auth", "term-setup"}
-
-        auth_registry = ACPHandlerRegistry(
-            sessions=ACPSessionStore(),
-            task_creator=_creator,
-            require_auth=True,
-            auth_handler=_auth,
-            terminal_auth_method={
-                "id": "term-setup",
-                "name": "Terminal setup",
-                "type": "terminal",
-                "args": ["--setup"],
-            },
-            extra_auth_methods=({"id": "token-auth", "name": "Token", "type": "agent"},),
+        bad_legacy_cancel = await _post(
+            http,
+            shared_peer,
+            {"jsonrpc": "2.0", "id": 5, "method": "cancel", "params": {"sessionId": v1_sid}},
         )
-        auth_http = HttpAcpTransport(registry=auth_registry)
+        assert bad_legacy_cancel["error"]["code"] == INVALID_REQUEST
 
-        # peerA initializes (with terminal auth capability) and authenticates.
-        await _post(
-            auth_http,
-            peer_a,
+        bad_v1_mode = await _post(
+            http,
+            shared_peer,
             {
                 "jsonrpc": "2.0",
-                "id": 10,
-                "method": "initialize",
-                "params": {"protocolVersion": 1, "clientCapabilities": {"auth": {"terminal": True}}},
+                "id": 6,
+                "method": "session/set_mode",
+                "params": {"sessionId": legacy_sid, "modeId": "auto"},
             },
         )
-        auth_a = await _post(
-            auth_http,
-            peer_a,
-            {"jsonrpc": "2.0", "id": 11, "method": "authenticate", "params": {"methodId": "token-auth"}},
-        )
-        assert auth_a["result"] == {}
-        sess_a = await _post(
-            auth_http,
-            peer_a,
-            {"jsonrpc": "2.0", "id": 12, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
-        )
-        assert "result" in sess_a, sess_a
+        assert bad_v1_mode["error"]["code"] == INVALID_REQUEST
 
-        # peerB initializes without terminal auth and MUST NOT inherit peerA's auth state.
-        init_auth_b = await _post(
-            auth_http,
-            peer_b,
-            {"jsonrpc": "2.0", "id": 20, "method": "initialize", "params": {"protocolVersion": 1}},
-        )
-        assert [m["id"] for m in init_auth_b["result"]["authMethods"]] == ["token-auth"]
+        # On stdio (connection_scoped=True), legacy prompt after v1 initialize is still rejected.
+        stdio_reg = ACPHandlerRegistry(sessions=ACPSessionStore(), task_creator=_creator)
+        await stdio_reg.dispatch(ACPRequestContext("initialize", 10, peer="stdio"), {"protocolVersion": 1})
+        with pytest.raises(ACPSchemaError) as stdio_exc:
+            await stdio_reg.dispatch(ACPRequestContext("prompt", 11, peer="stdio"), {"prompt": "blocked on stdio"})
+        assert stdio_exc.value.code == INVALID_REQUEST
 
-        unauth_sess_b = await _post(
-            auth_http,
-            peer_b,
-            {"jsonrpc": "2.0", "id": 21, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
-        )
-        assert unauth_sess_b["error"]["code"] == AUTH_REQUIRED
+    asyncio.run(_run_inproc())
 
-        unauth_legacy_b = await _post(
-            auth_http,
-            peer_b,
-            {"jsonrpc": "2.0", "id": 22, "method": "prompt", "params": {"prompt": "bypass"}},
-        )
-        assert unauth_legacy_b["error"]["code"] in {AUTH_REQUIRED, INVALID_REQUEST}
+    # Live subprocess check against real `bernstein acp serve --no-stdio --http 127.0.0.1:<port>`
+    # with two independent TCP connections from 127.0.0.1.
+    task_counter = 0
 
-        # peerB cannot use a terminal auth method that was advertised only to peerA.
-        leaked_method_b = await _post(
-            auth_http,
-            peer_b,
-            {"jsonrpc": "2.0", "id": 23, "method": "authenticate", "params": {"methodId": "term-setup"}},
-        )
-        assert leaked_method_b["error"]["code"] == INVALID_PARAMS
+    class _StubOrchestrator(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            nonlocal task_counter
+            length = int(self.headers.get("content-length", "0") or 0)
+            if length:
+                self.rfile.read(length)
+            task_counter += 1
+            body = json.dumps({"id": f"task-{task_counter}"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
-        # Once peerB authenticates with its own advertised method, session/new succeeds.
-        auth_b = await _post(
-            auth_http,
-            peer_b,
-            {"jsonrpc": "2.0", "id": 24, "method": "authenticate", "params": {"methodId": "token-auth"}},
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    def _free_port() -> int:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    def _raw_post(port: int, payload: dict[str, Any]) -> dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8")
+        req = (
+            b"POST /acp HTTP/1.1\r\n"
+            b"host: 127.0.0.1\r\n"
+            b"content-type: application/json\r\n"
+            b"accept: application/json\r\n" + f"content-length: {len(body)}\r\n\r\n".encode("ascii") + body
         )
-        assert auth_b["result"] == {}
-        sess_b = await _post(
-            auth_http,
-            peer_b,
-            {"jsonrpc": "2.0", "id": 25, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
+            sock.sendall(req)
+            chunks: list[bytes] = []
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        _hdr, _, raw_body = b"".join(chunks).partition(b"\r\n\r\n")
+        return json.loads(raw_body)
+
+    orch_port = _free_port()
+    acp_port = _free_port()
+    httpd = http.server.HTTPServer(("127.0.0.1", orch_port), _StubOrchestrator)
+    orch_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    orch_thread.start()
+
+    src_dir = Path(__file__).resolve().parents[4] / "src"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(src_dir)
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "bernstein",
+            "acp",
+            "serve",
+            "--no-stdio",
+            "--http",
+            f"127.0.0.1:{acp_port}",
+            "--server-url",
+            f"http://127.0.0.1:{orch_port}",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    try:
+        ready = False
+        for _ in range(150):
+            try:
+                with socket.create_connection(("127.0.0.1", acp_port), timeout=0.2):
+                    ready = True
+                    break
+            except OSError:
+                time.sleep(0.05)
+        assert ready, f"acp serve --http did not listen on 127.0.0.1:{acp_port}"
+
+        # Connection 1: v1 initialize
+        r1 = _raw_post(acp_port, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}})
+        assert r1["result"]["protocolVersion"] == 1
+
+        # Connection 2 (same host 127.0.0.1): legacy prompt must NOT be locked out with -32600
+        r2 = _raw_post(acp_port, {"jsonrpc": "2.0", "id": 2, "method": "prompt", "params": {"prompt": "legacy live"}})
+        assert "result" in r2, r2
+        live_legacy_sid = r2["result"]["sessionId"]
+
+        # Connection 2: legacy initialize
+        r3 = _raw_post(
+            acp_port, {"jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {"protocolVersion": "2025-04-01"}}
         )
-        assert "result" in sess_b, sess_b
-        assert auth_calls == ["token-auth", "token-auth"]
+        assert r3["result"]["protocolVersion"] == "2025-04-01"
+
+        # Connection 1: v1 session/new still works after connection 2's legacy initialize
+        r4 = _raw_post(
+            acp_port,
+            {"jsonrpc": "2.0", "id": 4, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
+        )
+        assert "result" in r4, r4
+        live_v1_sid = r4["result"]["sessionId"]
+
+        # Cross-dialect session calls are rejected per session
+        r5 = _raw_post(
+            acp_port,
+            {"jsonrpc": "2.0", "id": 5, "method": "setMode", "params": {"sessionId": live_v1_sid, "mode": "auto"}},
+        )
+        assert r5["error"]["code"] == INVALID_REQUEST
+
+        r6 = _raw_post(
+            acp_port,
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "session/set_mode",
+                "params": {"sessionId": live_legacy_sid, "modeId": "auto"},
+            },
+        )
+        assert r6["error"]["code"] == INVALID_REQUEST
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_s6_http_transport_refuses_require_auth_fail_closed() -> None:
+    """HttpAcpTransport refuses require_auth=True at build time and fails closed if mutated later."""
+
+    async def _auth(method_id: str) -> bool:
+        return method_id == "token-auth"
+
+    auth_registry = ACPHandlerRegistry(
+        sessions=ACPSessionStore(),
+        require_auth=True,
+        auth_handler=_auth,
+        extra_auth_methods=({"id": "token-auth", "name": "Token", "type": "agent"},),
+    )
+    with pytest.raises(ValueError, match="require_auth"):
+        HttpAcpTransport(registry=auth_registry)
+
+    server = build_default_server(
+        adapters=(),
+        sandbox_backends=(),
+        require_auth=True,
+        auth_handler=_auth,
+    )
+    with pytest.raises(ValueError, match="require_auth"):
+        server.http_transport()
+
+    # Mutating registry.require_auth after construction must also fail closed on HTTP requests.
+    async def _run_post_mutation() -> None:
+        reg = ACPHandlerRegistry(
+            sessions=ACPSessionStore(),
+            require_auth=False,
+            auth_handler=_auth,
+            extra_auth_methods=({"id": "token-auth", "name": "Token", "type": "agent"},),
+        )
+        http = HttpAcpTransport(registry=reg)
+        reg.require_auth = True
+        status, _hdrs, body = await http.handle_request(
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}}).encode(),
+            accept="application/json",
+            peer="http://127.0.0.1",
+        )
+        assert status == 200
+        assert isinstance(body, bytes)
+        resp = json.loads(body)
+        assert resp["error"]["code"] == AUTH_REQUIRED
+
+        sse_status, _sse_hdrs, sse_stream = await http.handle_request(
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": 1}}).encode(),
+            accept="text/event-stream",
+            peer="http://127.0.0.1",
+        )
+        assert sse_status == 200
+        assert not isinstance(sse_stream, bytes)
+        chunks = [chunk async for chunk in sse_stream]
+        assert any(str(AUTH_REQUIRED) in chunk.decode("utf-8") for chunk in chunks), chunks
+
+    asyncio.run(_run_post_mutation())
+
+
+# ---------------------------------------------------------------------------
+# N9: peer-state cap evicts LRU, preserving active peers under flood
+# ---------------------------------------------------------------------------
+
+
+def test_n9_peer_state_cap_uses_lru_eviction_preserving_active_peers() -> None:
+    """An active peer touched mid-flood must not be evicted by FIFO ordering."""
+    from bernstein.core.protocols.acp import handlers as acp_handlers
+
+    async def _auth(_method_id: str) -> bool:
+        return True
+
+    async def _run() -> None:
+        cap = acp_handlers._MAX_PEER_STATES
+        registry = ACPHandlerRegistry(
+            sessions=ACPSessionStore(),
+            require_auth=True,
+            auth_handler=_auth,
+            extra_auth_methods=({"id": "tok", "name": "Tok", "type": "agent"},),
+        )
+        victim = "peer-victim"
+        await registry.dispatch(ACPRequestContext("initialize", 1, peer=victim), {"protocolVersion": 1})
+        await registry.dispatch(ACPRequestContext("authenticate", 2, peer=victim), {"methodId": "tok"})
+        first_sess = await registry.dispatch(
+            ACPRequestContext("session/new", 3, peer=victim),
+            {"cwd": "/work", "mcpServers": []},
+        )
+        assert first_sess["sessionId"]
+
+        for i in range(cap):
+            if i == cap // 2:
+                mid_sess = await registry.dispatch(
+                    ACPRequestContext("session/new", 4, peer=victim),
+                    {"cwd": "/work", "mcpServers": []},
+                )
+                assert mid_sess["sessionId"]
+            await registry.dispatch(
+                ACPRequestContext("initialize", 100 + i, peer=f"peer-flood-{i}"),
+                {"protocolVersion": 1},
+            )
+
+        assert len(registry._peer_states) == cap
+        assert victim in registry._peer_states
+        after_sess = await registry.dispatch(
+            ACPRequestContext("session/new", 5, peer=victim),
+            {"cwd": "/work", "mcpServers": []},
+        )
+        assert after_sess["sessionId"]
+
+        # Additional flood stays bounded at cap.
+        for j in range(200):
+            await registry.dispatch(
+                ACPRequestContext("initialize", 5000 + j, peer=f"peer-extra-{j}"),
+                {"protocolVersion": 1},
+            )
+        assert len(registry._peer_states) == cap
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# N10: initialize resets auth on stdio (documented) and does not cross peers
+# ---------------------------------------------------------------------------
+
+
+def test_n10_reinitialize_resets_auth_on_stdio_without_crossing_peers() -> None:
+    """Re-initialize clears auth only on that peer/connection, requiring re-auth on stdio."""
+
+    async def _auth(method_id: str) -> bool:
+        return method_id == "tok"
+
+    async def _run() -> None:
+        registry = ACPHandlerRegistry(
+            sessions=ACPSessionStore(),
+            require_auth=True,
+            auth_handler=_auth,
+            extra_auth_methods=({"id": "tok", "name": "Tok", "type": "agent"},),
+        )
+
+        # Stdio: initialize -> authenticate -> session/new OK -> re-initialize clears auth.
+        await registry.dispatch(ACPRequestContext("initialize", 1, peer="stdio"), {"protocolVersion": 1})
+        await registry.dispatch(ACPRequestContext("authenticate", 2, peer="stdio"), {"methodId": "tok"})
+        ok1 = await registry.dispatch(
+            ACPRequestContext("session/new", 3, peer="stdio"),
+            {"cwd": "/work", "mcpServers": []},
+        )
+        assert ok1["sessionId"]
+
+        await registry.dispatch(ACPRequestContext("initialize", 4, peer="stdio"), {"protocolVersion": 1})
+        with pytest.raises(ACPSchemaError) as reauth_exc:
+            await registry.dispatch(
+                ACPRequestContext("session/new", 5, peer="stdio"),
+                {"cwd": "/work", "mcpServers": []},
+            )
+        assert reauth_exc.value.code == AUTH_REQUIRED
+
+        await registry.dispatch(ACPRequestContext("authenticate", 6, peer="stdio"), {"methodId": "tok"})
+        ok2 = await registry.dispatch(
+            ACPRequestContext("session/new", 7, peer="stdio"),
+            {"cwd": "/work", "mcpServers": []},
+        )
+        assert ok2["sessionId"]
+
+        # Another peer calling initialize MUST NOT clear stdio's authentication.
+        await registry.dispatch(ACPRequestContext("initialize", 8, peer="stdio-other"), {"protocolVersion": 1})
+        ok3 = await registry.dispatch(
+            ACPRequestContext("session/new", 9, peer="stdio"),
+            {"cwd": "/work", "mcpServers": []},
+        )
+        assert ok3["sessionId"]
+
+        with pytest.raises(ACPSchemaError) as other_exc:
+            await registry.dispatch(
+                ACPRequestContext("session/new", 10, peer="stdio-other"),
+                {"cwd": "/work", "mcpServers": []},
+            )
+        assert other_exc.value.code == AUTH_REQUIRED
 
     asyncio.run(_run())
 

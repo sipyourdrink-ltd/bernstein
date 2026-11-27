@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 from bernstein.core.protocols.acp.handlers import ACPHandlerRegistry, ACPRequestContext
 from bernstein.core.protocols.acp.schema import (
+    AUTH_REQUIRED,
     INTERNAL_ERROR,
     INVALID_REQUEST,
     PARSE_ERROR,
@@ -104,6 +105,7 @@ async def dispatch_frame(
     raw_frame: Any,
     *,
     peer: str,
+    connection_scoped: bool = True,
 ) -> dict[str, Any] | None:
     """Validate, dispatch, and produce a response envelope (or ``None``).
 
@@ -124,7 +126,12 @@ async def dispatch_frame(
         )
         return make_error(request_id, exc.code, exc.message, exc.data)
 
-    ctx = ACPRequestContext(method=parsed.method, request_id=parsed.request_id, peer=peer)
+    ctx = ACPRequestContext(
+        method=parsed.method,
+        request_id=parsed.request_id,
+        peer=peer,
+        connection_scoped=connection_scoped,
+    )
     try:
         result = await registry.dispatch(ctx, parsed.params)
     except ACPSchemaError as exc:
@@ -443,11 +450,36 @@ class StdioAcpTransport:
 # ---------------------------------------------------------------------------
 
 
+_HTTP_REQUIRE_AUTH_ERROR: Final[str] = (
+    "HttpAcpTransport does not support require_auth=True because HTTP requests are "
+    "stateless and cannot bind authentication to a source IP or connection; use stdio "
+    "or bind HTTP authentication to a per-request token."
+)
+
+
+def _extract_request_id(raw_frame: Any) -> str | int | None:
+    if not isinstance(raw_frame, dict):
+        return None
+    raw_id: Any = cast("dict[str, Any]", raw_frame).get("id")
+    return raw_id if isinstance(raw_id, (str, int)) and not isinstance(raw_id, bool) else None
+
+
 @dataclass
 class HttpAcpTransport:
-    """HTTP transport with optional Server-Sent-Events streaming."""
+    """HTTP transport with optional Server-Sent-Events streaming.
+
+    HTTP requests are stateless (one POST per JSON-RPC frame) and multiple local
+    or proxied clients may share one source IP.  This transport therefore omits
+    connection-level legacy/v1 lockouts (relying on per-session protocol checks)
+    and fails closed on ``registry.require_auth=True`` until authentication is
+    bound to a per-request token.
+    """
 
     registry: ACPHandlerRegistry
+
+    def __post_init__(self) -> None:
+        if self.registry.require_auth:
+            raise ValueError(_HTTP_REQUIRE_AUTH_ERROR)
 
     async def handle_request(
         self,
@@ -472,7 +504,13 @@ class HttpAcpTransport:
             envelope = make_error(None, exc.code, exc.message, exc.data)
             return 200, {"content-type": "application/json"}, JsonRpcFraming.encode(envelope)
 
-        response = await dispatch_frame(self.registry, frame, peer=peer)
+        if self.registry.require_auth:
+            if isinstance(frame, dict) and "method" in frame and "id" not in frame:
+                return 202, {"content-type": "application/json"}, b""
+            envelope = make_error(_extract_request_id(frame), AUTH_REQUIRED, _HTTP_REQUIRE_AUTH_ERROR)
+            return 200, {"content-type": "application/json"}, JsonRpcFraming.encode(envelope)
+
+        response = await dispatch_frame(self.registry, frame, peer=peer, connection_scoped=False)
         if response is None:
             return 202, {"content-type": "application/json"}, b""
         return 200, {"content-type": "application/json"}, JsonRpcFraming.encode(response)
@@ -500,8 +538,15 @@ class HttpAcpTransport:
             await queue.put(None)
             return 200, _sse_headers(), _drain_queue(queue, restore=prior_publisher, registry=self.registry)
 
+        if self.registry.require_auth:
+            if not (isinstance(frame, dict) and "method" in frame and "id" not in frame):
+                envelope = make_error(_extract_request_id(frame), AUTH_REQUIRED, _HTTP_REQUIRE_AUTH_ERROR)
+                await queue.put(b"event: response\ndata: " + JsonRpcFraming.encode(envelope) + b"\n")
+            await queue.put(None)
+            return 200, _sse_headers(), _drain_queue(queue, restore=prior_publisher, registry=self.registry)
+
         async def _run_dispatch() -> None:
-            response = await dispatch_frame(self.registry, frame, peer=peer)
+            response = await dispatch_frame(self.registry, frame, peer=peer, connection_scoped=False)
             if response is not None:
                 await queue.put(b"event: response\ndata: " + JsonRpcFraming.encode(response) + b"\n")
             await queue.put(None)
