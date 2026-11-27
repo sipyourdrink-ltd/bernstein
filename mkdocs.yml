@@ -176,6 +176,7 @@ nav:
           - Tamper-evident audit trail: use-cases/tamper-evident-audit-trail.md
           - Signed results from untrusted workers: use-cases/signed-worker-results.md
       - Scope (what this does not do): scope.md
+      - Enforced invariants: invariants.md
       - What's new: whats-new.md
       - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md

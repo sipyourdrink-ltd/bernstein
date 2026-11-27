@@ -164,6 +164,7 @@ for offline client compliance review.
 | :material-history: [Release notes](release-notes/unreleased.md) | One page per tagged version, plus what has landed since the newest tag |
 | :material-shield-lock: [Air-gap installation](installation/air-gap.md) | Wheelhouse build, signed verification, `--profile airgap`, deny-all egress |
 | :material-table-check: [Governance coverage](governance/coverage.md) | Which failure class each control prevents, the test that proves it, and what is left uncovered |
+| :material-check-decagram: [Enforced invariants](invariants.md) | Falsifiable enforced properties paired with enforcing code paths, tests, and known limits |
 
 ## Links
 
