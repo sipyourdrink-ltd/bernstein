@@ -416,6 +416,28 @@ def test_stop_tunnel_helper_survives_oserror(fake_registry: _FakeProvider, monke
     gui_cli._stop_tunnel(handle.name)
 
 
+@pytest.mark.parametrize("bad_pid", [-1, 0, 1])
+def test_stop_tunnel_helper_skips_kill_for_non_process_pids(
+    fake_registry: _FakeProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_pid: int,
+) -> None:
+    """PIDs <= 1 (tailscale's 0, broadcast -1, init/container PID 1) must never be signaled."""
+    fake_registry._pid = bad_pid - 1
+    handle = gui_cli._start_tunnel(port=9999, provider="cloudflared")
+    assert handle.pid == bad_pid
+
+    sent: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        sent.append((pid, sig))
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+    gui_cli._stop_tunnel(handle.name)
+    assert sent == [], f"_stop_tunnel must not call os.kill for pid={bad_pid}, sent={sent}"
+    assert gui_cli._build_tunnel_registry().get(handle.name) is None
+
+
 # ---------------------------------------------------------------------------
 # Local (no-tunnel) browser seed: authenticate the SPA on loopback
 # ---------------------------------------------------------------------------

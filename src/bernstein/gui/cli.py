@@ -149,9 +149,10 @@ def _stop_tunnel(name: str) -> None:
     handle = reg.get(name)
     if handle is None:
         return
-    with contextlib.suppress(OSError):
-        # OSError swallowed: the tunnel process may already be gone.
-        os.kill(handle.pid, signal.SIGTERM)
+    if handle.pid > 1:
+        with contextlib.suppress(OSError):
+            # OSError swallowed: the tunnel process may already be gone.
+            os.kill(handle.pid, signal.SIGTERM)
     reg.destroy(name)
 
 
