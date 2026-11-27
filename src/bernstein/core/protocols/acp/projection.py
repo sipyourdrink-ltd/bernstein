@@ -12,6 +12,7 @@ hash-anchored ACP v1 ``session/update`` notifications:
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 DEFAULT_CONTEXT_WINDOW_TOKENS: Final[int] = 200_000
+MAX_SESSION_LOAD_UPDATES: Final[int] = 2_000
+MAX_SESSION_LOAD_BYTES: Final[int] = 16 * 1024 * 1024
 
 VALID_ACP_TOOL_KINDS: Final[frozenset[str]] = frozenset(
     {
@@ -454,8 +457,14 @@ def project_journal_to_acp_updates(
     *,
     include_user_messages: bool = True,
     after_index: int | None = None,
+    max_updates: int | None = None,
+    max_bytes: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Deterministically project a ``journal.jsonl`` file into ACP ``session/update`` dicts."""
+    """Deterministically project a ``journal.jsonl`` file into ACP ``session/update`` dicts.
+
+    When *max_updates* or *max_bytes* is supplied (e.g. during ``session/load``),
+    returns at most the newest updates fitting within both caps in chronological order.
+    """
     projector = JournalACPProjector()
     out: list[dict[str, Any]] = []
     for step in project_journal(journal_path, after_index=after_index):
@@ -468,11 +477,25 @@ def project_journal_to_acp_updates(
                 include_user_messages=include_user_messages,
             )
         )
+    if max_updates is not None and max_updates >= 0 and len(out) > max_updates:
+        out = out[-max_updates:] if max_updates > 0 else []
+    if max_bytes is not None and max_bytes >= 0 and out:
+        kept_reversed: list[dict[str, Any]] = []
+        used_bytes = 0
+        for item in reversed(out):
+            encoded_len = len(json.dumps(item, separators=(",", ":")).encode("utf-8"))
+            if used_bytes + encoded_len > max_bytes:
+                break
+            kept_reversed.append(item)
+            used_bytes += encoded_len
+        out = list(reversed(kept_reversed))
     return out
 
 
 __all__ = [
     "DEFAULT_CONTEXT_WINDOW_TOKENS",
+    "MAX_SESSION_LOAD_BYTES",
+    "MAX_SESSION_LOAD_UPDATES",
     "VALID_ACP_TOOL_KINDS",
     "JournalACPProjector",
     "infer_tool_kind",

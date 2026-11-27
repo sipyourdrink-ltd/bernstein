@@ -267,8 +267,9 @@ def test_embedded_runner_mid_permission_cancel_cleans_queue_and_task(tmp_path: P
 
         store = TaskStore(tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
         store.replay_jsonl()
-        assert len(store._tasks) == 1
-        assert next(iter(store._tasks.values())).status == TaskStatus.CANCELLED
+        tasks = store.list_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].status == TaskStatus.CANCELLED
 
         queue = ApprovalQueue(tmp_path / ".sdd" / "runtime" / "approvals", workdir=tmp_path)
         assert queue.list_pending(session_id=sid) == []

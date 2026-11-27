@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from contextlib import suppress
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import click
 
-from bernstein.cli.helpers import console
+from bernstein.cli.helpers import SERVER_URL, console
 from bernstein.core.protocols.acp.runner import (
     adapter_binary_name,
     find_installed_cli_adapters,
@@ -25,6 +27,8 @@ from bernstein.core.protocols.acp.server import (
     ACPServer,
     build_default_server,
 )
+from bernstein.core.protocols.acp.transport import MAX_FRAME_BYTES
+from bernstein.core.server.dashboard_tokens import is_loopback_host
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -142,6 +146,13 @@ def acp_group(ctx: click.Context, run_setup: bool, adapter_name: str | None) -> 
     default=False,
     help="Verify local CLI adapters and credentials for ACP terminal authentication and exit.",
 )
+@click.option(
+    "--allow-embedded-http",
+    "allow_embedded_http",
+    is_flag=True,
+    default=False,
+    help="Allow the embedded workspace runner on --http (loopback binds only).",
+)
 @click.pass_context
 def serve(
     ctx: click.Context,
@@ -150,21 +161,44 @@ def serve(
     server_url: str | None,
     adapter_name: str | None,
     run_setup: bool,
+    allow_embedded_http: bool = False,
 ) -> None:
     """Run the ACP server using the requested transport."""
     if run_setup:
         ctx.exit(run_terminal_setup(adapter_name=adapter_name))
 
-    server = build_default_server(server_url=server_url, adapter_name=adapter_name)
     if http_addr:
         host, port = _parse_addr(http_addr)
-        backend_label = server_url or "embedded"
+        if not is_loopback_host(host):
+            raise click.UsageError(
+                f"Refusing to bind unauthenticated ACP HTTP transport to non-loopback host {host!r}; "
+                "bind to 127.0.0.1, ::1, or localhost (and use a tunnel wrapper for remote access)."
+            )
+        if allow_embedded_http:
+            if ctx.get_parameter_source("server_url") == click.core.ParameterSource.COMMANDLINE and server_url:
+                raise click.UsageError("Cannot combine --allow-embedded-http with --server-url.")
+            effective_server_url: str | None = None
+        else:
+            effective_server_url = server_url or SERVER_URL
+        server = build_default_server(
+            server_url=effective_server_url,
+            adapter_name=adapter_name,
+            forward_auth_headers=False,
+        )
+        backend_label = effective_server_url or "embedded (loopback)"
         console.print(f"[cyan]ACP[/cyan] HTTP transport on [bold]{host}:{port}[/bold] (backend: {backend_label})")
         asyncio.run(_run_http(server, host, port))
         return
+
+    if allow_embedded_http:
+        raise click.UsageError("--allow-embedded-http requires --http HOST:PORT.")
     if not use_stdio:
         raise click.UsageError("Enable --stdio or provide --http HOST:PORT.")
+    server = build_default_server(server_url=server_url, adapter_name=adapter_name)
     asyncio.run(server.run_stdio())
+
+
+_BRACKETED_HOST_RE = re.compile(r"\A\[([^\]]+)\](?::(\d+))?\Z")
 
 
 def _parse_addr(addr: str) -> tuple[str, int]:
@@ -172,7 +206,13 @@ def _parse_addr(addr: str) -> tuple[str, int]:
     raw = addr.strip()
     if not raw:
         raise click.UsageError("--http requires a HOST:PORT or :PORT argument")
-    if raw.startswith(":"):
+    if raw.startswith("["):
+        m = _BRACKETED_HOST_RE.match(raw)
+        if m is None or not m.group(2):
+            raise click.UsageError(f"invalid bracketed address {raw!r}; expected [HOST]:PORT")
+        host = m.group(1)
+        port_str = m.group(2)
+    elif raw.startswith(":"):
         host = "127.0.0.1"
         port_str = raw[1:]
     elif ":" in raw:
@@ -190,8 +230,67 @@ def _parse_addr(addr: str) -> tuple[str, int]:
     return host, port
 
 
+def _is_allowed_http_host_header(headers: dict[str, str]) -> bool:
+    """Return ``True`` only when ``Host`` is present once and names a loopback host."""
+    if "_duplicate_host" in headers:
+        return False
+    raw = headers.get("host", "").strip()
+    if not raw or "," in raw or any(ch.isspace() for ch in raw):
+        return False
+    if raw.startswith("["):
+        m = _BRACKETED_HOST_RE.match(raw)
+        if m is None:
+            return False
+        host_part, port_part = m.group(1), m.group(2)
+        if port_part is not None:
+            port_num = int(port_part)
+            if not (0 < port_num < 65536):
+                return False
+        return is_loopback_host(host_part)
+    if raw.count(":") > 1:
+        return False
+    if ":" in raw:
+        host_part, _, port_part = raw.partition(":")
+        if not port_part.isdigit():
+            return False
+        port_num = int(port_part)
+        if not (0 < port_num < 65536):
+            return False
+    else:
+        host_part = raw
+    return is_loopback_host(host_part)
+
+
+def _is_allowed_http_origin_header(headers: dict[str, str]) -> bool:
+    """Return ``True`` when ``Origin`` is absent, or present once with a loopback origin."""
+    if "_duplicate_origin" in headers:
+        return False
+    if "origin" not in headers:
+        return True
+    raw = headers["origin"].strip()
+    if not raw or raw.lower() == "null" or "," in raw or any(ch.isspace() for ch in raw):
+        return False
+    try:
+        parsed = urlsplit(raw)
+        port_val = parsed.port
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        return False
+    if parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return False
+    if port_val is not None and not (0 < port_val < 65536):
+        return False
+    return is_loopback_host(parsed.hostname)
+
+
 async def _run_http(server: ACPServer, host: str, port: int) -> None:
-    """Start a tiny HTTP/1.1 server that delegates to :class:`HttpAcpTransport`."""
+    """Start a loopback-only HTTP/1.1 server that delegates to :class:`HttpAcpTransport`."""
+    if not is_loopback_host(host):
+        raise ValueError(
+            f"Refusing to bind unauthenticated ACP HTTP transport to non-loopback host {host!r}; "
+            "bind to 127.0.0.1, ::1, or localhost."
+        )
     transport = server.http_transport()
 
     async def _handle_client(
@@ -212,6 +311,14 @@ async def _run_http(server: ACPServer, host: str, port: int) -> None:
             return
 
         method, path, headers, body = request
+        if not _is_allowed_http_host_header(headers):
+            await _write_status(writer, 403, b"forbidden host")
+            writer.close()
+            return
+        if not _is_allowed_http_origin_header(headers):
+            await _write_status(writer, 403, b"forbidden origin")
+            writer.close()
+            return
         if method != "POST" or not path.startswith("/acp"):
             await _write_status(writer, 404, b"not found")
             writer.close()
@@ -255,9 +362,14 @@ async def _read_http_request(
         decoded = line.decode("latin-1").rstrip("\r\n")
         if ":" in decoded:
             key, _, value = decoded.partition(":")
-            headers[key.strip().lower()] = value.strip()
+            norm_key = key.strip().lower()
+            if norm_key in {"host", "origin"} and norm_key in headers:
+                headers[f"_duplicate_{norm_key}"] = "1"
+            headers[norm_key] = value.strip()
 
     length = int(headers.get("content-length", "0") or 0)
+    if length < 0 or length > MAX_FRAME_BYTES * 2:
+        raise ValueError(f"invalid content-length {length}")
     body = await reader.readexactly(length) if length > 0 else b""
     return method, path, headers, body
 
@@ -322,6 +434,7 @@ _REASONS: dict[int, str] = {
     200: "OK",
     202: "Accepted",
     400: "Bad Request",
+    403: "Forbidden",
     404: "Not Found",
 }
 

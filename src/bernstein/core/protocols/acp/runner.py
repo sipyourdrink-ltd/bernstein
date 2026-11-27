@@ -28,7 +28,7 @@ import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from bernstein.adapters.base import WaitableProcess, observe_fast_exit_probe
 from bernstein.core.approval.gate import ApprovalConfig, ApprovalTimeoutError, await_tool_call, load_approval_config
@@ -38,6 +38,7 @@ from bernstein.core.approval.models import (
     ApprovalPrincipal,
     PendingApproval,
     PrincipalKind,
+    ResolvedApproval,
     internal_principal,
 )
 from bernstein.core.approval.queue import ApprovalQueue
@@ -47,6 +48,7 @@ from bernstein.core.protocols.acp.handlers import (
     PromptResult,
     PromptRunOutcome,
     extract_prompt_text,
+    is_http_peer,
 )
 from bernstein.core.protocols.acp.projection import (
     DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -72,9 +74,14 @@ _MAX_DIFF_SNAPSHOT_BYTES: int = 2 * 1024 * 1024
 _FILE_HINT_RE = re.compile(r"\b([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8})\b")
 _CANCEL_PRINCIPAL = internal_principal("acp-runner/session-cancel")
 _TRANSPORT_DENY_PRINCIPAL = internal_principal("acp-runner/transport-permission-unavailable")
+TURN_APPROVAL_TOOL: Final[str] = "run_agent_turn"
+_TURN_PERMISSION_OPTIONS: Final[tuple[dict[str, str], ...]] = (
+    {"optionId": "allow_once", "name": "Allow once", "kind": "allow_once"},
+    {"optionId": "reject_once", "name": "Reject", "kind": "reject_once"},
+)
 _UNSUPPORTED_TRANSPORT_PERMISSION_REASON: str = (
     "Interactive permission prompt ('session/request_permission') is unavailable on stateless HTTP "
-    "transport (client_requester is None); use '--stdio' or switch session mode to 'auto'."
+    "transport (client_requester is None); use 'bernstein acp serve --stdio'."
 )
 
 
@@ -275,20 +282,58 @@ class _ACPTaskRequest:
 
 
 class _NotifyingApprovalQueue(ApprovalQueue):
-    """``ApprovalQueue`` subclass signalling an ``asyncio.Event`` on in-process ``push``."""
+    """``ApprovalQueue`` subclass signalling an ``asyncio.Event`` on in-process ``push``.
+
+    Tracks approval IDs pushed in-process so ``refresh_from_disk()`` ignores
+    unsigned ``*.resolved.json`` files forged in the workspace before the
+    nonce-checked ACP client response arrives.
+    """
 
     def __init__(self, base_dir: Path, *, workdir: Path, wake_event: asyncio.Event) -> None:
+        self._in_process_ids: set[str] = set()
         super().__init__(base_dir=base_dir, workdir=workdir)
         self._wake_event = wake_event
 
     def push(self, approval: PendingApproval) -> PendingApproval:
+        with self._lock:
+            self._in_process_ids.add(approval.id)
         pushed = super().push(approval)
         self._wake_event.set()
         return pushed
 
+    def resolve(
+        self,
+        approval_id: str,
+        decision: ApprovalDecision,
+        *,
+        principal: ApprovalPrincipal | None = None,
+        reason: str = "",
+        nonce: bytes | str | None = None,
+        source: str = "cli",
+        channel: str | None = None,
+    ) -> ResolvedApproval:
+        with self._lock:
+            self._in_process_ids.discard(approval_id)
+        return super().resolve(
+            approval_id,
+            decision,
+            principal=principal,
+            reason=reason,
+            nonce=nonce,
+            source=source,
+            channel=channel,
+        )
+
     def refresh_from_disk(self) -> None:
-        """Reload any out-of-process pending approvals written to disk."""
-        self._load_from_disk()
+        """Reload out-of-process pending approvals without letting disk files override in-process items."""
+        with self._lock:
+            protected_pending = {aid: self._pending[aid] for aid in self._in_process_ids if aid in self._pending}
+            protected_unsettled = {aid for aid in self._in_process_ids if aid not in self._resolved}
+            self._load_from_disk()
+            for aid, orig_pending in protected_pending.items():
+                self._pending[aid] = orig_pending
+            for aid in protected_unsettled:
+                self._resolved.pop(aid, None)
 
 
 class ACPApprovalGateBridge:
@@ -355,17 +400,29 @@ class ACPApprovalGateBridge:
                 await asyncio.wait_for(self._wake_event.wait(), timeout=0.05)
 
     async def _forward_one(self, pending: PendingApproval) -> None:
-        operand = str(pending.tool_args.get("path") or pending.tool_args.get("file_path") or "")
-        cmd = str(pending.tool_args.get("command") or "")
-        detail = f"{pending.tool_name}: {operand or cmd}".strip(": ")
-        locations = [{"path": operand}] if operand else None
+        options: list[dict[str, Any]] | None
+        if pending.tool_name == TURN_APPROVAL_TOOL:
+            goal_summary = " ".join(str(pending.tool_args.get("goal") or "").split())[:120] or "(empty prompt)"
+            detail = f"run agent turn: {goal_summary}"
+            kind = "execute"
+            locations = None
+            options = [dict(opt) for opt in _TURN_PERMISSION_OPTIONS]
+        else:
+            operand = str(pending.tool_args.get("path") or pending.tool_args.get("file_path") or "")
+            cmd = str(pending.tool_args.get("command") or "")
+            detail = f"{pending.tool_name}: {operand or cmd}".strip(": ")
+            kind = infer_tool_kind(pending.tool_name)
+            locations = [{"path": operand}] if operand else None
+            options = None
+
         decision_str, selected_kind = await self._registry.ask_permission_outcome(
             self._session.session_id,
             pending.tool_name,
             detail,
             tool_call_id=f"call-{pending.id[:12]}",
-            kind=infer_tool_kind(pending.tool_name),
+            kind=kind,
             locations=locations,
+            options=options,
         )
         if selected_kind == "transport_unsupported":
             with contextlib.suppress(KeyError, ApprovalNonceExpired):
@@ -376,7 +433,7 @@ class ACPApprovalGateBridge:
                     reason=_UNSUPPORTED_TRANSPORT_PERMISSION_REASON,
                     nonce=pending.nonce,
                     source="acp-transport",
-                    channel="acp-http" if self._session.peer.startswith("http://") else "acp",
+                    channel="acp-http" if is_http_peer(self._session.peer) else "acp",
                 )
             return
 
@@ -387,11 +444,15 @@ class ACPApprovalGateBridge:
         else:
             mapped = ApprovalDecision.REJECT
 
+        # clientInfo.name is client-asserted during initialize (audit-attribution only).
         principal = ApprovalPrincipal(
-            identifier=f"acp-user:{self._registry.client_name_for_peer(self._session.peer)}",
+            identifier=f"acp-client-asserted:{self._registry.client_name_for_peer(self._session.peer)}",
             auth_method="acp-v1",
             kind=PrincipalKind.HUMAN,
             grant=self._session.session_id,
+        )
+        channel = (
+            "acp-stdio" if self._session.peer == "stdio" else "acp-http" if is_http_peer(self._session.peer) else "acp"
         )
         with contextlib.suppress(KeyError, ApprovalNonceExpired):
             self.queue.resolve(
@@ -401,7 +462,7 @@ class ACPApprovalGateBridge:
                 reason=f"ACP permission outcome: {selected_kind}",
                 nonce=pending.nonce,
                 source="acp",
-                channel="acp-stdio",
+                channel=channel,
             )
 
 
@@ -583,10 +644,11 @@ class EmbeddedOrchestratorRunner:
 
             # Gate workspace write/execution through core.approval.gate + ApprovalQueue,
             # racing against cancel_event so mid-permission cancel or EOF wakes immediately.
+            prompt_summary = " ".join(prompt_text.split())[:120] or "(empty prompt)"
             ws_cfg = load_approval_config(workdir)
             effective_cfg = (
                 ApprovalConfig(interactive=False, timeout_seconds=ws_cfg.timeout_seconds, smart_auto_approve=True)
-                if session.mode == "auto"
+                if session.mode == "auto" and not is_http_peer(session.peer)
                 else ApprovalConfig(
                     interactive=True,
                     timeout_seconds=max(1, min(ws_cfg.timeout_seconds, int(self.registry.permission_timeout_s))),
@@ -597,8 +659,8 @@ class EmbeddedOrchestratorRunner:
                 await_tool_call(
                     session_id=session.session_id,
                     agent_role=session.role,
-                    tool_name="edit_file",
-                    tool_args={"path": rel_target, "goal": title},
+                    tool_name=TURN_APPROVAL_TOOL,
+                    tool_args={"goal": prompt_summary},
                     workdir=workdir,
                     queue=bridge.queue,
                     config=effective_cfg,

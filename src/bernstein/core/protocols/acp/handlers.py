@@ -17,6 +17,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.metadata import version as _pkg_version
@@ -27,7 +28,11 @@ from bernstein.core.protocols.acp.metrics import (
     record_acp_message,
     set_active_sessions,
 )
-from bernstein.core.protocols.acp.projection import project_journal_to_acp_updates
+from bernstein.core.protocols.acp.projection import (
+    MAX_SESSION_LOAD_BYTES,
+    MAX_SESSION_LOAD_UPDATES,
+    project_journal_to_acp_updates,
+)
 from bernstein.core.protocols.acp.schema import (
     ACP_AUTH_EXEMPT_METHODS,
     ACP_LEGACY_METHODS,
@@ -238,6 +243,22 @@ class ACPRequestContext:
     connection_scoped: bool = True
 
 
+_CURRENT_ACP_CONTEXT: ContextVar[ACPRequestContext | None] = ContextVar("current_acp_context", default=None)
+
+
+def current_request_context() -> ACPRequestContext | None:
+    """Return the active :class:`ACPRequestContext` inside handler dispatch, if any."""
+    return _CURRENT_ACP_CONTEXT.get()
+
+
+def is_http_peer(peer: str, *, connection_scoped: bool = True) -> bool:
+    """Return ``True`` when *peer* or *connection_scoped* denotes an unauthenticated HTTP client."""
+    if not connection_scoped:
+        return True
+    lowered = peer.strip().lower()
+    return lowered == "http" or lowered.startswith(("http://", "https://"))
+
+
 # ---------------------------------------------------------------------------
 # Handler registry
 # ---------------------------------------------------------------------------
@@ -375,6 +396,7 @@ class ACPHandlerRegistry:
                 {"method": ctx.method},
             ) from exc
 
+        ctx_token = _CURRENT_ACP_CONTEXT.set(ctx)
         try:
             result = await handler(ctx, params)
         except ACPSchemaError as exc:
@@ -385,6 +407,8 @@ class ACPHandlerRegistry:
             record_acp_message(ctx.method, "error")
             logger.exception("acp.handler crashed method=%s", ctx.method)
             raise ACPSchemaError(INTERNAL_ERROR, f"handler crashed: {exc}") from exc
+        finally:
+            _CURRENT_ACP_CONTEXT.reset(ctx_token)
 
         record_acp_message(ctx.method, "ok")
         return result
@@ -574,6 +598,7 @@ class ACPHandlerRegistry:
             system_prompt=system_prompt,
             protocol_version=ACP_V1_PROTOCOL_VERSION,
             peer=ctx.peer,
+            owner_peer=ctx.peer,
         )
         await self.sessions.add(session)
         save_persisted_session(session)
@@ -611,13 +636,31 @@ class ACPHandlerRegistry:
             jpath, journal_ok = resolve_session_journal_path(req_cwd / ".sdd", in_mem.run_id)
             if not journal_ok:
                 return None, []
-            updates = project_journal_to_acp_updates(jpath, include_user_messages=True) if jpath is not None else []
+            updates = (
+                project_journal_to_acp_updates(
+                    jpath,
+                    include_user_messages=True,
+                    max_updates=MAX_SESSION_LOAD_UPDATES,
+                    max_bytes=MAX_SESSION_LOAD_BYTES,
+                )
+                if jpath is not None
+                else []
+            )
             return in_mem, updates
 
         loaded, jpath = load_persisted_session(cwd, session_id)
         if loaded is None:
             return None, []
-        updates = project_journal_to_acp_updates(jpath, include_user_messages=True) if jpath is not None else []
+        updates = (
+            project_journal_to_acp_updates(
+                jpath,
+                include_user_messages=True,
+                max_updates=MAX_SESSION_LOAD_UPDATES,
+                max_bytes=MAX_SESSION_LOAD_BYTES,
+            )
+            if jpath is not None
+            else []
+        )
         return loaded, updates
 
     async def _handle_session_load(
@@ -651,6 +694,7 @@ class ACPHandlerRegistry:
         if existing is not None:
             if (
                 existing.protocol_version != ACP_V1_PROTOCOL_VERSION
+                or (existing.owner_peer is not None and existing.owner_peer != ctx.peer)
                 or "\x00" in existing.cwd
                 or not Path(existing.cwd).is_absolute()
                 or Path(existing.cwd).resolve() != req_cwd
@@ -673,6 +717,7 @@ class ACPHandlerRegistry:
             session is None
             or session.session_id != session_id
             or session.protocol_version != ACP_V1_PROTOCOL_VERSION
+            or (session.owner_peer is not None and session.owner_peer != ctx.peer)
             or "\x00" in session.cwd
             or not Path(session.cwd).is_absolute()
             or Path(session.cwd).resolve() != req_cwd
@@ -693,6 +738,7 @@ class ACPHandlerRegistry:
         if latest is not None:
             if (
                 latest.protocol_version != ACP_V1_PROTOCOL_VERSION
+                or (latest.owner_peer is not None and latest.owner_peer != ctx.peer)
                 or "\x00" in latest.cwd
                 or not Path(latest.cwd).is_absolute()
                 or Path(latest.cwd).resolve() != req_cwd
@@ -710,6 +756,9 @@ class ACPHandlerRegistry:
                 )
 
         session.peer = ctx.peer
+        session.owner_peer = ctx.peer
+        session.set_mode("manual")
+        session.always_allowed_tools.clear()
         session.mcp_servers = tuple(dict(s) for s in mcp_servers_raw)
         session.additional_directories = additional_dirs
         if system_prompt is not None:
@@ -718,6 +767,7 @@ class ACPHandlerRegistry:
         session.touch()
 
         await self.sessions.upsert(session)
+        save_persisted_session(session)
         set_active_sessions(await self.sessions.count())
 
         for update in replayed_updates:
@@ -758,11 +808,23 @@ class ACPHandlerRegistry:
                 f"session {session_id!r} is not an ACP v1 session",
                 {"sessionId": session_id},
             )
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            raise ACPSchemaError(
+                RESOURCE_NOT_FOUND,
+                f"unknown session {session_id!r}",
+                {"sessionId": session_id},
+            )
         if mode_id not in VALID_MODES:
             raise ACPSchemaError(
                 INVALID_PARAMS,
                 f"modeId must be one of {sorted(VALID_MODES)}",
                 {"field": "modeId", "got": mode_id},
+            )
+        if mode_id == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
+                {"sessionId": session_id, "modeId": mode_id},
             )
         session.set_mode(mode_id)
         save_persisted_session(session)
@@ -814,6 +876,18 @@ class ACPHandlerRegistry:
                 f"session {session_id!r} is not an ACP v1 session",
                 {"sessionId": session_id},
             )
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            raise ACPSchemaError(
+                RESOURCE_NOT_FOUND,
+                f"unknown session {session_id!r}",
+                {"sessionId": session_id},
+            )
+        if session.mode == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
+                {"sessionId": session_id},
+            )
         if session.has_active_turn:
             raise ACPSchemaError(
                 INVALID_REQUEST,
@@ -822,6 +896,8 @@ class ACPHandlerRegistry:
             )
 
         session.peer = ctx.peer
+        if session.owner_peer is None:
+            session.owner_peer = ctx.peer
         cancel_event = session.begin_turn()
         self.audit_emitter(
             "acp.prompt",
@@ -868,6 +944,9 @@ class ACPHandlerRegistry:
         session = await self.sessions.get(session_id)
         if session is None:
             logger.debug("acp.session_cancel ignored for unknown session=%s", session_id)
+            return None
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            logger.debug("acp.session_cancel ignored from non-owner peer=%s for session=%s", ctx.peer, session_id)
             return None
 
         had_active = session.request_cancel("client_cancel")
@@ -1064,6 +1143,11 @@ class ACPHandlerRegistry:
         mode_param = params.get("mode")
         if mode_param is not None and mode_param not in {"auto", "manual"}:
             raise ACPSchemaError(INVALID_PARAMS, f"invalid mode {mode_param!r}")
+        if mode_param == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
+            )
 
         outcome = await self.task_creator(prompt, cwd, role)
         if not outcome.accepted:
@@ -1075,6 +1159,8 @@ class ACPHandlerRegistry:
             role=role,
             mode=mode_param or "manual",
             protocol_version=ACP_LEGACY_PROTOCOL_VERSION,
+            peer=ctx.peer,
+            owner_peer=ctx.peer,
         )
         await self.sessions.add(session)
         set_active_sessions(await self.sessions.count())
@@ -1136,6 +1222,13 @@ class ACPHandlerRegistry:
                 INVALID_REQUEST,
                 f"session {session_id!r} is an ACP v1 session; use 'session/set_mode'",
                 {"sessionId": session_id},
+            )
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            raise ACPSchemaError(SESSION_NOT_FOUND, f"unknown session {session_id!r}")
+        if mode == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
             )
         try:
             session.set_mode(mode)

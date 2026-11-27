@@ -81,6 +81,7 @@ class ACPSession:
     turn_count: int = 0
     run_id: str = ""
     peer: str = "stdio"
+    owner_peer: str | None = None
     always_allowed_tools: set[str] = field(default_factory=set[str])
     _waiters: dict[str, _PermissionWaiter] = field(default_factory=dict[str, _PermissionWaiter])
     _active_cancel_event: asyncio.Event | None = field(default=None, init=False, repr=False)
@@ -210,18 +211,16 @@ class ACPSession:
 
     @classmethod
     def from_persisted_dict(cls, data: dict[str, Any], *, cwd_override: str | None = None) -> ACPSession:
-        """Reconstruct an :class:`ACPSession` from persisted metadata."""
+        """Reconstruct an :class:`ACPSession` from persisted metadata.
+
+        Approval-relaxing fields (``mode`` and ``always_allowed_tools``) are
+        intentionally NOT rehydrated from the workspace metadata file, which
+        resides inside the agent-writable ``<cwd>/.sdd/`` tree: loaded sessions
+        always start in ``manual`` mode with an empty allow-always set.
+        """
         raw_sid = data.get("session_id")
         if not isinstance(raw_sid, str) or not raw_sid.strip():
             raise ValueError("persisted session_id must be a non-empty string")
-        mode_raw = str(data.get("mode") or "manual")
-        mode = mode_raw if mode_raw in VALID_MODES else "manual"
-        allowed_raw = data.get("always_allowed_tools")
-        allowed: set[str] = (
-            {str(x) for x in cast("list[Any]", allowed_raw) if isinstance(x, str)}
-            if isinstance(allowed_raw, list)
-            else set[str]()
-        )
 
         def _parse_timestamp(raw_ts: Any) -> float:
             if raw_ts is None:
@@ -244,13 +243,13 @@ class ACPSession:
         return cls(
             session_id=raw_sid,
             cwd=cwd_override or str(data.get("cwd") or "."),
-            mode=mode,
+            mode="manual",
             role=str(data.get("role") or "backend"),
             created_at=_parse_timestamp(data.get("created_at")),
             last_activity=_parse_timestamp(data.get("last_activity")),
             turn_count=turns,
             run_id=str(data.get("run_id") or ""),
-            always_allowed_tools=allowed,
+            always_allowed_tools=set[str](),
             protocol_version=ACP_V1_PROTOCOL_VERSION,
         )
 

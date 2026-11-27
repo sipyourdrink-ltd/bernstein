@@ -26,6 +26,8 @@ from bernstein.core.protocols.acp.handlers import (
     ACPHandlerRegistry,
     PromptResult,
     PromptRunOutcome,
+    current_request_context,
+    is_http_peer,
 )
 from bernstein.core.protocols.acp.metrics import set_active_sessions
 from bernstein.core.protocols.acp.runner import EmbeddedOrchestratorRunner, is_adapter_usable
@@ -200,10 +202,21 @@ def build_default_server(
     auth_handler: Callable[[str], Awaitable[bool]] | None = None,
     terminal_auth_method: dict[str, Any] | object | None = _UNSET_AUTH,
     require_auth: bool = False,
+    forward_auth_headers: bool = True,
     eof_drain_grace_s: float = 0.5,
     eof_cancel_timeout_s: float = 0.5,
 ) -> ACPServer:
-    """Build an :class:`ACPServer` in standalone embedded mode or HTTP proxy mode."""
+    """Build an :class:`ACPServer` in standalone embedded mode or HTTP proxy mode.
+
+    Note:
+        The default ``bernstein-setup`` terminal authentication method checks
+        local CLI adapter readiness (``PATH`` / ``--setup``) per ACP's
+        agent-credential readiness semantics; ``require_auth=True`` with that
+        default method on stdio is therefore an adapter-readiness gate rather
+        than caller-identity access control.  ``auth_headers()`` are attached to
+        ``--server-url`` requests only on local stdio connections and never on
+        behalf of unauthenticated HTTP peers.
+    """
     if adapters is None:
         adapters = _discover_adapters()
     if sandbox_backends is None:
@@ -224,13 +237,25 @@ def build_default_server(
     effective_creator = task_creator
     effective_canceller = task_canceller
     remote_task_cwds: dict[str, str] = {}
+    http_peer_tasks: set[str] = set()
 
     if use_remote:
         assert server_url is not None
         if effective_creator is None:
-            effective_creator = _http_task_creator(server_url, task_cwds=remote_task_cwds)
+            effective_creator = _http_task_creator(
+                server_url,
+                task_cwds=remote_task_cwds,
+                http_peer_tasks=http_peer_tasks,
+                forward_auth_headers=forward_auth_headers,
+            )
         if effective_canceller is None:
-            effective_canceller = _http_task_canceller(server_url, sessions=sessions, task_cwds=remote_task_cwds)
+            effective_canceller = _http_task_canceller(
+                server_url,
+                sessions=sessions,
+                task_cwds=remote_task_cwds,
+                http_peer_tasks=http_peer_tasks,
+                forward_auth_headers=forward_auth_headers,
+            )
 
     effective_auth_handler = auth_handler
     if effective_auth_handler is None and resolved_terminal_auth is not None:
@@ -308,12 +333,24 @@ def _resolve_request_headers(cwd: str | None) -> dict[str, str]:
     return auth_headers()
 
 
+def _should_attach_auth_headers(*, forward_auth_headers: bool, session_peer: str | None = None) -> bool:
+    """Return ``True`` only when local ``auth_headers()`` may be sent upstream."""
+    if not forward_auth_headers:
+        return False
+    req_ctx = current_request_context()
+    if req_ctx is not None and is_http_peer(req_ctx.peer, connection_scoped=req_ctx.connection_scoped):
+        return False
+    return not (session_peer is not None and is_http_peer(session_peer))
+
+
 def _http_task_creator(
     server_url: str,
     *,
     task_cwds: dict[str, str] | None = None,
+    http_peer_tasks: set[str] | None = None,
+    forward_auth_headers: bool = True,
 ) -> Callable[[str, str, str], Awaitable[PromptResult]]:
-    """Return a ``TaskCreator`` that POSTs to *server_url* with ``auth_headers()``."""
+    """Return a ``TaskCreator`` that POSTs to *server_url* (attaching ``auth_headers()`` on stdio only)."""
 
     async def _create(prompt: str, cwd: str, role: str) -> PromptResult:
         try:
@@ -330,7 +367,8 @@ def _http_task_creator(
             "priority": 3,
             "metadata": {"source": "acp", "cwd": cwd},
         }
-        headers = _resolve_request_headers(cwd)
+        allow_auth = _should_attach_auth_headers(forward_auth_headers=forward_auth_headers)
+        headers = _resolve_request_headers(cwd) if allow_auth else {}
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(f"{server_url.rstrip('/')}/tasks", json=payload, headers=headers)
@@ -344,8 +382,11 @@ def _http_task_creator(
         if not sid:
             return PromptResult(session_id="", accepted=False, message="missing session id in response")
         sid_str = str(sid)
-        if task_cwds is not None and cwd:
-            task_cwds[sid_str] = cwd
+        if allow_auth:
+            if task_cwds is not None and cwd:
+                task_cwds[sid_str] = cwd
+        elif http_peer_tasks is not None:
+            http_peer_tasks.add(sid_str)
         return PromptResult(session_id=sid_str, accepted=True)
 
     return _create
@@ -356,8 +397,10 @@ def _http_task_canceller(
     *,
     sessions: ACPSessionStore | None = None,
     task_cwds: dict[str, str] | None = None,
+    http_peer_tasks: set[str] | None = None,
+    forward_auth_headers: bool = True,
 ) -> Callable[[str, str], Awaitable[bool]]:
-    """Return a ``TaskCanceller`` that POSTs to ``/tasks/{id}/cancel`` with ``auth_headers()``."""
+    """Return a ``TaskCanceller`` that POSTs to ``/tasks/{id}/cancel`` (stdio ``auth_headers()`` only)."""
 
     async def _cancel(task_or_session_id: str, reason: str) -> bool:
         try:
@@ -365,13 +408,20 @@ def _http_task_canceller(
         except ImportError:
             return False
 
-        cwd: str | None = task_cwds.pop(task_or_session_id, None) if task_cwds is not None else None
-        if cwd is None and sessions is not None:
-            sess = await sessions.get(task_or_session_id)
-            if sess is not None:
-                cwd = sess.cwd
+        was_http_task = http_peer_tasks is not None and task_or_session_id in http_peer_tasks
+        if http_peer_tasks is not None:
+            http_peer_tasks.discard(task_or_session_id)
 
-        headers = _resolve_request_headers(cwd)
+        cwd: str | None = task_cwds.pop(task_or_session_id, None) if task_cwds is not None else None
+        sess = await sessions.get(task_or_session_id) if sessions is not None else None
+        if cwd is None and sess is not None:
+            cwd = sess.cwd
+
+        allow_auth = not was_http_task and _should_attach_auth_headers(
+            forward_auth_headers=forward_auth_headers,
+            session_peer=sess.peer if sess is not None else None,
+        )
+        headers = _resolve_request_headers(cwd) if allow_auth else {}
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
