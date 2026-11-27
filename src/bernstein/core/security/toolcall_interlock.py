@@ -68,6 +68,7 @@ class ToolCallIntent:
     request_id: str
     span_id: str
     args_digest: str
+    retry_of: str | None = None
 
     @classmethod
     def from_request(
@@ -80,8 +81,13 @@ class ToolCallIntent:
         request_id: Any,
         span_id: str,
         arguments: Any,
+        retry_of: str | None = None,
     ) -> ToolCallIntent:
         """Build an intent without retaining raw connector arguments."""
+        if retry_of is not None:
+            if not retry_of.strip():
+                raise ValueError("retry_of must be a non-empty string when provided")
+            retry_of = retry_of.strip()
         canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return cls(
             scope_id=scope_id,
@@ -91,11 +97,12 @@ class ToolCallIntent:
             request_id=str(request_id),
             span_id=span_id,
             args_digest="sha256:" + hashlib.sha256(canonical).hexdigest(),
+            retry_of=retry_of,
         )
 
     def digest(self) -> str:
         """Return the canonical digest a provider's evidence must bind."""
-        payload = {
+        payload: dict[str, str] = {
             "args_digest": self.args_digest,
             "method": self.method,
             "request_id": self.request_id,
@@ -104,8 +111,19 @@ class ToolCallIntent:
             "span_id": self.span_id,
             "tool_name": self.tool_name,
         }
+        if self.retry_of is not None:
+            payload["retry_of"] = self.retry_of
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def canonical_effect_preimage(payload: Any) -> bytes:
+    """Return the exact bytes hashed by :func:`canonical_effect_digest`."""
+    if isinstance(payload, bytes):
+        return payload
+    if isinstance(payload, str):
+        return payload.encode("utf-8")
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def canonical_effect_digest(payload: Any) -> str:
@@ -118,14 +136,27 @@ def canonical_effect_digest(payload: Any) -> str:
     compact-JSON branch is not the primary form: a live connector return is
     digested from its received bytes.
     """
-    if isinstance(payload, bytes):
-        digest = hashlib.sha256(payload).hexdigest()
-    elif isinstance(payload, str):
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    else:
-        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        digest = hashlib.sha256(raw).hexdigest()
-    return "sha256:" + digest
+    return "sha256:" + hashlib.sha256(canonical_effect_preimage(payload)).hexdigest()
+
+
+def effect_preimage_for_connector_response(
+    response: Mapping[str, Any] | None,
+    received: bytes | None = None,
+    *,
+    patch: str | None = None,
+) -> bytes:
+    """Return the exact preimage bytes hashed into ``toolcall.effect.effect_digest``."""
+    if patch is not None:
+        return canonical_effect_preimage(patch)
+    if response is None:
+        return canonical_effect_preimage(None)
+    result = response.get("result")
+    error = response.get("error")
+    if error is None and isinstance(result, str):
+        return canonical_effect_preimage(result)
+    if received is not None:
+        return canonical_effect_preimage(received)
+    return canonical_effect_preimage(response)
 
 
 def effect_digest_for_connector_response(
@@ -141,15 +172,7 @@ def effect_digest_for_connector_response(
     sent it, so key order, whitespace, escapes and echoed timestamps all
     count.  A response with no received bytes falls back to compact JSON.
     """
-    if response is None:
-        return canonical_effect_digest(None)
-    result = response.get("result")
-    error = response.get("error")
-    if error is None and isinstance(result, str):
-        return canonical_effect_digest(result)
-    if received is not None:
-        return canonical_effect_digest(received)
-    return canonical_effect_digest(response)
+    return "sha256:" + hashlib.sha256(effect_preimage_for_connector_response(response, received)).hexdigest()
 
 
 def _accepts_keyword(func: Any, name: str) -> bool:
@@ -644,8 +667,10 @@ __all__ = [
     "ToolCallInterlockError",
     "VerifiedDispatchEvidence",
     "canonical_effect_digest",
+    "canonical_effect_preimage",
     "derive_attestation_verdict",
     "effect_digest_for_connector_response",
+    "effect_preimage_for_connector_response",
     "project_attestation_mode",
     "toolcall_effect_outcome",
     "verified_tool_call_ids",

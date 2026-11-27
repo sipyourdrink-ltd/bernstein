@@ -89,6 +89,13 @@ def cli() -> None:
         "Without a pinned --public-key/--jwk this proves integrity, not who signed it."
     ),
 )
+@click.option(
+    "--effects-dir",
+    "effects_dir",
+    type=click.Path(file_okay=False, exists=True, path_type=Path),
+    default=None,
+    help="Optional directory of recorded tool-call effect payloads (<intent_sha256>.effect).",
+)
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Print PASS-line details.")
 def verify_cmd(
     receipt_path: Path,
@@ -96,6 +103,7 @@ def verify_cmd(
     public_key_path: Path | None,
     fmt: str,
     allow_unpinned_key: bool,
+    effects_dir: Path | None,
     verbose: bool,
 ) -> None:
     """Verify an audit receipt using the standalone verifier."""
@@ -126,6 +134,7 @@ def verify_cmd(
         verbose=verbose,
         stream=sys.stdout,
         allow_unpinned_key=allow_unpinned_key,
+        effects_dir=effects_dir,
     )
     sys.exit(_emit(result, kind="verify"))
 

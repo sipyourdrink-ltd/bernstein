@@ -52,10 +52,11 @@ import argparse
 import base64
 import hashlib
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import io
@@ -72,6 +73,11 @@ COSE_ALG_EDDSA = -8
 COSE_LABEL_ALG = 1
 EMPTY_TREE_ROOT = hashlib.sha256(b"empty-tree").hexdigest()
 VALID_FORMATS = ("cose", "intoto", "transparency")
+TOOLCALL_ATTESTATION_EVENT = "toolcall.attestation"
+TOOLCALL_DISPATCH_EVENT = "toolcall.enforced_dispatch"
+TOOLCALL_EFFECT_EVENT = "toolcall.effect"
+TOOLCALL_EFFECT_OUTCOMES = frozenset({"ok", "error", "timeout", "partial"})
+_SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
 
 # Key-trust notes returned by ``_resolve_public_key``. Only a key pinned out of
 # band proves who signed the receipt; the embedded key proves only that the
@@ -477,6 +483,263 @@ def verify_transparency(receipt: dict[str, Any], public_key: Any, recomputed_hea
     return CheckResult("transparency", ok=True, detail="RFC6962 STH signed, root + inclusion proof verified")
 
 
+def verify_toolcall_effects(
+    receipt: dict[str, Any],
+    *,
+    effects_dir: Path | None = None,
+) -> tuple[CheckResult, list[str]]:
+    """Verify tool-call decision -> dispatch -> effect triples and retry_of links (#6270).
+
+    Pre-effect chains (with no ``toolcall.effect`` rows, or no tool-call events
+    at all) remain valid and report ``effect unobserved``.  Broken bindings,
+    duplicate dispatches/effects, malformed records, invalid ``retry_of`` links,
+    or tampered/missing payload artifacts under ``effects_dir`` fail the effect
+    leg.
+    """
+    events = receipt.get("events")
+    if not isinstance(events, list):
+        return CheckResult("toolcall_effects", ok=False, detail="receipt.events missing or not a list"), []
+    typed_events = cast("list[Any]", events)
+
+    attestations: dict[str, dict[str, Any]] = {}
+    attestations_by_intent: dict[str, dict[str, Any]] = {}
+    dispatches: dict[str, dict[str, Any]] = {}
+    effects: dict[str, dict[str, Any]] = {}
+    ordered_refs: list[str] = []
+    errors: list[str] = []
+    per_ref_errors: dict[str, list[str]] = {}
+    saw_toolcall = False
+
+    for raw_event in typed_events:
+        if not isinstance(raw_event, dict):
+            continue
+        event = cast("dict[str, Any]", raw_event)
+        event_type = str(event.get("event_type", ""))
+        raw_details = event.get("details")
+        payload: dict[str, Any] = cast("dict[str, Any]", raw_details) if isinstance(raw_details, dict) else {}
+
+        if event_type == TOOLCALL_ATTESTATION_EVENT:
+            saw_toolcall = True
+            att_ref = str(payload.get("attestation_ref", "")).strip()
+            intent_digest = str(payload.get("intent_digest", "")).strip()
+            req_id = str(payload.get("request_id", "")).strip()
+            tool_name = str(payload.get("tool_name", "")).strip()
+            raw_retry_of = payload.get("retry_of")
+
+            if not att_ref or not intent_digest:
+                errors.append("toolcall.attestation missing attestation_ref or intent_digest")
+                continue
+            if att_ref in attestations:
+                msg = f"duplicate toolcall.attestation for {att_ref[:19]}"
+                errors.append(msg)
+                per_ref_errors.setdefault(att_ref, []).append(msg)
+                continue
+
+            retry_of: str | None = None
+            retry_status: str | None = None
+            if raw_retry_of is not None:
+                if not isinstance(raw_retry_of, str) or not raw_retry_of.strip():
+                    msg = f"invalid retry_of on attestation {att_ref[:19]}"
+                    errors.append(msg)
+                    per_ref_errors.setdefault(att_ref, []).append(msg)
+                else:
+                    retry_of = raw_retry_of.strip()
+                    if retry_of == intent_digest:
+                        msg = f"self-referential retry_of on intent {intent_digest[:19]}"
+                        errors.append(msg)
+                        per_ref_errors.setdefault(att_ref, []).append(msg)
+                    elif retry_of in attestations_by_intent:
+                        prior = attestations_by_intent[retry_of]
+                        retry_status = "in-range"
+                        if req_id and prior["request_id"] and req_id == prior["request_id"]:
+                            msg = f"retry {intent_digest[:19]} reuses prior request_id {req_id!r}"
+                            errors.append(msg)
+                            per_ref_errors.setdefault(att_ref, []).append(msg)
+                    else:
+                        retry_status = "outside-range"
+
+            entry = {
+                "attestation_ref": att_ref,
+                "intent_digest": intent_digest,
+                "request_id": req_id,
+                "tool_name": tool_name,
+                "retry_of": retry_of,
+                "retry_status": retry_status,
+            }
+            attestations[att_ref] = entry
+            attestations_by_intent.setdefault(intent_digest, entry)
+            ordered_refs.append(att_ref)
+            continue
+
+        if event_type == TOOLCALL_DISPATCH_EVENT:
+            saw_toolcall = True
+            att_ref = str(payload.get("attestation_ref", "")).strip()
+            intent_digest = str(payload.get("intent_digest", "")).strip()
+            if not att_ref or att_ref not in attestations:
+                errors.append(f"toolcall.enforced_dispatch without preceding attestation ({att_ref[:19] or 'missing'})")
+                continue
+            if intent_digest != attestations[att_ref]["intent_digest"]:
+                msg = f"toolcall.enforced_dispatch intent_digest mismatch for {att_ref[:19]}"
+                errors.append(msg)
+                per_ref_errors.setdefault(att_ref, []).append(msg)
+                continue
+            if att_ref in dispatches:
+                msg = f"duplicate toolcall.enforced_dispatch for {att_ref[:19]} (violates one-attestation-one-dispatch)"
+                errors.append(msg)
+                per_ref_errors.setdefault(att_ref, []).append(msg)
+                continue
+            orig_hmac = str(payload.get("_original_hmac", "")).strip()
+            event_hmac = str(event.get("hmac", "")).strip()
+            expected_handle = f"hmac:{orig_hmac}" if orig_hmac else (f"hmac:{event_hmac}" if event_hmac else "")
+            dispatches[att_ref] = {"expected_handle": expected_handle, "intent_digest": intent_digest}
+            continue
+
+        if event_type == TOOLCALL_EFFECT_EVENT:
+            saw_toolcall = True
+            att_ref = str(payload.get("attestation_ref", "")).strip()
+            intent_digest = str(payload.get("intent_digest", "")).strip()
+            dispatch_ref = str(payload.get("dispatch_ref", "")).strip()
+            effect_digest = str(payload.get("effect_digest", "")).strip()
+            outcome = payload.get("outcome")
+            duration_ms = payload.get("duration_ms")
+
+            if not att_ref or att_ref not in dispatches:
+                msg = f"toolcall.effect without preceding toolcall.enforced_dispatch ({att_ref[:19] or 'missing'})"
+                errors.append(msg)
+                if att_ref:
+                    per_ref_errors.setdefault(att_ref, []).append(msg)
+                continue
+            if att_ref in effects:
+                msg = f"duplicate toolcall.effect for {att_ref[:19]}"
+                errors.append(msg)
+                per_ref_errors.setdefault(att_ref, []).append(msg)
+                continue
+
+            eff_errs: list[str] = []
+            if intent_digest != attestations[att_ref]["intent_digest"]:
+                eff_errs.append(f"toolcall.effect intent_digest mismatch for {att_ref[:19]}")
+            expected_handle = dispatches[att_ref]["expected_handle"]
+            if expected_handle:
+                if dispatch_ref != expected_handle:
+                    eff_errs.append(f"toolcall.effect dispatch_ref mismatch for {att_ref[:19]}")
+            elif not dispatch_ref:
+                eff_errs.append(f"toolcall.effect missing dispatch_ref for {att_ref[:19]}")
+            if not isinstance(outcome, str) or outcome not in TOOLCALL_EFFECT_OUTCOMES:
+                eff_errs.append(f"toolcall.effect invalid outcome {outcome!r} for {att_ref[:19]}")
+            if not _SHA256_PREFIXED_RE.match(effect_digest):
+                eff_errs.append(f"toolcall.effect malformed effect_digest for {att_ref[:19]}")
+            if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)) or duration_ms < 0:
+                eff_errs.append(f"toolcall.effect invalid duration_ms for {att_ref[:19]}")
+
+            payload_verified = False
+            if effects_dir is not None and not eff_errs:
+                match = _SHA256_PREFIXED_RE.match(intent_digest)
+                if match is None:
+                    eff_errs.append(
+                        f"toolcall.effect malformed intent_digest for payload lookup ({intent_digest[:19]})"
+                    )
+                else:
+                    artifact_path = effects_dir / f"{match.group(1)}.effect"
+                    if not artifact_path.is_file():
+                        eff_errs.append(f"effect payload missing in --effects-dir for intent {intent_digest[:19]}")
+                    else:
+                        recomputed = "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+                        if recomputed != effect_digest:
+                            eff_errs.append(
+                                f"effect_digest mismatch for intent {intent_digest[:19]}: "
+                                f"recomputed {recomputed[:19]} != recorded {effect_digest[:19]}"
+                            )
+                        else:
+                            payload_verified = True
+
+            if eff_errs:
+                errors.extend(eff_errs)
+                per_ref_errors.setdefault(att_ref, []).extend(eff_errs)
+            effects[att_ref] = {
+                "effect_digest": effect_digest,
+                "outcome": outcome,
+                "duration_ms": duration_ms,
+                "payload_verified": payload_verified,
+            }
+
+    for att_ref in ordered_refs:
+        att = attestations[att_ref]
+        if (
+            att["retry_of"] is not None
+            and att["retry_status"] == "outside-range"
+            and att["retry_of"] in attestations_by_intent
+        ):
+            msg = f"retry_of on {att['intent_digest'][:19]} points forward to a later attestation"
+            errors.append(msg)
+            per_ref_errors.setdefault(att_ref, []).append(msg)
+
+    if not saw_toolcall:
+        return (
+            CheckResult(
+                "toolcall_effects",
+                ok=True,
+                detail="no toolcall effect records in range (effect unobserved)",
+            ),
+            [],
+        )
+
+    closed_count = 0
+    unobserved_count = 0
+    detail_lines: list[str] = []
+    for att_ref in ordered_refs:
+        att = attestations[att_ref]
+        intent_short = att["intent_digest"][:19]
+        att_short = att_ref[:19]
+        req_id = att["request_id"]
+        ref_errs = per_ref_errors.get(att_ref, [])
+        if ref_errs:
+            detail_lines.append(
+                f"  toolcall attestation={att_short} intent={intent_short} request_id={req_id} "
+                f"status=FAIL reason={'; '.join(ref_errs)}"
+            )
+        elif att_ref in effects:
+            closed_count += 1
+            eff = effects[att_ref]
+            payload_note = " payload=verified" if eff["payload_verified"] else ""
+            detail_lines.append(
+                f"  toolcall attestation={att_short} intent={intent_short} request_id={req_id} "
+                f"status=closed outcome={eff['outcome']} effect_digest={eff['effect_digest'][:19]}{payload_note}"
+            )
+        elif att_ref in dispatches:
+            unobserved_count += 1
+            detail_lines.append(
+                f"  toolcall attestation={att_short} intent={intent_short} request_id={req_id} "
+                f'status="dispatched, effect unobserved"'
+            )
+        else:
+            unobserved_count += 1
+            detail_lines.append(
+                f"  toolcall attestation={att_short} intent={intent_short} request_id={req_id} "
+                f'status="attested, effect unobserved"'
+            )
+        if att["retry_of"] is not None:
+            scope_note = "in-range" if att["retry_status"] == "in-range" else "prior intent outside range"
+            detail_lines.append(
+                f"  toolcall retry intent={intent_short} retry_of={att['retry_of'][:19]} "
+                f"request_id={req_id} ({scope_note})"
+            )
+
+    total = len(ordered_refs)
+    if errors:
+        summary = (
+            f"{closed_count}/{total} closed, {unobserved_count} effect unobserved, "
+            f"{len(errors)} error(s): {'; '.join(errors[:3])}"
+        )
+        return CheckResult("toolcall_effects", ok=False, detail=summary), detail_lines
+
+    parts = [f"{closed_count}/{total} closed"]
+    if unobserved_count:
+        parts.append(f"{unobserved_count} effect unobserved")
+    if effects_dir is not None and closed_count > 0:
+        parts.append("payload digests verified")
+    return CheckResult("toolcall_effects", ok=True, detail=", ".join(parts)), detail_lines
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -507,6 +770,7 @@ def run_verify(
     verbose: bool,
     stream: io.TextIOBase,
     allow_unpinned_key: bool = False,
+    effects_dir: Path | None = None,
 ) -> VerifyResult:
     """Run every enabled check and emit human-readable output."""
     result = VerifyResult()
@@ -562,6 +826,12 @@ def run_verify(
         result.checks.append(check)
         _print_check(check, verbose=verbose, stream=stream)
 
+    effects_check, effect_lines = verify_toolcall_effects(receipt, effects_dir=effects_dir)
+    result.checks.append(effects_check)
+    _print_check(effects_check, verbose=verbose, stream=stream, always_detail=True)
+    for line in effect_lines:
+        print(line, file=stream)
+
     overall = "PASS" if result.ok else "FAIL"
     if result.ok and unpinned:
         overall += " (unpinned key: integrity only)"
@@ -602,6 +872,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "the default is to report such a receipt as FAIL."
         ),
     )
+    parser.add_argument(
+        "--effects-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional directory of recorded tool-call effect payloads (<intent_sha256>.effect) "
+            "used to recompute and verify toolcall.effect effect_digest values offline."
+        ),
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Print PASS-line details.")
     return parser
 
@@ -613,6 +892,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.receipt.is_file():
         print(f"ERROR: not a file: {args.receipt}", file=sys.stderr)
+        return 2
+
+    if args.effects_dir is not None and not args.effects_dir.is_dir():
+        print(f"ERROR: not a directory: {args.effects_dir}", file=sys.stderr)
         return 2
 
     pinned_jwk: dict[str, Any] | None = None
@@ -644,6 +927,7 @@ def main(argv: list[str] | None = None) -> int:
         verbose=args.verbose,
         stream=sys.stdout,
         allow_unpinned_key=args.allow_unpinned_key,
+        effects_dir=args.effects_dir,
     )
     return 0 if result.ok else 1
 

@@ -4311,12 +4311,20 @@ def receipt_export_cmd(
         "Without --jwk/--public-key this proves integrity, not who signed it."
     ),
 )
+@click.option(
+    "--effects-dir",
+    "effects_dir",
+    default=None,
+    type=click.Path(file_okay=False, exists=True, resolve_path=True),
+    help="Optional directory of recorded tool-call effect payloads (<intent_sha256>.effect).",
+)
 def receipt_verify_cmd(
     receipt_path: str,
     jwk_path: str | None,
     public_key_path: str | None,
     fmt: str,
     allow_unpinned_key: bool,
+    effects_dir: str | None,
 ) -> None:
     """Verify an audit receipt by shelling to the standalone verifier.
 
@@ -4346,6 +4354,8 @@ def receipt_verify_cmd(
         cmd.extend(["--public-key", public_key_path])
     if allow_unpinned_key:
         cmd.append("--allow-unpinned-key")
+    if effects_dir:
+        cmd.extend(["--effects-dir", effects_dir])
 
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.stdout:
