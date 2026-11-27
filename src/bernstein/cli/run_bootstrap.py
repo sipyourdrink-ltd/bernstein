@@ -36,6 +36,7 @@ from bernstein.cli.helpers import (
 from bernstein.cli.run_preflight import (
     _CLI_RUN_EPOCH,
     _abort_if_default_branch_merge_target,
+    _abort_if_no_cli_adapter,
     _configure_quality_gate_bypass,
     _emit_preflight_runtime_warnings,
     _estimate_run_preview,
@@ -193,17 +194,18 @@ def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
     """
     try:
         config, _tasks = load_plan(plan_path)
-    except PlanLoadError as exc:
-        console.print(f"[red]Failed to load plan file:[/red] {exc}")
+    except (PlanLoadError, OSError, TypeError, ValueError, OverflowError) as exc:
+        click.echo(f"Failed to load plan file: {exc}", err=True)
         raise SystemExit(1) from exc
 
     unapplied = [name for name in _UNAPPLIED_PLAN_SETTINGS if getattr(config, name)]
     if unapplied:
-        console.print(
-            f"[red]Cannot run {plan_path} with --from-plan:[/red] it sets "
+        click.echo(
+            f"Cannot run {plan_path} with --from-plan: it sets "
             f"{', '.join(unapplied)}, which `bernstein run` does not apply, so the run "
             "would not match the plan. Remove the setting(s) (configure agent count in "
-            "bernstein.yaml) and run again."
+            "bernstein.yaml) and run again.",
+            err=True,
         )
         raise SystemExit(1)
     return config
@@ -232,7 +234,7 @@ def _load_plan_goal(plan_path: Path) -> str:
     if plan_path.suffix == ".json":
         with suppress(json.JSONDecodeError):
             data = json.loads(content)
-            if "goal" in data:
+            if isinstance(data, dict) and "goal" in data:
                 return str(data["goal"])
 
     if plan_path.suffix.lower() in _YAML_PLAN_SUFFIXES:
@@ -287,8 +289,8 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         try:
             _plan_config, tasks = load_plan(plan_file)
             return tasks
-        except PlanLoadError as exc:
-            console.print(f"[red]Plan load error:[/red] {exc}")
+        except (PlanLoadError, OSError, TypeError, ValueError, OverflowError) as exc:
+            click.echo(f"Plan load error: {exc}", err=True)
             raise SystemExit(1) from exc
 
     _headers: dict[str, str] = {}
@@ -303,15 +305,19 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
         )
         resp.raise_for_status()
         tasks_data = resp.json()
+        if not isinstance(tasks_data, list) or not all(isinstance(task, dict) for task in tasks_data):
+            raise ValueError("Expected a JSON list of task objects.")
+        return [Task.from_dict(task) for task in tasks_data]
     except httpx.ConnectError as err:
-        console.print("[red]Task server not running. Start with `bernstein run` first,[/red]")
-        console.print("[red]or pass a plan file: `bernstein run --dry-run plan.yaml`[/red]")
+        click.echo(
+            "Task server not running. Start with `bernstein run` first,\n"
+            "or pass a plan file: `bernstein run --dry-run plan.yaml`",
+            err=True,
+        )
         raise SystemExit(1) from err
     except Exception as exc:
-        console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
+        click.echo(f"Failed to fetch tasks: {exc}", err=True)
         raise SystemExit(1) from exc
-
-    return [Task.from_dict(td) for td in tasks_data]
 
 
 def _confirm_run(
@@ -393,7 +399,7 @@ def _parse_budget_spec(raw: str | float | None) -> float | None:
     """
     if raw is None:
         return None
-    if isinstance(raw, (int, float)):
+    if isinstance(raw, int | float):
         return max(0.0, float(raw))
     s = str(raw).strip().lower()
     if not s:
@@ -770,17 +776,17 @@ def _show_dry_run_plan(
 ) -> None:
     """Show scheduling plan without executing.
 
-    When a plan file is provided, loads tasks directly from it so no running
-    server is required.  Otherwise falls back to fetching open tasks from a
-    running task server.
+    Load a saved plan when supplied. Otherwise synthesize one from an explicit
+    goal or an explicit or discovered seed file. With none of these inputs,
+    preview the open tasks on the running task server.
 
     Args:
-        _workdir: Project root directory.
+        workdir: Project root directory.
         plan_file: Optional plan file path.
-        _goal: Optional goal string.
-        _seed_file: Optional seed file path.
-        model_override: Optional model override.
-        _cli: Optional CLI override.
+        goal: Optional goal string.
+        seed_file: Optional seed file path.
+        model_override: Model used for the cost estimate when supplied.
+        cli: Compatibility parameter. Validated by the CLI before this call.
     """
     _ = cli  # Part of interface: --cli is validated by its click.Choice
     from rich.table import Table
@@ -970,7 +976,8 @@ def plan_init_writes(root: Path) -> tuple[PlannedWrite, ...]:
     from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
 
     planned = [PlannedWrite(rel, PLAN_EXISTS if (root / rel).is_dir() else PLAN_CREATE) for rel in SDD_DIRS]
-    for rel in (INIT_WORKSPACE_CONFIG, INIT_RUNTIME_GITIGNORE, INIT_PROJECT_CONFIG):
+    selected = find_seed_file(root) or (root / INIT_PROJECT_CONFIG)
+    for rel in (INIT_WORKSPACE_CONFIG, INIT_RUNTIME_GITIGNORE, selected.relative_to(root).as_posix()):
         planned.append(PlannedWrite(rel, PLAN_EXISTS if (root / rel).exists() else PLAN_CREATE))
     if (root / INIT_TEMPLATES_DIR).exists():
         planned.append(PlannedWrite(INIT_TEMPLATES_DIR, PLAN_EXISTS))
@@ -1059,12 +1066,7 @@ def init(
     wizard: bool = False,
     non_interactive: bool = False,
 ) -> None:
-    """Init workspace -- create .sdd/ structure.
-
-    Raises:
-        click.UsageError: When --wizard is combined with a flag the wizard
-            path does not implement.
-    """
+    """Init workspace -- create .sdd/ structure and bernstein.yaml."""
     if wizard:
         # The wizard is a separate implementation, not a mode of _init_impl:
         # it writes its own bernstein.yaml and never reaches the badge or
@@ -1106,6 +1108,30 @@ def _is_verbose() -> bool:
         return False
     obj: dict[str, object] = raw_obj  # type: ignore[assignment]
     return bool(obj.get("VERBOSE", False))
+
+
+def ensure_workspace_templates_and_gitignore(root: Path) -> None:
+    """Copy bundled templates and add ``.sdd/runtime/`` to root ``.gitignore`` if needed."""
+    templates_dst = root / INIT_TEMPLATES_DIR
+    if not templates_dst.exists():
+        import shutil
+
+        from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
+
+        if _BUNDLED_TEMPLATES_DIR.is_dir():
+            shutil.copytree(_BUNDLED_TEMPLATES_DIR, templates_dst)
+            console.print("[green]Created[/green] templates/ (default roles & prompts)")
+
+    root_gi_path = root / INIT_ROOT_GITIGNORE
+    gitignore_entry = INIT_GITIGNORE_ENTRY
+    if root_gi_path.exists():
+        existing = root_gi_path.read_text()
+        if gitignore_entry not in existing:
+            root_gi_path.write_text(existing.rstrip("\n") + f"\n{gitignore_entry}\n")
+            console.print(f"[green]Updated[/green] .gitignore (added {gitignore_entry})")
+    else:
+        root_gi_path.write_text(f"{gitignore_entry}\n")
+        console.print(f"[green]Created[/green] .gitignore (added {gitignore_entry})")
 
 
 def _init_impl(
@@ -1161,33 +1187,12 @@ def _init_impl(
         gi_path.write_text("*.pid\n*.log\n")
 
     # Create bernstein.yaml in project root if not present
-    yaml_path = root / INIT_PROJECT_CONFIG
+    yaml_path = find_seed_file(root) or (root / INIT_PROJECT_CONFIG)
     if not yaml_path.exists():
         yaml_path.write_text(_generate_default_yaml(project_type))
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
 
-    # Copy bundled default templates if the project doesn't have its own
-    templates_dst = root / INIT_TEMPLATES_DIR
-    if not templates_dst.exists():
-        import shutil
-
-        from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
-
-        if _BUNDLED_TEMPLATES_DIR.is_dir():
-            shutil.copytree(_BUNDLED_TEMPLATES_DIR, templates_dst)
-            console.print("[green]Created[/green] templates/ (default roles & prompts)")
-
-    # Append .sdd/runtime/ to root .gitignore if not already present
-    root_gi_path = root / INIT_ROOT_GITIGNORE
-    gitignore_entry = INIT_GITIGNORE_ENTRY
-    if root_gi_path.exists():
-        existing = root_gi_path.read_text()
-        if gitignore_entry not in existing:
-            root_gi_path.write_text(existing.rstrip("\n") + f"\n{gitignore_entry}\n")
-            console.print(f"[green]Updated[/green] .gitignore (added {gitignore_entry})")
-    else:
-        root_gi_path.write_text(f"{gitignore_entry}\n")
-        console.print(f"[green]Created[/green] .gitignore (added {gitignore_entry})")
+    ensure_workspace_templates_and_gitignore(root)
 
     # Optional: inject a "powered by bernstein" badge into README.md
     if add_badge:
@@ -1211,8 +1216,9 @@ def _init_impl(
     # Print clear next steps
     console.print("")
     console.print("[green]Done.[/green] Next steps:")
-    console.print("  1. Edit [bold]bernstein.yaml[/bold]: set a goal")
-    console.print("  2. Run [bold]bernstein[/bold] to start the orchestra")
+    from bernstein.cli.first_run_readiness import project_handoff
+
+    project_handoff(root, remote=remote).render(console)
     console.print("")
     # ``examples/`` is a repo directory and is not part of the wheel, so an
     # operator who installed from PyPI has no such path to look at. The
@@ -2330,7 +2336,7 @@ def exec_restart() -> None:
     is_flag=False,
     flag_value=".sdd/logs/activity.log",
     default=None,
-    help="Write activity to log file (default: .sdd/logs/activity.log).",
+    help="Write activity to a log file (default: .sdd/logs/activity.log).",
 )
 @click.option(
     "--max-cost-usd",
@@ -2457,6 +2463,13 @@ def exec_restart() -> None:
         "cache policy are unaffected."
     ),
 )
+@click.option(
+    "--open-ui",
+    "open_ui",
+    is_flag=True,
+    default=False,
+    help="Open the Web GUI in your browser once the local task server is ready.",
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -2503,13 +2516,9 @@ def run(
     attach: tuple[Path, ...] = (),
     refresh_cache: bool = False,
     force_fresh: bool = False,
+    open_ui: bool = False,
 ) -> None:
-    """Parse seed, init workspace, start server, launch agents.
-
-    Top-level wrapper: routes any uncaught exception through the
-    first-run categorisation guard so the operator sees a structured
-    hint panel and a sysexits.h exit code instead of a raw traceback.
-    """
+    """Parse bernstein.yaml (or plan file), start the task server, and run agents."""
     try:
         _run_impl(
             plan_file=plan_file,
@@ -2557,6 +2566,7 @@ def run(
             attach=attach,
             refresh_cache=refresh_cache,
             force_fresh=force_fresh,
+            open_ui=open_ui,
         )
     except (click.UsageError, SystemExit):
         raise
@@ -2611,6 +2621,7 @@ def _run_impl(
     attach: tuple[Path, ...] = (),
     refresh_cache: bool = False,
     force_fresh: bool = False,
+    open_ui: bool = False,
 ) -> None:
     """Concrete ``run`` implementation; wrapped by :func:`run` for hinting.
 
@@ -2854,6 +2865,11 @@ def _run_impl(
         validated_seed = None
         if goal is None and plan_file is None and from_plan is None:
             validated_seed = validate_seed_or_exit(seed_file)
+        _abort_if_no_cli_adapter(
+            cli=cli,
+            seed=validated_seed,
+            plan_file=plan_file or from_plan,
+        )
         estimate = _estimate_run_preview(
             workdir=workdir,
             plan_file=plan_file,
@@ -2911,7 +2927,7 @@ def _run_impl(
                 except Exception:
                     loaded_goal = str(plan_file)
             except Exception as exc:
-                console.print(f"[red]Failed to load plan file:[/red] {exc}")
+                click.echo(f"Failed to load plan file: {exc}", err=True)
                 raise SystemExit(1) from exc
 
             console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
@@ -2928,7 +2944,7 @@ def _run_impl(
                     console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
                     console.print(f"[dim]Goal:[/dim] {goal[:100]}")
                 except (ValueError, OSError) as exc:
-                    console.print(f"[red]Failed to load plan:[/red] {exc}")
+                    click.echo(f"Failed to load plan: {exc}", err=True)
                     raise SystemExit(1) from exc
             effective_goal, team = _resolve_goal_and_team(workdir, goal, seed_file)
             plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
@@ -2980,6 +2996,7 @@ def _run_impl(
                     tasks=tasks,
                     ab_test=ab_test,
                     force_fresh=force_fresh,
+                    open_ui=open_ui,
                 )
                 persist_server_port(port, workdir)
 
@@ -2991,7 +3008,7 @@ def _run_impl(
             # into a generic "failed to load plan file" message.
             raise
         except Exception as exc:
-            console.print(f"[red]Failed to load plan file:[/red] {exc}")
+            click.echo(f"Failed to load plan file: {exc}", err=True)
             raise SystemExit(1) from exc
 
     # --from-plan: load goal from saved plan file, override inline goal
@@ -3001,7 +3018,7 @@ def _run_impl(
             console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
             console.print(f"[dim]Goal:[/dim] {goal[:100]}")
         except (ValueError, OSError) as exc:
-            console.print(f"[red]Failed to load plan:[/red] {exc}")
+            click.echo(f"Failed to load plan: {exc}", err=True)
             raise SystemExit(1) from exc
 
     # Confirmation prompt before execution (skip with --auto-approve)
@@ -3025,6 +3042,7 @@ def _run_impl(
                     cli=cli or "auto",  # Default to "auto" if not specified
                     model=model,
                     force_fresh=force_fresh,
+                    open_ui=open_ui,
                 )
                 persist_server_port(port, workdir)
         except RuntimeError as exc:
@@ -3064,6 +3082,7 @@ def _run_impl(
                 model=model,
                 worker_role=worker_role,
                 force_fresh=force_fresh,
+                open_ui=open_ui,
             )
             persist_server_port(port, workdir)
     except SeedError as exc:
@@ -3203,11 +3222,14 @@ def serve(bind_host: str | None, port: int, log_level: str) -> None:
     """
     import uvicorn
 
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+
     host = bind_host or os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1")
     # Keep the cluster config's advertised bind host aligned with the socket we
     # actually bind, and pin single-worker mode - the TaskStore is
     # single-process and multi-worker mode corrupts JSONL / double-claims tasks.
     os.environ["BERNSTEIN_BIND_HOST"] = host
+    os.environ["BERNSTEIN_LOOPBACK_HOST_GUARD"] = "1" if is_loopback_host(host) else "0"
     os.environ.setdefault("BERNSTEIN_WORKERS", "1")
 
     console.print(f"[green]Task server (foreground):[/green] http://{host}:{port}/  (Ctrl-C or SIGTERM to stop)")

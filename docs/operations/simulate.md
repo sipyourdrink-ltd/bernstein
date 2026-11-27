@@ -30,17 +30,65 @@ Source: `src/bernstein/cli/commands/simulate_cmd.py` and
 
 ```text
 bernstein simulate PLAN
-  [--from-traces N]      max historical records per (role, adapter); default 50
-  [--seed S]             RNG seed; identical seed + plan + traces -> byte-identical report; default 42
+  [--from-traces N]      max history samples per (role, adapter); default 50
+  [--seed S]             RNG seed; reproducibility also requires identical plan, options, and calibration; default 42
   [--budget-cap USD]     non-zero exit when predicted p90 spend exceeds this
-  [--out FILE]           write report.json or report.md sidecar
+  [--out FILE]           write a sidecar; extension selects its format
   [--metrics-dir DIR]    default .sdd/metrics if present, else cold-start
   [--traces-dir DIR]     default .sdd/traces if present, else cold-start
   [--format md|json]     stdout format; sidecar follows --out extension
 ```
 
-Determinism: same seed + plan + trace history yields a byte-identical
-report. CI can lock the seed and diff reports against a stored fixture.
+## How historical samples are used
+
+`--from-traces` does not cap the same population for every estimate:
+
+- **Cost** uses recorded cost samples from `.sdd/metrics/cost.jsonl`, filtered
+  by role and adapter. The limit keeps at most that many samples for each pair.
+- **Latency** uses valid, non-negative duration samples from the `latency_seconds`
+  or `duration_s` fields in trace rows, independently
+  for each role and adapter. The loader visits `*.jsonl` files in filename
+  order and rows in each file in order; after collecting the duration samples,
+  it keeps their tail up to the requested limit. Rows without a usable duration
+  do not contribute a latency sample.
+- **Abandonment** uses every accepted trace row for a role and adapter pair,
+  including rows with no usable duration. The limit does not truncate this
+  population, so changing it does not change the observed abandonment rate.
+
+For example, suppose one trace file contains these rows in order, all for
+`backend` / `mock`:
+
+```json
+{"role":"backend","adapter":"mock","status":"completed","latency_seconds":10}
+{"role":"backend","adapter":"mock","status":"abandoned"}
+{"role":"backend","adapter":"mock","status":"completed","latency_seconds":30}
+```
+
+With `--from-traces 1`, the latency sample is `[30]`; with
+`--from-traces 2`, it is `[10, 30]`. In both cases the abandonment rate is
+`1/3`, because all three trace rows count, including the abandoned row without
+a duration.
+
+Determinism requires the same plan, seed, sampling options (including
+`--from-traces`), and calibration inputs from both traces and metrics.
+Keep the other simulation options, including the budget cap, identical as
+well. CI can pin those inputs and diff reports against a stored fixture.
+
+## Report formats and output ordering
+
+`--format md|json` selects standard output independently of `--out`.
+The optional report file uses its suffix (case-insensitive):
+
+| `--out` suffix | File contents |
+|---|---|
+| `.json` | JSON |
+| `.md`, `.markdown` | Markdown |
+| Any other suffix | JSON |
+
+The command writes the stdout report first and then the optional file.
+The file-written notice goes to stderr. If predicted p90 spend exceeds
+`--budget-cap`, both reports have already been emitted before the breach
+diagnostic is printed to stderr and the command exits 3.
 
 ## Examples
 
@@ -56,7 +104,7 @@ Lock historical sampling and emit a JSON artefact for CI:
 bernstein simulate plan.yaml \
   --from-traces 200 \
   --seed 17 \
-  --out .sdd/audit/simulate-$(date +%Y%m%d).json \
+  --out report.json \
   --format json
 ```
 
@@ -73,7 +121,7 @@ mkdir -p /tmp/cold && bernstein simulate plan.yaml \
 |------|---------|
 | 0    | Report produced, no budget-cap breach |
 | 2    | `SimulationError` (plan failed to load / parse) |
-| 3    | `--budget-cap` breached by predicted p90 spend |
+| 3    | `--budget-cap` breached by predicted p90 spend; stdout and any requested report file were written before the stderr diagnostic |
 
 ## Config keys
 

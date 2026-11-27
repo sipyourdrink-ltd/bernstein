@@ -19,6 +19,25 @@ If you just want to know:
 
 ## What "verified" means
 
+### Declared gate scope
+
+The coarse completion signal below is separate from a gate's structured
+`VerificationScope`. A plugin's returned scope is preserved in its result and
+the persisted gate report, including `checked`, `cannot_check`, confidence,
+oracle identity and evidence reference. An inconclusive plugin also retains
+its reason and the configured required/advisory blocking semantics.
+
+Built-in gate results that declare a scope retain it across disk-cache reloads.
+Older cache entries without a scope remain unattested (`scope: null`); no
+coverage is inferred from their pass status or the changed-file list. An
+unreadable scope causes a cache miss and fresh execution. Plugins continue to
+execute without the built-in result cache.
+
+This preserves declarations; it does not establish their truth, require every
+oracle to declare one, or add coverage to a gate that returns no scope.
+
+### Completion signal
+
 A completion is **verified** if any of these are true:
 
 | Evidence type            | Source                       | Field                       |
@@ -38,6 +57,37 @@ tracker writes one record per completion to the JSONL ledger and
 stamps `task.verification_count` (0–3) and `task.flagged_unverified`
 (bool) on the task object so any downstream consumer can filter on
 them.
+
+When an agent exits with code 0, no changed files or new commits, and no
+completion report, the orphan-recovery path checks its declared janitor gates
+in the agent worktree (or the run checkout when no separate worktree exists).
+Non-incidental untracked agent work blocks this shortcut for every gate type,
+including `test_passes`. The status check excludes ignored files and filters
+orchestrator and adapter artifacts, so ordinary ignored state such as `.venv/`
+does not block it. An unreadable status (nonzero Git exit, error or timeout)
+blocks the shortcut even for a task with only `test_passes` gates. This shortcut
+also checks the gate targets against Git: literal `path_exists` requires a
+tracked path; glob patterns in `path_exists` and `glob_exists` enumerate
+candidates with Python glob semantics and require at least one tracked match.
+`file_contains` requires a tracked, non-symlink file with no uncommitted changes
+relative to HEAD, because the janitor reads a symlink's target content.
+Untracked work and all `path_exists`/`file_contains` targets are guarded.
+
+Accepted limitation: an agent-created Git-ignored file used to satisfy
+`test_passes` or `glob_exists` cannot in general be distinguished from ordinary
+ignored build state (`.venv/`, `__pycache__/`, caches). Such ignored dependencies
+are not detectable by the shortcut. `glob_exists` still requires a tracked
+candidate; an ignored-only match is rejected.
+
+Failed or timed-out status or gate-target Git probes keep verification on the
+run checkout with the existing completion/retry behavior. Non-path signals,
+including tests and LLM checks, continue to run in the worktree when the shortcut
+is safe.
+Passing all gates then completes the task with an "already satisfied on base"
+summary without a retry. Any failed gate keeps the existing fail/retry behavior.
+The outcome's WAL row records `completion_signals_checked`, `janitor_passed`,
+and `verification_workdir`. This case requires declared gates; an empty gate
+list does not establish that the task was already satisfied.
 
 ---
 

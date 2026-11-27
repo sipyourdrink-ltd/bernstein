@@ -140,6 +140,21 @@ def test_fallback_order_retry_bound_and_failure_evidence() -> None:
     assert all("secret" not in failure.reason for failure in run.journal.failures)
 
 
+def test_non_callable_collector_is_recorded_as_failure() -> None:
+    collector: Any = object()
+    run = run_probe_set(
+        ProbeSet(version="v1", probes=(_probe(max_retries=0),)),
+        targets=("host-a",),
+        collectors={CollectionMethod.COMMAND: collector},
+        jitter_max_s=0.0,
+    )
+
+    assert run.results[0].status is ProbeStatus.UNKNOWN
+    (failure,) = run.journal.failures
+    assert failure.kind is ProbeFailureKind.EXCEPTION
+    assert failure.reason == "TypeError"
+
+
 def test_all_sources_exhaust_to_unknown_without_aborting_other_work() -> None:
     bad = _probe(
         "bad",

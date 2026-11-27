@@ -203,7 +203,9 @@ def load_traces(traces_dir: Path | None, *, limit: int = DEFAULT_HISTORY_LIMIT) 
             counters[1] += 1
             if abandoned:
                 counters[0] += 1
-            latency = _coerce_float(record.get("latency_seconds")) or _coerce_float(record.get("duration_s"))
+            latency = _coerce_float(record.get("latency_seconds"))
+            if latency is None:
+                latency = _coerce_float(record.get("duration_s"))
             if latency is not None:
                 bucket = latency_buckets.setdefault(key, [])
                 bucket.append(latency)

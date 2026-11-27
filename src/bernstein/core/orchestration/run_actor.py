@@ -403,6 +403,18 @@ class RunActor:
     The actor must be started with :meth:`start` and stopped with
     :meth:`stop`; lifecycle is also exposed via the
     :meth:`run` async context-manager helper.
+
+    Args:
+        session_id: Session this actor owns.
+        replay_capacity: Number of applied events retained for replay.
+            Defaults to 1024.
+        initial_state: State to start from. None creates a fresh state for
+            this session.
+        on_refusal: Optional callback when a terminal-state transition is refused.
+
+    Raises:
+        ValueError: If the initial state belongs to another session or
+            replay capacity is less than one.
     """
 
     def __init__(

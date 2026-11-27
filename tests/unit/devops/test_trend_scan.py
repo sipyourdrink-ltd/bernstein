@@ -12,6 +12,7 @@ Coverage:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,21 @@ def test_score_item_empty_text_returns_zero(spec: SourceSpec) -> None:
     score, matched = score_item(item, spec)
     assert score == 0.0
     assert matched == ()
+
+
+@pytest.mark.parametrize("version", ["3.13", "3.14"])
+def test_trend_score_matches_dotted_release_keywords(version: str) -> None:
+    source = next(s for s in load_default_sources() if s.name == "python-release-notes")
+    without_version = replace(source, boost_keywords=tuple(kw for kw in source.boost_keywords if kw != version))
+    item = RawItem(title=f"Python {version} release", url="", ts="2026-01-02T00:00:00Z")
+
+    score, matched = score_item(item, source)
+    assert matched == ("python", "release", version)
+    assert score > score_item(item, without_version)[0]
+
+    for suffix in ("0", ".1rc1"):
+        near_match = replace(item, title=f"Python {version}{suffix} release")
+        assert score_item(near_match, source)[1] == ("python", "release")
 
 
 # ---------------------------------------------------------------------------

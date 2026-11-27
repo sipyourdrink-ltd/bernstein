@@ -136,6 +136,76 @@ def test_parse_task_lines_empty_document_returns_empty_list() -> None:
     assert parse_task_lines("") == []
 
 
+@pytest.mark.parametrize(
+    ("opening", "inside", "closing"),
+    [
+        ("```markdown", "~~~", "```"),
+        ("~~~markdown", "~~~still code", "~~~"),
+        ("  ````markdown", "```", "   `````  "),
+        ("~~~~markdown", "~~~", "~~~~"),
+    ],
+)
+def test_parse_task_lines_skips_fenced_examples(opening: str, inside: str, closing: str) -> None:
+    doc = f"{opening}\n{inside}\n- [ ] [T001] Example\n{closing}\n- [ ] [T002] Ship"
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T002"]
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        # Fence opener on a bullet item line; the indented closing fence
+        # must end the block, not open a new one (#7980).
+        "- ```markdown\n  - [ ] [T001] Example\n  ```\n\n- [ ] [T002] Ship",
+        # Ordered-list item with a deeper content indent.
+        "1. ```markdown\n   - [ ] [T001] Example\n   ```\n\n- [ ] [T002] Ship",
+        # Nested bullet: the fence sits on the inner item's line.
+        "- Item\n  - ```markdown\n    - [ ] [T001] Example\n    ```\n- [ ] [T002] Ship",
+    ],
+)
+def test_parse_task_lines_skips_fences_inside_list_items(doc: str) -> None:
+    # A list-prefixed fence opener ("- ```markdown") opens the block; when
+    # the opener is missed, the closing fence becomes a new opener and
+    # swallows every real task below it (#7980).
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T002"]
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        # Both list markers precede the opener on the same line; the
+        # example row must not leak into the DAG as a phantom task.
+        "- - ```markdown\n    - [ ] [T001] Example\n    ```\n- [ ] [T002] Ship",
+        # Ordered marker nested inside a bullet.
+        "- 1. ```markdown\n     - [ ] [T001] Example\n     ```\n- [ ] [T002] Ship",
+    ],
+)
+def test_parse_task_lines_skips_fence_on_nested_item_line(doc: str) -> None:
+    # A fence opener nested on a same-line item ("- - ```markdown") opens
+    # the block relative to the innermost item (#7980).
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T002"]
+
+
+def test_parse_task_lines_unclosed_fence_ends_at_item_boundary() -> None:
+    # Markdown ends an unterminated fence at the enclosing list item's
+    # boundary; the sibling task row below it must still be selected
+    # rather than swallowed by the frozen fence (#7980).
+    doc = "- [ ] [T001] Real\n- ```markdown\n  example\n\n- [ ] [T002] Also real"
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T001", "T002"]
+
+
+def test_parse_task_lines_unclosed_nested_fence_keeps_outer_tasks() -> None:
+    doc = "- Outer\n  - ```markdown\n    code\n- [ ] [T001] Real"
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T001"]
+
+
+def test_parse_task_lines_invalid_opener_then_lone_fence_line() -> None:
+    # The backtick in the info string makes the first line a non-fence;
+    # the indented lone fence line opens a real block, and the dedented
+    # task row below ends the item - and with it the fence (#7980).
+    doc = "- ```bad`suffix\n  ```\n- [ ] [T001] Real"
+    assert [row.task_id for row in parse_task_lines(doc)] == ["T001"]
+
+
 # ---------------------------------------------------------------------------
 # _parse_priority - 0-4 ticket scale collapses to 1-3 internal scale
 # ---------------------------------------------------------------------------

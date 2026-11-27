@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
 from bernstein.core.semantic_cache import ResponseCacheManager
 from click.testing import CliRunner
 
@@ -44,6 +45,21 @@ def test_cache_list_json(tmp_path: Path) -> None:
     assert payload["entries"][0]["source_task_id"] in {"T-verified", "T-ghost"}
 
 
+def test_cache_list_limit_returns_the_first_entry(tmp_path: Path) -> None:
+    _seed_cache(tmp_path)
+    runner = CliRunner()
+    command = ["cache", "list", "--json", "--workdir", str(tmp_path)]
+
+    all_entries = runner.invoke(cli, command)
+    limited = runner.invoke(cli, [*command, "--limit", "1"])
+
+    assert all_entries.exit_code == 0, all_entries.output
+    assert limited.exit_code == 0, limited.output
+    entries = json.loads(all_entries.output)["entries"]
+    assert len(entries) == 2
+    assert json.loads(limited.output) == {"entries": entries[:1]}
+
+
 def test_cache_inspect_json(tmp_path: Path) -> None:
     _seed_cache(tmp_path)
     runner = CliRunner()
@@ -75,3 +91,23 @@ def test_cache_clear_unverified_only(tmp_path: Path) -> None:
     mgr = ResponseCacheManager(tmp_path)
     assert mgr.inspect_task("T-verified") is not None
     assert mgr.inspect_task("T-ghost") is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "detail"),
+    [
+        (b"{", "Expecting property name"),
+        (b"[]", "Expected a JSON object"),
+        (b'{"ingredients":"repo"}', "ingredients must be a list"),
+    ],
+    ids=["malformed-json", "not-an-object", "invalid-policy"],
+)
+def test_cache_policy_rejects_invalid_input(tmp_path: Path, payload: bytes, detail: str) -> None:
+    path = tmp_path / "policy.json"
+    path.write_bytes(payload)
+    result = CliRunner().invoke(cli, ["cache", "policy", "--file", str(path), "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "Invalid cache policy" in result.stderr
+    assert detail in result.stderr
+    assert result.stdout == ""

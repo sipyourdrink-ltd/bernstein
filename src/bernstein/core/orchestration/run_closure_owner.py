@@ -151,9 +151,14 @@ def reconcile_spawner_run_owner(*, workdir: Path, owner: SpawnerRunOwner) -> boo
         return False
 
     final = events[-1]
+    # Foreground shutdown records the quiescence observation immediately
+    # after its outcome. It is part of the anchor, not a new outcome.
+    completion = final
+    if len(events) > 1 and final.get("event") == "run_quiescence" and final.get("run_id") == owner.run_id:
+        completion = events[-2]
     outcome = "abandoned"
-    if final.get("event") == "run_completed":
-        recorded = str(final.get("outcome", "completed"))
+    if completion.get("event") == "run_completed" and completion.get("run_id") == owner.run_id:
+        recorded = str(completion.get("outcome", "completed"))
         if recorded in {"completed", "failed", "cancelled"}:
             outcome = recorded
     try:

@@ -197,7 +197,7 @@ def run_cmd(
     raw_block = _load_pipeline_block(target_path)
     sweep_errors: list[str] = []
     tracker_configs = _load_tracker_configurations(target_path, fallback_path=config_path)
-    trackers, init_errors = _instantiate_trackers(tracker_configs, sweep_errors)
+    trackers, init_errors = _instantiate_trackers(tracker_configs, sweep_errors, workdir=config_path.resolve().parent)
 
     dispatcher = _CliDispatcher()
     pipeline = build_pipeline_from_yaml(
@@ -498,32 +498,19 @@ def _load_tracker_configurations(
 def _instantiate_trackers(
     tracker_configs: dict[str, dict[str, Any]],
     sweep_errors: list[str],
+    *,
+    workdir: Path,
 ) -> tuple[dict[str, AbstractTrackerAdapter], list[str]]:
     """Resolve and construct tracker adapters from the registry."""
-    from bernstein.core.trackers.registry import (
-        discover_plugin_trackers,
-        get_registry,
-    )
+    from bernstein.core.trackers.registry import discover_workspace_trackers
 
-    registry = get_registry()
-    discovery_error: Exception | None = None
-    try:
-        discover_plugin_trackers()
-    except Exception as exc:
-        logger.debug("plugin tracker discovery failed: %s", exc)
-        discovery_error = exc
+    registry = discover_workspace_trackers(workdir, record_failures=True)
 
     adapters: dict[str, AbstractTrackerAdapter] = {}
     init_errors: list[str] = []
     for name, cfg in tracker_configs.items():
         if name not in registry:
-            if discovery_error is not None:
-                err = (
-                    f"Configured tracker {name!r} not found in registry "
-                    f"(plugin discovery failed earlier: {discovery_error})"
-                )
-            else:
-                err = f"Configured tracker {name!r} not found in registry"
+            err = f"Configured tracker {name!r} not found in registry"
             logger.warning(err)
             init_errors.append(err)
             continue

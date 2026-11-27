@@ -1,0 +1,33 @@
+id: flaky-test-quarantine-fix
+name: Flaky Test Root-Cause and Determinism Fix
+version: "1.0"
+description: |
+  Isolate nondeterministic test failures caused by wall-clock timing, port
+  collisions, shared state, or unordered iteration, and prove stability under
+  repeated parallel execution.
+tags: [software, testing, reliability, ci, debugging]
+tasks:
+  - title: Reproduce flake under stress and classify nondeterminism source
+    role: qa
+    priority: 0
+    scope: small
+    complexity: medium
+    description: |
+      Run targeted test loops with randomized seeds and parallel load to capture
+      the exact failure traceback and state leak.
+  - title: Replace timing or shared-state assumptions with deterministic hooks
+    role: backend
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Eliminate sleep-based synchronization, hardcoded ports, or leaked globals
+      in favor of explicit barriers, ephemeral bindings, and isolated fixtures.
+  - title: Verify 50 consecutive passes without weakening assertions
+    role: reviewer
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Confirm test count and assertion strength are preserved and the target
+      test passes repeatedly under CI concurrency.

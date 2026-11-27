@@ -289,10 +289,10 @@ def find_collisions(run_ids: Iterable[UUID]) -> dict[str, list[UUID]]:
         run_ids: The run ids to check.
 
     Returns:
-        Mapping from a colliding name to the list of UUIDs that render to
-        it (length >= 2). Empty when no collisions exist.
+        Mapping from a colliding name to its distinct UUIDs in first-seen
+        order. Empty when no collisions exist.
     """
     grouped: dict[str, list[UUID]] = defaultdict(list)
-    for run_id in run_ids:
+    for run_id in dict.fromkeys(run_ids):
         grouped[render_name(run_id)].append(run_id)
     return {name: ids for name, ids in grouped.items() if len(ids) > 1}

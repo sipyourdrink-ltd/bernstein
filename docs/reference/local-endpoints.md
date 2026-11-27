@@ -36,6 +36,9 @@ keyed on the profile's exact `(base_url, model)` pair.
 See [examples/local-fleet](https://github.com/sipyourdrink-ltd/bernstein/tree/main/examples/local-fleet)
 for a complete mixed-fleet configuration.
 
+For an optional hosted provider using the same profile and certification
+surface, see the [OrcaRouter operator guide](../operations/orcarouter.md).
+
 ## Role tiers
 
 | Tier | Roles | Requirement |

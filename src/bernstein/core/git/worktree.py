@@ -21,7 +21,9 @@ import re as _re
 import shutil
 import subprocess
 import time
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,11 +32,12 @@ from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_lis
 from bernstein.core.git.git_pr import _MERGE_DENY_EXACT, _MERGE_DENY_PREFIXES
 from bernstein.core.git.salvage import SalvageResult, salvage_worktree
 from bernstein.core.git.worktree_isolation import validate_worktree_isolation
+from bernstein.core.persistence.file_locks import cross_process_lock
 from bernstein.core.platform_compat import IS_WINDOWS, process_alive, robust_rmtree
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -1077,6 +1080,10 @@ class WorktreeManager:
         repo_root: Absolute path to the repository root.
         setup_config: Optional environment setup applied after each worktree is
             created (symlinks, file copies, setup command).
+        salvage_on_cleanup: Attempt to preserve uncommitted work and
+            unmerged commits during cleanup. Defaults to True.
+        salvage_push: Let cleanup attempt to push a salvaged branch.
+            Defaults to True and applies when cleanup salvages work.
     """
 
     def __init__(
@@ -1114,6 +1121,20 @@ class WorktreeManager:
         if resolved.parent != base:
             raise WorktreeError(f"Worktree path '{worktree_path}' resolves outside the worktree base '{base}'")
 
+    @contextmanager
+    def _lock_slots(self, *session_ids: str) -> Iterator[None]:
+        """Serialize manager mutations of a slot, including checkout and rollback."""
+        # Case-insensitive filesystems can alias two spellings of the same slot.
+        keys = {sha256(os.fsencode(session_id.casefold())).hexdigest() for session_id in session_ids}
+        with ExitStack() as locks:
+            try:
+                for key in sorted(keys):
+                    lock_path = self._base_dir / ".locks" / "mutation" / f"{key}.lock"
+                    locks.enter_context(cross_process_lock(lock_path, timeout=60))
+            except OSError as exc:
+                raise WorktreeError(f"Could not lock worktree session(s) {', '.join(session_ids)}: {exc}") from exc
+            yield
+
     def create(self, session_id: str) -> Path:
         """Create a git worktree for *session_id* and return its path.
 
@@ -1143,31 +1164,14 @@ class WorktreeManager:
         # the worktree) before anything touches the filesystem.
         validate_worktree_slug(session_id)
         worktree_path = self._base_dir / session_id
-        self._require_inside_base_dir(worktree_path)
         branch_name = f"agent/{session_id}"
+        with self._lock_slots(session_id):
+            self._require_inside_base_dir(worktree_path)
+            self._add_checkout(session_id, worktree_path, branch_name)
+            self._finish_create(session_id, worktree_path, branch_name)
+        return worktree_path
 
-        if worktree_path.exists():
-            raise WorktreeError(f"Worktree path '{worktree_path}' already exists")
-
-        self._base_dir.mkdir(parents=True, exist_ok=True)
-
-        # Pre-flight: detect and auto-repair stale locks / invalid HEAD
-        health_warnings = _check_git_health(self.repo_root)
-        for warning in health_warnings:
-            logger.warning("Git health pre-check: %s", warning)
-
-        result = worktree_add(self.repo_root, worktree_path, branch_name)
-
-        if not result.ok:
-            stderr = result.stderr.strip()
-            if "already exists" in stderr:
-                raise WorktreeError(
-                    f"Branch '{branch_name}' already exists. Delete it manually or call cleanup() first. Git: {stderr}"
-                )
-            raise WorktreeError(f"git worktree add failed for session '{session_id}': {stderr}")
-
-        logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
-
+    def _finish_create(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
         # The worktree and agent branch now exist.  Every remaining step runs
         # inside an undo handler so that a failure - including a cancellation
         # delivered mid-setup, which is a BaseException rather than an
@@ -1211,10 +1215,49 @@ class WorktreeManager:
             self._undo_partial_create(session_id, worktree_path, branch_name)
             raise
 
-        return worktree_path
+        logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
+
+    def _add_checkout(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
+        """Run git worktree add with the session slot lock held."""
+        if worktree_path.exists():
+            raise WorktreeError(f"Worktree path '{worktree_path}' already exists")
+
+        for warning in _check_git_health(self.repo_root):
+            logger.warning("Git health pre-check: %s", warning)
+
+        try:
+            result = worktree_add(self.repo_root, worktree_path, branch_name)
+        except BaseException:
+            self._undo_failed_checkout(session_id, worktree_path, branch_name)
+            raise
+        if result.ok:
+            return
+
+        if self._undo_failed_checkout(session_id, worktree_path, branch_name):
+            raise WorktreeError(f"git worktree add failed for session '{session_id}': {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        if "already exists" in stderr:
+            raise WorktreeError(
+                f"Branch '{branch_name}' already exists. Delete it manually or call cleanup() first. Git: {stderr}"
+            )
+        raise WorktreeError(f"git worktree add failed for session '{session_id}': {stderr}")
+
+    def _undo_failed_checkout(self, session_id: str, worktree_path: Path, branch_name: str) -> bool:
+        """Roll back a checkout that Git registered before reporting failure."""
+        try:
+            if not self.owns(worktree_path):
+                return False
+            head = run_git(["symbolic-ref", "--quiet", "HEAD"], worktree_path, timeout=10)
+            if not head.ok or head.stdout.strip() != f"refs/heads/{branch_name}":
+                return False
+        except Exception as exc:
+            logger.warning("Could not identify the failed checkout for %s: %s", session_id, exc)
+            return False
+        self._undo_partial_create(session_id, worktree_path, branch_name)
+        return True
 
     def _undo_partial_create(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
-        """Undo a partially-created worktree after a post-``worktree_add`` step fails.
+        """Undo a partially-created worktree after checkout or setup fails.
 
         Removes the worktree and deletes the agent branch so ``create`` never
         leaves either behind.  Deliberately does *not* run the salvage path
@@ -1276,8 +1319,12 @@ class WorktreeManager:
                 the worktree back before raising.
         """
         validate_worktree_slug(session_id)
-        self._require_inside_base_dir(worktree_path)
         old_id = worktree_path.name
+        with self._lock_slots(old_id, session_id):
+            self._require_inside_base_dir(worktree_path)
+            return self._adopt_locked(worktree_path, old_id, session_id)
+
+    def _adopt_locked(self, worktree_path: Path, old_id: str, session_id: str) -> Path:
         if old_id == session_id:
             return worktree_path
         target = self._base_dir / session_id
@@ -1327,11 +1374,18 @@ class WorktreeManager:
         Args:
             session_id: The session whose worktree should be removed.
         """
+        self._last_salvage = None
+        try:
+            with self._lock_slots(session_id):
+                self._cleanup_locked(session_id)
+        except WorktreeError as exc:
+            logger.warning("Could not clean up worktree for %s: %s", session_id, exc)
+
+    def _cleanup_locked(self, session_id: str) -> None:
         worktree_path = self._base_dir / session_id
         branch_name = f"agent/{session_id}"
 
         # 0. Salvage uncommitted work BEFORE anything destructive happens.
-        self._last_salvage = None
         if self._salvage_on_cleanup and worktree_path.exists():
             try:
                 self._last_salvage = salvage_worktree(
@@ -1477,46 +1531,55 @@ class WorktreeManager:
             return 0
         cleaned = 0
         for entry in self._base_dir.iterdir():
-            if entry.is_dir() and entry.name != ".locks":
-                session_id = entry.name
-                if self._is_session_live(session_id):
-                    logger.debug("Keeping live worktree %s during stale cleanup", session_id)
-                    continue
-
-                # Preserve unmerged commits to the graveyard before we nuke
-                # the branch. A crashed agent may have committed
-                # work locally that never reached main; ``git worktree
-                # remove --force`` followed by ``git branch -D`` would make
-                # those commits unreachable and gc-eligible.
-                branch_name = f"agent/{session_id}"
-                base_ref = _resolve_graveyard_base(self.repo_root)
-                try:
-                    unmerged = _count_unmerged_commits(self.repo_root, branch_name, base=base_ref)
-                except Exception as exc:  # defensive - preserve rather than drop work
-                    logger.debug("Graveyard pre-check failed for %s: %s", session_id, exc)
-                    unmerged = -1 if _branch_exists(self.repo_root, branch_name) else 0
-                # Any non-zero result preserves: >0 is a real count, -1 means the
-                # check was inconclusive but the branch exists, so we keep the work.
-                if unmerged != 0:
-                    logger.warning(
-                        "Stale worktree %s has %s unmerged commit(s) (base %s); preserving to graveyard",
-                        session_id,
-                        unmerged if unmerged > 0 else "an unknown number of",
-                        base_ref,
-                    )
-                    try:
-                        preserve_branch_to_graveyard(self.repo_root, session_id, branch=branch_name)
-                    except Exception as exc:  # defensive - log and proceed
-                        logger.warning(
-                            "Graveyard preservation crashed for %s (continuing cleanup): %s",
-                            session_id,
-                            exc,
-                        )
-
-                logger.info("Cleaning stale worktree: %s", session_id)
-                self.cleanup(session_id)
-                cleaned += 1
+            if entry.name == ".locks" or not entry.is_dir():
+                continue
+            try:
+                with self._lock_slots(entry.name):
+                    if entry.is_dir() and self._cleanup_if_stale_locked(entry.name):
+                        cleaned += 1
+            except WorktreeError as exc:
+                logger.warning("Could not clean up stale worktree for %s: %s", entry.name, exc)
         return cleaned
+
+    def _cleanup_if_stale_locked(self, session_id: str) -> bool:
+        if self._is_session_live(session_id):
+            logger.debug("Keeping live worktree %s during stale cleanup", session_id)
+            return False
+
+        # Preserve unmerged commits to the graveyard before we nuke
+        # the branch. A crashed agent may have committed
+        # work locally that never reached main; ``git worktree
+        # remove --force`` followed by ``git branch -D`` would make
+        # those commits unreachable and gc-eligible.
+        branch_name = f"agent/{session_id}"
+        base_ref = _resolve_graveyard_base(self.repo_root)
+        try:
+            unmerged = _count_unmerged_commits(self.repo_root, branch_name, base=base_ref)
+        except Exception as exc:  # defensive - preserve rather than drop work
+            logger.debug("Graveyard pre-check failed for %s: %s", session_id, exc)
+            unmerged = -1 if _branch_exists(self.repo_root, branch_name) else 0
+        # Any non-zero result preserves: >0 is a real count, -1 means the
+        # check was inconclusive but the branch exists, so we keep the work.
+        if unmerged != 0:
+            logger.warning(
+                "Stale worktree %s has %s unmerged commit(s) (base %s); preserving to graveyard",
+                session_id,
+                unmerged if unmerged > 0 else "an unknown number of",
+                base_ref,
+            )
+            try:
+                preserve_branch_to_graveyard(self.repo_root, session_id, branch=branch_name)
+            except Exception as exc:  # defensive - log and proceed
+                logger.warning(
+                    "Graveyard preservation crashed for %s (continuing cleanup): %s",
+                    session_id,
+                    exc,
+                )
+
+        logger.info("Cleaning stale worktree: %s", session_id)
+        self._last_salvage = None
+        self._cleanup_locked(session_id)
+        return True
 
     def _is_session_live(self, session_id: str) -> bool:
         """Return True if the session still has a live process or lock."""

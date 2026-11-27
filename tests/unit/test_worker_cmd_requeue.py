@@ -43,7 +43,12 @@ class TestReleaseOnSpawnFailure:
             json=lambda: {"id": "task-77", "title": "do it", "role": "backend"},
         )
 
-        with mock.patch.object(loop, "_spawn_agent", return_value=None):
+        # The base-sync gate (#6538) is stubbed out: this test isolates the
+        # spawn-failure release, and tmp_path is not a git workspace.
+        with (
+            mock.patch.object(loop, "_sync_task_base", return_value=None),
+            mock.patch.object(loop, "_spawn_agent", return_value=None),
+        ):
             loop._claim_available_tasks(client, node_id="node-1")
 
         # The claim was released (re-queued), and the slot was NOT consumed.
@@ -62,7 +67,11 @@ class TestReleaseOnSpawnFailure:
             json=lambda: {"id": "task-88", "title": "do it", "role": "backend"},
         )
 
-        with mock.patch.object(loop, "_spawn_agent", return_value=4242):
+        # Base-sync gate stubbed: see test_spawn_failure_releases_claim_back_to_pool.
+        with (
+            mock.patch.object(loop, "_sync_task_base", return_value=None),
+            mock.patch.object(loop, "_spawn_agent", return_value=4242),
+        ):
             loop._claim_available_tasks(client, node_id="node-1")
 
         release_calls = [

@@ -10,9 +10,7 @@ is the median time from PR opened to merged over the last 30 days, then a link t
 </picture>
 
 [`.github/workflows/project-pulse.yml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.github/workflows/project-pulse.yml)
-publishes it every Monday at 09:19 UTC into one rolling issue titled `Project pulse (weekly)`,
-labelled `docs` -- created on the first run, edited in place afterwards.
-Find it with [`is:issue "Project pulse (weekly)"`](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aissue+%22Project+pulse+%28weekly%29%22).
+runs on demand via `workflow_dispatch` and optionally updates a rolling issue when a target issue number is supplied.
 
 ## What it reports
 
@@ -42,9 +40,12 @@ The issue body carries the same ten fields in three shapes, all rendered from on
 - **The card.** An SVG in a light and a dark variant, chosen by the reader's colour scheme.
   It draws itself once on load with CSS alone: no script, no font or image fetched from
   anywhere, and it holds still for readers who prefer reduced motion.
-- **The trend.** Two charts over the last eight weekly collections -- merged pull requests
-  per week and the median merge lag -- as Mermaid blocks, which GitHub renders inline. They
-  appear once a second week exists.
+- **The trend.** Two charts over the latest eight weekly collections -- merged pull requests
+  per week and the median merge lag -- as Mermaid blocks, which GitHub renders inline. To
+  build that window, rendering upserts the supplied current sample into the history by
+  collection date: a same-date history row is replaced, not counted alongside it, and the
+  resulting rows are sorted by date before the newest eight are selected. The trend appears
+  only when that sequence contains at least two distinct collection dates.
 - **The tables.** Every field as a number, for readers and tools that do not render images.
 
 ## The `project-pulse` branch
@@ -52,8 +53,13 @@ The issue body carries the same ten fields in three shapes, all rendered from on
 GitHub only shows an image it can fetch from a URL, so the workflow commits its output to a
 branch of its own, `project-pulse`. It holds the card (`pulse.svg`, `pulse-dark.svg`), the
 page (`project-pulse.md`), the collected `pulse.json` and `history.json`, one row per
-collection date, capped at two years. The branch carries no code, is never merged anywhere,
-and its history is one commit per week. The same files are uploaded as a workflow artifact.
+collection date, capped at two years. The history is sorted by collection date and keeps the
+newest 104 rows. Rendering incorporates the supplied current collection using the same-date
+replacement rule, then charts only the newest eight rows of that combined sequence; it does
+not count a current sample twice. For example, if `history.json` has a row dated
+`2026-09-14` and the current `pulse.json` is also dated `2026-09-14`, the current row replaces
+the saved row for that date before the eight-row window is chosen. The branch carries no code,
+is never merged anywhere, and its history is one commit per week. The same files are uploaded as a workflow artifact.
 
 The card above and the issue body are the branch's current contents.
 

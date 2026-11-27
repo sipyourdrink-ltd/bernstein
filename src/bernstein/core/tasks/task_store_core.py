@@ -13,12 +13,12 @@ import logging
 import time
 import uuid
 from collections import deque
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NotRequired, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NotRequired, Protocol, TypedDict, cast
 
 from fastapi import HTTPException
-from typing_extensions import TypedDict
 
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
@@ -29,8 +29,15 @@ from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
+from bernstein.core.tasks.claim_admission import (
+    ClaimAction,
+    ClaimAdmissionController,
+    ClaimAdmissionStatus,
+    ClaimControlError,
+)
 from bernstein.core.tasks.errors import TaskDomainError
 from bernstein.core.tasks.lifecycle import (
+    UNSUCCESSFUL_TERMINAL_STATUSES,
     IllegalTransitionError,
     _validate_task_transition,
     transition_agent,
@@ -38,6 +45,7 @@ from bernstein.core.tasks.lifecycle import (
 )
 from bernstein.core.tasks.models import (
     AgentSession,
+    ApprovalSpec,
     CompletionSignal,
     DispatchTier,
     ProgressSnapshot,
@@ -59,6 +67,7 @@ from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
 
+    from bernstein.core.admission.models import PoolSpec
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.tasks.contracts import ContractViolation, WorkerCompletion, WorkerRefusal
 
@@ -135,6 +144,10 @@ class TaskRecord(TypedDict):
     role: str
     priority: int
     dispatch_tier: NotRequired[str]
+    model: NotRequired[str | None]
+    effort: NotRequired[str | None]
+    cli: NotRequired[str | None]
+    requires: NotRequired[list[str]]
     scope: str
     complexity: str
     estimated_minutes: int | None
@@ -153,6 +166,7 @@ class TaskRecord(TypedDict):
     batch_eligible: bool
     eu_ai_act_risk: str
     approval_required: bool
+    approval_spec: NotRequired[dict[str, Any] | None]
     risk_level: str
     slack_context: dict[str, Any] | None
     version: int
@@ -252,6 +266,10 @@ class TaskCreateRequest(Protocol):
     model: str | None
     effort: str | None
     cli: str | None
+
+    @property
+    def requires(self) -> Sequence[str]: ...
+
     batch_eligible: bool
     approval_required: bool
     eu_ai_act_risk: str
@@ -451,6 +469,13 @@ class EmptyCompletionError(TaskDomainError):
         )
 
 
+class AttachmentPreview(NamedTuple):
+    """Derived tasks and manifest digest returned by read-only attachment preview."""
+
+    tasks: tuple[Task, ...]
+    manifest_sha256: str
+
+
 class TaskStore:
     """Thread-safe in-memory task store with JSONL persistence.
 
@@ -477,7 +502,17 @@ class TaskStore:
         jsonl_path: Path,
         archive_path: Path = DEFAULT_ARCHIVE_PATH,
         metrics_jsonl_path: Path | None = None,
+        *,
+        claim_control_path: Path | None = None,
+        claim_controller_id: str | None = None,
     ) -> None:
+        if (claim_control_path is None) != (claim_controller_id is None):
+            raise ValueError("Claim control path and controller id must be configured together")
+        self._claim_controller = (
+            ClaimAdmissionController(claim_control_path, claim_controller_id, jsonl_path)
+            if claim_control_path is not None and claim_controller_id is not None
+            else None
+        )
         self._task_listeners: list[Callable[[Task], None]] = []
         self._task_created_listeners: list[Callable[[Task], None]] = []
         self._tasks: dict[str, Task] = {}
@@ -521,6 +556,56 @@ class TaskStore:
         # is skipped rather than the transition refused.
         self._audit_chain: AuditChainStore | None = None
         self.administrative_runs: Any = None
+
+    def read_store_identity(self) -> str:
+        """Read a pre-initialized identity; never create or repair one."""
+        from bernstein.core.server.server_models import TaskStoreIdentity
+
+        try:
+            raw = Path(str(self._jsonl_path) + ".identity.json").read_bytes()
+            return TaskStoreIdentity.from_json(raw).store_id
+        except OSError as exc:
+            raise ValueError("missing or unreadable task store identity") from exc
+
+    async def initialize_store_identity(self) -> str:
+        """Explicit, create-once initialization, independent of task records."""
+        async with self._lock:
+            path = Path(str(self._jsonl_path) + ".identity.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with fsynced_write(path, mode="x") as handle:
+                    json.dump({"schema_version": "task-store-identity/v1", "store_id": uuid.uuid4().hex}, handle)
+            except FileExistsError:
+                pass
+            return self.read_store_identity()
+
+    async def preview_attachment(self, raw: str | bytes, pools: Mapping[str, PoolSpec]) -> AttachmentPreview:
+        """Validate and copy only selected tasks under the lock, without admission."""
+        from bernstein.core.admission.models import PoolSpec, Posture, canonical_name
+        from bernstein.core.server.server_models import AttachmentManifest
+
+        async with self._lock:
+            manifest = AttachmentManifest.from_json(raw)
+            if manifest.store_id != self.read_store_identity():
+                raise ValueError("attachment store_id mismatch")
+            name = manifest.limits.resources.pool
+            pool = pools.get(name)
+            if (
+                not isinstance(pool, PoolSpec)
+                or pool.name != name
+                or canonical_name(pool.name) != name
+                or pool.posture is not Posture.ENFORCE
+                or type(pool.slots) is not int
+                or pool.slots < 0
+            ):
+                raise ValueError("attachment requires an existing valid ENFORCE pool")
+            selected: list[Task] = []
+            for entry in sorted(manifest.tasks, key=lambda entry: entry.task_id):
+                task = self._tasks.get(entry.task_id)
+                if task is None or task.version != entry.version or task.tenant_id != manifest.tenant_id:
+                    raise ValueError(f"missing, stale or cross-tenant attachment task: {entry.task_id}")
+                selected.append(deepcopy(task))
+            return AttachmentPreview(tuple(selected), manifest.digest())
 
     # -- claim ledger --------------------------------------------------------
 
@@ -780,11 +865,83 @@ class TaskStore:
                     task.status = TaskStatus(record.get("status", task.status.value))
                     if "dispatch_tier" in record:
                         task.dispatch_tier = DispatchTier(record["dispatch_tier"])
+                    if "model" in record:
+                        task.model = record["model"]
+                    if "effort" in record:
+                        task.effort = record["effort"]
+                    if "cli" in record:
+                        task.cli = record["cli"]
+                    if "requires" in record:
+                        task.requires = list(record["requires"])
+                    if "approval_spec" in record:
+                        # Keep this whole field atomic: never clear a gate just
+                        # because the new value is unusable. A task that was
+                        # meant to wait for human sign-off must not quietly
+                        # become ungated after a corrupt journal line.
+                        raw_spec: object = record["approval_spec"]
+                        if raw_spec is None:
+                            task.approval_spec = None
+                        elif isinstance(raw_spec, dict):
+                            try:
+                                task.approval_spec = ApprovalSpec.from_dict(raw_spec)
+                            except (KeyError, TypeError, ValueError) as exc:
+                                logger.warning(
+                                    "Ignoring malformed approval_spec for task %s at %s:%d; "
+                                    "keeping the last valid policy: %s",
+                                    task_id,
+                                    self._jsonl_path,
+                                    line_num,
+                                    exc,
+                                )
+                        else:
+                            logger.warning(
+                                "Ignoring invalid approval_spec for task %s at %s:%d; "
+                                "expected a mapping or null, got %s: keeping the last valid policy",
+                                task_id,
+                                self._jsonl_path,
+                                line_num,
+                                type(raw_spec).__name__,
+                            )
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
+                    task.claimed_at = record.get("claimed_at", task.claimed_at)
+                    task.claimed_by_session = record.get("claimed_by_session", task.claimed_by_session)
                     task.result_summary = record.get("result_summary", task.result_summary)
+                    if isinstance(version := record.get("version"), int):
+                        task.version = version
+                    task.terminal_reason = record.get("terminal_reason", task.terminal_reason)
+                    if isinstance(metadata := record.get("metadata"), dict):
+                        task.metadata = metadata
                     task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
                     self._index_add(task)
                 else:
+                    # First-seen record is a task creation. Fail closed on a
+                    # malformed gate: skipping the line leaves no task with a
+                    # silently dropped approval requirement. A later valid
+                    # creation line for the same id can still replay normally.
+                    raw_spec: object = record.get("approval_spec")
+                    if raw_spec is not None:
+                        if isinstance(raw_spec, dict):
+                            try:
+                                ApprovalSpec.from_dict(raw_spec)
+                            except (KeyError, TypeError, ValueError) as exc:
+                                logger.warning(
+                                    "Skipping task creation with malformed approval_spec for task %s at %s:%d: %s",
+                                    task_id,
+                                    self._jsonl_path,
+                                    line_num,
+                                    exc,
+                                )
+                                continue
+                        else:
+                            logger.warning(
+                                "Skipping task creation with invalid approval_spec for task %s at %s:%d; "
+                                "expected a mapping or null, got %s",
+                                task_id,
+                                self._jsonl_path,
+                                line_num,
+                                type(raw_spec).__name__,
+                            )
+                            continue
                     task = Task.from_dict(cast("dict[str, Any]", record))
                     self._tasks[task_id] = task
                     self._index_add(task)
@@ -1195,6 +1352,10 @@ class TaskStore:
             "role": task.role,
             "priority": task.priority,
             "dispatch_tier": task.dispatch_tier.value,
+            "model": task.model,
+            "effort": task.effort,
+            "cli": task.cli,
+            "requires": list(task.requires),
             "scope": task.scope.value,
             "complexity": task.complexity.value,
             "estimated_minutes": task.estimated_minutes,
@@ -1213,6 +1374,7 @@ class TaskStore:
             "batch_eligible": task.batch_eligible is True,
             "eu_ai_act_risk": task.eu_ai_act_risk,
             "approval_required": task.approval_required,
+            "approval_spec": task.approval_spec.to_dict() if task.approval_spec is not None else None,
             "risk_level": task.risk_level,
             "slack_context": task.slack_context,
             "version": task.version,
@@ -1386,49 +1548,6 @@ class TaskStore:
         self._notify_task_updated(task)
         return True
 
-    async def _revive_blocked_dependents(self, *task_ids: str) -> None:
-        """Revive tasks stranded on *task_ids* now that a retry of them succeeded.
-
-        A failed dependency that is retried and then completes does not
-        automatically clear its stranded dependents: the cascade that ran
-        when it first failed moved them to ``BLOCKED_BY_FAILED_DEP`` naming
-        the original id, and the original id is still terminal. This walks
-        the same frontier as :meth:`_cascade_unblock_dependency` but seeds it
-        from ``retry_of`` links, so a dependent whose
-        ``blocking_task_id`` matches a retried-and-succeeded task is moved
-        back to ``OPEN``.
-
-        Only the direct dependent is rewired -- a task stranded on a task
-        that was itself stranded is not reachable through this path, and the
-        retry's own completion re-runs the transitive unblock. Mirrors
-        :meth:`_cascade_failed_dependency`, which strands the same ring in
-        the failure direction (issue #4376).
-
-        Must be called with ``self._lock`` held.
-        """
-        solved_blocker_ids: set[str] = set()
-        for tid in task_ids:
-            completed_task = self._tasks.get(tid)
-            if completed_task is None or not isinstance(completed_task.metadata, dict):
-                continue
-            retry_of = completed_task.metadata.get("retry_of")
-            if isinstance(retry_of, str) and retry_of:
-                solved_blocker_ids.add(retry_of)
-
-        frontier = set(solved_blocker_ids)
-        while frontier:
-            next_frontier: set[str] = set()
-            for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
-                if candidate.status is not TaskStatus.BLOCKED_BY_FAILED_DEP:
-                    continue
-                blocker_id = (
-                    candidate.metadata.get("blocking_task_id") if isinstance(candidate.metadata, dict) else None
-                )
-                if blocker_id in solved_blocker_ids and await self._unblock_task(candidate, blocker_id):
-                    solved_blocker_ids.add(candidate.id)
-                    next_frontier.add(candidate.id)
-            frontier = next_frontier
-
     async def _cascade_unblock_dependency(self, *completed_task_ids: str) -> None:
         """Unblock tasks that were stranded by failed dependencies now succeeded by *completed_task_ids*.
 
@@ -1451,6 +1570,8 @@ class TaskStore:
                     solved_blocker_ids.add(retry_of)
 
         frontier = set(completed_task_ids)
+        completed = [*self._by_status[TaskStatus.DONE].values(), *self._by_status[TaskStatus.CLOSED].values()]
+        succeeded_ids = satisfied_dependency_ids(completed)
         while frontier:
             next_frontier: set[str] = set()
             for candidate in sorted(self._tasks.values(), key=lambda t: t.id):
@@ -1460,16 +1581,33 @@ class TaskStore:
                     candidate.metadata.get("blocking_task_id") if isinstance(candidate.metadata, dict) else None
                 )
                 blocker = self._tasks.get(blocker_id) if blocker_id else None
-                blocker_unblocked = blocker is not None and blocker.status not in (
-                    TaskStatus.BLOCKED_BY_FAILED_DEP,
-                    TaskStatus.FAILED,
-                    TaskStatus.CANCELLED,
-                    TaskStatus.REFUSED,
-                )
+                blocker_unblocked = blocker is not None and blocker.status not in UNSUCCESSFUL_TERMINAL_STATUSES
                 blocker_cleared = bool(blocker_id and (blocker_id in solved_blocker_ids or blocker_unblocked))
-                if (blocker_cleared or self._dependencies_satisfied(candidate)) and await self._unblock_task(
-                    candidate, blocker_id or candidate.id
-                ):
+                if not blocker_cleared and not self._dependencies_satisfied(candidate):
+                    continue
+
+                remaining_blocker = min(
+                    (
+                        dep_id
+                        for dep_id in candidate.depends_on
+                        if dep_id not in succeeded_ids
+                        and (dependency := self._tasks.get(dep_id)) is not None
+                        and dependency.status in UNSUCCESSFUL_TERMINAL_STATUSES
+                    ),
+                    default=None,
+                )
+                if remaining_blocker is not None:
+                    if remaining_blocker != blocker_id:
+                        candidate.metadata["blocking_task_id"] = remaining_blocker
+                        candidate.result_summary = (
+                            f"dependency {remaining_blocker} is {self._tasks[remaining_blocker].status.value}"
+                        )
+                        candidate.version += 1
+                        await self._append_jsonl(self._task_to_record(candidate))
+                        self._notify_task_updated(candidate)
+                    continue
+
+                if await self._unblock_task(candidate, blocker_id or candidate.id):
                     solved_blocker_ids.add(candidate.id)
                     next_frontier.add(candidate.id)
             frontier = next_frontier
@@ -1582,6 +1720,7 @@ class TaskStore:
             model=req.model,
             effort=req.effort,
             cli=getattr(req, "cli", None),
+            requires=list(getattr(req, "requires", ())),
             batch_eligible=batch_eligible,
             eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
             approval_required=bool(getattr(req, "approval_required", False)),
@@ -2025,6 +2164,7 @@ class TaskStore:
                     model=req.model,
                     effort=req.effort,
                     cli=getattr(req, "cli", None),
+                    requires=list(getattr(req, "requires", ())),
                     batch_eligible=batch_eligible,
                     eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
                     approval_required=bool(getattr(req, "approval_required", False)),
@@ -2094,6 +2234,71 @@ class TaskStore:
 
         return created_tasks, skipped_titles
 
+    async def _claim_control_io(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Keep the store lock until durable control I/O finishes, even on cancellation."""
+        operation_task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        cancelled: asyncio.CancelledError | None = None
+        while True:
+            try:
+                result = await asyncio.shield(operation_task)
+                break
+            except asyncio.CancelledError as exc:
+                if operation_task.cancelled():
+                    raise
+                cancelled = exc
+        if cancelled is not None:
+            raise cancelled
+        return result
+
+    @property
+    def claim_admission_controlled(self) -> bool:
+        """Whether this store has explicitly configured claim admission control."""
+        return self._claim_controller is not None
+
+    async def _require_claim_admission(self) -> None:
+        """Called only while holding the claim/transition lock, before effects."""
+        if self._claim_controller is None:
+            return
+        try:
+            status = await self._claim_control_io(self._claim_controller.snapshot)
+        except ClaimControlError as exc:
+            raise HTTPException(
+                status_code=503, detail="Claim admission unavailable; operator action required"
+            ) from exc
+        if status["halted"]:
+            raise HTTPException(status_code=503, detail="Task claim admission is halted")
+
+    async def claim_admission_status(self) -> ClaimAdmissionStatus:
+        if self._claim_controller is None:
+            raise HTTPException(status_code=409, detail="Claim admission controller is not configured")
+        async with self._lock:
+            try:
+                return await self._claim_control_io(self._claim_controller.snapshot)
+            except ClaimControlError as exc:
+                raise HTTPException(
+                    status_code=503, detail="Claim admission unavailable; operator action required"
+                ) from exc
+
+    async def change_claim_admission(
+        self, action: ClaimAction, *, actor: str, reason: str, expected_revision: int
+    ) -> ClaimAdmissionStatus:
+        """Operator boundary; HTTP callers must authenticate before invoking it."""
+        if self._claim_controller is None:
+            raise HTTPException(status_code=409, detail="Claim admission controller is not configured")
+        async with self._lock:
+            try:
+                return await self._claim_control_io(
+                    self._claim_controller.transition,
+                    action,
+                    actor=actor,
+                    reason=reason,
+                    expected_revision=expected_revision,
+                )
+            except ClaimControlError as exc:
+                raise HTTPException(
+                    status_code=503, detail="Claim control transition refused; preserve state for operator recovery"
+                ) from exc
+
     async def claim_next(
         self,
         role: str,
@@ -2125,6 +2330,7 @@ class TaskStore:
             The claimed Task, or None if nothing is available.
         """
         async with self._lock:
+            await self._require_claim_admission()
             pq = self._priority_queues.get((role, TaskStatus.OPEN))
             if not pq:
                 return None
@@ -2221,6 +2427,7 @@ class TaskStore:
                 not in an OPEN state (already claimed / in progress / terminal).
         """
         async with self._lock:
+            await self._require_claim_admission()
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
@@ -2287,6 +2494,7 @@ class TaskStore:
         failed: list[str] = []
         normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
         async with self._lock:
+            await self._require_claim_admission()
             for task_id in task_ids:
                 task = self._tasks.get(task_id)
                 if task is None or task.status != TaskStatus.OPEN or not self._dependencies_satisfied(task):
@@ -2449,7 +2657,6 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
-            await self._revive_blocked_dependents(task_id)
             await self._cascade_unblock_dependency(task_id)
         if completion is not None:
             self._audit_contract_outcome(task_id, outcome="valid")
@@ -2721,7 +2928,7 @@ class TaskStore:
         except OSError as exc:
             logger.warning("Contract audit event write failed for %s: %s", for_log(task_id), exc)
 
-    async def reopen(self, task_id: str, reason: str) -> Task:
+    async def reopen(self, task_id: str, reason: str, *, dispatch_tier: DispatchTier | None = None) -> Task:
         """Reopen a done task that failed janitor verification.
 
         Transitions DONE -> OPEN so the SAME task (same id) is re-claimed and
@@ -2732,6 +2939,7 @@ class TaskStore:
         Args:
             task_id: Task identifier.
             reason: Why the task is being reopened (e.g. failed janitor signals).
+            dispatch_tier: Explicit backend tier; omission preserves the current value.
 
         Returns:
             The updated Task.
@@ -2740,6 +2948,8 @@ class TaskStore:
             KeyError: If task_id does not exist.
             IllegalTransitionError: If the task is not in DONE status.
         """
+        if dispatch_tier is not None:
+            dispatch_tier = DispatchTier(dispatch_tier)
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
@@ -2750,6 +2960,13 @@ class TaskStore:
             transition_task(task, TaskStatus.OPEN, actor="task_store", reason=reason)
             reopen_count = int(task.metadata.get("janitor_reopen_count", 0) or 0) + 1
             task.metadata["janitor_reopen_count"] = reopen_count
+            if dispatch_tier is not None:
+                task.metadata["dispatch_tier_transition"] = {
+                    "old": task.dispatch_tier.value,
+                    "new": dispatch_tier.value,
+                    "reason": reason,
+                }
+                task.dispatch_tier = dispatch_tier
             task.claimed_at = None
             task.claimed_by_session = None
             task.assigned_agent = None

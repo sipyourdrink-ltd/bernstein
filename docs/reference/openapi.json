@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Bernstein Task Server",
-    "description": "Bernstein REST API - the open-source governance layer for AI agents, one git worktree per task.\n\n## Authentication\n\nAuthentication is ENABLED by default.  Include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nTo run without auth (development only), set `BERNSTEIN_AUTH_DISABLED=1` - this logs a loud warning and passes every request through.\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/ready`, `/alive`, `/.well-known/agent.json`, `/docs`, `/openapi.json`, and the auth-flow endpoints (`/auth/login`, `/auth/oidc/callback`, etc.).\n\nWebhook and hook endpoints (`/webhook`, `/webhooks/*`, `/hooks/{session_id}`) authenticate via HMAC-SHA256 signatures - they do NOT accept Bearer tokens.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited - respect the `Retry-After` header |\n| 500 | Internal server error |\n",
+    "description": "Bernstein REST API - an open-source governance layer for AI agents, one git worktree per task.\n\n## Authentication\n\nAuthentication is ENABLED by default.  Include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nTo run without auth (development only), set `BERNSTEIN_AUTH_DISABLED=1` - this logs a loud warning and passes every request through.\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/ready`, `/alive`, `/.well-known/agent.json`, `/docs`, `/openapi.json`, and the auth-flow endpoints (`/auth/login`, `/auth/oidc/callback`, etc.).\n\nWebhook and hook endpoints (`/webhook`, `/webhooks/*`, `/hooks/{session_id}`) authenticate via HMAC-SHA256 signatures - they do NOT accept Bearer tokens.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited - respect the `Retry-After` header |\n| 500 | Internal server error |\n",
     "version": "1.0.0"
   },
   "paths": {
@@ -200,7 +200,7 @@
     "/agents/{session_id}/logs": {
       "get": {
         "summary": "Agent Logs",
-        "description": "Return log file content for a session.\n\nArgs:\n    session_id: Agent session ID.\n    tail_bytes: If > 0, return only the last N bytes of the log.",
+        "description": "Return the log content for a running or finished agent session.\n\nArgs:\n    session_id: Agent session identifier (e.g. ``backend-abc12345``).\n    tail_bytes: When > 0, only the last *tail_bytes* of the file are\n        returned (partial leading line is stripped).  0 means full file.\n\nReturns:\n    JSON with ``session_id``, ``content`` string, and ``size`` in bytes.\n\nRaises:\n    HTTPException: 400 when session_id contains illegal characters,\n        404 when no log file exists for the session.",
         "operationId": "agent_logs_agents__session_id__logs_get",
         "parameters": [
           {
@@ -235,7 +235,7 @@
             }
           },
           "404": {
-            "description": "No log file for session"
+            "description": "No log for session"
           },
           "422": {
             "description": "Validation Error",
@@ -253,7 +253,7 @@
     "/agents/{session_id}/kill": {
       "post": {
         "summary": "Agent Kill",
-        "description": "Request that an agent session be killed.\n\nWrites a ``.kill`` signal file that the orchestrator picks up on\nits next tick.",
+        "description": "Request termination of an agent by writing a ``.kill`` signal file.\n\nThe orchestrator polls for these files on each tick and calls\n``spawner.kill(session)`` for the matching session.\n\nArgs:\n    session_id: Agent session to terminate.\n\nReturns:\n    JSON with ``session_id`` and ``kill_requested: true``.\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_kill_agents__session_id__kill_post",
         "parameters": [
           {
@@ -293,7 +293,7 @@
     "/agents/{session_id}/stream": {
       "get": {
         "summary": "Agent Stream",
-        "description": "SSE stream of live log output for a session.",
+        "description": "Server-Sent Events stream of agent output for the given session.\n\nReplays all existing log content first, then tails the file for new\nlines.  Closes automatically after ``_MAX_IDLE_TICKS`` consecutive\npolls with no new data (or no log file).\n\nFor synthetic agents (no real log file) the stream emits a single\n``unavailable`` event and closes immediately, avoiding an infinite\nreconnect loop in the browser.\n\nSSE event format::\n\n    data: {\"type\": \"connected\", \"session_id\": \"<id>\"}\n\n    data: {\"line\": \"<log line>\"}\n\n    data: {\"type\": \"unavailable\", \"reason\": \"synthetic\"}\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_stream_agents__session_id__stream_get",
         "parameters": [
           {
@@ -1048,7 +1048,7 @@
     "/tasks/next/{role}": {
       "get": {
         "summary": "Next Task",
-        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.",
+        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.\n\nPass ``node_id`` to name the cluster node the claim is made for, so\nthe health gate judges the registered node even when the recorded\nowner is a parent session ID (see :func:`_resolve_claiming_node`).",
         "operationId": "next_task_tasks_next__role__get",
         "parameters": [
           {
@@ -1090,6 +1090,22 @@
                 }
               ],
               "title": "Parent Session Id"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
             }
           }
         ],
@@ -1171,7 +1187,7 @@
     "/tasks/{task_id}/claim": {
       "post": {
         "summary": "Claim Task",
-        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.",
+        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.\n\nPass ``node_id`` to name the registered cluster node the claim is\nmade for. A node the registry knows but that cannot accept work\n(unhealthy telemetry, cordoned, draining, offline) is refused with\n409 until it recovers; the parent session stays the recorded claim\nowner either way (#7853).",
         "operationId": "claim_task_tasks__task_id__claim_post",
         "parameters": [
           {
@@ -1214,6 +1230,22 @@
               ],
               "title": "Claimed By Session"
             }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
+            }
           }
         ],
         "responses": {
@@ -1231,7 +1263,7 @@
             "description": "Task not found"
           },
           "409": {
-            "description": "Version conflict or invalid state"
+            "description": "Version conflict, invalid state, or claiming node not accepting work"
           },
           "503": {
             "description": "Server is draining"
@@ -4331,7 +4363,7 @@
     "/webhook": {
       "post": {
         "summary": "Generic Webhook",
-        "description": "Create a task directly from a generic inbound webhook payload.\n\nThe endpoint is intentionally small and separate from the trigger-manager\nflow: callers POST a task-shaped payload and Bernstein creates one task.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
+        "description": "Create a task from a generic inbound webhook payload.\n\nAfter authentication, matching trigger rules can suppress task creation.\nPolicy suppressions are recorded in trigger history and return HTTP 409.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
         "operationId": "generic_webhook_webhook_post",
         "requestBody": {
           "content": {
@@ -5932,6 +5964,78 @@
         }
       }
     },
+    "/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/identities": {
       "get": {
         "tags": [
@@ -6562,7 +6666,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce for an expired, already-resolved or evicted approval returns\n``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -9667,7 +9771,7 @@
     "/api/v1/agents/{session_id}/logs": {
       "get": {
         "summary": "Agent Logs",
-        "description": "Return log file content for a session.\n\nArgs:\n    session_id: Agent session ID.\n    tail_bytes: If > 0, return only the last N bytes of the log.",
+        "description": "Return the log content for a running or finished agent session.\n\nArgs:\n    session_id: Agent session identifier (e.g. ``backend-abc12345``).\n    tail_bytes: When > 0, only the last *tail_bytes* of the file are\n        returned (partial leading line is stripped).  0 means full file.\n\nReturns:\n    JSON with ``session_id``, ``content`` string, and ``size`` in bytes.\n\nRaises:\n    HTTPException: 400 when session_id contains illegal characters,\n        404 when no log file exists for the session.",
         "operationId": "agent_logs_api_v1_agents__session_id__logs_get",
         "parameters": [
           {
@@ -9702,7 +9806,7 @@
             }
           },
           "404": {
-            "description": "No log file for session"
+            "description": "No log for session"
           },
           "422": {
             "description": "Validation Error",
@@ -9720,7 +9824,7 @@
     "/api/v1/agents/{session_id}/kill": {
       "post": {
         "summary": "Agent Kill",
-        "description": "Request that an agent session be killed.\n\nWrites a ``.kill`` signal file that the orchestrator picks up on\nits next tick.",
+        "description": "Request termination of an agent by writing a ``.kill`` signal file.\n\nThe orchestrator polls for these files on each tick and calls\n``spawner.kill(session)`` for the matching session.\n\nArgs:\n    session_id: Agent session to terminate.\n\nReturns:\n    JSON with ``session_id`` and ``kill_requested: true``.\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_kill_api_v1_agents__session_id__kill_post",
         "parameters": [
           {
@@ -9760,7 +9864,7 @@
     "/api/v1/agents/{session_id}/stream": {
       "get": {
         "summary": "Agent Stream",
-        "description": "SSE stream of live log output for a session.",
+        "description": "Server-Sent Events stream of agent output for the given session.\n\nReplays all existing log content first, then tails the file for new\nlines.  Closes automatically after ``_MAX_IDLE_TICKS`` consecutive\npolls with no new data (or no log file).\n\nFor synthetic agents (no real log file) the stream emits a single\n``unavailable`` event and closes immediately, avoiding an infinite\nreconnect loop in the browser.\n\nSSE event format::\n\n    data: {\"type\": \"connected\", \"session_id\": \"<id>\"}\n\n    data: {\"line\": \"<log line>\"}\n\n    data: {\"type\": \"unavailable\", \"reason\": \"synthetic\"}\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_stream_api_v1_agents__session_id__stream_get",
         "parameters": [
           {
@@ -10515,7 +10619,7 @@
     "/api/v1/tasks/next/{role}": {
       "get": {
         "summary": "Next Task",
-        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.",
+        "description": "Claim the next available task for *role*.\n\nPass ``claimed_by_session`` as a query param to record which parent\norchestrator session owns the claim.\n\nPass ``parent_session_id`` to restrict claiming to tasks that were\ncreated under that coordinator session.  Workers belonging to a\ncoordinator should always pass their coordinator's session ID here\nto avoid stealing tasks from other namespaces.\n\nPass ``node_id`` to name the cluster node the claim is made for, so\nthe health gate judges the registered node even when the recorded\nowner is a parent session ID (see :func:`_resolve_claiming_node`).",
         "operationId": "next_task_api_v1_tasks_next__role__get",
         "parameters": [
           {
@@ -10557,6 +10661,22 @@
                 }
               ],
               "title": "Parent Session Id"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
             }
           }
         ],
@@ -10638,7 +10758,7 @@
     "/api/v1/tasks/{task_id}/claim": {
       "post": {
         "summary": "Claim Task",
-        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.",
+        "description": "Claim a specific task by ID.\n\nPass ``expected_version`` as a query param for optimistic locking\n(CAS). If the task's version doesn't match, returns 409 Conflict.\n\nPass ``claimed_by_session`` to record which parent orchestrator\nsession owns this claim.\n\nPass ``node_id`` to name the registered cluster node the claim is\nmade for. A node the registry knows but that cannot accept work\n(unhealthy telemetry, cordoned, draining, offline) is refused with\n409 until it recovers; the parent session stays the recorded claim\nowner either way (#7853).",
         "operationId": "claim_task_api_v1_tasks__task_id__claim_post",
         "parameters": [
           {
@@ -10681,6 +10801,22 @@
               ],
               "title": "Claimed By Session"
             }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
+            }
           }
         ],
         "responses": {
@@ -10698,7 +10834,7 @@
             "description": "Task not found"
           },
           "409": {
-            "description": "Version conflict or invalid state"
+            "description": "Version conflict, invalid state, or claiming node not accepting work"
           },
           "503": {
             "description": "Server is draining"
@@ -13798,7 +13934,7 @@
     "/api/v1/webhook": {
       "post": {
         "summary": "Generic Webhook",
-        "description": "Create a task directly from a generic inbound webhook payload.\n\nThe endpoint is intentionally small and separate from the trigger-manager\nflow: callers POST a task-shaped payload and Bernstein creates one task.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
+        "description": "Create a task from a generic inbound webhook payload.\n\nAfter authentication, matching trigger rules can suppress task creation.\nPolicy suppressions are recorded in trigger history and return HTTP 409.\n``BERNSTEIN_WEBHOOK_SECRET`` must be configured (fail-closed; )\nand each request must carry a fresh ``X-Bernstein-Timestamp`` header\nplus a matching ``X-Bernstein-Webhook-Signature-256`` HMAC over\n``f\"{timestamp}.\".encode() + body``. The plaintext\n``X-Bernstein-Webhook-Secret`` fallback has been removed; callers\nrelying on it must upgrade to the HMAC + timestamp flow.\n\nAutomation bridge (#2512): an admitted trigger returns a signed,\nchain-anchored trigger receipt in ``receipt`` so the calling platform holds\na proof of what it asked for rather than a bare task reference. A trigger\nthat fails authentication, or that replays a trigger id already admitted,\nis refused with its own signed refusal receipt (HTTP 401 and 409\nrespectively) -- the negative path leaves a record, never a silent drop.",
         "operationId": "generic_webhook_api_v1_webhook_post",
         "requestBody": {
           "content": {
@@ -15399,6 +15535,78 @@
         }
       }
     },
+    "/api/v1/claim-admission": {
+      "get": {
+        "summary": "Claim Admission Status",
+        "operationId": "claim_admission_status_api_v1_claim_admission_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/claim-admission/{action}": {
+      "post": {
+        "summary": "Change Claim Admission",
+        "operationId": "change_claim_admission_api_v1_claim_admission__action__post",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "enroll",
+                "halt",
+                "resume"
+              ],
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimControlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimAdmissionStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/identities": {
       "get": {
         "tags": [
@@ -16029,7 +16237,7 @@
           "approvals"
         ],
         "summary": "Resolve Queued Approval",
-        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce replayed against an already-resolved or evicted approval\nreturns ``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
+        "description": "Resolve a queued approval with ``allow``, ``reject``, or ``always``.\n\nThe request body must echo the ``nonce`` the gate issued when the\napproval was queued. Mismatches return ``409 NONCE_MISMATCH``; a\nnonce for an expired, already-resolved or evicted approval returns\n``410 NONCE_EXPIRED``. The resolution is attributed to the\nprincipal the request authenticated as. When scoped tokens are\nconfigured and the request presents none, the call is refused with\n``401`` rather than recorded against an unnamed caller; when no scoped\ntokens are configured the server is in its loopback posture and the\ndecision is attributed to the loopback operator.",
         "operationId": "resolve_queued_approval_api_v1_approvals__approval_id__resolve_post",
         "parameters": [
           {
@@ -20261,6 +20469,67 @@
         "title": "ChannelResponseResponse",
         "description": "Single channel response in API responses."
       },
+      "ClaimAdmissionStatus": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "controller_id": {
+            "type": "string",
+            "title": "Controller Id"
+          },
+          "halted": {
+            "type": "boolean",
+            "title": "Halted"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "controller_id",
+          "halted",
+          "revision",
+          "actor",
+          "reason"
+        ],
+        "title": "ClaimAdmissionStatus"
+      },
+      "ClaimControlRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason",
+          "expected_revision"
+        ],
+        "title": "ClaimControlRequest",
+        "description": "A reason, never an authority, controller path or installation selector."
+      },
       "ClaimGossipRequest": {
         "properties": {
           "receipts": {
@@ -20530,7 +20799,8 @@
           },
           "value": {
             "type": "string",
-            "title": "Value"
+            "title": "Value",
+            "description": "Signal input. For test_passes, an operator-approved check identifier."
           }
         },
         "type": "object",
@@ -21250,6 +21520,56 @@
             },
             "type": "array",
             "title": "Supported Models"
+          },
+          "disk_free_mb": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disk Free Mb"
+          },
+          "mem_used_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mem Used Pct"
+          },
+          "mesh_rtt_ms": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Rtt Ms"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
           }
         },
         "type": "object",
@@ -22636,6 +22956,16 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -23385,6 +23715,9 @@
             "type": "string",
             "title": "Reason",
             "default": ""
+          },
+          "dispatch_tier": {
+            "$ref": "#/components/schemas/DispatchTier"
           }
         },
         "type": "object",
@@ -23585,6 +23918,13 @@
             ],
             "title": "Cli"
           },
+          "requires": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Requires"
+          },
           "batch_eligible": {
             "type": "boolean",
             "title": "Batch Eligible",
@@ -23687,6 +24027,28 @@
               }
             ],
             "title": "Parent Session Id"
+          },
+          "claimed_by_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By Session"
+          },
+          "repo_root_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Root Commit"
           },
           "retry_count": {
             "type": "integer",
@@ -24506,6 +24868,16 @@
               }
             ],
             "title": "Cli"
+          },
+          "requires": {
+            "items": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Requires"
           },
           "batch_eligible": {
             "type": "boolean",

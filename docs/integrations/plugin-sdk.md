@@ -4,6 +4,8 @@ Bernstein exposes a pluggy-based hook system that lets you extend the
 orchestrator without modifying core code.  Plugins are plain Python classes
 - no base class required, no registration boilerplate.
 
+See the [plugin list](https://github.com/sipyourdrink-ltd/bernstein/blob/main/community/awesome-bernstein-plugins.md#bernstein-addons) for bernstein-addons and installation instructions.
+
 ## Contents
 
 - [How it works](#how-it-works)
@@ -16,6 +18,7 @@ orchestrator without modifying core code.  Plugins are plain Python classes
   - [Slack notifier](#slack-notifier)
   - [Discord notifier](#discord-notifier)
   - [Metrics collector](#metrics-collector)
+  - [Generate a quality gate](#generate-a-quality-gate)
   - [Custom quality gate](#custom-quality-gate)
   - [Cost-aware router](#cost-aware-router)
   - [Jira sync](#jira-sync)
@@ -229,6 +232,13 @@ If your plugin raises an exception it will be:
 This means plugin authors can be liberal with exceptions; they won't take down
 the system.  However, it also means silent failures are possible, so log
 liberally inside your plugins.
+
+During worker and task-server discovery, a failing import, factory or
+registration for a configured plugin or a `bernstein.plugins` entry point
+records a workspace [declaration quarantine](../operations/declaration-quarantine.md).
+Other plugin declarations continue loading. Fix the cause, explicitly
+re-enable the declaration, then reload discovery or restart the affected
+process. Diagnostic discovery honors active markers without writing new ones.
 
 ---
 
@@ -589,67 +599,187 @@ Sample output in `.sdd/metrics/plugin_events.jsonl`:
 
 ---
 
+### Generate a quality gate
+
+From a Bernstein checkout with Cookiecutter and pytest available, generate a
+gate that checks Python files for TODO comments.
+
+```bash
+cookiecutter --no-input ./templates/quality_gate_plugin \
+  gate_name=no_todo_comments gate_class=NoTodoCommentsGate
+```
+
+`gate_name` names the output directory, Python module and pipeline step.
+Choose a snake_case Python identifier that starts with a letter and differs
+from the built-in gate names. `gate_class` names the generated class and
+its `Config` dataclass. The `description`
+input supplies the class docstring. The output directory also contains a
+README and `test_no_todo_comments.py`.
+
+The generated `scan()` returns `(0, 0)`. Replace that method on
+`NoTodoCommentsGate` in `no_todo_comments/no_todo_comments.py` with the
+following implementation. It counts lines beginning with `# TODO:` after
+leading whitespace in the changed Python files.
+
+```python
+def scan(self, changed_files: list[str], run_dir: Path) -> tuple[int, int]:
+    errors = 0
+    for name in changed_files:
+        path = run_dir / name
+        if path.suffix == ".py" and path.is_file():
+            with path.open(encoding="utf-8", errors="replace") as source:
+                errors += sum(line.lstrip().startswith("# TODO:") for line in source)
+    return errors, 0
+```
+
+The tuple contains errors first and warnings second. The generated `run()`
+returns a failed `GateResult` when errors exceed `threshold` (default
+`0`), or when warnings are present and `fail_on` is `"warning"`.
+`fail_on` defaults to `"error"`. With `enabled=False`, the gate returns
+`skipped`. Run the generated tests and copy the module to the project
+directory where `GatePluginRegistry` discovers it. Packaged gates can also
+register through the `bernstein.gates` entry-point group.
+
+```bash
+python -m pytest -q no_todo_comments/test_no_todo_comments.py
+mkdir -p .bernstein/gates
+cp no_todo_comments/no_todo_comments.py .bernstein/gates/
+```
+
+The run seed parser restricts `quality_gates.pipeline` to built-in names.
+To run a generated gate, give its name to a Python `GatePipelineStep`. This
+example runs just that gate against the generated test file, which contains
+two TODO reminders.
+
+```python
+import asyncio
+from pathlib import Path
+
+from bernstein.core.models import Task
+from bernstein.core.quality.gate_pipeline import GatePipelineStep
+from bernstein.core.quality.gate_runner import GateRunner
+from bernstein.core.quality.quality_gates import QualityGatesConfig
+
+root = Path.cwd()
+step = GatePipelineStep(name="no_todo_comments", required=True, condition="any_changed")
+runner = GateRunner(QualityGatesConfig(pipeline=[step], cache_enabled=False), root)
+task = Task(
+    id="check-todo-comments",
+    title="Check TODO comments",
+    description="Count TODO reminders in the generated test.",
+    role="backend",
+    owned_files=["no_todo_comments/test_no_todo_comments.py"],
+)
+report = asyncio.run(runner.run_all(task, root))
+result = report.results[0]
+print(result.status, result.metadata["errors"], result.blocked)
+```
+
+This prints `fail 2 True`. The generated gate returns `blocked=False`, and
+the runner applies the step's `required` setting. Set `required=False` to
+record the findings as advisory. If `scan()` raises an exception, the runner
+records `inconclusive` and blocks a required step. The report for this
+example is written to `.sdd/runtime/gates/check-todo-comments.json`.
+
+---
+
 ### Custom quality gate
 
-`examples/plugins/quality_gate_plugin.py` - runs a security scan after every
-task completes.
+`examples/plugins/quality_gate_plugin.py` - runs a security scan on every
+task and blocks promotion when it fails.
 
-The gate result is written to `.sdd/metrics/custom_gates.jsonl`.  A failed
-scan logs a warning but does **not** block the orchestrator - for hard
-blocking, configure `quality_gates:` in `bernstein.yaml` instead.  The plugin
-pattern is useful for **soft gates**: record the result, alert on failure, but
-let the run continue.
+`SecurityScanGate` subclasses `GatePlugin`, so it runs in the quality-gate
+pipeline. It returns `blocked=False` and lets `GateRunner` apply the pipeline
+step's policy: `required: true` blocks on failure; `required: false` records an
+advisory failure. Changing the plugin's `required` property alone does not
+override an explicit pipeline step.
+
+The runner stores the result, output and command in the project root's
+`.sdd/runtime/gates/<task_id>.json`. Normal task execution also records a metric
+in `.sdd/metrics/quality_gates.jsonl`. Both survive removal of the agent worktree;
+the example no longer writes a separate `custom_gates.jsonl` there. Calling
+`run()` directly only returns a result; use the runner to persist it.
+
+If the example module is importable, an old
+`plugins: [examples.plugins.quality_gate_plugin:SecurityScanGate]` entry emits
+a migration warning. The example is distributed in the repository. In a
+wheel-only installation, remove the old entry and copy the example from the
+repository. Put the file in `.bernstein/gates/` (or use `bernstein.gates`) and
+configure the pipeline step as shown below. Plugins that implement Bernstein
+hooks can still register those hooks through `plugins:`. The former `workdir=` constructor argument is unnecessary:
+scan commands use the runner-provided task directory, and the runner owns storage.
 
 ```python
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
-from datetime import UTC, datetime
+import time
 from pathlib import Path
 
-from bernstein.plugins import hookimpl
+from bernstein.core.quality.gate_plugins import GatePlugin
+from bernstein.core.quality.gate_runner import GateResult
 
 log = logging.getLogger(__name__)
 
+DEFAULT_COMMAND = "bandit -r . -ll -q"
 
-class SecurityScanGate:
-    """Runs a security scan (bandit) after every task completes.
 
-    Override the scan command:
-        export BERNSTEIN_SECURITY_CMD="semgrep --config=auto . --quiet"
+class SecurityScanGate(GatePlugin):
+    """Runs a security scan on every task and blocks when it fails.
+
+    The scan command defaults to ``bandit -r . -ll -q`` (medium+ severity).
+    Override via the ``BERNSTEIN_SECURITY_CMD`` environment variable.
+
+    A non-zero exit, a timeout or a command that cannot start returns ``fail``.
+    The pipeline step's ``required`` setting controls blocking. The runner
+    records results under the project root, not the temporary scan directory.
     """
 
-    def __init__(
-        self,
-        command: str | None = None,
-        workdir: Path | str | None = None,
-        timeout_s: int = 60,
-    ) -> None:
-        self._command = command or os.getenv("BERNSTEIN_SECURITY_CMD", "bandit -r . -ll -q")
-        self._workdir = Path(workdir) if workdir else Path.cwd()
+    def __init__(self, command: str | None = None, timeout_s: int = 60) -> None:
+        self._command: str = command or os.environ.get("BERNSTEIN_SECURITY_CMD", DEFAULT_COMMAND)
         self._timeout_s = timeout_s
 
-    @hookimpl
-    def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
-        passed, output = self._run_scan()
-        self._record(task_id, passed, output)
-        if not passed:
-            log.warning(
-                "SecurityScanGate: scan failed after task %s (%s):\n%s",
-                task_id,
-                role,
-                output[:500],
-            )
+    @property
+    def name(self) -> str:
+        """Unique gate name; use it as the pipeline step name."""
+        return "security_scan_cmd"
 
-    def _run_scan(self) -> tuple[bool, str]:
+    def run(
+        self,
+        changed_files: list[str],
+        run_dir: Path,
+        task_title: str,
+        task_description: str,
+    ) -> GateResult:
+        """Scan ``run_dir``; let the runner apply blocking and persist the result."""
+        started = time.monotonic()
+        passed, output = self._run_scan(run_dir)
+        if not passed:
+            log.warning("SecurityScanGate: scan failed for task %r:\n%s", task_title, output[:500])
+        return GateResult(
+            name=self.name,
+            status="pass" if passed else "fail",
+            required=self.required,
+            blocked=False,
+            cached=False,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            details=output,
+            metadata={"command": self._command},
+        )
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _run_scan(self, run_dir: Path) -> tuple[bool, str]:
+        """Execute the scan command and return (passed, output)."""
         try:
             proc = subprocess.run(
                 self._command,
                 shell=True,
-                cwd=self._workdir,
+                cwd=run_dir,
                 capture_output=True,
                 text=True,
                 timeout=self._timeout_s,
@@ -662,31 +792,18 @@ class SecurityScanGate:
             return False, f"Timed out after {self._timeout_s}s"
         except OSError as exc:
             return False, f"Command error: {exc}"
-
-    def _record(self, task_id: str, passed: bool, output: str) -> None:
-        metrics_dir = self._workdir / ".sdd" / "metrics"
-        record = {
-            "ts": datetime.now(UTC).isoformat(),
-            "gate": "security_scan",
-            "task_id": task_id,
-            "command": self._command,
-            "passed": passed,
-            "output": output[:500],
-        }
-        try:
-            metrics_dir.mkdir(parents=True, exist_ok=True)
-            with (metrics_dir / "custom_gates.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps(record) + "\n")
-        except OSError as exc:
-            log.warning("SecurityScanGate: could not write result: %s", exc)
 ```
 
-Enable it:
+Enable it: copy the file to `.bernstein/gates/security_scan_gate.py` (or
+register the class in the `bernstein.gates` entry-point group), then add the
+gate to the pipeline:
 
 ```yaml
 # bernstein.yaml
-plugins:
-  - examples.plugins.quality_gate_plugin:SecurityScanGate
+quality_gates:
+  pipeline:
+    - { name: "lint",              required: true, condition: "always" }
+    - { name: "security_scan_cmd", required: true, condition: "python_changed" }
 ```
 
 Replace `bandit` with any tool:

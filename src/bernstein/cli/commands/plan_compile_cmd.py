@@ -43,7 +43,7 @@ def _safe_name(name: str) -> str:
     """
     candidate = name.strip()
     if not candidate:
-        raise click.BadParameter("name must not be empty")
+        raise click.BadParameter("Name must not be empty.")
     if candidate in {".", ".."} or any(ch in _UNSAFE_NAME_CHARS for ch in candidate):
         raise click.BadParameter(f"name is not a safe path component: {name!r}")
     return candidate
@@ -77,17 +77,18 @@ def plan_compile(spec: Path, name: str | None, approve: bool, as_json: bool) -> 
     workdir = Path.cwd()
     slug = _safe_name(name or spec.stem)
 
-    spec_text = spec.read_text(encoding="utf-8")
+    try:
+        spec_text = spec.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise click.ClickException(f"Cannot read spec {spec}: {exc}") from exc
     req_set = draft_requirements(spec_text, StructuralDrafter())
     if not req_set.requirements:
-        console.print("[red]No EARS-shaped acceptance lines found in the spec.[/red]")
-        raise SystemExit(1)
+        raise click.ClickException("No EARS-shaped acceptance lines found in the spec.")
 
     graph = compile_requirements(req_set)
     coverage = lineage_coverage(graph)
     if not coverage.covered:
-        console.print("[red]Lineage coverage gap: some task nodes carry no requirement hash.[/red]")
-        raise SystemExit(1)
+        raise click.ClickException("Lineage coverage gap: some task nodes carry no requirement hash.")
 
     spec_dir = _contained(workdir / ".sdd" / "spec", workdir / ".sdd" / "spec" / slug)
     spec_dir.mkdir(parents=True, exist_ok=True)

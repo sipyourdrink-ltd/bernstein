@@ -7,10 +7,12 @@ behaviour, plus end-to-end agent dispatch through a real
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from bernstein.core.models import ModelConfig
@@ -25,6 +27,7 @@ from bernstein.core.workflows import (
     WorkflowSpec,
     load_workflow_spec_from_text,
 )
+from bernstein.core.workflows.workflow_runner import load_node_state, record_spec_snapshot
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -129,6 +132,64 @@ nodes:
     assert not (runner_workdir / "shouldnt-exist.txt").exists()
 
 
+def test_run_dispatches_nothing_in_layers_after_an_abort(runner_workdir: Path) -> None:
+    """After a failure, later layers are skipped once and never dispatched, even off a green branch.
+
+    ``after-cmd`` and ``after-agent`` depend only on the passing ``ok`` node, so only the run-wide
+    abort can stop them; ``deeper`` checks that the abort holds for every remaining layer.
+    """
+    spawned: list[str] = []
+
+    class CountingSpawner:
+        """Records every dispatch; none may happen after the abort."""
+
+        def spawn_for_tasks(self, tasks: list[Any]) -> Any:
+            spawned.append(tasks[0].id)
+            session = MagicMock()
+            session.id = f"sess-{len(spawned)}"
+            return session
+
+    spec = _spec_from(
+        """
+name: abort-later-layers
+description: "A failure in layer 1 must stop every later layer"
+version: "1.0.0"
+nodes:
+  - id: bad
+    command: "exit 1"
+  - id: ok
+    command: "true"
+  - id: after-cmd
+    depends_on: [ok]
+    command: "echo ran > after-cmd.txt"
+  - id: after-agent
+    depends_on: [ok]
+    agent: backend
+    prompt: "must never be dispatched"
+  - id: deeper
+    depends_on: [after-cmd]
+    command: "echo ran > deeper.txt"
+"""
+    )
+    runner = WorkflowRunner(spawner=CountingSpawner(), workdir=runner_workdir)  # type: ignore[arg-type]
+    execution = runner.run(spec, run_id="abort-later-layers")
+
+    reported = [n.node_id for n in execution.nodes]
+    assert sorted(reported) == ["after-agent", "after-cmd", "bad", "deeper", "ok"], reported
+    by_id = {n.node_id: n for n in execution.nodes}
+    assert execution.succeeded is False
+    assert by_id["bad"].status == NodeStatus.FAILED
+    assert by_id["ok"].status == NodeStatus.SUCCESS
+    for node_id in ("after-cmd", "after-agent", "deeper"):
+        assert by_id[node_id].status == NodeStatus.SKIPPED, node_id
+        assert by_id[node_id].condition_skipped is False, node_id
+        persisted = load_node_state(runner_workdir, "abort-later-layers", node_id)
+        assert persisted is None or persisted["status"] != NodeStatus.SUCCESS.value, node_id
+    assert not (runner_workdir / "after-cmd.txt").exists()
+    assert not (runner_workdir / "deeper.txt").exists()
+    assert spawned == []
+
+
 # ---------------------------------------------------------------------------
 # Conditional `when` gating (#4464)
 # ---------------------------------------------------------------------------
@@ -159,6 +220,74 @@ nodes:
     assert by_id["gated"].condition_skipped is True
     assert execution.succeeded is True
     assert not (runner_workdir / "gated.txt").exists()
+
+
+@pytest.mark.parametrize(("resume", "windows"), [(False, False), (True, False), (False, True)])
+def test_when_timeout_fails_node_and_skips_dependants(runner_workdir: Path, resume: bool, windows: bool) -> None:
+    spec = _spec_from(
+        """
+name: when-deadline
+description: "Check a timed-out condition"
+version: "1.0.0"
+nodes:
+  - id: conditional
+    command: "true"
+    when: "test -f ready"
+  - id: downstream
+    command: "true"
+    depends_on: [conditional]
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    run_id = "when-deadline-test"
+    process = MagicMock(pid=12345)
+    process.communicate.side_effect = subprocess.TimeoutExpired("test -f ready", 30)
+    with (
+        patch("bernstein.core.workflows.workflow_runner.IS_WINDOWS", windows),
+        patch("bernstein.core.workflows.workflow_runner.subprocess.Popen") as popen,
+        patch("bernstein.core.workflows.workflow_runner.kill_process_group", return_value=not windows) as kill_group,
+    ):
+        popen.return_value.__enter__.return_value = process
+        if resume:
+            record_spec_snapshot(runner_workdir, run_id, spec)
+            execution = runner.resume(spec, run_id=run_id)
+        else:
+            execution = runner.run(spec, run_id=run_id)
+
+    popen.assert_called_once()
+    assert popen.call_args.args == ("test -f ready",)
+    assert popen.call_args.kwargs["stdout"] == (subprocess.DEVNULL if windows else subprocess.PIPE)
+    assert popen.call_args.kwargs["start_new_session"] is not windows
+    process.communicate.assert_called_once_with(timeout=30)
+    kill_group.assert_called_once_with(process.pid, sig=9)
+    assert process.kill.called is windows
+    assert not execution.succeeded
+    assert [node.status for node in execution.nodes] == [NodeStatus.FAILED, NodeStatus.SKIPPED]
+    failure = execution.nodes[0]
+    assert failure.error == "when predicate timed out after 30s"
+    assert not failure.condition_skipped
+    persisted = load_node_state(runner_workdir, run_id, "conditional")
+    assert persisted is not None and persisted["status"] == NodeStatus.FAILED
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX shell background syntax")
+def test_when_waits_for_background_output_before_dispatch(runner_workdir: Path) -> None:
+    spec = _spec_from(
+        """
+name: when-background
+description: "Wait for a condition's output producer"
+version: "1.0.0"
+nodes:
+  - id: conditional
+    command: "test -f ready"
+    when: "(sleep 0.1; touch ready) &"
+"""
+    )
+
+    execution = _build_runner(workdir=runner_workdir).run(spec)
+
+    assert execution.succeeded
+    assert (runner_workdir / "ready").is_file()
 
 
 def test_when_true_runs_the_node_normally(runner_workdir: Path) -> None:
@@ -308,6 +437,32 @@ nodes:
     assert tick.status == NodeStatus.SUCCESS
     assert tick.iterations >= 3
     assert int(counter.read_text().strip()) >= 3
+
+
+def test_loop_timeout_fails_on_the_first_iteration(runner_workdir: Path) -> None:
+    spec = _spec_from(
+        """
+name: loop-deadline
+description: "Check a timed-out loop predicate"
+version: "1.0.0"
+nodes:
+  - id: iterate
+    command: "true"
+    loop:
+      until: "test -f ready"
+      max_iterations: 3
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    with patch.object(runner, "_loop_predicate_passes", side_effect=subprocess.TimeoutExpired("test -f ready", 30)):
+        execution = runner.run(spec)
+
+    assert not execution.succeeded
+    node = execution.nodes[0]
+    assert node.status == NodeStatus.FAILED
+    assert node.iterations == 1
+    assert node.exit_code is None
+    assert node.error == "loop predicate timed out after 30s"
 
 
 def test_loop_max_iterations_exhausted_fails(runner_workdir: Path) -> None:
@@ -534,8 +689,13 @@ class _RecordingMockAdapter(CLIAdapter):
         return None
 
 
-def test_agent_node_dispatches_through_real_spawner(tmp_path: Path) -> None:
+def test_agent_node_dispatches_through_real_spawner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An agent-typed node reaches `AgentSpawner.spawn_for_tasks`."""
+    # The integration check exercises dispatch, not the host's available disk space.
+    monkeypatch.setattr(
+        "bernstein.core.agents.spawner_core.shutil.disk_usage",
+        lambda _path: MagicMock(free=2 * 1024**3),
+    )
     workdir = tmp_path / "proj"
     workdir.mkdir()
     templates_dir = workdir / "templates" / "roles" / "backend"
@@ -937,3 +1097,86 @@ nodes:
         raise AssertionError("Expected WorkflowRunError for nonexistent run")
     except Exception as e:
         assert "no workflow run state" in str(e).lower()
+
+
+# ---------------------------------------------------------------------------
+# always_run cleanup/teardown nodes
+# ---------------------------------------------------------------------------
+
+
+def test_always_run_executes_cleanup_after_upstream_failure_without_passing_run(runner_workdir: Path) -> None:
+    """An ``always_run: true`` node still runs after an abort, while receipt stays skipped and run fails."""
+    spec = _spec_from(
+        """
+name: always-run-cleanup
+description: "Teardown still executes when restore fails"
+version: "1.0.0"
+nodes:
+  - id: restore
+    command: "exit 2"
+  - id: verify
+    depends_on: [restore]
+    command: "echo verified > verify.txt"
+  - id: cleanup
+    depends_on: [restore, verify]
+    always_run: true
+    command: "echo cleaned > cleanup.txt"
+  - id: receipt
+    depends_on: [verify, cleanup]
+    command: "echo receipt > receipt.txt"
+"""
+    )
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.run(spec, run_id="always-run-fail")
+    by_id = {n.node_id: n for n in execution.nodes}
+
+    assert execution.succeeded is False
+    assert by_id["restore"].status == NodeStatus.FAILED
+    assert by_id["verify"].status == NodeStatus.SKIPPED
+    assert by_id["cleanup"].status == NodeStatus.SUCCESS
+    assert by_id["receipt"].status == NodeStatus.SKIPPED
+    assert (runner_workdir / "cleanup.txt").read_text().strip() == "cleaned"
+    assert not (runner_workdir / "verify.txt").exists()
+    assert not (runner_workdir / "receipt.txt").exists()
+
+
+def test_always_run_executes_on_resume_after_aborted_layer(runner_workdir: Path) -> None:
+    """Resuming a run killed after a failure still dispatches unexecuted ``always_run`` cleanup."""
+    from bernstein.core.workflows.workflow_runner import NodeExecution, record_node_state
+
+    spec = _spec_from(
+        """
+name: always-run-resume
+description: "Resume runs always_run cleanup after persisted failure"
+version: "1.0.0"
+nodes:
+  - id: restore
+    command: "exit 1"
+  - id: cleanup
+    depends_on: [restore]
+    always_run: true
+    command: "echo resumed-cleanup > cleanup.txt"
+  - id: receipt
+    depends_on: [cleanup]
+    command: "echo receipt > receipt.txt"
+"""
+    )
+    run_id = "always-run-resume-1"
+    digest = record_spec_snapshot(runner_workdir, run_id, spec, manifest_source=spec.name)
+    record_node_state(
+        runner_workdir,
+        run_id,
+        NodeExecution(node_id="restore", status=NodeStatus.FAILED, iterations=1, exit_code=1, error="exit 1"),
+        digest,
+    )
+
+    runner = _build_runner(workdir=runner_workdir)
+    execution = runner.resume(spec, run_id=run_id)
+    by_id = {n.node_id: n for n in execution.nodes}
+
+    assert execution.succeeded is False
+    assert by_id["restore"].status == NodeStatus.FAILED
+    assert by_id["cleanup"].status == NodeStatus.SUCCESS
+    assert by_id["receipt"].status == NodeStatus.SKIPPED
+    assert (runner_workdir / "cleanup.txt").read_text().strip() == "resumed-cleanup"
+    assert not (runner_workdir / "receipt.txt").exists()

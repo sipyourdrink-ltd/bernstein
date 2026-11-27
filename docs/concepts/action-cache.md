@@ -5,9 +5,7 @@ layer above it and gives Bernstein **deterministic replay without
 paying the LLM bill**. Every action - prompt, model output, tool
 call, tool result - is content-addressed by `(model_id,
 normalized_prompt, tool_name, tool_args)` and stored under
-`.sdd/runtime/action_cache/<aa>/<rest>.bin` (the SHA-256 hex digest split after its first byte). On replay, cache hits
-return the recorded result; misses fall through to the live model and
-append.
+`.sdd/runtime/action_cache/<aa>/<rest>.bin` (the SHA-256 hex digest split after its first byte). The `ActionCache.get_or_call` wrapper looks up that key first: a hit returns the recorded result without a live call; miss behavior depends on the configured mode, as described below.
 
 ## Why it exists
 
@@ -33,10 +31,11 @@ their own calls with `ActionCache.get_or_call`.
 
 ```bash
 # Mode is set in bernstein.yaml under `tuning:` (see Configuration):
-#   record - always live, append every call to the cache
-#   replay - cache-only, fail-loud on cache miss instead of calling the model
-#   hybrid - replay on hit, fall through to live model on miss, append result
-#   off    - no lookups or writes
+# `ActionCache.get_or_call` behavior:
+#   record - return a hit; on a miss call live_call and write its result
+#   replay - return a hit; on a miss raise CacheMiss without calling live_call
+#   hybrid - return a hit; on a miss call live_call and write its result
+#   off    - skip lookup, call live_call, and do not write
 
 # List a past run's recorded actions from the cache ($0, no live calls)
 bernstein cache action replay <run_id>   # add --as-json for machine output
@@ -47,7 +46,46 @@ bernstein cache action stats
 
 The `cache action replay` subcommand lists every cached action tagged
 with the run id (model, tool, tokens, cost, output head). It does not
-re-execute anything or compare against live output.
+re-execute anything or compare against live output. This command name is
+separate from `replay` mode, which controls cache lookup in `get_or_call`.
+
+### `ActionCache.get_or_call` by mode
+
+The wrapper attempts a lookup before deciding whether to call `live_call`.
+A hit in `record`, `replay`, or `hybrid` returns the cached record without
+calling the callback or writing a new record. `off` skips lookup, so every
+call reaches the callback.
+
+| Mode | Hit | Miss |
+|---|---|---|
+| `record` | Return cached record; no callback or write. | Call callback, then write its result. |
+| `replay` | Return cached record; no callback or write. | Raise `CacheMiss`; no callback or write. |
+| `hybrid` | Return cached record; no callback or write. | Call callback, then write its result. |
+| `off` | Lookup is skipped, so there is no hit. | Call callback; do not write. |
+
+In particular, `record` mode on `get_or_call` does not mean “always live”:
+a repeated call with the same key can reuse the first result:
+
+```python
+calls = 0
+
+
+def live_call():
+    global calls
+    calls += 1
+    return ("answer", None, None, 0.0)
+
+
+first = cache.get_or_call(model_id="opus", prompt="p", live_call=live_call)
+second = cache.get_or_call(model_id="opus", prompt="p", live_call=live_call)
+assert first.output_text == second.output_text == "answer"
+assert calls == 1  # second call was a cache hit, even in record mode
+```
+
+This is distinct from calling `ActionCache.record` directly: `record`
+constructs and returns the supplied record without looking up an existing
+one. It writes in `record` and `hybrid` modes, and does not persist in
+`replay` or `off` modes.
 
 ## Configuration
 

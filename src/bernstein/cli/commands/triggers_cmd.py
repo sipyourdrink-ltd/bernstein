@@ -25,6 +25,7 @@ def triggers_list() -> None:
     from rich.console import Console
     from rich.table import Table
 
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
     from bernstein.core.trigger_manager import TriggerManager
 
     console = Console()
@@ -40,9 +41,15 @@ def triggers_list() -> None:
         console.print(f"[dim]Create {config_path} to define trigger rules.[/dim]")
         return
 
+    try:
+        markers = DeclarationQuarantineStore(sdd_dir.parent).load()
+    except (OSError, TypeError, ValueError) as exc:
+        raise click.ClickException(f"Cannot read declaration quarantine: {exc}") from exc
+    origin = str(config_path.resolve())
+    quarantined = {entry.source_name for entry in markers if entry.kind == "routine" and entry.origin == origin}
     triggers = TriggerManager(sdd_dir).list_triggers()
 
-    if not triggers:
+    if not triggers and not quarantined:
         console.print("[yellow]No triggers defined in triggers.yaml.[/yellow]")
         return
 
@@ -54,8 +61,12 @@ def triggers_list() -> None:
     table.add_column("Last Fired")
     table.add_column("Filters", max_width=40)
 
+    parsed_names = set()
     for t in triggers:
+        parsed_names.add(t["name"])
         enabled_str = "[green]yes[/green]" if t["enabled"] else "[red]no[/red]"
+        if t["name"] in quarantined:
+            enabled_str = "[red]quarantined[/red]"
         schedule = t.get("schedule") or "-"
         last_fired = "-"
         if t.get("last_fired"):
@@ -68,6 +79,9 @@ def triggers_list() -> None:
                 last_fired = f"{ago // 3600}h ago"
         filters_str = ", ".join(f"{k}={v}" for k, v in t.get("filters", {}).items())[:40]
         table.add_row(t["name"], t["source"], enabled_str, schedule, last_fired, filters_str)
+
+    for name in sorted(quarantined - parsed_names):
+        table.add_row(name, "-", "[red]quarantined[/red]", "-", "-", "-")
 
     console.print(table)
 
@@ -125,6 +139,7 @@ def triggers_fire(name: str) -> None:
 
     from bernstein.cli.helpers import server_post
     from bernstein.core.models import TriggerEvent
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
     from bernstein.core.trigger_manager import TriggerManager
 
     console = Console()
@@ -134,7 +149,7 @@ def triggers_fire(name: str) -> None:
         console.print("[red]No .sdd/ directory found.[/red]")
         raise SystemExit(1)
 
-    mgr = TriggerManager(sdd_dir)
+    mgr = TriggerManager(sdd_dir, quarantine_store=DeclarationQuarantineStore(sdd_dir.parent))
 
     # Find the trigger config
     target = None

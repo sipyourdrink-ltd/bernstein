@@ -10,8 +10,10 @@ from pathlib import Path
 import yaml
 
 
-def _load_current_config() -> dict[str, object]:
-    """Load the current config from bernstein.yaml/yml."""
+def _load_current_config() -> dict[str, object] | None:
+    """Load the current mapping or report why there is nothing to compare."""
+    from bernstein.cli.helpers import console
+
     for name in ("bernstein.yaml", "bernstein.yml"):
         p = Path.cwd() / name
         if p.is_file():
@@ -19,8 +21,10 @@ def _load_current_config() -> dict[str, object]:
                 raw = yaml.safe_load(f)
             if isinstance(raw, dict):
                 return dict(raw)  # type: ignore[arg-type]
-            return {}
-    return {}
+            console.print(f"[dim]{name} must contain a YAML mapping.[/dim]")
+            return None
+    console.print("[dim]No bernstein.yaml found in current directory.[/dim]")
+    return None
 
 
 def config_diff_cmd() -> None:
@@ -32,8 +36,7 @@ def config_diff_cmd() -> None:
 
     current_yaml = _load_current_config()
 
-    if not current_yaml:
-        console.print("[dim]No bernstein.yaml found in current directory.[/dim]")
+    if current_yaml is None:
         return
 
     report = diff_against_defaults(current_yaml)

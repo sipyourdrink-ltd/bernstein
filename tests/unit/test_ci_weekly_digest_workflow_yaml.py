@@ -155,3 +155,22 @@ def test_header_does_not_advertise_a_firing_alert(workflow_text: str) -> None:
     # nothing ever consumed the computed alert. The header must not restate
     # that claim once the dead computation is gone.
     assert "alert fires" not in workflow_text.lower(), "header still advertises a threshold alert nothing implements"
+
+
+def test_digest_never_requests_security_events_permission(workflow_text: str) -> None:
+    assert "security-events" not in workflow_text
+    parsed = cast("object", yaml.safe_load(workflow_text))
+    workflow = _mapping(parsed)
+    assert workflow.get("permissions") == {}
+    digest = _mapping(_mapping(workflow.get("jobs")).get("digest"))
+    assert _mapping(digest.get("permissions")) == {
+        "contents": "read",
+        "actions": "read",
+        "issues": "write",
+    }
+
+
+def test_digest_uses_script_allowlisted_quality_fetch(digest_run: str, workflow_text: str) -> None:
+    code = _code_only(digest_run)
+    assert "--quality-repo" in code
+    assert "gh run download" not in workflow_text

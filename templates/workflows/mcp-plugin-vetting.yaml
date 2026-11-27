@@ -1,0 +1,33 @@
+name: mcp-plugin-vetting
+description: "Vet a third-party MCP server or agent plugin for supply-chain, permission, and injection safety."
+version: "1.0.0"
+nodes:
+  - id: pin-and-inventory
+    agent: analyst
+    prompt: |
+      Pin commit/package SHA-256, license, required env vars, and declared tool
+      schemas for: {goal}
+    timeout_seconds: 1200
+  - id: code-and-egress-audit
+    depends_on: [pin-and-inventory]
+    agent: security
+    prompt: |
+      Audit subprocess, filesystem, credential, and network egress behavior across
+      all handlers for: {goal}
+    fresh_context: true
+    timeout_seconds: 1800
+  - id: injection-and-containment-check
+    depends_on: [pin-and-inventory]
+    agent: adversary
+    prompt: |
+      Evaluate untrusted tool-output prompt-injection and workspace-escape vectors
+      and specify containment policy rules for: {goal}
+    fresh_context: true
+    timeout_seconds: 1800
+  - id: vetting-decision
+    depends_on: [code-and-egress-audit, injection-and-containment-check]
+    agent: reviewer
+    prompt: |
+      Synthesize findings into an allow/deny verdict with pinned digest and
+      mandatory sandbox configuration for: {goal}
+    timeout_seconds: 1200

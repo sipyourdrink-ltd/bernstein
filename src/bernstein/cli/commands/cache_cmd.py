@@ -12,7 +12,6 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.persistence.action_cache import (
-    ActionRecord,
     open_cache,
 )
 from bernstein.core.persistence.cache_eviction import (
@@ -252,11 +251,19 @@ def show_cache_policy(policy_file: Path, as_json: bool) -> None:
     policy plus its ``sha256`` policy hash - the value bound into every cache
     hit, miss, dedup, and eviction audit event for tasks under this policy.
     """
-    policy = CachePolicy.from_dict(json.loads(policy_file.read_text(encoding="utf-8")))
+    try:
+        data = json.loads(policy_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object.")
+        policy = CachePolicy.from_dict(data)
+        policy_hash = policy.policy_hash()
+    except (OSError, ValueError, TypeError, OverflowError, RecursionError) as exc:
+        raise click.ClickException(f"Invalid cache policy {policy_file}: {exc}") from exc
+
     if as_json:
-        click.echo(json.dumps({"policy": policy.to_dict(), "policy_hash": policy.policy_hash()}, indent=2))
+        click.echo(json.dumps({"policy": policy.to_dict(), "policy_hash": policy_hash}, indent=2))
         return
-    console.print(f"[bold]Policy hash:[/bold] {policy.policy_hash()}")
+    console.print(f"[bold]Policy hash:[/bold] {policy_hash}")
     console.print(f"[bold]Ingredients:[/bold] {', '.join(policy.ingredients) or '(mandatory only)'}")
     console.print(f"[bold]Expiry mode:[/bold] {policy.expiry_mode} (drift window={policy.drift_window})")
     console.print(f"[bold]TTL seconds:[/bold] {policy.ttl_seconds}")
@@ -323,16 +330,7 @@ def action_cache_replay(run_id: str, workdir: Path, as_json: bool) -> None:
       bernstein cache action replay 20240315-143022
     """
     cache = open_cache(workdir.resolve(), mode="replay", run_id=run_id)
-    found: list[ActionRecord] = []
-    for path, _size, _atime in cache.store._iter_entries():
-        try:
-            import pickle
-
-            raw = pickle.loads(path.read_bytes())
-        except (OSError, pickle.UnpicklingError, EOFError):
-            continue
-        if isinstance(raw, ActionRecord) and raw.run_id == run_id:
-            found.append(raw)
+    found = cache.records_for_run(run_id)
 
     if as_json:
         click.echo(

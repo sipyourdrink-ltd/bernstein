@@ -343,6 +343,36 @@ def _write_pid_file(
     return pid_file
 
 
+def _read_owned_pid_file(
+    pid_dir: str, session: str, pid_file: Path, child_pid: int, started_at: float
+) -> dict[str, object] | None:
+    """Read the current marker only if it belongs to this worker invocation."""
+    try:
+        checked_pid_file = contained_path(pid_dir, f"{session}.json", label="session id")
+        if checked_pid_file != pid_file:
+            return None
+        info = json.loads(checked_pid_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict) or info.get("worker_pid") != os.getpid() or info.get("session") != session:
+        return None
+    # Legacy markers may omit the start time, and retirement removes child_pid.
+    if info.get("started_at", started_at) != started_at or info.get("child_pid", child_pid) != child_pid:
+        return None
+    return info
+
+
+def _retire_child_pid(pid_file: Path, info: dict[str, object]) -> bool:
+    """Remove a reaped child's PID while keeping this worker's marker visible."""
+    try:
+        if "child_pid" in info:
+            del info["child_pid"]
+            _atomic_write_json(pid_file, info)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _wait_for_log(log_path: Path) -> bool:
     """Wait up to 5s for the log file to appear. Returns True if found."""
     if log_path.exists():
@@ -382,7 +412,8 @@ def _handle_tool_error(
     error_msg = f"Tool {tool} failed with exit code {exit_code_str}"
     logger.warning("Tool error detected (policy=%s): %s", tool_abort_policy, error_msg)
 
-    pm.fire_tool_error(session_id, tool, error_msg)
+    if pm is not None:
+        pm.fire_tool_error(session_id, tool, error_msg)
 
     cascaded = abort_chain.abort_tool(
         session_id,
@@ -441,9 +472,13 @@ def _monitor_logs(
         return
 
     from bernstein.core.abort_chain import AbortChain
-    from bernstein.plugins.manager import get_plugin_manager
+    from bernstein.plugins.manager import PluginQuarantineUnavailable, get_plugin_manager
 
-    pm = get_plugin_manager(workdir)
+    try:
+        pm = get_plugin_manager(workdir, record_declaration_failures=True)
+    except PluginQuarantineUnavailable:
+        logger.warning("Tool-error plugin notification unavailable; continuing abort monitoring")
+        pm = None
     signals_dir = workdir / ".sdd" / "runtime" / "signals"
     abort_chain = AbortChain(signals_dir=signals_dir)
     policy = _build_abort_policy(tool_abort_policy)
@@ -475,7 +510,12 @@ def _monitor_logs(
 
 
 def main() -> None:
-    """Entry point for bernstein-worker."""
+    """Run the worker command from the process arguments.
+
+    Raises:
+        SystemExit: With the worker's exit status, including argument and
+            launch failures or the wrapped command's exit status.
+    """
     parser = argparse.ArgumentParser(
         description="Bernstein agent worker - wraps CLI agents for process visibility",
     )
@@ -587,6 +627,7 @@ def main() -> None:
     # 2b. Write PID metadata. ``on_resolved`` publishes the path to the holder
     # *before* the file is created, so even a SIGTERM during the write itself
     # is cleaned up (``unlink(missing_ok=True)`` tolerates the pre-create case).
+    started_at = time.time()
     pid_file = _write_pid_file(
         Path(args.pid_dir),
         args.session,
@@ -596,7 +637,7 @@ def main() -> None:
             "session": args.session,
             "command": cmd[0],
             "model": args.model,
-            "started_at": time.time(),
+            "started_at": started_at,
         },
         on_resolved=_pid_file_holder.append,
     )
@@ -711,6 +752,7 @@ def main() -> None:
         _atomic_write_json(checked_pid_file, info)
 
     # 4. Start log monitor for hierarchical abort (T442)
+    monitor_thread: threading.Thread | None = None
     if args.log_path:
         log_path = Path(args.log_path)
         workdir = Path(args.workdir)
@@ -736,8 +778,18 @@ def main() -> None:
     except Exception:
         child.kill()
         exit_code = 1
+    else:
+        # Retire the reaped PID before waiting so a supervisor cannot mistake
+        # it for a live child during the monitor's shutdown window.
+        if monitor_thread is not None:
+            info = _read_owned_pid_file(args.pid_dir, args.session, pid_file, child.pid, started_at)
+            if info is not None and _retire_child_pid(pid_file, info):
+                monitor_thread.join(timeout=2)
     finally:
-        pid_file.unlink(missing_ok=True)
+        # Re-read after the join because another worker may have published a
+        # marker at the same path while the monitor was stopping.
+        if _read_owned_pid_file(args.pid_dir, args.session, pid_file, child.pid, started_at) is not None:
+            pid_file.unlink(missing_ok=True)
 
     # Translate signal-termination into the conventional ``128 + N`` form
     # so external supervisors that key on standard codes see a stable

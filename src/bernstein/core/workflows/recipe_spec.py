@@ -278,7 +278,7 @@ class RecipeSpec(BaseModel):
                 resolved[param.name] = value
                 continue
             if param.default is not None:
-                resolved[param.name] = param.default
+                resolved[param.name] = _coerce_value(str(param.default), param.type)
                 continue
             if param.required:
                 missing.append(param.name)

@@ -24,10 +24,13 @@ bernstein plan show PLAN_ID
 
 - `bernstein plan ls` - lists managed plans across all three buckets in
   a table (`State`, `Plan ID`, `Path`). `--state` filters to one bucket.
+  A plan is a regular `*.yaml` file; a directory whose name ends in
+  `.yaml` is not listed, and `plan show` does not find it.
 - `bernstein plan show PLAN_ID` - prints the archived (or active) plan's
   full YAML body, prefixed with `# state:` and `# path:` comment lines.
   `PLAN_ID` is the filename stem, e.g. `2026-04-23-strategic-300` for an
-  archived plan or the original stem for an active one.
+  archived plan or the original stem for an active one. It identifies the managed
+  plan separately from the execution run ID.
 
 Both commands operate on `plans/` under the current working directory
 (or wherever `default_lifecycle()` is rooted); there is no `--workdir`

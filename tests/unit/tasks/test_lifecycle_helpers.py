@@ -161,6 +161,37 @@ def test_retry_escalation_terminal_reason_takes_precedence_over_scope() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Gateway-prefixed model escalation (#6605)
+# ---------------------------------------------------------------------------
+
+
+def test_retry_escalation_gateway_model_is_not_replaced_with_bare_tier() -> None:
+    # A model like "openai/gpt-4o" is on an OpenAI-compatible gateway whose
+    # registry does not know "opus". The escalation must keep the prefixed name.
+    task = _task()
+    model, _effort = _choose_retry_escalation(task, 2, "openai/gpt-4o", "high")
+    assert model == "openai/gpt-4o", f"expected prefixed model, got {model!r}"
+
+
+def test_retry_escalation_gateway_model_large_scope_keeps_prefix() -> None:
+    task = _task(scope=Scope.LARGE)
+    model, _effort = _choose_retry_escalation(task, 1, "openai/gpt-4o", "low")
+    assert "/" in model, f"bare tier name returned for gateway model: {model!r}"
+
+
+def test_retry_escalation_gateway_model_blocking_limit_keeps_prefix() -> None:
+    task = _task(terminal_reason="blocking_limit")
+    model, _effort = _choose_retry_escalation(task, 1, "openai/gpt-4o-mini", "low")
+    assert "/" in model, f"bare tier name returned for gateway model: {model!r}"
+
+
+def test_retry_escalation_tier_model_still_escalates_normally() -> None:
+    # Ensure the gateway guard does not break plain Claude tier names.
+    task = _task()
+    assert _choose_retry_escalation(task, 2, "haiku", "low") == ("sonnet", "high")
+
+
+# ---------------------------------------------------------------------------
 # _dynamic_retry_limit
 # ---------------------------------------------------------------------------
 
@@ -506,3 +537,75 @@ def test_retry_escalation_pin_holds_even_when_the_pin_is_a_tier_name() -> None:
 def test_retry_escalation_without_a_pin_keeps_the_historical_ladder() -> None:
     task = _task(scope=Scope.LARGE)
     assert _choose_retry_escalation(task, 1, "sonnet", "low") == ("opus", "max")
+
+
+# ---------------------------------------------------------------------------
+# _choose_retry_escalation: non-Claude adapter never gets a bare tier (#6605)
+# ---------------------------------------------------------------------------
+
+
+def test_non_claude_adapter_drops_a_tier_label_on_the_second_retry() -> None:
+    # The first attempt's spawn coerced the unpinned tier label to the
+    # adapter's configured default; the retry leaves the model unset so the
+    # same default is re-resolved, instead of stamping "opus" on a gateway
+    # that has no route for it.
+    task = _task()
+    assert _choose_retry_escalation(task, 2, "sonnet", "high", adapter_is_claude_compatible=False) == (None, "high")
+
+
+def test_non_claude_adapter_drops_a_tier_label_on_a_large_scope() -> None:
+    task = _task(scope=Scope.LARGE)
+    assert _choose_retry_escalation(task, 1, "sonnet", "low", adapter_is_claude_compatible=False) == (None, "max")
+
+
+def test_non_claude_adapter_drops_a_tier_label_on_a_blocking_limit() -> None:
+    task = _task(terminal_reason="blocking_limit")
+    assert _choose_retry_escalation(task, 1, "haiku", "low", adapter_is_claude_compatible=False) == (None, "max")
+
+
+def test_non_claude_adapter_drops_a_tier_label_on_the_first_retry() -> None:
+    task = _task()
+    assert _choose_retry_escalation(task, 1, "opus", "medium", adapter_is_claude_compatible=False) == (None, "high")
+
+
+def test_non_claude_adapter_retains_a_genuine_unprefixed_model() -> None:
+    # A non-tier name is a real model identity: kept on every branch, never
+    # escalated into a tier the adapter cannot route.
+    task = _task()
+    assert _choose_retry_escalation(task, 2, "MiniMax-M3", "low", adapter_is_claude_compatible=False) == (
+        "MiniMax-M3",
+        "high",
+    )
+    large = _task(scope=Scope.LARGE)
+    assert _choose_retry_escalation(large, 1, "MiniMax-M3", "low", adapter_is_claude_compatible=False) == (
+        "MiniMax-M3",
+        "max",
+    )
+
+
+def test_non_claude_adapter_keeps_a_provider_prefixed_model() -> None:
+    task = _task(scope=Scope.LARGE)
+    assert _choose_retry_escalation(task, 1, "openai/gpt-4o", "low", adapter_is_claude_compatible=False) == (
+        "openai/gpt-4o",
+        "max",
+    )
+
+
+def test_non_claude_adapter_pin_still_wins_over_the_guard() -> None:
+    task = _task(scope=Scope.LARGE)
+    assert _choose_retry_escalation(
+        task, 1, "sonnet", "low", pinned_model="sonnet", adapter_is_claude_compatible=False
+    ) == ("sonnet", "max")
+
+
+def test_non_claude_adapter_metadata_pinned_tier_is_a_genuine_pin() -> None:
+    # metadata["pinned_model"] (the A/B-test escape hatch) makes a tier name
+    # a deliberate comparison point, not an escalation artifact.
+    task = _task(scope=Scope.LARGE, metadata={"pinned_model": True})
+    assert _choose_retry_escalation(task, 1, "opus", "low", adapter_is_claude_compatible=False) == ("opus", "max")
+
+
+def test_claude_compatible_adapter_keeps_the_historical_ladder() -> None:
+    # The guard defaults off: callers that say nothing get the Claude ladder.
+    task = _task()
+    assert _choose_retry_escalation(task, 2, "sonnet", "high", adapter_is_claude_compatible=True) == ("opus", "high")

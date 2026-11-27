@@ -1,5 +1,61 @@
 # bernstein doctor
 
+The default doctor's checks also produce installation audit findings:
+
+```sh
+bernstein doctor --json
+bernstein govern audit --only INS --json
+bernstein govern audit --list --only INS
+```
+
+The doctor's JSON retains `checks` and `runtime` and adds `findings`. That array
+uses exactly the same schema and producers as the installation audit's JSON
+array. The text report, display order, readiness calculation, exit behavior and
+`--fix` workflow remain unchanged. Use `bernstein govern audit --only INS` to select the installation checks
+and measure the host.
+The audit CLI explicitly composes the installation catalog into its runner;
+the core default registry remains independent of CLI doctor implementations.
+See [installation check composition](../sdd/installation-check-composition.md)
+for the ownership boundary and its regression checks.
+
+Each producer has a stable ID, even when it emits several display rows or has
+no configured subject:
+
+| ID | Installation check |
+| --- | --- |
+| INS-001 | Python version |
+| INS-002 | Adapter binaries |
+| INS-003 | Adapter last-green advisories |
+| INS-004 | Adapter version posture |
+| INS-005 | Adapter authentication |
+| INS-006 | Server port |
+| INS-007 | Workspace structure |
+| INS-008 | Stale PID files |
+| INS-009 | Guardrail statistics |
+| INS-010 | CI tools |
+| INS-011 | Storage backend (including PostgreSQL and Redis variants) |
+| INS-012 | Secrets manager |
+| INS-013 | Readiness |
+| INS-014 | Context files, MCP, permissions, installations and plugins |
+| INS-015 | Commit attribution |
+| INS-016 | Compliance prerequisites |
+| INS-017 | Schedule supervisor |
+| INS-018 | Eval gate power advisory |
+| INS-019 | OTLP export advisory |
+| INS-020 | Audit anchoring |
+
+Audit findings use `pass`, `fail`, or `not_measurable`. A tool probe that cannot
+run is `not_measurable` with the tool and prerequisite named; it never becomes
+a passing finding. Checks without observations are also `not_measurable`.
+For INS-005, a configured Codex model cannot make a missing `codex` login
+probe measurable; an observed API-key setting does not require that CLI probe.
+For INS-004, any `unknown_version` entry is `not_measurable` and names the
+adapter's unavailable `<adapter> --version` probe. Measured versions still
+pass at or above the floor and fail below it.
+These audit verdicts preserve the legacy doctor's advisory display and exit
+behavior. Version-posture evidence hashes the observed versions and anchoring
+state, excluding the receipt timestamp so repeated observations compare equal.
+
 `bernstein doctor` is the single-command checklist for diagnosing a
 broken Bernstein installation before opening an issue. The legacy
 `bernstein doctor` runs the same checks it always did; the new
@@ -199,3 +255,55 @@ remediation)` dataclass. `category` is one of `installation`,
 under `provider_availability` in `bernstein.yaml` and exits non-zero when
 any declared chain element is broken. See
 [Provider availability & failover](provider-availability.md).
+
+## Aged leaked lanes (#6572)
+
+The default `bernstein doctor` report checks confirmed leaked worktrees and
+sandbox sessions using the same canonical TaskStore replay snapshot. A lane
+is considered only when the sweep confirms all recorded owning tasks are
+finished; missing ownership, unknown tasks, active/resumable owners and
+superseded sandbox lifetimes remain excluded. The worktree and sandbox
+prerequisites landed through [#6919](https://github.com/sipyourdrink-ltd/bernstein/pull/6919)
+and [#6733](https://github.com/sipyourdrink-ltd/bernstein/pull/6733).
+
+`BERNSTEIN_LEAK_MAX_AGE_SECONDS` sets the threshold in seconds, defaulting to
+`86400` (24 hours). The internal check's explicit `max_age_seconds` argument
+has precedence over the environment. Values must be finite and non-negative;
+invalid configuration is an unavailable-check error. The comparison is
+strictly **older than**: a lane exactly at the threshold is not aged.
+
+Age describes the resource lifetime, **not time since task completion or
+leak onset**. Worktrees use directory birthtime when available, otherwise
+filesystem ctime (`directory_birthtime_or_ctime`); sandboxes use their audited
+session-create time (`audit_session_create`). A confirmed leak with missing,
+negative or non-finite age receives an unknown-age warning rather than a
+clean result. The existing classifiers' clock-skew handling is unchanged.
+
+| Evidence | Check result | Default doctor exit contribution |
+| --- | --- | --- |
+| Confirmed leak older than threshold | WARN with lane ID, owner IDs/statuses, age and source | Non-blocking |
+| Confirmed leak with unusable age | WARN with unknown age | Non-blocking |
+| No aged or unknown-age confirmed leaks | PASS | Non-blocking |
+| Unreadable/invalid task or audit evidence, or invalid threshold | FAIL with unavailable-check detail | Exit 1 |
+
+The existing aggregate text row retains each lane's details. In
+`bernstein doctor --json`, that row in `checks` includes `leaked_lanes`, a
+list of structured records with `kind`, `resource_id`, `task_ids`,
+`task_statuses`, `age_seconds`, `age_source`, `max_age_seconds` and `reason`.
+`reason` is `age_exceeded` or `age_unavailable`; unavailable ages are JSON
+`null`, never NaN. An unavailable check emits no asserted lane findings.
+These records are separate from the installation audit's `findings` catalogue.
+
+The check reads evidence only. It does not delete lanes, update tasks, append
+audit events, mint keys or contact sandbox providers, and has no automatic
+removal action under `--fix`. Preview remediation with `bernstein worktrees
+sweep` or `bernstein sandbox sweep`. Applying a removal plan still requires
+its separate authenticated removal gate; a doctor warning grants no removal
+authority. See [worktree operations](worktrees.md#task-terminal-lane-sweep).
+
+Regression coverage in `tests/unit/sandbox/test_leaked_lane_sweep.py` exercises
+both kinds, canonical statuses, a reopen after the shared snapshot,
+threshold/default/override boundaries, unavailable task evidence, unknown
+ages, existing sweep exclusions and byte-preserving reads. The public CLI
+JSON/text and error-exit boundary is exercised by
+`tests/unit/test_doctor_leaked_lanes.py`.

@@ -69,6 +69,23 @@ def test_wiki_build_streams_markdown_to_stdout(fixture_repo: Path) -> None:
     assert "## Test layout" in result.output
 
 
+def test_wiki_build_includes_unicode_paths(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "ascii_name.py").write_text("def hello(): pass\n", encoding="utf-8")
+    (src / "café.py").write_text("def bonjour(): pass\n", encoding="utf-8")
+    _init_git_repo(tmp_path)
+    subprocess.run(["git", "config", "core.quotePath", "true"], cwd=tmp_path, check=True)
+
+    result = CliRunner().invoke(wiki_group, ["build", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "- `def hello()` (function, `src/ascii_name.py:1`)" in result.output.splitlines()
+    assert "- `def bonjour()` (function, `src/café.py:1`)" in result.output.splitlines()
+    structure = result.output.split("## Top-level structure\n")[1].split("## Public API summary")[0]
+    assert structure.strip() == "- `src/`"
+
+
 def test_wiki_build_writes_file_with_flag(fixture_repo: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(

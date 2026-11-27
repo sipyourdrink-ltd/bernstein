@@ -109,7 +109,9 @@ def test_from_plan_refuses_plan_settings_the_run_cannot_apply(
 
     assert exc.value.code == 1
     bootstrap_goal.assert_not_called()
-    assert setting.split(":")[0] in capsys.readouterr().out
+    output = capsys.readouterr()
+    assert setting.split(":")[0] in output.err
+    assert output.out == ""
 
 
 def test_from_plan_refuses_a_seed_shaped_yaml(
@@ -125,7 +127,9 @@ def test_from_plan_refuses_a_seed_shaped_yaml(
 
     assert exc.value.code == 1
     bootstrap_goal.assert_not_called()
-    assert "--seed" in capsys.readouterr().out.replace("\n", " ")
+    output = capsys.readouterr()
+    assert "--seed" in output.err
+    assert output.out == ""
 
 
 def test_from_plan_markdown_still_runs_from_the_goal_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

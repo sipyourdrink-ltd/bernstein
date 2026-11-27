@@ -323,6 +323,12 @@ def test_model_vendor_forwards_the_wrapped_adapter_declaration(tmp_path: Path) -
     assert adapter.model_vendor == "anthropic"
 
 
+def test_model_vendor_assignment_updates_the_wrapped_adapter(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    adapter.model_vendor = "anthropic"
+
+    assert mock_inner.model_vendor == adapter.model_vendor == "anthropic"
+
+
 def test_model_vendor_defaults_to_empty_when_the_inner_adapter_declares_none(tmp_path: Path) -> None:
     """An undeclared vendor stays empty rather than guessing a name."""
     inner = MagicMock(spec=CLIAdapter)
@@ -330,3 +336,46 @@ def test_model_vendor_defaults_to_empty_when_the_inner_adapter_declares_none(tmp
     adapter = CachingAdapter(inner, tmp_path)
 
     assert adapter.model_vendor == ""
+
+
+def test_spawn_relays_task_titles_when_inner_adapter_accepts_it(tmp_path: Path) -> None:
+    """Grouped mock spawns must receive every batched task title through CachingAdapter."""
+    received: dict[str, Any] = {}
+
+    class _BatchAwareAdapter(CLIAdapter):
+        def name(self) -> str:
+            return "mock"
+
+        def spawn(
+            self,
+            *,
+            prompt: str,
+            workdir: Path,
+            model_config: ModelConfig,
+            session_id: str,
+            mcp_config: dict[str, Any] | None = None,
+            timeout_seconds: int = 60,
+            task_scope: str = "medium",
+            budget_multiplier: float = 1.0,
+            system_addendum: str = "",
+            multimodal_context: Any | None = None,
+            task_id: str = "",
+            task_title: str = "",
+            task_titles: list[str] | None = None,
+        ) -> SpawnResult:
+            received["task_title"] = task_title
+            received["task_titles"] = task_titles
+            return SpawnResult(pid=123, log_path=workdir / "mock.log")
+
+    adapter = CachingAdapter(_BatchAwareAdapter(), tmp_path)
+    adapter.spawn(
+        prompt="Batched tasks",
+        workdir=tmp_path,
+        model_config=_model_config("mock"),
+        session_id="batch-1",
+        task_id="t1",
+        task_title="Task A",
+        task_titles=["Task A", "Task B"],
+    )
+
+    assert received == {"task_title": "Task A", "task_titles": ["Task A", "Task B"]}

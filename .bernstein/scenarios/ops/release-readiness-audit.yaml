@@ -1,0 +1,40 @@
+id: release-readiness-audit
+name: Release Readiness and Rollback Audit
+version: "1.0"
+description: |
+  Pre-release verification across changelog fragments, dependency advisories,
+  schema compatibility, upgrade smoke tests, and documented rollback commands.
+tags: [release, ops, quality, rollback, security]
+tasks:
+  - title: Verify release-note fragments and public API surface diff
+    role: docs
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Compare public CLI flags, HTTP routes, and schema versions since the
+      previous tag against committed release-note fragments.
+  - title: Run dependency vulnerability and license compliance check
+    role: security
+    priority: 0
+    scope: small
+    complexity: medium
+    description: |
+      Audit locked runtime dependencies against current advisories and license
+      policy; flag any unpinned transitive additions.
+  - title: Exercise clean-environment install and rollback path
+    role: qa
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Build the wheel/container from HEAD, run smoke verification in an isolated
+      directory, and test downgrading back to the prior release tag.
+  - title: Assemble release sign-off summary
+    role: manager
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Consolidate gate verdicts, open known limitations, and exact rollback
+      steps into a single release readiness record.

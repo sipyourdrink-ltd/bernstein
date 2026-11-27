@@ -50,6 +50,9 @@ def mount(app: FastAPI) -> None:
         raise RuntimeError(
             f"GUI static assets not found at {STATIC_DIR}. Build them with: `cd web && npm install && npm run build`"
         )
+    if getattr(app.state, "_bernstein_gui_mounted", False):
+        return
+    app.state._bernstein_gui_mounted = True
 
     # Bidirectional parity: register on BOTH the root app AND under /api/v1/.
     # AUDIT-126's ``test_every_v1_route_has_root_counterpart`` asserts every
@@ -77,6 +80,7 @@ def mount(app: FastAPI) -> None:
                     "version": _package_version(),
                     "commit": _git_sha(),
                     "build_time": _build_time(),
+                    "runner_active": _is_runner_active(app),
                 },
             )
 
@@ -185,3 +189,44 @@ def _build_time() -> str:
     import datetime as _dt
 
     return _dt.datetime.fromtimestamp(marker.stat().st_mtime).isoformat(timespec="seconds")
+
+
+def _read_pid_file(path: Path) -> int | None:
+    """Read an integer PID from *path*, returning None if absent or malformed."""
+    if not path.is_file():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+        return int(raw) if raw else None
+    except (OSError, ValueError):
+        return None
+
+
+def _is_pid_alive(pid: int | None) -> bool:
+    """Return True when *pid* corresponds to a running process."""
+    if pid is None or pid <= 0:
+        return False
+    try:
+        from bernstein.core.config.platform_compat import process_alive
+    except ImportError:  # pragma: no cover - minimal GUI wheel without core
+        import os
+
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    return process_alive(pid)
+
+
+def _is_runner_active(app: FastAPI) -> bool:
+    """Return True when an active task runner is attached to *app*."""
+    if bool(getattr(app.state, "readonly", False)):
+        return False
+    explicit = getattr(app.state, "runner_active", None)
+    if isinstance(explicit, bool):
+        return explicit
+    sdd_dir = getattr(app.state, "sdd_dir", None)
+    if not isinstance(sdd_dir, Path):
+        return False
+    return _is_pid_alive(_read_pid_file(sdd_dir / "runtime" / "spawner.pid"))

@@ -23,6 +23,13 @@ class TriggerEvent:
 
 (`src/bernstein/core/tasks/models.py`)
 
+`TriggerSource` is the Python protocol defined in
+`src/bernstein/core/trigger_sources/__init__.py`. Its
+`TriggerSource.normalize(self, raw_event: dict[str, Any]) -> TriggerEvent`
+method accepts a raw-event mapping and returns a normalized `TriggerEvent`.
+Normalization does not create a task; task creation is the caller's
+responsibility through one of the paths below.
+
 ## Two independent paths from event to task
 
 Bernstein does not route every event through one central dispatcher. Two
@@ -72,6 +79,18 @@ matches an incoming `TriggerEvent` against each enabled rule's `source` and
 (`cooldown_s`, `max_retries`, dedup, and more), and a default excluded-sender
 list (`bernstein[bot]`, `github-actions[bot]`), then returns task payloads
 for the caller to submit.
+
+### GitLab task routing
+
+After GitLab authentication and event mapping, `POST /webhooks/gitlab`
+applies the first matching `source: gitlab_webhook` rule before creating
+tasks. Use `filters.events` for event kinds such as `pipeline` or
+`merge_request` and `filters.branches` for branch globs. The GitLab mapper
+still determines task content. With no matching rule, the existing mapper
+behavior applies. Matching rules use the same cooldown and deduplication
+gate as GitHub push handling, scoped to the GitLab request tenant. Both created and suppressed deliveries
+appear in trigger history. A delivery with a reserved deduplication key and
+no confirmed task outcome receives HTTP 503.
 
 ## CLI
 

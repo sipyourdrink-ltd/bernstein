@@ -109,6 +109,20 @@ class TestGenerateManPage:
         assert "longer description" in page
 
 
+def test_root_man_page_uses_the_command_name_once() -> None:
+    group = click.Group("bernstein", help="Project commands.")
+    group.add_command(click.Command("status", help="Show status."))
+    pages = generate_all_man_pages(group)
+
+    root = pages["bernstein"].splitlines()
+    assert root[0].split()[:3] == [".TH", "BERNSTEIN", "1"]
+    assert root[1:3] == [".SH NAME", r"bernstein \- Project commands"]
+
+    status = pages["status"].splitlines()
+    assert status[0].split()[:3] == [".TH", "BERNSTEIN-STATUS", "1"]
+    assert status[1:3] == [".SH NAME", r"bernstein\-status \- Show status"]
+
+
 class TestGenerateAllManPages:
     """Tests for generate_all_man_pages()."""
 

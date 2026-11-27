@@ -26,7 +26,7 @@ from bernstein.core.tasks.models import Task
 SIGNALS = {
     "path_exists": "report.txt",
     "glob_exists": "reports/*.txt",
-    "test_passes": "pytest -q",
+    "test_passes": "unit",
     "file_contains": "report.txt :: ready",
     "llm_review": "Review the result",
     "llm_judge": "Judge the result",
@@ -119,6 +119,7 @@ async def test_existing_native_gate_survives_real_task_wire_and_store(
     # This issue concerns the native signal contract, with the same no-auth
     # setting as the suite's autouse API fixture. Exercise the actual route.
     monkeypatch.setenv("BERNSTEIN_AUTH_DISABLED", "1")
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"unit":["pytest","-q"]}')
     app = create_app(jsonl_path=tmp_path / ".sdd/runtime/tasks.jsonl")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
         identifier = await _post_task_to_server(client, "http://local-fixture", task)

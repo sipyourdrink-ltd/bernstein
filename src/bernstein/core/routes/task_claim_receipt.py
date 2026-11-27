@@ -122,6 +122,13 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
     if request.app.state.draining:  # type: ignore[attr-defined]
         raise HTTPException(status_code=503, detail="Server is draining -- no new claims accepted")
 
+    store = _get_store(request)
+    if store.claim_admission_controlled:
+        # This endpoint's legacy JSON backlog mutates outside the TaskStore
+        # lock. Until that consumer is enrolled, refuse the complete endpoint
+        # in controlled mode rather than advertise a bypassable controller.
+        raise HTTPException(status_code=503, detail="Claim receipts are not supported in controlled claim mode")
+
     tenant_id = _resolve_request_tenant_scope(request)
     claimer_id = _checked_claim_session(body.claimer_id)
     assert claimer_id is not None

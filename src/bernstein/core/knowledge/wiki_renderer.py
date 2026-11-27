@@ -56,11 +56,11 @@ def _is_public_symbol(node: SymbolNode) -> bool:
 
 
 def _top_level_dir(path: str) -> str:
-    """Return the first path segment, excluding ``src/`` packaging shims."""
+    """Return the first path segment, omitting ``src/`` around package directories."""
     parts = path.split("/")
-    if parts and parts[0] == "src" and len(parts) > 1:
+    if parts[0] == "src" and len(parts) > 2:
         return parts[1]
-    return parts[0] if parts else ""
+    return parts[0]
 
 
 def _package_for_file(path: str) -> str:
@@ -112,12 +112,12 @@ def _collect_packages(graph: SemanticGraph) -> dict[str, list[SymbolNode]]:
 
 
 def _collect_test_dirs(files: Iterable[str]) -> list[str]:
-    """Distinct directories under ``tests/`` containing test files."""
+    """Distinct directories containing test files, including the repository root."""
     seen: set[str] = set()
     for path in files:
         if not _is_test_file(path):
             continue
-        parent = path.rsplit("/", 1)[0]
+        parent = path.rpartition("/")[0] or "."
         seen.add(parent)
     return sorted(seen)[:_MAX_TEST_DIRS]
 
@@ -190,7 +190,10 @@ def _render_test_layout(files: list[str]) -> list[str]:
     dirs = _collect_test_dirs(test_files)
     lines.append(f"- {len(test_files)} test file(s) tracked.")
     for tdir in dirs:
-        count = sum(1 for p in test_files if p.startswith(tdir + "/"))
+        if tdir == ".":
+            count = sum("/" not in p.removeprefix("./") for p in test_files)
+        else:
+            count = sum(1 for p in test_files if p.startswith(tdir + "/"))
         lines.append(f"- `{tdir}/` ({count} file(s))")
     lines.append("")
     return lines

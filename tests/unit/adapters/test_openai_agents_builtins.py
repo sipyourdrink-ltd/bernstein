@@ -24,8 +24,10 @@ These cover the hard conditions the builtins must satisfy:
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,9 +45,6 @@ from bernstein.adapters.openai_agents_builtins import (
     write_file_in_workdir,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 def _sink() -> tuple[list[dict[str, Any]], Any]:
     events: list[dict[str, Any]] = []
@@ -54,6 +53,82 @@ def _sink() -> tuple[list[dict[str, Any]], Any]:
         events.append(event)
 
     return events, emit
+
+
+# The shell-string form of ``run_command`` executes ``/bin/bash -lc`` by
+# design (see the module docstring), so every test that asserts shell
+# semantics requires a POSIX host. On Windows the string form fails closed
+# with a structured error before any shell is consulted.
+SHELL_FORM_POSIX_ONLY = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the shell-string form is /bin/bash -lc, which is POSIX-only by design",
+)
+
+#: Bare name of the running interpreter, for argv-list calls whose point is
+#: "a bare toolchain name resolves and runs", not which interpreter it is.
+#: ``python3`` is not a distinct executable on Windows (the venv ships
+#: ``python.exe`` only), so tests that need a guaranteed-resolvable bare name
+#: use the active interpreter instead of hardcoding one.
+_INTERP_BASENAME = os.path.basename(sys.executable)
+
+
+def _put_interpreter_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the running interpreter resolvable by bare name.
+
+    pytest is invoked as ``sys.executable -m pytest``, which does not
+    activate the venv, so the interpreter's own directory is not necessarily
+    on PATH. ``resolve_command`` rejects absolute argv[0], so a test that
+    must exec the interpreter by bare name puts its directory on PATH first.
+    """
+    monkeypatch.setenv(
+        "PATH",
+        os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "failure", "diagnostic"),
+    [
+        pytest.param(
+            "printf synthetic-sensitive",
+            None,
+            "status=nonzero",
+            marks=SHELL_FORM_POSIX_ONLY,
+        ),
+        ([_INTERP_BASENAME, "synthetic-sensitive"], "timeout", "reason=timeout"),
+        ([_INTERP_BASENAME, "synthetic-sensitive"], "os-error", "error_type=OSError"),
+        (["/synthetic-sensitive"], None, "reason=command_not_allowed"),
+    ],
+)
+def test_command_application_logs_contain_only_metadata(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str | list[str],
+    failure: str | None,
+    diagnostic: str,
+) -> None:
+    from bernstein.adapters import openai_agents_builtins as builtins
+
+    _put_interpreter_on_path(monkeypatch)
+
+    def run(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(argv, 1, stderr=b"synthetic-sensitive")
+        if failure == "os-error":
+            raise OSError("synthetic-sensitive")
+        return subprocess.CompletedProcess(argv, 1, "synthetic-sensitive", "synthetic-sensitive")
+
+    monkeypatch.setattr(builtins, "_run_captured", run)
+    events, emit = _sink()
+    with caplog.at_level("INFO", logger=builtins.__name__):
+        result = run_command_in_workdir(tmp_path, command, emit=emit)
+
+    assert diagnostic in caplog.text
+    assert "synthetic-sensitive" not in caplog.text
+    assert "synthetic-sensitive" in result
+    assert events[0]["type"] == "tool_call"
+    assert events[-1]["type"] == "tool_result"
 
 
 class TestPathConfinement:
@@ -167,9 +242,21 @@ class TestRunCommandNoShell:
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0]
         assert stdout == "*.txt"
 
-    def test_runs_in_workdir(self, tmp_path: Path) -> None:
+    def test_runs_in_workdir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ``pwd`` cannot be the probe for the child's cwd: the ``pwd`` that
+        # resolves on the windows-latest runner is the MSYS2 build Git for
+        # Windows ships, and it prints a POSIX-style path (``/c/Users/...``)
+        # rather than the resolved Windows path asserted here - the same
+        # self-measuring helper problem #3000 fixed for the glob test.
+        # CPython's ``os.getcwd()`` reports the directory the child was
+        # spawned in on every platform.
+        _put_interpreter_on_path(monkeypatch)
         _events, emit = _sink()
-        out = run_command_in_workdir(tmp_path, ["pwd"], emit=emit)
+        out = run_command_in_workdir(
+            tmp_path,
+            [_INTERP_BASENAME, "-c", "import os; print(os.getcwd())"],
+            emit=emit,
+        )
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == str(tmp_path.resolve())
 
@@ -186,8 +273,15 @@ class TestRunCommandShellString:
     manager prompt asks the agent to resolve ``$(cat <token-file>)`` and
     ``$BERNSTEIN_AUTH_TOKEN`` into an Authorization header. Both require
     shell substitution; an argv-list call (``shell=False``) cannot do this.
+
+    Every test here that asserts actual shell semantics is skipped on
+    Windows: the string form executes ``/bin/bash -lc`` by design, and that
+    interpreter does not exist there (the call fails closed with a
+    structured error instead). The pure input-validation test and the
+    argv-list cross-checks in this class stay running on every host.
     """
 
+    @SHELL_FORM_POSIX_ONLY
     def test_command_substitution_resolves(self, tmp_path: Path) -> None:
         token_file = tmp_path / "manager.token"
         token_file.write_text("secret-token-value")
@@ -200,6 +294,7 @@ class TestRunCommandShellString:
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == "Bearer secret-token-value"
 
+    @SHELL_FORM_POSIX_ONLY
     def test_env_var_fallback_resolves(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "env-fallback-token")
         _events, emit = _sink()
@@ -207,24 +302,28 @@ class TestRunCommandShellString:
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == "Bearer env-fallback-token"
 
+    @SHELL_FORM_POSIX_ONLY
     def test_arithmetic_substitution(self, tmp_path: Path) -> None:
         _events, emit = _sink()
         out = run_command_in_workdir(tmp_path, "echo $((2+2))", emit=emit)
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == "4"
 
+    @SHELL_FORM_POSIX_ONLY
     def test_pipe_works(self, tmp_path: Path) -> None:
         _events, emit = _sink()
         out = run_command_in_workdir(tmp_path, "echo hello | tr a-z A-Z", emit=emit)
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == "HELLO"
 
+    @SHELL_FORM_POSIX_ONLY
     def test_runs_in_workdir(self, tmp_path: Path) -> None:
         _events, emit = _sink()
         out = run_command_in_workdir(tmp_path, "pwd", emit=emit)
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == str(tmp_path.resolve())
 
+    @SHELL_FORM_POSIX_ONLY
     def test_nonzero_exit_surfaces_stderr(self, tmp_path: Path) -> None:
         _events, emit = _sink()
         out = run_command_in_workdir(
@@ -241,6 +340,7 @@ class TestRunCommandShellString:
         out = run_command_in_workdir(tmp_path, "   ", emit=emit)
         assert out.startswith("error:")
 
+    @SHELL_FORM_POSIX_ONLY
     def test_shell_string_form_was_never_subject_to_the_denylist(self, tmp_path: Path) -> None:
         # Finding: the shell-string form builds exec_argv as
         # ["/bin/bash", "-lc", <string>] directly - "/bin/bash" never passes
@@ -270,6 +370,7 @@ class TestRunCommandShellString:
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == "hello"
 
+    @SHELL_FORM_POSIX_ONLY
     def test_background_job_does_not_hang_the_call(self, tmp_path: Path) -> None:
         """A backgrounded job (heartbeat-loop shape) must not block the tool call.
 
@@ -297,6 +398,7 @@ class TestRunCommandShellString:
         assert stdout == "started"
         assert elapsed < 10, f"run_command took {elapsed:.1f}s - background job blocked the call"
 
+    @SHELL_FORM_POSIX_ONLY
     def test_heartbeat_loop_shape_does_not_hang_the_call(self, tmp_path: Path) -> None:
         """The manager's actual heartbeat-loop shape must return promptly.
 
@@ -353,6 +455,7 @@ class TestRunCommandShellString:
                     pass
             subprocess.run(["pkill", "-f", marker], check=False)
 
+    @SHELL_FORM_POSIX_ONLY
     def test_normal_foreground_output_capture_unaffected(self, tmp_path: Path) -> None:
         """File-backed capture must preserve exact stdout/stderr for normal calls."""
         _events, emit = _sink()
@@ -412,9 +515,15 @@ class TestRunCommandArgvRestriction:
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == "bash-ok"
 
-    def test_bare_python3_argv0_allowed(self, tmp_path: Path) -> None:
+    def test_bare_python3_argv0_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The regression family is "bare standard-toolchain interpreter names
+        # resolve and run", not the literal string "python3" - which is not a
+        # distinct executable on Windows (the venv ships ``python.exe``
+        # only). Run the active interpreter under its own bare name so the
+        # contract is exercised on every host.
+        _put_interpreter_on_path(monkeypatch)
         _events, emit = _sink()
-        out = run_command_in_workdir(tmp_path, ["python3", "-c", "print(1)"], emit=emit)
+        out = run_command_in_workdir(tmp_path, [_INTERP_BASENAME, "-c", "print(1)"], emit=emit)
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
         assert stdout == "1"
 
@@ -441,7 +550,10 @@ class TestRunCommandArgvRestriction:
 
     def test_resolve_command_returns_absolute_path(self) -> None:
         resolved = resolve_command("echo")
-        assert resolved.startswith("/")
+        # ``Path.is_absolute()`` in the host flavour: ``/usr/bin/echo`` on
+        # POSIX, ``C:\...\echo.EXE`` on Windows. A literal ``"/"`` prefix
+        # would assert the POSIX rendering on hosts that do not produce it.
+        assert Path(resolved).is_absolute()
         assert resolved.endswith("echo") or "echo" in resolved
 
     def test_resolve_command_rejects_unresolvable(self) -> None:
@@ -570,6 +682,7 @@ class TestRunCommandDuplicateSuppression:
         yield
         mod._recent_invocations.clear()
 
+    @SHELL_FORM_POSIX_ONLY
     def test_single_shell_string_executes_exactly_once(self, tmp_path: Path) -> None:
         _events, emit = _sink()
         run_command_in_workdir(tmp_path, "echo run >> marker.txt", emit=emit)
@@ -580,6 +693,7 @@ class TestRunCommandDuplicateSuppression:
         run_command_in_workdir(tmp_path, ["bash", "-c", "echo run >> marker.txt"], emit=emit)
         assert (tmp_path / "marker.txt").read_text().count("run") == 1
 
+    @SHELL_FORM_POSIX_ONLY
     def test_duplicate_shell_string_executes_exactly_once(self, tmp_path: Path) -> None:
         events, emit = _sink()
         first = run_command_in_workdir(tmp_path, "echo run >> marker.txt", emit=emit)
@@ -600,6 +714,7 @@ class TestRunCommandDuplicateSuppression:
         results = [e for e in events if e["type"] == "tool_result"]
         assert results[1].get("deduped") is True
 
+    @SHELL_FORM_POSIX_ONLY
     def test_distinct_commands_both_execute(self, tmp_path: Path) -> None:
         _events, emit = _sink()
         run_command_in_workdir(tmp_path, "echo a >> marker.txt", emit=emit)
@@ -608,6 +723,7 @@ class TestRunCommandDuplicateSuppression:
         assert "a" in text
         assert "b" in text
 
+    @SHELL_FORM_POSIX_ONLY
     def test_window_zero_disables_suppression(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BERNSTEIN_RUN_COMMAND_DEDUPE_WINDOW_S", "0")
         _events, emit = _sink()

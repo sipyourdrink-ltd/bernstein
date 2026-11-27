@@ -1,24 +1,23 @@
 """Benchmark for TaskStore performance and persistence latency."""
 
 import asyncio
-import shutil
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 
 from bernstein.core.task_store import TaskStore
 
 
-async def run_benchmark():
-    test_dir = Path("bench_workdir")
-    if test_dir.exists():
-        shutil.rmtree(test_dir)
-    test_dir.mkdir()
+async def run_benchmark() -> None:
+    with TemporaryDirectory(prefix="bernstein-task-store-") as directory:
+        root = Path(directory)
+        store = TaskStore(jsonl_path=root / "runtime" / "tasks.jsonl", archive_path=root / "archive" / "tasks.jsonl")
+        await _measure_store(store)
 
-    jsonl_path = test_dir / "tasks.jsonl"
-    store = TaskStore(jsonl_path=jsonl_path)
 
+async def _measure_store(store: TaskStore) -> None:
     num_tasks = 1000
 
     print(f"Benchmarking {num_tasks} task operations...")
@@ -79,8 +78,6 @@ async def run_benchmark():
     await store.create(req)  # This triggers flush
     flush_duration = time.perf_counter() - start_time
     print(f"  Flush Latency (buffer size {store._BUFFER_MAX}): {flush_duration * 1000:.2f} ms")
-
-    shutil.rmtree(test_dir)
 
 
 if __name__ == "__main__":

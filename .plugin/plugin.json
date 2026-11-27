@@ -1,7 +1,7 @@
 {
   "name": "bernstein",
-  "version": "3.24.1",
-  "description": "The open-source governance layer for AI agents. Spawn parallel agents in per-task git worktrees, verify their work, and merge results; no model in the coordination loop, so replaying a plan reproduces its task graph byte-identically.",
+  "version": "4.0.2",
+  "description": "An open-source governance layer for AI agents. Spawn parallel agents in per-task git worktrees, verify their work, and merge results; no model in the coordination loop, so replaying a plan reproduces its task graph byte-identically.",
   "author": {
     "name": "chernistry",
     "url": "https://github.com/chernistry"

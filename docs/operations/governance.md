@@ -90,6 +90,11 @@ recomputes offline from `.sdd` alone.
 
 ## Verifying a dropped receipt
 
+In the web UI, open **Governance** and choose or drop a file under
+**Verify a receipt**. Confirm the selected filename and select **Verify
+receipt** to send the original bytes to the server. A successful check shows
+the integrity-only tier and its trust caveat beside the verdict.
+
 ```
 POST /governance/verify-receipt
 ```
@@ -110,19 +115,18 @@ installation serving it.
 | `divergent_step` | The first divergent journal step, when journal tamper was located. |
 
 The tier is always `integrity-only` because the signature is checked against
-the key embedded in the receipt: that proves the file is internally consistent
-and that no byte changed after signing, not who produced it. Provenance
-requires the operator's key out of band —
-`bernstein verify receipt <file> --public-key <pem>` — and no key can be pinned
-through the endpoint, because a key arriving in the same request as the receipt
-is the same channel rather than an independent anchor.
+the key embedded in the receipt. The verifier checks the canonical signed
+contents. JSON formatting such as trailing whitespace can change without
+affecting the result. To check who signed the receipt, obtain the operator's
+public key separately and use `bernstein verify receipt <file> --public-key
+<pem>`. The endpoint uses only the embedded key.
 
 A receipt that does not verify is answered with `200` and a failing verdict.
 The result is a statement about the evidence, not a failed request.
 
 ## Guarantees
 
-- **Verifiability** - `bernstein governance verify <run>` re-resolves and
+- **Verifiability** - `bernstein govern verify <run>` re-resolves and
   re-projects every recorded access and budget decision from the presented
   bindings and ledger and confirms the recorded verdicts. Any single-byte tamper
   to a record, the bindings, or the spine fails the check.
@@ -136,7 +140,7 @@ The result is a statement about the evidence, not a failed request.
 ## CLI
 
 ```
-bernstein governance verify <run> --bindings bindings.json [--ledger ledger.jsonl]
+bernstein govern verify <run> --bindings bindings.json [--ledger ledger.jsonl]
 ```
 
 Exit codes: `0` verified, `1` no records / bad input, `2` mismatch.
@@ -148,6 +152,22 @@ event, so an operator can confirm from the chain alone that a decision bound the
 claimed inputs to a named spine entry.
 
 ## `govern audit-compliance`: what this install can and cannot show
+
+The main audit runner exposes the same 23 policy-library observations:
+
+```sh
+bernstein govern audit --only CMP --json
+bernstein govern audit --only CMP --profile soc2 --json
+bernstein govern audit --list --only CMP
+```
+
+CMP checks are opt-in, like installation checks, so adding this catalogue does
+not change the default workspace audit gate. `--profile` defaults to selecting
+CMP when no `--only` is given and marks required IDs with `required` in JSON or
+an asterisk in text. Supported profiles are `soc2`, `iso27001`, `pci_dss`,
+`nist_800_53`, `hipaa` and `gdpr`, using the existing library mappings; selection
+does not assert conformance. Unknown profiles are rejected before execution.
+The older `audit-compliance` command remains available.
 
 ```
 bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip CMP-014]
@@ -189,6 +209,66 @@ is by misreading the same library result.
 
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
+
+## `govern audit`: machine-readable output and CI gates
+
+```bash
+bernstein govern audit --format json
+bernstein govern audit --format sarif --strict
+bernstein govern audit --quiet --strict
+```
+
+`--format text` is the default. JSON is an array with one object per finding,
+including every `Finding` field and its `id` alias: `check_id`, `verdict`,
+`evidence` (locator and SHA-256 pairs), `what_would_make_it_measurable`, `reason`,
+`message`, `summary`, `remediation`, `area`, and `passed`.
+The existing `--json` and `--json-output` flags remain aliases for JSON output
+and may be combined with `--format json` or the default text format.
+Combining either alias with `--format sarif`, or using `--list --format sarif`,
+is a usage error. `doctor --json` uses the
+same complete finding objects in its `findings` array.
+
+SARIF 2.1.0 includes one rule per check ID and one result per finding, with
+`ruleId = finding.id`, a matching `ruleIndex`, and finding fields in
+`properties`. Evidence retains its SHA-256 hashes but omits source locators,
+and absolute local paths in diagnostic text are redacted. Each result has a
+physical location: a file reported by the check's evidence within the workspace,
+or the workspace's root `bernstein.yaml` / `bernstein.yml`
+configuration for workspace-level evidence. When configuration is missing,
+the location identifies the expected `bernstein.yaml`. Repository paths are
+relative, URI-encoded paths; reported files outside the workspace fall back to
+the root configuration. For code-scanning uploads, run the command from the
+repository root and keep `--workdir` at that root so relative paths resolve
+against the checkout correctly. SARIF never includes absolute local paths or
+file URIs.
+Passing results have `kind: pass` and `level: none`, so they are not code-scanning
+findings. Failures have `kind: fail` and `level: error`; unmeasurable results
+have `kind: review` and `level: none`, with the unmeasurable reason in the
+message; declarations are informational with
+`level: none`. `properties.kind` carries `measured`, `declared`, or
+`not_measurable`; legacy `pass`/`fail` verdicts map to `measured` there, while
+the original verdict and `passed` remain available. An offline JSON Schema
+profile tests the emitted SARIF 2.1.0 subset, including rules and locations;
+validation never fetches the `$schema` URL.
+
+All checks selected by `--only` and `--skip` are required for this gate.
+
+| Exit | Condition |
+|---|---|
+| `0` | At least one check ran, all selected measured checks passed, and none was unmeasurable; or a valid `--list` invocation completed. |
+| `1` | A selected check failed or crashed, a measured result had no explicit pass, no checks matched, or a check was unmeasurable without `--strict`. Unexpected tool exceptions also exit `1`. |
+| `2` | With `--strict`, a selected check is `not_measurable`, and no check failed or crashed. Click usage errors also exit `2`, such as an unknown format, nonexistent workdir, or incompatible output flags. |
+
+Declared findings never affect the exit code. Failures and crashes take
+precedence over strict incompleteness. As on `main`, unmeasurable checks fail
+the default gate; `--strict` distinguishes missing prerequisites with code `2`
+without reclassifying check crashes. The registry still reports a crashed
+check as `not_measurable` and continues the remaining checks.
+
+`--quiet` suppresses the report and registry crash warnings in every format,
+including empty selections and `--list`. It preserves sentinel journaling and
+notification dispatch. CLI usage diagnostics still go to stderr. `--list` does
+not execute checks and exits `0`.
 
 ## `govern audit --only duplication`: duplicate implementations in this install
 
@@ -233,8 +313,9 @@ Other checks still run normally. The command exits `1` for the injected failure.
 The check is listed by `--list`, but is omitted from default runs when inactive.
 `--only sentinel` can inspect its inactive, passing state explicitly.
 
-An active sentinel always prints its name and check ID to stderr, including
-when `--only` or `--skip` excludes the check; JSON on stdout remains parseable.
+An active sentinel prints its name and check ID to stderr unless `--quiet` is
+set, including when `--only` or `--skip` excludes the check; JSON on stdout
+remains parseable. Quiet mode still records and notifies an executed sentinel.
 When the failure is raised, the run is persisted as one chain-anchored
 `AuditReport` under `.sdd/lineage/govern-audit/reports/` before one notification
 event is dispatched. The existing notification bridge handles delivery, retries
@@ -352,6 +433,36 @@ unchanged environment reports nothing. By default only drifted entities print;
 
 Exit codes: `0` no drift, `1` unreadable desired state, `2` drift.
 
+### Repeating and resuming a reviewed reconcile diff
+
+The library helper `bernstein.core.govern.reconcile.apply_reconcile_diff`
+consumes a `ReconcileDiff`, a `ChangeReceipt` context template, and trusted
+callbacks for whole-diff authorization, fresh observation and applying one
+entry. It has no built-in environment mutator and does not change the
+read-only `govern reconcile --propose` CLI. The authorizer must approve the
+entire diff under the template's effective policy digest before any callback
+can mutate state, including any separate approval required for removals.
+
+Each attempt uses the existing kind-qualified entity/desired-value key.
+Policy changes do not rewrite that intent identity: authorization is a
+separate input and previous receipts must match the exact plan, policy,
+environment and approver. The template's plan digest is the canonical digest
+of `diff.to_dict()`; its timestamp is supplied by the caller.
+
+A matching fresh value produces a `skipped` attempt without calling the
+mutator. An unread entity is unavailable; only explicitly confirmed absence
+can satisfy a removal. Fresh unsatisfied drift that differs from the reviewed
+observation fails rather than overwriting a changed target. The first failure
+stops the loop, so never-attempted entries have no attempt in that receipt.
+
+For partial resume, supply the trusted in-process prior `ChangeReceipt`.
+Prior successful or satisfied entries are recorded as skips; failed and
+never-attempted entries are reconsidered. Loading an external receipt requires
+shared-protocol envelope verification and independent signer trust before
+passing its data to this helper. A new diff is required for later drift or a
+changed policy context. Existing `govern apply` admission and receipt
+verification remain separate; an idempotency key is never approval.
+
 ## Skip vs. suppress
 
 `bernstein govern audit-compliance` is the compliance check set above. The check
@@ -386,3 +497,8 @@ window.
 
 For `--skip` (check exclusion), see the audit check contract defined in
 issue #5072.
+
+CMP execution errors use the shared audit error handling: the failed control
+remains in the report, remaining controls still run, and `--strict` returns 1
+for the crash. Exit 2 is reserved for missing prerequisites without a failure
+or crash.

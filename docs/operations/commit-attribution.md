@@ -24,8 +24,31 @@ The top-level `bernstein commit-stats` alias was removed in v4.0.0 (#3472).
 | `--repo-dir PATH` | `.` | Repository to run `git log` against. |
 | `--json` | off | Print `CommitStatsResult.to_dict()` instead of a Rich table. |
 
-Output is a table with one row per role, plus a totals row: commit count,
-lines added, lines deleted.
+The table has one row per role, plus a totals row for commits, lines added, and
+lines deleted. JSON has stable per-role counters under `roles`, top-level
+`total_commits`, `total_lines_added`, and `total_lines_deleted` counters, and an
+`error` field (`null` on success, otherwise the error message). For example, a
+successful report with one role can look like:
+
+```json
+{
+  "roles": {
+    "backend": {"commits": 4, "lines_added": 120, "lines_deleted": 17}
+  },
+  "total_commits": 4,
+  "total_lines_added": 120,
+  "total_lines_deleted": 17,
+  "error": null
+}
+```
+
+Each role's `commits` is its commit count; `lines_added` and `lines_deleted`
+are its line-churn counts. `total_lines_added` and `total_lines_deleted` sum
+churn across roles. The report uses a separate history query for commit counts.
+In mixed history, check `total_commits` for the overall count. Versions that
+build the role list from line-count rows can omit roles with no such rows and
+report an empty result for a selection containing only empty commits. On failure, the JSON result has the same
+fields and puts the message in `error`.
 
 ## How role is determined
 
@@ -38,10 +61,13 @@ keywords:
 backend, frontend, qa, security, devops, docs, manager, architect
 ```
 
-The first keyword found in the author string becomes that commit's role. If
-none match, the role label is the full lowercased author string (so a human
-contributor's commits show up under their own name/email rather than being
-dropped).
+The author string is lowercased, then the keywords are checked in the fixed
+order shown above; the first matching keyword in that order wins, regardless
+of where it appears in the string. For example, `manager backend-bot
+<backend@example.com>` maps to `backend`, because `backend` precedes `manager`
+in the keyword list. If no keyword matches, the full lowercased author string
+is the role label. For example, `Alice Developer <alice@example.com>` maps to
+`alice developer <alice@example.com>`.
 
 Practical effect: this only produces meaningful role buckets when agent
 commits carry a role-tagged author identity (for example
@@ -53,23 +79,30 @@ does not distinguish humans from agents.
 
 ## Data source
 
-Two `git log` invocations against `--repo-dir` (default: the current
-directory):
+The report uses these `git log` queries. Both use the same `--repo-dir`
+(default: the current directory) and receive the same `--since` and `--until`
+filters when supplied:
 
 1. `git log --numstat --format=%an <%ae> --date=short` — line-level added/
    deleted counts per commit, attributed by author.
-2. `git log --format=%an <%ae>` — a plain commit count per author.
+2. `git log --format=%an <%ae>` — a plain commit count per author. Versions
+   that return an empty report when no line-count rows are found skip this query
+   in that case.
 
-Both respect `--since`/`--until` when given. If `git` is not installed or the
+Thus the report's date range and repository selection apply to both its line-
+churn query and its commit-count query. If `git` is not installed or the
 directory is not a repository, the command exits non-zero and prints the
 underlying error (or the `error` field, in `--json` mode).
 
 ## Also surfaced in `bernstein doctor`
 
-`bernstein doctor` runs the same `collect_commit_stats()` call (unfiltered by
-date) as one of its checks, labelled **Commit attribution**. It reports
-`{total commits}: {role}: {commits} commits, +{added}/-{deleted}` per role for
-info, or the underlying git error if the check fails.
+`bernstein doctor` runs the same `collect_commit_stats()` check in the current
+working directory with no date filters. The report's `--since`, `--until`, and
+`--repo-dir` options do not apply to this check. Its summary starts with
+`{total_commits} commits:` and lists comma-separated role entries of the form
+`{role}: {commits} commits, +{added}/-{deleted}`. When no role rows are available,
+it reports `no commits found in this repository`. On failure it displays the
+underlying Git error.
 
 ## Limitations
 
@@ -85,5 +118,5 @@ info, or the underlying git error if the check fails.
 - `src/bernstein/cli/commit_stats.py` — `collect_commit_stats`,
   `_author_to_role`, `render_commit_stats`
 - `src/bernstein/cli/commands/status_cmd.py` — `commit_stats_cmd` (`bernstein
-  commit-stats`), `_doctor_check_commit_attribution` (`bernstein doctor`
+  report commits`), `_doctor_check_commit_attribution` (`bernstein doctor`
   integration)

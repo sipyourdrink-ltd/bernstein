@@ -351,7 +351,9 @@ def test_crashed_orchestrator_whose_pidfile_was_cleaned_is_still_restarted(
     assert _restart_calls(pid=pid, liveness=liveness) == [1], "a crash with its pidfile intact must restart"
 
     checks: list[dict[str, Any]] = []
-    _fix_stale_pids(_doctor_check_stale_pids(checks, tmp_path), [])
+    stale_pid_paths: list[Path] = []
+    _doctor_check_stale_pids(checks, tmp_path, stale_pid_paths=stale_pid_paths)
+    _fix_stale_pids(stale_pid_paths, [])
     assert not pidfile.exists(), "doctor --fix is expected to have removed the stale pidfile"
 
     liveness, pid = classify_pidfile_liveness(pidfile, expect_cmdline=_markers())

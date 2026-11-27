@@ -323,6 +323,9 @@ def _collect_probe(
             )
             continue
 
+        def collect(collector: ProbeCollector = collector) -> Any | None:
+            return collector(target, probe)
+
         for attempt in range(1, attempts_per_source + 1):
             remaining = deadline - clock()
             if remaining <= 0:
@@ -338,7 +341,7 @@ def _collect_probe(
                 )
                 return _unknown_result(target, probe), failures
 
-            outcome = _call_with_timeout(lambda collector=collector: collector(target, probe), remaining)
+            outcome = _call_with_timeout(collect, remaining)
             if outcome.timed_out:
                 failures.append(
                     ProbeFailure(

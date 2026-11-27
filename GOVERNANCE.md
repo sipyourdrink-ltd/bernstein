@@ -4,22 +4,45 @@ Bernstein is a single-maintainer project. [@chernistry](https://github.com/chern
 holds the final call. This page states how that call gets made, so
 contributors do not have to infer it from the other files.
 
-**How decisions are made.** In the open, in issues and pull requests.
-There is no private channel where a proposal is really decided. The
+**How decisions are made.** A contributor's proposal or pull request is
+decided in its public issue or pull request; there is no private channel
+where it is really decided. The
 maintainer decides and the reasoning goes in the thread next to the
 decision — a "no" that does not say what would change it is an
 incomplete answer. Boundaries already settled live in
 [docs/scope.md](docs/scope.md), each pointing at the
 [decision record](docs/decisions/index.md) behind it.
 
+**Where the maintainer plans.** The maintainer keeps work orders and
+research notes in a private planning tracker and decides there what to
+build next, so most planned work does not appear as a public issue
+before its pull request. Every change lands through a public pull request
+open to review. The [review charter](docs/governance/review-charter.md)
+sets the approval requirements for its author and the paths it touches.
+
+Ordinary bug reports, proposals from
+contributors, the labelled queues in [CONTRIBUTING.md](CONTRIBUTING.md)
+and every issue that someone has claimed or has a pull request for stay
+in the public tracker. Report suspected vulnerabilities privately using
+the channels in [SECURITY.md](SECURITY.md).
+
 **Changes that need an issue first.** Agree on the design before writing
 code when the change touches the public API (CLI commands and flags, HTTP
 endpoints, the adapter ABC), a schema or on-disk format (`schemas/`,
 `proto/`, the `.sdd/` state layout), or a security boundary (auth, tokens,
 sandboxing, the audit chain, anything in the [SECURITY.md](SECURITY.md)
-in-scope table). State the problem, the option chosen, and what it costs.
-Everything else — bug fixes, docs, tests, a new adapter — goes straight
-to a pull request.
+in-scope table). Before writing code, open a public issue stating the
+problem, the option chosen and what it costs.
+Other changes, including ordinary bug fixes, docs, tests and new adapters,
+go straight to a pull request.
+
+When a fix involves a suspected vulnerability, coordinate it privately
+with the maintainer under [SECURITY.md](SECURITY.md). A public design
+issue can describe the general boundary change while the report and fix
+stay private until disclosure. If even that description would reveal the
+vulnerability, agree on safe wording or a disclosure date in private.
+Implementation of the boundary change starts once the required issue
+can be published safely and is open.
 
 **Becoming a committer or a core reviewer.** Both roles are defined in the
 [review charter](docs/governance/review-charter.md#7-becoming-and-remaining-a-committer),

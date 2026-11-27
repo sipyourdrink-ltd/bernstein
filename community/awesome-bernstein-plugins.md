@@ -1,6 +1,6 @@
 # awesome-bernstein-plugins
 
-> A curated list of plugins, adapters, role templates, and integrations for [Bernstein](https://github.com/sipyourdrink-ltd/bernstein) - the open-source governance layer for AI agents.
+> A curated list of plugins, adapters, role templates, and integrations for [Bernstein](https://github.com/sipyourdrink-ltd/bernstein) - an open-source governance layer for AI agents.
 
 Plugins extend Bernstein without touching core code. They hook into the task and agent lifecycle via [pluggy](https://pluggy.readthedocs.io/) - the same machinery used by pytest. A plugin is a plain Python class. No subclassing. No registration boilerplate.
 
@@ -23,6 +23,7 @@ See [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md) for th
 
 ## Contents
 
+- [bernstein-addons](#bernstein-addons)
 - [Notifiers](#notifiers)
 - [Observability & Metrics](#observability--metrics)
 - [Issue Tracker Sync](#issue-tracker-sync)
@@ -35,6 +36,29 @@ See [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md) for th
 - [Writing a Plugin](#writing-a-plugin)
 - [Publishing a Plugin](#publishing-a-plugin)
 - [Contributing to This List](#contributing-to-this-list)
+
+---
+
+## bernstein-addons
+
+Official companion packages maintained in [sipyourdrink-ltd/bernstein-addons](https://github.com/sipyourdrink-ltd/bernstein-addons):
+
+- [org-kit](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/org-kit) (`bernstein-org-kit`) — starter organization kit across 6 presets (`minimal`, `engineering`, `secops`, `product`, `compliance`, and `full` — up to 36 roles, 16 SOPs, 20 workflows, and 32 scenarios), auto-generated `roles.toml`, deterministic SHA-256 workflow DAG compiler, fail-closed stage runner over Bernstein's native CLI adapters, and an `AGENTS.md` governance hook.
+- [role-pack](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/role-pack) (`bernstein-role-pack`) — records roles and reporting lines, requires acceptance tied to file SHA-256 hashes by a different registered principal with review rights (`role_pack_acceptance` gate), and blocks replaying an unknown task under a new ID.
+- [sandcastle](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/sandcastle) (`bernstein-sandcastle`) — runs isolated task attempts through Sandcastle and records run evidence while leaving merge decisions to Bernstein's gates.
+- [brand-gate](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/brand-gate) (`bernstein-brand-gate`) — opt-in pre-tool domain and URL check backed by `brand-impersonation-detector`, appending validated verdicts to the journal.
+
+Install from a clone of [bernstein-addons](https://github.com/sipyourdrink-ltd/bernstein-addons), following its [README](https://github.com/sipyourdrink-ltd/bernstein-addons/blob/main/README.md#quickstart-role-pack-and-org-kit-demos) and each plugin's README (packages are installed from source rather than PyPI):
+
+```bash
+git clone https://github.com/sipyourdrink-ltd/bernstein-addons.git
+cd bernstein-addons
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install "bernstein>=4.0.1,<5" ./plugins/role-pack ./plugins/org-kit
+bernstein-role-pack demo
+bernstein-org-kit demo
+```
 
 ---
 
@@ -160,13 +184,13 @@ Hook mapping:
 
 ## Quality Gates
 
-Run automated checks after tasks complete. Log results, alert on failure, optionally block the orchestrator.
+Run automated checks on each task's change. Log results, alert on failure, block promotion on failure.
 
 ### Bundled
 
 | Plugin | Description | Install |
 |--------|-------------|---------|
-| `SecurityScanGate` | Runs `bandit` (or any configurable command) after every task completes. Records results to `.sdd/metrics/custom_gates.jsonl`. | `examples.plugins.quality_gate_plugin:SecurityScanGate` |
+| `SecurityScanGate` | Runs `bandit` (or any configurable command) on every task. A failed required scan blocks the task. The runner records results in the project root at `.sdd/runtime/gates/<task_id>.json` and metrics in `.sdd/metrics/quality_gates.jsonl`. | Copy `examples/plugins/quality_gate_plugin.py` to `.bernstein/gates/`, then add `security_scan_cmd` to `quality_gates.pipeline` |
 
 **SecurityScanGate** - configuration:
 
@@ -178,7 +202,7 @@ export BERNSTEIN_SECURITY_CMD="semgrep --config=auto . --quiet"
 export BERNSTEIN_SECURITY_CMD="trivy fs . --exit-code 1 --severity HIGH,CRITICAL"
 ```
 
-**Note**: The plugin gate is a *soft gate* - it records and alerts but does not block the orchestrator. For hard blocking, use `quality_gates:` in `bernstein.yaml`.
+**Note**: `SecurityScanGate` returns `blocked=False` so the pipeline controls blocking. Set `required: false` on the `security_scan_cmd` step in `quality_gates.pipeline` for an advisory scan. The runner keeps its reports and metrics outside the temporary agent worktree. When this example is importable, registering it under `plugins:` emits a migration warning; use `.bernstein/gates/` or `bernstein.gates` and the pipeline instead.
 
 ### Community
 
@@ -329,7 +353,7 @@ Miscellaneous plugins that don't fit the above categories.
 
 | Plugin | Description | Install |
 |--------|-------------|---------|
-| `AdapterPlugin` | Base class for building adapter-style plugins that wrap external CLI tools. | `examples.plugins.adapter_plugin` |
+| `ExampleAgentAdapter` | Example CLI adapter; subclass `bernstein.adapters.base.CLIAdapter` for your own tool. | `examples.plugins.adapter_plugin` |
 | `TriggerPlugin` | Emits lifecycle events to external trigger systems (webhooks, queues). | `examples.plugins.trigger_plugin` |
 | `ReporterPlugin` | Aggregates and formats lifecycle events into structured reports. | `examples.plugins.reporter_plugin` |
 

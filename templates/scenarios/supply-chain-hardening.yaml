@@ -1,0 +1,86 @@
+id: supply-chain-hardening
+name: Software Supply Chain Hardening
+version: "1.0"
+description: |
+  Lift a repository from no supply-chain controls to SLSA Level 2 with a
+  signed-artifact policy, an SBOM-on-every-release pipeline, and verified
+  consumer-side attestation. Targeted at teams that need to satisfy EU
+  Cyber Resilience Act, Executive Order 14028 procurement gates, or
+  enterprise vendor due-diligence questionnaires.
+tags:
+  - supply-chain
+  - security
+  - sbom
+  - slsa
+tasks:
+  - title: Establish the build-platform baseline
+    role: devops
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Lock builds to a hosted CI runner with documented isolation. Confirm
+      the runner does not allow long-lived secrets and that build steps
+      cannot mutate prior steps. This is the SLSA Level 2 prerequisite.
+  - title: Generate SBOMs in CycloneDX and SPDX on every release
+    role: security
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Wire the CI to produce both formats per release artifact. Pin the
+      generator version. Publish SBOMs alongside the release; do not
+      tuck them into a private bucket.
+  - title: Sign every artifact with Sigstore and publish provenance
+    role: security
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      Use cosign with keyless OIDC signing. Attach SLSA build provenance
+      via the GitHub attest-build-provenance action or its GitLab
+      equivalent. Verify the attestation tab populates after each release.
+  - title: Pin every transitive dependency in lockfiles and verify in CI
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Adopt a frozen lockfile policy. Add a CI gate that fails when the
+      lockfile drifts. Document the override path for emergency upgrades.
+  - title: Wire consumer-side verification into deploy pipelines
+    role: devops
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Verify signatures and provenance before any artifact lands in
+      production. Reject unsigned artifacts. Capture verification logs
+      under the audit chain.
+  - title: Publish a security-policy and a vulnerability-disclosure path
+    role: docs
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Add SECURITY.md and a security.txt. Document the disclosure SLA,
+      the contact channel, and the credit policy. Wire to the issue
+      tracker so submissions do not vanish.
+  - title: Achieve OpenSSF Scorecard score above seven
+    role: security
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Add the Scorecard GitHub Action. Address branch-protection,
+      dependency-update tooling, code-review, and pinned-dependencies
+      checks. Publish the badge in the README.
+  - title: Map controls to OSPS Baseline and EO 14028 procurement gates
+    role: security
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Produce a mapping from each implemented control to the OSPS Baseline
+      level and to the relevant EO 14028 procurement requirement. This
+      is the artifact a vendor-due-diligence questionnaire needs.

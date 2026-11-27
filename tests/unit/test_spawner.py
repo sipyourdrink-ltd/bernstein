@@ -847,6 +847,98 @@ class TestSpawnerWithRouter:
 
         assert adapter.spawn.call_count == 1
 
+    def test_spawn_rate_limiter_skips_mock_adapter(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=321)
+        adapter.name.return_value = "mock"
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=60.0))
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            spawn_rate_limiter=limiter,
+            default_model="mock-model",
+        )
+
+        spawner.spawn_for_tasks([make_task()])
+        spawner.spawn_for_tasks([make_task(id="task-002")])
+
+        assert adapter.spawn.call_count == 2
+
+    def test_spawn_rate_limiter_enforced_when_mock_run_routes_to_real_adapter(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        mock_adapter = mock_adapter_factory(pid=321)
+        mock_adapter.name.return_value = "mock"
+        opencode_adapter = mock_adapter_factory(pid=654)
+        opencode_adapter.name.return_value = "opencode"
+        codex_adapter = mock_adapter_factory(pid=987)
+        codex_adapter.name.return_value = "codex"
+
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        # Case 1: per-step Task.cli overrides a mock run-level adapter.
+        cli_limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=60.0))
+        cli_spawner = AgentSpawner(
+            mock_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            spawn_rate_limiter=cli_limiter,
+            default_model="mock-model",
+        )
+        task1 = make_task(id="task-001")
+        task1.cli = "opencode"
+        task2 = make_task(id="task-002")
+        task2.cli = "opencode"
+        with patch.object(cli_spawner, "_get_adapter_by_name", return_value=opencode_adapter):
+            cli_spawner.spawn_for_tasks([task1])
+            with pytest.raises(SpawnError, match="Spawn rate limit exceeded"):
+                cli_spawner.spawn_for_tasks([task2])
+
+        # Case 2: role_model_policy.provider overrides a mock run-level adapter.
+        policy_limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=60.0))
+        policy_spawner = AgentSpawner(
+            mock_adapter,
+            templates_dir,
+            tmp_path,
+            role_model_policy={"qa": {"provider": "codex"}},
+            use_worktrees=False,
+            spawn_rate_limiter=policy_limiter,
+            default_model="mock-model",
+        )
+        qa_task1 = make_task(id="task-003", role="qa")
+        qa_task2 = make_task(id="task-004", role="qa")
+        with patch.object(policy_spawner, "_get_adapter_by_name", return_value=codex_adapter):
+            policy_spawner.spawn_for_tasks([qa_task1])
+            with pytest.raises(SpawnError, match="Spawn rate limit exceeded"):
+                policy_spawner.spawn_for_tasks([qa_task2])
+
+        assert opencode_adapter.spawn.call_count == 1
+        assert codex_adapter.spawn.call_count == 1
+
+    def test_spawn_rate_limiter_tolerates_spawner_bypassing_init(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        adapter = mock_adapter_factory(pid=321)
+        adapter.name.return_value = "claude"
+        spawner = AgentSpawner.__new__(AgentSpawner)
+        spawner._adapter = adapter
+        spawner._default_model = "opus"
+        spawner._role_model_policy = {}
+        spawner._templates_dir = tmp_path / "templates"
+        spawner._workdir = tmp_path
+        spawner._router = None
+        spawner._catalog = None
+        spawner._policy_hook_registry = None
+        spawner._spawn_rate_limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=60.0))
+
+        assert spawner._infer_adapter_name_for_provider(None, "opus") == "claude"
+        assert spawner._infer_adapter_name_for_provider("codex", "mock-model") == "codex"
+
 
 # --- Non-Claude adapter model coercion guard (issue: MiniMax-M3 child tasks) ---
 #

@@ -25,10 +25,51 @@ two shapes so the orchestrator can extract a title and route the task:
 2. **Markdown fields** - a `# ` heading for the title plus optional
    `**Role:**` / `**Priority:**` / `**Scope:**` / `**Complexity:**` lines.
 
-A file that is neither (for example a plain YAML file with no `---` block and
-no `# ` heading) cannot be parsed as a ticket. It is skipped rather than
-spawned, and `bernstein --dry-run` prints a warning naming the file so the
-gap is visible instead of silent.
+### Parsing precedence and defaults
+
+The parser tries frontmatter first. It treats falsey YAML values, such as an
+empty block, `null`, `false`, `0`, an empty string, and an empty list, as an
+empty mapping. If a closed YAML mapping supplies a title or can use a body
+heading, its fields take precedence. Absent optional fields then use defaults:
+role `backend`, priority **2 (normal)**, scope `medium`, and complexity
+`medium`. Markdown metadata lines do not override those defaults.
+
+The parser converts the mapping's `title` value to text and strips surrounding
+whitespace. If the field is omitted or the resulting text is empty, the first
+`# ` heading after the block supplies the title. A null value, including a
+blank `title:` field, becomes the literal title `None` and takes precedence
+over any heading.
+
+For example, this frontmatter produces title **Build the cache** and priority
+**1 (critical)**, even if the body contains another heading or priority line:
+
+```yaml
+---
+title: Build the cache
+priority: 1
+---
+# A different heading
+```
+
+If the frontmatter parser returns no task, the Markdown parser reads the
+whole file. This can happen when frontmatter is absent, unterminated, invalid
+YAML, has a truthy non-mapping value, or has no usable title or body heading.
+The first `# ` heading in the file supplies the title. Omitted or
+unrecognized Markdown priority defaults to **2 (normal)**. For example:
+
+```markdown
+# Document the cache
+
+**Priority:** 3
+```
+
+This fallback produces title **Document the cache** and priority **3
+(nice-to-have)**. Priority values are normalized to the internal 1-3 scale:
+0 or 1 becomes 1, 2 stays 2, and 3 or 4 becomes 3.
+
+If neither parser finds a title, the file is skipped. Look for the warning
+naming the file in `bernstein --dry-run`. Backlog sync logs frontmatter
+declaration errors such as a malformed `artifact_spec`.
 
 ## YAML frontmatter (Ticket Format v1)
 
@@ -91,6 +132,26 @@ For hand-authored multi-task plans, use one checkbox per task:
 | `[P]` | Sets `parallel_safe = true`. Absence keeps the default serial-only behaviour. |
 | `[US<n>]` | Sets `story_id` to the user-story slice. |
 | `-> T###, T###` | Trailing arrow declares inline dependencies. |
+
+### Fenced examples are skipped
+
+The parser reads task rows only from plain checklist lines: rows inside
+fenced code blocks are examples and never enter the DAG, so a plan can
+embed a sample backlog. Fence handling follows Markdown:
+
+- A run of at least three backticks or tildes opens a block, indented up
+  to three spaces (relative to any enclosing list item) and optionally
+  followed by an info string such as `markdown`. A backtick fence whose
+  info string contains a backtick does not open a block; tilde fences
+  open regardless of the info string.
+- The block closes at the first later line carrying the same fence
+  character in a run at least as long, with nothing after it.
+- List items are tracked: under `- ```markdown` the indented closing
+  fence ends the block, and the real tasks below it are selected
+  normally. The same holds when items nest on one line (`- -
+  ```markdown`): the opener is recognised relative to the innermost
+  item. A fence that is never closed ends at the boundary of its
+  enclosing list item, so sibling tasks below it are still selected.
 
 ## Scheduler behaviour
 

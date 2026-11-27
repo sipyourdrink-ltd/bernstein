@@ -144,7 +144,7 @@ Source of truth for this group is `src/bernstein/gui/` (FastAPI + SPA), `web/`
 
 ## Data-freshness drift (time-stamped metrics)
 
-Some docs include time-stamped factual metrics (stars, downloads, dates) that
+Some docs include time-stamped factual metrics (stars, dates) that
 grow stale even when the code does not change. These lines look like
 `as of YYYY-MM-DD: ...` or `(YYYY-MM-DD)` in a table heading. The drift gate
 here is purely temporal: the underlying numbers were correct on the recorded
@@ -160,7 +160,7 @@ The current inventory is:
 
 | File | Stale-prone substring shape | Data source | Refresh command |
 |------|-----------------------------|-------------|-----------------|
-| `README.md` (intro line) | `as of YYYY-MM-DD: N stars, N forks, ~N pypi downloads/day (~Nk/month)` | GitHub API, PyPI | `gh api repos/sipyourdrink-ltd/bernstein --jq '{stargazers_count, forks_count}'` and `curl -sS https://pypistats.org/api/packages/bernstein/recent \| jq .data` |
+| `README.md` (intro line) | `as of YYYY-MM-DD: N stars, N forks` | GitHub API | `gh api repos/sipyourdrink-ltd/bernstein --jq '{stargazers_count, forks_count}'` |
 | `README.md` (regulatory anchors) | `### regulatory anchors (as of YYYY-MM-DD)` | Regulator publications | Manual review of cited regulations |
 
 ### Refresh commands
@@ -169,7 +169,6 @@ For the README intro stats line:
 
 ```bash
 gh api repos/sipyourdrink-ltd/bernstein --jq '{stargazers_count, forks_count}'
-curl -sS https://pypistats.org/api/packages/bernstein/recent | jq .data
 ```
 
 ### Staleness policy

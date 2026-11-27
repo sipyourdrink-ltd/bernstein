@@ -1,0 +1,68 @@
+id: market-scan
+name: Market Scan
+version: "1.0"
+description: |
+  Map the live competitive landscape for a product category. Captures
+  named competitors, recent funding events, public roadmap signals, and
+  customer reviews into a single living dossier the team can refer to
+  during planning and pitch preparation.
+tags:
+  - research
+  - market
+  - competitive
+tasks:
+  - title: Enumerate competitors by direct, adjacent, and emerging tier
+    role: docs
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Direct competitors solve the same problem the same way. Adjacent
+      competitors solve the same problem differently. Emerging entrants
+      cover the same problem at a smaller scale. Tag each entry so the
+      dossier is sortable.
+  - title: Pull recent funding, hiring, and product-launch signals
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      For each competitor, capture funding events in the last twelve
+      months, hiring patterns by function, and product launches in the
+      last six months. Cite each data point.
+  - title: Sample customer reviews and public discussion
+    role: docs
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      For each competitor, pull representative reviews from G2, Capterra,
+      Hacker News threads, and dev community channels. Note the most
+      common praise and the most common complaint.
+  - title: Build a feature-by-feature comparison matrix
+    role: architect
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Pick the ten most decision-relevant features. Score each competitor
+      against them based on cited evidence. Refuse to score from marketing
+      copy alone; quote the source for every cell.
+  - title: Highlight the top three differentiation opportunities
+    role: manager
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      Identify gaps the competitor set leaves open. Each opportunity
+      has a one-paragraph thesis, the cited evidence, and a falsifier
+      that would invalidate the thesis.
+  - title: Schedule the next refresh and assign owners
+    role: manager
+    priority: 3
+    scope: small
+    complexity: low
+    description: |
+      Market scans rot fast. Pick a refresh cadence (sixty or ninety
+      days). Assign per-competitor owners. The dossier is a living
+      artifact, not a one-time report.

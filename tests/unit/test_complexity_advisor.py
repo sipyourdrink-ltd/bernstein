@@ -123,6 +123,30 @@ def test_one_way_import_half_coupling(tmp_path: Path) -> None:
     assert score == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize(
+    ("right_path", "left_import", "right_import", "expected"),
+    [
+        ("pkg/right.py", "from . import right", "from . import left", 1.0),
+        ("pkg/right.py", "from . import missing, right as sibling", "", 0.5),
+        ("other/right.py", "from . import right", "", 0.0),
+        ("pkg/right/__init__.py", "from . import right", "", 0.5),
+        ("pkg/right.py", "from . import left", "", 0.0),
+    ],
+    ids=["mutual", "one-way", "different-package", "sibling-package", "self-import"],
+)
+def test_coupling_counts_relative_sibling_imports(
+    tmp_path: Path, right_path: str, left_import: str, right_import: str, expected: float
+) -> None:
+    files = {"pkg/left.py": left_import, right_path: right_import}
+    for filename, source in files.items():
+        path = tmp_path / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        (path.parent / "__init__.py").touch()
+        path.write_text(source, encoding="utf-8")
+
+    assert _cross_file_dep_score(list(files), tmp_path) == expected
+
+
 # ---------------------------------------------------------------------------
 # _imports_any
 # ---------------------------------------------------------------------------

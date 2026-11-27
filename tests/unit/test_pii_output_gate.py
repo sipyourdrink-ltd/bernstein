@@ -16,6 +16,9 @@ Covers:
 
 from __future__ import annotations
 
+import re
+import sys
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -27,6 +30,7 @@ from bernstein.core.pii_output_gate import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sized
     from pathlib import Path
 
 
@@ -467,28 +471,97 @@ class TestAllowlistIsScopedToTheFlaggedValue:
     def test_anchoring_keeps_benign_uses_exempt(self, line: str) -> None:
         assert _rules(line) == []
 
+    @staticmethod
+    def _count_scan_ops(scanner: Callable[[str], Sized], line: str, expected_hits: int) -> int:
+        """Count Python loop/call operations executed by *scanner(line)* on this thread.
+
+        Uses ``sys.monitoring`` (Python 3.12+) on a free tool slot so the count
+        is deterministic, immune to CI runner CPU noise, and safe alongside
+        coverage and debuggers.
+        """
+        mon = sys.monitoring
+        events = mon.events
+        tool_id: int | None = None
+        for candidate in (4, 3, 5, 2, 1, 0):
+            if mon.get_tool(candidate) is not None:
+                continue
+            try:
+                mon.use_tool_id(candidate, "test_pii_output_gate_linearity")
+            except ValueError:
+                continue
+            tool_id = candidate
+            break
+        if tool_id is None:
+            raise RuntimeError("No free sys.monitoring tool_id available")
+
+        target_tid = threading.get_ident()
+        get_ident = threading.get_ident
+        ops = 0
+
+        def _bump(*_args: object) -> None:
+            nonlocal ops
+            if get_ident() == target_tid:
+                ops += 1
+
+        try:
+            mon.register_callback(tool_id, events.JUMP, _bump)
+            mon.register_callback(tool_id, events.PY_START, _bump)
+            mon.set_events(tool_id, events.JUMP | events.PY_START)
+            findings = scanner(line)
+        finally:
+            mon.set_events(tool_id, 0)
+            mon.register_callback(tool_id, events.JUMP, None)
+            mon.register_callback(tool_id, events.PY_START, None)
+            mon.free_tool_id(tool_id)
+
+        assert len(findings) == expected_hits
+        return ops
+
+    @classmethod
+    def _assert_linear_scan_cost(cls, scanner: Callable[[str], Sized]) -> None:
+        """Assert that 4x more marker-dense matches cost well under quadratic (~16x) ops."""
+        unit = 'xxxx"4111111111111111"'
+        small_count, large_count = 200, 800
+        # Warm up regex caches / one-time setup before measuring.
+        assert len(scanner(",".join([unit] * 4))) == 4
+
+        small_ops = cls._count_scan_ops(scanner, ",".join([unit] * small_count), small_count)
+        large_ops = cls._count_scan_ops(scanner, ",".join([unit] * large_count), large_count)
+
+        assert small_ops > 0
+        ratio = large_ops / small_ops
+        assert large_ops < 8 * small_ops, (
+            f"expected linear scan cost for {small_count}->{large_count} matches; "
+            f"got {small_ops}->{large_ops} ops ({ratio:.2f}x)"
+        )
+
     def test_scan_cost_grows_linearly_with_a_marker_dense_line(self) -> None:
         """One long line dense with markers and matches - a minified bundle or a source map.
 
         Checking each match against a per-line mask keeps the scan linear;
         checking it against every benign span made it quadratic, and the gate
-        runs with no timeout. Compared as a ratio, so machine speed cancels out:
-        4x the matches must cost well under the ~16x a quadratic scan pays.
+        runs with no timeout. Counting Python scan operations avoids CI runner
+        wall-clock noise while still enforcing the same 4x -> <8x bound.
         """
-        import time
+        self._assert_linear_scan_cost(scan_text)
 
-        def best_of_three(count: int) -> float:
-            line = ",".join(['xxxx"4111111111111111"'] * count)
-            timings = []
-            for _ in range(3):
-                started = time.perf_counter()
-                assert len(scan_text(line)) == count
-                timings.append(time.perf_counter() - started)
-            return min(timings)
+    def test_linearity_check_rejects_a_quadratic_scan(self) -> None:
+        """Verify the linearity check actually fails on an O(n^2) overlap scan."""
+        benign_re = re.compile(r"xxxx")
+        card_re = re.compile(r"\b4111111111111111\b")
 
-        small, large = best_of_three(2000), best_of_three(8000)
+        def quadratic_scan(line: str) -> list[tuple[int, int]]:
+            benign_spans = [m.span() for m in benign_re.finditer(line)]
+            hits: list[tuple[int, int]] = []
+            for m in card_re.finditer(line):
+                start, end = m.span()
+                if any(a < end and start < b for a, b in benign_spans):
+                    continue
+                hits.append((start, end))
+            return hits
 
-        assert large < 8 * small + 0.05, (small, large)
+        with pytest.raises(AssertionError, match="expected linear scan cost"):
+            self._assert_linear_scan_cost(quadratic_scan)
 
     def test_a_test_password_does_not_stretch_over_a_real_token(self) -> None:
         line = f'connect(password=pw, token="{_GITHUB_TOKEN}", user="admin")'

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -175,6 +178,33 @@ class TestBM25Ranker:
 
 
 # --- TestContextCompressor ---
+
+
+@pytest.mark.parametrize("seed", ["1", "2", "3"])
+def test_dependency_selection_is_stable_across_hash_seeds(tmp_path: Path, seed: str) -> None:
+    (tmp_path / "main.py").write_text("import left, middle, right\n# uniqueentry\n", encoding="utf-8")
+    for name in ("left", "middle", "right"):
+        (tmp_path / f"{name}.py").write_text("value = 0\n", encoding="utf-8")
+
+    program = """\
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+from bernstein.core.tokens.context_compression import ContextCompressor
+
+task = SimpleNamespace(title="uniqueentry", description="", owned_files=[])
+compressor = ContextCompressor(Path(sys.argv[1]))
+files, _, _ = compressor.select_relevant_files([task], max_files=2)
+for path in files:
+    print(path)
+"""
+    output = subprocess.check_output(
+        [sys.executable, "-c", program, str(tmp_path)],
+        env={**os.environ, "PYTHONHASHSEED": seed},
+        text=True,
+    )
+    assert output.splitlines() == ["left.py", "main.py"]
 
 
 class TestContextCompressor:

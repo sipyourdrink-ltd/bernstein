@@ -41,7 +41,10 @@ from bernstein.core.server.json_logging import setup_json_logging
 from bernstein.core.server.server_middleware import (
     CrashGuardMiddleware,
     IPAllowlistMiddleware,
+    LoopbackHostMiddleware,
     ReadOnlyMiddleware,
+    WebSocketAdmissionEndpoint,
+    WebSocketAdmissionMiddleware,
 )
 from bernstein.core.server.server_models import (
     A2AArtifactResponse,
@@ -134,69 +137,37 @@ class ContentLengthMiddleware:
             )
             return
 
-        # Streaming enforcement: when the client omits Content-Length (e.g.
-        # chunked transfer encoding), wrap the receive channel so we tally
-        # bytes and reject once the cap is crossed.  This guarantees the cap
-        # cannot be bypassed by omitting the header.
-        max_bytes = self._max_body_bytes
-        seen_bytes = 0
-        cap_exceeded = False
-
-        async def limited_receive() -> Any:
-            nonlocal seen_bytes, cap_exceeded
+        # Validate the complete write body before the handler can consume it
+        # or act on a partial request. Retain at most the configured byte cap.
+        body = bytearray()
+        while True:
             message = await receive()
-            if message.get("type") == "http.request":
-                chunk = message.get("body", b"")
-                if chunk:
-                    seen_bytes += len(chunk)
-                    if seen_bytes > max_bytes:
-                        cap_exceeded = True
-            return message
-
-        # Track whether the wrapped app has started its response so we don't
-        # double-send if the body overflow is detected after headers were sent.
-        response_started = False
-        response_finished = False
-
-        async def wrapped_send(message: Any) -> None:
-            nonlocal response_started, response_finished
-            if response_finished:
-                # Inner app is still trying to send after we've already
-                # emitted our 413 - drop its messages on the floor.
+            if message["type"] == "http.disconnect":
                 return
-            msg_type = message.get("type")
-            if msg_type == "http.response.start":
-                if cap_exceeded:
-                    # Body already crossed the cap - discard the inner app's
-                    # response and emit our 413 instead.
-                    await self._send_json(
-                        send,
-                        413,
-                        {
-                            "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
-                        },
-                    )
-                    response_started = True
-                    response_finished = True
-                    return
-                response_started = True
-            elif msg_type == "http.response.body" and cap_exceeded:
-                # Shouldn't happen (we already finished), but guard anyway.
-                return
-            await send(message)
-
-        try:
-            await self.app(scope, limited_receive, wrapped_send)
-        finally:
-            if cap_exceeded and not response_started:
-                # Inner app finished without emitting a response - send 413.
+            chunk = message.get("body", b"")
+            seen_bytes = len(body) + len(chunk)
+            if seen_bytes > self._max_body_bytes:
                 await self._send_json(
                     send,
                     413,
-                    {
-                        "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
-                    },
+                    {"detail": f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"},
                 )
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        buffered: bytes | None = bytes(body)
+        del body, chunk, message
+
+        async def validated_receive() -> Any:
+            nonlocal buffered
+            if buffered is None:
+                return await receive()
+            payload, buffered = buffered, None
+            return {"type": "http.request", "body": payload, "more_body": False}
+
+        await self.app(scope, validated_receive, send)
 
     @staticmethod
     async def _send_json(send: Any, status: int, body: dict[str, Any]) -> None:
@@ -278,6 +249,10 @@ def node_to_response(node: NodeInfo) -> NodeResponse:
             active_agents=node.capacity.active_agents,
             gpu_available=node.capacity.gpu_available,
             supported_models=node.capacity.supported_models,
+            disk_free_mb=node.capacity.disk_free_mb,
+            mem_used_pct=node.capacity.mem_used_pct,
+            mesh_rtt_ms=node.capacity.mesh_rtt_ms,
+            platform=node.capacity.platform,
         ),
         last_heartbeat=node.last_heartbeat,
         registered_at=node.registered_at,
@@ -316,6 +291,7 @@ def task_to_response(task: Task) -> TaskResponse:
         model=task.model,
         effort=task.effort,
         cli=task.cli,
+        requires=list(task.requires),
         batch_eligible=task.batch_eligible,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         # Issue #3110: the declared artifact contract must survive the
@@ -331,6 +307,7 @@ def task_to_response(task: Task) -> TaskResponse:
         progress_log=cast("list[ProgressEntry]", task.progress_log).copy(),  # type: ignore[reportUnknownMemberType]
         version=task.version,
         parent_session_id=task.parent_session_id,
+        claimed_by_session=task.claimed_by_session,
         # expose typed retry bookkeeping so clients read the
         # single source of truth rather than regex-ing the title.
         retry_count=task.retry_count,
@@ -608,6 +585,8 @@ class SSEBus:
 class SSEReconnectLimiterMiddleware:
     """Front-door limiter for the /events, /events/cost and /events/thread SSE endpoints.
 
+    The ``/api/v1`` aliases of these endpoints count against the same budget.
+
     Rejects requests from IPs that have reconnected more than
     ``RECONNECT_MAX_PER_WINDOW`` times inside ``RECONNECT_WINDOW_S`` for
     ``RECONNECT_COOLDOWN_S`` seconds. Reconnect counters live on the shared
@@ -626,7 +605,11 @@ class SSEReconnectLimiterMiddleware:
         if scope.get("type") != "http" or scope.get("method", "").upper() != "GET":
             await self.app(scope, receive, send)
             return
-        if scope.get("path") not in self._SSE_PATHS:
+        path = str(scope.get("path", ""))
+        # Versioned aliases share the canonical routes' reconnect budget.
+        if path.startswith("/api/v1/"):
+            path = path[len("/api/v1") :]
+        if path not in self._SSE_PATHS:
             await self.app(scope, receive, send)
             return
         fastapi_app = scope.get("app")
@@ -1034,6 +1017,10 @@ def create_app(
     plan_mode: bool = False,
     readonly: bool = False,
     slack_signing_secret: str | None = None,
+    claim_control_path: Path | None = None,
+    claim_controller_id: str | None = None,
+    enforce_loopback_host: bool | None = None,
+    defer_auth_dirs: bool = False,
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -1049,6 +1036,9 @@ def create_app(
             rejected with 405.  The dashboard, events stream, and read
             endpoints remain fully accessible.  Useful for public demo
             deployments.
+        claim_control_path: Explicit operator-owned persistent claim controller database.
+            Paired with claim_controller_id; omitted keeps existing claim behavior.
+        claim_controller_id: Operator-chosen installation controller identity.
         slack_signing_secret: Slack app signing secret for verifying webhook
             request signatures.  Defaults to ``SLACK_SIGNING_SECRET`` env var.
 
@@ -1067,6 +1057,7 @@ def create_app(
     from bernstein.core.auth_middleware import SSOAuthMiddleware
     from bernstein.core.routes.agents import router as agents_router
     from bernstein.core.routes.auth import router as auth_router
+    from bernstein.core.routes.claim_admission import router as claim_admission_router
     from bernstein.core.routes.costs import router as costs_router
     from bernstein.core.routes.dashboard import router as dashboard_router
     from bernstein.core.routes.discord import router as discord_router
@@ -1118,7 +1109,12 @@ def create_app(
     _cluster_auth_secret = effective_cluster.auth_token or ""
     cluster_authenticator: ClusterAuthenticator | None = None
 
-    store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
+    store = TaskStore(
+        jsonl_path,
+        metrics_jsonl_path=metrics_jsonl_path,
+        claim_control_path=claim_control_path,
+        claim_controller_id=claim_controller_id,
+    )
     sse_bus = SSEBus()
 
     def _publish_task_update(task_obj: Any) -> None:
@@ -1258,7 +1254,7 @@ def create_app(
         title="Bernstein Task Server",
         version="1.0.0",
         description=(
-            "Bernstein REST API - the open-source governance layer for AI agents, "
+            "Bernstein REST API - an open-source governance layer for AI agents, "
             "one git worktree per task.\n\n"
             "## Authentication\n\n"
             "Authentication is ENABLED by default.  Include a Bearer token in "
@@ -1291,6 +1287,9 @@ def create_app(
         ),
         lifespan=lifespan,
     )
+
+    # Must stay first so probes stop after every gate and before routing.
+    application.add_middleware(WebSocketAdmissionEndpoint)
 
     # Crash guard - outermost middleware, catches unhandled exceptions
     application.add_middleware(CrashGuardMiddleware)
@@ -1331,7 +1330,7 @@ def create_app(
     from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     _auth_dir = sdd_dir / "auth"
-    _agent_identity_store = AgentIdentityStore(_auth_dir)
+    _agent_identity_store = AgentIdentityStore(_auth_dir, create_dir=not defer_auth_dirs)
     application.state.identity_store = _agent_identity_store  # type: ignore[attr-defined]
 
     # RFC 8707: optional resource-indicator binding. Configured via the
@@ -1426,6 +1425,19 @@ def create_app(
 
     application.add_middleware(CORSMiddleware, **cors_kwargs)
 
+    # DNS-rebinding defense on loopback binds: rejects non-loopback Host
+    # headers (including static /ui/ requests) before CORS/auth/routing run.
+    loopback_guard = (
+        enforce_loopback_host
+        if enforce_loopback_host is not None
+        else os.environ.get("BERNSTEIN_LOOPBACK_HOST_GUARD", "").strip().lower() in ("1", "true", "yes")
+    )
+    if loopback_guard:
+        application.add_middleware(LoopbackHostMiddleware)
+
+    # Must stay last so WebSocket probes traverse every installed gate.
+    application.add_middleware(WebSocketAdmissionMiddleware)
+
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
     message_board = MessageBoard()
@@ -1446,9 +1458,13 @@ def create_app(
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.a2a_federation = a2a_federation  # type: ignore[attr-defined]
     # Mints the lineage receipt every inbound A2A response carries (#2609).
-    # ``None`` when key material or the lineage root is unavailable, in which
-    # case responses are served unattested rather than not at all.
-    application.state.a2a_receipt_issuer = build_receipt_issuer(sdd_dir)  # type: ignore[attr-defined]
+    # Built eagerly only when A2A server mode is enabled or keys already exist;
+    # otherwise deferred until an A2A route needs it so uninitialized workdirs
+    # are not populated with key material on passive `gui serve` boots.
+    a2a_enabled = os.environ.get("BERNSTEIN_A2A_SERVER_ENABLED", "").strip().lower() in ("1", "true", "yes")
+    application.state.a2a_receipt_issuer = (  # type: ignore[attr-defined]
+        build_receipt_issuer(sdd_dir) if (a2a_enabled or (sdd_dir / "a2a").is_dir()) else None
+    )
     # Inbound A2A JSON-RPC auth (#2609): API key + OAuth2 client-credentials,
     # both declared in the agent card. Built from ``BERNSTEIN_A2A_*`` env at
     # app creation; the JSON-RPC surface is inert unless
@@ -1626,6 +1642,7 @@ def create_app(
         file_health_router,
         fleet_router,
         drain_router,
+        claim_admission_router,
         identities_router,
         acp_router,
         approvals_router,
@@ -1736,9 +1753,45 @@ _default_cluster_config = (
 
 def get_app() -> FastAPI:
     """Get or create the default FastAPI app (lazy singleton)."""
+    from dataclasses import replace
+
+    from bernstein.core.config.seed_parser import SeedError, _load_seed_mapping, _parse_cluster
+    from bernstein.core.seed import resolve_seed_path
+
+    cluster_config = _default_cluster_config
+    seed_path = resolve_seed_path(Path.cwd())
+    if seed_path.exists():
+        # The server child receives the selected seed path, not a serialized
+        # ClusterConfig. Load startup-only partition settings before serving
+        # requests; reloading metadata later must not replace a live ring.
+        try:
+            # Full metadata loads retain layer validation. Here only effective
+            # registry settings are validated, below, outside this read-error path.
+            seed_data = _load_seed_mapping(seed_path, validate_layers=False)
+        except SeedError:
+            # Metadata loading already handles unreadable or malformed seeds.
+            # Shard opt-in must not turn those errors into a new boot failure.
+            seed_data = {}
+        raw_cluster = seed_data.get("cluster")
+        registry_fields = ("shards", "shard_vnodes", "min_disk_free_mb", "max_mem_used_pct", "max_mesh_rtt_ms")
+        registry_settings = (
+            {key: raw_cluster[key] for key in registry_fields if key in raw_cluster}
+            if isinstance(raw_cluster, dict)
+            else {}
+        )
+        seed_cluster = _parse_cluster(registry_settings) if registry_settings else None
+        if seed_cluster is not None:
+            cluster_config = replace(
+                cluster_config or ClusterConfig(),
+                shards=seed_cluster.shards,
+                shard_vnodes=seed_cluster.shard_vnodes,
+                min_disk_free_mb=seed_cluster.min_disk_free_mb,
+                max_mem_used_pct=seed_cluster.max_mem_used_pct,
+                max_mesh_rtt_ms=seed_cluster.max_mesh_rtt_ms,
+            )
     return create_app(
         auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
-        cluster_config=_default_cluster_config,
+        cluster_config=cluster_config,
         readonly=os.environ.get("BERNSTEIN_READONLY", "").lower() in ("1", "true", "yes"),
         slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
     )
@@ -1804,7 +1857,7 @@ class TaskNotificationManager:
                 try:
                     await queue.put(notification)
                 except Exception as e:
-                    logger.warning(f"Failed to notify subscriber: {e}")
+                    logger.warning("Failed to notify subscriber: %s", e)
 
     # 2. Add generic type to return value
     async def subscribe(self) -> asyncio.Queue[AgentStatusNotification]:
@@ -1856,5 +1909,10 @@ async def notify_agent_status(
     await _task_notification_manager.notify_agent_status(notification)
 
     logger.info(
-        f"Agent status notification: {agent_id} ({role}) - {status} (task: {task_id}, progress: {progress:.0%})"
+        "Agent status notification: %s (%s) - %s (task: %s, progress: %.0f%%)",
+        agent_id,
+        role,
+        status,
+        task_id,
+        progress * 100,
     )

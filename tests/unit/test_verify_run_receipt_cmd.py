@@ -124,6 +124,7 @@ def test_verify_run_without_signing_key_exits_2(tmp_path: Path) -> None:
     result = CliRunner().invoke(verify_cmd, ["run", _RUN_ID, "-w", str(workdir)])
     assert result.exit_code == 2
     assert "No signing key configured" in result.output
+    assert "openssl genpkey -algorithm ED25519" in result.output
 
 
 def test_verify_run_on_empty_run_exits_1(tmp_path: Path) -> None:

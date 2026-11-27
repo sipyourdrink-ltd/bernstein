@@ -32,6 +32,22 @@ Weekly Scorecard runs via `.github/workflows/scorecard.yml`. Results are
 uploaded to GitHub Code Scanning. Per-signal triage decisions live in
 issue #1482.
 
+### Hash-pinned installs
+
+`pip install` outside a lockfile goes through a hashed requirements file:
+
+| Install | Hashed source | Refresh |
+|---|---|---|
+| hatchling in `Dockerfile`, `docker/demo/`, `docker/volunteer-hub/` | `docker/requirements-build.txt` | `uv pip compile --generate-hashes --universal --python-version 3.13 docker/requirements-build.in -o docker/requirements-build.txt` |
+| pipx in `adapter-contract-drift.yml` | `.github/requirements/pipx-requirements.txt` | `uv pip compile --generate-hashes --universal --python-version 3.12 .github/requirements/pipx-requirements.in -o .github/requirements/pipx-requirements.txt` |
+| wheel dependencies in `spiffe-extra-e2e.yml` | `uv export --frozen` from `uv.lock` at run time | follows `uv.lock` |
+
+The npm rows of `adapter-contract-drift.yml` use `npm ci` with the SHA-512
+integrities in `.github/adapter-clis/package-lock.json`. Each row runs install
+hooks for its selected CLI and dependencies. The pipx bootstrap is hash-pinned.
+Pipx resolves each adapter's contract spec, which may omit a version.
+See the [adapter contract guide](../contributing/adapter-contracts.md) when updating a CLI.
+
 ## CII Best Practices badge (operator pickup)
 
 The CII Best Practices badge cannot be obtained programmatically. An

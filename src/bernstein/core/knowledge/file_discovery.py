@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_file_tree_cache: dict[str, tuple[float, str]] = {}
+_file_tree_cache: dict[str, tuple[float, list[str]]] = {}
 
 _IGNORED_DIRS = frozenset(
     {
@@ -65,8 +65,8 @@ def file_tree(workdir: Path, max_lines: int = 50) -> str:
     Uses ``git ls-files`` when inside a git repo (fast, respects
     .gitignore). Falls back to a recursive walk with heuristic filters.
 
-    Results are cached per *workdir* for 60 seconds to avoid repeated
-    subprocess calls during a single orchestrator run.
+    File names are cached per *workdir* for 60 seconds. Each call
+    applies its own line limit to the cached listing.
 
     Args:
         workdir: Project root directory.
@@ -77,35 +77,26 @@ def file_tree(workdir: Path, max_lines: int = 50) -> str:
     """
     cache_key = str(workdir)
     now = time.monotonic()
-    if cache_key in _file_tree_cache:
-        cached_time, cached_result = _file_tree_cache[cache_key]
-        if now - cached_time < _FILE_TREE_TTL:
-            return cached_result
-
-    lines: list[str] = []
-
-    # Try git ls-files first - fast and .gitignore-aware.
-    lines = _gc_ls_files(workdir)
-
-    # Fallback: walk the directory tree.
-    if not lines:
-        for path in sorted(workdir.rglob("*")):
-            if path.is_dir():
-                continue
-            rel = path.relative_to(workdir)
-            if _should_skip(rel):
-                continue
-            lines.append(str(rel))
+    cached = _file_tree_cache.get(cache_key)
+    if cached is not None and now - cached[0] < _FILE_TREE_TTL:
+        lines = cached[1]
+    else:
+        lines = _gc_ls_files(workdir)
+        if not lines:
+            for path in sorted(workdir.rglob("*")):
+                if path.is_dir():
+                    continue
+                rel = path.relative_to(workdir)
+                if _should_skip(rel):
+                    continue
+                lines.append(str(rel))
+        _file_tree_cache[cache_key] = (now, lines)
 
     if len(lines) > max_lines:
         truncated = lines[:max_lines]
         truncated.append(f"... ({len(lines) - max_lines} more files)")
-        output = "\n".join(truncated)
-    else:
-        output = "\n".join(lines)
-
-    _file_tree_cache[cache_key] = (now, output)
-    return output
+        return "\n".join(truncated)
+    return "\n".join(lines)
 
 
 def _read_if_exists(path: Path, max_chars: int = 4000) -> str | None:

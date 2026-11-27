@@ -1,0 +1,41 @@
+id: mcp-server-security-vetting
+name: Third-Party MCP Server and Plugin Security Vetting
+version: "1.0"
+description: |
+  Vet an external Model Context Protocol (MCP) server, skill bundle, or CLI
+  plugin prior to enablement: pinned commit/digest, environment isolation,
+  network egress, tool schema safety, and license compliance.
+tags: [ai-governance, security, mcp, plugins, supply-chain]
+tasks:
+  - title: Pin source digest, dependencies, and license obligations
+    role: analyst
+    priority: 0
+    scope: small
+    complexity: low
+    description: |
+      Record exact repository commit/wheel SHA-256, transitive dependency CVEs,
+      and open-source license compatibility.
+  - title: Audit tool handlers for secret exfiltration and command injection
+    role: security
+    priority: 1
+    scope: medium
+    complexity: high
+    description: |
+      Inspect subprocess calls, environment variable inheritance, filesystem
+      writes, and outbound HTTP calls across all exposed MCP tools.
+  - title: Test untrusted tool-output injection and sandbox containment
+    role: adversary
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Verify that hostile payloads returned by the MCP server cannot trigger
+      unapproved tool invocations or escape workspace path boundaries.
+  - title: Emit pinned allow/deny manifest and runtime policy rules
+    role: devops
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Produce the pinned MCP configuration, env allowlist, and containment
+      rules required for developer or CI adoption.

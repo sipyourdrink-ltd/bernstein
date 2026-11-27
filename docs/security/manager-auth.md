@@ -18,7 +18,8 @@ almost always a missing or stripped bearer token on the manager's `POST
 |------|-------|----------|
 | Per-session bearer (zero-trust) | `.sdd/runtime/agent_tokens/{session_id}.token` (mode `0600`) | 4 h (task-scoped) |
 | Legacy fallback bearer | `BERNSTEIN_AUTH_TOKEN` env var | Process lifetime |
-| JWT signing secret | Derived from the install audit key (outside the workdir); `BERNSTEIN_AUTH_JWT_SECRET` overrides | Until the audit key or the override changes |
+| Agent JWT signing key | Out-of-workdir Ed25519 key (`$BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH`, else beside `$BERNSTEIN_AUDIT_KEY_PATH` / XDG state dir, mode `0600`) via `KMSAdapter`; public key published at `/.well-known/agent.json/keys` | Until rotated or replaced |
+| Legacy HS256 migration secret | `BERNSTEIN_AUTH_JWT_SECRET` (deprecated; verifies pre-existing unexpired HS256 credentials only, removed one minor release later) | Migration window only |
 | Identity record (role, permissions, scope) | `.sdd/auth/agent_identities/{session_id}.json`, MAC'd with a key derived from the install audit key | Until revoked or the token expires |
 | Auth opt-out | `BERNSTEIN_AUTH_DISABLED=1` | Process lifetime - logs loud WARN |
 
@@ -97,10 +98,11 @@ Source pointers (read these if you need to debug from code):
 ```
 
 - **Created**: at agent spawn, inside `AgentSpawner._issue_agent_token`.
-- **Format**: HS256 JWT. The signing secret is derived from the install
-  audit key, which lives outside the workdir (see
-  [Signing key and identity records](#signing-key-and-identity-records));
-  nothing under `.sdd/` can sign a token.
+- **Format**: `EdDSA` (Ed25519) JWT carrying `kid` in its header. The signing
+  private key lives outside the workdir via `KMSAdapter` (see
+  [Signing key and identity records](#signing-key-and-identity-records)) and its
+  public key is served in `/.well-known/agent.json/keys`; nothing under `.sdd/`
+  can sign a token.
 - **Claims**: `sub=session_id`, `role`, `task_ids=[…]`, `iat`, `exp`, `jti`.
 - **Task scope**: the server limits every task write, and every claim it
   picks for the caller, to `task_ids`. An empty list means "all tasks" only
@@ -131,14 +133,21 @@ under `.sdd/worktrees/`, so they can read every file under `.sdd/` and write
 new ones there. Neither the token-signing secret nor the authority behind a
 token is therefore kept in the workdir:
 
-- **Key**: both keys below are derived (HKDF-SHA256, one domain each) from the
-  install audit key - `$BERNSTEIN_AUDIT_KEY_PATH`, else
+- **Keys**: record authentication derives its HMAC key (HKDF-SHA256) from the
+  install audit key (`$BERNSTEIN_AUDIT_KEY_PATH`, else
   `$XDG_STATE_HOME/bernstein/audit.key`, else
-  `~/.local/state/bernstein/audit.key`, mode `0600` enforced. It is the same
-  key the audit chain and the delegation ledger use, so there is no extra
-  setup. See [Audit log - key management](audit-log.md#key-management).
-- **Token signature**: HS256 under the derived JWT key, unless
-  `BERNSTEIN_AUTH_JWT_SECRET` is set, which overrides it.
+  `~/.local/state/bernstein/audit.key`, mode `0600` enforced). Agent token
+  signing uses an out-of-workdir Ed25519 keypair loaded through `KMSAdapter`
+  (`$BERNSTEIN_AGENT_JWT_SIGNING_KEY_PATH`, else
+  `agent_identity_jwt.ed25519` in the same state directory, mode `0600`
+  enforced; `BERNSTEIN_AGENT_JWT_KMS_ADAPTER` selects `file`, `env`, or `hsm`).
+  See [Audit log - key management](audit-log.md#key-management).
+- **Token signature**: new tokens are signed with `EdDSA` (Ed25519) and record
+  `algorithm="EdDSA"` on the credential; verification dispatches strictly from
+  the authenticated record's `algorithm` using the public key only. Pre-existing
+  unexpired `HS256` credentials verify until expiry; `BERNSTEIN_AUTH_JWT_SECRET`
+  logs a deprecation warning during that window and is removed one minor release
+  later.
 - **Identity record**: `.sdd/auth/agent_identities/{session_id}.json` carries
   a `record_mac` under the derived record key. The store ignores - and logs
   `Ignoring unauthenticated identity record` for - any record whose MAC is

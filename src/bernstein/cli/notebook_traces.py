@@ -273,7 +273,7 @@ def diff_notebooks(
             old_cell = old_cells[idx]
 
             # Check for modifications
-            if old_cell.source != new_cell.source:
+            if old_cell.source != new_cell.source or old_cell.cell_type != new_cell.cell_type:
                 events.append(
                     NotebookEditEvent(
                         path=new.path,

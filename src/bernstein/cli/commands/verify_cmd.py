@@ -280,7 +280,7 @@ def verify_legacy_cmd(
     if expect_fingerprint is not None and baseline_run_id is not None:
         raise click.UsageError("--expect and --baseline are mutually exclusive; pass only one.")
     if (expect_fingerprint is not None or baseline_run_id is not None) and determinism_run_id is None:
-        raise click.UsageError("--expect/--baseline require --determinism <run-id>.")
+        raise click.UsageError("--determinism <run-id> is required when using --expect or --baseline.")
 
     if wheelhouse_path is wal_run_id is determinism_run_id is formal_task_id is None and not memory_audit:
         console.print(
@@ -1245,7 +1245,11 @@ def verify_run_cmd(
         console.print(
             "[red]No signing key configured.[/red] Provide --signing-key-path or "
             "--signing-env-var (or set $BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH / "
-            "$BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR)."
+            "$BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR).\n"
+            "  Generate an Ed25519 key pair locally:\n"
+            "    openssl genpkey -algorithm ED25519 -out run.key "
+            "&& openssl pkey -in run.key -pubout -out run.pub\n"
+            f"    bernstein verify run {run_id} --signing-key-path run.key"
         )
         raise SystemExit(2)
 
@@ -1292,7 +1296,11 @@ def verify_run_cmd(
     if receipt.receipt_path is not None:
         table.add_row("Receipt", str(receipt.receipt_path))
     console.print(table)
-    console.print("\n  [dim]Verify offline with: bernstein verify receipt <path> [--public-key PEM][/dim]")
+    receipt_target = str(receipt.receipt_path) if receipt.receipt_path is not None else "<path>"
+    console.print(
+        f"\n  [dim]Verify offline with: bernstein verify receipt {receipt_target} --public-key <pub.pem>[/dim]",
+        soft_wrap=True,
+    )
     console.print()
     raise SystemExit(0)
 

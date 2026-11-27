@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 import pluggy
+
+
+class _QualityGate(ABC):
+    """Identify a quality gate without importing the quality runner."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Unique gate name."""
 
 
 def hookspec(

@@ -54,14 +54,12 @@ _REMOVE_BY_REASON_RE = re.compile(r"^remove-by:(\d{4}-\d{2}-\d{2})$")
 # without a reason the contract test accepts.
 #
 # Known mappings from #5505:
-#   authzen, external_policy_hook -> #4912
 #   directory_bridge, directory_registry, sso_oidc, vault_injector, rbac
 #     -> Directory and secrets bridges (#4972, #5018, #5021, #5040)
 #   hipaa, soc2_report, compliance_report -> #5098
 # Everything else is triaged for removal by 2026-12-01 (v4.0.0 window)
 # rather than left as an unowned freezer entry.
 KNOWN_ORPHAN_REASONS: dict[str, str] = {
-    "authzen": "#4912",
     "capability_delta": "remove-by:2026-12-01",
     "claude_permission_profiles": "remove-by:2026-12-01",
     "command_allowlist": "remove-by:2026-12-01",
@@ -75,7 +73,6 @@ KNOWN_ORPHAN_REASONS: dict[str, str] = {
     "dp_telemetry": "remove-by:2026-12-01",
     "engagement_mandate": "remove-by:2026-12-01",
     "environment_digest": "remove-by:2026-12-01",
-    "external_policy_hook": "#4912",
     "hipaa": "#5098",
     "identity_spawn_anchor": "remove-by:2026-12-01",
     "ip_allowlist": "remove-by:2026-12-01",

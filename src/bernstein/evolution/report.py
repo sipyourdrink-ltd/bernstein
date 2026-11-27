@@ -71,6 +71,10 @@ class CycleRecord:
         return self.tests_passed / total
 
 
+def _has_test_results(cycle: CycleRecord) -> bool:
+    return cycle.tests_passed > 0 or cycle.tests_failed > 0
+
+
 @dataclass
 class ExperimentRecord:
     """One row from experiments.jsonl (optional, may be absent)."""
@@ -193,14 +197,14 @@ class EvolutionReport:
     @property
     def first_tests_passed(self) -> int:
         for c in self.cycles:
-            if c.tests_passed > 0:
+            if _has_test_results(c):
                 return c.tests_passed
         return 0
 
     @property
     def last_tests_passed(self) -> int:
         for c in reversed(self.cycles):
-            if c.tests_passed > 0:
+            if _has_test_results(c):
                 return c.tests_passed
         return 0
 
@@ -224,7 +228,7 @@ class EvolutionReport:
         return "".join(chars)
 
     def _tests_sparkline(self) -> str:
-        vals = [float(c.tests_passed) for c in self.cycles if c.tests_passed > 0]
+        vals = [float(c.tests_passed) for c in self.cycles if _has_test_results(c)]
         return self._sparkline(vals)
 
     def _success_rate_sparkline(self) -> str:

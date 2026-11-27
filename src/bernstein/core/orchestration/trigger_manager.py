@@ -14,6 +14,7 @@ import fnmatch
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -39,10 +40,13 @@ from bernstein.core.models import (
     TriggerFireRecord,
     TriggerTaskTemplate,
 )
+from bernstein.core.security.declaration_quarantine import DeclarationQuarantineEntry, declaration_id
+from bernstein.core.security.redactor import redact_text
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
     from bernstein.core.task_store import TaskStore
 
 _FIRE_LOG_FILENAME = "fire_log.jsonl"
@@ -81,11 +85,18 @@ def _parse_task_template(raw: dict[str, Any]) -> TriggerTaskTemplate:
     )
 
 
-def load_trigger_configs(path: Path) -> list[TriggerConfig]:
+def load_trigger_configs(
+    path: Path,
+    *,
+    quarantine_store: DeclarationQuarantineStore | None = None,
+    quarantined_sources: dict[str | None, str] | None = None,
+) -> list[TriggerConfig]:
     """Load trigger rules from a YAML config file.
 
     Args:
         path: Path to ``triggers.yaml``.
+        quarantine_store: Persist named declaration failures in runtime callers.
+        quarantined_sources: Collect enabled quarantined rules for direct task gating.
 
     Returns:
         List of parsed TriggerConfig objects.
@@ -94,8 +105,6 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
         FileNotFoundError: If the config file does not exist.
         ValueError: If the config is malformed.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Trigger config not found: {path}")
     try:
         with path.open() as f:
             data = yaml.safe_load(f)
@@ -105,20 +114,22 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
     if not isinstance(data, dict) or "triggers" not in data:
         raise ValueError("Trigger config must have a top-level 'triggers' key")
 
+    if not isinstance(data["triggers"], list):
+        raise ValueError("Trigger config 'triggers' must be a list")
+
+    origin = str(path.resolve())
+    disabled = {entry.declaration_id for entry in quarantine_store.load()} if quarantine_store is not None else set()
     configs: list[TriggerConfig] = []
     for raw in data["triggers"]:
-        if not isinstance(raw, dict) or "name" not in raw or "source" not in raw:
-            logger.warning("Skipping malformed trigger entry: %r", raw)
+        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"]:
+            logger.warning("Skipping trigger entry without a usable name")
             continue
-        # Presence is not type. Both fields are load-bearing: name is joined
-        # into the dedup key, where a non-string raises, and source is only
-        # ever compared against string literals, so a non-string one loads
-        # clean and is silently inert.
-        if not isinstance(raw["name"], str) or not raw["name"]:
-            logger.warning("Skipping trigger entry with a non-string or empty name: %r", raw["name"])
-            continue
-        if not isinstance(raw["source"], str) or not raw["source"]:
-            logger.warning("Skipping trigger %r: source must be a non-empty string, got %r", raw["name"], raw["source"])
+        name = raw["name"]
+        entry_id = declaration_id("routine", name, origin, None)
+        source = raw.get("source")
+        if entry_id in disabled:
+            if quarantined_sources is not None and raw.get("enabled", True):
+                quarantined_sources[source if isinstance(source, str) and source else None] = name
             continue
         # TriggerConfig.schedule is str | None, but YAML hands back whatever was
         # written: `schedule: 30` unquoted arrives as an int and used to be
@@ -127,7 +138,7 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
         # the truth. Syntax is still the evaluator's business - validating it
         # needs croniter, which is optional.
         schedule = raw.get("schedule")
-        if raw["source"] == "cron":
+        if source == "cron":
             if schedule is not None and not isinstance(schedule, str):
                 logger.warning(
                     "Cron trigger %r has a %s schedule, not a string; it will never fire",
@@ -138,19 +149,49 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
             elif not schedule:
                 # The evaluator skips these on a falsy check every tick, silently.
                 logger.warning("Cron trigger %r has no usable schedule and will never fire", raw["name"])
-        task_raw = raw.get("task", {})
-        configs.append(
-            TriggerConfig(
-                name=raw["name"],
-                source=raw["source"],
+        try:
+            if not isinstance(source, str) or not source:
+                raise ValueError("source must be a non-empty string")
+            config = TriggerConfig(
+                name=name,
+                source=source,
                 enabled=raw.get("enabled", True),
                 filters=dict(raw.get("filters", {})),
                 conditions=dict(raw.get("conditions", {})),
-                task=_parse_task_template(task_raw),
+                task=_parse_task_template(raw.get("task", {})),
                 schedule=schedule,
             )
-        )
-    return configs
+        except (AttributeError, OverflowError, TypeError, ValueError) as exc:
+            reason, _ = redact_text(str(exc))
+            logger.warning("Skipping trigger %r: %s", name, reason)
+            if quarantine_store is not None:
+                disabled.add(entry_id)
+                if quarantined_sources is not None and raw.get("enabled", True):
+                    quarantined_sources[source if isinstance(source, str) and source else None] = name
+                try:
+                    quarantine_store.record_failure(
+                        DeclarationQuarantineEntry(
+                            declaration_id=entry_id,
+                            kind="routine",
+                            source_name=name,
+                            origin=origin,
+                            skill_name=None,
+                            reason=reason,
+                            error_type=type(exc).__name__,
+                            at=time.time(),
+                        )
+                    )
+                except Exception:
+                    logger.exception("Could not persist quarantine for trigger %r", name)
+            continue
+        configs.append(config)
+    active = []
+    for config in configs:
+        if declaration_id("routine", config.name, origin, None) not in disabled:
+            active.append(config)
+        elif quarantined_sources is not None and config.enabled:
+            quarantined_sources[config.source] = config.name
+    return active
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +239,7 @@ def _matches_filter(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     _SOURCE_MATCHERS: dict[str, Callable[[TriggerEvent, TriggerConfig], bool]] = {
         "github_push": _matches_github_push,
         "github_workflow_run": _matches_github_workflow_run,
+        "gitlab_webhook": _matches_gitlab_webhook,
         "slack": _matches_slack,
         "file_watch": _matches_file_watch,
         "webhook": _matches_webhook,
@@ -275,16 +317,26 @@ def _matches_file_watch(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     return not (allowed_events and event.metadata.get("event_type") not in allowed_events)
 
 
+def _matches_gitlab_webhook(event: TriggerEvent, trigger: TriggerConfig) -> bool:
+    event_types = trigger.filters.get("events", [])
+    if event_types and event.metadata.get("event_type") not in event_types:
+        return False
+    branches = trigger.filters.get("branches", [])
+    return not branches or _glob_match_any(branches, [event.branch])
+
+
 def _matches_webhook(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     """Filter logic for webhook triggers."""
     filters = trigger.filters
     path_filter = filters.get("path")
-    if path_filter and event.metadata.get("request_path") != path_filter:
+    if path_filter and not _glob_match_any([path_filter], [event.metadata.get("request_path", "")]):
         return False
     method_filter = filters.get("method")
     if method_filter and event.metadata.get("request_method") != method_filter:
         return False
     header_filters: dict[str, str] = filters.get("headers", {})
+    if event.metadata.get("webhook_headers_unverified"):
+        return True
     request_headers: dict[str, str] = event.metadata.get("request_headers", {})
     return all(request_headers.get(key, "") == expected for key, expected in header_filters.items())
 
@@ -306,6 +358,8 @@ def compute_dedup_key(trigger_name: str, event: TriggerEvent) -> str:
         parts.append(event.metadata["channel"])
     if event.metadata.get("request_path"):
         parts.append(event.metadata["request_path"])
+    if event.source == "gitlab_webhook" and event.metadata.get("delivery_identity"):
+        parts.append(event.metadata["delivery_identity"])
     # For sources without a unique key (cron, file_watch), use a 60s bucket
     if event.source in ("cron", "file_watch"):
         bucket = str(int(event.timestamp) // 60)
@@ -427,12 +481,15 @@ class TriggerGateResult:
     skip creating its task. When it is not suppressed, the caller must create
     the task and then call :meth:`TriggerManager.record_fire` with
     ``dedup_key`` so later cooldown/dedup checks see this fire.
+    ``dedup_expires_at`` identifies the particular reservation, so a reused
+    key cannot be confirmed by an outcome from an expired reservation.
     """
 
     trigger_name: str | None
     suppressed: bool
     reason: str | None
     dedup_key: str | None
+    dedup_expires_at: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +505,13 @@ class TriggerManager:
     limits), and creates tasks.
     """
 
-    def __init__(self, sdd_dir: Path, store: TaskStore | None = None) -> None:
+    def __init__(
+        self,
+        sdd_dir: Path,
+        store: TaskStore | None = None,
+        *,
+        quarantine_store: DeclarationQuarantineStore | None = None,
+    ) -> None:
         self._sdd_dir = sdd_dir
         self._store = store
         self._config_path = sdd_dir / "config" / "triggers.yaml"
@@ -457,6 +520,10 @@ class TriggerManager:
 
         self._configs: list[TriggerConfig] = []
         self._config_mtime: float = 0.0
+        self._quarantine_store = quarantine_store
+        self._quarantine_mtime: int | None = None
+        self._quarantined_sources: dict[str | None, str] = {}
+        self._config_unreadable = False
 
         # In-memory rate limiter: list of fire timestamps in the last 60s
         self._fire_timestamps: list[float] = []
@@ -487,23 +554,42 @@ class TriggerManager:
 
     def _try_reload_config(self) -> None:
         """Load or hot-reload trigger configs if the file changed."""
-        if not self._config_path.exists():
-            self._configs = []
-            return
         try:
-            mtime = self._config_path.stat().st_mtime
-            if mtime != self._config_mtime:
-                self._configs = load_trigger_configs(self._config_path)
-                self._config_mtime = mtime
+            try:
+                mtime = self._config_path.stat().st_mtime
+            except (FileNotFoundError, NotADirectoryError):
+                self._configs = []
+                self._quarantined_sources.clear()
+                self._config_unreadable = False
+                self._config_mtime = 0.0
+                return
+            quarantine_mtime = None
+            if self._quarantine_store is not None:
+                with contextlib.suppress(FileNotFoundError):
+                    quarantine_mtime = self._quarantine_store.path.stat().st_mtime_ns
+            if self._config_unreadable or mtime != self._config_mtime or quarantine_mtime != self._quarantine_mtime:
+                quarantined_sources: dict[str | None, str] = {}
+                configs = load_trigger_configs(
+                    self._config_path, quarantine_store=self._quarantine_store, quarantined_sources=quarantined_sources
+                )
                 # Read global defaults
                 with self._config_path.open() as f:
                     data = yaml.safe_load(f)
                 defaults = data.get("defaults", {}) if isinstance(data, dict) else {}
+                if not isinstance(defaults, dict):
+                    raise ValueError("Trigger config 'defaults' must be a mapping")
                 self._max_tasks_per_minute = int(defaults.get("max_tasks_per_minute", _DEFAULT_MAX_TASKS_PER_MINUTE))
+                self._configs = configs
+                self._quarantined_sources = quarantined_sources
+                self._config_unreadable = False
+                self._config_mtime = mtime
+                self._quarantine_mtime = quarantine_mtime
                 logger.info("Loaded %d trigger configs from %s", len(self._configs), self._config_path)
-        except (ValueError, FileNotFoundError) as exc:
-            logger.error("Failed to load trigger config: %s", exc)
+        except (OSError, OverflowError, TypeError, ValueError, yaml.YAMLError) as exc:
+            reason, _ = redact_text(str(exc))
+            logger.error("Failed to load trigger config: %s", reason)
             self._configs = []
+            self._config_unreadable = self._quarantine_store is not None
 
     @property
     def configs(self) -> list[TriggerConfig]:
@@ -620,14 +706,19 @@ class TriggerManager:
         loaded at construction and says nothing about what another process
         claimed since.
         """
+        return self._claim_dedup_reservation(dedup_key, ttl_s)[0]
+
+    def _claim_dedup_reservation(self, dedup_key: str, ttl_s: int) -> tuple[bool, float]:
+        """Return the claim decision and its reservation expiry under one lock."""
         with self._dedup_lock():
             self._load_dedup_cache()
             expiry = self._dedup_cache.get(dedup_key)
             if expiry is not None and expiry > time.time():
-                return False
-            self._dedup_cache[dedup_key] = time.time() + ttl_s
+                return False, expiry
+            expiry = time.time() + ttl_s
+            self._dedup_cache[dedup_key] = expiry
             self._save_dedup_cache()
-            return True
+            return True, expiry
 
     # -- Cron state ---------------------------------------------------------
 
@@ -686,13 +777,18 @@ class TriggerManager:
 
     # -- Fire log -----------------------------------------------------------
 
-    def _record_fire(self, record: TriggerFireRecord) -> None:
+    def _record_fire(self, record: TriggerFireRecord, *, dedup_expires_at: float | None = None) -> None:
         """Append a fire record to the fire log."""
         path = self._runtime_dir / _FIRE_LOG_FILENAME
+        entry = asdict(record)
+        if record.cooldown_scope is None:
+            entry.pop("cooldown_scope")
+        if dedup_expires_at is not None:
+            entry["dedup_expires_at"] = dedup_expires_at
         with path.open("a") as f:
-            f.write(json.dumps(asdict(record)) + "\n")
+            f.write(json.dumps(entry) + "\n")
 
-    def _last_fire_time(self, trigger_name: str) -> float | None:
+    def _last_fire_time(self, trigger_name: str, *, scope: str | None = None, strict: bool = False) -> float | None:
         """Return the most recent PRODUCTIVE fire timestamp for a trigger, or None.
 
         The cooldown clock is driven from this, and a fire that produced nothing
@@ -706,21 +802,35 @@ class TriggerManager:
         existed were all real fires that created a task.
         """
         path = self._runtime_dir / _FIRE_LOG_FILENAME
-        if not path.exists():
-            return None
         last: float | None = None
         try:
             for line in path.read_text().strip().split("\n"):
                 if not line:
                     continue
                 entry = json.loads(line)
-                if entry.get("trigger_name") == trigger_name and entry.get("produced", True):
+                if not isinstance(entry, dict):
+                    if strict:
+                        raise ValueError("Invalid trigger history row")
+                    continue
+                if (
+                    entry.get("trigger_name") == trigger_name
+                    and entry.get("produced", True)
+                    and (scope is None or entry.get("cooldown_scope") == scope)
+                ):
                     last = entry.get("fired_at")
+                    if strict and (
+                        not isinstance(last, (int, float)) or isinstance(last, bool) or not math.isfinite(last)
+                    ):
+                        raise ValueError("Invalid trigger history timestamp")
+        except FileNotFoundError:
+            return None
         except (json.JSONDecodeError, OSError):
+            if strict:
+                raise
             logger.warning("Error reading fire log")
         return last
 
-    def get_fire_history(self, limit: int = 50) -> list[dict[str, Any]]:
+    def get_fire_history(self, limit: int | None = 50) -> list[dict[str, Any]]:
         """Return the most recent fire log entries."""
         path = self._runtime_dir / _FIRE_LOG_FILENAME
         if not path.exists():
@@ -733,7 +843,7 @@ class TriggerManager:
                 entries.append(json.loads(line))
         except (json.JSONDecodeError, OSError):
             return []
-        return entries[-limit:]
+        return entries if limit is None else entries[-limit:]
 
     # -- Rate limiting ------------------------------------------------------
 
@@ -752,8 +862,17 @@ class TriggerManager:
     def _check_conditions(self, trigger: TriggerConfig, event: TriggerEvent) -> str | None:
         """Check trigger conditions. Returns suppression reason or None if all pass."""
         conditions = trigger.conditions
+        if (
+            event.source == "webhook"
+            and event.metadata.get("webhook_headers_unverified")
+            and trigger.filters.get("headers")
+        ):
+            return "header filters require authenticated headers"
 
-        reason = self._check_cooldown(trigger.name, conditions)
+        scope = event.metadata.get("cooldown_scope") if event.source in {"gitlab_webhook", "webhook"} else None
+        reason = self._check_cooldown(
+            trigger.name, conditions, scope=scope, strict=bool(event.metadata.get("webhook_headers_unverified"))
+        )
         if reason:
             return reason
 
@@ -771,12 +890,16 @@ class TriggerManager:
 
         return None
 
-    def _check_cooldown(self, trigger_name: str, conditions: dict[str, Any]) -> str | None:
+    def _check_cooldown(
+        self, trigger_name: str, conditions: dict[str, Any], *, scope: str | None = None, strict: bool = False
+    ) -> str | None:
         """Return suppression reason if cooldown has not elapsed."""
         cooldown_s = conditions.get("cooldown_s", 0)
+        if strict and (type(cooldown_s) not in (int, float) or not math.isfinite(cooldown_s)):
+            raise ValueError("Invalid webhook cooldown")
         if cooldown_s <= 0:
             return None
-        last = self._last_fire_time(trigger_name)
+        last = self._last_fire_time(trigger_name, scope=scope, strict=strict)
         if last is not None and (time.time() - last) < cooldown_s:
             return f"cooldown (last fired {int(time.time() - last)}s ago, cooldown={cooldown_s}s)"
         return None
@@ -933,6 +1056,8 @@ class TriggerManager:
         summary: str,
         *,
         produced: bool = True,
+        cooldown_scope: str | None = None,
+        dedup_expires_at: float | None = None,
     ) -> None:
         """Record a trigger fire after task creation succeeds.
 
@@ -952,8 +1077,9 @@ class TriggerManager:
             dedup_key=dedup_key,
             event_summary=summary,
             produced=produced,
+            cooldown_scope=cooldown_scope,
         )
-        self._record_fire(record)
+        self._record_fire(record, dedup_expires_at=dedup_expires_at)
 
     # -- Direct-route governance ---------------------------------------------
 
@@ -985,22 +1111,38 @@ class TriggerManager:
 
             # An enabled trigger for this source has matching filters -
             # governance now applies to this event.
-            reason = self._check_conditions(trigger, event)
             dedup_key = compute_dedup_key(trigger.name, event)
-            if reason is None and self._check_dedup(dedup_key):
-                reason = "deduplicated"
+            dedup_expires_at = None
+            if event.source in {"gitlab_webhook", "webhook"}:
+                # A reserved delivery is reconciled even when cooldown history is unavailable.
+                with self._dedup_lock():
+                    self._load_dedup_cache()
+                    reserved = self._check_dedup(dedup_key)
+                    if reserved:
+                        dedup_expires_at = self._dedup_cache[dedup_key]
+                reason = "deduplicated" if reserved else self._check_conditions(trigger, event)
+            else:
+                reason = self._check_conditions(trigger, event)
+                if reason is None and self._check_dedup(dedup_key):
+                    reason = "deduplicated"
             if reason is not None:
                 logger.info("Trigger %s suppressed a direct %s task: %s", trigger.name, event.source, reason)
-                return TriggerGateResult(trigger.name, True, reason, None)
+                return TriggerGateResult(trigger.name, True, reason, None, dedup_expires_at)
 
             cooldown_s = trigger.conditions.get("cooldown_s", 300)
-            if not self.claim_dedup(dedup_key, max(cooldown_s, 300)):
+            claimed, dedup_expires_at = self._claim_dedup_reservation(dedup_key, max(cooldown_s, 300))
+            if not claimed:
                 logger.info("Trigger %s suppressed a direct %s task: deduplicated", trigger.name, event.source)
-                return TriggerGateResult(trigger.name, True, "deduplicated", None)
+                return TriggerGateResult(trigger.name, True, "deduplicated", None, dedup_expires_at)
             self._record_rate()
             logger.info("Trigger %s governance passed for a direct %s task", trigger.name, event.source)
-            return TriggerGateResult(trigger.name, False, None, dedup_key)
+            return TriggerGateResult(trigger.name, False, None, dedup_key, dedup_expires_at)
 
+        if self._config_unreadable:
+            return TriggerGateResult("triggers.yaml", True, "trigger policy unavailable", None)
+        for source, name in self._quarantined_sources.items():
+            if source is None or source == event.source:
+                return TriggerGateResult(name, True, "declaration quarantined", None)
         return TriggerGateResult(None, False, None, None)
 
     # -- Cron evaluation (called from orchestrator tick) ---------------------

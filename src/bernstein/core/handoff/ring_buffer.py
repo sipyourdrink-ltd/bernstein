@@ -181,7 +181,8 @@ class StreamTailBuffer:
         except OSError:
             return []
         if limit is not None and limit >= 0:
-            return entries[-limit:]
+            # ``entries[-0:]`` is the whole list, so zero needs its own answer: no entries.
+            return entries[-limit:] if limit > 0 else []
         return entries
 
     def clear(self) -> None:

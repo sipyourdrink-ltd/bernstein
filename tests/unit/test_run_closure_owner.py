@@ -51,16 +51,31 @@ def test_verified_incomplete_journal_is_closed_as_abandoned(workspace: Path) -> 
 
 
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
+@pytest.mark.parametrize("quiescence_tail", [False, True])
 def test_journaled_terminal_outcome_is_recovered_without_becoming_abandoned(
     workspace: Path,
     outcome: str,
+    quiescence_tail: bool,
 ) -> None:
     journal = _owned_started_run(workspace)
     journal.record("run_completed", run_id="run-1", outcome=outcome)
+    if quiescence_tail:
+        journal.record("run_quiescence", run_id="run-1", verified=True, residual=[])
     assert reconcile_positively_dead_owner(workdir=workspace, dead_pid=4242)
     projection = project_run_closure(AuditChainStore(workspace / ".sdd" / "audit"), "run-1")
     assert projection.status is RunClosureStatus.CLOSED
     assert projection.outcome is RunClosureOutcome(outcome)
+    assert projection.anchor_head == journal.fingerprint()
+    assert projection.anchor_count == journal.event_count()
+
+
+def test_later_task_work_prevents_recovery_of_a_stale_completion(workspace: Path) -> None:
+    journal = _owned_started_run(workspace)
+    journal.record("run_completed", run_id="run-1", outcome="completed")
+    journal.record("task_claimed", run_id="run-1", task_id="t1")
+    assert reconcile_positively_dead_owner(workdir=workspace, dead_pid=4242)
+    projection = project_run_closure(AuditChainStore(workspace / ".sdd" / "audit"), "run-1")
+    assert projection.outcome is RunClosureOutcome.ABANDONED
 
 
 def test_pid_mismatch_cannot_close_an_unrelated_run(workspace: Path) -> None:

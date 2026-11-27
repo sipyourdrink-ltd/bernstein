@@ -42,6 +42,7 @@ from bernstein.core.orchestration.preflight import (
     check_adapter_configured,
     gemini_has_auth,
     preflight_checks,
+    resolve_effective_cli,
 )
 from bernstein.core.orchestration.process_utils import (
     LIVENESS_ALIVE,
@@ -245,9 +246,6 @@ def _register_mcp_discovery(workdir: Path) -> None:
     logger.debug("Registered Bernstein MCP server in %s", mcp_path)
 
 
-# Install PII redaction on the root logger so all handlers receive sanitised
-# messages - no email, phone, SSN, or credit-card number reaches disk/stdout.
-install_pii_filter()
 console = Console()
 
 # Constants - re-export for backward compat
@@ -636,6 +634,7 @@ def bootstrap_from_seed(
     model: str | None = None,
     ab_test: bool = False,
     worker_role: str | None = None,
+    open_ui: bool = False,
 ) -> BootstrapResult:
     """Full bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
 
@@ -685,8 +684,8 @@ def bootstrap_from_seed(
 
     # 1. Parse seed
     seed = parse_seed(seed_path)
-    if cli is not None:
-        object.__setattr__(seed, "cli", cli)
+    effective_cli = resolve_effective_cli(cli, getattr(seed, "cli", None))
+    object.__setattr__(seed, "cli", effective_cli)
     if model is not None:
         object.__setattr__(seed, "model", model)
     preflight_checks(seed.cli, port)
@@ -756,6 +755,13 @@ def bootstrap_from_seed(
         ).print()
         raise SystemExit(1)
     console.print(f"  [dim]server[/dim]  :{port} [green]ready[/green]")
+    _surface_web_ui(
+        workdir=workdir,
+        port=port,
+        bind_host=bind_host,
+        auth_token=auth_token,
+        open_ui=open_ui,
+    )
 
     # Register Bernstein as a discoverable MCP server for Claude Code sessions
     with contextlib.suppress(OSError):
@@ -1220,6 +1226,43 @@ def run_watchdog(
         )
 
 
+def _surface_web_ui(
+    *,
+    workdir: Path,
+    port: int,
+    bind_host: str,
+    auth_token: str | None,
+    open_ui: bool = False,
+) -> None:
+    """Print the Web GUI URL and token location without exposing the raw bearer."""
+    gui_index = Path(__file__).resolve().parents[2] / "gui" / "static" / "index.html"
+    if not gui_index.is_file():
+        return
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+
+    display_host = (
+        "127.0.0.1"
+        if bind_host in ("0.0.0.0", "::", "")
+        else (f"[{bind_host}]" if ":" in bind_host and not bind_host.startswith("[") else bind_host)
+    )
+    base_url = f"http://{display_host}:{port}/ui/"
+    token_file = workdir / ".sdd" / "runtime" / "auth.token"
+    if token_file.is_file():
+        hint = " (API token: .sdd/runtime/auth.token)"
+    elif auth_token:
+        hint = " (API token: $BERNSTEIN_AUTH_TOKEN)"
+    else:
+        hint = ""
+    console.print(f"  [dim]web ui[/dim]  {base_url}{hint}")
+
+    if open_ui and is_loopback_host(bind_host):
+        import webbrowser
+
+        open_url = f"{base_url}#t={auth_token}" if auth_token else base_url
+        with contextlib.suppress(Exception):
+            webbrowser.open(open_url)
+
+
 def bootstrap_from_goal(
     goal: str,
     workdir: Path,
@@ -1230,6 +1273,7 @@ def bootstrap_from_goal(
     model: str | None = None,
     ab_test: bool = False,
     tasks: list[Task] | None = None,
+    open_ui: bool = False,
 ) -> BootstrapResult:
     """Bootstrap from an inline goal string (no YAML file needed).
 
@@ -1260,6 +1304,7 @@ def bootstrap_from_goal(
         model=model,
         ab_test=ab_test,
         tasks=tasks,
+        open_ui=open_ui,
     )
 
 
@@ -1405,6 +1450,7 @@ def _bootstrap_from_goal_impl(
     model: str | None = None,
     ab_test: bool = False,
     tasks: list[Task] | None = None,
+    open_ui: bool = False,
 ) -> BootstrapResult:
     """Internal implementation of bootstrap_from_goal.
 
@@ -1562,6 +1608,13 @@ def _bootstrap_from_goal_impl(
             ).print()
             raise SystemExit(1)
     console.print(f"[green]{_icons.arrow_right}[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
+    _surface_web_ui(
+        workdir=workdir,
+        port=port,
+        bind_host=bind_host,
+        auth_token=auth_token,
+        open_ui=open_ui,
+    )
 
     # Register Bernstein as a discoverable MCP server for Claude Code sessions
     with contextlib.suppress(OSError):
@@ -1649,6 +1702,7 @@ if __name__ == "__main__":
                 level=logging.INFO,
                 format="%(asctime)s %(levelname)s %(name)s: %(message)s",
             )
+        install_pii_filter()
         _watchdog_seed_path = Path(_args.seed_path) if _args.seed_path else None
         logger.info("watchdog __main__: starting with seed_path=%s", _watchdog_seed_path)
         run_watchdog(Path.cwd(), _args.port, adapter=_args.adapter, model=_args.model, seed_path=_watchdog_seed_path)

@@ -296,6 +296,49 @@ async def test_task_diff_still_serves_a_task_in_the_callers_scope(
     assert response.json()["task_id"] == own_task_id
 
 
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", READ_CREDENTIALS)
+@pytest.mark.parametrize(
+    "suffix",
+    ["detail", "diff", "trace"],
+)
+async def test_task_panel_routes_require_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+    suffix: str,
+) -> None:
+    """The general /api/v1/tasks/{id}/{detail,diff,trace} endpoints enforce tenant isolation."""
+    credential = _credential(fx, credential_name)
+
+    response = await client.get(
+        f"/api/v1/tasks/{fx.task_b_id}/{suffix}",
+        headers=credential.crossing_headers(),
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} read /{suffix} of an out-of-scope task: got {response.status_code}"
+    )
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize(("credential_name", "own_tenant"), READ_CREDENTIALS_WITH_OWN_TENANT)
+async def test_task_trace_still_serves_a_task_in_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+    own_tenant: str,
+) -> None:
+    """Positive control: the caller's own task still serves /api/v1/tasks/{id}/trace."""
+    credential = _credential(fx, credential_name)
+    own_task_id = fx.task_a_id if own_tenant == TENANT_A else fx.task_default_id
+
+    response = await client.get(f"/api/v1/tasks/{own_task_id}/trace", headers=credential.headers)
+
+    assert response.status_code == 200, f"{credential_name} lost trace for its own tenant"
+    assert response.json()["task_id"] == own_task_id
+
+
 # Cost-history trend scoping (issue #3702)
 # ---------------------------------------------------------------------------
 # The 30/90-day trend behind /costs/alerts (and the legacy /costs/history

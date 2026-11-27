@@ -26,12 +26,13 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein sandbox leaks [--all] [--json]` | Lists sandbox sessions that were created but never destroyed and whose owning task is recorded terminal in the task log. Read-only. See [docs/architecture/sandbox.md](../architecture/sandbox.md#leaked-sessions). |
 | `bernstein agents-md` | Generates a canonical AAIF AGENTS.md for the repo and rewrites it into each CLI's native shape (`CLAUDE.md`, `.cursor/rules/*.mdc`, `CONVENTIONS.md`, `.goosehints`). `generate`, `write`, `sync`, `verify`, `diff`. |
 | `bernstein scaffold "<prompt>"` | Bootstraps a project skeleton from a single goal prompt. `--template auto\|python-cli\|...`, `--output <dir>`, `--force`. |
-| `bernstein wiki build` | Renders `WIKI.md` for the current repo from the AST symbol graph. Local, no LLM call, no cloud round-trip. |
+| `bernstein wiki build` | Renders `WIKI.md` for the current repo from the AST symbol graph, preserving Unicode filenames in symbol paths. Local, no LLM call, no cloud round-trip. |
 | `bernstein simulate <plan.yaml>` | Digital-twin dry-run: predicts cost band (p50/p90), wall-clock, abandonment probability, per-task blast-radius, and bottlenecks against historical `.sdd/traces/` + `.sdd/metrics/` without spawning a real agent or hitting the network. See [docs/operations/simulate.md](simulate.md). |
 | `bernstein compare <spec> --adapters claude,codex[,...]` | Side-by-side adapter A/B in isolated per-adapter worktrees. Up to four adapters, deterministic seed, unified diff against baseline. See [docs/operations/compare.md](compare.md). |
 | `bernstein recipes list / show / run` | First-class workflow library. Parameterised recipes live in `templates/recipes/*.yaml`. See [docs/operations/recipes.md](recipes.md). |
 | `bernstein recipes register / fire / history / repair-lineage` | Content-addressed registered runs. Each fire writes a receipt to the audit chain; `fire` needs a reachable, authenticated task server (exit `2` when it cannot submit); `repair-lineage` resolves a forked definition lineage additively. See [docs/operations/recipes.md](recipes.md). |
-| `bernstein resume <task-id>` | Pick up a task from its last `checkpoint.json` instead of restarting. See [docs/operations/resume.md](resume.md). |
+| `bernstein resume <task-id>` | Prepare from a task checkpoint and queue a local resume signal. See [task checkpoint resume](resume.md). |
+| `bernstein ledger resume <run-id>` | Replay a work ledger and queue local resume signals for its frontier. See [durable work ledger](work-ledger.md). |
 | `bernstein fork --run <id> --from-step N` | Rewind a run to journal step N and branch a new run from its content-addressed worktree snapshot. The snapshot sha is recorded in the event journal, so a tampered snapshot ref is detected. See [docs/operations/fork-from-step.md](fork-from-step.md). |
 | `bernstein worktrees list / gc` | Inspect and reap orphan worktrees. Four-state classifier (`active` / `orphan` / `stale` / `corrupt`). See [docs/operations/worktrees.md](worktrees.md). |
 | `bernstein telemetry on / off / status / export` | Opt-in operator telemetry. Default off; honours `DO_NOT_TRACK` and `BERNSTEIN_TELEMETRY=0`. See [docs/telemetry.md](../telemetry.md). |
@@ -75,7 +76,9 @@ bernstein status     # task summary
 bernstein ps         # running agents (PID files + a live process-table cross-check, so it still lists survivors after stop --force removed the PID files)
 bernstein cost       # spend by model/task
 bernstein doctor     # pre-flight checks
-bernstein recap      # post-run summary
+bernstein recap      # post-run summary (default: live task-server data)
+bernstein recap --archive path/to/tasks.jsonl  # local recap from a named task archive; no server
+bernstein recap --since 6h                   # local workspace recap for the last 6 hours; no server
 bernstein export     # shareable HTML/Markdown report of the latest run
 bernstein trace <ID> # agent decision trace
 bernstein changelog --hours 48  # changelog from agent-produced diffs
@@ -89,6 +92,12 @@ bernstein debug bundle   # collect logs, config, and state for bug reports
 bernstein skills list    # discoverable skill packs (progressive disclosure)
 bernstein skills show <name>  # print a skill body with its references
 ```
+
+`--archive` and `--since` select separate recap sources and cannot be combined.
+Without either option, `bernstein recap` uses the live task server by default.
+
+`bernstein run --dry-run` exits with status `1` and writes a diagnostic to
+stderr if it cannot load its plan or fetch tasks from the task server.
 
 ```bash
 bernstein fingerprint build --corpus-dir ~/oss-corpus  # build local similarity index

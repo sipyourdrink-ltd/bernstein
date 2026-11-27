@@ -5,15 +5,17 @@
 Spawning an agent is not free: Bernstein has to create a git worktree
 (5–15 s on a non-trivial repo), optionally start an MCP server process,
 and warm up the adapter's CLI. The **warm pool** pays that cost ahead of
-time. A small number of "ready" slots - each backed by a pre-created
-worktree and (optionally) a pre-started MCP process - sit idle until a
-task arrives, at which point the spawner claims a slot instead of
-provisioning from scratch.
+time. It tracks a small number of `PoolSlot` records. A ready record may be
+backed by a pre-created worktree and (optionally) a pre-started MCP process,
+but `ready` does not mean the worktree is provisioned. Today the orchestrator
+adds speculative ready records with an empty worktree path; when the worker
+launcher claims one, it releases the unprovisioned record and creates a new
+worktree instead of reusing one.
 
-If you only have time for one sentence: **the pool tracks pre-provisioned
-worktree slots that the spawner can claim instead of running
-`git worktree add`, but today the orchestrator sizes it itself and no code
-fills it with real worktrees, so spawns take the cold path**. The rest of
+If you only have time for one sentence: **the pool tracks slot records, and a
+provisioned worktree slot can let the spawner skip `git worktree add`; today,
+however, the orchestrator adds speculative records with empty paths, so the
+worker launcher creates a new worktree and takes the cold path**. The rest of
 this page explains the slot lifecycle, the configuration surface, and the
 current wiring.
 
@@ -21,16 +23,19 @@ current wiring.
 
 ## What is a worktree slot?
 
-A **worktree slot** is one pre-provisioned unit of the warm pool: a
-ready-to-claim git worktree (plus, optionally, a pre-started MCP server
-process) reserved for the next agent spawn. Each slot is a `PoolSlot`
-object with its own `slot_id`, a target role, a `worktree_path` on
-disk, and a `ready → claimed → expired` lifecycle. When a task
-arrives, the spawner claims a ready slot and skips the 5–15 s
-`git worktree add` cold-start. `WarmPoolConfig.max_slots` caps the total
-number of slots ever added to the pool (ready, claimed and expired all
-count, and slots are never removed), not the number idle at once.
+A **worktree slot** is a `PoolSlot` record with its own `slot_id`, a target
+role, a `worktree_path`, and a `ready → claimed → expired` lifecycle. `ready`
+is a status, not a guarantee that a worktree exists: a **provisioned** slot
+has a worktree at its path (and may have a pre-started MCP server process),
+while an unprovisioned slot has an empty path. Today, the orchestrator adds
+speculative ready records with empty paths. When the worker launcher claims
+one, it releases that record and creates a new worktree instead of using the
+slot as a pre-provisioned worktree. A provisioned ready slot can skip the
+5–15 s `git worktree add` cold-start.
 
+`WarmPoolConfig.max_slots` caps the total number of slots ever added to the
+pool (ready, claimed and expired all count, and slots are never removed), not
+the number idle at once or the number of agents that can run concurrently.
 Worktree slots are about spawn latency. They are distinct from the
 concurrency slots that adaptive parallelism manages (how many agents
 run at once) and from cluster `--slots` (how many workers a remote node
@@ -157,16 +162,37 @@ The transitions are the methods on `WarmPool`:
 
 - **`add_slot(slot)`** - append a freshly-built `PoolSlot` to the pool.
   Beyond `max_slots`, additions are silently ignored.
-- **`claim_slot(role)`** - return the oldest `ready` slot matching
-  `role`, marking it `claimed`. Returns `None` if no match exists; the
-  spawner falls back to the cold path.
+- **`claim_slot(role)`** - return the first `ready` slot with that role in
+  insertion order, marking it `claimed`. It does not check the slot's age;
+  even an over-TTL slot is claimable until an explicit expiry sweep marks it
+  `expired`. Returns `None` if no matching ready slot exists; the spawner
+  falls back to the cold path.
 - **`release_slot(slot_id)`** - mark a slot `expired` once the agent
   releases its worktree. Called from `AgentSpawner._release_warm_pool_slot`
   (delegating to `release_warm_pool_slot` in `spawner_worktree.py`)
   during agent reaping.
-- **`expire_stale(now=None)`** - sweep ready slots older than
-  `slot_ttl_seconds` and move them to `expired`. Nothing calls it on a
-  schedule yet.
+- **`expire_stale(now=None)`** - sweep ready slots whose age is strictly
+  greater than `slot_ttl_seconds` and move them to `expired`. Slots exactly
+  at the TTL are not expired, and claimed or already expired slots are not
+  changed. Nothing calls the sweep on a schedule yet.
+
+For example, with `max_slots=2` and `slot_ttl_seconds=60`, add a `backend`
+slot created at `100.0` and a `qa` slot created at `110.0`. Before a sweep,
+`claim_slot("backend")` can still claim the first slot: claiming does not
+compare its age with the TTL. Instead, explicitly sweep at the fixed clock
+value `now=170.0`:
+
+```python
+pool.expire_stale(now=170.0)
+```
+
+The backend slot is 70 seconds old and expires; the qa slot is exactly 60
+seconds old and stays ready because expiry uses `>` rather than `>=`. The
+result is `pool.stats() == {"ready": 1, "claimed": 0, "expired": 1, "total": 2}`
+and `pool.available_roles() == ["qa"]` (before the sweep, the available roles
+were `["backend", "qa"]`). The expired backend record still occupies one of
+the two lifetime slots: adding another slot is rejected at the cap. Expiry
+changes the state and availability, not the total slot count.
 
 The pool itself never **creates** slots - they are added externally; today
 only `prepare_speculative_warm_pool` does so, with unprovisioned slots.

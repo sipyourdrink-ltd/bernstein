@@ -49,6 +49,9 @@ src/bernstein/core/identity/spiffe/svid.py::svid_reference_from_x509            
 src/bernstein/core/identity/spiffe/workload_api.py::WorkloadApiError                           # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/spiffe/workload_api.py::fetch_x509_svid                            # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/agent_card_signer.py::sign_agent_card                              # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/agent_manifest_export.py::CompositionExport                        # #6035 result of build_composition_export, reached through the dynamic CompositionManifestExporter.__call__ callback used by export-agent and the opt-in spawner; the static fixpoint does not resolve that callback edge
+src/bernstein/core/security/agent_manifest_export.py::build_composition_export                   # #6035 invoked by CompositionManifestExporter.__call__ from export-agent and the opt-in spawner; the static fixpoint does not resolve that callback edge
+src/bernstein/core/security/agent_manifest_export.py::verify_availability_companion              # #6035 documented offline consumer API with trusted-key/tampering tests; intentionally no in-tree runtime consumer because this composition-only feature exports evidence without reading it into scheduler authority
 src/bernstein/core/security/article12_bundle.py::ChainBreakError                               # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/article12_bundle.py::RunBundleResult                               # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/article12_bundle.py::assemble_from_run                             # exported in the module's __all__ and exercised by tests; no production caller
@@ -188,7 +191,6 @@ src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.epsilon_remain
 src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.epsilon_spent                # exercised by tests only; no production caller
 src/bernstein/core/security/dp_telemetry.py::PrivacyBudgetTracker.queries_remaining            # exercised by tests only; no production caller
 src/bernstein/core/security/dual_approval.py::create_approval_request                          # exercised by tests only; no production caller
-src/bernstein/core/security/dual_approval.py::evaluate_approval                                # exercised by tests only; no production caller
 src/bernstein/core/security/dual_approval.py::format_approval_prompt                           # exercised by tests only; no production caller
 src/bernstein/core/security/dual_approval.py::is_destructive                                   # exercised by tests only; no production caller
 src/bernstein/core/security/engagement_mandate.py::EngagementMandate.is_valid_at               # exercised by tests only; no production caller
@@ -207,7 +209,7 @@ src/bernstein/core/security/evidence_envelope.py::envelope_jws_header           
 src/bernstein/core/security/evidence_envelope.py::envelope_signing_input                       # exercised by tests only; no production caller
 src/bernstein/core/security/external_policy_hook.py::CedarHook                                 # exercised by tests only; no production caller
 src/bernstein/core/security/external_policy_hook.py::OPAHook                                   # exercised by tests only; no production caller
-src/bernstein/core/security/external_policy_hook.py::PolicyHookRegistry                        # exercised by tests only; no production caller
+src/bernstein/core/security/external_policy_hook.py::PolicyHookRegistry.first_decisive         # public compatibility helper; spawn admission evaluates every response so later denials and obligations cannot be hidden by an earlier allow
 src/bernstein/core/security/governance.py::BudgetRefused                                       # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/governance.py::check_budget_decision                               # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/grant_precondition.py::DispatchGrantGate                           # exercised by tests only; no production caller

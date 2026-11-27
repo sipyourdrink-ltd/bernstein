@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import operator
+import os
 import re
 import subprocess
 from collections import Counter
@@ -65,8 +66,14 @@ def ls_files(cwd: Path) -> list[str]:
     Returns:
         List of relative file paths, or empty list on failure.
     """
-    out = _run_git(["ls-files"], cwd, timeout=5)
-    return out.splitlines() if out else []
+    try:
+        paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=cwd, stderr=subprocess.PIPE, timeout=5)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("git ls-files failed: %s", exc)
+        return []
+    if not isinstance(paths, bytes):
+        return []
+    return [os.fsdecode(path) for path in paths.split(b"\0") if path]
 
 
 def ls_files_pattern(cwd: Path, pattern: str) -> list[str]:

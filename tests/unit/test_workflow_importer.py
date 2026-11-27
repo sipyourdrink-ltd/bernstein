@@ -162,3 +162,19 @@ class TestImportWorkflowTasks:
         payload = call_args[1]["json"] if call_args[1] else call_args[0][1]
         assert payload["metadata"].get("workflow_import_source") == "TODO.md"
         assert payload["title"] == "Add tests"
+
+
+def test_dry_run_deduplicates_titles_across_files(tmp_path: Path) -> None:
+    (tmp_path / "TODO.md").write_text("- [ ] Index pages\n- [ ] Write docs\n")
+    (tmp_path / "TASKS.md").write_text("- [ ] INDEX PAGES   \n")
+    client = MagicMock()
+    client.get.return_value.is_success = True
+    client.get.return_value.json.return_value = {"tasks": [{"title": "  write docs  "}]}
+
+    preview = import_workflow_tasks(tmp_path, client, "local", dry_run=True)
+    client.post.assert_not_called()
+    actual = import_workflow_tasks(tmp_path, client, "local")
+
+    assert preview == actual == 1
+    client.post.assert_called_once()
+    assert client.post.call_args.kwargs["json"]["title"] == "Index pages"

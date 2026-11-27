@@ -228,6 +228,7 @@ def test_spawn_check_receives_authoritative_model_before_launch(
     orch = _spawn_orch(tmp_path)
     spawner: Any = object.__new__(AgentSpawner)
     spawner._workdir = tmp_path
+    spawner._policy_hook_registry = None
     spawner._templates_dir = tmp_path / "templates"
     spawner._default_model = "opus" if model_source == "default" else "sonnet"
     spawner._role_model_policy = {"backend": {"model": "opus"}} if model_source == "role" else {}

@@ -1,0 +1,74 @@
+# Cloud and AI token spend attribution, routing optimization, and SLO check.
+name: finops-budget-remediation
+version: "1.0.0"
+
+phases:
+  - name: analyze
+    allowed_roles: [analyst, prompt-engineer]
+  - name: optimize
+  - name: verify
+    allowed_roles: [qa, security, reviewer]
+  - name: approve
+    allowed_roles: [docs, manager]
+
+nodes:
+  attribute-unit-spend:
+    phase: analyze
+    role: analyst
+    description: "Break down token, context, retry, and cloud spend per workflow"
+    estimated_minutes: 25
+
+  compact-prompts-and-tiers:
+    phase: optimize
+    role: prompt-engineer
+    description: "Rightsize model tiers and trim redundant context while keeping safety floors"
+    estimated_minutes: 35
+    depends_on:
+      - attribute-unit-spend
+
+  wire-budget-caps:
+    phase: optimize
+    role: devops
+    description: "Configure per-run USD/token ceilings and retry circuit breakers"
+    estimated_minutes: 25
+    depends_on:
+      - attribute-unit-spend
+
+  verify-quality-and-security-floors:
+    phase: verify
+    role: qa
+    description: "Confirm held-out benchmark accuracy and security review floors hold"
+    estimated_minutes: 30
+    depends_on:
+      - compact-prompts-and-tiers
+      - wire-budget-caps
+
+  retune-routing:
+    phase: optimize
+    role: prompt-engineer
+    description: "Restore model tier on stages where quality regressed"
+    depends_on:
+      - source: verify-quality-and-security-floors
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 2
+      until: "status == 'done'"
+
+  reverify-quality-and-security-floors:
+    phase: verify
+    role: qa
+    description: "Re-verify held-out benchmark accuracy and security floors after routing retune"
+    estimated_minutes: 25
+    depends_on:
+      - retune-routing
+
+  publish-finops-report:
+    phase: approve
+    role: docs
+    description: "Record projected savings, guardrails, and rollback config"
+    estimated_minutes: 15
+    depends_on:
+      - source: verify-quality-and-security-floors
+        condition: "status == 'done'"
+      - source: reverify-quality-and-security-floors
+        condition: "status == 'done'"

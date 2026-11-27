@@ -8,3 +8,8 @@ constraints:
   - "Python 3.12+ with Flask"
   - "pytest for all tests"
   - "Return proper HTTP status codes for errors"
+
+# Declare the quickstart's actual merge-gate policy so run_started journals
+# gate_config and `bernstein trace export` can compute policy.bundle_hash.
+quality_gates:
+  enabled: false

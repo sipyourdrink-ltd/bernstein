@@ -99,6 +99,7 @@ def adapter_cli_choice() -> click.Choice[str]:
 
 
 def print_banner() -> None:
+    """Print the Bernstein banner to the configured console."""
     console.print(f"[blue]{BANNER}[/blue]")
 
 
@@ -199,10 +200,10 @@ def server_get(path: str, *, raise_on_auth_error: bool = False) -> dict[str, Any
     except httpx.HTTPStatusError as exc:
         if raise_on_auth_error and exc.response.status_code in (401, 403):
             raise ServerAuthError(exc.response.status_code) from exc
-        console.print(f"[red]Server error:[/red] {exc}")
+        click.echo(f"Server error: {exc}", err=True)
         return None
     except Exception as exc:
-        console.print(f"[red]Server error:[/red] {exc}")
+        click.echo(f"Server error: {exc}", err=True)
         return None
 
 
@@ -246,10 +247,10 @@ def server_post(
         except httpx.HTTPStatusError as exc:
             if raise_on_auth_error and exc.response.status_code in (401, 403):
                 raise ServerAuthError(exc.response.status_code) from exc
-            console.print(f"[red]Server error:[/red] {exc}")
+            click.echo(f"Server error: {exc}", err=True)
             return None
         except Exception as exc:
-            console.print(f"[red]Server error:[/red] {exc}")
+            click.echo(f"Server error: {exc}", err=True)
             return None
     return None
 
@@ -269,17 +270,19 @@ def require_server_reachable() -> None:
     try:
         reachable = server_get("/status", raise_on_auth_error=True)
     except ServerAuthError:
-        console.print(
-            "[red]Server is running but rejected credentials.[/red] "
-            "Run [bold]bernstein[/bold] in this workspace, or set BERNSTEIN_AUTH_TOKEN to match the server."
+        click.echo(
+            "Server is running but rejected credentials. "
+            "Run bernstein in this workspace, or set BERNSTEIN_AUTH_TOKEN to match the server.",
+            err=True,
         )
         raise SystemExit(1) from None
     if reachable is None:
-        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
+        click.echo("Cannot reach task server. Is Bernstein running? Run bernstein to start.", err=True)
         raise SystemExit(1)
 
 
 def read_pid(path: str) -> int | None:
+    """Read a numeric PID from a file, returning None if unavailable."""
     p = Path(path)
     if p.exists():
         try:
@@ -290,14 +293,17 @@ def read_pid(path: str) -> int | None:
 
 
 def write_pid(path: str, pid: int) -> None:  # type: ignore[reportUnusedFunction]
+    """Write a process ID to its PID file."""
     Path(path).write_text(str(pid))
 
 
 def is_alive(pid: int) -> bool:
+    """Return whether the shared process probe reports the PID alive."""
     return _shared_is_process_alive(pid)
 
 
 def kill_pid(path: str, label: str) -> None:
+    """Signal the process in a PID file if it is alive, then remove the file."""
     pid = read_pid(path)
     if pid is None:
         console.print(f"[dim]No PID file found for {label}.[/dim]")
@@ -471,7 +477,7 @@ _DOT_BERNSTEIN_SEED_FILENAMES = (
 )
 
 
-def find_seed_file() -> Path | None:
+def find_seed_file(root: Path = Path(".")) -> Path | None:
     """Look for a bernstein.yaml in the current directory.
 
     Checks the project-local ``.bernstein/`` directory first (e.g.
@@ -481,12 +487,8 @@ def find_seed_file() -> Path | None:
     Returns:
         Path to the seed file if found, None otherwise.
     """
-    for name in _DOT_BERNSTEIN_SEED_FILENAMES:
-        p = Path(name)
-        if p.is_file():
-            return p
-    for name in _SEED_FILENAMES:
-        p = Path(name)
+    for name in (*_DOT_BERNSTEIN_SEED_FILENAMES, *_SEED_FILENAMES):
+        p = root / name
         if p.is_file():
             return p
     return None

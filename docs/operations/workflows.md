@@ -73,12 +73,31 @@ Node fields (`core/workflows/workflow_spec.py`, `WorkflowNode`):
 | `prompt` | Prompt body; `{goal}` is substituted from `run(goal=...)`. |
 | `loop` | `{until: "<bash predicate>", max_iterations: N}` - re-fires the node until the predicate exits 0 or the cap is hit. |
 | `fresh_context` | Agent nodes only: no session carryover between loop iterations. |
+| `always_run` | Run this node as a cleanup/teardown step even if an earlier node failed and aborted the run (command-node failures and agent spawn failures; agent-node completion gating is tracked in #6639). A failed run still reports failure even when an `always_run` node succeeds. |
 | `timeout_seconds` | Per-iteration wall-clock cap (1-86400, default set in `workflow_spec.py`). |
 | `interactive` | **Rejected at load time** - see [Limitations](#limitations). |
 
-Bundled examples ship under `templates/workflows/`: `idea-to-pr.yaml`,
-`refactor-with-tests.yaml`, `doc-update.yaml`, `hot-fix.yaml`,
-`security-review.yaml`, `dependency-bump.yaml`.
+### Bundled workflows
+
+Fifteen stock manifests ship under `templates/workflows/` (packaged into the wheel under `bernstein/_default_templates/workflows/`):
+
+| Workflow | Intended use |
+|---|---|
+| `idea-to-pr.yaml` | End-to-end feature delivery: research, plan, implement, test, and open a PR. |
+| `refactor-with-tests.yaml` | Target a module, refactor safely, and loop on tests until green. |
+| `hot-fix.yaml` | Reproduce a production defect, patch, regression-test, and ship a hotfix. |
+| `doc-update.yaml` | Audit and update project documentation against recent code changes. |
+| `security-review.yaml` | Static-scan, triage, patch, and adversary-review security findings. |
+| `dependency-bump.yaml` | Bump locked dependencies, run the test suite, and loop on flake fixes. |
+| `audit-evidence-pack.yaml` | Collect audit logs, SBOM/provenance, and eval results into a verified evidence pack. |
+| `incident-postmortem.yaml` | Triage an incident, land a regression-tested guardrail, and write the postmortem. |
+| `release-readiness.yaml` | Pre-release audit across changelog fragments, dependency health, and smoke tests. |
+| `deprecation-rollout.yaml` | Phased deprecation rollout: warn, migrate callers, verify zero usage, and remove the shim. |
+| `ai-governance-gate.yaml` | Audit an agentic workflow against OWASP Agentic Top 10, eval stability, and ISO 42001 controls. |
+| `zero-downtime-migration.yaml` | Design, implement, and verify an expand-backfill-contract migration with rehearsed rollback. |
+| `finops-spend-audit.yaml` | Attribute cloud and LLM token spend, rightsize model routing, and verify quality floors. |
+| `disaster-recovery-drill.yaml` | Rehearse isolated backup restore, measure RTO/RPO, verify integrity, and run sandbox teardown (`always_run: true` on command/spawn failures; use `.bernstein/workflows/disaster-recovery-drill.yaml` or `command:` nodes for accepted-completion gating while #6639 is open). |
+| `mcp-plugin-vetting.yaml` | Vet a third-party MCP server or agent plugin for supply-chain, permission, and injection safety. |
 
 ## Running
 
@@ -93,8 +112,20 @@ executes the manifest as a topological DAG: every layer of nodes whose
 dependencies are satisfied runs concurrently via a thread pool.
 Agent-typed nodes dispatch through the existing `AgentSpawner`;
 command-typed nodes shell out with `subprocess.run`. Each node's
-terminal status is one of `success`, `failed`, or `skipped` (skipped
-means an upstream dependency failed). A node with `loop:` re-fires until
+terminal status is one of `success`, `failed`, or `skipped`. A node is
+skipped when its own `when` predicate is false, or when an upstream
+dependency failed. Once any node fails, the run aborts: every node in a
+later layer is skipped and nothing in it is dispatched — even on a branch
+that did not fail — unless that node sets `always_run: true` for
+cleanup/teardown. `always_run: true` triggers on command-node failures
+and agent dispatch/spawn failures; because agent nodes currently record
+success on spawn without waiting for verified completion (see
+[Resuming workflows](#resuming-workflows) and #6639), use `command:`
+nodes or the task-store-backed conditional DAG
+(`.bernstein/workflows/disaster-recovery-drill.yaml`) when teardown must
+gate on accepted task outcomes. An `always_run` node still cannot turn
+an aborted run into a success, and downstream non-`always_run` nodes
+remain skipped. A node with `loop:` re-fires until
 its `until` bash predicate exits `0` or `max_iterations` is reached, at
 which point the run raises rather than silently truncating.
 
@@ -102,13 +133,21 @@ which point the run raises rather than silently truncating.
 
 ## Resuming workflows
 
+Agent dispatch currently does not wait for verified completion before releasing
+dependent nodes. The [completion boundary proposal](../architecture/workflow-agent-completion-proposal.md)
+records the unresolved execution and resume guarantees tracked in #6639.
+
 Workflow runs can be resumed after interruption (Ctrl+C, crash, kill) using:
 
 ```bash
 bernstein workflow run idea-to-pr -g "Add JWT auth"  # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth"
-bernstein workflow resume <run_id> -m ./my-flow.yaml
+bernstein workflow resume <run_id> -m ./my-flow.yaml -g "Add JWT auth"
 ```
+
+Pass the original goal again when unfinished nodes use `{goal}`, including
+when supplying `-m`. The resume command defaults `--goal` to an empty string;
+it does not restore the goal from `spec_snapshot.json`.
 
 The resume command:
 - Validates that the provided manifest matches the one used at run start via spec digest
@@ -118,7 +157,8 @@ The resume command:
 - Preserves loop iteration counts when resuming loop nodes
 
 State persistence location: `.sdd/runs/<run_id>/` contains:
-- `spec_snapshot.json` - manifest name, version, digest, and source
+- `spec_snapshot.json` - state format `version`, `spec_name`, `spec_version`,
+  `spec_digest`, `node_ids`, and `source` (manifest path or name); no goal text
 - `<node_id>.node.json` - checkpoint for each completed node
 - `run_complete.json` - sentinel written when run finishes
 

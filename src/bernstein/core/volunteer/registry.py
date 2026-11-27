@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -49,12 +50,14 @@ MANIFEST_SUBPATH = ".bernstein/volunteer.json"
 
 #: Default revalidation window (6 hours).
 DEFAULT_REVALIDATE_SECONDS = 6 * 3600
+_MAX_REGISTRY_RESPONSE_BYTES = 1024 * 1024
 
 #: Environment variable that overrides the cache TTL.
 TTL_ENV = "BERNSTEIN_VOLUNTEER_TTL"
 
 
 def env_ttl_seconds(default: int = DEFAULT_REVALIDATE_SECONDS) -> int:
+    """Read the registry cache TTL override, falling back for invalid values."""
     raw = os.environ.get(TTL_ENV)
     if not raw:
         return default
@@ -67,13 +70,21 @@ def env_ttl_seconds(default: int = DEFAULT_REVALIDATE_SECONDS) -> int:
 
 @dataclass(frozen=True)
 class HTTPResponse:
+    """Minimal HTTP response used by the registry client."""
+
     status: int
     body: bytes
     etag: str | None
 
 
 class HTTPTransport(Protocol):
+    """Injectable HTTP GET boundary for volunteer registry fetches."""
+
     def get(self, url: str, *, headers: dict[str, str]) -> HTTPResponse: ...
+
+
+class _ReadableResponse(Protocol):
+    def read(self, size: int, /) -> bytes: ...
 
 
 class _UrllibTransport:
@@ -89,17 +100,33 @@ class _UrllibTransport:
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with opener.open(request, timeout=15) as resp:
-                body = resp.read()
+                body = self._read_body(resp)
                 etag = resp.headers.get("ETag")
                 return HTTPResponse(status=resp.status, body=body, etag=etag)
         except urllib.error.HTTPError as exc:
-            body = exc.read() if exc.fp is not None else b""
-            etag = exc.headers.get("ETag") if exc.headers is not None else None
-            return HTTPResponse(status=exc.code, body=body, etag=etag)
+            with exc:
+                body = self._read_body(exc.fp) if exc.fp is not None else b""
+                etag = exc.headers.get("ETag") if exc.headers is not None else None
+                return HTTPResponse(status=exc.code, body=body, etag=etag)
+
+    @staticmethod
+    def _read_body(response: _ReadableResponse) -> bytes:
+        try:
+            body = response.read(_MAX_REGISTRY_RESPONSE_BYTES + 1)
+        except HTTPException as exc:
+            raise OSError("invalid volunteer registry response") from exc
+        if len(body) > _MAX_REGISTRY_RESPONSE_BYTES:
+            raise OSError(f"volunteer registry response exceeds {_MAX_REGISTRY_RESPONSE_BYTES}-byte limit")
+        remaining = getattr(response, "length", None)
+        if isinstance(remaining, int) and remaining > 0:
+            raise OSError("incomplete volunteer registry response")
+        return body
 
 
 @dataclass(frozen=True)
 class IndexEntry:
+    """A repository listing advertised by a volunteer index."""
+
     repo_url: str
     default_branch: str
     topics: tuple[str, ...]
@@ -110,6 +137,8 @@ class IndexEntry:
 
 @dataclass(frozen=True)
 class BrowseResult:
+    """A volunteer listing whose manifest was loaded and accepted."""
+
     repo_url: str
     default_branch: str
     manifest: VolunteerManifest
@@ -120,6 +149,8 @@ class BrowseResult:
 
 @dataclass(frozen=True)
 class DroppedEntry:
+    """A repository omitted from volunteer results and the reason."""
+
     repo_url: str
     reason: str
 

@@ -201,6 +201,10 @@ def receive(
             # Skip half-written or corrupt files; the next poll will retry
             # if the writer eventually completes.
             continue
+        # Only a JSON object is a message. Any other valid JSON (an array, a number) is skipped
+        # like a corrupt file, so one bad entry does not stop the read (#8054).
+        if not isinstance(data, dict):
+            continue
         messages.append(Message.from_dict(data))
     return messages
 

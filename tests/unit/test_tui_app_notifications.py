@@ -106,6 +106,15 @@ class TestNotificationCentre:
             assert text.count("new ") == 2
 
     @pytest.mark.asyncio
+    async def test_toast_tick_after_overlay_unmount(self) -> None:
+        app = BernsteinApp()
+        async with app.run_test():
+            app._toasts.error("worktree missing")
+            await app.query_one("#toast-overlay").remove()
+
+            app._tick_toasts()
+
+    @pytest.mark.asyncio
     async def test_acknowledge_clears_the_unread_marker(self) -> None:
         app = BernsteinApp()
         async with app.run_test() as pilot:

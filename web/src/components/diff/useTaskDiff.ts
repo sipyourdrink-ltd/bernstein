@@ -18,7 +18,7 @@ export function useTaskDiff({ taskId, enabled }: UseTaskDiffOptions) {
     queryKey: ['task-diff', taskId],
     queryFn: () =>
       apiGet<TaskDiffResponse>(
-        `/dashboard/tasks/${encodeURIComponent(taskId)}/diff`,
+        `/tasks/${encodeURIComponent(taskId)}/diff`,
       ),
     enabled: enabled && taskId !== '',
     // The diff doesn't update on its own - refetching is operator-driven via

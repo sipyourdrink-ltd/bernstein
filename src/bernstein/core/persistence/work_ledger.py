@@ -425,11 +425,20 @@ def _check_row(
     raw_seq = row.get("seq", -1)
     try:
         seq = int(raw_seq)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         seq = -1
     position = _row_position(seq if seq >= 0 else expected_seq, line_no)
     if seq != expected_seq:
         errors.append(f"{position}: seq mismatch (expected {expected_seq}, got {raw_seq!r})")
+
+    # These fields are outside the hash but must be readable by LedgerEntry.from_dict.
+    # Older rows can omit them and use the reader's defaults.
+    for field_name, convert in (("ts", float), ("redactions", int), ("schema_version", int)):
+        if field_name in row:
+            try:
+                convert(row[field_name])
+            except (TypeError, ValueError, OverflowError):
+                errors.append(f"{position}: invalid {field_name} metadata")
 
     stored_prev = str(row.get("prev_hash", ""))
     if stored_prev != prev_hash:
@@ -450,7 +459,7 @@ def _check_row(
     return errors
 
 
-def _walk_validated_lines(bucket_path: Path) -> tuple[str, list[str]]:
+def _walk_validated_lines(bucket_path: Path, *, repair_interrupted_append: bool = False) -> tuple[str, list[str]]:
     """Walk *bucket_path*, revalidate the chain, and collect canonical lines.
 
     Returns ``(tip_hash, validated_lines)``. Fail-closed contract mirrors
@@ -458,15 +467,25 @@ def _walk_validated_lines(bucket_path: Path) -> tuple[str, list[str]]:
     :class:`LedgerError` naming the offending position; a torn/unparseable
     trailing line (crash mid-write) is tolerated only when nothing
     well-formed follows it.
+
+    A writer can repair an interrupted append before accepting new rows.
+    Only an unterminated final fragment can be removed. A valid final row
+    without its newline is retained and terminated.
     """
     prev_hash = GENESIS_HASH
     expected_seq = 0
     validated: list[str] = []
     pending_torn_line: int | None = None
+    incomplete_at: int | None = None
+    byte_offset = 0
+    ends_with_newline = True
 
-    with bucket_path.open(encoding="utf-8") as fh:
+    with bucket_path.open("r+b" if repair_interrupted_append else "rb") as fh:
         for line_no, raw in enumerate(fh, start=1):
-            stripped = raw.strip()
+            line_offset = byte_offset
+            byte_offset += len(raw)
+            ends_with_newline = raw.endswith(b"\n")
+            stripped = raw.decode("utf-8").strip()
             if not stripped:
                 continue
 
@@ -474,6 +493,8 @@ def _walk_validated_lines(bucket_path: Path) -> tuple[str, list[str]]:
             if row is None:
                 if pending_torn_line is None:
                     pending_torn_line = line_no
+                    if not ends_with_newline:
+                        incomplete_at = line_offset
                 continue
 
             if pending_torn_line is not None:
@@ -493,6 +514,17 @@ def _walk_validated_lines(bucket_path: Path) -> tuple[str, list[str]]:
             expected_seq += 1
             validated.append(stripped)
 
+        if repair_interrupted_append and pending_torn_line is not None:
+            if incomplete_at is None:
+                raise LedgerError(f"ledger {bucket_path}: line {pending_torn_line} is corrupt and newline terminated")
+            fh.truncate(incomplete_at)
+            os.fsync(fh.fileno())
+        elif repair_interrupted_append and not ends_with_newline:
+            fh.seek(byte_offset)
+            fh.write(b"\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+
     if pending_torn_line is not None:
         logger.warning(
             "ledger %s: torn trailing line %d ignored; recovered %d validated entries",
@@ -502,12 +534,6 @@ def _walk_validated_lines(bucket_path: Path) -> tuple[str, list[str]]:
         )
 
     return prev_hash, validated
-
-
-def _validate_chain_for_recovery(bucket_path: Path) -> tuple[str, int]:
-    """Return ``(tip_hash, validated_count)`` for writer tip recovery."""
-    tip_hash, validated = _walk_validated_lines(bucket_path)
-    return tip_hash, len(validated)
 
 
 def validated_canonical_lines(ledger_dir: Path) -> tuple[list[str], str]:
@@ -602,8 +628,8 @@ class WorkLedger:
         """Open (or create) the ledger rooted at *ledger_dir*.
 
         Recovery revalidates every entry hash from genesis and fails closed
-        on interior corruption; a torn trailing line degrades gracefully to
-        the last validated entry.
+        on interior corruption. An interrupted trailing append is repaired
+        at the last validated entry before a writer can add more rows.
         """
         ledger_dir.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
@@ -732,12 +758,12 @@ class WorkLedger:
         if not self._bucket_path.exists():
             return
         try:
-            tip_hash, validated = _validate_chain_for_recovery(self._bucket_path)
+            tip_hash, validated = _walk_validated_lines(self._bucket_path, repair_interrupted_append=True)
         except OSError as exc:
             msg = f"ledger recovery failed: {exc}"
             raise LedgerError(msg) from exc
         self._tip_hash = tip_hash
-        self._seq = validated
+        self._seq = len(validated)
 
 
 # ---------------------------------------------------------------------------
@@ -782,13 +808,16 @@ class LedgerReader:
                     continue
                 yield LedgerEntry.from_dict(row)
 
-    def verify(self, expected_head: str | None = None) -> LedgerVerification:
+    def verify(self, expected_head: str | None = None, *, allow_interrupted_tail: bool = False) -> LedgerVerification:
         """Walk the chain and recompute every entry hash.
 
         Args:
             expected_head: When supplied, additionally require the tail's
                 ``entry_hash`` to equal this value -- the check a resume
                 runs against an anchored head.
+            allow_interrupted_tail: For resume planning only, ignore an
+                unparseable final fragment with no newline. Every complete
+                row and any expected head must still verify.
 
         Returns:
             A :class:`LedgerVerification`; every error names the exact
@@ -805,13 +834,15 @@ class LedgerReader:
                 errors.append(f"no ledger file at {self._bucket_path}; expected head {expected_head!r}")
             return LedgerVerification(ok=ok, head_hash=GENESIS_HASH, entries=0, errors=errors)
 
-        with self._bucket_path.open(encoding="utf-8") as fh:
+        with self._bucket_path.open(encoding="utf-8", newline="\n") as fh:
             for line_no, raw in enumerate(fh, start=1):
                 stripped = raw.strip()
                 if not stripped:
                     continue
                 row = _parse_ledger_row(stripped)
                 if row is None:
+                    if allow_interrupted_tail and not raw.endswith("\n"):
+                        break
                     errors.append(f"entry {expected_seq} (line {line_no}): not a parseable ledger row")
                     continue
                 errors.extend(_check_row(row, line_no=line_no, expected_seq=expected_seq, prev_hash=prev_hash))

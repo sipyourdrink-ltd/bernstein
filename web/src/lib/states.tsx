@@ -1,20 +1,28 @@
 // State primitives - every screen-level component must use these (no rolling-your-own).
 // Per Variant A handoff §8 + system-tokens-and-states ticket.
 
-import type { ReactNode } from 'react';
+import type { MouseEventHandler, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
-type Action = { label: string; onClick: () => void; variant?: 'primary' | 'secondary' };
+type Action = { label: string; onClick: MouseEventHandler<HTMLButtonElement>; variant?: 'primary' | 'secondary' };
 
 interface EmptyStateProps {
   title: string;
   description?: string;
+  children?: ReactNode;
   action?: Action;
   icon?: ReactNode;
   className?: string;
 }
 
-export function EmptyState({ title, description, action, icon, className }: EmptyStateProps) {
+export function EmptyState({
+  title,
+  description,
+  children,
+  action,
+  icon,
+  className,
+}: EmptyStateProps) {
   return (
     <div
       className={cn(
@@ -27,6 +35,7 @@ export function EmptyState({ title, description, action, icon, className }: Empt
       {description && (
         <p className="max-w-md text-body text-muted-foreground">{description}</p>
       )}
+      {children}
       {action && (
         <button
           type="button"

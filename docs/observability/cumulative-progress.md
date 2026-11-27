@@ -1,11 +1,23 @@
 # Cumulative progress tracking
 
-The Bernstein TUI (`bernstein --tui` / the Textual dashboard app) shows two
+The Bernstein Textual dashboard (`bernstein live`) shows two
 completion-percentage bars: a per-task **Progress** column in the task table,
 and an aggregate run-level bar in the status bar showing how much of the
 whole run is done. Both are colour-coded terminal progress bars rendered
 client-side from data the task server already returns on every poll — there
 is no separate "progress" API call.
+
+## Which signal answers which question?
+
+These signals are not interchangeable; choose one based on what you need to know.
+
+| Signal | Input | What an operator can infer |
+|---|---|---|
+| Run completion percentage | The polled task-server status/summary counts: `tasks_done / tasks_total` | The fraction of tasks in the run marked done; it is a run-completion summary, not a measure of agent activity. |
+| Task completion percentage | Each task's API fields (`progress.percentage`, step counts, or test counts, in that order); a task marked `done` is 100% | The dashboard's client-side estimate for that task's completion. It trusts the supplied fields and is not independently verified. |
+| [Session-log activity](progress-watch.md) | Changes in a watched agent session log's mtime or size | The log is advancing, which indicates activity. Growth alone does not establish that work was completed. |
+| [Per-agent token usage](token-progress.md) | Bytes appended to the session's `.sdd/runtime/<session_id>.tokens` sidecar, counted on orchestrator ticks | How much token usage has been recorded for the agent, and (when configured) how it compares with its task budget—not task completion. |
+| [Journal-derived task progress vector](task-artifacts.md#progress-vector) | A projection of journaled work, including checkpoint references, evidence producers and results, diff/gate attempts, and task transitions | How much progress is earned by recorded work. It cannot be set by the agent, but it is distinct from the dashboard's API-derived percentage. |
 
 ## What renders where
 
@@ -19,22 +31,45 @@ Bar colour reflects completion: `dim` below 30%, `yellow` from 30-59%,
 
 ## Where the numbers come from
 
-**Run-level (status bar):** `_compute_run_pct()` divides the `done` count by
-the `total` count from the same status payload the TUI already polls
-(`core/routes` status/summary fields) and passes the result to
-`render_progress_bar()`. If `tasks_total` is zero, no bar is shown.
+**Run-level (status bar):** `_compute_run_pct()` uses `summary.total` and
+`summary.done` when those keys are present; otherwise it falls back to the
+status payload's top-level `total` and `completed`, respectively. The run
+percentage is `done / total * 100`. If the selected total is zero (or missing,
+which defaults to zero), `_compute_run_pct()` returns no percentage and the
+status bar shows no run-progress bar. For example, `summary: {"total": 4,
+"done": 1}` gives 25%; with no summary counts, top-level `{"total": 4,
+"completed": 1}` also gives 25%.
 
-**Per-task (task list):** `TaskProgress.from_api()` reads a task's raw API
-dict and computes a percentage with this priority order:
+**Per-task (task list):** `TaskProgress.from_api()` computes a value using
+these inputs, in priority order:
 
-1. An explicit `progress.percentage` field, if the server sent one.
-2. `completed_steps / total_steps`, if step counts are present.
-3. `tests_passing / tests_total`, if test counts are present.
-4. Otherwise `0.0`, and the column renders `—` instead of a bar unless
-   `files_changed` or a truthy `progress` field is also present.
+1. `progress.percentage`, if it is not `null` (including an explicit `0`).
+2. `progress.completed_steps / progress.total_steps`, when total steps is
+   greater than zero.
+3. `tests_passing / tests_total`, when total tests is greater than zero.
+4. Otherwise the computed percentage is `0`.
 
-A task with `status == "done"` always shows 100%, regardless of the fields
-above.
+For test counts, the parser first looks inside the `progress` object and, if a
+specific key is absent there, reads the legacy top-level `tests_passing` or
+`tests_total` field. For example, `{"progress": {"completed_steps": 1,
+"total_steps": 4, "tests_passing": 8, "tests_total": 10}}` uses the step
+ratio and shows 25%, not the test ratio of 80%. Without usable percentage or
+step counts, those test counts provide the percentage.
+
+Whichever source wins, the displayed percentage stays within 0-100. An
+explicit `progress.percentage` outside that range is clamped to it, and for
+the step and test ratios the numerator is bounded to `[0, total]` before
+division — so a negative `completed_steps` or `tests_passing` count shows
+0%, and a count past its total shows 100%.
+
+The table shows a dash (`—`) when the computed value is zero and neither a
+truthy `progress` object nor a nonzero top-level `files_changed` count is
+present. Thus a task with no progress fields, such as `{}`, shows a dash. A
+top-level `{"files_changed": 2}` has no completion percentage to compute but
+shows an explicit 0% bar; likewise `{"progress": {"percentage": 0}}` shows
+0%. A task with `status: "done"` always shows 100%, even if an older reported
+percentage says otherwise (for example, `{"status": "done", "progress":
+{"percentage": 35}}` shows 100%).
 
 ## Limitations
 

@@ -29,7 +29,7 @@ task's mailbox chain first. If the open has no matching close and the task
 remains `SUSPENDED`, cancel it through the normal operator path:
 
 ```bash
-bernstein task cancel <task-id> --reason "recover stranded mailbox rendezvous after restart"
+bernstein cancel <task-id> --reason "recover stranded mailbox rendezvous after restart"
 ```
 
 Cancellation is an escape hatch, not a fabricated rendezvous resolution: it

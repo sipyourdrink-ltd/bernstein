@@ -72,8 +72,8 @@ _SUGGESTIONS: list[ErrorSuggestion] = [
         pattern=r"(?i)GOOGLE_API_KEY.*not set|missing.*api.?key.*gemini",
         title="Google API key not configured",
         steps=[
-            "export GOOGLE_API_KEY=...",
-            "Or authenticate via gcloud: gcloud auth login",
+            "export GEMINI_API_KEY=...  # or GOOGLE_API_KEY=...",
+            "Or run 'gemini' to sign in, or: gcloud auth application-default login",
         ],
     ),
     ErrorSuggestion(
@@ -85,7 +85,7 @@ _SUGGESTIONS: list[ErrorSuggestion] = [
         ],
     ),
     ErrorSuggestion(
-        pattern=r"(?i)no.*seed.*file|no.*bernstein\.yaml|no goal.*seed",
+        pattern=r"(?i)\bno\b.*(?:seed.*file|bernstein\.yaml)|\bno goal.*seed",
         title="No project configuration found",
         steps=[
             "Create a bernstein.yaml: bernstein init",
