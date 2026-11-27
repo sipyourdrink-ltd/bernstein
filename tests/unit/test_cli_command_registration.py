@@ -425,7 +425,6 @@ GHOST_FLAG_EXEMPTIONS: dict[str, str] = {}
 # (real -> documented) assertion is skipped for them, the forward assertion
 # is not.
 PARTIAL_FLAG_TABLES: dict[str, str] = {
-    "acp serve": "ACP v1 --cli, --setup, and --allow-embedded-http flags pinned here pending reference table update",
     "run": "documents the most-used subset of a ~45-flag surface; the full list is `bernstein run --help`",
 }
 
@@ -436,17 +435,6 @@ PARTIAL_FLAG_TABLES: dict[str, str] = {
 # command's surface fails here and forces a deliberate update -- and a look at
 # whether the "most-used" table rows are affected.
 PARTIAL_TABLE_FULL_SURFACES: dict[str, frozenset[str]] = {
-    "acp serve": frozenset(
-        {
-            "--allow-embedded-http",
-            "--cli",
-            "--http",
-            "--no-stdio",
-            "--server-url",
-            "--setup",
-            "--stdio",
-        }
-    ),
     "run": frozenset(
         {
             "--ab-test",

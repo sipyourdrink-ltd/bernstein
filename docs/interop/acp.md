@@ -6,7 +6,7 @@ Bernstein speaks the [Agent Client Protocol](https://agentclientprotocol.org)
 
 | Role | Command / surface | Direction | What it does |
 |------|-------------------|-----------|--------------|
-| Server | `bernstein acp serve --stdio` | IDE -> Bernstein | Exposes Bernstein as an ACP v1 backend over stdio or HTTP/SSE so an editor can drive it. See [ACP bridge](../reference/acp-bridge.md). |
+| Server | `bernstein acp serve --stdio` | IDE -> Bernstein | Exposes Bernstein as an ACP v1 backend over stdio or loopback HTTP/SSE so an editor can drive it. See [ACP bridge](../reference/acp-bridge.md). |
 | Client | `EventChannel.ACP` adapter | upstream CLI -> Bernstein | Consumes ACP from an upstream CLI as a first-class adapter event transport. |
 
 > **Legacy REST surface:** The FastAPI REST routes in
@@ -16,7 +16,9 @@ Bernstein speaks the [Agent Client Protocol](https://agentclientprotocol.org)
 > **Server runner:** `bernstein acp serve --stdio` runs the embedded workspace
 > runner with live `EventJournal` -> `session/update` projection, runtime
 > approval-gate bridging over `session/request_permission`, persisted
-> `session/load` replay, and `--setup` terminal authentication; see
+> `session/load` replay, and `--setup` terminal authentication (`--http` binds
+> loopback only and forwards to `--server-url` unless `--allow-embedded-http` is
+> passed); see
 > [ACP bridge](../reference/acp-bridge.md#embedded-runner-session-replay-and-terminal-setup).
 
 This page documents the **client** role: Bernstein consuming ACP from an
