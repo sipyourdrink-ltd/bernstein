@@ -17,6 +17,7 @@ import click
 
 from bernstein.core.security.role_adapter_policy import (
     DEFAULT_POLICY_PATH,
+    PolicyFileCorrupt,
     RolePolicy,
     load_policy_file,
     save_policy_file,
@@ -54,7 +55,10 @@ def show_policy(policy_file: Path, as_json: bool) -> None:
     back-compat default). The optional ``*`` entry is the default for unlisted
     roles; an empty default means no adapters allowed.
     """
-    payload = load_policy_file(policy_file).to_dict()
+    try:
+        payload = load_policy_file(policy_file).to_dict()
+    except PolicyFileCorrupt as exc:
+        raise click.ClickException(str(exc)) from exc
     if as_json:
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
@@ -109,7 +113,10 @@ def set_policy(role: str, allow: tuple[str, ...], policy_file: Path) -> None:
         bernstein security role-adapter-policy set --role '*'
         # ^ denies every adapter for roles with no named entry
     """
-    policy = load_policy_file(policy_file)
+    try:
+        policy = load_policy_file(policy_file)
+    except PolicyFileCorrupt as exc:
+        raise click.ClickException(str(exc)) from exc
     new_map = dict(policy.per_role_allowlists)
     new_map[role] = tuple(sorted({a.strip() for a in allow if a.strip()}))
     new_policy = RolePolicy(per_role_allowlists=new_map)
@@ -145,7 +152,11 @@ def test_policy(role: str, adapter: str, policy_file: Path) -> None:
 
     Exit code is 0 when allowed, 1 when denied - useful for shell guards.
     """
-    policy = load_policy_file(policy_file)
+    try:
+        policy = load_policy_file(policy_file)
+    except PolicyFileCorrupt as exc:
+        click.echo(f"DENY:  role={role!r} adapter={adapter!r}; allowed=[]; reason: {exc}")
+        raise click.exceptions.Exit(code=1) from exc
     if policy.is_allowed(role, adapter):
         click.echo(f"ALLOW: role={role!r} adapter={adapter!r}")
         return

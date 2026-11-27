@@ -3143,8 +3143,10 @@ class AgentSpawner:
         """Reload policy from the project root, never from a task worktree.
 
         Keep this gate independent of adapter lookup: resume and transport
-        backends can dispatch an already constructed adapter. A refusal is a
-        hard stop, including when the audit sink cannot record it.
+        backends can dispatch an already constructed adapter. When a non-empty
+        process-global policy is installed via ``set_policy()``, enforce both
+        the file policy and the global policy so either one can deny. A refusal
+        is a hard stop, including when the audit sink cannot record it.
         """
         from bernstein.core.security.audit import AuditLog
         from bernstein.core.security.role_adapter_policy import (
@@ -3152,20 +3154,25 @@ class AgentSpawner:
             PolicyFileCorrupt,
             deny,
             enforce,
+            get_policy,
             load_policy_file,
         )
 
-        audit_log = None
-        try:
-            audit_log = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
-        except Exception as exc:
-            logger.warning("role_adapter_policy: audit unavailable; policy still enforced: %s", exc)
+        def _audit_log_factory() -> AuditLog:
+            return AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
+
         try:
             policy = load_policy_file(self._workdir / DEFAULT_POLICY_PATH)
+            enforce(role, adapter_name, audit_log=_audit_log_factory, policy=policy)
+            global_policy = get_policy()
+            if global_policy.per_role_allowlists:
+                enforce(role, adapter_name, audit_log=_audit_log_factory, policy=global_policy)
         except PolicyFileCorrupt as exc:
-            deny(role, adapter_name, reason=str(exc), audit_log=audit_log)
-        else:
-            enforce(role, adapter_name, audit_log=audit_log, policy=policy)
+            deny(role, adapter_name, reason=str(exc), audit_log=_audit_log_factory)
+        except RoleAdapterDenied:
+            raise
+        except Exception as exc:
+            deny(role, adapter_name, reason=f"role_adapter_policy check failed: {exc}", audit_log=_audit_log_factory)
 
     def _enforce_adapter_dispatch(self, adapter: CLIAdapter, role: str) -> None:
         """Gate the actual adapter, preserving registry identity through caching."""
@@ -3183,6 +3190,164 @@ class AgentSpawner:
         """Last policy check shared by direct, resume and transport fallbacks."""
         self._enforce_adapter_dispatch(adapter, role)
         return adapter.spawn(**kwargs)
+
+    def _dispatch_local_target(
+        self,
+        *,
+        target_adapter: CLIAdapter,
+        adapter_name: str,
+        session: AgentSession,
+        session_id: str,
+        tasks: list[Task],
+        prompt: str,
+        spawn_cwd: Path,
+        model_config: ModelConfig,
+        attempt_mcp: dict[str, Any] | None,
+        max_scope: Any,
+        style_addendum: str,
+        attachments: Any,
+    ) -> tuple[SpawnResult, bool]:
+        """Dispatch a single local spawn attempt across the active execution backend."""
+        spawned_in_process = self._in_process is not None and self._backend == AgentBackend.IN_PROCESS
+        if spawned_in_process:
+            assert self._in_process is not None
+            # In-process: run the adapter's subprocess via
+            # a thread inside the current Python process
+            fake_pid, actual_log_path = self._in_process.run(
+                prompt=prompt,
+                workdir=spawn_cwd,
+                model_config=model_config,
+                session_id=session_id,
+                mcp_config=attempt_mcp,
+                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+            )
+            return SpawnResult(pid=fake_pid, log_path=actual_log_path), True
+        if self._sandbox_session_routing_active():
+            # oai-002 phase 2: route exec through a
+            # SandboxSession (Docker, E2B, Modal,
+            # plugin) - either the shared session
+            # attached at construction or a per-spawn
+            # session provisioned from the attached
+            # backend (issue #2162).  The local-worktree
+            # backend is intentionally excluded so the
+            # existing direct-subprocess path keeps
+            # worker-wrapper / PID semantics intact.
+            return (
+                self._spawn_via_sandbox_session(
+                    session_id=session_id,
+                    prompt=prompt,
+                    spawn_cwd=spawn_cwd,
+                    model_config=model_config,
+                    mcp_config=attempt_mcp,
+                    session=session,
+                    adapter=target_adapter,
+                    system_addendum=style_addendum,
+                ),
+                False,
+            )
+        if self._sandbox is not None:
+            return (
+                self._spawn_in_sandbox(
+                    session_id=session_id,
+                    prompt=prompt,
+                    spawn_cwd=spawn_cwd,
+                    model_config=model_config,
+                    mcp_config=attempt_mcp,
+                    session=session,
+                    adapter=target_adapter,
+                    task_scope=max_scope,
+                    system_addendum=style_addendum,
+                ),
+                False,
+            )
+        if self._container_mgr is not None:
+            return (
+                self._spawn_in_container(
+                    session_id=session_id,
+                    prompt=prompt,
+                    spawn_cwd=spawn_cwd,
+                    model_config=model_config,
+                    mcp_config=attempt_mcp,
+                    session=session,
+                    adapter=target_adapter,
+                    task_scope=max_scope,
+                    system_addendum=style_addendum,
+                ),
+                False,
+            )
+
+        # Extract budget_multiplier from task metadata
+        # (set by retry logic when previous attempt hit budget cap).
+        _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
+        # Explicit per-task max_turns override (Task.max_turns):
+        # thread it to the adapter as explicit_max_turns, but
+        # only when its spawn() signature accepts the
+        # parameter. Adapters without support keep their own
+        # auto-computed turn budget; warn so the operator
+        # knows the cap was not applied. When several grouped
+        # tasks carry a value the largest wins, mirroring
+        # budget_multiplier above.
+        _extra_spawn_kwargs: dict[str, Any] = {}
+        _spawn_params = inspect.signature(target_adapter.spawn).parameters
+        _explicit_turns = max((t.max_turns for t in tasks if t.max_turns is not None), default=None)
+        if _explicit_turns is not None:
+            if "explicit_max_turns" in _spawn_params:
+                _extra_spawn_kwargs["explicit_max_turns"] = _explicit_turns
+            else:
+                logger.warning(
+                    "Adapter %s spawn() does not accept explicit_max_turns; "
+                    "task max_turns=%d ignored, falling back to adapter-computed turns",
+                    adapter_name,
+                    _explicit_turns,
+                )
+        # Task identity for adapters that brand their
+        # output per task (log attribution, per-task
+        # behaviour). Grouped spawns are led by their
+        # first task, the same order the prompt lists
+        # them in.
+        if "task_id" in _spawn_params:
+            _extra_spawn_kwargs["task_id"] = tasks[0].id
+        if "task_title" in _spawn_params:
+            _extra_spawn_kwargs["task_title"] = tasks[0].title
+        if "task_titles" in _spawn_params:
+            _extra_spawn_kwargs["task_titles"] = [t.title for t in tasks]
+        # Issue #1797: hand the attested attachments to the
+        # adapter. Only passed when something was declared,
+        # so an unattached spawn calls exactly the argument
+        # list it always did. A capable adapter inlines the
+        # bytes; an incapable one raises CapabilityRefusal
+        # from its own spawn() before launching a process.
+        # An adapter whose spawn() predates the parameter
+        # cannot carry them at all, and dropping them
+        # silently is the failure this wiring exists to
+        # remove - so that refuses here instead.
+        if attachments is not None:
+            if "multimodal_context" not in _spawn_params:
+                raise AttachmentDispatchError(
+                    f"adapter {adapter_name!r} cannot carry attachments: its spawn() "
+                    "does not accept multimodal_context. Use a multimodal-capable "
+                    "adapter (claude, gemini) or drop the attachments."
+                )
+            _extra_spawn_kwargs["multimodal_context"] = attachments.context
+        # Cacheable prefix extraction is deferred to adapters
+        # that support provider-specific caching.
+        return (
+            self._spawn_adapter(
+                target_adapter,
+                session.role,
+                prompt=prompt,
+                workdir=spawn_cwd,
+                model_config=model_config,
+                session_id=session_id,
+                mcp_config=attempt_mcp,
+                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                task_scope=max_scope,
+                budget_multiplier=_budget_mult,
+                system_addendum=style_addendum,
+                **_extra_spawn_kwargs,
+            ),
+            False,
+        )
 
     def _get_adapter_by_name(self, adapter_name: str, *, role: str | None = None) -> CLIAdapter:
         """Return cached adapter instance, creating one when needed.
@@ -5407,6 +5572,7 @@ class AgentSpawner:
             _unattended_max = _unattended_policy.max_retries if _unattended_policy is not None else 1
             _unattended_attempt = 0
             result: SpawnResult | None = None
+            spawned_in_process = False
 
             self._touch_prespawn_heartbeat(session_id)
 
@@ -5425,10 +5591,9 @@ class AgentSpawner:
                         break
                     attempted.add(attempt_key)
 
+                    self._enforce_role_adapter_policy(adapter_name, session.role)
                     try:
-                        target_adapter = self._get_adapter_by_name(adapter_name, role=session.role)
-                    except RoleAdapterDenied:
-                        raise
+                        target_adapter = self._get_adapter_by_name(adapter_name)
                     except Exception as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         break
@@ -5593,134 +5758,20 @@ class AgentSpawner:
                         self._notify_cost_anomaly_spawn(tasks, model_config)
                         target_adapter.set_resource_limits(self._resource_limits)
                         spawn_start = time.perf_counter()
-                        spawned_in_process = self._in_process is not None and self._backend == AgentBackend.IN_PROCESS
-                        if spawned_in_process:
-                            assert self._in_process is not None
-                            # In-process: run the adapter's subprocess via
-                            # a thread inside the current Python process
-                            fake_pid, actual_log_path = self._in_process.run(
-                                prompt=prompt,
-                                workdir=spawn_cwd,
-                                model_config=model_config,
-                                session_id=session_id,
-                                mcp_config=attempt_mcp,
-                                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-                            )
-                            result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
-                        elif self._sandbox_session_routing_active():
-                            # oai-002 phase 2: route exec through a
-                            # SandboxSession (Docker, E2B, Modal,
-                            # plugin) - either the shared session
-                            # attached at construction or a per-spawn
-                            # session provisioned from the attached
-                            # backend (issue #2162).  The local-worktree
-                            # backend is intentionally excluded so the
-                            # existing direct-subprocess path keeps
-                            # worker-wrapper / PID semantics intact.
-                            result = self._spawn_via_sandbox_session(
-                                session_id=session_id,
-                                prompt=prompt,
-                                spawn_cwd=spawn_cwd,
-                                model_config=model_config,
-                                mcp_config=attempt_mcp,
-                                session=session,
-                                adapter=target_adapter,
-                                system_addendum=style_addendum,
-                            )
-                        elif self._sandbox is not None:
-                            result = self._spawn_in_sandbox(
-                                session_id=session_id,
-                                prompt=prompt,
-                                spawn_cwd=spawn_cwd,
-                                model_config=model_config,
-                                mcp_config=attempt_mcp,
-                                session=session,
-                                adapter=target_adapter,
-                                task_scope=max_scope,
-                                system_addendum=style_addendum,
-                            )
-                        elif self._container_mgr is not None:
-                            result = self._spawn_in_container(
-                                session_id=session_id,
-                                prompt=prompt,
-                                spawn_cwd=spawn_cwd,
-                                model_config=model_config,
-                                mcp_config=attempt_mcp,
-                                session=session,
-                                adapter=target_adapter,
-                                task_scope=max_scope,
-                                system_addendum=style_addendum,
-                            )
-                        else:
-                            # Extract budget_multiplier from task metadata
-                            # (set by retry logic when previous attempt hit budget cap).
-                            _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
-                            # Explicit per-task max_turns override (Task.max_turns):
-                            # thread it to the adapter as explicit_max_turns, but
-                            # only when its spawn() signature accepts the
-                            # parameter. Adapters without support keep their own
-                            # auto-computed turn budget; warn so the operator
-                            # knows the cap was not applied. When several grouped
-                            # tasks carry a value the largest wins, mirroring
-                            # budget_multiplier above.
-                            _extra_spawn_kwargs: dict[str, Any] = {}
-                            _spawn_params = inspect.signature(target_adapter.spawn).parameters
-                            _explicit_turns = max((t.max_turns for t in tasks if t.max_turns is not None), default=None)
-                            if _explicit_turns is not None:
-                                if "explicit_max_turns" in _spawn_params:
-                                    _extra_spawn_kwargs["explicit_max_turns"] = _explicit_turns
-                                else:
-                                    logger.warning(
-                                        "Adapter %s spawn() does not accept explicit_max_turns; "
-                                        "task max_turns=%d ignored, falling back to adapter-computed turns",
-                                        adapter_name,
-                                        _explicit_turns,
-                                    )
-                            # Task identity for adapters that brand their
-                            # output per task (log attribution, per-task
-                            # behaviour). Grouped spawns are led by their
-                            # first task, the same order the prompt lists
-                            # them in.
-                            if "task_id" in _spawn_params:
-                                _extra_spawn_kwargs["task_id"] = tasks[0].id
-                            if "task_title" in _spawn_params:
-                                _extra_spawn_kwargs["task_title"] = tasks[0].title
-                            if "task_titles" in _spawn_params:
-                                _extra_spawn_kwargs["task_titles"] = [t.title for t in tasks]
-                            # Issue #1797: hand the attested attachments to the
-                            # adapter. Only passed when something was declared,
-                            # so an unattached spawn calls exactly the argument
-                            # list it always did. A capable adapter inlines the
-                            # bytes; an incapable one raises CapabilityRefusal
-                            # from its own spawn() before launching a process.
-                            # An adapter whose spawn() predates the parameter
-                            # cannot carry them at all, and dropping them
-                            # silently is the failure this wiring exists to
-                            # remove - so that refuses here instead.
-                            if _attachments is not None:
-                                if "multimodal_context" not in _spawn_params:
-                                    raise AttachmentDispatchError(
-                                        f"adapter {adapter_name!r} cannot carry attachments: its spawn() "
-                                        "does not accept multimodal_context. Use a multimodal-capable "
-                                        "adapter (claude, gemini) or drop the attachments."
-                                    )
-                                _extra_spawn_kwargs["multimodal_context"] = _attachments.context
-                            # Cacheable prefix extraction is deferred to adapters
-                            # that support provider-specific caching.
-                            result = self._spawn_adapter(
-                                target_adapter,
-                                session.role,
-                                prompt=prompt,
-                                workdir=spawn_cwd,
-                                model_config=model_config,
-                                session_id=session_id,
-                                mcp_config=attempt_mcp,
-                                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-                                task_scope=max_scope,
-                                budget_multiplier=_budget_mult,
-                                system_addendum=style_addendum,
-                                **_extra_spawn_kwargs,
-                            )
+                        result, spawned_in_process = self._dispatch_local_target(
+                            target_adapter=target_adapter,
+                            adapter_name=adapter_name,
+                            session=session,
+                            session_id=session_id,
+                            tasks=tasks,
+                            prompt=prompt,
+                            spawn_cwd=spawn_cwd,
+                            model_config=model_config,
+                            attempt_mcp=attempt_mcp,
+                            max_scope=max_scope,
+                            style_addendum=style_addendum,
+                            attachments=_attachments,
+                        )
                         spawn_duration = time.perf_counter() - spawn_start
                         agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
                         self._adapter_health.record_success(adapter_name, latency_ms=spawn_duration * 1000)

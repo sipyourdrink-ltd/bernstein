@@ -389,7 +389,7 @@ def test_workspace_policies_do_not_leak_between_initial_resume_and_failover(
     nested = root_b / ".sdd" / "worktrees" / "old"
     nested.mkdir(parents=True)
     _write_policy(nested, {"docs": ["qwen"]})
-    previous = set_policy(RolePolicy.from_dict({"docs": ["unrelated-global-adapter"]}))
+    previous = set_policy(RolePolicy.from_dict({"unrelated-role": ["unrelated-global-adapter"]}))
     global_policy = get_policy()
     try:
         spawner_a.spawn_for_tasks([make_task(role="docs")])
@@ -578,3 +578,68 @@ def test_runtime_bridge_refuses_before_remote_effect(tmp_path, dispatch_spawner)
             preferred_log_path=tmp_path / "log",
         )
     bridge.spawn.assert_not_called()
+
+
+@pytest.mark.parametrize("with_permissive_file", [False, True])
+def test_global_set_policy_enforced_alongside_file_policy(tmp_path, dispatch_spawner, make_task, with_permissive_file):
+    """A non-empty process-global policy from set_policy() is enforced alongside the file policy."""
+    from bernstein.core.security.role_adapter_policy import RolePolicy, set_policy
+
+    spawner, adapter = dispatch_spawner()
+    if with_permissive_file:
+        _write_policy(tmp_path, {"docs": ["qwen"]})
+    previous = set_policy(RolePolicy.from_dict({"docs": ["codex"]}))
+    try:
+        with pytest.raises(RoleAdapterDenied) as exc_info:
+            spawner.spawn_for_tasks([make_task(role="docs")])
+        assert exc_info.value.role == "docs"
+        assert exc_info.value.adapter == "qwen"
+        with pytest.raises(RoleAdapterDenied):
+            spawner.spawn_for_resume([make_task(role="docs")], worktree_path=tmp_path, changed_files=[])
+    finally:
+        set_policy(previous)
+    adapter.spawn.assert_not_called()
+
+
+def test_audit_log_constructed_only_on_deny(tmp_path, dispatch_spawner, make_task, monkeypatch):
+    """The role-adapter policy allow path does not construct AuditLog, while deny does."""
+    spawner, adapter = dispatch_spawner()
+    _write_policy(tmp_path, {"docs": ["qwen"]})
+    # Stub unrelated task_response_profile audit emission so AuditLog calls reflect the policy gate only.
+    monkeypatch.setattr(spawner, "_emit_response_profile_audit", lambda **kwargs: None)
+    audit_calls: list[dict[str, object]] = []
+
+    class _RecordingAuditLog:
+        def __init__(self, **kwargs: object) -> None:
+            audit_calls.append(dict(kwargs))
+
+        def log(self, *args: object, **kwargs: object) -> None:
+            audit_calls.append({"logged": (args, kwargs)})
+
+    monkeypatch.setattr("bernstein.core.security.audit.AuditLog", _RecordingAuditLog)
+    session = spawner.spawn_for_tasks([make_task(role="docs")])
+    assert session.status == "working"
+    adapter.spawn.assert_called_once()
+    assert audit_calls == []
+
+    _write_policy(tmp_path, {"docs": ["codex"]})
+    with pytest.raises(RoleAdapterDenied):
+        spawner.spawn_for_tasks([make_task(role="docs")])
+    assert len(audit_calls) == 2
+    assert "logged" in audit_calls[1]
+
+
+def test_policy_file_corrupt_is_not_oserror_and_unexpected_gate_error_denies(
+    tmp_path, dispatch_spawner, make_task, monkeypatch
+):
+    """PolicyFileCorrupt is not an OSError and unexpected gate failures still deny."""
+    assert not isinstance(PolicyFileCorrupt("corrupt"), OSError)
+
+    spawner, adapter = dispatch_spawner()
+    monkeypatch.setattr(
+        "bernstein.core.security.role_adapter_policy.load_policy_file",
+        MagicMock(side_effect=RecursionError("deeply nested fixture")),
+    )
+    with pytest.raises(RoleAdapterDenied, match="deeply nested fixture"):
+        spawner.spawn_for_tasks([make_task(role="docs")])
+    adapter.spawn.assert_not_called()

@@ -332,6 +332,50 @@ class TestCLI:
         assert result.exit_code == 1
         assert "DENY" in result.output
 
+    @pytest.mark.parametrize("as_json", [False, True])
+    def test_show_corrupt_file_reports_path_and_reason(self, tmp_path: Path, as_json: bool) -> None:
+        runner = CliRunner()
+        path = tmp_path / "policy.json"
+        path.write_text('{"docs": "codex"}', encoding="utf-8")
+        args = ["role-adapter-policy", "show", "--policy-file", str(path)]
+        if as_json:
+            args.append("--json-output")
+        result = runner.invoke(security_group, args)
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit), f"unexpected uncaught exception: {result.exception!r}"
+        assert str(path) in result.output
+        assert "docs" in result.output
+
+    def test_test_corrupt_file_prints_deny_with_reason_and_exits_1(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        path = tmp_path / "policy.json"
+        path.write_text('{"docs": "codex"}', encoding="utf-8")
+        result = runner.invoke(
+            security_group,
+            ["role-adapter-policy", "test", "--role", "docs", "--adapter", "codex", "--policy-file", str(path)],
+        )
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit), f"unexpected uncaught exception: {result.exception!r}"
+        assert "DENY" in result.output
+        assert "reason:" in result.output
+        assert str(path) in result.output
+        assert "docs" in result.output
+
+    def test_set_corrupt_file_refuses_without_overwriting(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        path = tmp_path / "policy.json"
+        original = '{"docs": "codex"}'
+        path.write_text(original, encoding="utf-8")
+        result = runner.invoke(
+            security_group,
+            ["role-adapter-policy", "set", "--role", "docs", "--allow", "codex", "--policy-file", str(path)],
+        )
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit), f"unexpected uncaught exception: {result.exception!r}"
+        assert str(path) in result.output
+        assert "docs" in result.output
+        assert path.read_text(encoding="utf-8") == original
+
 
 # ---------------------------------------------------------------------------
 # Default-path constant invariant

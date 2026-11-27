@@ -51,7 +51,9 @@ use their declared name. Bridges use their bridge name.
 
 Resume always reads the configured project root, even when the preserved
 worktree has its own policy file. Separate spawners do not share or replace the
-process-global policy. A saved change applies to subsequent checks without a
+process-global policy; if a caller installs a non-empty process-global policy
+via `set_policy()`, the spawner enforces it alongside the project-root file so
+either one can deny. A saved change applies to subsequent checks without a
 restart. This does not revoke already running agents or make policy edits
 atomic with workspace preparation; stop running work separately when needed.
 

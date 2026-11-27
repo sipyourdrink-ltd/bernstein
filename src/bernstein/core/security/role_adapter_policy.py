@@ -38,12 +38,14 @@ import stat
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from bernstein.core.security.audit import AuditLog
+
+    AuditLogArg = AuditLog | Callable[[], AuditLog | None] | None
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +54,11 @@ logger = logging.getLogger(__name__)
 ADAPTER_DENY_EVENT_TYPE: str = "role.adapter.denied"
 
 
-class PolicyFileCorrupt(OSError):
+class PolicyFileCorrupt(RuntimeError):
     """Raised when a policy file exists but cannot be read or parsed.
 
+    Subclasses :exc:`RuntimeError` rather than :exc:`OSError` so generic I/O
+    handlers cannot accidentally swallow a fail-closed corrupt-policy signal.
     Distinct from the not-found case (which returns the permit-all default) so
     callers on the security-enforcement path can fail closed rather than
     silently lifting all restrictions.
@@ -233,7 +237,7 @@ def enforce(
     role: str,
     adapter: str,
     *,
-    audit_log: AuditLog | None = None,
+    audit_log: AuditLogArg = None,
     actor: str = "orchestrator",
     policy: RolePolicy | None = None,
 ) -> None:
@@ -244,7 +248,8 @@ def enforce(
             etc.). Free-form string - unrecognised roles use the optional
             ``*`` default, or remain unrestricted when it is absent.
         adapter: Adapter id (e.g. ``claude``, ``aider``, ``mock``).
-        audit_log: Optional :class:`AuditLog`. When provided, a deny emits a
+        audit_log: Optional :class:`AuditLog` or zero-arg factory returning one.
+            When provided, a factory is invoked only on deny to emit a
             ``role.adapter.denied`` event into the HMAC chain.
         actor: Audit-event actor field. Defaults to ``"orchestrator"``.
         policy: Override the global policy (useful in tests).
@@ -265,13 +270,21 @@ def deny(
     *,
     allowed: tuple[str, ...] = (),
     reason: str = "not in role allow-list",
-    audit_log: AuditLog | None = None,
+    audit_log: AuditLogArg = None,
     actor: str = "orchestrator",
-) -> None:
+) -> NoReturn:
     """Record a refusal and raise even if the audit sink is unavailable."""
-    if audit_log is not None:
+    resolved_log: AuditLog | None = None
+    if callable(audit_log):
         try:
-            audit_log.log(
+            resolved_log = audit_log()
+        except Exception as exc:
+            logger.warning("role_adapter_policy: audit unavailable; policy still enforced: %s", exc)
+    else:
+        resolved_log = audit_log
+    if resolved_log is not None:
+        try:
+            resolved_log.log(
                 ADAPTER_DENY_EVENT_TYPE,
                 actor,
                 "adapter",
