@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -36,7 +37,9 @@ import time
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
+
+import psutil
 
 if TYPE_CHECKING:
     import builtins
@@ -72,6 +75,10 @@ PREVIEW_STATE_FILE = PREVIEW_STATE_DIR / "state.json"
 DEFAULT_AUDIT_DIR = Path(".sdd/audit")
 
 DEFAULT_EXPIRE_SECONDS = 4 * 3600  # 4 hours, per the ticket.
+
+#: Maximum difference allowed between the spawn-time and teardown-time
+#: ``psutil.Process.create_time()`` readings for the same process.
+_PROCESS_START_TIME_TOLERANCE_SECONDS = 0.05
 
 #: Map of duration suffixes recognised by ``--expire`` parsing.
 _DURATION_UNITS: dict[str, int] = {
@@ -157,6 +164,10 @@ class PreviewState:
         expires_at_epoch: Unix timestamp at which the share URL expires.
         process_pid: PID of the dev-server process tree leader.
         created_at_epoch: When the preview was created.
+        container_name: Isolated container name when backed by a container runtime.
+        process_start_time: ``psutil.Process.create_time()`` captured at spawn
+            to bind :attr:`process_pid` to the process instance across sessions,
+            or ``None`` for container-backed or legacy state records.
     """
 
     preview_id: str
@@ -174,6 +185,7 @@ class PreviewState:
     process_pid: int
     created_at_epoch: float = field(default_factory=time.time)
     container_name: str | None = None
+    process_start_time: float | None = None
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when *now* is past :attr:`expires_at_epoch`."""
@@ -340,6 +352,12 @@ class PreviewManager:
         self._audit = audit_log
         self._runner = runner or ContainerDevServerRunner()
         self._clock: Clock = clock or _SystemClock()
+        self._last_skipped_pids: builtins.list[tuple[str, int, str]] = []
+
+    @property
+    def last_skipped_pids(self) -> tuple[tuple[str, int, str], ...]:
+        """Return ``(preview_id, pid, reason)`` tuples skipped by the last stop/reap call."""
+        return tuple(self._last_skipped_pids)
 
     # ------------------------------------------------------------------
     # Public API
@@ -407,6 +425,7 @@ class PreviewManager:
         preview_id = f"prv-{secrets.token_hex(4)}"
 
         run_handle = self._runner.spawn(command=chosen.command, cwd=cwd)
+        process_start_time = _read_process_create_time(run_handle.pid)
         try:
             port = _await_port(run_handle, timeout_seconds=port_probe_timeout)
         except Exception as exc:
@@ -455,6 +474,7 @@ class PreviewManager:
             ),
             process_pid=run_handle.pid,
             container_name=run_handle.container_name,
+            process_start_time=process_start_time,
             created_at_epoch=active_clock.now(),
         )
         try:
@@ -506,6 +526,7 @@ class PreviewManager:
             ``True`` if a preview was stopped, ``False`` if no record
             matched.
         """
+        self._last_skipped_pids = []
         state = self._store.get(preview_id)
         if state is None:
             return False
@@ -514,6 +535,7 @@ class PreviewManager:
 
     def stop_all(self) -> int:
         """Stop every active preview. Returns the number stopped."""
+        self._last_skipped_pids = []
         states = self._store.list()
         for state in states:
             self._teardown(state, reason="all")
@@ -529,6 +551,7 @@ class PreviewManager:
         Returns:
             Count of previews torn down.
         """
+        self._last_skipped_pids = []
         ts = now if now is not None else self._clock.now()
         reaped = 0
         for state in self._store.list():
@@ -549,6 +572,8 @@ class PreviewManager:
         """Close the tunnel, kill the dev server, drop the record, audit."""
         with contextlib.suppress(Exception):
             self._tunnel.close(state.tunnel_name)
+        pid_signal_status: str | None = None
+        pid_signal_reason: str | None = None
         if state.container_name is not None:
             try:
                 runtime = runtime_executable(state.sandbox_backend)
@@ -558,23 +583,37 @@ class PreviewManager:
                 raise PreviewError(
                     "Preview container cleanup could not be confirmed. Retry stop after restoring the runtime."
                 )
-        elif state.process_pid > 0:
-            with contextlib.suppress(ProcessLookupError, OSError):
-                # SIGTERM the dev server's process group so child
-                # processes die too. Sandbox-managed PIDs are always
-                # ones we spawned (Sonar python:S4828).
-                _terminate_pid(state.process_pid)  # NOSONAR python:S4828
+        elif isinstance(state.process_pid, bool) or state.process_pid != 0:
+            signaled, pid_reason = _terminate_pid(
+                state.process_pid,
+                expected_start_time=state.process_start_time,
+            )  # NOSONAR python:S4828
+            pid_signal_status = "signaled" if signaled else "skipped"
+            pid_signal_reason = pid_reason
+            if not signaled:
+                self._last_skipped_pids.append((state.preview_id, state.process_pid, pid_reason))
+                logger.warning(
+                    "Skipping termination of preview %s PID %r (%s); cleaning up state",
+                    state.preview_id,
+                    state.process_pid,
+                    pid_reason,
+                )
         self._store.remove(state.preview_id)
         record_preview_stopped(provider=state.tunnel_provider, sandbox=state.sandbox_backend)
+        audit_details: dict[str, Any] = {
+            "reason": reason,
+            "tunnel_provider": state.tunnel_provider,
+            "sandbox_backend": state.sandbox_backend,
+        }
+        if pid_signal_status is not None and pid_signal_reason is not None:
+            audit_details["process_pid"] = state.process_pid
+            audit_details["process_signal_status"] = pid_signal_status
+            audit_details["process_signal_reason"] = pid_signal_reason
         self._record_audit(
             "preview.stop",
             actor="bernstein.preview",
             resource_id=state.preview_id,
-            details={
-                "reason": reason,
-                "tunnel_provider": state.tunnel_provider,
-                "sandbox_backend": state.sandbox_backend,
-            },
+            details=audit_details,
         )
 
     def _record_audit(
@@ -843,15 +882,108 @@ def _normalise_auth(mode: AuthMode | str) -> AuthMode:
         raise PreviewError(f"unknown auth mode: {mode!r}") from exc
 
 
-def _terminate_pid(pid: int) -> None:
-    """SIGTERM *pid*'s process group, falling back to the bare pid."""
-    if pid <= 0:
-        return
-    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-        return
-    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+def _is_valid_target_pid(pid: object) -> TypeGuard[int]:
+    """Return ``True`` when *pid* is an integer ``> 1`` and not a ``bool``."""
+    return not isinstance(pid, bool) and isinstance(pid, int) and pid > 1
+
+
+def _is_valid_start_time(value: Any) -> TypeGuard[int | float]:
+    """Return ``True`` when *value* is a finite positive timestamp (not ``bool``)."""
+    return (
+        not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value) and float(value) > 0.0
+    )
+
+
+def _read_process_create_time(pid: object) -> float | None:
+    """Return ``psutil.Process(pid).create_time()`` or ``None`` if invalid/unreadable."""
+    if not _is_valid_target_pid(pid):
+        return None
+    try:
+        created = psutil.Process(pid).create_time()
+    except (psutil.Error, OSError):
+        return None
+    if not _is_valid_start_time(created):
+        return None
+    return float(created)
+
+
+def _terminate_pid(pid: object, expected_start_time: object = None) -> tuple[bool, str]:
+    """Fail-closed SIGTERM for a persisted preview dev-server PID.
+
+    Refuses invalid/bool/init PIDs (``<= 1``), our own PID, any PID sharing
+    our process group (or with ``pgid <= 1``), and any PID whose live
+    ``psutil.Process(pid).create_time()`` cannot be verified against
+    *expected_start_time*.
+
+    Returns:
+        ``(signaled, reason)`` where *signaled* is ``True`` only when
+        ``SIGTERM`` was delivered.
+    """
+    if not _is_valid_target_pid(pid):
+        return False, "invalid_pid"
+    if pid == os.getpid():
+        return False, "self_pid"
+
+    own_pgid: int | None = None
+    getpgrp = getattr(os, "getpgrp", None)
+    if getpgrp is not None:
+        try:
+            own_pgid = int(getpgrp())
+        except OSError:
+            return False, "unreadable_pgid"
+        if pid == own_pgid:
+            return False, "own_process_group"
+
+    if expected_start_time is None:
+        return False, "missing_start_time"
+    if not _is_valid_start_time(expected_start_time):
+        return False, "invalid_start_time"
+
+    target_pgid: int | None = None
+    getpgid = getattr(os, "getpgid", None)
+    if getpgid is not None:
+        try:
+            target_pgid = int(getpgid(pid))
+        except ProcessLookupError:
+            return False, "not_alive"
+        except OSError:
+            return False, "unreadable_pgid"
+        if own_pgid is not None and target_pgid == own_pgid:
+            return False, "own_process_group"
+        if target_pgid <= 1:
+            return False, "unsafe_process_group"
+
+    try:
+        actual_start_time = psutil.Process(pid).create_time()
+    except psutil.NoSuchProcess:
+        return False, "not_alive"
+    except (psutil.Error, OSError):
+        return False, "unreadable_start_time"
+
+    if not _is_valid_start_time(actual_start_time):
+        return False, "unreadable_start_time"
+    if abs(float(actual_start_time) - float(expected_start_time)) > _PROCESS_START_TIME_TOLERANCE_SECONDS:
+        return False, "start_time_mismatch"
+
+    # Signal the process group only when the verified PID is its group leader
+    # (already verified > 1 and distinct from our own process group).
+    killpg = getattr(os, "killpg", None)
+    if target_pgid is not None and target_pgid == pid and killpg is not None:
+        try:
+            killpg(target_pgid, signal.SIGTERM)
+            return True, "signaled"
+        except ProcessLookupError:
+            return False, "not_alive"
+        except OSError:
+            return False, "signal_failed"
+
+    try:
         os.kill(pid, signal.SIGTERM)
+        return True, "signaled"
+    except ProcessLookupError:
+        return False, "not_alive"
+    except OSError:
+        return False, "signal_failed"
 
 
 def _default_token_secret() -> str:

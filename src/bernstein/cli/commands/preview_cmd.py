@@ -222,6 +222,7 @@ def stop_cmd(preview_id: str | None, stop_all: bool) -> None:
     try:
         if stop_all:
             n = manager.stop_all()
+            _print_skipped_pids(manager.last_skipped_pids)
             console.print(f"[yellow]Stopped {n} preview(s).[/yellow]")
             return
         assert preview_id is not None
@@ -230,12 +231,21 @@ def stop_cmd(preview_id: str | None, stop_all: bool) -> None:
             raise SystemExit(1)
     except PreviewError as exc:
         raise click.ClickException(str(exc)) from exc
+    _print_skipped_pids(manager.last_skipped_pids)
     console.print(f"[yellow]Stopped[/yellow] {preview_id}")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _print_skipped_pids(skipped: tuple[tuple[str, int, str], ...]) -> None:
+    """Report persisted preview PIDs whose termination was skipped."""
+    for skipped_id, pid, reason in skipped:
+        console.print(
+            f"[yellow]Skipped signaling PID {pid!r} for preview {skipped_id} ({reason}); state cleaned up.[/yellow]"
+        )
 
 
 def _print_candidates(cwd: Path) -> None:

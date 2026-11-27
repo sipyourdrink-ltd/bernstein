@@ -1,0 +1,3 @@
+## Fail-closed PID identity guard for preview teardown
+
+`PreviewManager` now records `psutil.Process(pid).create_time()` in `PreviewState.process_start_time` when spawning a host dev-server process and fails closed before delivering `SIGTERM` during `stop`, `stop_all`, or `reap_expired`. Invalid, boolean, or init PIDs (`<= 1`), our own PID, any PID sharing our process group (or with `pgid <= 1`), legacy state without `process_start_time`, unreadable process metadata, and stale reused PIDs with a mismatched start time receive no signal; the skipped PID and reason are logged, recorded in the `preview.stop` audit entry, reported by `bernstein preview stop`, and the persisted preview state is still cleaned up.

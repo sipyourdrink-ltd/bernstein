@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
+import os
+import signal
 import socket
 import threading
 from collections.abc import Iterator
@@ -17,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import psutil
 import pytest
 
 from bernstein.core.preview.manager import (
@@ -81,6 +85,38 @@ def local_server() -> Iterator[_LocalServer]:
         server.close()
 
 
+@pytest.fixture(autouse=True)
+def recorded_signals(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int, int]]:
+    """Intercept ``os.kill`` / ``os.killpg`` so preview tests never emit real signals."""
+    calls: list[tuple[str, int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append(("kill", pid, int(sig))))
+    if hasattr(os, "killpg"):
+        monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append(("killpg", pgid, int(sig))))
+    return calls
+
+
+def _patch_psutil_create_time(
+    monkeypatch: pytest.MonkeyPatch,
+    resolver: Any,
+) -> None:
+    """Patch ``psutil.Process(pid)`` while passing ``psutil.Process()`` through for conftest."""
+    real_process = psutil.Process
+
+    class _FakeProc:
+        def __init__(self, pid: int) -> None:
+            self._pid = pid
+
+        def create_time(self) -> float:
+            return float(resolver(self._pid))
+
+    def _factory(pid: int | None = None) -> Any:
+        if pid is None:
+            return real_process()
+        return _FakeProc(pid)
+
+    monkeypatch.setattr(psutil, "Process", _factory)
+
+
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -138,10 +174,22 @@ class _FakeSandbox:
 # ---------------------------------------------------------------------------
 
 
-def test_full_lifecycle_with_real_socket(tmp_path: Path, local_server: _LocalServer) -> None:
+def test_full_lifecycle_with_real_socket(
+    tmp_path: Path,
+    local_server: _LocalServer,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Start → list → stop, with audit-chain verification at the end."""
     # Project file the discovery layer can pick up.
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"dev": "vite"}}), encoding="utf-8")
+
+    # Deterministic process metadata for the fake runner PID (9999) so the test
+    # never probes a host process that happens to hold PID 9999.
+    def _missing(pid: int) -> float:
+        raise psutil.NoSuchProcess(pid)
+
+    _patch_psutil_create_time(monkeypatch, _missing)
 
     # The fake dev server reports the port that the actual local socket
     # is bound to, so the TCP probe in PreviewManager.start succeeds.
@@ -183,10 +231,11 @@ def test_full_lifecycle_with_real_socket(tmp_path: Path, local_server: _LocalSer
     listed = manager.list()
     assert [s.preview_id for s in listed] == [preview.state.preview_id]
 
-    # Stop tears the tunnel down and removes the record.
+    # Stop tears the tunnel down and removes the record without sending a real signal.
     assert manager.stop(preview.state.preview_id) is True
     assert manager.list() == []
     assert provider.stopped == [preview.state.tunnel_name]
+    assert recorded_signals == []
 
     # Audit chain stays intact across all three events.
     valid, errors = audit.verify()
@@ -202,3 +251,229 @@ def test_full_lifecycle_with_real_socket(tmp_path: Path, local_server: _LocalSer
     assert event_types.count("preview.start") >= 1
     assert event_types.count("preview.link") >= 1
     assert event_types.count("preview.stop") >= 1
+
+
+def _write_persisted_preview(
+    store_path: Path,
+    *,
+    preview_id: str,
+    process_pid: Any,
+    process_start_time: Any = ...,
+) -> None:
+    row: dict[str, Any] = {
+        "preview_id": preview_id,
+        "command": "npm run dev",
+        "cwd": str(store_path.parent),
+        "port": 5173,
+        "sandbox_backend": "worktree",
+        "sandbox_session_id": "sbx-int",
+        "tunnel_provider": "cloudflared",
+        "tunnel_name": preview_id,
+        "public_url": f"https://{preview_id}.example.com",
+        "share_url": f"https://{preview_id}.example.com",
+        "auth_mode": "none",
+        "expires_at_epoch": 9_999_999_999.0,
+        "process_pid": process_pid,
+        "created_at_epoch": 1_700_000_000.0,
+    }
+    if process_start_time is not ...:
+        row["process_start_time"] = process_start_time
+    store_path.write_text(json.dumps({"previews": [row]}, indent=2) + "\n", encoding="utf-8")
+
+
+def _make_manager(
+    tmp_path: Path, *, runner: DevServerRunner | None = None
+) -> tuple[PreviewManager, PreviewStore, AuditLog]:
+    provider = _InMemoryProvider()
+    state_path = tmp_path / "tunnels.json"
+
+    def _factory() -> TunnelRegistry:
+        reg = TunnelRegistry(state_path=state_path)
+        reg.register(provider)
+        return reg
+
+    audit = AuditLog(tmp_path / "audit", key=b"\xfb" * 32)
+    store = PreviewStore(path=tmp_path / "preview.json")
+    manager = PreviewManager(
+        store=store,
+        tunnel=TunnelBridge(registry_factory=_factory),
+        token_issuer=PreviewTokenIssuer(secret="y" * 64),
+        audit_log=audit,
+        runner=runner,
+    )
+    return manager, store, audit
+
+
+def _read_stop_audit_details(audit_dir: Path) -> list[dict[str, Any]]:
+    events = [
+        json.loads(line)
+        for f in sorted(audit_dir.glob("*.jsonl"))
+        for line in f.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    return [e["details"] for e in events if e["event_type"] == "preview.stop"]
+
+
+def test_stop_skips_stale_pid_with_different_start_time(
+    tmp_path: Path,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A reused PID whose live create_time differs must receive no signal."""
+    manager, store, _ = _make_manager(tmp_path)
+    _write_persisted_preview(
+        store.path,
+        preview_id="prv-stale",
+        process_pid=42424,
+        process_start_time=1_700_000_000.0,
+    )
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    _patch_psutil_create_time(monkeypatch, lambda _pid: 1_700_000_500.0)
+
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.preview.manager"):
+        assert manager.stop("prv-stale") is True
+
+    assert recorded_signals == []
+    assert store.get("prv-stale") is None
+    assert "42424" in caplog.text and "start_time_mismatch" in caplog.text
+    details = _read_stop_audit_details(tmp_path / "audit")[-1]
+    assert details["process_signal_status"] == "skipped"
+    assert details["process_signal_reason"] == "start_time_mismatch"
+
+
+def test_stop_refuses_pid_1(
+    tmp_path: Path,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PID 1 must never be signaled even if persisted with a start time."""
+    manager, store, _ = _make_manager(tmp_path)
+    _write_persisted_preview(
+        store.path,
+        preview_id="prv-pid1",
+        process_pid=1,
+        process_start_time=1_700_000_000.0,
+    )
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.preview.manager"):
+        assert manager.stop("prv-pid1") is True
+
+    assert recorded_signals == []
+    assert store.get("prv-pid1") is None
+    assert "invalid_pid" in caplog.text
+    details = _read_stop_audit_details(tmp_path / "audit")[-1]
+    assert details["process_signal_status"] == "skipped"
+    assert details["process_signal_reason"] == "invalid_pid"
+
+
+def test_stop_refuses_own_process_group(
+    tmp_path: Path,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Neither our own pgid nor any PID sharing our process group may be signaled."""
+    if not (hasattr(os, "getpgrp") and hasattr(os, "getpgid")):
+        pytest.skip("POSIX process groups not available on this platform")
+
+    own_pgid = os.getpgrp()
+    peer_pid = max(own_pgid, os.getpid()) + 10_000
+    manager, store, _ = _make_manager(tmp_path)
+    _patch_psutil_create_time(monkeypatch, lambda _pid: 1_700_000_000.0)
+    monkeypatch.setattr(os, "getpgid", lambda pid: own_pgid)
+
+    _write_persisted_preview(
+        store.path,
+        preview_id="prv-own-pgid",
+        process_pid=peer_pid,
+        process_start_time=1_700_000_000.0,
+    )
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.preview.manager"):
+        assert manager.stop("prv-own-pgid") is True
+
+    assert recorded_signals == []
+    assert store.get("prv-own-pgid") is None
+    assert "own_process_group" in caplog.text
+    details = _read_stop_audit_details(tmp_path / "audit")[-1]
+    assert details["process_signal_status"] == "skipped"
+    assert details["process_signal_reason"] == "own_process_group"
+
+
+def test_stop_legacy_state_without_start_time_skips_signal_and_cleans_up(
+    tmp_path: Path,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Legacy state files lacking process_start_time send no signal and clean up state."""
+    manager, store, _ = _make_manager(tmp_path)
+    _write_persisted_preview(
+        store.path,
+        preview_id="prv-legacy",
+        process_pid=42426,
+    )
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    _patch_psutil_create_time(monkeypatch, lambda _pid: 1_700_000_000.0)
+
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.preview.manager"):
+        assert manager.stop("prv-legacy") is True
+
+    assert recorded_signals == []
+    assert store.get("prv-legacy") is None
+    assert "42426" in caplog.text and "missing_start_time" in caplog.text
+    details = _read_stop_audit_details(tmp_path / "audit")[-1]
+    assert details["process_signal_status"] == "skipped"
+    assert details["process_signal_reason"] == "missing_start_time"
+
+
+def test_stop_signals_matching_start_time(
+    tmp_path: Path,
+    local_server: _LocalServer,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Start records psutil create_time and stop signals when create_time matches."""
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"dev": "vite"}}), encoding="utf-8")
+    target_pid = max(os.getpid(), os.getpgrp() if hasattr(os, "getpgrp") else 0) + 20_000
+    expected_create_time = 1_700_000_123.25
+
+    def _resolve(pid: int) -> float:
+        if pid != target_pid:
+            raise psutil.NoSuchProcess(pid)
+        return expected_create_time
+
+    _patch_psutil_create_time(monkeypatch, _resolve)
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+
+    runner = _StaticRunner([f"Local:   http://localhost:{local_server.port}/"], pid=target_pid)
+    manager, store, _ = _make_manager(tmp_path, runner=runner)
+
+    preview = manager.start(
+        cwd=tmp_path,
+        sandbox_session=_FakeSandbox(),
+        approve_discovered=True,
+        provider="cloudflared",
+        auth_mode=AuthMode.TOKEN,
+        expire_seconds="30m",
+        port_probe_timeout=5.0,
+    )
+    assert preview.state.process_start_time == pytest.approx(expected_create_time)
+    persisted = json.loads(store.path.read_text(encoding="utf-8"))["previews"][0]
+    assert persisted["process_start_time"] == pytest.approx(expected_create_time)
+
+    assert manager.stop(preview.state.preview_id) is True
+    assert store.get(preview.state.preview_id) is None
+    if hasattr(os, "killpg"):
+        assert recorded_signals == [("killpg", target_pid, int(signal.SIGTERM))]
+    else:
+        assert recorded_signals == [("kill", target_pid, int(signal.SIGTERM))]
+    details = _read_stop_audit_details(tmp_path / "audit")[-1]
+    assert details["process_signal_status"] == "signaled"
+    assert details["process_signal_reason"] == "signaled"

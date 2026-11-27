@@ -14,10 +14,16 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
+import os
+import signal
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import psutil
 import pytest
+from click.testing import CliRunner
 
 from bernstein.core.preview.manager import (
     AuthMode,
@@ -33,6 +39,40 @@ from bernstein.core.preview.token_issuer import IssuedAuth, PreviewTokenIssuer
 from bernstein.core.preview.tunnel_bridge import TunnelBridge, TunnelBridgeError
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.tunnels.protocol import TunnelHandle
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def recorded_signals(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int, int]]:
+    """Intercept ``os.kill`` / ``os.killpg`` so unit tests never emit real signals."""
+    calls: list[tuple[str, int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append(("kill", pid, int(sig))))
+    if hasattr(os, "killpg"):
+        monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append(("killpg", pgid, int(sig))))
+    return calls
+
+
+def _patch_psutil_create_time(monkeypatch: pytest.MonkeyPatch, resolver: Any) -> None:
+    """Patch ``psutil.Process(pid)`` while keeping ``psutil.Process()`` working for conftest."""
+    real_process = psutil.Process
+
+    class _FakeProc:
+        def __init__(self, pid: int) -> None:
+            self._pid = pid
+
+        def create_time(self) -> float:
+            return float(resolver(self._pid))
+
+    def _factory(pid: int | None = None) -> Any:
+        if pid is None:
+            return real_process()
+        return _FakeProc(pid)
+
+    monkeypatch.setattr(psutil, "Process", _factory)
+
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -255,7 +295,11 @@ def test_start_persists_state_and_writes_audit_chain(tmp_path: Path) -> None:
     assert "preview.link" in event_types
 
 
-def test_stop_removes_record_and_audits(tmp_path: Path) -> None:
+def test_stop_removes_record_and_audits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_signals: list[tuple[str, int, int]],
+) -> None:
     """``stop`` tears the tunnel down, deletes state, audits ``preview.stop``."""
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"dev": "vite"}}), encoding="utf-8")
     runner = _FakeRunner(["http://localhost:1234"])
@@ -265,24 +309,19 @@ def test_stop_removes_record_and_audits(tmp_path: Path) -> None:
 
     import bernstein.core.preview.manager as mgr_mod
 
-    real_probe = mgr_mod.probe_port
-    real_terminate = mgr_mod._terminate_pid
-    mgr_mod.probe_port = lambda *args, **kwargs: True  # type: ignore[assignment]
-    mgr_mod._terminate_pid = lambda pid: None  # type: ignore[assignment]
-    try:
-        manager = PreviewManager(
-            store=store,
-            tunnel=tunnel,
-            token_issuer=_FakeIssuer(),
-            audit_log=audit,
-            runner=runner,
-        )
-        preview = manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox(), approve_discovered=True)
-        assert manager.stop(preview.state.preview_id) is True
-    finally:
-        mgr_mod.probe_port = real_probe  # type: ignore[assignment]
-        mgr_mod._terminate_pid = real_terminate  # type: ignore[assignment]
+    monkeypatch.setattr(mgr_mod, "probe_port", lambda *args, **kwargs: True)
+    monkeypatch.setattr(mgr_mod, "_terminate_pid", lambda *args, **kwargs: (False, "skipped"))
+    manager = PreviewManager(
+        store=store,
+        tunnel=tunnel,
+        token_issuer=_FakeIssuer(),
+        audit_log=audit,
+        runner=runner,
+    )
+    preview = manager.start(cwd=tmp_path, sandbox_session=_FakeSandbox(), approve_discovered=True)
+    assert manager.stop(preview.state.preview_id) is True
 
+    assert recorded_signals == []
     assert store.get(preview.state.preview_id) is None
     assert preview.state.tunnel_name in tunnel.closed
     valid, errors = audit.verify()
@@ -489,3 +528,250 @@ def test_stop_keeps_state_when_container_cleanup_fails(tmp_path):
     assert store.get(state.preview_id) is None
     assert all(call.args == ("docker",) for call in resolve.call_args_list)
     assert all(call.args[0] == ["/local/bin/docker", "rm", "--force", name] for call in run.call_args_list)
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed PID identity guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("bad_pid", "expected_reason"),
+    [
+        (False, "invalid_pid"),
+        (True, "invalid_pid"),
+        (0, "invalid_pid"),
+        (-1, "invalid_pid"),
+        (-42, "invalid_pid"),
+        (1, "invalid_pid"),
+    ],
+)
+def test_terminate_pid_refuses_invalid_and_bool_pids(
+    bad_pid: Any,
+    expected_reason: str,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bernstein.core.preview.manager as mgr_mod
+
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+
+    signaled, reason = mgr_mod._terminate_pid(bad_pid, expected_start_time=1_700_000_000.0)
+    assert signaled is False
+    assert reason == expected_reason
+    assert recorded_signals == []
+
+
+def test_terminate_pid_refuses_self_pid_and_own_pgrp(
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bernstein.core.preview.manager as mgr_mod
+
+    own_pid = os.getpid()
+    signaled, reason = mgr_mod._terminate_pid(own_pid, expected_start_time=1_700_000_000.0)
+    assert (signaled, reason) == (False, "self_pid")
+    assert recorded_signals == []
+
+    if hasattr(os, "getpgrp") and hasattr(os, "getpgid"):
+        own_pgid = os.getpgrp()
+        if own_pgid != own_pid:
+            signaled_pgrp, reason_pgrp = mgr_mod._terminate_pid(own_pgid, expected_start_time=1_700_000_000.0)
+            assert (signaled_pgrp, reason_pgrp) == (False, "own_process_group")
+        peer_pid = max(own_pid, own_pgid) + 5000
+        monkeypatch.setattr(os, "getpgid", lambda pid: own_pgid)
+        signaled_peer, reason_peer = mgr_mod._terminate_pid(peer_pid, expected_start_time=1_700_000_000.0)
+        assert (signaled_peer, reason_peer) == (False, "own_process_group")
+        assert recorded_signals == []
+
+
+def test_terminate_pid_fails_closed_when_start_time_unreadable_or_invalid(
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bernstein.core.preview.manager as mgr_mod
+
+    target_pid = max(os.getpid(), os.getpgrp() if hasattr(os, "getpgrp") else 0) + 6000
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+
+    for bad_ts, expected_reason in [
+        (None, "missing_start_time"),
+        (True, "invalid_start_time"),
+        (-5.0, "invalid_start_time"),
+        (float("nan"), "invalid_start_time"),
+        (float("inf"), "invalid_start_time"),
+    ]:
+        assert mgr_mod._terminate_pid(target_pid, expected_start_time=bad_ts) == (False, expected_reason)
+
+    def _deny_create_time(pid: int) -> float:
+        raise psutil.AccessDenied(pid)
+
+    _patch_psutil_create_time(monkeypatch, _deny_create_time)
+    assert mgr_mod._terminate_pid(target_pid, expected_start_time=1_700_000_000.0) == (False, "unreadable_start_time")
+
+    if hasattr(os, "getpgid"):
+
+        def _deny_pgid(_pid: int) -> int:
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(os, "getpgid", _deny_pgid)
+        assert mgr_mod._terminate_pid(target_pid, expected_start_time=1_700_000_000.0) == (False, "unreadable_pgid")
+
+    assert recorded_signals == []
+
+
+def test_terminate_pid_refuses_pgid_1_and_limits_non_leader_to_single_pid(
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not (hasattr(os, "getpgid") and hasattr(os, "killpg")):
+        pytest.skip("POSIX process groups not available on this platform")
+
+    import bernstein.core.preview.manager as mgr_mod
+
+    target_pid = max(os.getpid(), os.getpgrp()) + 7000
+    _patch_psutil_create_time(monkeypatch, lambda _pid: 1_700_000_000.0)
+    monkeypatch.setattr(os, "getpgid", lambda _pid: 1)
+    assert mgr_mod._terminate_pid(target_pid, expected_start_time=1_700_000_000.0) == (False, "unsafe_process_group")
+    assert recorded_signals == []
+
+    # When target is NOT the process-group leader, signal only the verified PID
+    # rather than killing an unverified group leader via killpg.
+    other_pgid = target_pid + 1
+    monkeypatch.setattr(os, "getpgid", lambda _pid: other_pgid)
+    assert mgr_mod._terminate_pid(target_pid, expected_start_time=1_700_000_000.0) == (True, "signaled")
+    assert recorded_signals == [("kill", target_pid, int(signal.SIGTERM))]
+
+
+def test_reap_expired_skips_stale_pid_reports_and_cleans_state(
+    tmp_path: Path,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = PreviewStore(path=tmp_path / "preview.json")
+    audit = _audit_log(tmp_path)
+    target_pid = max(os.getpid(), os.getpgrp() if hasattr(os, "getpgrp") else 0) + 8000
+    store.path.write_text(
+        json.dumps(
+            {
+                "previews": [
+                    {
+                        "preview_id": "prv-expired-stale",
+                        "command": "npm run dev",
+                        "cwd": str(tmp_path),
+                        "port": 1234,
+                        "sandbox_backend": "worktree",
+                        "sandbox_session_id": "x",
+                        "tunnel_provider": "cloudflared",
+                        "tunnel_name": "t-stale",
+                        "public_url": "https://old/",
+                        "share_url": "https://old/",
+                        "auth_mode": "none",
+                        "expires_at_epoch": 10.0,
+                        "process_pid": target_pid,
+                        "process_start_time": 1_700_000_000.0,
+                        "created_at_epoch": 0.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    _patch_psutil_create_time(monkeypatch, lambda _pid: 1_700_009_999.0)
+
+    manager = PreviewManager(store=store, tunnel=_FakeTunnel(), token_issuer=_FakeIssuer(), audit_log=audit)
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.preview.manager"):
+        reaped = manager.reap_expired(now=20.0)
+
+    assert reaped == 1
+    assert recorded_signals == []
+    assert store.list() == []
+    assert "start_time_mismatch" in caplog.text
+
+
+def test_preview_state_round_trip_with_process_start_time() -> None:
+    state = PreviewState(
+        preview_id="prv-ts",
+        command="cmd",
+        cwd="/tmp",
+        port=8080,
+        sandbox_backend="worktree",
+        sandbox_session_id="sbx",
+        tunnel_provider="cloudflared",
+        tunnel_name="t",
+        public_url="https://x/",
+        share_url="https://x/",
+        auth_mode="token",
+        expires_at_epoch=12345.0,
+        process_pid=42,
+        process_start_time=1_700_000_123.5,
+        created_at_epoch=10.0,
+    )
+    assert PreviewState.from_dict(state.to_dict()) == state
+
+    legacy = state.to_dict()
+    legacy.pop("process_start_time")
+    restored = PreviewState.from_dict(legacy)
+    assert restored.process_start_time is None
+
+
+def test_preview_stop_cli_reports_skipped_pid(
+    tmp_path: Path,
+    recorded_signals: list[tuple[str, int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bernstein.cli.commands import preview_cmd
+
+    store = PreviewStore(path=tmp_path / "preview.json")
+    target_pid = max(os.getpid(), os.getpgrp() if hasattr(os, "getpgrp") else 0) + 9000
+    store.path.write_text(
+        json.dumps(
+            {
+                "previews": [
+                    {
+                        "preview_id": "prv-cli-legacy",
+                        "command": "npm run dev",
+                        "cwd": str(tmp_path),
+                        "port": 3000,
+                        "sandbox_backend": "worktree",
+                        "sandbox_session_id": "sbx",
+                        "tunnel_provider": "cloudflared",
+                        "tunnel_name": "t-cli",
+                        "public_url": "https://cli/",
+                        "share_url": "https://cli/",
+                        "auth_mode": "none",
+                        "expires_at_epoch": 9_999_999_999.0,
+                        "process_pid": target_pid,
+                        "created_at_epoch": 0.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = PreviewManager(
+        store=store,
+        tunnel=_FakeTunnel(),
+        token_issuer=_FakeIssuer(),
+        audit_log=_audit_log(tmp_path),
+    )
+    monkeypatch.setattr(preview_cmd, "PreviewManager", lambda: manager)
+
+    out_lines: list[str] = []
+    monkeypatch.setattr(
+        preview_cmd.console, "print", lambda *args, **kwargs: out_lines.append(" ".join(map(str, args)))
+    )
+
+    result = CliRunner().invoke(preview_cmd.preview_group, ["stop", "prv-cli-legacy"])
+    assert result.exit_code == 0, result.output
+    assert recorded_signals == []
+    assert store.get("prv-cli-legacy") is None
+    rendered = "\n".join(out_lines)
+    assert str(target_pid) in rendered and "missing_start_time" in rendered
