@@ -8,6 +8,40 @@ locally without waiting for the cloud runner.
 > harness MUST update this page in the same PR. See the project-wide
 > [Documentation duty](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md#docs-alongside-code) rule.
 
+## Workflow dispatch crash and restart characterization
+
+`tests/integration/test_workflow_dispatch_restart.py` uses the real
+workflow runner and task store with controlled POSIX local subprocesses and
+a command sentinel. Exercises resume before dispatch and after a launched attempt loses its acknowledgement or crashes before the terminal checkpoint. Invocation counters are backed by successful real-child launch preconditions outside expected failures, so fixture launch errors block the suite. The latter audit hook characterizes the current early node-finish behavior; it does not claim to cover an in-flight confirmed-dispatch checkpoint after a future completion implementation.
+
+Resume observation waits for dispatch return or run termination within the
+existing harness bound before checking launch preconditions. Positive controls
+delay real child startup beyond the observation window in both crash cases and
+require the precise proposed-contract gap after successful dispatch.
+
+Run `uv run pytest tests/integration/test_workflow_dispatch_restart.py -q`.
+The shared `tests/support/workflow_completion.py` fixture checks that a live
+child is observable, the command sentinel fires, and children are reaped.
+Every runner join must finish within the cleanup bound; a surviving runner
+causes an ordinary teardown error, with store disposal still guaranteed.
+A blocked-runner negative control verifies this failure remains outside
+expected-failure conversion and releases and joins its own runner afterward.
+Only explicitly reproduced proposed-contract assertions count as strict
+expected failures; an unexpected pass requires revisiting the contract test.
+A green characterization suite with expected failures does not implement
+workflow completion. Acceptance-evidence, loop and legacy-migration work
+remain separate (see #6639 and #6841).
+
+## Workflow completion tests
+
+Run `uv run pytest tests/integration/test_workflow_completion_authority.py -q`
+to exercise live agents, worker-reported completion, failure, refusal and
+rejected verification against the workflow runner and task store. The tests
+use the same controlled child processes as the restart suite. Five strict
+expected failures cover dependency release before acceptance. A sixth covers
+worker dispatch when the runner has no completion authority. The passing controls check the fixture and
+dispatch failures.
+
 ## Tool ↔ bug-class matrix
 
 | Tool                        | Bug class                                                         | When                |
@@ -34,7 +68,7 @@ locally without waiting for the cloud runner.
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
-| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes, the access-token prompt | local only (`cd web && npm test`; not run in CI) |
+| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes, the access-token prompt | Web UI regression workflow and local (`cd web && npm test`) |
 
 ## Web UI tests
 
@@ -55,6 +89,21 @@ server or make network requests.
 installed before React loads, and drives it with real DOM events: the 401
 path in `src/lib/api.ts` and the shell's access-token prompt. `fetch` is
 stubbed; nothing listens on a port.
+
+Run the Vitest and Testing Library component tests with
+`cd web && npm run test:components`.
+
+The Playwright smoke starts a real GUI server in a temporary project and
+exercises the shipped bundle, including token recovery and task cancellation
+with backend readback. From the repository root, install Chromium and run it:
+
+```bash
+uv run --locked --extra gui python -m playwright install chromium
+uv run --locked --extra gui python scripts/smoke_webui.py
+```
+
+The Web UI regression workflow runs all three test layers on relevant pull
+requests.
 
 Test-count drop vs merge base (#4873)
 
@@ -89,7 +138,61 @@ uv run python scripts/check_test_count_drop.py --base origin/main
 uv run python scripts/check_test_count_drop.py --base origin/main --pr-body "$(gh pr view --json body -q .body)"
 ```
 
+## The suite's memory guard
+
+`tests/conftest.py` caps each test process's address space (`RLIMIT_AS`)
+at **2 GB**. It does this because the full suite holds references across
+thousands of tests and can otherwise grow without bound. A run that crosses the
+cap fails fast instead of taking the machine down. `scripts/run_tests.py`
+already isolates each file in its own process, so CI never comes near it.
+
+Set `BERNSTEIN_MEM_GUARD_GB` to change the cap, as a whole number of GB
+(`0` or an unparsable value keeps the 2 GB default). The rendering lane
+sets it to `2048`, because headless Chromium reserves a ~1.5 TB virtual
+address space at launch.
+
+**Running with pytest-xdist (`-n`).** The cap applies in each xdist worker
+and in a plain run, never in the xdist controller. The controller runs no
+tests, but its address space grows with the session, and capping it made
+large `-n` runs die at teardown with `can't start new thread` (#5938). A
+worker on a big local run can still cross 2 GB. When a test then fails on
+`can't start new thread`, a refused fork (`BlockingIOError`) or a
+`MemoryError`, the report carries a `memory guard` section naming the
+limit and the process's `VmSize`. The reported xdist controller abort
+`assert not crashitem` also includes this context when a worker dies without
+a test report. The diagnostic identifies a possible cause, not proof that
+the guard caused every worker failure. Rerun with a higher cap to confirm:
+
+```bash
+BERNSTEIN_MEM_GUARD_GB=8 uv run --with pytest-xdist pytest path/to/test_file.py -n 8 -q
+```
+
+`--with pytest-xdist` supplies the optional plugin for this run. Replace the
+example path with the file that failed. macOS does not let a process
+lower `RLIMIT_AS`, so the cap is a no-op there and only the per-test RSS
+check applies.
+
+The scope regression's child sessions preserve the configured cap and
+inherited `PYTHONPATH`. Only the limit-readback cases load the POSIX
+`resource` probe; the diagnostic remains tested on Windows without it.
+
 ## Run any of the above locally
+
+Choose the selector for the scope you need. The repository runner's `-k`
+is a literal substring filter on test file stems; it selects whole files.
+Pytest's `-k` instead evaluates a keyword expression against collected test
+cases. A node ID selects one specific case:
+
+```bash
+# Whole files whose stems contain quickstart_poll
+uv run python scripts/run_tests.py -k quickstart_poll
+
+# Cases matching a keyword expression within one file
+uv run pytest tests/unit/test_quickstart_poll.py -k 'exits_early and dict_shaped' -q
+
+# One exact case
+uv run pytest tests/unit/test_quickstart_poll.py::test_quickstart_poll_exits_early_on_the_dict_shaped_status_payload -q
+```
 
 ```bash
 # Identity anchoring, including a real two-process race against one audit dir
@@ -119,7 +222,7 @@ uv tool install semgrep
 uv tool run semgrep --config .semgrep.yml --severity ERROR --error src/
 
 # Bandit (production HIGH-only with baseline)
-uv run bandit -r src/ -ll --severity-level high -b .bandit-baseline.json
+uv run bandit -r src/ --severity-level high -b .bandit-baseline.json
 
 # pip-audit
 uv run pip-audit --strict
@@ -127,8 +230,8 @@ uv run pip-audit --strict
 # Beartype claw - runs the lineage-signer unit tests under runtime type
 # enforcement (allow-list: tests/_beartype_claw.py)
 BEARTYPE_USE_CLAW=enable \
-  uv run pytest tests/unit/ -q --no-cov \
-  -k 'lineage_signer or lineage_record or lineage_export'
+  uv run pytest tests/unit/test_lineage_signer.py tests/unit/test_lineage_record.py \
+  tests/unit/test_lineage_export.py -q --no-cov
 
 # Pyright strict zone
 uv run pyright --project pyrightconfig.strict.json
@@ -147,13 +250,13 @@ uv run mypy src
 uv run pytest tests/unit/cli/test_doctor_environment_type_contract.py -q
 
 # Vulture
-vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
+uv run vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
-# Diff-cover (after a coverage run). The floor is the committed
+# Diff-cover (after a coverage run on the files under review). The floor is the committed
 # diff_coverage_floor_percent in .coverage-baseline.json (LEVEL 1 of the
 # coverage ratchet); the weekly bump nudges it up. See
 # docs/operations/coverage-ratchet.md.
-uv run pytest tests/unit/ --cov=src/bernstein --cov-report=xml
+uv run pytest path/to/test_file.py --cov=src/bernstein --cov-report=xml
 FLOOR=$(uv run python scripts/coverage_ratchet.py show-floor --baseline .coverage-baseline.json)
 uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under="$FLOOR"
 
@@ -338,14 +441,12 @@ is a flake waiting to happen.
 uv run python scripts/run_tests.py --parallel 4
 
 # One file or one test, same runner:
-uv run python scripts/run_tests.py tests/unit/test_foo.py
-uv run python scripts/run_tests.py tests/unit/test_foo.py::test_bar
+uv run python scripts/run_tests.py tests/unit/test_no_network_guard.py
+uv run python scripts/run_tests.py tests/unit/test_no_network_guard.py::test_guard_allows_localhost_hostname
 
-# Or straight pytest:
-uv run pytest tests/unit/ -q --no-cov
-
-# The guard's own meta-tests:
+# Or straight pytest for one file:
 uv run pytest tests/unit/test_no_network_guard.py -q --no-cov
+
 ```
 
 ## Multi-adapter pentest fan-out
@@ -424,6 +525,20 @@ process. Ordinary assertion failures retain their FAILURES and short-summary
 sections; when those sections are absent, the job log retains the complete
 captured stdout and stderr under separate labels. These diagnostics do not
 establish the cause of an unexplained process exit.
+
+The recurring unexplained exit was #6042: `tests/unit/test_orchestrator.py`
+intermittently reported `FAIL` at ~53s with no summary at all. The death
+lands at end-of-run (the file legitimately takes ~50s), nothing prints —
+not even a traceback — so the subprocess was killed externally: pytest's
+own error paths all emit something, and the harness's only internal kill
+(the 600s per-file timeout) reports `TIMEOUT`. The killer is the kernel
+OOM killer on a memory-pressured shard runner, and a long-lived file with
+an unbounded footprint is its victim; this file leaked per-test thread
+pools until #6763 joined them deterministically. The file now carries a
+per-test process-growth ratchet (`_bound_process_growth`) that fails the
+leaking test by name, and
+`tests/unit/test_orchestrator_resource_cleanup.py` pins that the ratchet
+fires, so the silent death cannot return.
 
 `scripts/run_tests.py` runs each `tests/unit/test_*.py` file in its own
 subprocess (the OOM-avoidance model: a single `pytest --cov` over all

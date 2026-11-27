@@ -16,7 +16,9 @@ and misreported it as "server unreachable". These tests pin the fix:
 
 from __future__ import annotations
 
+import os
 import stat
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,6 +50,37 @@ def test_persist_then_read_round_trips(tmp_path: Path) -> None:
 
 
 def test_read_run_auth_token_missing_returns_none(tmp_path: Path) -> None:
+    assert read_run_auth_token(tmp_path) is None
+
+
+def test_read_run_auth_token_rejects_symlink_and_directory(tmp_path: Path) -> None:
+    secret_target = tmp_path / "other.txt"
+    secret_target.write_text("leaked-token", encoding="utf-8")
+    token_path = run_auth_token_path(tmp_path)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.symlink_to(secret_target)
+    assert read_run_auth_token(tmp_path) is None
+
+    token_path.unlink()
+    token_path.mkdir()
+    assert read_run_auth_token(tmp_path) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits and UID checks do not apply on Windows")
+@pytest.mark.parametrize("bad_mode", [0o644, 0o640, 0o604, 0o601])
+def test_read_run_auth_token_rejects_group_or_world_permissions(tmp_path: Path, bad_mode: int) -> None:
+    token_path = persist_run_auth_token(tmp_path, "secret-token")
+    assert token_path is not None
+    token_path.chmod(bad_mode)
+    assert read_run_auth_token(tmp_path) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX UID ownership checks do not apply on Windows")
+def test_read_run_auth_token_rejects_foreign_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    token_path = persist_run_auth_token(tmp_path, "secret-token")
+    assert token_path is not None
+    foreign_uid = token_path.stat().st_uid + 1
+    monkeypatch.setattr(os, "getuid", lambda: foreign_uid)
     assert read_run_auth_token(tmp_path) is None
 
 
@@ -132,7 +165,9 @@ def test_server_get_returns_none_on_unreachable(tmp_path: Path, monkeypatch: pyt
         assert helpers.server_get("/status", raise_on_auth_error=True) is None
 
 
-def test_server_get_401_without_optin_stays_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_server_get_401_without_optin_stays_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Back-compat: the 69 existing callers must keep receiving ``None`` on 401."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("BERNSTEIN_SERVER_URL", raising=False)
@@ -142,6 +177,28 @@ def test_server_get_401_without_optin_stays_none(tmp_path: Path, monkeypatch: py
 
     with patch.object(helpers.httpx, "get", fake_get):
         assert helpers.server_get("/status") is None
+
+    output = capsys.readouterr()
+    assert "Server error:" in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("auth_error", [False, True])
+def test_require_server_reachable_reports_failure_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], auth_error: bool
+) -> None:
+    def probe(*_args: object, **_kwargs: object) -> None:
+        if auth_error:
+            raise helpers.ServerAuthError(401)
+
+    monkeypatch.setattr(helpers, "server_get", probe)
+    with pytest.raises(SystemExit) as exc:
+        helpers.require_server_reachable()
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    expected = "rejected credentials" if auth_error else "Cannot reach task server"
+    assert expected in output.err
+    assert output.out == ""
 
 
 def test_resolve_auth_token_persists_to_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

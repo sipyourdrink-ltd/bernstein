@@ -25,7 +25,19 @@ The command has two modes, selected by which options you pass:
 | Variant | `--variant-a` / `--variant-b` / `--tasks` | Compares two prompt variants with the deterministic echo executor. Offline, zero LLM cost. |
 | Suite (profile arms) | `--suite` / `--arm-a` / `--arm-b` | Runs the suite under two response profiles; emits one chain-anchored cost-and-quality artifact. |
 
-Suite mode requires `--suite`, `--arm-a`, and `--arm-b` together.
+Any one of `--suite`, `--arm-a`, or `--arm-b` selects suite mode, even
+when all variant inputs are also supplied. Suite mode then requires all
+three suite options together; a partial suite selection is a usage error.
+
+Variant mode prints comparison JSON by default; `--json` is not needed
+and does not change that mode. With `--output FILE`, it writes that JSON
+to the file and prints a short confirmation instead.
+
+Suite mode defaults to a human-readable comparison; `--json` prints its
+artifact path, digest, and content as JSON. `--output FILE` additionally
+writes that suite JSON payload without changing the selected stdout
+format. Suite mode also stores its content-addressed artifact under
+`--reports-dir`.
 
 ## Suite mode: the three-arm plan
 
@@ -51,8 +63,8 @@ without the control arm.
 # Variant mode (offline, deterministic)
 bernstein eval ab --variant-a a.yaml --variant-b b.yaml --tasks tasks.yaml
 
-# Suite mode, two arms
-bernstein eval ab --suite suite.yaml --arm-a balanced --arm-b terse --json
+# Suite mode, two arms (offline synthetic executor)
+bernstein eval ab --suite suite.yaml --arm-a balanced --arm-b terse --executor synthetic --json
 
 # Suite mode, three arms with the built-in control, 3 trials each
 bernstein eval ab --suite suite.yaml --arm-a baseline --arm-b terse \
@@ -76,8 +88,8 @@ bernstein eval ab --suite suite.yaml --arm-a balanced --arm-b terse \
 | `--ledger PATH` | synthetic: `.sdd/eval/ab/ledger.jsonl`; spawn: `.sdd/cost/ledger.jsonl` | Spend ledger the runs are joined against. |
 | `--reports-dir DIR` | `.sdd/reports/eval_ab` | Where the content-addressed artifact is written. |
 | `--audit-dir DIR` | `.sdd/audit` | Audit chain the comparison event is appended to. |
-| `--json` | off | Emit raw JSON (suite mode). |
-| `--output FILE` | stdout | Write the comparison JSON here. |
+| `--json` | off | Emit raw JSON in suite mode; variant mode already defaults to JSON. |
+| `--output FILE` | unset | Write the selected mode's comparison JSON here; see the mode-specific stdout behavior above. |
 | `--scorer {exact,none}` | exact | Built-in scorer for variant mode. |
 
 Synthetic figures never land in the production spend ledger; they write to

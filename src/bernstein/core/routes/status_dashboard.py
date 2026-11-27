@@ -7,12 +7,14 @@ import logging
 import subprocess
 import time
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein import __version__
 from bernstein.core.home import BernsteinHome, resolve_config_bundle
 from bernstein.core.prometheus import get_transition_reason_histogram
 from bernstein.core.runtime_state import (
@@ -901,6 +903,43 @@ def _summarise_lineage(sdd_dir: Any) -> dict[str, Any]:
     }
 
 
+def _execution_readiness_observation(request: Request, tenant_id: str, now: float) -> dict[str, Any]:
+    """Project coordinator-local evidence without inferring worker or scheduler state."""
+    _, reason = _readiness(request)
+    draining = reason == "draining"
+    dispatch_reason = {"draining": "draining", "readonly": "readonly_mode"}.get(reason, "dispatch_evidence_unavailable")
+    observed_at = datetime.fromtimestamp(now, tz=UTC).isoformat()
+    provenance = {"tenant_id": tenant_id}
+    return {
+        "schema_version": 1,
+        "coordinator": {
+            "state": "ready",
+            "reason_codes": [],
+            "source": "task_server_status",
+            "version": None if __version__ == "0.0.0" else __version__,
+            "observed_at": observed_at,
+            "expires_at": None,
+            "provenance": provenance,
+        },
+        "scheduler": {
+            "state": "unknown",
+            "reason_codes": ["scheduler_evidence_unavailable"],
+            "source": "task_server_status",
+            "observed_at": None,
+            "expires_at": None,
+            "provenance": provenance,
+        },
+        "dispatch": {
+            "state": "blocked" if draining else "unknown",
+            "reason_codes": [dispatch_reason],
+            "source": "task_server_status",
+            "observed_at": observed_at if reason in {"draining", "readonly"} else None,
+            "expires_at": None,
+            "provenance": provenance,
+        },
+    }
+
+
 @router.get("/status")
 def status_dashboard(request: Request) -> JSONResponse:
     """Dashboard summary of task counts."""
@@ -916,6 +955,7 @@ def status_dashboard(request: Request) -> JSONResponse:
     runtime = _runtime_summary(request, store, tenant_id)
     payload["runtime"] = runtime
     now = time.time()
+    payload["execution_readiness"] = _execution_readiness_observation(request, tenant_id, now)
     tasks = store.list_tasks(tenant_id=tenant_id)
     live_costs = _load_live_costs(request)
     sdd_dir = getattr(request.app.state, "sdd_dir", None)

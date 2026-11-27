@@ -138,9 +138,12 @@ def _render_mermaid_graph(data: dict[str, Any]) -> str:
 def graph_tasks(output_format: str) -> None:
     """Render the current task dependency graph as ASCII or Mermaid."""
     data = _fetch_task_graph()
-    graph_output = _render_ascii_graph(data) if output_format == "ascii" else _render_mermaid_graph(data)
+    if output_format == "mermaid":
+        click.echo(_render_mermaid_graph(data))
+        return
+
     console.print()
     console.print("[bold]Task Dependency Graph[/bold]")
     console.print()
-    console.print(graph_output)
+    console.print(_render_ascii_graph(data))
     console.print()

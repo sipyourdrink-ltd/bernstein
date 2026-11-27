@@ -74,7 +74,8 @@ has no such limit; it never touches the artifact store.
 ## The proposal carries only what the canary regenerates
 
 The regeneration reaches `main` through a long-lived pull request on
-`bot/adapter-canary-last-green`. That branch is rebuilt each night by
+`bot/adapter-canary-last-green`. Its generated commits use `github-actions[bot]`,
+which the quorum check recognises as a project member. The branch is rebuilt each night by
 `scripts/canary_propose_branch.py` on `origin/main` **as fetched at commit
 time**, not on the workflow checkout.
 
@@ -214,15 +215,15 @@ covered under *Chronic-skip handling*.
 | Adapter | Binary | Last-green version | Verified | Receipt |
 |---|---|---|---|---|
 | agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z (not probed) | `006fb946868d` |
-| aider | `aider` | 0.86.2 | 2026-11-10T13:04:45Z | `ffa2b33f38e8` |
-| claude | `claude` | 2.1.322 | 2026-11-10T13:04:45Z | `2a2169615c2d` |
-| codex | `codex` | 0.167.0 | 2026-11-10T13:04:45Z | `304f765d1251` |
-| copilot | `copilot` | 1.0.108 | 2026-11-10T13:04:45Z | `ff8ba589be17` |
-| gemini | `gemini` | 0.67.0 | 2026-11-10T13:04:45Z | `ccef38dfc173` |
-| kimi | `kimi` | 1.51.0 | 2026-11-10T13:04:45Z | `376213beb701` |
-| opencode | `opencode` | 1.19.5 | 2026-11-10T13:04:45Z | `0fd72c720fa8` |
-| pydantic_ai | `clai` | 2.66.0 | 2026-11-10T13:04:45Z | `050aca507475` |
-| qwen | `qwen` | 0.27.1 | 2026-11-10T13:04:45Z | `ed4881be35f4` |
+| aider | `aider` | 0.86.2 | 2026-11-25T15:03:12Z | `c749c4e4960a` |
+| claude | `claude` | 2.1.328 | 2026-11-25T15:03:12Z | `fef6f221e6d4` |
+| codex | `codex` | 0.171.0 | 2026-11-25T15:03:12Z | `5fc8ba1e0068` |
+| copilot | `copilot` | 1.0.115 | 2026-11-25T15:03:12Z | `84d4f2767861` |
+| gemini | `gemini` | 0.70.0 | 2026-11-25T15:03:12Z | `242a8fdd748f` |
+| kimi | `kimi` | 1.51.0 | 2026-11-25T15:03:12Z | `7cf2191099a0` |
+| opencode | `opencode` | 1.19.6 | 2026-11-25T15:03:12Z | `6276dc9ab854` |
+| pydantic_ai | `clai` | 2.74.0 | 2026-11-25T15:03:12Z | `182de6e5dce9` |
+| qwen | `qwen` | 0.28.0 | 2026-11-25T15:03:12Z | `fbc9e6879e66` |
 <!-- last-green:end -->
 
 ## Operator knobs

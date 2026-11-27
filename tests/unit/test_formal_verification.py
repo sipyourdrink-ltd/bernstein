@@ -115,17 +115,17 @@ class TestVerifyPythonEval:
         ctx = {"result_length": 10, "files_modified": 0}
         assert _verify_python_eval(prop, ctx) is None
 
-    def test_bad_expression_returns_none(self) -> None:
-        # Syntax errors should not raise - return None (skip rather than block)
+    def test_bad_expression_fails_closed(self) -> None:
         prop = self._prop("this is not python")
         result = _verify_python_eval(prop, {})
-        assert result is None
+        assert result is not None
+        assert "Invalid property" in result.detail
 
     def test_forbidden_names_unavailable(self) -> None:
-        # __builtins__ is empty so builtins like open(), os, etc. are not accessible
-        prop = self._prop("open")  # 'open' is not in context → NameError → returns None
+        prop = self._prop("open")
         result = _verify_python_eval(prop, {})
-        assert result is None
+        assert result is not None
+        assert "Invalid property" in result.detail
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +169,18 @@ class TestRunFormalVerificationZ3:
             properties=[FormalProperty(name=f"prop_{i}", invariant=inv) for i, inv in enumerate(invariants)],
             block_on_violation=True,
         )
+
+    def test_disallows_non_scalar_property_syntax(self, tmp_path: Path) -> None:
+        config = self._config(["len([]) == 0"])
+        result = run_formal_verification(_fake_task(), tmp_path, config)
+        assert not result.passed
+        assert len(result.violations) == 1
+
+    def test_short_circuit_does_not_hide_unsupported_symbols(self, tmp_path: Path) -> None:
+        config = self._config(["True or missing_symbol"])
+        result = run_formal_verification(_fake_task(), tmp_path, config)
+        assert not result.passed
+        assert len(result.violations) == 1
 
     def test_all_pass(self, tmp_path: Path) -> None:
         task = _fake_task(result_summary="Done")
@@ -215,35 +227,54 @@ class TestRunFormalVerificationZ3:
 
 
 class TestRunFormalVerificationLean4:
+    @pytest.fixture(autouse=True)
+    def configured_image(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_FORMAL_LEAN_IMAGE", "lean-fixture")
+
     def _lean4_prop(self, invariant: str = "True") -> FormalProperty:
         return FormalProperty(name="lean_prop", invariant=invariant, checker="lean4")
 
     def test_lean4_pass_when_cli_succeeds(self, tmp_path: Path) -> None:
         task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop()])
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("bernstein.core.sandbox.isolated_process.run_isolated") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
         assert result.passed is True
+
+    def test_lean4_compiles_lemmas_from_readonly_proof_root(self, tmp_path: Path) -> None:
+        (tmp_path / "Facts.lean").write_text("def value : Nat := 1")
+        property = FormalProperty("example", "value = 1", "lean4", "Facts.lean")
+        config = FormalVerificationConfig(properties=[property])
+        with patch("bernstein.core.sandbox.isolated_process.run_isolated") as run:
+            run.return_value = MagicMock(returncode=0, stdout=b"")
+            result = run_formal_verification(_fake_task(), tmp_path, config)
+        assert result.passed
+        assert run.call_args.kwargs["workdir"] == "/proof"
+        assert run.call_args.kwargs["mounts"][0].endswith("target=/proof,readonly")
+        assert run.call_args.args[1][-1] == "Facts"
 
     def test_lean4_fail_when_cli_fails(self, tmp_path: Path) -> None:
         task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop("False")])
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error: tactic 'decide' failed")
+        with patch("bernstein.core.sandbox.isolated_process.run_isolated") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout=b"error: tactic 'decide' failed", stderr=b"")
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
         assert result.passed is False
         assert len(result.violations) == 1
         assert result.violations[0].checker == "lean4"
         assert "tactic" in result.violations[0].counterexample
 
-    def test_lean4_skipped_when_cli_not_found(self, tmp_path: Path) -> None:
+    def test_lean4_fails_closed_when_runtime_unavailable(self, tmp_path: Path) -> None:
+        from bernstein.core.sandbox.isolated_process import IsolationUnavailable
+
         task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop()])
-        with patch("subprocess.run", side_effect=FileNotFoundError("lean not found")):
+        with patch(
+            "bernstein.core.sandbox.isolated_process.run_isolated", side_effect=IsolationUnavailable("lean not found")
+        ):
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
-        # FileNotFoundError → non-fatal skip → passes
-        assert result.passed is True
+        assert result.passed is False
         assert result.properties_checked == 1
 
     def test_lean4_timeout_produces_violation(self, tmp_path: Path) -> None:
@@ -251,7 +282,9 @@ class TestRunFormalVerificationLean4:
 
         task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop()], timeout_s=1)
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["lean"], 1)):
+        with patch(
+            "bernstein.core.sandbox.isolated_process.run_isolated", side_effect=subprocess.TimeoutExpired(["lean"], 1)
+        ):
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
         assert result.passed is False
         assert result.violations[0].counterexample == "(timeout)"

@@ -405,6 +405,7 @@ def test_run_journal_records_the_set_resolved_from_the_install(tmp_path: Path) -
         extension_set_digest_from_events,
         record_run_extension_set,
     )
+    from bernstein.plugins.manager import get_plugin_manager
 
     workdir = tmp_path / "project"
     _write_skill(workdir / "templates" / "skills", "zeta-pack", version="4.0.0", body="Zeta body.")
@@ -412,6 +413,8 @@ def test_run_journal_records_the_set_resolved_from_the_install(tmp_path: Path) -
     journal = EventJournal(run_id="extset-spawn", sdd_dir=workdir / ".sdd")
     journal.record("run_started", run_id="extset-spawn")
     recorded = record_run_extension_set(journal, workdir)
+    attested_manager = get_plugin_manager(workdir)
+    assert get_plugin_manager(workdir, record_declaration_failures=True) is attested_manager
 
     events = load_events(journal.path).events
     rows = [e for e in events if e.get("event") == LOADED_EXTENSION_SET_EVENT]

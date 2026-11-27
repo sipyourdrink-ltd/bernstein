@@ -8,24 +8,25 @@ search:
 **What this page does**: Takes you from "Bernstein is installed" to "I just watched
 my first orchestrated task complete." About 5 minutes.
 
-**You'll end up with**: A `.sdd/` workspace, a one-line goal that ran, and a clear
-`bernstein recap` summary of what the agents did.
+**You'll end up with**: A `.sdd/` workspace, a completed orchestrated run, a `bernstein recap`
+summary, and your own Ed25519-signed run receipt verified offline.
 
 If `bernstein --version` doesn't work yet, finish the [install page](install.md) first.
 
 ---
 
-## Step 1: Pick (and authenticate) one CLI agent
+## Step 1: Pick (and authenticate) one CLI agent for this walkthrough
 
-Bernstein orchestrates **other** CLI coding agents - it doesn't talk to LLM APIs directly.
-You need at least one agent installed and logged in. Most people start with Claude Code:
+This walkthrough uses a CLI coding agent; Bernstein also supports other adapter types. See the [adapter catalog](../adapters/index.md) for the other options.
+
+Install and sign in to one worker. For example, if your Claude account includes Claude Code access, run:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
-claude login
+claude auth login
 ```
 
-Other one-line installs (pick whichever you have an API key for):
+Other worker installs:
 
 ```bash
 npm install -g @openai/codex          # Codex CLI (OpenAI)
@@ -33,8 +34,7 @@ npm install -g @google/gemini-cli     # Gemini CLI (Google)
 pip install aider-chat                # Aider (any provider)
 ```
 
-Don't have an API key on hand? Skip ahead to **Try the demo first** below - it works
-without one.
+For Codex, run `codex login` to use your eligible account. API billing is a separate option: configure the provider key for the worker you selected. To try a local fixture without a provider account, see **Try the demo first** below.
 
 ---
 
@@ -67,40 +67,57 @@ Created templates/ (default roles & prompts)
 Created .gitignore (added .sdd/runtime/)
 
 Done. Next steps:
-  1. Edit bernstein.yaml: set a goal
-  2. Run bernstein to start the orchestra
+Project setup: action needed
+Working branch: main
+Worker: auto  |  Internal planner: openrouter_free
+  Create a working branch with git switch -c bernstein/first-run.
+  Edit bernstein.yaml: set a goal for bernstein run.
 ```
 
-Four things happened:
+This excerpt shows a new repository on `main`. The branch, worker, planner and remaining steps depend on the checkout and configuration. Four things happened:
 
 - **`.sdd/`** - your file-based state directory (backlog, logs, metrics, signals). This is
   the single source of truth. Inspect it, back it up, recover from it.
-- **`bernstein.yaml`** - your project config. The defaults are fine for a first run.
+- **`bernstein.yaml`** - your project config. Set the goal and worker before starting.
 - **`templates/`** - the default role prompts, copied in so you can edit them per project.
 - **`.gitignore`** - created or appended to, so `.sdd/runtime/` stays out of git.
 
 A minimal `bernstein.yaml` looks like:
 
 ```yaml
-internal_llm_provider: claude   # or codex / gemini / aider - whatever you set up
-budget: "$5"                    # spending cap for the run (accepts "$5", 5, or 5.0)
+goal: "Add a hello() function to src/greeting.py that returns Hello, world!"
+cli: codex                      # choose the worker you installed and signed in to
+model: gpt-5.4                  # use a model supported by the chosen worker
+internal_llm_provider: none     # leave optional internal LLM calls disabled
+budget: 5                       # run budget cap (numeric limit)
 ```
+
+`cli` selects the installed coding agent used for worker tasks. The separate
+`internal_llm_provider` setting configures Bernstein's internal LLM calls, such as
+planning and reviews; `internal_llm_model` selects the model for those calls.
+These internal settings do not select the worker adapter or replace `cli`.
 
 ---
 
 ## Step 4: Run your first goal
 
+Run `bernstein doctor` to check your agent setup. Its `Project setup` section reports the current checkout and selected configuration. In `doctor --json`, the optional `project_setup` object has `version` (1), `ready` (boolean), `branch`, `worker`, and `planner` (strings or null), and `next_steps` (a list of actions). Installation checks have their own results. If you're on the project's
+default branch, create and switch to a working branch before running the goal.
+Bernstein merges verified changes into the branch you start from and refuses
+merge-capable runs from the default branch.
+
 ```bash
-bernstein -g "Add a hello() function to src/greeting.py that returns 'Hello, world!'"
+git switch -c bernstein/first-run  # skip if already on a working branch
+bernstein run --worker backend
 ```
 
 What happens:
 
 1. Bernstein starts the task server on port 8052.
-2. The manager breaks the goal into one or more tasks.
+2. The configured goal becomes one task for the backend worker.
 3. An agent spawns in an isolated git worktree.
 4. The janitor runs quality gates (lint, type-check, tests) on the agent's output.
-5. Verified work merges back to your branch.
+5. Verified work merges back to your branch. Review it with `git diff <default-branch>...HEAD` and open a pull request when you want to merge it.
 
 You'll see a live TUI in your terminal. Wait for it to finish - usually under 3 minutes
 for a simple goal.
@@ -112,8 +129,9 @@ for a simple goal.
 ```bash
 bernstein status     # one-shot snapshot
 bernstein live       # full TUI dashboard (attach to a running session)
-bernstein gui serve  # opens http://127.0.0.1:8052/ui/ in your browser
 ```
+
+While `bernstein run` is active, its task server already mounts the browser dashboard at `http://127.0.0.1:8052/ui/` (do not start `bernstein gui serve` on the same port concurrently; `bernstein gui serve` is for inspecting a workspace when no run is active).
 
 `bernstein status` prints a banner, the task counts, and a **Bernstein Agents**
 table with one row per running session — session, role, CLI, model, worker,
@@ -124,10 +142,10 @@ skills, worker PID, agent PID and runtime — followed by the spend so far. Use
 
 ## Step 6: See what happened
 
-Once it finishes:
+While the server is running, use `bernstein recap` for its current totals. After it exits, read the local completion journal:
 
 ```bash
-bernstein recap
+bernstein recap --archive .sdd/runtime/tasks.jsonl
 ```
 
 ```
@@ -138,8 +156,7 @@ bernstein recap
   Success rate  100.0%
 ```
 
-`bernstein recap` prints that recap table, then a git diff summary, quality
-scores, and a per-model cost breakdown. The exact numbers depend on the run.
+The local journal supplies the task totals. With a running server, `bernstein recap` also reports the git diff, quality scores and cost breakdown.
 
 The summary card also reports a **Model routing savings** number when the
 cascade router downgraded any task off Opus - see
@@ -156,20 +173,55 @@ bernstein logs tail -a <session-id>  # agent stdout for one session
 
 ---
 
-## Try the demo first (no API key needed)
+## Step 7: Verify your own run receipt offline
 
-If you don't have an API key set up, run the zero-config demo instead. It creates a temp
-Flask app with 4 intentional bugs and runs **mock** agents to fix them - no provider calls,
-no spend.
+Every run records its replay journal under `.sdd/runs/<run-id>/journal.jsonl`. Sign a portable
+Ed25519 receipt for your run and verify it offline with the pinned public key:
 
 ```bash
-bernstein demo            # mock agents (about a minute or two)
-bernstein demo --dry-run  # preview the plan without spawning
-bernstein demo --real     # use real agents (requires API key, ~$0.15)
+ls .sdd/runs/                                   # find your <run-id>
+openssl genpkey -algorithm ED25519 -out run.key \
+    && openssl pkey -in run.key -pubout -out run.pub
+bernstein verify run <run-id> --signing-key-path run.key
+bernstein verify receipt .sdd/runs/<run-id>/run-receipt.json --public-key run.pub
 ```
 
-This is the fastest way to see the orchestrator move tasks through the lifecycle without
-configuring anything.
+`bernstein verify receipt` prints `OK (provenance: pinned key)` and exits `0`. To prove tamper
+detection, copy the receipt, edit a field inside the copy (for example, an entry in the embedded
+journal), and re-run `bernstein verify receipt` against the modified copy — it exits `2` with
+`TAMPER DETECTED` (and names the first divergent journal step when a journal entry was altered).
+
+---
+
+## Try the demo first (no API key needed)
+
+If you do not have an API key or CLI agent set up, run the zero-config demo instead. It creates a
+temp Flask app with 4 intentional bugs and runs **mock** agents to fix them — no external provider
+calls.
+
+```bash
+bernstein demo            # mock agents (about a minute)
+bernstein demo --dry-run  # preview the plan without spawning
+bernstein demo --real     # use real agents (requires an authenticated CLI agent)
+```
+
+At the end of `bernstein demo`, copy the printed `cd <project-dir>`, `openssl`, `bernstein verify run`,
+and `bernstein verify receipt` commands to sign and verify your own demo run receipt offline.
+
+Summary and exit contract:
+
+- **Complete run (`done >= total` and `failed == 0`)**: the summary prints `Bugs fixed` in green,
+  shows `Fixed <done> bugs in <elapsed>.`, and exits `0`.
+- **Partial or failed run (`failed > 0` or `done < total`)**: the summary highlights `Bugs fixed` in
+  yellow (along with `Tasks failed` or `Task server: unreachable - counts unread` when applicable),
+  prints `Fixed <done> of <total> bugs in <elapsed> (<failed> unresolved).`, and exits non-zero.
+- **Audit-trail hints**: `bernstein audit verify --merkle-only` is suggested only when `.sdd/audit/`
+  contains `.jsonl` audit events and Merkle seal files; otherwise the summary tells you either to
+  seal existing `.jsonl` events (`bernstein audit seal` then `bernstein audit verify --merkle-only`)
+  or to enable auditing with `BERNSTEIN_AUDIT=1`.
+
+This is the fastest way to see the orchestrator move tasks through the lifecycle and produce an
+offline-verifiable receipt without configuring a provider.
 
 > **Preview.** Two known first-run failures: a cold run can exceed the task-server
 > readiness budget and exit 1 (tracked from
@@ -183,10 +235,18 @@ configuring anything.
 
 ## Common first-run errors
 
+- **Installation**. If `bernstein --version` fails, complete the [install guide](install.md).
+- **Worker**. If the worker is missing, install the CLI named by `cli`. If it is installed but the login check fails, sign in to that worker and rerun `bernstein doctor`.
+- **Planner**. If you enabled an internal planner, check its own provider configuration. For the single-worker example above, leave it disabled.
+- **Branch**. Create a working branch from a committed checkout. A fresh repository needs an initial commit. With a detached HEAD, create a branch for the resulting changes.
+- **Run failure**. If setup passes but a task fails, inspect its status with `bernstein recap --archive .sdd/runtime/tasks.jsonl` and read the session output with `bernstein logs tail -a <session-id>`.
+
 ### `No agents available`
 
-`bernstein doctor` shows every `Adapter:` row red. Install at least one CLI agent
-(Step 1) and run its login flow. Then:
+`bernstein doctor` shows every `Adapter:` row red, or `bernstein run` exits `1`
+before cost estimation or plan confirmation with `Error: No CLI agents found`
+(pointing to `bernstein demo`). Install at least one CLI agent (Step 1) and run
+its login flow (or run `bernstein demo` for simulated mock agents). Then:
 
 ```bash
 bernstein agents discover    # rescan agent-role catalogs

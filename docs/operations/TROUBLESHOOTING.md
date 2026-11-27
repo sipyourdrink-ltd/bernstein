@@ -368,15 +368,15 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 **Resolution:** None needed for a run bernstein governs: bernstein passes pi no extension of its own. Use an adapter that takes `mcp_config` (for example `claude`) when a task needs an MCP server.
 
-**Symptom:** A spawned `pi` agent is killed with `heartbeat stale` after about two minutes while its pi session transcript (`~/.pi/agent/sessions/`) shows it mid-turn, and its runner log under `.sdd/runtime/` is 0 bytes.
-
-**Cause:** Pi takes no heartbeat directory, so liveness falls back to the log's modification time. Before #6943, `pi` was spawned without `--mode json`; with stdout redirected it fell back to print mode, which writes only the final answer when the run ends, so the log never grew during a long first turn.
-
-**Resolution:** Upgrade to a release with #6943; spawned `pi` agents now run with `--mode json`, which writes JSONL events to the log as the agent works. pi only turns a failed final turn into a nonzero exit in text mode, so the adapter runs it under `python -m bernstein.adapters.pi_json_launcher`, which keeps that rule: a final assistant message that stopped on `error`, `aborted` or `length` exits 1, and the reason is printed to the log. A `pi` too old to accept `--mode` fails the adapter capability contract.
-
 ---
 
 ## 12. Agent Timeout (Watchdog Kill)
+
+**Symptom:** A working `pi` agent is killed for a stale heartbeat while its runner log stays empty before its first artifact (#6943).
+
+**Cause:** Interactive Pi writes its TUI instead of streaming events to the redirected runner log, leaving log-mtime liveness without an activity signal. Even in JSON mode, Pi waits for EOF when stdin is a pipe; inheriting an open pipe can keep the log empty.
+
+**Resolution:** The Pi adapter launches `pi --no-extensions --print --mode json` with stdin connected to the null device, so Pi receives EOF immediately and non-interactive JSON events reach the runner log as the agent works. Update Bernstein if the spawned command lacks these flags or still inherits stdin. This uses the existing log-mtime liveness signal; it does not disable heartbeat escalation or increase its thresholds. JSON mode alone exits 0 after a failed turn, so the adapter runs pi under `python -m bernstein.adapters.pi_json_launcher`, which passes every event through and exits 1 when the last assistant message stopped on `error`, `aborted` or `length` (127 when `pi` is missing, 126 when it cannot be executed, `128 + N` when a signal kills it).
 
 **Symptom:** Agent is killed mid-task. Log shows `"Timeout after Xds: pid=... - sending SIGTERM"`.
 

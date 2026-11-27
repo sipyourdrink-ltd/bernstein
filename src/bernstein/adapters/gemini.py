@@ -198,6 +198,7 @@ class GeminiAdapter(CLIAdapter):
     # provider-alias table). Unchanged from the old substring branch.
     provides = ("gemini", "google")
     model_vendor = "google"
+    default_model = "gemini-3-flash"
 
     external_endpoints = (("generativelanguage.googleapis.com", 443),)
     # Google Generative Language returns HTTP 429 with status

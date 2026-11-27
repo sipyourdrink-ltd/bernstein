@@ -123,7 +123,14 @@ export function parseAnsi(s: string): AnsiSegment[] {
     cursor = match.index + match[0].length;
     const params = match[1];
     const codes = params === '' ? [0] : params.split(';').map((p) => Number.parseInt(p, 10) || 0);
-    for (const code of codes) {
+    for (let i = 0; i < codes.length; i++) {
+      const code = codes[i];
+      if (code === 38 || code === 48) {
+        const mode = codes[i + 1];
+        if (mode === 5) i += 2; // Mode and palette index.
+        else if (mode === 2) i += 4; // Mode and RGB channels.
+        continue;
+      }
       style = applyCode(style, code);
     }
   }

@@ -44,7 +44,8 @@ def _detect_kind(path: Path) -> str:
 
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        # Undecodable is inconclusive too; the loader then names the encoding problem (#7869).
         return "unknown"
     if not isinstance(data, dict):
         return "unknown"
@@ -402,7 +403,7 @@ def _run_dsl_cmd(path: Path, *, dry_run: bool, console: Any) -> None:
     console.print(
         "[yellow]DSL workflows aren't executable via `workflow run` yet; "
         f"use `bernstein workflow run {name} --dry-run` for the plan or "
-        f"`bernstein workflow show {name}` for full structure.[/yellow]",
+        f"`bernstein workflow show {name}` for the full structure.[/yellow]",
     )
     raise SystemExit(1)
 

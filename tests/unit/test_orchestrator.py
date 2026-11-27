@@ -1,4 +1,10 @@
-"""Tests for the Orchestrator - httpx calls and spawner are always mocked."""
+"""Tests for the Orchestrator - httpx calls and spawner are always mocked.
+
+``_bound_process_growth`` carries this file's #6042 process-budget ratchet:
+it fails the test whose teardown leaves this file's pytest subprocess over
+its thread/RSS budget, so the shard can never again lose the whole file to a
+silent external kill (recorded in that fixture's docstring).
+"""
 
 from __future__ import annotations
 
@@ -6,6 +12,7 @@ import collections
 import json
 import logging
 import subprocess
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack
@@ -75,6 +82,69 @@ def _join_test_owned_executors(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 
         monkeypatch.setattr(Orchestrator, "__init__", initialize_owned)
         yield
+
+
+#: Process-wide budgets for this file's pytest subprocess (#6042). The file
+#: peaks around 230 MB RSS and single-digit threads today; the budgets are
+#: several times that headroom so ordinary variance cannot trip them, while
+#: any real leak outgrows them long before the subprocess can become the
+#: largest process on a memory-pressured shard runner.
+_PROCESS_RSS_BUDGET_BYTES = 1536 * 1024 * 1024
+_PROCESS_THREAD_BUDGET = 32
+
+
+def _process_rss_bytes() -> int | None:
+    """Current RSS of this process in bytes, or ``None`` when it cannot be read."""
+    import psutil
+
+    try:
+        return int(psutil.Process().memory_info().rss)
+    except (MemoryError, OSError, psutil.Error):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _bound_process_growth(_join_test_owned_executors: None) -> Iterator[None]:
+    """Fail the test whose teardown leaves this file's subprocess over budget (#6042).
+
+    Recorded cause, so the failure cannot return silently:
+
+    CI intermittently reported ``FAIL tests/unit/test_orchestrator.py``
+    (about 53s) with no FAILURES section, no short test summary and no
+    traceback anywhere in the job log. The file legitimately takes ~50s, so
+    the death landed at end-of-run; every pytest-native error path prints
+    something, and the harness's only internal SIGKILL (the 600s per-file
+    timeout) reports ``TIMEOUT``, not ``FAIL`` — so the process was killed
+    externally with no chance to flush, which reproduces the exact signature
+    (a block-buffered pipe loses the already-printed summary on SIGKILL).
+    The only such killer on a shard runner is the kernel OOM killer, and
+    this file — among the shard's longest-lived processes — is its natural
+    victim whenever its own footprint outgrows its neighbours.
+
+    The in-file defect that fed this was per-test resource growth without
+    deterministic teardown: every test built a real 4-worker thread pool
+    whose lifetime rode on cyclic GC. #6763's ``_join_test_owned_executors``
+    (on which this fixture depends, so pools are joined before measuring)
+    fixed the leak; this ratchet is the pin. If a test again lets the
+    subprocess outgrow its budget, the offending test fails here by name
+    with a precise message, instead of the whole file dying without a
+    summary and reddening unrelated pull requests.
+    """
+    yield
+    threads = threading.active_count()
+    rss_bytes = _process_rss_bytes()
+    rss_over = rss_bytes is not None and rss_bytes > _PROCESS_RSS_BUDGET_BYTES
+    if threads > _PROCESS_THREAD_BUDGET or rss_over:
+        rss_mb = "unknown" if rss_bytes is None else f"{rss_bytes / (1024 * 1024):.0f} MB"
+        raise AssertionError(
+            f"process-growth budget exceeded (#6042): {threads} active threads "
+            f"(budget {_PROCESS_THREAD_BUDGET}) and RSS {rss_mb} "
+            f"(budget {_PROCESS_RSS_BUDGET_BYTES // (1024 * 1024)} MB) after this test. "
+            "This file was once the shard's silent OOM-kill victim (no pytest summary, "
+            "no traceback); unbounded growth made its subprocess the largest on the "
+            "runner. Find what this test leaked and join/close it, or raise the budget "
+            "in _bound_process_growth with a reason."
+        )
 
 
 def _make_task(
@@ -1747,6 +1817,51 @@ class TestRunStop:
         target_events = [event.event_type for event in chain.query() if event.details.get("run_id") == orch._run_id]
         assert target_events[-3:] == ["intent.journal_seal", "otel.projection", "run.closure"]
 
+    @pytest.mark.parametrize("write_fails", [False, True])
+    def test_run_close_declares_delegation_head_in_manifest(self, tmp_path: Path, monkeypatch, write_fails) -> None:
+        from bernstein.core.config.manifest import load_manifest
+        from bernstein.core.identity import delegation
+
+        monkeypatch.setenv("BERNSTEIN_CONFIDENCE_DB", str(tmp_path / "confidence.sqlite"))
+        monkeypatch.setattr(delegation, "_audit_key", lambda: b"k" * 32)
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        config = OrchestratorConfig(poll_interval_s=0, server_url="http://testserver", dry_run=True)
+        orch = _build_orchestrator(tmp_path, transport, config=config)
+        ledger = delegation.DelegationLedger(tmp_path / ".sdd" / "audit", b"k" * 32)
+        receipt = ledger.record_hop(run_id=orch._run_id, issuer="p", subject="o", audience="a", act="spawn")
+        manifest_path = tmp_path / ".sdd" / "runtime" / "manifests" / f"{orch._run_id}.json"
+        startup = manifest_path.read_bytes()
+        cleanup = orch._cleanup
+
+        def finish_writers():
+            nonlocal receipt
+            cleanup()
+            receipt = ledger.record_hop(run_id=orch._run_id, issuer="o", subject="a", audience="a", act="spawn")
+
+        monkeypatch.setattr(orch, "_cleanup", finish_writers)
+        if write_fails:
+            from bernstein.core.persistence import atomic_write
+
+            replace_file = atomic_write.os.replace
+
+            def fail_manifest_replace(source, target):
+                if str(target) == str(manifest_path):
+                    raise OSError("simulated manifest commit failure")
+                return replace_file(source, target)
+
+            monkeypatch.setattr(atomic_write.os, "replace", fail_manifest_replace)
+        orch.run()
+        manifest = load_manifest(tmp_path / ".sdd", orch._run_id)
+        if write_fails:
+            assert manifest_path.read_bytes() == startup
+            assert manifest.delegation_head_hmac is None
+            result = delegation.verify_run(orch._run_id, root=ledger.root)
+            assert result.incomplete and not result.valid
+        else:
+            assert getattr(manifest, "delegation_head_hmac", None) == receipt.hmac
+            assert getattr(manifest, "delegation_hop_count", None) == 2
+            assert manifest.manifest_hash == manifest.compute_hash()
+
     def test_stop_breaks_loop(self, tmp_path: Path) -> None:
         transport = _mock_transport(
             {
@@ -3321,8 +3436,11 @@ class TestDeadAgentFileOwnershipEdgeCases:
 class TestStaleHeartbeatReapingDefault:
     """An agent whose heartbeat exceeds the configured timeout is reaped and its tasks failed."""
 
+    @patch("bernstein.core.agents.agent_lifecycle._is_process_alive", return_value=False)
     @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
-    def test_stale_heartbeat_reaps_agent(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
+    def test_stale_heartbeat_reaps_agent(
+        self, _mock_recycle_alive: MagicMock, _mock_lifecycle_alive: MagicMock, tmp_path: Path
+    ) -> None:
         """Heartbeat older than heartbeat_timeout_s triggers reaping and task failure."""
         adapter = _mock_adapter()
         config = OrchestratorConfig(
@@ -3632,13 +3750,15 @@ class TestMaybeRetryTask:
         *,
         max_retries: int = 2,
         default_model: str | None = "mock-model",
+        adapter_name: str | None = None,
     ) -> tuple[Orchestrator, list[dict]]:
         """Return (orchestrator, captured_post_bodies) with POST /tasks mocked.
 
         ``default_model`` is the run-level ``--model`` pin. Tests that assert
-        the Claude tier ladder must pass ``None``: a pinned model is carried
-        through retries verbatim rather than escalated (#4274), so with a pin
-        in place there is no ladder to observe.
+        the Claude tier ladder must pass ``default_model=None`` and a
+        Claude-compatible ``adapter_name`` (e.g. ``"claude"``): a pinned model
+        is carried through retries verbatim (#4274), and non-Claude adapters
+        do not use the Claude tier ladder (#6605).
         """
         posted: list[dict] = []
 
@@ -3650,7 +3770,10 @@ class TestMaybeRetryTask:
 
         transport = httpx.MockTransport(handler)
         cfg = OrchestratorConfig(server_url="http://testserver", max_task_retries=max_retries)
-        orch = _build_orchestrator(tmp_path, transport, config=cfg, default_model=default_model)
+        adapter = _mock_adapter()
+        if adapter_name is not None:
+            adapter.name.return_value = adapter_name
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=cfg, default_model=default_model)
         return orch, posted
 
     def test_first_retry_bumps_effort_keeps_model(self, tmp_path: Path) -> None:
@@ -3663,8 +3786,8 @@ class TestMaybeRetryTask:
             model="sonnet",
             effort="low",
         )
-        # No run-level pin: this test is about the tier ladder itself.
-        orch, posted = self._build(tmp_path, default_model=None)
+        # No run-level pin on a Claude adapter: this test is about the Claude tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None, adapter_name="claude")
 
         result = orch._maybe_retry_task(task)
 
@@ -3703,8 +3826,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        # No run-level pin: this test is about the tier ladder itself.
-        orch, posted = self._build(tmp_path, default_model=None)
+        # No run-level pin on a Claude adapter: this test is about the Claude tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None, adapter_name="claude")
 
         result = orch._maybe_retry_task(task)
 
@@ -3787,8 +3910,8 @@ class TestMaybeRetryTask:
             effort="medium",
             retry_count=1,
         )
-        # No run-level pin: this test is about the tier ladder itself.
-        orch, posted = self._build(tmp_path, default_model=None)
+        # No run-level pin on a Claude adapter: this test is about the Claude tier ladder itself.
+        orch, posted = self._build(tmp_path, default_model=None, adapter_name="claude")
 
         orch._maybe_retry_task(task)
 
@@ -5792,8 +5915,11 @@ class TestEvolutionAgentLifetimeRecording:
         assert kw["role"] == "qa"
         assert kw["tasks_completed"] == 0  # timed out before completing
 
+    @patch("bernstein.core.agents.agent_lifecycle._is_process_alive", return_value=False)
     @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
-    def test_heartbeat_reap_records_agent_lifetime(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
+    def test_heartbeat_reap_records_agent_lifetime(
+        self, _mock_recycle_alive: MagicMock, _mock_lifecycle_alive: MagicMock, tmp_path: Path
+    ) -> None:
         """_reap_dead_agents (heartbeat path) calls record_agent_lifetime."""
         transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
         cfg = OrchestratorConfig(

@@ -15,10 +15,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import bernstein
+from bernstein.adapters import pi_json_launcher as launcher
 from bernstein.adapters.pi_json_launcher import terminal_failure
 
 _SRC = str(Path(bernstein.__file__).resolve().parents[1])
@@ -165,3 +167,72 @@ def test_a_missing_pi_exits_127_with_the_install_hint(tmp_path: Path) -> None:
     )
     assert done.returncode == 127
     assert b"npm install -g @mariozechner/pi-coding-agent" in done.stderr
+
+
+# ---------------------------------------------------------------------------
+# Launch failures, signals and stdin, in process over a fake child
+# ---------------------------------------------------------------------------
+
+
+class _FakeChild:
+    def __init__(self, code: int, *, alive: bool = True, lookup_error: bool = False) -> None:
+        self.stdout = iter(_lines({"type": "agent_start"}))
+        self._code = code
+        self._alive = alive
+        self._lookup_error = lookup_error
+        self.signals: list[int] = []
+
+    def poll(self) -> int | None:
+        return None if self._alive else self._code
+
+    def send_signal(self, signum: int) -> None:
+        if self._lookup_error:
+            raise ProcessLookupError
+        self.signals.append(signum)
+
+    def wait(self) -> int:
+        return self._code
+
+
+def _fake_popen(monkeypatch: pytest.MonkeyPatch, child: _FakeChild | BaseException) -> dict[str, Any]:
+    seen: dict[str, Any] = {}
+
+    def popen(argv: list[str], **kwargs: Any) -> _FakeChild:
+        seen.update(kwargs)
+        if isinstance(child, BaseException):
+            raise child
+        return child
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", popen)
+    return seen
+
+
+def test_pi_reads_eof_from_the_null_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pi reads piped stdin to EOF before emitting, even in JSON mode (#7645)."""
+    seen = _fake_popen(monkeypatch, _FakeChild(0))
+    assert launcher.run(["pi"]) == 0
+    assert seen["stdin"] == subprocess.DEVNULL
+
+
+def test_a_pi_that_cannot_be_executed_exits_126(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_popen(monkeypatch, PermissionError(13, "Permission denied"))
+    assert launcher.run(["pi"]) == 126
+    assert "Permission denied executing pi" in capsys.readouterr().err
+
+
+def test_a_pi_killed_by_a_signal_exits_128_plus_the_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Popen reports death by signal N as -N; the launcher reports it as a shell does."""
+    _fake_popen(monkeypatch, _FakeChild(-15))
+    assert launcher.run(["pi"]) == 143
+
+
+def test_forwarding_a_signal_to_a_pi_that_already_exited_is_harmless(monkeypatch: pytest.MonkeyPatch) -> None:
+    handlers: dict[int, Any] = {}
+    monkeypatch.setattr(launcher.signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
+    _fake_popen(monkeypatch, _FakeChild(0, lookup_error=True))
+    assert launcher.run(["pi"]) == 0
+    assert handlers, "no signal handler was installed"
+    for sig, handler in handlers.items():
+        handler(sig, None)  # pi gone between poll() and send_signal(): must not raise

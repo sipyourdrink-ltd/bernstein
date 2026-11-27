@@ -126,6 +126,10 @@ class WorkflowNode(BaseModel):
         fresh_context: When ``True``, agent-typed nodes get a fresh
             session per iteration (no carryover).  Ignored for command-
             typed nodes.
+        always_run: When ``True``, the node still executes as a cleanup /
+            teardown step even when an upstream dependency failed or an
+            earlier layer aborted the run.  A failed run still reports
+            ``succeeded = False`` even when an ``always_run`` node succeeds.
         interactive: Stub for human-approval gates.  Manifests with this
             set to ``True`` are rejected at load time with a ``ValueError``
             referencing #1110 so the failure surfaces before any upstream
@@ -149,6 +153,7 @@ class WorkflowNode(BaseModel):
     loop: LoopSpec | None = None
     when: str | None = Field(default=None, min_length=1, description="Bash predicate gating whether this node runs.")
     fresh_context: bool = False
+    always_run: bool = False
     interactive: bool = False
     timeout_seconds: int = Field(default=DEFAULT_NODE_TIMEOUT_SECONDS, ge=1, le=86_400)
 
@@ -379,7 +384,17 @@ def load_workflow_spec(path: Path) -> WorkflowSpec:
     """
     if not path.is_file():
         raise WorkflowSpecError(f"workflow manifest not found: {path}")
-    return load_workflow_spec_from_text(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # A ValueError, not an OSError: it escaped every caller as a traceback (#7869).
+        byte = exc.object[exc.start]
+        raise WorkflowSpecError(
+            f"workflow manifest {path.name} is not valid UTF-8 (byte 0x{byte:02x} at offset {exc.start})"
+        ) from exc
+    except OSError as exc:
+        raise WorkflowSpecError(f"workflow manifest {path.name} could not be read: {exc.strerror or exc}") from exc
+    return load_workflow_spec_from_text(text)
 
 
 def _bundled_workflows_dir() -> Path:

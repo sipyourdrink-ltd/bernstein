@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import doctest
 import hashlib
+from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -17,8 +20,18 @@ from bernstein.core.evidence.render_receipt import (
     RenderDelta,
     RenderReceipt,
     Viewport,
+    first_property_difference,
     render_delta,
 )
+
+
+def test_render_pair_reference_examples() -> None:
+    operations = Path(__file__).resolve().parents[3] / "docs" / "operations"
+    examples = doctest.testfile(
+        str(operations / "render-pairs.md"), module_relative=False, encoding="utf-8", raise_on_error=True
+    )
+    assert examples.attempted > 0
+    assert "(render-pairs.md)" in (operations / "replay.md").read_text(encoding="utf-8")
 
 
 def test_viewport_basics() -> None:
@@ -532,3 +545,132 @@ def test_render_delta_round_trips_through_dict() -> None:
 
     incomparable = render_delta(base, _receipt(route="/other"))
     assert RenderDelta.from_dict(incomparable.to_dict()) == incomparable
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        {},
+        {
+            ("root.b", "style.color"): "blue",
+            ("root.a", "style.display"): "block",
+            ("root.a", "style.color"): "red",
+        },
+    ],
+)
+def test_first_property_difference_equal_ignores_insertion_order(base: dict[tuple[str, str], str]) -> None:
+    head = dict(reversed(tuple(base.items())))
+    assert first_property_difference(base, head) is None
+
+
+@pytest.mark.parametrize("reverse_base", [False, True])
+@pytest.mark.parametrize("reverse_head", [False, True])
+def test_first_property_difference_selects_changed_key_in_stable_order(reverse_base: bool, reverse_head: bool) -> None:
+    base = {
+        ("root.z", "style.color"): "red",
+        ("root.a", "style.display"): "block",
+        ("root.a", "style.color"): "red",
+        ("root.0", "style.color"): "gray",
+    }
+    head = {
+        ("root.0", "style.color"): "gray",
+        ("root.a", "style.display"): "flex",
+        ("root.a", "style.color"): "blue",
+        ("root.z", "style.color"): "blue",
+    }
+    if reverse_base:
+        base = dict(reversed(tuple(base.items())))
+    if reverse_head:
+        head = dict(reversed(tuple(head.items())))
+    base_items, head_items = list(base.items()), list(head.items())
+
+    assert first_property_difference(base, head) == ("root.a", "style.color")
+    assert list(base.items()) == base_items
+    assert list(head.items()) == head_items
+
+
+@pytest.mark.parametrize("missing_from_base", [False, True])
+@pytest.mark.parametrize("whole_element", [False, True])
+def test_first_property_difference_reports_missing_properties(missing_from_base: bool, whole_element: bool) -> None:
+    present = {("root.a", "style.display"): "block", ("root.a", "style.color"): ""}
+    missing = {} if whole_element else {("root.a", "style.display"): "block"}
+    base, head = (missing, present) if missing_from_base else (present, missing)
+
+    assert first_property_difference(base, head) == ("root.a", "style.color")
+
+
+@pytest.mark.parametrize("missing_from_base", [True, False], ids=["missing-from-base", "missing-from-head"])
+@pytest.mark.parametrize("missing_first", [True, False], ids=["missing-first", "changed-first"])
+@pytest.mark.parametrize("reverse_base", [False, True])
+@pytest.mark.parametrize("reverse_head", [False, True])
+def test_first_property_difference_orders_missing_and_changed_keys_together(
+    missing_from_base: bool, missing_first: bool, reverse_base: bool, reverse_head: bool
+) -> None:
+    first = ("root.a", "style.display")
+    last = ("root.z", "style.color")
+    missing, changed = (first, last) if missing_first else (last, first)
+    common = ("root.0", "style.color")
+    base = {common: "gray", changed: "red"}
+    head = {common: "gray", changed: "blue"}
+    present = head if missing_from_base else base
+    present[missing] = ""
+    if reverse_base:
+        base = dict(reversed(base.items()))
+    if reverse_head:
+        head = dict(reversed(head.items()))
+    base_items, head_items = list(base.items()), list(head.items())
+
+    assert first_property_difference(base, head) == first
+    assert list(base.items()) == base_items
+    assert list(head.items()) == head_items
+
+
+@pytest.mark.parametrize("head_environment", [_env(), _env(locale="fr-FR"), None])
+def test_render_delta_keeps_both_unstable_property_lists(head_environment: EnvironmentDescriptor | None) -> None:
+    base = _receipt(unstable_properties={"experimentalFont": "true", "cssSubgrid": "enabled"})
+    head = _receipt(environment=head_environment, unstable_properties={"cssSubgrid": "enabled"})
+
+    result = render_delta(base, head)
+    payload = result.to_dict()
+
+    assert payload["base_unstable_properties"] == base.unstable_properties
+    assert payload["head_unstable_properties"] == head.unstable_properties
+    assert RenderDelta.from_dict(payload) == result
+    assert result.is_incomparable == (head_environment != base.environment)
+
+
+def test_render_delta_unstable_metadata_is_hashable_and_order_independent() -> None:
+    first = _receipt(unstable_properties={"z": "on", "a": "off"})
+    reordered = _receipt(unstable_properties={"a": "off", "z": "on"})
+    result = render_delta(first, first)
+    other = render_delta(reordered, reordered)
+
+    assert result == other
+    assert hash(result) == hash(other)
+    assert list(result.to_dict()["base_unstable_properties"]) == ["a", "z"]
+    assert result.is_clean
+    first.unstable_properties["z"] = "changed"
+    assert result.to_dict()["base_unstable_properties"]["z"] == "on"
+
+
+def test_render_delta_unstable_metadata_is_detached() -> None:
+    base = _receipt(unstable_properties={"experimentalFont": "fallback"})
+    head = _receipt(unstable_properties={"experimentalFont": "loaded"})
+    delta = render_delta(base, head)
+    payload = delta.to_dict()
+    expected = deepcopy(payload)
+    original_hash = hash(delta)
+    loaded = RenderDelta.from_dict(payload)
+
+    payload["base_unstable_properties"]["experimentalFont"] = "changed"
+    payload["head_unstable_properties"].clear()
+
+    for snapshot in (delta, loaded):
+        assert snapshot.to_dict() == expected
+        assert hash(snapshot) == original_hash
+
+
+def test_render_delta_legacy_payload_keeps_its_serialized_shape() -> None:
+    payload = {"base_descriptor_hash": "base", "head_descriptor_hash": "head", "incomparable_reason": "", "deltas": []}
+    assert RenderDelta.from_dict(payload).to_dict() == payload
+    assert hash(RenderDelta()) == hash(RenderDelta())

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -35,20 +36,10 @@ __all__ = ["register", "trackers_group"]
 
 
 def _load_registry_with_plugins() -> Any:
-    """Return the default tracker registry after plugin discovery.
+    """Read the workspace tracker registrations without writing quarantine state."""
+    from bernstein.core.trackers.registry import discover_workspace_trackers
 
-    Plugin discovery is best-effort: if the plugin manager is not
-    available (e.g. in a stripped-down test environment), the function
-    returns the registry seeded with built-in adapters only.
-    """
-    from bernstein.core.trackers.registry import discover_plugin_trackers, get_registry
-
-    registry = get_registry()
-    try:
-        discover_plugin_trackers()
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(f"[yellow]Warning: plugin discovery failed: {exc}[/yellow]")
-    return registry
+    return discover_workspace_trackers(Path.cwd(), record_failures=False)
 
 
 def _row_for(entry: TrackerRegistration) -> dict[str, Any]:

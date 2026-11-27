@@ -21,6 +21,8 @@ EvalResult = Literal["pass", "fail", "retry"]
 
 @dataclass
 class EvalRecord:
+    """One evaluation outcome with task, model, role, and resource measurements."""
+
     task_id: str
     model: str
     role: str
@@ -64,6 +66,8 @@ def load_eval_records(metrics_dir: Path, limit: int = 0) -> list[EvalRecord]:
 
 @dataclass
 class ModelAccuracy:
+    """Per-model evaluation counts and average duration and cost."""
+
     model: str
     total: int = 0
     passed: int = 0
@@ -78,6 +82,7 @@ class ModelAccuracy:
 
 
 def per_model_accuracy(records: list[EvalRecord]) -> dict[str, ModelAccuracy]:
+    """Aggregate evaluation outcomes, durations, and costs by model."""
     by_model: dict[str, list[EvalRecord]] = defaultdict(list)
     for r in records:
         by_model[r.model].append(r)
@@ -102,6 +107,7 @@ def per_model_accuracy(records: list[EvalRecord]) -> dict[str, ModelAccuracy]:
 
 
 def per_role_accuracy(records: list[EvalRecord]) -> dict[str, ModelAccuracy]:
+    """Aggregate evaluation outcomes, durations, and costs by role."""
     by_role: dict[str, list[EvalRecord]] = defaultdict(list)
     for r in records:
         by_role[r.role].append(r)

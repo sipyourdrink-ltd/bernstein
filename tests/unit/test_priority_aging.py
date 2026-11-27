@@ -124,3 +124,16 @@ class TestApplyAging:
         config = AgingConfig(threshold_seconds=300, boost_per_interval=1, min_priority=1)
         results = apply_aging([task], config, now=now)
         assert len(results) == 0  # No change needed
+
+
+def test_aging_never_demotes_a_task_above_the_floor() -> None:
+    """A task already more urgent than ``min_priority`` keeps its priority (#8027)."""
+    config = AgingConfig(threshold_seconds=60, min_priority=2)
+
+    assert compute_aged_priority(1, 60, config) == (1, 0)
+    assert compute_aged_priority(3, 60, config) == (2, 1)
+
+    now = time.time()
+    task = _t("urgent", priority=1, created_at=now - 60)
+    assert apply_aging([task], config, now=now) == []
+    assert task.priority == 1

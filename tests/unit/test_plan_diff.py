@@ -243,6 +243,32 @@ def test_step_added_to_empty_plan() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_plan_diff_separates_slash_colliding_steps() -> None:
+    def plan(first: str, second: str) -> dict:
+        return _make_plan(
+            [
+                _make_stage("a/b", [_make_step("c", description=first)]),
+                _make_stage("a", [_make_step("b/c", description=second)]),
+            ]
+        )
+
+    old = plan("first before", "second before")
+    assert compute_plan_diff(old, old).is_empty
+
+    for new, before, after in [
+        (plan("first after", "second before"), "first before", "first after"),
+        (plan("first before", "second after"), "second before", "second after"),
+    ]:
+        assert compute_plan_diff(old, new) == PlanDiff(
+            modified_steps=[StepChange("a/b/c", "modified", "description", old_value=before, new_value=after)]
+        )
+
+    first, second = old["stages"]
+    assert compute_plan_diff(_make_plan([first]), _make_plan([second])) == PlanDiff(
+        added_steps=["a/b/c"], removed_steps=["a/b/c"]
+    )
+
+
 def test_same_title_different_stages() -> None:
     """Steps with identical titles in different stages are distinct."""
     old = _make_plan(

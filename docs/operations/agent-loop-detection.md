@@ -1,10 +1,13 @@
 # Agent edit-loop detection
 
-An agent is "looping" when it edits the same file more than a few times in a
-short window - typically a fix-verify-fail cycle where the agent keeps
-re-editing without making progress. Bernstein tracks per-agent, per-file
-edit counts each tick and kills any agent that crosses the threshold, so the
-task can be retried or escalated instead of burning tokens indefinitely.
+An agent can be caught in an edit loop when repeated file changes show a fix-verify-fail
+cycle without progress. Bernstein detects this by sampling modification times
+(mtimes) for locked files: it counts **observed timestamp advances**, not every
+save or edit. Several saves between samples can therefore become one recorded
+observation, while a first observation can count if its mtime is in the active
+window. The default detector kills an agent after more than three observations
+of the same file within five minutes, so the task can be retried or escalated
+instead of burning tokens indefinitely.
 
 Not to be confused with [Agent crash loops](agent_crash_loop.md), which
 covers a session repeatedly failing to *spawn* (a respawn budget with
@@ -13,22 +16,44 @@ module.
 
 Source: `src/bernstein/core/observability/loop_detector.py`
 (`LoopDetector.detect_loops`), applied by
-`src/bernstein/core/agents/agent_lifecycle.py`
+`src/bernstein/core/agents/agent_recycling.py`
 (`check_loops_and_deadlocks` → `_recover_loops`), called each tick from
 `core/orchestration/orchestrator.py`.
 
 ## How it works
 
 1. Each tick, `_poll_file_mtimes` checks the modification time of every file
-   currently locked by an active agent. When a file's mtime has advanced
-   since the last poll, the edit is recorded against that agent
-   (`detector.record_edit(agent_id, file_path, mtime)`).
-2. `detect_loops()` prunes edit records older than the detection window and
-   counts edits per `(agent_id, file_path)` pair.
+   currently locked by an active agent. If the observed mtime is greater than
+   the last sampled mtime, it records one observation against that agent
+   (`detector.record_edit(agent_id, file_path, mtime)`). The first sample can
+   also record an observation: the cache starts empty (effectively mtime 0), so
+   an existing file's recent mtime may count.
+2. `detect_loops()` prunes observations whose mtimes are older than the detection
+   window, then counts observations separately for each `(agent_id, file_path)`
+   pair.
 3. Any pair whose count exceeds the threshold is reported as a
-   `LoopDetection` (agent id, file path, edit count, window).
+   `LoopDetection` (agent id, file path, observation count, window).
 4. `_recover_loops` kills the offending agent, propagates the abort to any
    child agents, clears its lock-wait state, and releases its file locks.
+
+### Example: what gets counted
+
+With the default five-minute window and threshold of 3, suppose one agent holds
+`src/foo.py` and all listed mtimes are within the active window:
+
+| Sample | What the sampler sees | Count for this agent and file | Result |
+|---|---|---:|---|
+| 10:00 | First observation: mtime advances from the empty cache to 10:00 | 1 | Not detected |
+| 10:01 | Same mtime as the previous sample | 1 | No new observation |
+| 10:02 | Three saves happened since 10:01; the sampled mtime has advanced | 2 | Those saves collapse into one observation |
+| 10:03 | Mtime advances again | 3 | At threshold, not over it |
+| 10:04 | Mtime advances again | 4 | Detected: 4 is greater than the default threshold of 3 |
+
+This is a count of sampled advances, not a count of physical saves. Observations
+older than the sliding window are pruned and no longer contribute; another file
+has its own count, as does another agent's observation of a file.
+Runtime warning text says "edited"; its `N` is the number of recorded observations,
+not the number of saves.
 
 ```
 Loop detected: agent <id> edited '<path>' <N> times in <window>s - killing agent
@@ -38,8 +63,8 @@ Loop detected: agent <id> edited '<path>' <N> times in <window>s - killing agent
 
 | Constant | Default | Meaning |
 |---|---|---|
-| `LOOP_EDIT_THRESHOLD` | 3 | more than 3 edits (i.e. 4+) to the same file within the window trips detection |
-| `LOOP_WINDOW_SECONDS` | 300.0 | sliding window (5 minutes) edits are counted over |
+| `LOOP_EDIT_THRESHOLD` | 3 | more than 3 observations (i.e. 4+) for the same agent and file within the window trips detection |
+| `LOOP_WINDOW_SECONDS` | 300.0 | sliding window (5 minutes) observations are counted over |
 
 Both are module-level constants in `loop_detector.py`; they are not exposed
 through `bernstein.yaml`. Callers can pass different values directly to

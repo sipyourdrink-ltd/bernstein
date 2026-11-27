@@ -40,7 +40,9 @@ from bernstein.core.skills.sources.local_dir import LocalDirSkillSource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
     from bernstein.core.skills.source import SkillArtifact, SkillSource
     from bernstein.core.skills.sources.plugin import SkillSourceResolution
 
@@ -147,6 +149,7 @@ class SkillLoader:
         *,
         source_resolutions: Sequence[SkillSourceResolution] = (),
         on_quarantine: Callable[[QuarantinedSkill], None] | None = None,
+        quarantine_store: DeclarationQuarantineStore | None = None,
     ) -> None:
         """Index every source, quarantining whatever cannot be indexed.
 
@@ -161,6 +164,9 @@ class SkillLoader:
                 failure rather than a list to diff afterwards. A hook that
                 raises is itself caught -- a broken reporter must not become
                 the thing that stops the load.
+            quarantine_store: Optional persistent workspace quarantine. The
+                production factory supplies it; isolated in-memory loaders
+                can omit it.
         """
         self._sources: list[SkillSource] = sources.copy()
         self._source_resolutions: tuple[SkillSourceResolution, ...] = tuple(source_resolutions)
@@ -168,6 +174,7 @@ class SkillLoader:
         self._source_by_skill: dict[str, SkillSource] = {}
         self._quarantined: list[QuarantinedSkill] = []
         self._on_quarantine = on_quarantine
+        self._quarantine_store = quarantine_store
         self._reload()
 
     @property
@@ -208,6 +215,27 @@ class SkillLoader:
             at=time.time(),
         )
         self._quarantined.append(record)
+        if self._quarantine_store is not None:
+            from bernstein.core.security.declaration_quarantine import (
+                DeclarationQuarantineEntry,
+                declaration_id,
+            )
+
+            try:
+                self._quarantine_store.record_failure(
+                    DeclarationQuarantineEntry(
+                        declaration_id=declaration_id("skill", source_name, origin, skill_name),
+                        kind="skill",
+                        source_name=source_name,
+                        origin=origin,
+                        skill_name=skill_name,
+                        reason=record.reason,
+                        error_type=record.error_type,
+                        at=record.at,
+                    )
+                )
+            except Exception:
+                logger.exception("Cannot persist/journal quarantine for %s", skill_name or source_name)
         logger.error(
             "Quarantined skill %s from source %r (%s): %s",
             skill_name or "<whole source>",
@@ -235,8 +263,25 @@ class SkillLoader:
         self._source_by_skill.clear()
         self._quarantined.clear()
 
+        blocked: dict[tuple[str, str, str | None], QuarantinedSkill] = {}
+        if self._quarantine_store is not None:
+            for entry in self._quarantine_store.load():
+                if entry.kind == "skill":
+                    blocked[(entry.source_name, entry.origin, entry.skill_name)] = QuarantinedSkill(
+                        source_name=entry.source_name,
+                        origin=entry.origin,
+                        skill_name=entry.skill_name,
+                        reason=entry.reason,
+                        error_type=entry.error_type,
+                        at=entry.at,
+                    )
+
         for source in self._sources:
             source_name = _source_label(source)
+            held = blocked.get((source_name, source_name, None))
+            if held is not None:
+                self._quarantined.append(held)
+                continue
             try:
                 artifacts = source.iter_skills()
             except Exception as exc:
@@ -248,6 +293,10 @@ class SkillLoader:
                 )
                 continue
             for artifact in artifacts:
+                held = blocked.get((source_name, _artifact_origin(artifact), _artifact_name(artifact)))
+                if held is not None:
+                    self._quarantined.append(held)
+                    continue
                 try:
                     self._register(source, artifact)
                 except Exception as exc:
@@ -382,6 +431,7 @@ def default_loader_from_templates(
     templates_roles_dir: object,
     *,
     include_plugins: bool = True,
+    workdir: Path | None = None,
 ) -> SkillLoader:
     """Build a :class:`SkillLoader` from the conventional directory layout.
 
@@ -390,6 +440,7 @@ def default_loader_from_templates(
             at the sibling ``skills/`` directory automatically.
         include_plugins: Whether to also load ``bernstein.skill_sources``
             entry points. Tests disable this to isolate behaviour.
+        workdir: Workspace owning quarantine state; defaults to the current directory.
 
     Returns:
         Configured :class:`SkillLoader`. When no skills dir exists and no
@@ -397,6 +448,8 @@ def default_loader_from_templates(
         "fall back to the legacy role template".
     """
     from pathlib import Path as _Path  # local import to keep top-level list short
+
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
 
     # templates/roles -> templates/skills
     roles_path = templates_roles_dir if isinstance(templates_roles_dir, _Path) else _Path(str(templates_roles_dir))
@@ -414,7 +467,11 @@ def default_loader_from_templates(
         sources.extend(scan.sources)
         resolutions = scan.resolutions
 
-    return SkillLoader(sources=sources, source_resolutions=resolutions)
+    return SkillLoader(
+        sources=sources,
+        source_resolutions=resolutions,
+        quarantine_store=DeclarationQuarantineStore(workdir or _Path.cwd()),
+    )
 
 
 def _source_label(source: SkillSource) -> str:

@@ -1,0 +1,41 @@
+id: incident-postmortem-pack
+name: Incident Postmortem and Remediation Pack
+version: "1.0"
+description: |
+  Reconstruct an outage timeline from logs and deploy records, verify blast
+  radius, land the immediate guardrails, and close with a blameless postmortem
+  plus tracked remediation tasks.
+tags: [incident, ops, postmortem, reliability, governance]
+tasks:
+  - title: Reconstruct timeline from logs, alerts, and deploy history
+    role: analyst
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Correlate UTC timestamps across deploy receipts, edge status logs, and
+      error traces. Pin first symptom, detection time, mitigation, and full recovery.
+  - title: Quantify customer and data blast radius
+    role: security
+    priority: 0
+    scope: small
+    complexity: medium
+    description: |
+      Verify whether any tenant boundary, durable store, or auth token surface
+      was affected. Record exact queries and counts rather than estimates.
+  - title: Add regression test and fail-closed guardrail
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Reproduce the trigger in an automated test that fails before the fix,
+      then land the preflight or circuit-breaker check that blocks recurrence.
+  - title: Publish postmortem and file bounded follow-up issues
+    role: docs
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Write the postmortem with root cause, contributing factors, what went
+      well, and concrete remediation issues with owners and review dates.

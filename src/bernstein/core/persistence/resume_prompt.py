@@ -45,9 +45,7 @@ def read_scratchpad(scratchpad_path: str | Path | None) -> str:
     path = Path(scratchpad_path)
     try:
         return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, IsADirectoryError):
-        return ""
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 

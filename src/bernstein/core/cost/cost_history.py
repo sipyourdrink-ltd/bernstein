@@ -417,7 +417,7 @@ def get_active_alerts(
     *budget_usd*.  When *budget_usd* is 0 (unlimited), no alerts are emitted.
 
     Args:
-        sdd_dir: The ``.sdd`` directory (used to read daily history).
+        _sdd_dir: Reserved parameter.
         current_spent_usd: Total spend for the current run / today.
         budget_usd: Daily / run budget in USD (0 = unlimited).
 

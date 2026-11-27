@@ -6,6 +6,129 @@ through Bernstein. This page describes the protocol surface and how to point a
 client at the server. For the per-tier tool catalogue see
 [`tool_tiers.md`](tool_tiers.md).
 
+## Execution readiness (#6645)
+
+The task server exposes coordinator observations. The MCP status projection is
+shipped for valid, versioned coordinator evidence; scheduler and dispatch
+evidence, and the opt-in synthetic probe, remain proposed.
+
+### Root cause
+
+`bernstein_status` preserves `live: true` whenever the MCP bridge responds,
+including coordinator outages. Its success response projects counts and cost
+from `/status`, without scheduler ownership or worker eligibility evidence.
+The existing `/health/ready` checks the store, drain and read-only state; it
+does not establish execution readiness. MCP initialization identifies the
+bridge package, not the remote coordinator.
+
+### Coordinator status evidence
+
+The task server includes `execution_readiness` in `GET /status`, scoped to
+the same tenant as the task counts. For schema version 1 evidence with a
+valid coordinator observation, `bernstein_status` adds an optional `readiness`
+object. It keeps the MCP bridge's transport observation and package version
+separate from the coordinator's observed version. The aggregate and coordinator
+states are `unknown`; scheduler and dispatch states are also `unknown` because
+this projection does not claim scheduler ownership or worker eligibility.
+Drain blocks worker claims. Read-only mode is reported as an observation with
+unknown dispatch capacity because workers can claim through a GET route. This
+response is an observation with no expiry guarantee. The bridge's version and
+status schema are independent of this server projection.
+
+### Proposed boundary
+
+- Preserve the existing `live`, count, cost, error and hint semantics and the
+  existing `/health/ready` load-balancer contract. Extend the shipped optional
+  `readiness` projection with scheduler and dispatch evidence when that future
+  evidence is available. The bridge adds its transport observation and
+  computes any future aggregate; status reads never create tasks, call models,
+  claim capacity or change the queue.
+- For the future scheduler/dispatch extension, retain
+  `readiness.schema_version = 1` and define an aggregate `state` in
+  `ready | blocked | unknown`, with separate `transport`, `coordinator`,
+  `scheduler` and `dispatch` components. Extend components to carry `state`,
+  `reason_codes`, `source`, `observed_at`, `expires_at` and `provenance`.
+  Timestamps are UTC RFC 3339 strings or `null` when unobserved; provenance
+  binds evidence to the authorized tenant and queue. Scheduler evidence also
+  names the owner and run identity. Do not expose other tenants' identities.
+- The bridge stamps only its own transport observation and package version.
+  Future coordinator evidence may include its observed version, coordinator
+  identity and active run identity, independently of the bridge. Missing
+  remote metadata remains `null`; do not substitute the local package version.
+- Define transport as responsiveness, coordinator as successful authenticated
+  access to the requested queue, scheduler as current queue ownership with a
+  fresh heartbeat, and dispatch as current eligibility for at least one task
+  in that queue. Eligibility uses the existing admission, worker, model-pin,
+  policy, approval and budget decisions without reserving resources. An idle
+  queue yields `unknown` with `no_pending_work`, rather than a capacity claim.
+- Aggregate `ready` requires all four fresh, identity-matching components to
+  be `ready`. A known blocker yields `blocked`; otherwise missing, expired,
+  future-dated or mismatched evidence yields `unknown`. Known blockers include
+  `draining`, `paused`, `readonly`, `no_eligible_worker`, `policy_denied`,
+  `approval_required` and `budget_exhausted`. A blocked aggregate must retain
+  unknown components, so a known block does not hide absent telemetry.
+- The evidence producer sets expiry from the existing scheduler heartbeat
+  policy, not the status caller. Receivers validate timestamps against their
+  observation time; unverifiable clock differences yield `unknown`. Missing
+  fields from an older coordinator yield `unknown` with
+  `unsupported_coordinator`; HTTP 200 and registered-node counts alone never
+  establish readiness. Fresh readiness is a snapshot, not a dispatch promise.
+- Propose a separate write tool, `bernstein_execution_probe`, requiring
+  explicit invocation, a queue identity, idempotency key and an approved
+  finite timeout and nonnegative finite cost ceiling. Reject nonpositive
+  timeouts, invalid cost bounds or absent authorization. Submit one synthetic
+  artifact task through the existing
+  authenticated task path in an isolated workspace. Honor tenant scope,
+  policy, approval gates, configured model and effort, cancellation and
+  ordinary completion verification. Never retry with a different model or
+  raise the budget. A timeout cancels only the probe's work and reports the
+  observed outcome, retaining audit evidence for any uncertain termination.
+- Probe output distinguishes `verified`, `blocked`, `failed`, `timed_out`,
+  `cancelled` and `unknown`, names its task/run, and links the independently
+  verified completion receipt when one exists. A submitted task or agent's
+  success report is insufficient. Preserve this outcome separately from
+  readiness: completed, independently verified work is stronger evidence
+  than HTTP 200, process liveness or a registered-node count.
+
+### Implementation and proposed test matrix
+
+The shipped coordinator-version projection regression is listed at 8. All other
+tests below are proposals, not implemented or reported as passing:
+
+1. `test_unreachable_coordinator_preserves_transport_liveness`: a responding
+   bridge keeps `live: true`, while remote evidence cannot become ready.
+2. `test_server_without_scheduler_cannot_report_execution_ready`: a working
+   store and HTTP 200 do not imply scheduler ownership.
+3. `test_expired_or_foreign_scheduler_evidence_never_reports_ready`: expired,
+   future-dated, wrong-queue and mismatched-owner/run samples remain unknown.
+4. `test_execution_blockers_are_reported_without_queue_mutation`: parameterize
+   drain, pause, read-only, worker, policy, approval and budget blockers;
+   assert no model, reservation, claim or task-create call on status reads.
+5. `test_idle_queue_does_not_fabricate_dispatch_capacity`: an empty queue
+   reports unknown dispatch with `no_pending_work`.
+6. `test_ready_requires_fresh_scoped_scheduler_and_dispatch_evidence`: the
+   healthy fixture is ready only when all four components match the scope.
+7. `test_legacy_coordinator_readiness_is_unknown`: an old response keeps its
+   existing count/cost fields and cannot fabricate remote telemetry.
+8. `test_status_projects_coordinator_version_separately_from_bridge`: valid
+   versioned coordinator evidence produces an optional readiness projection
+   with separate bridge/coordinator versions and unknown aggregate, scheduler
+   and dispatch states.
+9. `test_readiness_schema_covers_success_outage_and_tenant_scope`: validate
+   both MCP output schemas and ensure cross-tenant evidence is inaccessible.
+10. `test_status_never_starts_an_execution_probe`: repeated reads cannot
+    create tasks or spend budget, including error and stale-evidence paths.
+11. `test_probe_requires_authorization_and_finite_approved_limits`: missing
+    authority, invalid bounds and policy/approval rejection create no work.
+12. `test_probe_idempotency_never_creates_duplicate_work`: repeated requests
+    under the same tenant and key return the existing task/run handle.
+13. `test_probe_honors_model_pins_tenant_scope_and_cancellation`: verify
+    scoped dispatch, fixed model/effort and bounded timeout cleanup without
+    cancelling unrelated work or discarding uncertain-termination evidence.
+14. `test_probe_success_requires_independently_verified_completion`: only
+    the normal verifier's valid task/run-bound receipt yields `verified`;
+    agent claims, failure, cancellation and missing receipts do not.
+
 ## Transports
 
 | Transport | Command | Use when |
@@ -313,8 +436,8 @@ registration set.
 
 ## Driving long-running runs from an MCP host (Tasks extension)
 
-A run started over MCP can outlive a single call. Rather than hold a session
-open for the whole run, a host drives it with a **verifiable run handle** it
+A run started over stdio or SSE can outlive a single MCP call. A host
+follows the run with a **verifiable run handle** it
 polls (MCP Tasks extension, pinned revision `2026-07-28`). The handle is not
 free-standing server state: its status is a pure projection of the run
 journal, and it embeds the run's audit-chain head so the host can later prove
@@ -359,8 +482,8 @@ the task it watched corresponds to the audited run.
    ```
 
    `status` is one of `working`, `input_required`, `completed`, `failed`,
-   `cancelled`. A host without Tasks support polls on an interval (the polling
-   fallback); a host with Tasks support reads the same fields from the task.
+   `cancelled`. Poll `bernstein_run_status` on an interval to read the run
+   handle. A host using native tasks can also read the task row with `tasks/get`.
 
 3. When the run reaches a terminal status, the handle's embedded `chainHead`
    verifies against the completed run's audit chain with `bernstein audit
@@ -372,27 +495,52 @@ the task it watched corresponds to the audited run.
 
 ### Task-augmented calls (native task handles)
 
-A host that implements the Tasks extension can skip the polling fallback and
-ask for a native task row instead.
+On the SDK-based stdio and SSE transports, check the `initialize` result
+before requesting a native task. Three version values serve different purposes.
 
-- `bernstein_run` advertises `execution.taskSupport: "optional"` in its
-  `tools/list` entry, so a host may invoke it either way. A **plain**
-  `tools/call` returns the usual `CallToolResult` with the run JSON. A
-  **task-augmented** `tools/call` (one that carries `task` in the request
-  params) returns a `CreateTaskResult` whose `task.taskId` the host then
-  drives with `tasks/get`, `tasks/result`, `tasks/list`, and `tasks/cancel`.
-  The response shape follows the call, not the host's declared capability: a
-  tasks-capable host that sends a plain call still gets a `CallToolResult`.
-- `bernstein_run_status` advertises `execution.taskSupport: "forbidden"`. It
-  is the stateless polling fallback and always answers immediately, so it must
-  not be invoked as a task.
+| Where to look | Value | Meaning |
+| --- | --- | --- |
+| `pyproject.toml` | `mcp>=2.3.0,<2.4` | Python SDK dependency used by the server. |
+| `initialize` result, `protocolVersion` | `2025-11-25` | Negotiated revision for which Bernstein advertises the legacy `tasks` capability. |
+| `bernstein_run_status` run handle, `specRevision` | `2026-07-28` | Revision pinned by the run-handle implementation. The field keeps this value across protocol negotiations. |
+
+When `initialize` advertises `capabilities.tasks`, inspect `tools/list`.
+`bernstein_run` declares `execution.taskSupport: "optional"`. To ask for a
+native task, include a `task` object in the `tools/call` parameters.
+
+```json
+{"name": "bernstein_run", "arguments": {"goal": "Update project notes"}, "task": {}}
+```
+
+The example uses the default `orchestration` template. On success, the
+SDK compatibility middleware returns a `CreateTaskResult`. Use its
+`task.taskId` with `tasks/get`, `tasks/result` or `tasks/cancel`.
+`tasks/list` lists task rows. Omitting `task` returns a `CallToolResult`
+with the orchestration run payload.
+
+With `arguments.template` set to `"administrative"`, both plain and
+task-augmented calls return an ordinary `CallToolResult`. Pass its
+payload's `runId` as `run_id` to `bernstein_run_status` to follow the
+administrative run. With metering enabled, both templates place their
+`CallToolResult` payload under `result`. The administrative identifier
+is then at `result.runId`.
+See the [cost-meter envelope](#per-call-cost-meter-envelope).
+
+- `bernstein_run_status` declares `execution.taskSupport: "forbidden"`.
+  Invoke it as a plain tool. Tools without an `execution` hint also default
+  to `forbidden`.
 - Every task row carries a finite `ttl` (24h) rather than the `null` that
   spells "unlimited". A `null` ttl is dropped from the serialised response and
   the receiving host rejects the row, so the retention window is stated
   explicitly. It under-claims: nothing evicts the run.
 
-Hosts with no Tasks support are unaffected and keep using
-`bernstein_run_status`.
+On stdio or SSE, a host can poll `bernstein_run_status` without negotiating
+native tasks. The separate streamable HTTP transport
+(`bernstein.mcp.remote_transport`) supports handshake-era protocol revisions
+and defaults an absent `MCP-Protocol-Version` header to `2025-03-26`.
+It advertises plain tools and returns the created task in the
+`bernstein_run` tool response. To follow an individual task on that
+transport, use its `id` with the task server's `GET /tasks/{task_id}`.
 
 ### Connecting a host trace to the run's artefacts
 
@@ -539,7 +687,7 @@ and no state-changing request is sent:
 
 A task that is stuck, blocked, or unfinished has no approval to grant. Finish
 work you are executing with `bernstein_complete`, report a blocker with
-`bernstein_post_message`, or abandon the work with `bernstein task cancel <task_id>`.
+`bernstein_post_message`, or abandon the work with `bernstein cancel <task_id>`. The hint above contains the older spelling.
 
 ### `planned` is decided on the plan, not on the task
 

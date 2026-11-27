@@ -28,7 +28,7 @@ PAPER_BG = "#F8F1E7"
 
 # The wordmark paths are hotlinked from PyPI and the website repository -
 # content may change, the paths may not (docs/design/brand.md § The wordmark).
-HOTLINKED = ("logo-dark.svg", "logo-light.svg", "banner-readme.webp")
+HOTLINKED = ("logo-dark.svg", "logo-light.svg", "logo-readme.svg", "banner-readme.webp")
 
 EXPECTED_PNG_SIZES = {
     **{f"bernstein-mark-{s}.png": (s, s) for s in (32, 64, 128, 256, 512, 1024)},
@@ -116,6 +116,35 @@ def test_wordmarks_carry_the_mark_and_outlined_text(name: str) -> None:
     text = (ASSETS / name).read_text(encoding="utf-8")
     assert AMBER in text
     assert "<text" not in text, "the wordmark is outlines, not a <text> element that needs a font"
+
+
+def test_logo_panel_carries_its_own_background() -> None:
+    """The panel wordmark is for surfaces that cannot choose by colour scheme,
+    so its ink always sits on its own opaque panel."""
+    path = ASSETS / "logo-readme.svg"
+    root = _svg_root(path)
+    text = path.read_text(encoding="utf-8")
+    first = next(child for child in root if child.tag == "{http://www.w3.org/2000/svg}rect")
+    assert first.get("fill") == DARK_BG, "the panel is the first shape and uses the dark token background"
+    assert first.get("rx"), "the panel has rounded corners"
+    assert "<text" not in text and AMBER in text
+
+
+def test_readme_header_starts_with_the_banner() -> None:
+    """The light fallback and the dark variant are the only header banner."""
+    readmes = [REPO / "README.md", *sorted((REPO / "docs" / "i18n").glob("README.*.md"))]
+    for readme in readmes:
+        header = readme.read_text(encoding="utf-8").split("</div>")[0]
+        picture = re.search(r"<picture>\s*(.*?)\s*</picture>", header, flags=re.DOTALL)
+        assert picture, f"{readme.name}: no picture in the header"
+        assert header.count("<picture>") == 1, readme.name
+        assert header.count("<img ") == 1, readme.name
+        first_image = re.search(r'<img\b[^>]*\bsrc="([^"]+)"', picture[1])
+        assert first_image and first_image[1].endswith("docs/assets/readme-banner-light.webp"), readme.name
+        dark_image = re.search(r'<source media="\(prefers-color-scheme: dark\)" srcset="([^"]+)"', picture[1])
+        assert dark_image and dark_image[1].endswith("docs/assets/readme-banner-dark.webp"), readme.name
+        for wordmark in ("logo-dark.svg", "logo-light.svg", "logo-readme.svg"):
+            assert wordmark not in header, f"{readme.name}: header still shows {wordmark}"
 
 
 def _names_listed_in_guide() -> set[str]:

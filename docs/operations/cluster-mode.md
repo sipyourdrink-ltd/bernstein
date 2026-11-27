@@ -174,6 +174,59 @@ behind one proxy IP do not share one budget. Heartbeats without an
 `Authorization` header stay keyed by client IP. Invalid or non-positive
 values fall back to the defaults.
 
+#### Proposed authenticated request buckets (not implemented)
+
+The remaining part of issue #6609 needs an identity trust decision before
+implementation. The RPM environment variables above already exist. Ordinary
+task writes still share the resolved peer-IP bucket, including workers with a
+valid cluster credential. `RequestRateLimitMiddleware` runs before
+`SSOAuthMiddleware`, so authenticated request state is not available at that
+point. A client-selected `x-bernstein-agent-id` is not proof of identity: even
+a valid fleet-wide secret does not bind its holder to one particular agent.
+
+Proposed boundary for review:
+
+- Keep a pre-authentication IP budget for invalid or anonymous traffic.
+- Add an identity budget only after the existing authenticator validates the
+  credential. Derive its key from the authenticated tenant and principal;
+  reject a conflicting agent-id header rather than trusting it.
+- Retain peer-IP accounting for legacy/shared credentials until a server-side
+  binding from credential to worker is approved. This means the proposal
+  does not yet satisfy the shared-secret interpretation of the 50-worker
+  acceptance case. Decide whether that case requires individual credentials
+  or a new registered-worker credential binding; a header alone is insufficient.
+- Decide the outer IP ceiling and whether it applies to verified traffic
+  before moving middleware. Simply retaining the current 30-write ceiling
+  outside authentication would still reject the 250-write acceptance case.
+- Preserve current RPM defaults, trusted-proxy resolution, route permissions,
+  seed-specific buckets, heartbeat accounting and SSE concurrency limits.
+  Do not change any of them as a side effect of this proposal.
+
+Numbered implementation test matrix (proposed, not shipped tests):
+
+1. `test_authenticated_workers_do_not_share_the_proxy_write_budget`:
+   50 distinct authenticated principals, five writes each from one peer,
+   produce 250 accepted requests with the approved outer-ceiling policy.
+2. `test_rotating_worker_headers_with_invalid_credentials_retains_ip_budget`:
+   invalid credentials and 50 rotated headers share the original IP budget.
+3. `test_authenticated_worker_cannot_select_another_principal_bucket`:
+   a valid credential with a conflicting header cannot select another bucket.
+4. `test_shared_cluster_secret_does_not_mint_unbounded_worker_buckets`:
+   rotating headers under one shared secret obeys the approved binding policy.
+5. `test_tenants_do_not_share_authenticated_worker_buckets`: equal local agent
+   identifiers from different authenticated tenants remain distinct.
+6. `test_request_rpm_environment_overrides_preserve_defaults_and_validation`:
+   cover unset, positive, invalid and non-positive read/write values.
+7. `test_authenticated_rate_limits_preserve_proxy_and_seed_bucket_policy`:
+   exercise trusted/untrusted XFF, seed buckets, heartbeat and SSE limits
+   through the production middleware stack.
+
+Evidence on main at `b80e0aa71`: an in-process ASGI pytest fixture using the
+real authenticator and limiter produced 30 successful task writes and 220
+HTTP 429 responses for 50 valid-credential header identities. Its invalid-token
+control produced 30 HTTP 401 responses and 220 HTTP 429 responses. No external
+server was contacted. This is a failing reproduction, not a completed fix.
+
 ### Workspace preflight
 
 Before it registers or accepts any claim, the worker verifies its workspace is
@@ -312,6 +365,13 @@ Operationally, drain is the right primitive for a planned restart: cordon →
 drain → wait for `active_agents = 0` → unregister. Cordon is the right
 primitive for an unhealthy host you want to investigate without rebooting.
 
+## Cluster heartbeat settings
+
+Set `cluster.node_heartbeat_interval_s` and `cluster.node_timeout_s` to integer
+values in seconds. The defaults are `15` and `60`, respectively. To set the
+server's listening address, use `bernstein serve --host` or
+`BERNSTEIN_BIND_HOST`.
+
 ## Failure modes
 
 Bernstein's cluster recovery is conservative - there is no global lock
@@ -386,6 +446,35 @@ $ bernstein cluster nodes --json-output
   `--json-output`. They read the endpoints below, so a stopped server prints a
   clear "cannot connect" hint instead of a stack trace.
 
+### Watching the whole cluster in `bernstein live`
+
+Point the TUI at the central the same way the CLI is pointed at it:
+
+```console
+$ BERNSTEIN_SERVER_URL=http://central:8052 BERNSTEIN_AUTH_TOKEN=<token> bernstein live
+```
+
+The AGENTS panel switches to a cluster view when the server URL is not a
+loopback address, or when a local server has registered worker nodes. It
+renders one line per node - name, status, adapter, `model` label when the node
+advertises one, claimed count, free/total slots, heartbeat age - and under each
+node the tasks it currently holds (`claimed` or `in_progress`), with task id,
+role, title and time since claim. Tasks are placed under a node by the
+`claimed_by_session` field of `GET /tasks`, which a worker sets to its node id
+when it claims.
+
+Node status is the server's: `online` is green, `degraded` and other
+non-online states yellow, `offline` dim. A node that stops heartbeating keeps
+its row, with a growing heartbeat age, until the node reaper marks it.
+
+The cluster panel reads `/cluster/status` and pages active claims by status.
+Claims can change between requests. The next poll refreshes the displayed list.
+Against a remote server the dashboard panels skip local runtime data and disable local
+save, local task comparison, hot restart, and local agent-limit controls.
+The header shows the remote cluster active count and capacity. Press `q` to quit without
+draining. A loopback server with no registered nodes keeps the single-machine
+view.
+
 Endpoints relevant to cluster operations:
 
 - `GET /cluster/nodes[?status=online|cordoned|draining|offline]` - full
@@ -443,7 +532,7 @@ A workload that drops the label reports `opted_out`; a workload that is gone fro
 the cluster reports `withdrawn`. The two are distinct, and neither is a row that
 quietly stops appearing.
 
-The inventory document is in the shape `bernstein governance plan` consumes, so
+The inventory document is in the shape `bernstein govern plan` consumes, so
 the same file feeds the posture diff without a second format. `inventory_hash`
 is a pure function of the listing's contents, not its order: two operators
 running against the same cluster get the same hash.
@@ -452,6 +541,64 @@ Governed workloads' OTLP spans reach the ingest boundary under the source label
 `k8s:<namespace>/<kind>/<name>`, so the signed receipt names the workload the
 spans came from. Nothing here sits in a workload's data path, and there is no
 admission webhook: a workload is never blocked from starting.
+
+## Remote delivery, base sync, and repository identity
+
+Issue #6538 is implemented on main in three parts.
+
+**Delivery.** After a clean agent exit the worker pushes `agent/{session_id}`
+to its configured `origin` and reports the branch and head SHA on
+`/tasks/{id}/complete` (`agent_branch` / `agent_sha`). The central fetches
+that ref before its auto-commit hook, so the standard gate pipeline merges
+the work as if the agent ran locally. A push failure fails the task instead
+of completing it: work that never leaves the node is not a completion.
+
+**Base sync.** Before spawning a claimed task, the worker fetches the run
+branch from its configured `origin` - never a URL taken from the claim - and
+fast-forwards the workspace checkout to the fetched head
+(`WorkerLoop._sync_task_base`), so the task worktree branches from the run
+branch's current head instead of the clone-time commit. A claim may carry
+`base_ref` / `base_sha`: `base_ref` must match the workspace's checked-out
+branch, and `base_sha` must be reachable from the fetched head. A failed
+fetch, a non-fast-forwardable workspace, or an unreachable claimed base
+refuses the claim; refusal releases the task back to the pool rather than
+running it on a stale or unverified base.
+
+**Repository identity.** Claim responses (`GET /tasks/next/{role}`) stamp
+`repo_root_commit`, the central workspace's root commit. A worker whose
+workspace root commit differs refuses the claim before any spawn and stops
+claiming from that central (the mismatch is a property of the workspace, not
+of one task); restart the worker with a checkout of the run's repository.
+Claims with no stamped identity (an older central) are not checked.
+
+Worker-side coverage lives in `tests/unit/test_worker_cmd_base_sync.py`
+(worktree created from the fetched base SHA, fetch failure refuses the
+claim, claimed `base_sha` must be reachable, repository mismatch refuses the
+claim and latches) and `tests/unit/test_worker_cmd_reporting.py` (clean exit
+reports branch and SHA, failed push fails the task);
+`tests/unit/test_task_claim_repo_identity.py` pins the stamped claim
+response field.
+
+Still proposed (not implemented): a versioned execution context binding run,
+task, attempt, repository identity, base ref and exact base SHA into one
+structure (a root commit alone does not distinguish forks or separate runs);
+the central stamping `base_ref` / `base_sha` on every claim; binding the
+delivered branch and SHA to that context at acceptance time; and replacing
+the delivery force-push with ordinary pushes only. The remaining matrix for
+that work:
+
+1. `test_remote_delivery_cannot_replace_existing_branch_history`:
+   conflicting branch history and failing hooks stop delivery without a force
+   update or hook bypass.
+2. `test_remote_delivery_remains_pending_until_native_acceptance`:
+   the actual coordinator rejects failed signals, approvals or merge gates;
+   accepted work becomes a commit on the run branch before final closure.
+3. `test_stale_remote_attempt_cannot_complete_a_reclaimed_task`:
+   bind the report to its run/task/attempt and reject stale or duplicate reports
+   according to the existing completion fencing contract.
+4. `test_legacy_remote_claims_follow_the_approved_compatibility_policy`:
+   missing context, artifact-mode tasks and coordinator restarts preserve the
+   chosen compatibility and recovery behavior without guessing a base.
 
 ## Code pointers
 
@@ -462,9 +609,85 @@ admission webhook: a workload is never blocked from starting.
 | JWT cluster auth                 | `src/bernstein/core/protocols/cluster/cluster_auth.py`                          |
 | Task-stealing policy             | `src/bernstein/core/protocols/cluster/cluster.py:340-393`                       |
 | Worker CLI                       | `src/bernstein/cli/commands/worker_cmd.py`                                      |
-| Worker run loop                  | `src/bernstein/cli/commands/worker_cmd.py:50-368`                               |
+| Worker run loop                  | `src/bernstein/cli/commands/worker_cmd.py:83-996`                               |
 | Heartbeat client (library)       | `src/bernstein/core/protocols/cluster/cluster.py:396-...`                       |
 | Cluster autoscaler (optional)    | `src/bernstein/core/protocols/cluster/cluster_autoscaler.py`                    |
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+
+### Consistent hash ring primitive
+
+The internal `HashRing` maps UTF-8 node keys to shard IDs using the first
+eight SHA-256 bytes as a big-endian integer. Virtual-node keys are
+`<shard-id>#<index>`; lookup selects the first clockwise token and wraps
+around at the end. An empty ring rejects lookups. `ShardMap` keeps the
+configured URL metadata for each local partition. When `cluster.shards` is
+configured, the running `NodeRegistry` uses the ring to select separate local
+storage partitions inside that one registry process. All existing node routes
+operate on that storage; the URLs do not trigger remote requests.
+
+The default is `shards: {}` and `shard_vnodes: 128`. Empty shards keep the
+existing single dictionary, routes and persistence format unchanged. To opt in:
+
+```yaml
+cluster:
+  enabled: true
+  shards:
+    partition-a: https://metadata.example/partition-a
+    partition-b: https://metadata.example/partition-b
+  shard_vnodes: 128
+```
+
+Shard IDs must be unique ASCII identifiers matching
+`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`; at most 256 are accepted. URLs must be
+absolute HTTP(S) URLs with a hostname and valid port, without credentials,
+whitespace, ASCII control characters, query or fragment. A path prefix is allowed. `shard_vnodes` must be
+an integer from 1 to 1024; booleans, floats and numeric strings are rejected.
+Invalid values fail config loading, including direct `ClusterConfig` construction
+(the runtime `shards` value is a tuple of ID/URL pairs).
+
+This partitions storage inside one process and makes no distributed-scaling
+guarantee. Ring membership is fixed for that registry's lifetime; restart reloads
+the existing flat node file through the configured ring. Changing configuration
+is not an online migration protocol. HTTP shard-map discovery, 421 responses,
+forwarding and client/relay routing are outside this feature.
+
+## Worker health telemetry
+
+Heartbeats accept optional `disk_free_mb`, `mem_used_pct`, `mesh_rtt_ms` and
+`platform` fields inside `capacity`. Existing payloads remain accepted.
+Heartbeat responses, `GET /cluster/nodes` and `GET /cluster/status` return
+the recorded telemetry in each node's `capacity`, with `null` for missing values.
+The registry marks a worker `unhealthy:disk`, `unhealthy:memory` or
+`unhealthy:mesh-rtt` when its reported telemetry exceeds the configured
+thresholds. The registry skips unhealthy workers when selecting a node for a
+task or choosing a recipient for task stealing. A `bernstein worker` pull
+waits for recovery before claiming more work, and so does a claim for a
+specific task by ID (#7853).
+
+Both claim endpoints find the registered node behind a claim the same way.
+The registry assigns each node an ID at registration, which is not the parent
+orchestrator session a claim records as its owner, so the claim names the
+node explicitly in a `node_id` query parameter; `claimed_by_session` stays
+the recorded owner. A client that sends no `node_id` (older clients, the
+`bernstein worker` loop, which passes its node ID as `claimed_by_session`)
+is matched on `claimed_by_session` instead. The lookup keys on the presented
+identifiers, never on the request URL, so deployments serving the registry
+and the task server under separate URLs resolve the same node. A claimant
+the task server's registry does not know - a single-host run with no
+registration, or a node registered with a separate registry deployment -
+is not gated: the health check can only judge a node the server can see.
+A refused by-ID claim answers `409` and leaves the task open, so the
+orchestrator's bounded claim retry picks it up again once the node reports
+recovery.
+
+Multiple reasons are comma separated. Recovery resets `unhealthy_since`.
+
+Cluster seed keys `min_disk_free_mb` (512), `max_mem_used_pct` (95.0) and
+`max_mesh_rtt_ms` (5000.0) set the thresholds. Missing telemetry contributes
+no failure reason until the first reading. Omitting a later reading preserves
+the last observed value. Local workers report free disk space for their workspace,
+platform, and memory use when available. Mesh RTT is optional. The platform string is informational. Telemetry is not
+a substitute for authentication, and does not override cordon/drain intent.

@@ -65,6 +65,7 @@ async def test_declared_witnesses_and_context_survive_task_creation(tmp_path: Pa
         completion_signals=[CompletionSignal(type="file_contains", value="result.txt :: accepted")],
         metadata={
             "context_files": ["contract.md"],
+            "dispatch_hints": {"estimated_changed_lines": True, "requires_shell": False, "unknown": "not forwarded"},
             "loader_internal": "not forwarded",
             "administrative_run_id": "admin-" + "a" * 32,
         },
@@ -77,7 +78,7 @@ async def test_declared_witnesses_and_context_survive_task_creation(tmp_path: Pa
     assert [(signal.type, signal.value) for signal in stored.completion_signals] == [
         ("file_contains", "result.txt :: accepted")
     ]
-    assert stored.metadata == {"context_files": ["contract.md"]}
+    assert stored.metadata == {"context_files": ["contract.md"], "dispatch_hints": {"requires_shell": False}}
     (tmp_path / "result.txt").write_text("rejected", encoding="utf-8")
     assert not evaluate_signal(stored.completion_signals[0], tmp_path)[0]
     (tmp_path / "result.txt").write_text("accepted", encoding="utf-8")

@@ -13,11 +13,15 @@ shipping a container that crash-loops on first ``up``.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
 import subprocess
+import sys
+from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -225,6 +229,68 @@ def _docker_compose_available() -> bool:
     return probe.returncode == 0
 
 
+def _read_compose_resource_file(path: Path) -> str | None:
+    """Read bounded OS resource metadata without exposing arbitrary file text."""
+    try:
+        with path.open(encoding="ascii") as handle:
+            text = handle.read(4097)
+    except (OSError, UnicodeError):
+        return None
+    return text if len(text) <= 4096 else None
+
+
+def _compose_resource_snapshot() -> dict[str, int | str]:
+    """Parent limits and allowlisted counters; no child VM or causal inference."""
+    events = ("low", "high", "max", "oom", "oom_kill", "oom_group_kill")
+    snapshot: dict[str, int | str] = dict.fromkeys(
+        (
+            "parent_rlimit_as_soft",
+            "parent_rlimit_as_hard",
+            "mem_available_kib",
+            "cgroup_memory_current_bytes",
+            "cgroup_memory_max_bytes",
+            *(f"cgroup_event_{key}" for key in events),
+        ),
+        "unavailable",
+    )
+    with suppress(ImportError, AttributeError, OSError, ValueError):
+        import resource
+
+        snapshot["parent_rlimit_as_soft"], snapshot["parent_rlimit_as_hard"] = resource.getrlimit(resource.RLIMIT_AS)
+
+    def counter(text: str) -> int | None:
+        return int(text) if text.isascii() and text.isdigit() and len(text) <= 20 else None
+
+    for line in (_read_compose_resource_file(Path("/proc/meminfo")) or "").splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "MemAvailable:" and parts[2] == "kB":
+            value = counter(parts[1])
+            if value is not None:
+                snapshot["mem_available_kib"] = value
+    memberships = [
+        line[3:]
+        for line in (_read_compose_resource_file(Path("/proc/self/cgroup")) or "").splitlines()
+        if line.startswith("0::")
+    ]
+    if len(memberships) != 1 or not memberships[0].startswith("/") or ".." in Path(memberships[0]).parts:
+        return snapshot
+    cgroup = Path("/sys/fs/cgroup") / memberships[0].lstrip("/")
+    for filename, key in (("memory.current", "cgroup_memory_current_bytes"), ("memory.max", "cgroup_memory_max_bytes")):
+        text = (_read_compose_resource_file(cgroup / filename) or "").strip()
+        value = counter(text)
+        if value is not None:
+            snapshot[key] = value
+        elif filename == "memory.max" and text == "max":
+            snapshot[key] = "max"
+    for line in (_read_compose_resource_file(cgroup / "memory.events") or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] in events:
+            value = counter(parts[1])
+            if value is not None:
+                snapshot[f"cgroup_event_{parts[0]}"] = value
+    return snapshot
+
+
 @pytest.mark.parametrize(
     "compose_file",
     SHIPPED_COMPOSE_FILES,
@@ -240,6 +306,7 @@ def test_shipped_compose_file_parses(compose_file: Path) -> None:
     if not _docker_compose_available():
         pytest.skip("docker compose CLI not available in this test environment")
 
+    resources_before = _compose_resource_snapshot()
     try:
         result = subprocess.run(
             ["docker", "compose", "-f", str(compose_file), "config", "-q"],
@@ -253,8 +320,12 @@ def test_shipped_compose_file_parses(compose_file: Path) -> None:
     except subprocess.TimeoutExpired:
         pytest.skip("`docker compose config` did not answer within 30s; that is the daemon, not the file")
 
+    resources_after = _compose_resource_snapshot()
     assert result.returncode == 0, (
-        f"`docker compose -f {compose_file.relative_to(REPO_ROOT)} config` failed:\n{result.stderr}"
+        f"`docker compose -f {compose_file.relative_to(REPO_ROOT)} config` failed:\n"
+        "Resource diagnostics: "
+        + json.dumps({"before": resources_before, "after": resources_after}, sort_keys=True)
+        + f"\n{result.stderr}"
     )
 
 
@@ -405,3 +476,84 @@ def test_a_working_docker_probe_reads_as_available(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(subprocess, "run", _ok)
 
     assert _docker_compose_available() is True
+
+
+@pytest.mark.parametrize("returncode,available", [(1, True), (0, True), (1, False), (0, False)])
+def test_compose_resource_diagnostics_preserve_validation_result(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, available: bool
+) -> None:
+    """Resource evidence is bounded context, never a skip or a changed verdict."""
+    compose_file = REPO_ROOT / "examples/cluster/tailscale/docker-compose.yml"
+    private = "synthetic-private-value-never-log"
+    metadata = {
+        Path("/proc/meminfo"): f"MemAvailable: 123456 kB\nPrivate: {private}\n",
+        Path("/proc/self/cgroup"): "0::/diagnostic-test\n",
+        Path("/sys/fs/cgroup/diagnostic-test/memory.current"): "1234\n",
+        Path("/sys/fs/cgroup/diagnostic-test/memory.max"): "max\n",
+        Path("/sys/fs/cgroup/diagnostic-test/memory.events"): f"oom 2\noom_kill 1\nPrivate {private}\n",
+    }
+    reads: list[Path] = []
+    original_open = Path.open
+
+    def fake_open(path: Path, *args: object, **kwargs: object) -> object:
+        if path in metadata:
+            reads.append(path)
+            if not available:
+                raise PermissionError(private)
+            return io.StringIO(metadata[path])
+        return original_open(path, *args, **kwargs)
+
+    def limits(_kind: int) -> tuple[int, int]:
+        if not available:
+            raise OSError(private)
+        return 2 * 1024**3, -1
+
+    def do_not_set_limits(*_args: object) -> None:
+        pytest.fail("diagnostics must not change resource limits")
+
+    monkeypatch.setitem(
+        sys.modules, "resource", SimpleNamespace(RLIMIT_AS=9, getrlimit=limits, setrlimit=do_not_set_limits)
+    )
+    monkeypatch.setattr(Path, "open", fake_open)
+    monkeypatch.setattr(sys.modules[__name__], "_docker_compose_available", lambda: True)
+    monkeypatch.setattr(os, "environ", {"SYNTHETIC_PRIVATE_DIAGNOSTIC": private})
+    calls: list[tuple[object, dict[str, object]]] = []
+
+    def fake_run(argv: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        stderr = "synthetic config failure\n" + "synthetic stack line\n" * 100 if returncode else ""
+        return subprocess.CompletedProcess(argv, returncode, "", stderr)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    if returncode:
+        with pytest.raises(AssertionError, match="synthetic config failure") as failure:
+            test_shipped_compose_file_parses(compose_file)
+        message = str(failure.value)
+        assert "Resource diagnostics: " in message
+        assert message.index("Resource diagnostics: ") < message.index("synthetic config failure")
+        assert "Resource diagnostics: " in "\n".join(message.splitlines()[:80])
+        context = json.JSONDecoder().raw_decode(message.split("Resource diagnostics: ", 1)[1])[0]
+        assert set(context) == {"before", "after"}
+        assert private not in message
+        assert len(json.dumps(context)) < 2048
+        for snapshot in context.values():
+            assert snapshot["parent_rlimit_as_soft"] == (2 * 1024**3 if available else "unavailable")
+            assert snapshot["parent_rlimit_as_hard"] == (-1 if available else "unavailable")
+            assert snapshot["mem_available_kib"] == (123456 if available else "unavailable")
+            assert snapshot["cgroup_memory_max_bytes"] == ("max" if available else "unavailable")
+            assert snapshot["cgroup_event_oom_kill"] == (1 if available else "unavailable")
+    else:
+        test_shipped_compose_file_parses(compose_file)
+    assert reads.count(Path("/proc/meminfo")) == 2
+    assert len(calls) == 1
+    assert calls[0] == (
+        ["docker", "compose", "-f", str(compose_file), "config", "-q"],
+        {
+            "cwd": compose_file.parent,
+            "capture_output": True,
+            "text": True,
+            "timeout": 30,
+            "env": {**os.environ, **_PLACEHOLDER_ENV},
+            "check": False,
+        },
+    )

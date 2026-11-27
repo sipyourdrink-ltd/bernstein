@@ -162,6 +162,10 @@ class ErrorBudget:
     @property
     def time_to_exhaustion_tasks(self) -> int | None:
         """Estimated number of tasks until budget is gone at current burn rate."""
+        # A budget that is already gone has zero tasks left at any burn rate. This is checked
+        # first: at a burn rate of exactly 1.0 the rate check below returned None for it (#8026).
+        if self.is_depleted:
+            return 0
         if self.burn_rate <= 1.0:
             return None
         if self.budget_remaining <= 0:

@@ -932,7 +932,13 @@ class DAGExecutor:
         """The underlying WorkflowDAG."""
         return self._dag
 
-    def resolve_edge(self, edge: DAGEdge, tasks: dict[str, Task]) -> EdgeResolution:
+    def resolve_edge(
+        self,
+        edge: DAGEdge,
+        tasks: dict[str, Task],
+        *,
+        _visiting: frozenset[str] = frozenset(),
+    ) -> EdgeResolution:
         """Determine the resolution state of a single edge.
 
         Args:
@@ -943,7 +949,25 @@ class DAGExecutor:
             EdgeResolution for this edge.
         """
         source_task = tasks.get(edge.source)
-        if source_task is None or source_task.status not in TERMINAL_STATUSES:
+        if source_task is None:
+            # If the source node was never created because every path into it
+            # has already resolved SKIPPED (for example, an untaken conditional
+            # branch), this edge can never become satisfied and must not hold
+            # converging downstream nodes PENDING forever.
+            if edge.source not in _visiting:
+                source_incoming = self._edges_by_target.get(edge.source, [])
+                if (
+                    source_incoming
+                    and self._resolve_incoming(
+                        source_incoming,
+                        tasks,
+                        _visiting=_visiting | {edge.source},
+                    )
+                    == EdgeResolution.SKIPPED
+                ):
+                    return EdgeResolution.SKIPPED
+            return EdgeResolution.PENDING
+        if source_task.status not in TERMINAL_STATUSES:
             return EdgeResolution.PENDING
 
         if edge.condition is None:
@@ -988,7 +1012,13 @@ class DAGExecutor:
             return self.should_retry(node_id, existing)
         return existing is None
 
-    def _resolve_incoming(self, incoming: list[DAGEdge], tasks: dict[str, Task]) -> EdgeResolution:
+    def _resolve_incoming(
+        self,
+        incoming: list[DAGEdge],
+        tasks: dict[str, Task],
+        *,
+        _visiting: frozenset[str] = frozenset(),
+    ) -> EdgeResolution:
         """Collapse a node's inbound edges into a single resolution.
 
         ``SATISFIED`` when at least one edge is satisfied and none is still
@@ -1003,7 +1033,7 @@ class DAGExecutor:
         """
         any_satisfied = False
         for edge in incoming:
-            resolution = self.resolve_edge(edge, tasks)
+            resolution = self.resolve_edge(edge, tasks, _visiting=_visiting)
             if resolution == EdgeResolution.PENDING:
                 return EdgeResolution.PENDING
             if resolution == EdgeResolution.SATISFIED:

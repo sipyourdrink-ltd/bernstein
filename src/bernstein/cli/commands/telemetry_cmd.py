@@ -496,14 +496,15 @@ def _read_span_source(source: str) -> str:
     anything else is treated as a file path.
     """
     if source in {"-", "@-"}:
-        return click.get_text_stream("stdin").read()
+        with click.open_file("-") as stream:
+            return stream.read()
     from bernstein.core.security.sanitize import sanitize_log
 
     path = source[1:] if source.startswith("@") else source
     try:
         return Path(path).read_text(encoding="utf-8")
     except OSError as exc:
-        raise click.ClickException(f"cannot read span file: {sanitize_log(str(exc))}") from exc
+        raise click.ClickException(f"Could not read span file: {sanitize_log(str(exc))}") from exc
 
 
 def _single_exported_span(payload: Any) -> Any:
@@ -511,7 +512,7 @@ def _single_exported_span(payload: Any) -> Any:
     if isinstance(payload, list):
         if len(payload) == 1:
             return payload[0]
-        raise click.ClickException(f"expected a single exported span, got a JSON array of {len(payload)}")
+        raise click.ClickException(f"Expected one exported span. The JSON array contains {len(payload)} spans.")
     return payload
 
 

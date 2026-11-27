@@ -12,6 +12,7 @@ from types import MappingProxyType
 import pytest
 
 from bernstein.cli.commands.status_cmd import _doctor_check_adapters
+from bernstein.core.checks.contract import Finding, Verdict
 
 
 def test_doctor_accepts_a_typed_optional_environment_snapshot(tmp_path: Path) -> None:
@@ -20,7 +21,8 @@ def test_doctor_accepts_a_typed_optional_environment_snapshot(tmp_path: Path) ->
     caller.write_text(
         "from collections.abc import Mapping\n"
         "from bernstein.cli.commands.status_cmd import _doctor_check_adapters\n"
-        "def inspect_environment(environment: Mapping[str, str] | None) -> bool:\n"
+        "from bernstein.core.checks.contract import Finding\n"
+        "def inspect_environment(environment: Mapping[str, str] | None) -> Finding:\n"
         "    return _doctor_check_adapters([], env=environment)\n",
         encoding="utf-8",
     )
@@ -70,6 +72,10 @@ def test_doctor_preserves_explicit_path_and_ambient_fallback(
     monkeypatch.setattr(shutil, "which", lookup)
 
     checks: list[dict] = []
-    assert _doctor_check_adapters(checks, env=environment) is False
+    finding = _doctor_check_adapters(checks, env=environment)
+    assert type(finding) is Finding
+    assert finding.check_id == "INS-002"
+    assert finding.verdict is Verdict.FAIL
+    assert finding.passed is False
     assert calls == [(name, lookup_options) for name in ("claude", "codex", "gemini")]
     assert len(checks) == 3

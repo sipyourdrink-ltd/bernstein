@@ -91,6 +91,10 @@ def compute_aged_priority(
     """
     if config.threshold_seconds <= 0 or age_seconds < config.threshold_seconds:
         return original_priority, 0
+    # Aging only makes a task more urgent. One already at or above the floor has nothing to gain,
+    # and clamping it to the floor would demote it (#8027).
+    if original_priority <= config.min_priority:
+        return original_priority, 0
 
     boosts = int(age_seconds // config.threshold_seconds)
     if config.max_boosts > 0:

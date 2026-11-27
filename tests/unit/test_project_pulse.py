@@ -618,12 +618,11 @@ def _workflow() -> dict[str, Any]:
     return doc
 
 
-def test_workflow_runs_weekly_and_on_demand() -> None:
+def test_workflow_runs_on_demand_only() -> None:
     triggers = _workflow().get(True, _workflow().get("on"))
     assert isinstance(triggers, dict)
     assert "workflow_dispatch" in triggers
-    cron = str(triggers["schedule"][0]["cron"])
-    assert cron.split()[-1] != "*", f"cron {cron!r} fires daily, not weekly"
+    assert "schedule" not in triggers, "project-pulse must not run on an unattended cron schedule"
 
 
 def test_workflow_asks_for_no_more_than_it_needs() -> None:

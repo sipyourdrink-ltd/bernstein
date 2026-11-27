@@ -74,5 +74,27 @@ uv run python -m tests.integration.conformance.auditor.scenario --out /tmp/audit
 | `isolation.py` | the stranger's interpreter: no `bernstein`, no network |
 | `conftest.py` | session fixtures and the question bookkeeping |
 | `test_harness.py` | the instrument's own guarantees (no question numbers) |
+| `test_attribution_vectors.py` | attribution questions 1, 2, 7, 14 (#5058), all strict expected failures |
+| `test_authority_vectors.py` | authority questions 3, 4, 5, 21 (#5059), all strict expected failures |
+| `test_policy_approval_vectors.py` | policy and approval questions 6, 11, 12, 13 (#5060), all strict expected failures |
+| `test_data_endpoint_vectors.py` | data and endpoint questions 8, 9, 10 (#5061); Q9 passes, Q8/Q10 strict expected failures |
 | `test_vectors_integrity.py` | question 17, the worked example, plus the integrity group: 15, 16, 18, 19, 20 (#5062) |
 | `test_scoreboard.py` | what `n/21` means |
+
+The policy/approval slice reads only the exported audit and run receipts. The current
+scenario exports no `GovernanceDecision` binding for its tool action and no
+approval record for its final repository change. The vectors require policy
+identity/version bound at decision time and explicit approval requirement,
+outcome, approver and sign-off time. An expired wait is not a human grant
+(#5051), and absent evidence is not proof that no approval was required.
+No producer or fixture fields are added by this slice.
+Q13 verifies the exported run receipt's chain and signature, checks that its
+signed audit range covers the exact tool action, matches the decision's anchor
+to a governance spine entry and recomputes its canonical content hash, including
+the policy in the decision
+context. A nonempty hash or export-time labels alone cannot answer it. Unmarked
+negative controls reject arbitrary or unrelated anchors, a changed entry
+retaining its old hash/signature, an audit-only decision attachment and a missing
+signed tool event. They do not add evidence to the scenario or answer question
+13. Receipt verification here establishes integrity under the embedded key;
+operator-key trust remains a separate requirement.

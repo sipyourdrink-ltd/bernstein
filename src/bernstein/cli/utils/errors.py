@@ -146,10 +146,18 @@ def bootstrap_failed(exc: Exception) -> BernsteinError:
 
 def seed_parse_error(exc: Exception) -> BernsteinError:
     """Return a BernsteinError for a seed file parsing failure."""
+    msg = str(exc)
+    if "goal" in msg.lower():
+        fix = (
+            'Set a non-empty `goal: "..."` in bernstein.yaml '
+            '(or pass `bernstein -g "..."`, or run `bernstein demo` with no API key)'
+        )
+    else:
+        fix = "Check bernstein.yaml syntax; see 'bernstein help-all' for format"
     return BernsteinError(
         what="Cannot parse seed file",
-        why=str(exc),
-        fix="Check bernstein.yaml syntax; see 'bernstein help-all' for format",
+        why=msg,
+        fix=fix,
         exit_code=ExitCode.CONFIG,
     )
 

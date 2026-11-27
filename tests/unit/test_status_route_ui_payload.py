@@ -62,3 +62,27 @@ async def test_status_tasks_items_include_tui_fields(app) -> None:  # type: igno
     assert "assigned_agent" in task_item
     assert "blocked_reason" in task_item
     assert "progress" in task_item
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("mode", "reason"), [(None, None), ("draining", "draining"), ("readonly", "readonly_mode")])
+async def test_status_reports_coordinator_evidence_without_inferred_dispatch(
+    app, mode: str | None, reason: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("bernstein.core.routes.status_dashboard.__version__", "9.8.7", raising=False)
+    if mode:
+        setattr(app.state, mode, True)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/status")
+
+    assert response.status_code == 200
+    evidence = response.json()["execution_readiness"]
+    assert evidence["schema_version"] == 1
+    assert evidence["coordinator"]["version"] == "9.8.7"
+    assert evidence["coordinator"]["source"] == "task_server_status"
+    assert evidence["coordinator"]["provenance"] == {"tenant_id": "default"}
+    assert evidence["scheduler"]["state"] == "unknown"
+    assert evidence["dispatch"]["state"] == ("blocked" if mode == "draining" else "unknown")
+    assert evidence["dispatch"]["reason_codes"] == [reason or "dispatch_evidence_unavailable"]
+    assert response.json()["summary"]["total"] == 0

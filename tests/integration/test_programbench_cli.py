@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from bernstein.cli.eval_benchmark_cmd import benchmark_group
 from click.testing import CliRunner
 
@@ -38,9 +39,40 @@ def _run_in_tmp(tmp_path: Path, args: list[str]) -> Any:
         os.chdir(old_cwd)
 
 
+@pytest.fixture(autouse=True)
+def isolated_benchmark_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run fixed synthetic fixtures at the isolated-executor boundary."""
+    import subprocess
+    import sys
+
+    from bernstein.benchmark import programbench
+
+    def run_fixture(_image, argv, *, input_data, timeout):
+        return subprocess.run(
+            [sys.executable, *argv[1:]], input=input_data, capture_output=True, timeout=timeout, check=False
+        )
+
+    monkeypatch.setattr(programbench, "run_isolated", run_fixture)
+
+
 class TestProgramBenchCLI:
     def test_command_registered(self) -> None:
         assert "programbench" in benchmark_group.commands
+
+    def test_runtime_failure_stops_before_adapter(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.benchmark import programbench
+        from bernstein.core.sandbox.isolated_process import IsolationUnavailable
+
+        def unavailable(*args, **kwargs):
+            raise IsolationUnavailable("test runtime unavailable")
+
+        monkeypatch.setattr(programbench, "run_isolated", unavailable)
+        dataset = _dataset(tmp_path, [{"task_id": "pb-001", "asserts": ["True"]}])
+        with patch.object(ProgramBenchHarness, "_invoke_adapter") as invoke:
+            result = _run_in_tmp(tmp_path, ["programbench", "--adapter", "mock", "--dataset", str(dataset)])
+        assert result.exit_code != 0
+        assert "test runtime unavailable" in result.output
+        invoke.assert_not_called()
 
     def test_runs_against_synthetic_dataset(self, tmp_path: Path) -> None:
         dataset = _dataset(

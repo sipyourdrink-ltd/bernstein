@@ -10,12 +10,22 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from time import perf_counter_ns
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator, Sequence
+
+    import pytest
 
 logger = logging.getLogger(__name__)
 
 _PYTEST_RESULT_RE = re.compile(
-    r"^(?P<test_id>[^\s:]+(?:::[^\s:]+)+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b",
+    r"^(?P<test_id>[^\s:]+(?:::[^\s:\[]+)+(?:\[[^\r\n]*?\])?)[ \t]+"
+    r"(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
+    r"(?:[ \t]+\([^\r\n]*)?"
+    r"(?:[ \t]+(?:\[[ \t]*\d+(?:%|[ \t]*/[ \t]*\d+[ \t]*)\]|"
+    r"\d+(?:\.\d+)?(?:us|ms|s|m|h)(?:[ \t]+\d+[sm])?))?[ \t]*\r?$",
     re.MULTILINE,
 )
 _WRITE_LOCK = threading.Lock()
@@ -69,17 +79,213 @@ class FlakyDetectorResult:
     resolved: list[str]
 
 
+type PytestOutcome = Literal["PASSED", "FAILED", "ERROR", "SKIPPED", "XFAIL", "XPASS"]
+type PytestPhase = Literal["collect", "setup", "call", "teardown"]
+type PytestPhaseOutcome = Literal["passed", "assertion_failed", "error", "skipped", "xfailed", "xpassed"]
+
+
+@dataclass(frozen=True)
+class PytestPhaseObservation:
+    """One structured pytest report, without exception text or test output."""
+
+    node_id: str
+    phase: PytestPhase
+    outcome: PytestPhaseOutcome
+
+
+@dataclass(frozen=True)
+class PytestInvocationObservation:
+    """Observed exit, elapsed duration, final collection, and reports for one invocation.
+
+    Duration is diagnostic metadata and does not affect the proof verdict.
+    """
+
+    exit_code: int
+    selected_node_ids: tuple[str, ...]
+    phases: tuple[PytestPhaseObservation, ...]
+    duration_ms: int = 0
+
+
+@dataclass(frozen=True)
+class FixProofObservations:
+    """Frozen selections and repeated observations for the proof and regression arms."""
+
+    proof_node_ids: tuple[str, ...]
+    regression_node_ids: tuple[str, ...]
+    repeats: int
+    tests_on_base: tuple[PytestInvocationObservation, ...]
+    full_change: tuple[PytestInvocationObservation, ...]
+    source_reverted: tuple[PytestInvocationObservation, ...]
+    regression_base: tuple[PytestInvocationObservation, ...]
+    regression_full: tuple[PytestInvocationObservation, ...]
+    quarantined_node_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FixProofVerdict:
+    """Deterministic interpretation of observations, without an audit receipt."""
+
+    verdict: Literal["pass", "fail", "inconclusive"]
+    reason: str
+    proof_failure_ids: tuple[str, ...] = ()
+    regression_ids: tuple[str, ...] = ()
+
+
+def _stable_assertion_failures(
+    observations: tuple[PytestInvocationObservation, ...], expected: tuple[str, ...], repeats: int
+) -> tuple[frozenset[str] | None, str]:
+    node_ids = frozenset(expected)
+    if not node_ids or len(node_ids) != len(expected) or any(not node for node in node_ids):
+        return None, "selection is empty or invalid"
+    if type(repeats) is not int or repeats < 1 or len(observations) != repeats:
+        return None, "configured observations are incomplete"
+
+    expected_phases = {(node, phase) for node in node_ids for phase in ("setup", "call", "teardown")}
+    prior: frozenset[str] | None = None
+    for observation in observations:
+        selected = observation.selected_node_ids
+        if len(selected) != len(node_ids) or frozenset(selected) != node_ids:
+            return None, "observed selection differs from the frozen node IDs"
+        phases: set[tuple[str, str]] = set()
+        failures: set[str] = set()
+        for report in observation.phases:
+            key = (report.node_id, report.phase)
+            if key in phases or key not in expected_phases:
+                return None, "phase reports are duplicated or outside the selection"
+            phases.add(key)
+            if report.phase == "call" and report.outcome == "assertion_failed":
+                failures.add(report.node_id)
+            elif report.outcome != "passed":
+                return None, "a phase reported an error, skip or unsupported outcome"
+        if phases != expected_phases:
+            return None, "one or more selected phases were not observed"
+        if observation.exit_code != int(bool(failures)):
+            return None, "exit status does not agree with observed outcomes"
+        current = frozenset(failures)
+        if prior is not None and current != prior:
+            return None, "assertion outcomes changed between repeats"
+        prior = current
+    return prior, ""
+
+
+def evaluate_fix_proof(evidence: FixProofObservations) -> FixProofVerdict:
+    """Evaluate fully observed, serial pytest arms without running tests.
+
+    The caller binds the supplied observations to their frozen trees and
+    runs the configured commands in isolation. Incomplete, unstable or
+    error-only evidence cannot establish proof.
+    """
+    if set(evidence.proof_node_ids).intersection(evidence.quarantined_node_ids):
+        return FixProofVerdict("inconclusive", "proof selection contains a quarantined test")
+
+    groups = (
+        ("tests on base", evidence.tests_on_base, evidence.proof_node_ids),
+        ("full change", evidence.full_change, evidence.proof_node_ids),
+        ("source reverted", evidence.source_reverted, evidence.proof_node_ids),
+        ("regression base", evidence.regression_base, evidence.regression_node_ids),
+        ("regression full", evidence.regression_full, evidence.regression_node_ids),
+    )
+    results: list[frozenset[str]] = []
+    for label, observations, selection in groups:
+        failures, reason = _stable_assertion_failures(observations, selection, evidence.repeats)
+        if failures is None:
+            return FixProofVerdict("inconclusive", f"{label}: {reason}")
+        results.append(failures)
+
+    red, green, reverted, baseline_regressions, full_regressions = results
+    shared_full_ids = set(evidence.proof_node_ids).intersection(evidence.regression_node_ids)
+    if (green ^ full_regressions).intersection(shared_full_ids):
+        return FixProofVerdict("inconclusive", "full-tree outcomes disagree across proof and regression selections")
+    regressions = tuple(sorted(full_regressions - baseline_regressions))
+    if regressions:
+        return FixProofVerdict("fail", "previously passing tests now fail", regression_ids=regressions)
+    if len(baseline_regressions) == len(evidence.regression_node_ids):
+        return FixProofVerdict("inconclusive", "regression base has no passing test")
+    if not red:
+        return FixProofVerdict("fail", "tests on base do not reproduce the bug")
+    if green:
+        return FixProofVerdict("fail", "proof tests fail with the full change")
+    if not reverted:
+        return FixProofVerdict("fail", "proof tests do not exercise the reverted source changes")
+    witnessed = tuple(sorted(red & reverted))
+    if not witnessed:
+        return FixProofVerdict("inconclusive", "no proof test fails in both negative arms")
+    return FixProofVerdict("pass", "stable assertion failures witness the fix", proof_failure_ids=witnessed)
+
+
+def capture_pytest_observation(args: Sequence[str]) -> PytestInvocationObservation:
+    """Capture structured reports inside a dedicated pytest process.
+
+    The caller owns process isolation and environment setup. Capture is
+    process-local and assumes serial pytest, without distributed workers.
+    An exit code or assertion alone does not prove a fix.
+    """
+    import pytest
+
+    selected: list[str] = []
+    phases: list[PytestPhaseObservation] = []
+
+    class Observer:
+        @pytest.hookimpl(trylast=True)
+        def pytest_collection_finish(self, session: pytest.Session) -> None:
+            selected.extend(item.nodeid for item in session.items)
+
+        def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+            if report.failed:
+                phases.append(PytestPhaseObservation(report.nodeid, "collect", "error"))
+            elif report.skipped:
+                phases.append(PytestPhaseObservation(report.nodeid, "collect", "skipped"))
+
+        @pytest.hookimpl(wrapper=True, tryfirst=True)
+        def pytest_runtest_makereport(
+            self, item: pytest.Item, call: pytest.CallInfo[None]
+        ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+            report = yield
+            outcome: PytestPhaseOutcome
+            if hasattr(report, "wasxfail"):
+                outcome = "xfailed" if report.skipped else "xpassed"
+            elif (
+                report.when == "call"
+                and report.failed
+                and call.excinfo is None
+                and isinstance(report.longrepr, str)
+                and report.longrepr.startswith("[XPASS(strict)] ")
+            ):
+                # Pytest marks strict XPASS failed without setting wasxfail.
+                outcome = "xpassed"
+            elif report.passed:
+                outcome = "passed"
+            elif report.skipped:
+                outcome = "skipped"
+            elif report.when == "call" and call.excinfo is not None and call.excinfo.errisinstance(AssertionError):
+                outcome = "assertion_failed"
+            else:
+                outcome = "error"
+            phases.append(PytestPhaseObservation(item.nodeid, report.when, outcome))
+            return report
+
+    started = perf_counter_ns()
+    code = pytest.main(list(args), plugins=[Observer()])
+    duration_ms = (perf_counter_ns() - started) // 1_000_000
+    return PytestInvocationObservation(int(code), tuple(selected), tuple(phases), duration_ms=duration_ms)
+
+
+def iter_pytest_outcomes(output: str) -> Iterator[tuple[str, PytestOutcome]]:
+    """Yield verbose pytest node outcomes, preserving errors and skipped cases."""
+    for match in _PYTEST_RESULT_RE.finditer(output):
+        yield match.group("test_id"), cast("PytestOutcome", match.group("status"))
+
+
 def parse_pytest_output(output: str, *, run_id: str, timestamp: str | None = None) -> list[TestRun]:
     """Parse pytest terminal output into per-test run records."""
     ts = timestamp or datetime.now(UTC).isoformat()
     results: list[TestRun] = []
-    for match in _PYTEST_RESULT_RE.finditer(output):
-        status = match.group("status")
+    for test_id, status in iter_pytest_outcomes(output):
         if status not in {"PASSED", "FAILED", "ERROR"}:
             continue
         results.append(
             TestRun(
-                test_id=match.group("test_id"),
+                test_id=test_id,
                 passed=status == "PASSED",
                 duration_ms=0,
                 timestamp=ts,

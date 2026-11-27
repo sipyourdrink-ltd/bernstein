@@ -152,6 +152,7 @@ class TestDoctorJsonStdoutContract:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A tool probe blowing its budget must not empty stdout."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
         timeout = subprocess.TimeoutExpired(cmd=["uv", "run", "ruff", "--version"], timeout=10)
         runner = CliRunner()

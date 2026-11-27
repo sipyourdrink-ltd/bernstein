@@ -161,3 +161,47 @@ bernstein admission check --json
 - It does not revoke an agent that is already running; the decision is made once,
   before the process starts.
 - It does not control network egress - the sandbox backends own that.
+
+## Programmatic external policy admission
+
+Embedders can register existing OPA, Cedar or custom hooks and pass their
+`PolicyHookRegistry` as `AgentSpawner(..., policy_hook_registry=registry)`.
+The same spawner can be supplied to `Orchestrator(config, spawner, workdir)`.
+This constructor integration governs actual `spawn_for_tasks` calls before
+an adapter starts an action. It does not load external policies through the
+CLI, worker command or `bernstein.yaml`; those entry points still require
+an external policy configuration and attachment contract.
+
+Native admission is checked first; an external allow cannot override its
+refusal. With a registry supplied, all registered hooks are evaluated and
+recorded in the existing `.sdd/audit` HMAC chain using the install audit key.
+The request identifies the spawn session and role; its digest also binds the
+complete resolved execution subject.
+
+For an injected registry, this native-plus-external gate runs on each final
+direct-adapter attempt, including provider/model failover. It uses that
+attempt's adapter, model and effective `base_url` configuration, rather than
+the spawner's primary adapter or an earlier role-policy endpoint. Refusal is
+outside adapter retry handling: DENY, UNAVAILABLE, unsupported obligations or
+an audit failure cannot trigger another executor. An authorized selected
+adapter is not refused merely because the primary adapter would be denied.
+
+Injected registries currently support direct-adapter fresh spawns only.
+Runtime bridges, in-process backends, container/sandbox transports (including
+sandbox sessions), and crash-resume refuse before their action because this
+integration cannot bind their complete execution subject. This refusal does
+not fall back to local execution. With no injected registry these paths and
+the existing early native admission behavior are unchanged.
+
+The spawn boundary requires at least one explicit ALLOW and refuses any DENY
+or UNAVAILABLE outcome. An empty registry or only ABSTAIN outcomes refuses.
+Unlike `PolicyHookRegistry.first_decisive`, an earlier ALLOW cannot hide a
+later denial or unavailable engine. The registry's `fail_open` and
+`default_verdict` settings do not weaken spawn admission. ALLOW obligations
+are refused because the spawner cannot enforce them. Evaluation or audit
+append errors also prevent the action. Each hook's original verdict remains
+in the chain, including ALLOW with obligations and UNAVAILABLE; native
+admission records continue to describe the native policy decision.
+
+The supplied registry's registration list and audit destination are not
+modified. No registry preserves the existing native admission behavior.

@@ -304,3 +304,19 @@ class TestDiffManifests:
         m2 = _make_manifest(run_id="20240315-143022")
         diffs = diff_manifests(m1, m2)
         assert "run_id" in diffs
+
+
+def test_pre_declaration_manifest_hash_remains_compatible():
+    """Recreate the pre-upgrade payload rather than hashing new null fields."""
+    import hashlib
+    from dataclasses import asdict
+
+    original = asdict(_make_manifest())
+    for field in ("manifest_hash", "delegation_head_hmac", "delegation_hop_count", "delegation_seal"):
+        original.pop(field)
+    original["manifest_hash"] = hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    loaded = RunManifest.from_dict(original)
+    assert loaded.compute_hash() == original["manifest_hash"]
+    assert loaded.to_dict() == original

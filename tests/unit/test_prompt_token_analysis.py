@@ -18,44 +18,26 @@ from bernstein.core.prompt_token_analysis import (
 
 
 class TestSectionCategory:
-    def test_role_is_system_prompt(self) -> None:
-        assert _section_category("role") == "system_prompt"
-
-    def test_specialists_is_system_prompt(self) -> None:
-        assert _section_category("specialists") == "system_prompt"
-
-    def test_context_is_context(self) -> None:
-        assert _section_category("context") == "context"
-
-    def test_project_is_context(self) -> None:
-        assert _section_category("project") == "context"
-
-    def test_lessons_is_context(self) -> None:
-        assert _section_category("lessons") == "context"
-
-    def test_predecessor_is_context(self) -> None:
-        assert _section_category("predecessor") == "context"
-
-    def test_recommendations_is_context(self) -> None:
-        assert _section_category("recommendations") == "context"
-
-    def test_tasks_is_user_prompt(self) -> None:
-        assert _section_category("tasks") == "user_prompt"
-
-    def test_instructions_is_user_prompt(self) -> None:
-        assert _section_category("instructions") == "user_prompt"
-
-    def test_git_safety_is_user_prompt(self) -> None:
-        assert _section_category("git_safety") == "user_prompt"
-
-    def test_heartbeat_is_user_prompt(self) -> None:
-        assert _section_category("heartbeat") == "user_prompt"
-
-    def test_signal_is_user_prompt(self) -> None:
-        assert _section_category("signal") == "user_prompt"
-
-    def test_unknown_section_is_user_prompt(self) -> None:
-        assert _section_category("some_unknown_section") == "user_prompt"
+    @pytest.mark.parametrize(
+        "section,expected",
+        [
+            ("role", "system_prompt"),
+            ("specialists", "system_prompt"),
+            ("context", "context"),
+            ("project", "context"),
+            ("lessons", "context"),
+            ("predecessor", "context"),
+            ("recommendations", "context"),
+            ("tasks", "user_prompt"),
+            ("instructions", "user_prompt"),
+            ("git_safety", "user_prompt"),
+            ("heartbeat", "user_prompt"),
+            ("signal", "user_prompt"),
+            ("some_unknown_section", "user_prompt"),
+        ],
+    )
+    def test_section_category(self, section: str, expected: str) -> None:
+        assert _section_category(section) == expected
 
 
 # ---------------------------------------------------------------------------

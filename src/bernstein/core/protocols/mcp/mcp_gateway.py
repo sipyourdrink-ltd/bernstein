@@ -31,6 +31,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,6 +52,7 @@ from bernstein.core.protocols.mcp.stateless_core import (
 )
 from bernstein.core.security.audit_chain import record_mcp_capability_drift
 from bernstein.core.security.claude_tool_result_injection import ToolResultInjector
+from bernstein.core.security.evidence_envelope import canonical_envelope_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -130,11 +132,13 @@ class GatewayReplay:
                     self._index[key] = entry.output
         except FileNotFoundError:
             pass  # No cache file yet; start with empty index
-        except Exception:
-            # Malformed or partially-written WAL - load what was indexed so far
-            # and continue without crashing.  This is intentionally broad: any
-            # corruption in the WAL file must not take down the gateway process.
-            pass
+        except Exception as exc:
+            # Preserve responses indexed before the reader stopped.
+            logger.warning(
+                "MCP replay stopped reading the WAL after indexing %d responses (%s)",
+                len(self._index),
+                type(exc).__name__,
+            )
 
     @staticmethod
     def _make_key(method: str, tool_name: str) -> str:
@@ -222,6 +226,9 @@ class MCPGateway:
         # map silently downgrades effect digests to the compact-JSON fallback.
         self._received_lines: dict[Any, bytes] = {}
         self._reader_task: asyncio.Task[None] | None = None
+        self._upstream_tools_available: bool | None = None
+        self._capability_task: asyncio.Task[None] | None = None
+        self._capability_commit_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Capability drift
@@ -232,32 +239,106 @@ class MCPGateway:
         canonical = json.dumps(sorted(tool_names), separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
+    @staticmethod
+    def _definition_fingerprints(tools: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+        """Fingerprint each whole parsed entry and each of its top-level members."""
+
+        def validate(value: Any) -> None:
+            # The shared canonicalizer preserves arbitrary Python integers for
+            # legacy signatures. This portable profile admits only safe ints.
+            if isinstance(value, int) and not isinstance(value, bool) and abs(value) > 2**53 - 1:
+                raise ValueError("tool definition integer is outside the portable JCS domain")
+            if isinstance(value, dict):
+                if any(not isinstance(key, str) for key in value):
+                    raise ValueError("tool definition object keys must be strings")
+                for item in value.values():
+                    validate(item)
+            elif isinstance(value, list):
+                for item in value:
+                    validate(item)
+            elif value is not None and not isinstance(value, (str, int, float, bool)):
+                raise ValueError("tool definition contains a non-JSON value")
+
+        fingerprints = {}
+        for tool in tools:
+            validate(tool)
+            name = tool.get("name")
+            if not isinstance(name, str) or not name or name in fingerprints:
+                raise ValueError("invalid or repeated tool name")
+            fields = {
+                key: "sha256:" + hashlib.sha256(canonical_envelope_bytes({key: value})).hexdigest()
+                for key, value in tool.items()
+            }
+            fingerprints[name] = {
+                "digest": "sha256:" + hashlib.sha256(canonical_envelope_bytes(tool)).hexdigest(),
+                **{f"field:{key}": value for key, value in fields.items()},
+            }
+        return fingerprints
+
+    @staticmethod
+    def _definition_digest(fingerprints: dict[str, dict[str, str]]) -> str:
+        # JCS encodes names without delimiter ambiguity, including newlines.
+        value = {
+            "profile": "mcp-tool-definitions-jcs-v1",
+            "tools": {name: item["digest"] for name, item in fingerprints.items()},
+        }
+        return "sha256:" + hashlib.sha256(canonical_envelope_bytes(value)).hexdigest()
+
     def _process_capability_drift(
-        self,
-        tool_names: tuple[str, ...],
-        old_caps: MCPServerCapabilities | None,
+        self, tool_names: tuple[str, ...], fingerprints: dict[str, dict[str, str]] | None = None
     ) -> None:
         """Process capability drift for given tool names.
 
         Updates store and emits audit event if drift detected. No-op if
         no capabilities store or audit chain is configured.
         """
-        if self._capabilities_store is None or self._audit_chain is None:
+        store, chain = self._capabilities_store, self._audit_chain
+        if store is None or chain is None:
             return
-        digest = self._compute_tool_digest(tool_names)
-        prior = self._capabilities_store.get_capabilities(self._server_name)
-        if prior is not None and prior.capability_digest == digest:
-            return
-        # Get run_id from the wal_writer for the audit chain event
+        digest = (
+            self._compute_tool_digest(tool_names) if fingerprints is None else self._definition_digest(fingerprints)
+        )
         run_id = self._wal_writer._run_id
-        self._capabilities_store.set_capabilities(self._server_name, frozenset(tool_names), digest)
-        try:
+
+        def record(prior: MCPServerCapabilities | None) -> None:
+            definition_drift = None
+            if fingerprints is not None:
+                previous = prior.tool_definition_fingerprints if prior is not None else None
+                changes = {}
+                for name in sorted(set(previous or {}) | set(fingerprints)):
+                    old, new = (previous or {}).get(name, {}), fingerprints.get(name, {})
+                    if old.get("digest") != new.get("digest"):
+                        changes[name] = {
+                            "previous_digest": old.get("digest"),
+                            "current_digest": new.get("digest"),
+                            "changed_fields": sorted(
+                                key.removeprefix("field:")
+                                for key in set(old) | set(new)
+                                if key.startswith("field:") and old.get(key) != new.get(key)
+                            ),
+                        }
+                definition_drift = {
+                    "profile": "mcp-tool-definitions-jcs-v1",
+                    "previous_digest": prior.capability_digest if previous is not None else None,
+                    "current_digest": digest,
+                    "changed_tools": changes,
+                }
             record_mcp_capability_drift(
-                chain=self._audit_chain,
+                chain=chain,
                 run_id=run_id,
                 server_name=self._server_name,
                 current_tools=tool_names,
                 previous_tools=tuple(sorted(prior.tool_names)) if prior is not None else None,
+                definition_drift=definition_drift,
+            )
+
+        try:
+            store.set_capabilities(
+                self._server_name,
+                frozenset(tool_names),
+                digest,
+                before_change=record,
+                tool_definition_fingerprints=fingerprints,
             )
         except Exception:
             logger.warning(
@@ -266,32 +347,66 @@ class MCPGateway:
                 exc_info=True,
             )
 
-    async def _check_capability_drift(self) -> None:
-        """Check capability drift on first contact.
+    async def _persist_capability_observation(
+        self, tool_names: tuple[str, ...], definitions: list[dict[str, Any]] | None = None
+    ) -> None:
+        def persist() -> None:
+            if definitions is None:
+                self._process_capability_drift(tool_names)
+            else:
+                self._process_capability_drift(tool_names, self._definition_fingerprints(definitions))
 
-        Called on gateway start. Gets current advertised tools via
-        tools/list, computes digest, and checks against stored state.
-        Emits a drift event if the server is new or capabilities changed.
-        """
+        try:
+            # Canonicalization, hashing and persistence are all optional probe
+            # work; none may monopolize the proxy's event loop.
+            await asyncio.to_thread(persist)
+        except Exception as exc:
+            logger.warning("Capability drift check failed for %s: %s", self._server_name, exc)
+
+    async def _check_capability_drift(self) -> None:
+        """Record complete parsed tool definitions after the initialization handshake."""
         if self._capabilities_store is None or self._audit_chain is None:
             return
+        if self._upstream_tools_available is None:
+            return
+        tool_names: set[str] = set()
+        definitions: list[dict[str, Any]] = []
         try:
-            response, _ = await self._send_request(
-                {"jsonrpc": "2.0", "method": "tools/list", "id": 0},
-                0,
+            if self._upstream_tools_available:
+                cursor: str | None = None
+                seen: set[str] = set()
+                async with asyncio.timeout(_CONNECTOR_REQUEST_TIMEOUT_S):
+                    while True:
+                        req_id = f"bernstein-capabilities-{uuid4().hex}"
+                        request: dict[str, Any] = {"jsonrpc": "2.0", "method": "tools/list", "id": req_id}
+                        if cursor is not None:
+                            request["params"] = {"cursor": cursor}
+                        response, _ = await self._send_request(request, req_id)
+                        self._received_lines.pop(req_id, None)
+                        result = response.get("result")
+                        if not isinstance(result, dict):
+                            raise ValueError("upstream returned no valid tool list")
+                        tools = result.get("tools")
+                        if not isinstance(tools, list) or any(
+                            not isinstance(tool, dict) or not isinstance(tool.get("name"), str) or not tool["name"]
+                            for tool in tools
+                        ):
+                            raise ValueError("upstream returned no valid tool list")
+                        definitions.extend(tools)
+                        tool_names.update(tool["name"] for tool in tools)
+                        cursor = result.get("nextCursor")
+                        if cursor is None:
+                            break
+                        if not isinstance(cursor, str) or not cursor or cursor in seen:
+                            raise ValueError("upstream returned an invalid or repeated tool cursor")
+                        seen.add(cursor)
+            # Snapshot and audit file locks may contend with other processes.
+            self._capability_commit_task = asyncio.create_task(
+                self._persist_capability_observation(tuple(sorted(tool_names)), definitions)
             )
-        except Exception:
-            logger.debug("Capability drift check: tools/list failed", exc_info=True)
-            return
-        self._received_lines.pop(0, None)
-        tools = (response or {}).get("result", {}).get("tools", [])
-        if not isinstance(tools, list):
-            return
-        tool_names = tuple(t["name"] for t in tools if isinstance(t, dict) and "name" in t)
-        if not tool_names:
-            return
-        old_caps = self._capabilities_store.get_capabilities(self._server_name)
-        self._process_capability_drift(tool_names, old_caps)
+            await asyncio.shield(self._capability_commit_task)
+        except Exception as exc:
+            logger.warning("Capability drift check failed for %s: %s", self._server_name, exc)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -303,7 +418,11 @@ class MCPGateway:
             return
         if not self._upstream_cmd:
             return
-        await self._check_capability_drift()
+        if self._capability_commit_task is not None:
+            await asyncio.shield(self._capability_commit_task)
+            self._capability_commit_task = None
+        self._upstream_tools_available = None
+        self._capability_task = None
         self._proc = await asyncio.create_subprocess_exec(
             *self._upstream_cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -314,12 +433,24 @@ class MCPGateway:
 
     async def stop(self) -> None:
         """Terminate the upstream process gracefully."""
-        if self._proc and self._proc.returncode is None:
-            self._proc.terminate()
-            try:
-                await asyncio.wait_for(self._proc.wait(), timeout=5.0)
-            except TimeoutError:
-                self._proc.kill()
+        try:
+            probe = self._capability_task
+            if probe is not None:
+                if not probe.done() and not probe.cancelling():
+                    probe.cancel()
+                # Treat the probe's cancellation as its result, distinct from
+                # cancellation of this shutdown waiter.
+                await asyncio.shield(asyncio.gather(probe, return_exceptions=True))
+            # A cancelled waiter never owns cancellation of the shared write.
+            if self._capability_commit_task is not None:
+                await asyncio.shield(self._capability_commit_task)
+        finally:
+            if self._proc and self._proc.returncode is None:
+                self._proc.terminate()
+                try:
+                    await asyncio.wait_for(self._proc.wait(), timeout=5.0)
+                except TimeoutError:
+                    self._proc.kill()
 
     # ------------------------------------------------------------------
     # Upstream I/O
@@ -430,6 +561,14 @@ class MCPGateway:
             await self._prepare_tool_dispatch(message, method, params, req_id)
             if self._proc:
                 await self._send_upstream(message)
+                if (
+                    method == "notifications/initialized"
+                    and self._upstream_tools_available is not None
+                    and self._capabilities_store is not None
+                    and self._audit_chain is not None
+                    and self._capability_task is None
+                ):
+                    self._capability_task = asyncio.create_task(self._check_capability_drift())
             return None
 
         prepared = await self._prepare_tool_dispatch(message, method, params, req_id)
@@ -439,6 +578,11 @@ class MCPGateway:
             await self._record_tool_effect(prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout")
             raise
         received = self._received_lines.pop(req_id, None)
+        if method == "initialize" and "error" not in response:
+            result = response.get("result")
+            capabilities = result.get("capabilities") if isinstance(result, dict) else None
+            if isinstance(capabilities, dict):
+                self._upstream_tools_available = "tools" in capabilities
         from bernstein.core.security.toolcall_interlock import toolcall_effect_outcome
 
         await self._record_tool_effect(

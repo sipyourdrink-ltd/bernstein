@@ -9,6 +9,44 @@ new session off the recorded checkpoint (**fork**), or restart from zero
 (**cold**) -- and every one of those decisions is a deterministic,
 journal-anchored record.
 
+## Provider/model identity
+
+Both task retry creation paths retain a supplied provider-prefixed task model
+such as `openai/review-combo` instead of replacing it with a bare Claude tier.
+An explicit per-role model pin still takes precedence over the run-level pin,
+which takes precedence over the prior task model. This includes deliberately
+bare model aliases chosen by the operator. Effort follows each retry path's
+existing policy; retry limits, backoff and checkpoint decisions are unchanged.
+
+This retention does not query a provider catalog or prove model availability.
+If the task has no model and no explicit run/role pin reaches the retry path,
+both retry creators preserve the original model and effort overrides together.
+When both were unset, they remain unset: adding an effort alone would bypass
+role-template resolution and fail before reaching the adapter. The existing
+resolver therefore uses the same inputs and configuration sources as the first
+attempt, without an invented `sonnet` or `opus` override. A supplied effort is
+preserved; it is never erased to bypass a missing-model refusal. Effort escalation
+continues when a model or operator pin is known. Reusing inputs does not prove an
+identical effective model if configuration or router state changes. An endpoint
+URL alone does not identify a model, and no provider catalog is queried.
+
+## Gateway-only configurations
+
+When the retrying role's adapter is not Claude-compatible -- an
+OpenAI-compatible gateway (`OPENAI_API_BASE` set, models `openai/<combo>`),
+or a role pinned to a non-Claude `provider` -- the Claude tier ladder
+(`haiku`/`sonnet`/`opus`) has no route and both retry creators skip it
+entirely (#6605). An unpinned bare tier label on the failed task is an
+escalation artifact, not an operator pin: the first attempt's spawn coerced
+it to the adapter's configured default, so the retry leaves the model unset
+and the spawn re-resolves that same default -- the retry ladder resolves
+models from the same source the first attempt used. Any other unprefixed
+model name is a real model identity and is retained verbatim, never
+escalated into a tier. Two pin routes still win over the guard: an explicit
+role/run model pin (above), and a task carrying `metadata.pinned_model`
+(the A/B-test escape hatch). On a Claude-compatible adapter the historical
+tier ladder is unchanged.
+
 ## Per-adapter capability
 
 What an adapter can offer is derived from the resume strategy it already

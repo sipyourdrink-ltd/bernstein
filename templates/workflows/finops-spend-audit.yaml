@@ -1,0 +1,25 @@
+name: finops-spend-audit
+description: "Attribute cloud and LLM token spend, rightsize model routing, and verify quality floors."
+version: "1.0.0"
+nodes:
+  - id: spend-attribution
+    agent: analyst
+    prompt: |
+      Analyze token ledgers, context sizes, retry rates, and cloud usage to
+      isolate top unit-cost drivers for: {goal}
+    timeout_seconds: 1200
+  - id: routing-and-prompt-optimization
+    depends_on: [spend-attribution]
+    agent: prompt-engineer
+    prompt: |
+      Propose model-tier routing adjustments, prompt compaction, and per-run
+      budget caps without lowering security review floors for: {goal}
+    timeout_seconds: 1800
+  - id: quality-parity-verification
+    depends_on: [routing-and-prompt-optimization]
+    agent: qa
+    prompt: |
+      Run representative verification tasks to confirm accuracy and latency
+      remain within SLO bounds after cost optimizations for: {goal}
+    fresh_context: true
+    timeout_seconds: 1800

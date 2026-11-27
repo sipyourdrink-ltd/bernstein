@@ -34,11 +34,13 @@ name: Project pulse
 # are also uploaded as a workflow artifact.
 
 on:
-  schedule:
-    # Monday 09:19 UTC -- after the weekend rollover, off the crowded 03:00 -
-    # 08:00 band the nightly and weekly jobs already occupy.
-    - cron: "19 9 * * 1"
   workflow_dispatch:
+    inputs:
+      pulse_issue:
+        description: "Optional open issue number to edit in place (leave empty to publish artifact/branch only)"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: project-pulse
@@ -158,12 +160,11 @@ jobs:
             "HEAD:refs/heads/${DATA_BRANCH}"
 
       - name: Update the permanent pulse issue
+        if: inputs.pulse_issue != ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          # The single permanent, pinned pulse issue. Its body is edited in
-          # place every run; the workflow never opens a new issue.
-          PULSE_NUMBER: "6607"
+          PULSE_NUMBER: ${{ inputs.pulse_issue }}
         run: |
           set -euo pipefail
           STATE=$(gh issue view "${PULSE_NUMBER}" --repo "${REPO}" --json state --jq .state)

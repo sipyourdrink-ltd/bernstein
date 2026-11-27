@@ -4,14 +4,26 @@ Thanks for your interest! Here's how to get started.
 
 ## Quick Start
 
+Install [uv](https://docs.astral.sh/uv/) and use Python 3.13 to match
+pull request CI. Keep `UV_PYTHON` set in the shell where you run the
+contributor commands below. Without it, uv reads the repository's
+`.python-version` and selects Python 3.14.
+
 ```bash
 git clone https://github.com/sipyourdrink-ltd/bernstein && cd bernstein
-uv venv && uv pip install -e ".[dev]"
+export UV_PYTHON=3.13
+uv sync --locked --group dev
 ```
+
+Use `make help` to list the developer shortcuts. To preview documentation,
+run `uv run --locked --group docs mkdocs serve`. For local Git checks, see
+[pre-commit and pre-push hooks](docs/contributing/git-hooks.md).
 
 ## Picking something to work on
 
-[ROADMAP.md](ROADMAP.md) says what is being built and when.
+[ROADMAP.md](ROADMAP.md) says where public work is tracked; the
+maintainer's own plans are kept privately, as [GOVERNANCE.md](GOVERNANCE.md)
+explains.
 
 **Start here:** the volunteer workers program
 ([#3863](https://github.com/sipyourdrink-ltd/bernstein/issues/3863)) is
@@ -24,7 +36,7 @@ the RFC count as contributions too.
 
 Bernstein follows a **two-track release model**: patch releases (every 3 days) and minor releases (every 2 weeks). Details in [docs/operations/release.md](docs/operations/release.md).
 
-Issues are assigned to milestones to plan what ships in each release. A milestone is **not a parking lot** — every issue in a milestone should be on track to ship in that release.
+Public issues are assigned to milestones to show the release they target. A milestone is **not a parking lot** — every issue in a milestone should be on track to ship in that release.
 
 **Triage rules:**
 
@@ -86,21 +98,24 @@ whatever the last person in a hurry did.
 ## Testing
 
 ```bash
-uv run python scripts/run_tests.py -x        # all tests (isolated per-file, stops on first failure)
-uv run python scripts/run_tests.py -k router  # filter by keyword
-uv run python scripts/run_tests.py tests/unit/test_foo.py            # single file
-uv run python scripts/run_tests.py tests/unit/test_foo.py::test_bar  # single test
-uv run pytest tests/unit/test_foo.py -x -q    # single file, straight pytest
+uv run python scripts/run_tests.py -x        # unit tests (isolated per-file, stops on first failure)
+uv run python scripts/run_tests.py --affected HEAD                 # select tests for staged and unstaged changes
+uv run python scripts/run_tests.py --affected origin/main          # select tests for committed branch changes
+uv run python scripts/run_tests.py -k router                       # match test file stems
+uv run python scripts/run_tests.py tests/unit/test_no_network_guard.py            # single file
+uv run python scripts/run_tests.py tests/unit/test_no_network_guard.py::test_guard_allows_localhost_hostname  # single test
+uv run pytest tests/unit/test_no_network_guard.py -x -q    # single file, straight pytest
 ```
 
-> **WARNING: Never run `uv run pytest tests/ -x -q`** - the full suite keeps references across 2000+ tests and can leak 100+ GB RAM. The isolated runner in `scripts/run_tests.py` caps each file at ~200 MB.
+Run the full unit suite through the isolated runner. A single pytest
+process collecting all of `tests/` or `tests/unit/` can exhaust memory.
 
 ## Linting & type checking
 
 ```bash
 uv run ruff check src/
-uv run ruff format src/
-uv run pyright src/
+uv run ruff format --check src/
+uv run pyright --project pyrightconfig.strict.json
 ```
 
 `ruff check` and `ruff format` must pass before committing (CI runs `ruff format --check`). `pyright src/` is advisory repo-wide in CI, but the curated strict zone blocks: `uv run pyright --project pyrightconfig.strict.json`. No exceptions, no "fix later."
@@ -111,13 +126,15 @@ uv run pyright src/
 2. Make your changes
 3. Run checks:
    ```bash
-   uv run ruff check src/
-   uv run pyright src/
-   uv run lint-imports          # architecture contracts (adapter/core boundary)
-   uv run python scripts/run_tests.py -x
+   make check
+   git add path/to/changed-file
+   make test-affected BASE=HEAD
    ```
 4. Commit with a clear message
 5. Open a PR against `main`
+
+New functionality comes with tests in the same pull request. CI runs the main
+Python test suite through `scripts/run_tests.py`.
 
 Every change lands through the merge queue with the approvals the
 [review charter](docs/governance/review-charter.md) requires: two, from
@@ -309,7 +326,7 @@ When adding a new CLI command, create a new `*_cmd.py` module in `cli/commands/`
 
 ## Supported CLI Adapters
 
-Bernstein ships with 50+ CLI agent adapters, plus a generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
+Bernstein ships with 55 selectable CLI agent adapter names, including the generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
 
 | Adapter | File | Agent |
 |---------|------|-------|

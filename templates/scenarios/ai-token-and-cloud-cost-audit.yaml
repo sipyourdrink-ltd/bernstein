@@ -1,0 +1,41 @@
+id: ai-token-and-cloud-cost-audit
+name: Cloud and AI Token Spend FinOps Audit
+version: "1.0"
+description: |
+  Attribute cloud infrastructure and LLM token spend per workflow and tenant,
+  eliminate runaway retry or context-bloat loops, and rightsize model-tier
+  routing without degrading quality or security gates.
+tags: [finops, cost-optimization, token-economy, routing, cloud]
+tasks:
+  - title: Attribute token, cache, and compute spend by workflow and role
+    role: analyst
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Aggregate token usage, prompt/context sizes, retry counts, and cloud
+      resource utilization into unit cost per completed task.
+  - title: Isolate context bloat, retry storms, and over-tiered prompts
+    role: prompt-engineer
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Identify stages spending frontier reasoning tokens on deterministic
+      extraction or carrying redundant prompt history across waves.
+  - title: Configure budget circuit breakers and tiered routing policies
+    role: devops
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      Set per-run USD/token ceilings, max retry caps, and model-tier routing
+      rules while preserving frontier floors on security and review stages.
+  - title: Validate quality parity on held-out tasks before rollout
+    role: qa
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Re-run representative benchmark tasks under the updated routing policy
+      and confirm pass rates and latency stay within target bounds.

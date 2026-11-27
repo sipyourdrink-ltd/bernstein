@@ -49,7 +49,7 @@ def _parse_value(raw: str) -> object:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         if raw[:1] in _JSON_INTENT_PREFIXES:
-            raise click.BadParameter(f"value looks like JSON but is invalid: {exc}") from exc
+            raise click.BadParameter(f"The value looks like JSON but could not be parsed: {exc}") from exc
         return raw
 
 

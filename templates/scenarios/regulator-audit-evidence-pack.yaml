@@ -1,0 +1,241 @@
+id: regulator-audit-evidence-pack
+name: Regulator Audit Evidence Pack
+version: "1.0"
+description: |
+  Produce a regulator-ready evidence pack for an AI-assisted coding pipeline
+  under EU AI Act Article 12 logging, DORA Articles 8 to 15 ICT-resilience
+  requirements, and SR 11-7 model-risk controls. The pack maps every
+  control to a deterministic artifact: tamper-evident audit logs, signed
+  release provenance, model-risk-tier classifications, and a written
+  incident-response runbook. Output is a single zip plus an attestation
+  index a third-party auditor can navigate without operator hand-holding.
+tags:
+  - compliance
+  - audit
+  - enterprise
+  - regulated
+  - ai-governance
+tasks:
+  - title: Identify regulatory scope and applicable controls
+    role: manager
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Confirm which regulations apply to the pipeline under review (EU AI
+      Act, DORA, SR 11-7, ISO 42001, NIST AI RMF Generative AI Profile).
+      Capture the control identifiers each one introduces. Output a single
+      control-inventory spreadsheet with one row per control.
+  - title: Classify the AI-coding pipeline against EU AI Act Article 6 risk tiers
+    role: architect
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Walk every pipeline component (planner, executor, verifier, deploy
+      stage) and decide whether it lands in high-risk, limited-risk, or
+      minimal-risk under Article 6. Document the reasoning. This decision
+      drives which Article 9 to 15 obligations attach.
+  - title: Map every control to one or more deterministic artifacts
+    role: architect
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      For each control in the inventory, pick the artifact that satisfies
+      it. Article 12 logging maps to the HMAC audit chain. Article 17
+      quality-management system maps to ADRs plus the change-management
+      runbook. Article 9 risk-management system maps to the threat-model
+      register. Output evidence-map.yaml.
+  - title: Implement automatic event logging that satisfies Article 12 paragraphs 2a to 2c
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: high
+    description: |
+      Emit one structured log entry per agent action capturing: timestamp,
+      task identifier, planner decision, executor tool calls, model name
+      and version, prompt hash, response hash, and HMAC chain link to the
+      previous entry. Verify the log writer flushes synchronously to a
+      tamper-evident store before any tool call commits.
+  - title: Verify six-month retention of the audit log per Article 19
+    role: devops
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      Confirm the audit-log store retains entries for at least six months,
+      with read-only access for auditors. Document the retention policy,
+      the storage location, and the access-control model. Add a recurring
+      job that proves retention by sampling old entries.
+  - title: Produce an HMAC-chain integrity proof for the most recent ninety-day window
+    role: security
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Verify the HMAC chain end-to-end across the most recent ninety days.
+      Output a proof file listing the head hash, the tail hash, every
+      rotation event, and any link the verifier could not resolve. A
+      single broken link blocks audit submission.
+  - title: Generate SBOM and SLSA build-provenance for every release in the audit window
+    role: security
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Produce CycloneDX SBOMs for every container image and binary released
+      during the audit window. Confirm SLSA Level 1 provenance attaches to
+      every artifact. Sign each artifact and SBOM with cosign or Sigstore.
+  - title: Capture deterministic build evidence for the orchestrator itself
+    role: devops
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Re-run the orchestrator's build pipeline from a clean environment
+      twice. Confirm bit-for-bit identical artifacts. Document the build
+      platform, the toolchain versions, and the hermetic-build policy.
+      This is the Article 12 traceability anchor.
+  - title: Document the risk-management system per Article 9
+    role: docs
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Capture the risk-identification, risk-evaluation, and risk-mitigation
+      processes. Reference the OWASP Top 10 for LLM Applications 2025
+      checklist as the concrete attacker model. Include the threat-model
+      register and link every entry to a mitigating control.
+  - title: Produce a data-governance statement per Article 10
+    role: docs
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Describe training-data and prompt-data provenance, retention, and
+      access controls. If the pipeline uses retrieval, document the
+      corpus origin, refresh cadence, and PII-redaction policy. Tie this
+      to GDPR Article 32 if any personal data is in scope.
+  - title: Capture the human-oversight design per Article 14
+    role: architect
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Document where humans approve, override, or pause the agent. List
+      every approval gate, the role authorized to approve, the median
+      review latency, and the escape-hatch behavior when no human is
+      available. The auditor will probe whether oversight is real or
+      ceremonial.
+  - title: Emit accuracy and robustness evidence per Article 15
+    role: qa
+    priority: 2
+    scope: medium
+    complexity: high
+    description: |
+      Run the agent against a regression-evaluation harness. Capture
+      pass-at-one rates, hallucination-detection rates, and sensitivity
+      to prompt-injection patterns. Plot the trend across the audit
+      window. Material drift warrants a written explanation in the pack.
+  - title: Document the incident-response runbook per DORA Article 17
+    role: devops
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Capture the detection-to-containment-to-recovery workflow with
+      specific time targets. Tie each step to a named on-call role.
+      Include the post-incident-review template. The runbook must list
+      the regulator-notification triggers and the contact path.
+  - title: Map ICT-third-party arrangements per DORA Articles 28 to 30
+    role: manager
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      List every third-party service the pipeline depends on (model
+      providers, vector stores, observability vendors). For each,
+      document the data shared, the contractual terms, the exit plan,
+      and whether the provider is a critical ICT third-party under
+      DORA designation.
+  - title: Run an internal red-team exercise against the AI-coding agent
+    role: security
+    priority: 2
+    scope: medium
+    complexity: high
+    description: |
+      Run prompt-injection, exfiltration, and excessive-agency scenarios
+      against the live agent in a sandboxed environment. Use Garak or
+      PyRIT plus a custom seed list tied to the deployment context.
+      Document findings, severity, and the remediation timeline.
+  - title: Produce a model-risk-tier classification per SR 11-7
+    role: architect
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      Classify each model used in the pipeline by tier (1 high, 2
+      moderate, 3 low) per SR 11-7. Document the validation evidence
+      attached to each tier. Tier 1 models require independent
+      validation; capture the validator and the date.
+  - title: Build the auditor-navigable index
+    role: docs
+    priority: 1
+    scope: medium
+    complexity: low
+    description: |
+      Produce one Markdown index that an auditor opens first. The index
+      lists every control identifier in the inventory, the evidence
+      artifact path, the responsible role, and a one-line plain-language
+      summary of how the control is satisfied. This is the auditor's
+      table of contents.
+  - title: Stress-test the evidence pack with a mock auditor pass
+    role: qa
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Hand the pack to an internal reviewer who has not worked on the
+      pipeline. Ask them to verify ten controls picked at random.
+      Track time-to-evidence and friction points. Anything that takes
+      more than ten minutes routes back to the pack author.
+  - title: Sign the pack and publish to the auditor delivery channel
+    role: security
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Generate a single zip of the evidence pack. Sign with cosign and
+      publish the signature alongside the artifact. Deliver via the
+      contracted channel (secure file transfer, regulated portal). Log
+      the delivery as the final entry in the audit chain.
+  - title: Schedule the next quarterly refresh
+    role: manager
+    priority: 3
+    scope: small
+    complexity: low
+    description: |
+      Calendar the next refresh. The audit window rolls forward; control
+      mappings may shift if regulations update; new third-party services
+      may enter scope. The pack is a living artifact, not a one-shot.
+  - title: Capture lessons learned and update the control inventory
+    role: docs
+    priority: 3
+    scope: small
+    complexity: low
+    description: |
+      Record what surprised the team, which controls produced the most
+      pack-author friction, and which artifacts the auditor probed
+      hardest. Promote the lessons to the inventory as guidance for the
+      next pack.
+  - title: Update CLAUDE.md and AGENTS.md with the audit-pack workflow
+    role: docs
+    priority: 3
+    scope: small
+    complexity: low
+    description: |
+      Persist the workflow into repo memory so the next agent that
+      generates a pack does not re-discover the artifact map. Reference
+      the evidence-map.yaml and the auditor index as the canonical
+      starting points.

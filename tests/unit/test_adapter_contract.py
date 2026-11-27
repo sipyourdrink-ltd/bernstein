@@ -64,6 +64,7 @@ def _popen_path(adapter: CLIAdapter) -> str:
 #: Per-adapter ``ModelConfig`` overrides for ``test_spawn_returns_spawn_result``.
 _CONTRACT_MODEL_CONFIG: dict[str, ModelConfig] = {
     "clm": ModelConfig(model="clm-7b-instruct", effort="high"),
+    "OpenClaw": ModelConfig(model="openai/test", effort="high"),
     # OpenCode resolves ``-m`` as ``provider/model``; the adapter refuses a bare
     # id it cannot qualify from the operator's config, and the contract suite
     # runs without one, so the case hands it an already-qualified id.
@@ -292,7 +293,8 @@ class TestAdapterContract:
 
 # 680 after restoring five adapters plus the guard test on current upstream main;
 # 707 with the two deep-research adapters (gpt_researcher, tongyi_deepresearch).
-_EXPECTED_COLLECTED = 707
+# 721 with the Pi golden transcript replay (#6943).
+_EXPECTED_COLLECTED = 721
 
 
 def test_module_collected_case_count() -> None:
@@ -352,6 +354,10 @@ def _import_adapter_class(dotted: str) -> type[CLIAdapter]:
     return cls
 
 
+#: Golden token for this interpreter, for adapters that launch a ``python -m`` helper.
+_PYTHON = "{python}"
+
+
 def _split_inner_argv(argv: list[str]) -> list[str]:
     """Return the portion of argv after the bernstein-worker ``--`` separator.
 
@@ -361,7 +367,7 @@ def _split_inner_argv(argv: list[str]) -> list[str]:
     """
     for i, tok in enumerate(argv):
         if tok == "--":
-            return argv[i + 1 :]
+            return [_PYTHON if part == sys.executable else part for part in argv[i + 1 :]]
     return argv
 
 

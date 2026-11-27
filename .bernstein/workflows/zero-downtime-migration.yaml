@@ -1,0 +1,73 @@
+# Expand-backfill-contract database migration with parity and rollback gate.
+name: zero-downtime-migration
+version: "1.0.0"
+
+phases:
+  - name: design
+    allowed_roles: [architect, backend]
+  - name: implement
+  - name: verify
+    allowed_roles: [qa, devops, security, reviewer]
+  - name: cutover
+    allowed_roles: [devops, docs]
+
+nodes:
+  design-expand-contract:
+    phase: design
+    role: architect
+    description: "Specify N/N-1 compatible expand, backfill, and contract phases"
+    estimated_minutes: 25
+
+  author-migration-and-rollback:
+    phase: implement
+    role: backend
+    description: "Write forward DDL, throttled idempotent backfill, and down-migration"
+    estimated_minutes: 45
+    depends_on:
+      - design-expand-contract
+
+  rehearse-rollback-and-locks:
+    phase: verify
+    role: devops
+    description: "Rehearse forward/down migration on staging clone and measure lock bounds"
+    estimated_minutes: 25
+    depends_on:
+      - author-migration-and-rollback
+
+  verify-row-hash-parity:
+    phase: verify
+    role: qa
+    description: "Assert row counts, checksums, and dual-read behavior match"
+    estimated_minutes: 25
+    depends_on:
+      - rehearse-rollback-and-locks
+
+  fix-migration-defect:
+    phase: implement
+    role: backend
+    description: "Fix parity mismatch or lock-timeout violation"
+    depends_on:
+      - source: verify-row-hash-parity
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  reverify-row-hash-parity:
+    phase: verify
+    role: qa
+    description: "Re-verify row counts, checksums, lock bounds, and dual-read parity after fix"
+    estimated_minutes: 25
+    depends_on:
+      - fix-migration-defect
+
+  emit-cutover-runbook:
+    phase: cutover
+    role: docs
+    description: "Publish gated production cutover sequence and abort thresholds"
+    estimated_minutes: 20
+    depends_on:
+      - source: verify-row-hash-parity
+        condition: "status == 'done'"
+      - source: reverify-row-hash-parity
+        condition: "status == 'done'"

@@ -14,14 +14,9 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 
-#: Pi's switch that turns off extension discovery (``-ne``); explicit ``-e``
+#: Pi's contract-declared switch that turns off extension discovery; explicit ``-e``
 #: paths would still load.
 _NO_EXTENSIONS = "--no-extensions"
-
-_PI_NOT_FOUND = (
-    "pi not found in PATH. Install: npm install -g @mariozechner/pi-coding-agent "
-    "or see https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent"
-)
 
 
 class PiAdapter(CLIAdapter):
@@ -29,9 +24,8 @@ class PiAdapter(CLIAdapter):
 
     Pi is an npm-distributed coding agent
     (``@mariozechner/pi-coding-agent``).  The CLI takes the task prompt
-    as a positional argument after ``--``, and runs in ``--mode json`` so
-    its event stream reaches the runner log while it works; ``-c`` exists
-    for resume but is not used when spawning a fresh session.  See
+    as a positional argument; ``-c`` exists for resume but is not used
+    when spawning a fresh session.  See
     https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent.
     """
 
@@ -81,22 +75,18 @@ class PiAdapter(CLIAdapter):
         # loaded the operator's personal extensions -- their MCP servers
         # included -- into a run bernstein never configured them for (#5965).
         # bernstein passes pi no extension of its own, so none is lost.
-        # With stdout redirected pi falls back to print mode, which writes only
-        # the final assistant text and only when the run ends, so the runner
-        # log stayed 0 bytes for the agent's whole first turn. Log-mtime is the
-        # only liveness signal for an adapter that takes no heartbeat dir, and
-        # heartbeat escalation killed agents that were mid-turn (#6943).
-        # ``--mode json`` writes JSONL events as the agent works, then exits.
-        # JSON mode exits 0 even when the final turn failed (pi decides the
-        # exit code only in text mode), so pi runs under ``pi_json_launcher``,
-        # which streams each line through and applies text mode's rule to the
-        # last assistant message.
-        pi_cmd = ["pi", _NO_EXTENSIONS, "--mode", "json"]
+        # Stream events to the runner log so log-mtime liveness sees active
+        # work, and exit after the prompt instead of opening the TUI (#6943).
+        pi_cmd = ["pi", _NO_EXTENSIONS, "--print", "--mode", "json"]
         if model_config.model and model_config.model.lower() != "auto":
             pi_cmd.extend(["--model", model_config.model])
-        # ``--`` ends option parsing, so a task prompt that starts with ``-``
-        # is still the prompt and not an unknown flag.
+        # ``--`` ends option parsing, so a prompt that starts with ``-`` is
+        # still the prompt and not an unknown flag.
         pi_cmd.extend(["--", prompt])
+        # JSON mode exits 0 even when the final turn failed: pi decides a
+        # nonzero exit only in text mode. ``pi_json_launcher`` streams each
+        # line through unchanged and applies text mode's rule to the last
+        # assistant message (#6943).
         cmd = [sys.executable, "-m", "bernstein.adapters.pi_json_launcher", "--", *pi_cmd]
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
@@ -119,12 +109,18 @@ class PiAdapter(CLIAdapter):
                     wrapped_cmd,
                     cwd=workdir,
                     env=env,
+                    # Pi reads piped stdin before emitting, even in JSON mode.
+                    stdin=subprocess.DEVNULL,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(_PI_NOT_FOUND) from exc
+                msg = (
+                    "pi not found in PATH. Install: npm install -g @mariozechner/pi-coding-agent "
+                    "or see https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent"
+                )
+                raise RuntimeError(msg) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing pi: {exc}") from exc
 

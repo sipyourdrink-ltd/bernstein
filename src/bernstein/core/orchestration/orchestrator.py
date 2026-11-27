@@ -450,6 +450,8 @@ class Orchestrator:
         formal_verification_config: Any | None = None,
         data_class: str | None = None,
     ) -> None:
+        if config.hash_profile not in ("py-json-v1", "jcs-v2"):
+            raise ValueError(f"unknown hash_profile {config.hash_profile!r}")
         self._config = config
         self._spawner = spawner
         self._warm_pool = getattr(spawner, "_warm_pool", None)
@@ -799,7 +801,7 @@ class Orchestrator:
         # identity. Records by default (issue #2293); size is bounded by
         # BERNSTEIN_REPLAY_RETENTION over past runs rather than an on/off
         # gate.
-        self._recorder = EventJournal(run_id=run_id, sdd_dir=workdir / ".sdd")
+        self._recorder = EventJournal.resume(run_id=run_id, sdd_dir=workdir / ".sdd", hash_profile=config.hash_profile)
 
         # Last ``plan.graph`` digest appended this run (issue #3613). Empty
         # until the first normal tick records one. Held on the instance so a
@@ -1272,12 +1274,15 @@ class Orchestrator:
 
     def _current_capacity(self) -> NodeCapacity:
         """Build a NodeCapacity snapshot reflecting current agent usage."""
+        from bernstein.core.protocols.cluster.cluster import local_worker_capacity
+
         alive = sum(1 for a in self._agents.values() if a.status != "dead")
-        return NodeCapacity(
+        capacity = NodeCapacity(
             max_agents=self._config.max_agents,
             available_slots=max(0, self._config.max_agents - alive),
             active_agents=alive,
         )
+        return local_worker_capacity(self._workdir, capacity)
 
     @property
     def active_agents(self) -> dict[str, AgentSession]:
@@ -3523,6 +3528,7 @@ class Orchestrator:
         self._mark_finalization_started()
         try:
             self._record_run_quiescence()
+            self._finalize_delegation_manifest()
             self._seal_journal_into_lineage_spine()
             if self._otel_stream is not None:
                 self._otel_stream.finalize()
@@ -3534,6 +3540,20 @@ class Orchestrator:
             self._recorder.path,
             self._recorder.fingerprint()[:16] + "...",
         )
+
+    def _finalize_delegation_manifest(self) -> None:
+        """Declare the delegation tail after cleanup, before final run receipts.
+
+        A failed atomic write leaves the startup manifest incomplete; it must
+        never be presented as a complete delegation chain by the verifier.
+        """
+        try:
+            from bernstein.core.identity.delegation import default_ledger
+
+            sdd_dir = self._workdir / ".sdd"
+            default_ledger(sdd_dir / "audit").finalize_manifest(sdd_dir, self._run_id)
+        except Exception as exc:
+            logger.warning("Delegation manifest not finalized for run %s: %s", self._run_id, sanitize_log(str(exc)))
 
     def _record_run_quiescence(self) -> None:
         """Record whether every process the run started had exited.
@@ -3660,7 +3680,9 @@ class Orchestrator:
         try:
             from bernstein.core.replay.run_receipt import write_run_receipt_if_configured
 
-            receipt_path = write_run_receipt_if_configured(self._run_id, self._workdir / ".sdd")
+            receipt_path = write_run_receipt_if_configured(
+                self._run_id, self._workdir / ".sdd", hash_profile=self._recorder.hash_profile
+            )
         except Exception as exc:
             logger.warning("Failed to write run receipt: %s", sanitize_log(str(exc)))
         else:
@@ -4395,6 +4417,7 @@ class Orchestrator:
             session_id=session.id if session is not None else None,
             role_model_policy=getattr(self._spawner, "role_model_policy", None),
             run_pinned_model=getattr(self._spawner, "default_model", None),
+            default_adapter_name=getattr(self._spawner, "default_adapter_name", None),
         )
 
     def _handle_anomaly_signal(self, signal: object) -> None:
@@ -6228,6 +6251,10 @@ class Orchestrator:
                 endpoint_base_url=session.endpoint_base_url,
                 endpoint_profile_name=session.endpoint_profile_name,
             )
+            # Existing artifact events become signed, hop-scoped Trust Record
+            # references. These are evidence pointers, never admission inputs.
+            for reference in session.agent_manifest_references:
+                self._recorder.record("artifact_produced", agent_id=session.id, **reference)
             # Issue #3375: pin the declared context files the spawner resolved
             # for this session at their content addresses. Recorded only when
             # the tasks declared something, so undeclared runs journal exactly
@@ -6835,7 +6862,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     from bernstein.adapters.registry import get_adapter
-    from bernstein.core.seed import SeedConfig, parse_seed
+    from bernstein.core.seed import SeedConfig, SeedError, parse_seed
     from bernstein.core.spawner import AgentSpawner
 
     parser = argparse.ArgumentParser()
@@ -6870,21 +6897,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    print(f"[SPAWNER-DEBUG] orchestrator __main__: parsed CLI args={vars(args)!r}", file=sys.stderr, flush=True)
-    print(
-        f"[SPAWNER-DEBUG] orchestrator __main__: BERNSTEIN_SEED_PATH env var="
-        f"{os.environ.get('BERNSTEIN_SEED_PATH', '<unset>')!r}",
-        file=sys.stderr,
-        flush=True,
-    )
-    print(
-        f"[SPAWNER-DEBUG] orchestrator __main__: BERNSTEIN_ADAPTER env var="
-        f"{os.environ.get('BERNSTEIN_ADAPTER', '<unset>')!r}, BERNSTEIN_MODEL env var="
-        f"{os.environ.get('BERNSTEIN_MODEL', '<unset>')!r}",
-        file=sys.stderr,
-        flush=True,
-    )
-
     workdir = Path.cwd()
 
     # Configure logging so errors are visible in spawner.log (stdout/stderr)
@@ -6910,6 +6922,10 @@ if __name__ == "__main__":
                 ),
             ],
         )
+
+    from bernstein.core.observability.log_redact import install_pii_filter
+
+    install_pii_filter()
 
     # Apply deterministic random seed if requested via env var.
     _deterministic_seed_env = os.environ.get("BERNSTEIN_DETERMINISTIC_SEED", "").strip()
@@ -6950,7 +6966,6 @@ if __name__ == "__main__":
             )
         except ReplayRecordingMissingError as exc:
             logger.error("FATAL: %s", exc)
-            print(f"[FATAL] {exc}", file=sys.stderr, flush=True)
             sys.exit(1)
         set_active_store(_det_store)
         logger.info(
@@ -6966,7 +6981,6 @@ if __name__ == "__main__":
         # the real store is set after the orchestrator assigns its run_id below.
         pass  # store will be set after orchestrator is instantiated
 
-    print("[SPAWNER-DEBUG] orchestrator __main__: entering top-level try block", file=sys.stderr, flush=True)
     try:
         # Try to load adapter from seed if available
         adapter_name = args.adapter
@@ -6979,11 +6993,6 @@ if __name__ == "__main__":
         )
         seed: SeedConfig | None = None
         if seed_path.exists():
-            print(
-                f"[SPAWNER-DEBUG] orchestrator __main__: seed file exists at {seed_path}, attempting parse_seed()",
-                file=sys.stderr,
-                flush=True,
-            )
             try:
                 seed = parse_seed(seed_path)
                 # An explicit --adapter / BERNSTEIN_ADAPTER wins over the
@@ -6992,50 +7001,18 @@ if __name__ == "__main__":
                 # (which exports BERNSTEIN_ADAPTER=mock) is silently overridden
                 # by the seed default and spawns real Claude agents.
                 adapter_name = _resolve_spawner_adapter_name(args.adapter, getattr(seed, "cli", None))
-                _seed_role_model_policy = getattr(seed, "role_model_policy", None)
-                if not _seed_role_model_policy:
-                    print(
-                        "[SPAWNER-DEBUG] orchestrator __main__: role_model_policy is None/empty "
-                        f"after seed parse (seed_path={seed_path})",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                else:
-                    print(
-                        "[SPAWNER-DEBUG] orchestrator __main__: parsed role_model_policy="
-                        f"{json.dumps(_seed_role_model_policy, default=str)}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                print(
-                    "[SPAWNER-DEBUG] orchestrator __main__: seed parse SUCCESS - cli="
-                    f"{getattr(seed, 'cli', None)!r}, top-level model="
-                    f"{getattr(seed, 'model', None)!r}",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 logger.info(
-                    "orchestrator __main__: parsed seed from %s (cli=%s, model=%s, role_model_policy=%s)",
-                    seed_path,
+                    "Parsed seed adapter configuration: cli=%s model=%s has_role_model_policy=%s",
                     getattr(seed, "cli", None),
                     getattr(seed, "model", None),
-                    getattr(seed, "role_model_policy", None),
+                    bool(getattr(seed, "role_model_policy", None)),
                 )
+            except SeedError as exc:
+                logger.error("Invalid seed configuration: error_type=%s", type(exc).__name__)
+                _stand_down_watchdog(workdir, "invalid-seed-configuration")
+                sys.exit(1)
             except Exception as exc:
-                print(
-                    f"[SPAWNER-DEBUG] orchestrator __main__: seed parse FAILED for {seed_path}: "
-                    f"{exc!r}\n{traceback.format_exc()}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                logger.warning("Failed to parse seed for adapter config: %s", exc)
-        else:
-            print(
-                f"[SPAWNER-DEBUG] orchestrator __main__: seed file does NOT exist at {seed_path} "
-                "- role_model_policy and model will be unset from seed",
-                file=sys.stderr,
-                flush=True,
-            )
+                logger.warning("Failed to parse seed for adapter config: error_type=%s", type(exc).__name__)
 
         if not adapter_name:
             # Name --cli, not --adapter. --adapter is this module's own argparse
@@ -7054,14 +7031,6 @@ if __name__ == "__main__":
         # so child-task spawns can coerce Claude tier names for non-Claude
         # adapters instead of passing them through literally.
         run_model: str | None = args.model or (getattr(seed, "model", None) if seed else None)
-        print(
-            f"[SPAWNER-DEBUG] orchestrator __main__: resolved run_model={run_model!r} "
-            f"(args.model={args.model!r}, seed.model="
-            f"{getattr(seed, 'model', None) if seed else '<no seed>'!r})",
-            file=sys.stderr,
-            flush=True,
-        )
-
         if adapter_name == "auto":
             # Auto mode: default to Claude Code (primary), others used via routing
             adapter_inst = get_adapter("claude")
@@ -7426,17 +7395,6 @@ if __name__ == "__main__":
             ),
         )
 
-        _spawner_role_model_policy = seed.role_model_policy if seed else None
-        _spawner_policy_repr = (
-            json.dumps(_spawner_role_model_policy, default=str) if _spawner_role_model_policy else "<None/empty>"
-        )
-        print(
-            "[SPAWNER-DEBUG] orchestrator __main__: constructing AgentSpawner with "
-            f"role_model_policy={_spawner_policy_repr}, "
-            f"default_model={run_model!r}, adapter={adapter_inst!r}",
-            file=sys.stderr,
-            flush=True,
-        )
         spawner = AgentSpawner(
             adapter=adapter_inst,
             templates_dir=get_templates_dir(workdir) / "roles",
@@ -7542,6 +7500,8 @@ if __name__ == "__main__":
                 # Carried through the env override too: dropping the pins here
                 # would leave a MESH node folding nothing from its peers (#2997).
                 gossip_peer_keys=(cluster_cfg.gossip_peer_keys if cluster_cfg else ()),
+                shards=(cluster_cfg.shards if cluster_cfg else ()),
+                shard_vnodes=(cluster_cfg.shard_vnodes if cluster_cfg else 128),
             )
 
         # Topology branch (#2558): MESH starts a leaderless coordinator instead
@@ -7557,6 +7517,7 @@ if __name__ == "__main__":
 
         config = OrchestratorConfig(
             server_url=server_url,
+            hash_profile=seed.hash_profile if seed else "py-json-v1",
             max_agents=seed.max_agents if seed else 6,
             budget_usd=budget_usd,
             dry_run=dry_run,
@@ -7672,14 +7633,11 @@ if __name__ == "__main__":
                 _teardown_docker_sandbox()
                 if mcp_manager is not None:
                     mcp_manager.stop_all()
-    except Exception:
-        _crash_tb = traceback.format_exc()
-        print(
-            f"[SPAWNER-DEBUG] orchestrator __main__: FATAL uncaught exception:\n{_crash_tb}",
-            file=sys.stderr,
-            flush=True,
-        )
-        logger.exception("Orchestrator crashed")
+    except Exception as exc:
+        from bernstein.core.observability.log_redact import redact_sensitive_text
+
+        _crash_tb = redact_sensitive_text(traceback.format_exc())
+        logger.error("Orchestrator crashed: error_type=%s", type(exc).__name__)
         _failed_orchestrator = locals().get("orchestrator")
         if isinstance(_failed_orchestrator, Orchestrator):
             _failed_orchestrator._closure_outcome = RunClosureOutcome.FAILED
@@ -7692,17 +7650,9 @@ if __name__ == "__main__":
                 _crash_fh.write(f"\n=== spawner crash at {datetime.now(UTC).isoformat()} ===\n")
                 _crash_fh.write(_crash_tb)
                 _crash_fh.write("\n")
-            print(
-                f"[SPAWNER-DEBUG] orchestrator __main__: crash traceback appended to {_crash_log_path}",
-                file=sys.stderr,
-                flush=True,
-            )
-        except Exception as _log_exc:  # pragma: no cover - crash logging must never itself crash the reporting path
-            print(
-                f"[SPAWNER-DEBUG] orchestrator __main__: FAILED to write spawner_crash.log: {_log_exc!r}",
-                file=sys.stderr,
-                flush=True,
-            )
+            logger.error("Crash traceback appended to %s", _crash_log_path)
+        except Exception as log_exc:  # pragma: no cover - best-effort crash reporting
+            logger.error("Could not write spawner_crash.log: error_type=%s", type(log_exc).__name__)
         sys.exit(1)
 # ---------------------------------------------------------------------------
 # Meta-messages for orchestrator nudges (T567)

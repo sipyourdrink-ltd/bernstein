@@ -263,6 +263,14 @@ class TestDurationPredictorTraining:
     def teardown_method(self) -> None:
         reset_predictor()
 
+    def test_legacy_model_is_ignored(self, tmp_path: Path) -> None:
+        import pickle
+
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        (models_dir / "duration_predictor.pkl").write_bytes(pickle.dumps({"legacy": "fixture"}))
+        assert not DurationPredictor(models_dir).is_trained
+
     def test_train_returns_zero_below_min_samples(self, tmp_path: Path) -> None:
         models_dir = tmp_path / "models"
         models_dir.mkdir()
@@ -310,8 +318,8 @@ class TestDurationPredictorTraining:
         _make_training_jsonl(models_dir / "duration_training.jsonl", n=MIN_TRAIN_SAMPLES)
         predictor = DurationPredictor(models_dir)
         predictor.train()
-        assert (models_dir / "duration_predictor.pkl").exists()
-        assert (models_dir / "duration_predictor_meta.json").exists()
+        assert (models_dir / "duration_predictor.json").is_file()
+        assert not (models_dir / "duration_predictor.pkl").exists()
 
     @pytest.mark.skipif(
         not __import__("importlib").util.find_spec("sklearn"),
@@ -331,6 +339,7 @@ class TestDurationPredictorTraining:
         task = _make_task()
         est = p2.predict(task)
         assert est.is_cold_start is False
+        assert est == p1.predict(task)
 
     @pytest.mark.skipif(
         not __import__("importlib").util.find_spec("sklearn"),

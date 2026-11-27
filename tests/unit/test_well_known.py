@@ -293,16 +293,14 @@ def test_jwks_rotation_serves_both_current_and_archived_kid(tmp_path: Path) -> N
     client = TestClient(app)
 
     keys = client.get("/.well-known/agent.json/keys").json()["keys"]
-    # Three entries, two keys: the current key twice - once under the
-    # historical fixed kid for verifiers that cached it, once under its
-    # thumbprint - and the archived key under its own thumbprint. The
-    # archived key used to be published under a timestamped keystore id,
-    # which nothing on the wire ever names, so a verifier routing by the kid
-    # its card carried could not find it.
-    assert len(keys) == 3, f"expected current (x2 labels) + 1 archived JWK, got: {keys}"
+    # Four entries, three keys: the current agent-card key twice - once under
+    # the historical fixed kid for verifiers that cached it, once under its
+    # thumbprint - the archived agent-card key under its own thumbprint, and
+    # the install agent-token Ed25519 key under its own distinct kid (#8193).
+    assert len(keys) == 4, f"expected current (x2 labels) + 1 archived + 1 agent-token JWK, got: {keys}"
     kids = [k["kid"] for k in keys]
     assert kids[0] == "agent-bernstein-orchestrator", "current key must come first"
-    assert len(set(kids)) == 3, f"every published kid must be distinct: {kids}"
+    assert len(set(kids)) == 4, f"every published kid must be distinct: {kids}"
 
     by_kid = {k["kid"]: k["x"] for k in keys}
     current_x, archived_x = keys[0]["x"], keys[2]["x"]

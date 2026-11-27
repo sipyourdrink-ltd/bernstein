@@ -168,7 +168,7 @@ _TEXT_EXTENSIONS: frozenset[str] = frozenset(
 #: Markup extensions.
 _MARKUP_EXTENSIONS: frozenset[str] = frozenset({".html", ".htm", ".xml", ".xhtml", ".svg"})
 
-#: Special filenames with no extension (e.g., Makefile, Dockerfile).
+#: Conventional filenames that use the text ratio.
 _SPECIAL_NAMES: frozenset[str] = frozenset(
     {
         "Makefile",
@@ -218,8 +218,7 @@ def bytes_per_token_for_file_type(file_path: str | Path) -> float | None:
     name = Path(file_path).name
     lower = name.lower()
 
-    # Special filenames (no extension, well-known names).
-    if lower in _SPECIAL_NAMES and "." not in lower:
+    if name in _SPECIAL_NAMES:
         return TEXT_BYTES_PER_TOKEN
 
     # Dotfiles with no extension (e.g., .gitignore).

@@ -117,3 +117,19 @@ class TestLoadOutputStyles:
         names = [s.name for s in config.available]
         assert "compact" in names
         assert "my-style" in names
+
+
+def test_duplicate_default_style_names_keep_first_definition(tmp_path: Path) -> None:
+    """Two default files naming one style (any case) give one entry, from the first file (#8033)."""
+    styles = tmp_path / ".bernstein" / "output-styles"
+    styles.mkdir(parents=True)
+    (styles / "compact.md").write_text("---\nname: Plain\ndescription: first\n---\n")
+    (styles / "terse.md").write_text("---\nname: plain\ndescription: second\n---\n")
+    (styles / "detailed.md").write_text("---\nname: Wordy\ndescription: third\n---\n")
+    (tmp_path / "bernstein.yaml").write_text("output_style: PLAIN\n")
+
+    config = load_output_styles(tmp_path)
+
+    assert [(s.name, s.description) for s in config.available] == [("Plain", "first"), ("Wordy", "third")]
+    assert config.active_style is not None
+    assert (config.active_style.name, config.active_style.description) == ("Plain", "first")

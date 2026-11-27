@@ -12,7 +12,7 @@ tags:
 
 | Variable                    | Default     | Effect                                                  |
 |-----------------------------|-------------|---------------------------------------------------------|
-| `BERNSTEIN_AUTH_TOKEN`      | auto-gen    | Bearer token for `/api/v1/*`. SPA reads from `localStorage.bernstein_token`. If unset, the server generates one per session and logs it to stderr. |
+| `BERNSTEIN_AUTH_TOKEN`      | auto-gen    | Bearer token for `/api/v1/*`. SPA reads from `localStorage.bernstein_token`. On loopback `gui serve` (`127.0.0.1`/`localhost`/`::1`, including `--no-open` and `--dev`), reused from `.sdd/runtime/auth.token` when `.sdd/` exists or minted ephemerally for the session; never auto-minted on `--tunnel` or non-loopback binds. |
 | `BERNSTEIN_AUTH_DISABLED`   | unset       | Set to `1` / `true` / `yes` / `on` to bypass auth. Logs a loud warning. **Never on a network-reachable host.** |
 | `BERNSTEIN_HOOK_SECRET`     | unset       | HMAC secret for hook endpoints. Falls back to `BERNSTEIN_AUTH_TOKEN` if unset. |
 | `BERNSTEIN_MOCK_IDLE`       | unset       | When `1`, mock adapter sleeps each spawned agent. Set automatically by `bernstein run --idle`. |
@@ -24,9 +24,10 @@ Auth source: `src/bernstein/core/security/auth_middleware.py`. Idle source: `src
 ## Token plumbing
 
 ```text
-operator shell  ──BERNSTEIN_AUTH_TOKEN──▶  bernstein gui serve  ──Bearer token──▶  /api/v1/*
-                                                       │
-                                                       └── stderr: "Auto-generated BERNSTEIN_AUTH_TOKEN ..."
+operator shell  ──BERNSTEIN_AUTH_TOKEN (or .sdd/runtime/auth.token)──▶  bernstein gui serve / run  ──▶  /api/v1/*
+                                                                              │
+                                                                              ├── auto-open loopback: /ui/#t=<token> (scrubbed on load)
+                                                                              └── --no-open / --dev: .sdd/runtime/auth.token in a .sdd/ workspace, else printed on a terminal
 operator browser  ──localStorage.bernstein_token──▶  Authorization: Bearer ...
 ```
 
@@ -40,7 +41,7 @@ localStorage.setItem("bernstein_token", "<value of BERNSTEIN_AUTH_TOKEN>")
 
 ## Dashboard tokens
 
-The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; every grant and write authorization is a signed governance record (`bernstein governance verify dashboard-auth`).
+The `/dashboard*` and `/api/v1/dashboard/*` surfaces require a separate scoped credential (`#2366`): on a loopback bind an operator token is issued and printed at startup (`Dashboard token`), and a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; `#2366` tokens do not unlock general `/api/v1/*` routes or `/api/v1/events`. Token grants are audit events and write authorizations are signed governance records in the `dashboard-auth` lineage run.
 
 ## Theme
 
@@ -54,7 +55,9 @@ The dashboard requires a credential: on a loopback bind an operator token is iss
 - The topbar contains a `Single / Fleet` segmented control (defined in `web/src/components/AppShell.tsx`).
 - **Single** - current process only. Reads `/api/v1/*` from one server.
 - **Fleet** - multi-project view, backed by the fleet dashboard subsystem (`src/bernstein/core/fleet/`). Requires a fleet-enabled server.
-- The toggle is a UI affordance only; it does not change auth or routing on its own. Configure the fleet endpoint upstream - see [Fleet (multi-project)](../operations/fleet.md).
+- Enabling Fleet in the header opens the Fleet view (`/fleet`). Disabling it while there returns to Tasks; toggling it from another view leaves you on that view.
+- The **Fleet mode** checkbox in Settings saves the preference to browser storage. The header reads that preference on the next page reload; changing the checkbox does not immediately change the current view.
+- Fleet URLs with `?fleet=1` are shareable: opening one starts in Fleet mode, taking precedence over the locally saved preference. Configure the fleet endpoint upstream - see [Fleet (multi-project)](../operations/fleet.md).
 
 ## Build chip and `/health/deps`
 

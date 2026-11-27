@@ -6,7 +6,7 @@ This module exposes two flavours of helpers:
   used by tests and the CLI.
 * **MCP tool registration** (:func:`register_scenario_tools`) which wires
   ``bernstein_scenario``, ``bernstein_scenarios``, and
-  ``bernstein_scenario_status`` onto a FastMCP server.
+  ``bernstein_scenario_status`` onto a MCPServer server.
 
 The MCP tools delegate to the Bernstein task server over HTTP - they do not
 run orchestration in-process - keeping the MCP layer thin and stateless.
@@ -35,7 +35,7 @@ from bernstein.mcp.input_validation import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +88,14 @@ def get_scenario_detail(scenario_id: str, scenarios_dir: Path | None = None) -> 
         "version": recipe.version,
         "tasks": [
             {
+                **({"id": t.id} if t.id else {}),
                 "title": t.title,
                 "description": t.description,
                 "role": t.role,
                 "priority": t.priority,
                 "scope": t.scope,
                 "complexity": t.complexity,
+                **({"depends_on": list(t.depends_on)} if t.depends_on else {}),
             }
             for t in recipe.tasks
         ],
@@ -144,13 +146,25 @@ async def invoke_scenario_via_server(
 
     orchestration_id = payloads[0].orchestration_id
     task_ids: list[str] = []
+    spawned_by_template_id: dict[str, str] = {}
     headers = _auth_headers()
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         for payload in payloads:
+            resolved_deps: list[str] | None = None
+            if payload.depends_on_template_ids:
+                missing = [dep for dep in payload.depends_on_template_ids if dep not in spawned_by_template_id]
+                if missing:
+                    logger.warning(
+                        "Skipping scenario task %s because upstream template dependencies failed to spawn: %s",
+                        payload.title,
+                        ", ".join(missing),
+                    )
+                    continue
+                resolved_deps = [spawned_by_template_id[dep] for dep in payload.depends_on_template_ids]
             try:
                 resp = await client.post(
                     f"{server_url}/tasks",
-                    json=payload.as_server_payload(),
+                    json=payload.as_server_payload(resolved_depends_on=resolved_deps),
                     headers=headers,
                 )
                 resp.raise_for_status()
@@ -166,6 +180,8 @@ async def invoke_scenario_via_server(
                 tid = ""
             if tid:
                 task_ids.append(tid)
+                if payload.template_id:
+                    spawned_by_template_id[payload.template_id] = tid
 
     return {
         "orchestration_id": orchestration_id,
@@ -240,7 +256,7 @@ def _error_response(exc: Exception) -> str:
 
 
 def _validation_error_response(err: ValidationError) -> str:
-    """Render a validation failure as the JSON string FastMCP tools return."""
+    """Render a validation failure as the JSON string MCPServer tools return."""
     return validation_error_response(err)
 
 
@@ -278,7 +294,7 @@ def _scenario_run_handle(result: dict[str, Any]) -> dict[str, Any]:
     return handle
 
 
-def register_scenario_tools(mcp: FastMCP[None], server_url: str) -> None:
+def register_scenario_tools(mcp: MCPServer[None], server_url: str) -> None:
     """Register the consolidated ``bernstein_scenario`` MCP tool (#3087).
 
     One tool with an ``action`` selector replaces the former three-tool
@@ -287,7 +303,7 @@ def register_scenario_tools(mcp: FastMCP[None], server_url: str) -> None:
     aliases registered by the server module.
 
     Args:
-        mcp: FastMCP instance to attach the tool to.
+        mcp: MCPServer instance to attach the tool to.
         server_url: Bernstein task server base URL the tool will hit.
     """
 

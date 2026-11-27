@@ -1,0 +1,33 @@
+name: ai-governance-gate
+description: "Audit an agentic workflow against OWASP Agentic Top 10, eval stability, and ISO 42001 controls."
+version: "1.0.0"
+nodes:
+  - id: catalog-surface
+    agent: analyst
+    prompt: |
+      Catalog models, prompts, MCP servers, tool permissions, and human approval
+      gates in scope for: {goal}
+    timeout_seconds: 1200
+  - id: owasp-threat-audit
+    depends_on: [catalog-surface]
+    agent: adversary
+    prompt: |
+      Assess goal-hijack, tool-misuse, privilege-escalation, and memory-poisoning
+      vectors and propose concrete technical barriers for: {goal}
+    fresh_context: true
+    timeout_seconds: 1800
+  - id: eval-and-guardrail-check
+    depends_on: [catalog-surface]
+    agent: qa
+    prompt: |
+      Verify deterministic guardrail tests and repeatable outcome evaluations
+      exist and pass for: {goal}
+    fresh_context: true
+    timeout_seconds: 1800
+  - id: aims-verdict
+    depends_on: [owasp-threat-audit, eval-and-guardrail-check]
+    agent: security
+    prompt: |
+      Verify every high-severity risk is mitigated fail-closed and write the
+      signed governance register summary for: {goal}
+    timeout_seconds: 1200

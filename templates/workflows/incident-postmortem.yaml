@@ -1,0 +1,28 @@
+name: incident-postmortem
+description: "Triages an incident, lands a regression-tested guardrail, and writes the postmortem."
+version: "1.0.0"
+nodes:
+  - id: timeline-and-root-cause
+    agent: analyst
+    prompt: |
+      Investigate the incident: {goal}
+      Pin exact timestamps, root cause, blast radius, and minimal reproduction.
+  - id: guardrail-fix
+    depends_on: [timeline-and-root-cause]
+    agent: backend
+    prompt: |
+      Add a failing regression test for {goal}, implement the fail-closed fix,
+      and run focused lint and type checks.
+    fresh_context: true
+    timeout_seconds: 3600
+  - id: verify-tests
+    depends_on: [guardrail-fix]
+    command: "pytest -x -q"
+    timeout_seconds: 1800
+  - id: write-postmortem
+    depends_on: [verify-tests]
+    agent: docs
+    prompt: |
+      Write a concise blameless postmortem covering timeline, root cause,
+      customer impact, landed guardrail, and follow-up actions for: {goal}
+    timeout_seconds: 1200

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from pathlib import Path
 
 import pytest
 from bernstein.core.auth import verify_jwt
 
-from bernstein.core.identity.agent_jwt import AgentIdentityStore
+from bernstein.core.identity.agent_jwt import _LEGACY_JWT_SECRET_NAME, AgentIdentityStore, _retire_legacy_jwt_secret
 from tests.unit._identity_record_helpers import seal
 
 
@@ -20,6 +21,27 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+@pytest.mark.parametrize("removable", [True, False])
+def test_retirement_logs_status_without_file_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, removable: bool
+) -> None:
+    retired_file = tmp_path / _LEGACY_JWT_SECRET_NAME
+    if removable:
+        retired_file.touch()
+    else:
+        retired_file.mkdir()
+
+    with caplog.at_level(logging.INFO, logger="bernstein.core.identity.agent_jwt"):
+        _retire_legacy_jwt_secret(tmp_path)
+
+    (record,) = [entry for entry in caplog.records if entry.name == "bernstein.core.identity.agent_jwt"]
+    message = record.getMessage()
+    assert str(tmp_path) not in message
+    assert _LEGACY_JWT_SECRET_NAME not in message
+    assert record.levelno == (logging.INFO if removable else logging.WARNING)
+    assert retired_file.exists() is not removable
+
+
 def test_create_identity_returns_jwt_with_expected_claims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Newly issued agent tokens should be JWTs with the fixed identity claims."""
 
@@ -27,7 +49,7 @@ def test_create_identity_returns_jwt_with_expected_claims(tmp_path: Path, monkey
     store = AgentIdentityStore(tmp_path)
 
     identity, token = store.create_identity("backend-1", "backend", metadata={"tenant_id": "acme"})
-    claims = verify_jwt(token, "agent-jwt-secret")
+    claims = verify_jwt(token, store.public_key_jwk(), algorithm="EdDSA")
 
     assert claims is not None
     assert claims["sub"] == "backend-1"
@@ -149,7 +171,7 @@ def test_task_scoped_jwt_embeds_task_ids_in_claims(tmp_path: Path, monkeypatch: 
         "backend",
         task_ids=["task-aaa", "task-bbb"],
     )
-    claims = verify_jwt(token, "agent-jwt-secret")
+    claims = verify_jwt(token, store.public_key_jwk(), algorithm="EdDSA")
 
     assert claims is not None
     assert sorted(claims["task_ids"]) == ["task-aaa", "task-bbb"]
@@ -169,7 +191,7 @@ def test_file_scoped_jwt_embeds_allowed_files_in_claims(tmp_path: Path, monkeypa
         task_ids=["task-ccc"],
         allowed_files=["src/**/*.py", "tests/**/*.py"],
     )
-    claims = verify_jwt(token, "agent-jwt-secret")
+    claims = verify_jwt(token, store.public_key_jwk(), algorithm="EdDSA")
 
     assert claims is not None
     assert sorted(claims["allowed_files"]) == ["src/**/*.py", "tests/**/*.py"]

@@ -1,0 +1,32 @@
+id: observability-instrumentation
+name: Silent-Failure Audit and Structured Telemetry Uplift
+version: "1.0"
+description: |
+  Eliminate swallowed exceptions and opaque error exits by wiring structured
+  logs, correlation IDs, latency histograms, and health-check coverage.
+tags: [software, observability, telemetry, logging, reliability]
+tasks:
+  - title: Audit broad exception handlers and silent fallback paths
+    role: architect
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Locate bare or overly broad catches, swallowed subprocess errors, and
+      unlogged retry loops across critical execution paths.
+  - title: Add structured error context, metrics, and trace correlation
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Propagate run/task correlation fields and emit bounded structured events
+      without leaking credentials or PII.
+  - title: Add telemetry assertions for failure and recovery paths
+    role: qa
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      Write unit tests proving injected faults emit the expected structured
+      diagnostic fields and non-zero exit codes.

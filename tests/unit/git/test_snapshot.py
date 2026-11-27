@@ -11,6 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -111,6 +112,62 @@ def test_take_does_not_disturb_real_index(repo: Path) -> None:
     assert before == after == "staged.txt"
 
 
+def test_linked_worktree_snapshot_preserves_indexes_and_shares_metadata(repo: Path) -> None:
+    linked = repo / "linked"
+    _git("worktree", "add", "--detach", str(linked), cwd=repo)
+    filename = "README.md"
+    (repo / filename).write_text("main staged\n", encoding="utf-8")
+    _git("add", filename, cwd=repo)
+    (linked / filename).write_text("linked staged\n", encoding="utf-8")
+    _git("add", filename, cwd=linked)
+    (linked / filename).write_text("linked unstaged\n", encoding="utf-8")
+
+    snap = SnapshotStore(linked).take(task_id="T-linked", label="linked worktree")
+    sidecar = repo / ".git" / "bernstein" / "snapshots" / f"{snap.snapshot_id}.json"
+
+    assert sidecar.is_file()
+    assert json.loads(sidecar.read_text(encoding="utf-8")) == snap.to_dict()
+    assert _git("show", f"{snap.tree_sha}:{filename}", cwd=linked) == "linked unstaged\n"
+    assert _git("show", f":{filename}", cwd=linked) == "linked staged\n"
+    assert _git("show", f":{filename}", cwd=repo) == "main staged\n"
+    _git("worktree", "remove", "--force", str(linked), cwd=repo)
+    assert SnapshotStore(repo).list(task_id="T-linked") == [snap]
+
+
+def test_snapshot_from_subdirectory_captures_sibling_edits_and_deletions(repo: Path) -> None:
+    (repo / "remove.txt").write_text("remove me\n", encoding="utf-8")
+    _git("add", "remove.txt", cwd=repo)
+    _git("commit", "-qm", "add tracked sibling", cwd=repo)
+    nested = repo / "nested"
+    nested.mkdir()
+    (nested / "new.txt").write_text("nested\n", encoding="utf-8")
+    (repo / "README.md").write_text("root changed\n", encoding="utf-8")
+    (repo / "remove.txt").unlink()
+
+    snap = SnapshotStore(nested).take(task_id="T-nested")
+
+    assert _git("show", f"{snap.tree_sha}:README.md", cwd=repo) == "root changed\n"
+    assert _git("ls-tree", "-r", "--name-only", snap.tree_sha, cwd=repo).splitlines() == [
+        "README.md",
+        "nested/new.txt",
+    ]
+
+
+def test_linked_worktree_stack_metadata_is_shared(repo: Path) -> None:
+    linked = repo / "linked"
+    _git("branch", "task-first", cwd=repo)
+    _git("branch", "task-second", cwd=repo)
+    _git("worktree", "add", "--detach", str(linked), cwd=repo)
+
+    first = stack_push(repo, task_id="T-stack", branch="task-first")
+    second = stack_push(linked, task_id="T-stack", branch="task-second")
+
+    assert second.parent_branch == "task-first"
+    assert stack_list(repo, task_id="T-stack") == [first, second]
+    assert stack_clear(linked, task_id="T-stack") == 2
+    assert stack_list(repo, task_id="T-stack") == []
+
+
 def test_take_persists_metadata_sidecar(repo: Path) -> None:
     """The metadata JSON sidecar is written alongside the ref."""
     snap = SnapshotStore(repo).take(task_id="T-meta", label="before tool call")
@@ -174,14 +231,44 @@ def test_list_respects_limit(repo: Path) -> None:
 
 
 def test_list_synthesises_record_when_metadata_missing(repo: Path) -> None:
-    """A ref without its sidecar still appears in the list."""
+    """A ref without a sidecar sorts last and loses its task association."""
     store = SnapshotStore(repo)
-    snap = store.take(task_id="T-orphan")
+    tracked = store.take(task_id="T-orphan")
+    snap = store.take(task_id="T-orphan", tool_call_id="tc-orphan", agent_id="agent:test", label="before removal")
     sidecar = repo / ".git" / "bernstein" / "snapshots" / f"{snap.snapshot_id}.json"
     sidecar.unlink()
 
-    snaps = store.list()
-    assert any(s.snapshot_id == snap.snapshot_id for s in snaps)
+    fallback = Snapshot(
+        snapshot_id=snap.snapshot_id,
+        tree_sha=snap.tree_sha,
+        ref=snap.ref,
+        ts_ns=0,
+        label=snap.snapshot_id,
+    )
+    assert store.get(snap.snapshot_id) == fallback
+    assert store.list() == [tracked, fallback]
+    assert store.list(limit=1) == [tracked]
+    assert store.list(task_id="T-orphan") == [tracked]
+
+
+def test_populated_list_resolves_metadata_dir_once_and_sees_later_snapshots(repo: Path) -> None:
+    from bernstein.core.git import snapshot as snapshot_module
+
+    store = SnapshotStore(repo)
+    first = store.take(task_id="T-a")
+    second = store.take(task_id="T-b")
+    with patch.object(
+        snapshot_module, "_snapshot_metadata_dir", wraps=snapshot_module._snapshot_metadata_dir
+    ) as resolve:
+        assert store.list() == [second, first]
+        resolve.assert_called_once_with(repo)
+
+        third = SnapshotStore(repo).take(task_id="T-a")
+        resolve.reset_mock()  # Exclude the new snapshot's metadata write.
+        assert store.list() == [third, second, first]
+        resolve.assert_called_once_with(repo)
+
+    assert store.list(task_id="T-a", limit=1) == [third]
 
 
 # ---------------------------------------------------------------------------
@@ -526,9 +613,9 @@ def test_each_git_call_gets_the_timeout_it_was_meant_to_have(repo: Path, monkeyp
     SnapshotStore(repo).take(task_id="t-1")
 
     by_command = dict(seen)
-    assert by_command["add"] == snapshot_module._GIT_ADD_TIMEOUT_S
+    assert by_command["add"] == snapshot_module._GIT_ADD_TIMEOUT_S  # pyright: ignore[reportPrivateUsage]
     assert by_command["add"] == 300, "the add bound is the decision this module makes; pin it"
-    assert by_command["write-tree"] == snapshot_module._GIT_TIMEOUT_S
+    assert by_command["write-tree"] == snapshot_module._GIT_TIMEOUT_S  # pyright: ignore[reportPrivateUsage]
     assert by_command["write-tree"] == 30
 
 
@@ -547,7 +634,7 @@ def test_a_killed_git_add_does_not_orphan_its_lock_file(repo: Path, monkeypatch:
 
     def leave_a_lock(args: list[str], cwd: Path, **kwargs: object) -> GitResult:
         if args[0] == "add":
-            index = Path(str(kwargs.get("env", {}).get("GIT_INDEX_FILE", "")))  # type: ignore[union-attr]
+            index = Path(str(kwargs.get("env", {}).get("GIT_INDEX_FILE", "")))  # type: ignore[attr-defined]
             lock = index.with_name(index.name + ".lock")
             lock.write_text("", encoding="utf-8")
             created.append(lock)

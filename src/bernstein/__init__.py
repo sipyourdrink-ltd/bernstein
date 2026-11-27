@@ -1,13 +1,13 @@
-"""Bernstein - the open-source governance layer for AI agents.
+"""Bernstein - an open-source governance layer for AI agents.
 
-Bernstein runs a crew of CLI coding agents (Claude Code, Codex, Gemini CLI, and
-40+ more) against a single goal in per-task git worktrees. There is no model in
+Bernstein runs a crew of CLI coding agents (Claude Code, Codex, Gemini CLI and
+others) against a single goal in per-task git worktrees. There is no model in
 the coordination loop, so the same plan replays to a byte-identical task graph,
 and an HMAC-SHA256 audit chain (RFC 2104) covers every scheduling decision.
 
 Highlights:
 
-* 40+ CLI agent adapters (run ``bernstein integrations list`` for the current set).
+* Selectable CLI agent adapter names (run ``bernstein adapters list`` for the current count).
 * HMAC-SHA256 chained audit log per RFC 2104; key sits outside the audit
   volume; ``bernstein audit verify`` validates integrity. Replaying the HMAC
   chain needs that key; the Merkle seal (``audit verify --merkle-only``) and
@@ -65,6 +65,9 @@ def get_templates_dir(workdir: Path) -> Path:
     compatibility, then falls back to the package's bundled defaults so
     that ``bernstein`` works right after ``pip install`` without requiring
     ``bernstein init`` first.
+
+    Args:
+        workdir: Project root to search for local templates.
     """
     dot_bernstein = workdir / ".bernstein" / "templates"
     if dot_bernstein.is_dir():

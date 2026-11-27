@@ -4,13 +4,13 @@ name: static-analysis (extended)
 # ruff + mypy + bandit + CodeQL lane in ci.yml. Catches dead code
 # (vulture), outdated idioms (refurb), hot-path antipatterns
 # (perflint), pattern-based Python rules (Semgrep CE), and
-# IaC/filesystem CVEs (Trivy) that single-tool lanes miss.
+# IaC misconfigurations (Trivy). The filesystem scan runs in trivy-fs.yml.
 #
 # Each job runs in parallel and uploads SARIF to GitHub Code
 # Scanning so the Security tab is the single source of truth.
 #
-# Lane split (issue #2764): the security-signal jobs (semgrep, trivy-fs,
-# trivy-iac) run on push to main and on the schedule. The advisory
+# Lane split (issue #2764): the security-signal jobs (semgrep, trivy-iac)
+# run on push to main and on the schedule. The advisory
 # style-and-hygiene jobs (vulture, refurb, perflint) run on the weekly
 # schedule and workflow_dispatch only, so the code-scanning alert feed
 # stays a security signal. The refurb SARIF
@@ -94,7 +94,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
       - name: Install Semgrep (isolated env)
@@ -144,7 +144,7 @@ jobs:
             semgrep.sarif > semgrep.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
         with:
           sarif_file: semgrep.filtered.sarif
           category: semgrep-ce
@@ -154,89 +154,6 @@ jobs:
         with:
           name: semgrep-sarif
           path: semgrep.sarif
-          if-no-files-found: warn
-          retention-days: 14
-
-  trivy-fs:
-    # Filesystem scan for vulnerable OS / language packages + leaked
-    # secrets across the repo. HIGH/CRITICAL fails the job; lower
-    # severities surface in Code Scanning but do not block.
-    name: Trivy (filesystem)
-    runs-on: [self-hosted, linux, vps]
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
-        with:
-          egress-policy: audit
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Run Trivy filesystem scan (SARIF)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-fs.sarif
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "0"
-          # The scanner adapters under test need real, deliberately
-          # vulnerable inputs to scan: tests/fixtures/scanners/*/target
-          # holds a lockfile pinning a known-bad lodash and an env file
-          # with a planted secret. Our own supply-chain gate scanned them
-          # too and failed main on a finding that is the fixture's whole
-          # point. Only the target trees are skipped; the conformance
-          # fixtures beside them are still scanned.
-          skip-dirs: "tests/fixtures/scanners/trivy/target,tests/fixtures/scanners/gitleaks/target"
-      - name: Drop suppressed SARIF results
-        if: always()
-        run: |
-          python3 scripts/sarif_drop_suppressed.py \
-            trivy-fs.sarif > trivy-fs.filtered.sarif
-      - name: Upload SARIF to Code Scanning
-        if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4
-        with:
-          sarif_file: trivy-fs.filtered.sarif
-          category: trivy-fs
-      - name: Run Trivy filesystem scan (failing gate)
-        # Re-run with exit-code=1 to fail the job on any HIGH/CRITICAL
-        # finding. We split SARIF upload from the failing gate so
-        # findings still reach Code Scanning when the gate fires.
-        #
-        # PR-exempt: a newly-disclosed CVE in an unchanged dependency would
-        # otherwise redden PRs that never touched it. The SARIF upload above
-        # still surfaces the finding on PRs, and dependency-review covers
-        # dependency changes, so the hard gate only runs on push/schedule.
-        if: github.event_name != 'pull_request'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: table
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          # The scanner adapters under test need real, deliberately
-          # vulnerable inputs to scan: tests/fixtures/scanners/*/target
-          # holds a lockfile pinning a known-bad lodash and an env file
-          # with a planted secret. Our own supply-chain gate scanned them
-          # too and failed main on a finding that is the fixture's whole
-          # point. Only the target trees are skipped; the conformance
-          # fixtures beside them are still scanned.
-          skip-dirs: "tests/fixtures/scanners/trivy/target,tests/fixtures/scanners/gitleaks/target"
-      - name: Upload SARIF as workflow artifact
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: trivy-fs-sarif
-          path: trivy-fs.sarif
           if-no-files-found: warn
           retention-days: 14
 
@@ -282,7 +199,7 @@ jobs:
             trivy-iac.sarif > trivy-iac.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
         with:
           sarif_file: trivy-iac.filtered.sarif
           category: trivy-iac
@@ -328,7 +245,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
       - name: Install vulture (isolated env)
@@ -356,7 +273,7 @@ jobs:
             vulture.sarif > vulture.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
         with:
           sarif_file: vulture.filtered.sarif
           category: vulture
@@ -393,7 +310,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
       - name: Install refurb (isolated env)
@@ -438,7 +355,7 @@ jobs:
           FILTER
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
         with:
           sarif_file: refurb.filtered.sarif
           category: refurb
@@ -476,7 +393,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
       - name: Install perflint (isolated env)
@@ -507,7 +424,7 @@ jobs:
             perflint.sarif > perflint.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
         with:
           sarif_file: perflint.filtered.sarif
           category: perflint

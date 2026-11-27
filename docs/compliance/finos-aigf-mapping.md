@@ -122,7 +122,7 @@ in this table appears in §1.
 | DSSE/in-toto envelope on the bundle | Round-trip + tamper tests in place. v1 uses local Ed25519; Sigstore keyless variant is documented in the module docstring. |
 | Standalone verifier | `tools/verify_audit_dsse.py`. Subprocess-isolated test enforces no `bernstein.*` import. Pure stdlib + `cryptography`. |
 | Per-role adapter deny-list | Empty allow-list = all-allowed. Hooks `bernstein.adapters.registry.get_adapter` so every spawn site is covered. |
-| Sigstore release attestation (SLSA L3) | `actions/attest-build-provenance` runs on every published wheel + sdist via `publish.yml`. Consumers verify with `gh attestation verify <file> --owner sipyourdrink-ltd` or `bernstein verify <wheelhouse> --sigstore`. Smoke test in `tests/unit/test_release_attestation_workflow.py` guards against a workflow refactor silently re-opening the gap. |
+| Sigstore release attestation (SLSA L3) | `actions/attest-build-provenance` runs on every published wheel + sdist via `publish.yml`. Consumers verify with `gh attestation verify <file> --owner sipyourdrink-ltd` or `bernstein verify <wheelhouse> --sigstore`. Each GitHub Release also carries the bundle for its assets as `bernstein-<version>.sigstore.json`, so the files can be verified from the release page without the attestations API: `gh attestation verify <file> --owner sipyourdrink-ltd --bundle bernstein-<version>.sigstore.json`. Smoke test in `tests/unit/test_release_attestation_workflow.py` guards against a workflow refactor silently re-opening the gap. |
 
 ## 5. References
 

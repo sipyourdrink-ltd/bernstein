@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from collections import Counter
 from typing import Any, cast
 
 from bernstein.core.models import (
@@ -26,6 +28,7 @@ from bernstein.core.orchestration.manager_models import (
     QueueCorrection,
     QueueReviewResult,
 )
+from bernstein.core.tasks.models import DispatchTier
 from bernstein.core.tasks.schema_retry import (
     AskAgain,
     SchemaRetryContext,
@@ -245,7 +248,94 @@ def _parse_upgrade_details(raw: dict[str, Any]) -> UpgradeProposalDetails:
     )
 
 
-def raw_dicts_to_tasks(raw_tasks: list[dict[str, Any]], id_prefix: str = "task") -> list[Task]:
+_RESEARCH_PURPOSE = re.compile(
+    r"^(?:research|survey|open-ended analysis|feasibility study|(?:assess|evaluate) (?:the )?feasibility)\b", re.I
+)
+_SEARCH_PURPOSE = re.compile(
+    r"^(?:search (?:the web|online)|web (?:search|lookup)|look up\b.*\bonline|"
+    r"fetch (?:the )?(?:docs|documentation)|"
+    r"extract (?:the )?urls?)\b",
+    re.I,
+)
+_IMPLEMENTATION_FOLLOWUP = re.compile(
+    r"\b(?:and|then|to)\s+(?:implement|fix|repair|modify|change|patch|add|remove|update|refactor|write|edit|build)\b",
+    re.I,
+)
+_LOCAL_SOURCE = re.compile(
+    r"\b(?:in|from)\s+(?:the\s+)?(?:local\b|workspace\b|repo(?:sitory)?\b|[\w./-]+\.[\w-]+\b)",
+    re.I,
+)
+
+
+def _read_dispatch_hints(raw: object, index: int) -> dict[str, int | bool]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning("Ignoring malformed dispatch_hints in task %d", index)
+        return {}
+    hints: dict[str, int | bool] = {}
+    lines = raw.get("estimated_changed_lines")
+    if type(lines) is int and lines >= 0:
+        hints["estimated_changed_lines"] = lines
+    elif lines is not None:
+        logger.warning("Ignoring invalid dispatch_hints.estimated_changed_lines in task %d", index)
+    shell = raw.get("requires_shell")
+    if isinstance(shell, bool):
+        hints["requires_shell"] = shell
+    elif shell is not None:
+        logger.warning("Ignoring invalid dispatch_hints.requires_shell in task %d", index)
+    return hints
+
+
+def _one_concrete_file(files: object) -> bool:
+    if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], str):
+        return False
+    path = files[0]
+    return (
+        bool(path.strip())
+        and not any(char in path for char in "*?[]{}\\:\0")
+        and all(part not in ("", ".", "..") for part in path.split("/"))
+    )
+
+
+def _select_dispatch_tier(task: Task, raw: dict[str, Any], hints: dict[str, int | bool], index: int) -> DispatchTier:
+    if "dispatch_tier" in raw:
+        explicit = raw["dispatch_tier"]
+        if isinstance(explicit, str):
+            try:
+                return DispatchTier(explicit)
+            except ValueError:
+                pass
+        raise ValueError(f"Invalid dispatch_tier in task {index}: expected a supported tier string")
+
+    if hints.get("requires_shell") is True or any(s.type == "test_passes" for s in task.completion_signals):
+        return DispatchTier.SANDBOX
+    title = task.title.strip() if isinstance(task.title, str) else ""
+    if not _IMPLEMENTATION_FOLLOWUP.search(title):
+        if task.task_type is TaskType.RESEARCH or _RESEARCH_PURPOSE.match(title):
+            return DispatchTier.RESEARCH
+        if _SEARCH_PURPOSE.match(title) and not _LOCAL_SOURCE.search(title):
+            return DispatchTier.SEARCH
+    lines = hints.get("estimated_changed_lines")
+    if (
+        lines is not None
+        and lines < 10
+        and hints.get("requires_shell") is False
+        and _one_concrete_file(task.owned_files)
+    ):
+        return DispatchTier.EDGE
+    return DispatchTier.LOCAL
+
+
+def dispatch_distribution(tasks: list[Task]) -> str:
+    """Summarize selected generated tasks in stable tier order."""
+    counts = Counter(task.dispatch_tier for task in tasks)
+    return f"{len(tasks)} tasks: " + ", ".join(f"{counts[tier]} {tier.value}" for tier in DispatchTier)
+
+
+def raw_dicts_to_tasks(
+    raw_tasks: list[dict[str, Any]], id_prefix: str = "task", *, classify_dispatch: bool = False
+) -> list[Task]:
     """Convert parsed JSON task dicts into domain Task objects.
 
     Invalid tasks are logged and skipped rather than causing a hard failure.
@@ -253,6 +343,7 @@ def raw_dicts_to_tasks(raw_tasks: list[dict[str, Any]], id_prefix: str = "task")
     Args:
         raw_tasks: List of dicts from ``parse_tasks_response``.
         id_prefix: Prefix for generated task IDs.
+        classify_dispatch: Select dispatch tiers for generated plan tasks.
 
     Returns:
         List of valid Task objects.
@@ -262,6 +353,11 @@ def raw_dicts_to_tasks(raw_tasks: list[dict[str, Any]], id_prefix: str = "task")
         try:
             task = _parse_single_task(raw, i, id_prefix)
             if task is not None:
+                if classify_dispatch:
+                    hints = _read_dispatch_hints(raw.get("dispatch_hints"), i)
+                    if hints:
+                        task.metadata["dispatch_hints"] = hints
+                    task.dispatch_tier = _select_dispatch_tier(task, raw, hints, i)
                 tasks.append(task)
         except (ValueError, KeyError) as exc:
             logger.warning("Skipping task %d due to parse error: %s", i, exc)

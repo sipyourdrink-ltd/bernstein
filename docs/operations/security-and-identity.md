@@ -3,11 +3,26 @@
 Audience: security engineers evaluating Bernstein for an enterprise
 deployment.
 
+## Lineage signer custody
+
+Python integrations can construct a reusable lineage signer with
+`DetachedJwsSigner.from_signer(adapter, kid=key_id)` from
+`bernstein.core.lineage.identity`. The adapter implements the existing
+`DetachedSigner.sign(bytes) -> bytes` protocol; `KMSAdapter` implementations
+provide this signing surface without exporting private key material to the
+lineage module. Supply the matching trusted public key and key id in the
+verifying `AgentCard`.
+
+This constructor preserves the existing RFC 7797 protected header and detached
+JWS wire format. `from_pem` remains available for existing callers. A failed
+adapter call propagates to the caller without a local-key fallback. Selecting
+an adapter does not create a hardware driver, change routing, or rotate keys.
+
 ## Overview
 
 Bernstein's security model has two axes. The **human axis** authenticates
-operators against an identity provider (OIDC, SAML, or local username +
-password) and enforces RBAC on the FastAPI surface; tokens are JWT, sessions
+operators against an OIDC or SAML identity provider and enforces RBAC on
+the FastAPI surface; tokens are JWT, sessions
 are persisted to `.sdd/auth/`, and every privileged action is recorded in an
 HMAC-chained tamper-evident audit log. The **agent axis** treats every spawned
 agent as a first-class identity: the orchestrator issues a per-agent JWT
@@ -15,8 +30,7 @@ scoped to specific tasks and permissions, the API middleware validates that
 scope on every mutating request, and revocation is one POST.
 
 Authentication is required by default (`auth_middleware.py:14-19`). The only
-path to "no auth" is an explicit opt-out (`BERNSTEIN_AUTH_DISABLED=1` or
-`auth.enabled: false` in `bernstein.yaml`), which logs a loud warning on
+path to "no auth" is an explicit opt-out (`BERNSTEIN_AUTH_DISABLED=1`), which logs a loud warning on
 startup. SSO providers, RBAC route mapping, identity issuance, audit
 integrity, drain/export endpoints, and SBOM generation are all in-tree
 features - there is no separate "enterprise edition" toggle.
@@ -24,16 +38,28 @@ features - there is no separate "enterprise edition" toggle.
 ## Request rate limits
 
 Request limits apply to both canonical routes and their `/api/v1` aliases.
-Seed-configured `rate_limit.buckets` share their counters across both forms.
+Named buckets under the seed’s `rate_limit` mapping share counters across both forms.
 Canonical rules take precedence; versioned-only rules remain supported when
 no canonical rule matches.
 The `/events`, `/events/cost` and `/events/thread` routes and their versioned
-aliases share the SSE concurrency cap.
+aliases share the SSE concurrency cap and the per-client SSE reconnect limit.
+
+## WebSocket handshakes
+
+A WebSocket handshake (`/ws` and `/api/v1/ws`) passes the same middleware
+gates as an HTTP `GET` to the same path: authentication, the dashboard
+gate, the IP allowlist and request limits. The handshake is admitted only
+when that request would reach routing. Otherwise the client receives the
+gate's HTTP response (for example 401, 403 or 429) when the server supports
+the ASGI WebSocket denial response, or a close with code 1008. Clients send
+credentials as an `Authorization: Bearer` header on the handshake. Request
+logs record each handshake as a `GET`.
 
 ## Authentication attempt limits
 
 `POST /dashboard/auth/login`, `GET /auth/login`, `GET /auth/oidc/callback`,
-`POST /auth/saml/acs`, and `POST /auth/cli/{device,token,authorize}` share a
+`POST /auth/saml/acs`, `POST /auth/cli/{device,token,authorize}` and
+`POST /a2a/v1/oauth/token` share a
 default budget of 10 attempts per client per 60 seconds. Their `/api/v1`
 aliases use the same counters. Limits apply even to loopback clients and
 unconfigured providers. Client identity uses the TCP peer unless the peer
@@ -49,6 +75,12 @@ dashboard login clears only that client's backoff, retaining attempt counts.
 Backoff history expires 900 seconds after the lockout ends. State is held
 in memory per application process and is cleared on restart; deployments
 with multiple processes should also enforce limits at their ingress.
+
+The A2A token endpoint records failed client secrets like failed dashboard
+credentials. `POST /a2a/v1` (JSON-RPC) carries a credential on every call,
+so it has no attempt window: a failed API key or bearer token starts the
+same per-client backoff, calls are rejected with HTTP 429 while it lasts,
+and a successful call clears it.
 
 Existing seed buckets override the default attempt count and window:
 
@@ -67,22 +99,22 @@ general request limits continue to apply as well.
 
 ## Auth providers
 
-Three provider families are supported, configured under `auth.*` in
-`bernstein.yaml` and exposed by `core/security/auth.py:923-...`
-(`AuthService`).
+`AuthService` supports OIDC and SAML login. Set
+`BERNSTEIN_AUTH_ENABLED=true` to enable the authentication service.
 
-| Provider         | Config keys                                              | Code                                                      |
-| ---------------- | -------------------------------------------------------- | --------------------------------------------------------- |
-| **OIDC**         | `auth.oidc.{enabled,issuer,client_id,client_secret,scopes,redirect_uri}` | `core/security/sso_oidc.py`, `routes/auth.py:172-261`     |
-| **SAML 2.0**     | `auth.saml.{enabled,sp_entity_id,idp_metadata_url,...}`  | `core/security/auth.py` (SAML helpers), `routes/auth.py:269-316` |
-| **Local users**  | `auth.users[]` (admin-managed via `/auth/users`)         | `core/security/auth.py` (`AuthUserStore`), `routes/auth.py:494-520` |
+| Provider | Configuration |
+|----------|---------------|
+| **OIDC** | `BERNSTEIN_OIDC_ENABLED`, `BERNSTEIN_OIDC_ISSUER_URL`, `BERNSTEIN_OIDC_CLIENT_ID`, `BERNSTEIN_OIDC_CLIENT_SECRET`, `BERNSTEIN_OIDC_SCOPES`, `BERNSTEIN_OIDC_REDIRECT_URI` |
+| **SAML 2.0** | `BERNSTEIN_SAML_ENABLED`, `BERNSTEIN_SAML_IDP_ENTITY_ID`, `BERNSTEIN_SAML_IDP_SSO_URL`, `BERNSTEIN_SAML_IDP_X509_CERT`, `BERNSTEIN_SAML_SP_ENTITY_ID`, `BERNSTEIN_SAML_SP_ACS_URL` |
+
+Administrators can list stored users with `GET /auth/users`.
 
 Group-to-role mappings are surfaced via `GET /auth/group-mappings` and
 modified by admins via `PUT /auth/group-mappings`
 (`routes/auth.py:443-491`). They map IdP group claims (e.g.
 `bernstein-admins`) to one of the three Bernstein roles.
 
-A fourth path - **legacy bearer tokens** - exists for backwards
+The server also accepts **legacy bearer tokens** for backwards
 compatibility (`auth_middleware.py:7`). It accepts a single shared secret
 configured by `BERNSTEIN_AUTH_TOKEN`. Treat it as a transitional
 mechanism; SSO + JWT is the supported deployment.
@@ -104,9 +136,14 @@ user_id, scopes)`. Three issuers exist:
   `localStorage`. Device flow (`/auth/cli/device`, `/auth/cli/token`)
   issues the same token via polling for CLI-based logins
   (`routes/auth.py:324-372`).
-- **Agent identity** - `core/identity/agent_jwt.py` issues task-scoped JWTs
-  with claims `{session_id, user_id=identity_id, task_ids: [...],
-  permissions: [...]}`. Stored in `.sdd/auth/identities/`.
+- **Agent identity** - `core/identity/agent_jwt.py` issues short-lived
+  task-scoped `EdDSA` (Ed25519) JWTs carrying a `kid` published in
+  `/.well-known/agent.json/keys`, signed through `KMSAdapter` with an
+  out-of-workdir `0600` key and verified from the authenticated credential
+  record's stored `algorithm` using public key material only. Existing unexpired
+  `HS256` credentials continue verifying until expiry (`BERNSTEIN_AUTH_JWT_SECRET`
+  logs a deprecation warning and will be removed one minor release later).
+  Records are stored in `.sdd/auth/agent_identities/`.
 - **Cluster nodes** - `ClusterAuthenticator.issue_node_token(node_id)`
   (`core/protocols/cluster/cluster_auth.py:70-93`); see
   [Cluster mode](cluster-mode.md).
@@ -830,3 +867,30 @@ Compliance modules in code (`core/security/`):
 | Vault / secrets                    | `src/bernstein/core/security/vault/`, `vault_injector.py`             |
 | Tenant isolation                   | `src/bernstein/core/security/tenant_isolation.py`, `tenanting.py`     |
 | Permission modes (Claude profiles) | `src/bernstein/core/security/{permission_mode,permission_matrix,permission_rules}.py` |
+
+### Conduct scope comparison
+
+The pure `aggregate_conduct` helper accepts optional `scope_projection` and
+`recorded_activities` arguments and adds a `scope_comparison` output section.
+The supplied `DelegationScope` must be the effective scope for that principal
+throughout the requested period. Resolve it from verified authority records
+before calling; split periods at authority changes. This report does not replay
+the registry, verify grant chains, discover journals, remap identities or act on
+its results.
+
+Each `ConductScopeActivity` wraps an existing recorded activity's **exercised**
+scope, source run/principal, activity name and original journal event-index
+range. Supply verified activity records corresponding to the selected source
+projections. Do not substitute an entitlement ceiling for exercised scope or
+infer permissions from activity names/counts. The helper uses the existing
+`DelegationScope.narrowing_violations` rules, including the distinction between
+globs and path prefixes, and reports every divergent axis with the source
+citation and recorded scope.
+
+Missing period scope is `unavailable`. Missing activity records, absent recorded
+scope and unverified source runs remain explicit gaps; known comparisons plus
+gaps produce `partial`, never a clean-period assertion. A comparison without
+divergences describes only the supplied recorded activity scopes, not unobserved
+activity. Input ordering does not change canonical output. Source projections,
+counts, coverage and the existing indivisible window-selection rule remain the
+same; activity citations always use run-local indices.

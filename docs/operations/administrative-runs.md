@@ -1,5 +1,7 @@
 # Administrative runs
 
+For the individual-task alternative, see [Bare tasks](bare-tasks.md).
+
 Create an organizational work period without launching orchestration:
 
 ```python

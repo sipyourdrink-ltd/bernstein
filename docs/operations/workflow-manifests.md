@@ -66,7 +66,7 @@ Node fields (`core/workflows/workflow_spec.py`, `WorkflowNode`):
 | Field | Meaning |
 |---|---|
 | `id` | Slug-shaped, unique within the manifest. |
-| `depends_on` | Ids that must finish before this node starts. |
+| `depends_on` | Upstream node ids that must succeed or be intentionally skipped by a false `when` condition before this node starts. A command succeeds on exit 0; an agent node succeeds on dispatch returning a session, before verified completion. Failure-driven skips still block dependants. |
 | `command` | Bash command (mutually exclusive with `agent`). |
 | `agent` | Role/spec name that dispatches through `AgentSpawner` (requires `prompt`). |
 | `prompt` | Prompt body; `{goal}` is substituted from `run(goal=...)`. |
@@ -92,10 +92,17 @@ executes the manifest as a topological DAG: every layer of nodes whose
 dependencies are satisfied runs concurrently via a thread pool.
 Agent-typed nodes dispatch through the existing `AgentSpawner`;
 command-typed nodes shell out with `subprocess.run`. Each node's
-terminal status is one of `success`, `failed`, or `skipped` (skipped
-means an upstream dependency failed). A node with `loop:` re-fires until
+terminal status is one of `success`, `failed`, or `skipped`. An intentional
+skip because a `when` predicate was false satisfies dependants; a skip caused
+by an upstream failure or blocked dependency does not. A node with `loop:` re-fires until
 its `until` bash predicate exits `0` or `max_iterations` is reached, at
 which point the run raises rather than silently truncating.
+
+For an agent node, `success` means the spawner returned a session; the runner
+does not wait for verified agent completion before releasing dependent nodes.
+Command nodes succeed only after their command exits successfully. See the
+[workflow completion boundary](workflows.md#resuming-workflows) and its linked
+proposal for the unresolved agent completion guarantees.
 
 `bernstein workflow run` exits non-zero if any node ends up `failed`.
 
@@ -112,7 +119,10 @@ bernstein workflow init my-flow --target ~/workflows/my-flow.yaml --force
 `validate` sniffs the file structurally: `phases:` at the top level
 means legacy DSL, a top-level `nodes:` list means the current manifest
 schema. The non-matching path imports no schema, so a malformed DSL file
-can't crash the manifest validator or vice versa. `init` scaffolds a
+can't crash the manifest validator or vice versa. A file that is not
+valid UTF-8 is an error that names the file and the byte: `validate` and
+`run --dry-run` exit 1, and `list` shows it on its own error row and still
+lists the valid manifests beside it. `init` scaffolds a
 blank manifest and round-trips it through the parser before writing, so
 the scaffold can never fail its own `validate`.
 

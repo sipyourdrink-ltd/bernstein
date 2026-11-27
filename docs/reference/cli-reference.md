@@ -14,7 +14,7 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 
 ## Root command flags
 
-`bernstein` itself accepts these flags (defined at `cli/main.py:482-572`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
+`bernstein` itself accepts these flags (defined on `cli` in `src/bernstein/cli/main.py`). Most of them only matter when invoked **without** a subcommand - i.e. when you run `bernstein` to start orchestration from `bernstein.yaml` or an inline `--goal`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -42,6 +42,9 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 | `-v, --verbose` | off | Show debug-level output. |
 | `-q, --quiet` | off | Suppress all non-error output. |
 | `-t, --task PATTERN` | none | Run only backlog tasks matching PATTERN. |
+| `--sandbox BACKEND` | none | Override the sandbox backend selected for the run. |
+| `--allow-paid` | off | Allow selection of paid sandbox backends. |
+| `--refine SPEC` | none | Parse and validate an iterative refinement spec. The root runner does not consume it yet. |
 | `--auto-pr` | off | Auto-open a GitHub PR when all tasks complete. |
 | `--activity-log [PATH]` | off | Write activity to a log file. Default path `.sdd/logs/activity.log`. |
 
@@ -61,6 +64,12 @@ The commands are organised below by purpose, not alphabetically. Use the table i
 - All commands accept the root-level `--json` / `-v` / `-q` flags.
 - Hidden subcommands (`task compose`, `task sync`, etc.) are documented in the [Hidden commands](#hidden-commands) section at the end.
 - Flags marked `auth` require a logged-in session (`bernstein login`).
+
+#### Top-level shortcuts
+
+A shortcut in the first command position expands to the command and any additional words in its alias value, followed by the arguments supplied by the caller. For example, the built-in `i` shortcut has the value `init --wizard`, so `bernstein i --dir ./demo` expands to `bernstein init --wizard --dir ./demo`.
+
+User-defined aliases are loaded from `~/.bernstein/aliases.yaml` when the CLI process starts. User mappings can override built-in shortcuts. Alias values are split on whitespace into command-line words before the caller's original arguments are appended.
 
 ---
 
@@ -112,10 +121,28 @@ The full flag list is large (see `bernstein run --help` and `cli/run_bootstrap.p
 | `--task PATTERN` | none | Run only matching backlog tasks. |
 | `--wait [SECONDS]` | off | Block until the run reaches a terminal state and exit with its outcome. Optional ceiling in seconds, default 3600. |
 | `--port N` | 8052 | Task server port. |
+| `--open-ui` | off | Open `/ui/` in your browser once the local task server is ready. |
 | `-v / -q` | off | Verbosity. |
 
 The merge strategy is not a `run` flag: set `merge_strategy: pr|direct` in
 `bernstein.yaml` (default `pr`).
+
+When the task server binds to a loopback address (`127.0.0.1`, `localhost`,
+`::1`), `BERNSTEIN_LOOPBACK_HOST_GUARD=1` is enabled automatically and rejects
+requests whose `Host` header is not loopback (`localhost`,
+`localhost.localdomain`, loopback IP literals) with HTTP `403`. To expose a
+loopback server behind a reverse proxy, tunnel hostname, or container alias
+such as `host.docker.internal`, set `BERNSTEIN_ALLOWED_HOSTS` to a
+comma-separated list of permitted hostnames. `BERNSTEIN_ALLOWED_HOSTS` accepts
+hostnames only, with no port and no wildcard (exact lowercase hostname matching).
+
+Before computing a cost estimate, planning, or prompting for plan approval
+(including under `--auto-approve` and `--remote`), `bernstein run` verifies that
+the resolved CLI executable (`--cli`, `BERNSTEIN_ADAPTER`, or `cli:` in
+`bernstein.yaml`) is installed on `PATH`, or that at least one CLI agent is
+discoverable when resolved to `auto`. When none is installed, it exits `1` with
+install instructions and suggests `bernstein demo` (`--dry-run`, `--plan-only`,
+`--idle`, and `mock` skip the local binary check).
 
 `--max-cost-usd` is a hard cap, separate from the soft `--budget`
 threshold model. It writes the value to `BERNSTEIN_MAX_COST_USD`
@@ -190,7 +217,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `--add-badge` | off | Insert a shields.io "powered by bernstein" badge into `README.md`. |
 | `--badge-variant NAME` | `signed` | Badge wording when `--add-badge` is passed. |
 
-`init-wizard` adds an interactive prompt flow (project type, default agent, budget, etc.) and is preferred for first-time users.
+`bernstein init --wizard` adds an interactive prompt flow (project goal, agent budget, adapter, approval gate mode) and writes schema-valid `bernstein.yaml` (`orchestration:`, `merge_strategy`, `auto_merge`, optional `routing:`), `.sdd/config.yaml`, `.sdd/runtime/run_config.json`, bundled `templates/`, and the `.sdd/runtime/` entry in root `.gitignore`. Both `bernstein init` and `bernstein init --wizard` leave `internal_llm_provider` at its `"none"` default unless explicitly configured.
 
 ---
 
@@ -201,7 +228,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan` | Show the task backlog. | `cli/commands/task_cmd.py:454` |
 | `bernstein plan generate "<goal>"` | Generate a plan YAML. | `cli/plan_generate_cmd.py` |
 | `bernstein plan compile SPEC` | Compile a spec into a gated task graph with requirement-hash lineage. | `cli/plan_compile_cmd.py` |
-| `bernstein plan ls` | List archived plans. | `cli/plan_archive_cmd.py:plan_ls` |
+| `bernstein plan ls` | List managed plans in all states. Use `--state` with `active`, `completed`, or `blocked` to filter the list. | `cli/commands/plan_archive_cmd.py:plan_ls` |
 | `bernstein plan show NAME` | Show a stored plan. | `cli/plan_archive_cmd.py:plan_show` |
 | `bernstein add-task TITLE` | Create a task on the running server. | `cli/commands/task_cmd.py:37` |
 | `bernstein approve TASK_ID` | Approve a pending review. | `cli/commands/task_cmd.py:249` |
@@ -217,7 +244,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan validate PLAN.yaml` | Validate a plan file's schema (`bernstein validate` is a deprecated alias, removed in 4.0.0). | `cli/plan_validate_cmd.py:142` |
 | `bernstein validate PLAN.yaml` | Deprecated alias of `bernstein plan validate`; removed in v4.0.0. | `cli/plan_validate_cmd.py` |
 | `bernstein task` | Durable task lifecycle: complete, park, and resume a task. | `cli/commands/task_cmd.py:837` |
-| `bernstein scenario` | Manage Bernstein scenarios. | `cli/commands/scenario_cmd.py` |
+| `bernstein scenario` | Manage Bernstein scenarios. `scenario list` skips malformed YAML and files it cannot decode as UTF-8. | `cli/commands/scenario_cmd.py` |
 
 #### `bernstein plan`
 
@@ -250,7 +277,18 @@ pipeline with at most one model call: draft (structured requirement
 extraction), approve (the requirement-set hash is bound into the audit
 chain), and compile (a deterministic, model-free transformation to a task
 graph). Each task node carries the content hashes of the requirement lines it
-implements, so every artefact traces back to spec lines through lineage.
+implements, so every artefact traces back to spec lines through lineage. An
+unreadable spec or a spec with no EARS-shaped requirements exits with status
+`1` and a diagnostic on stderr. Command-line usage errors exit with status
+`2`.
+
+The draft stage recognises a line as a requirement only when `shall` appears
+as a complete word; matching is case-insensitive, so `SHALL` and `Shall`
+count too. Words that merely contain those letters — `shallow`, `shallot`,
+`Marshall` — are prose and are skipped, as are headings, list markers, and
+checkbox decoration. A spec whose only `shall`-looking occurrences are such
+words extracts no requirements and exits `1` like any spec without
+EARS-shaped requirements.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -350,16 +388,44 @@ hand-assembled as a request with a bearer header.
 | `bernstein recap` | Post-run summary. | `cli/commands/advanced_cmd.py:558` |
 | `bernstein retro` | Detailed retrospective. | `cli/commands/advanced_cmd.py:299` |
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
-| `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
-| `bernstein runs report` | Finished runs with a classified outcome. | `cli/commands/runs_cmd.py` |
+| `bernstein history FILE_PATH` | Archived task records matching the file's recorded ownership. | `cli/commands/maintenance_cmd.py:history_cmd` |
+| `bernstein runs report` | Classified outcomes from the run ledger. | `cli/commands/runs_cmd.py:50` |
+| `bernstein runs scorecard RUN_ID` | Build or verify one run's scorecard. | `cli/commands/runs_cmd.py:171` |
 | `bernstein runs helpers RUN_ID` | Agent-written helpers captured for a run. | `cli/commands/runs_cmd.py` |
 | `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
-| `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
+| `bernstein report` | Print a run summary in Markdown. | `cli/commands/report_cmd.py:17` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
 | `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
 | `bernstein report postmortem` | Failed-task postmortem. | `cli/commands/postmortem_cmd.py:12` |
 | `bernstein insights` | Analytics and insights from task traces. Skeleton: no analysis is computed yet. | `cli/commands/insights_cmd.py:25` |
+
+#### `bernstein history FILE_PATH`
+
+Look up archived terminal tasks that recorded ownership of a file. This is a
+recorded task/file association, not git history: a match does not establish
+which commits changed the file.
+
+| Argument / flag | Default | Meaning |
+|---|---|---|
+| `FILE_PATH` | required | File path to match against archived tasks' recorded `owned_files`. |
+| `--limit N` | `10` | Maximum number of matching tasks to show. |
+| `--workdir PATH` | `.` | Project root containing `.sdd/archive/tasks.jsonl`. |
+| `--json` | off | Print an object with the normalized `file` path and matching `tasks` array. |
+
+For example: `bernstein history src/bernstein/main.py --limit 5 --workdir .`
+
+#### `bernstein report`
+
+Print a Markdown summary of the latest run in the project.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--run-id RUN_ID` | latest run | Select a specific run. |
+| `--workdir PATH` | `.` | Project root directory. |
+| `--save` / `--no-save` | off | Use `--save` to also write `.sdd/reports/RUN_ID.md`. Use `--no-save` to print only. |
+
+To print and save a specific run, use `bernstein report --run-id RUN_ID --save`.
 
 #### `bernstein status`
 
@@ -380,11 +446,12 @@ routing is shown as `unknown`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--interval SEC` | 2.0 | Polling interval. |
-| `--classic` | off | Use the simpler Rich Live display. |
-| `--no-splash` | off | Skip the startup splash. |
+| `--interval SEC` | 2.0 | Polling interval in seconds for `--classic`. |
+| `--classic` | off | Use the classic Rich Live display. |
+| `--no-splash` | off | Skip the Textual startup splash. |
 
-The default is the 3-column Textual TUI: Agents | Tasks | Activity feed. `--classic` falls back to a single-pane Rich Live view.
+The default Textual dashboard shows Agents and Tasks side by side, with
+the activity feed below.
 
 Both views resolve the task server the same way as the rest of the CLI: `BERNSTEIN_SERVER_URL`, then the port the running orchestrator persisted in `.sdd/runtime/server.port`, then `http://localhost:8052`. When the poll cannot reach that server the header says `No connection to <url>` rather than drawing empty panels, which would be indistinguishable from an orchestrator with nothing to do. That state means *every* read failed: one route erroring while the others answer is a broken route, not a dead server, so the dashboard keeps rendering the panels that did load.
 
@@ -405,10 +472,16 @@ A subcommand group; defaults to `bernstein logs tail`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--archive PATH` | `.sdd/archive/tasks.jsonl` | Path to task archive. |
+| `--archive PATH` | none | Read task counts and recorded costs from a local JSONL archive (typically `.sdd/archive/tasks.jsonl`). |
 | `--since DURATION` | none | Build the report from workspace files instead of the task server (`45m`, `6h`, `2d`; a bare number is minutes). |
 | `--workdir PATH` | `.` | Project root, used with `--since`. |
 | `--as-json` | off | Emit raw JSON. |
+
+By default, recap queries the task server. Use `--archive` for a local archive
+report without the server. `--archive` and `--since` cannot be combined.
+Archive counts use the last entry for each task. Recorded cost sums the
+entries with a known cost, including retries. It is unavailable if the file
+contains no cost data.
 
 With `--since` the summary is the "since you were away" report: completed and
 failed tasks, provider errors, and estimated cost read from `.sdd/` alone, so
@@ -429,7 +502,16 @@ Group over the runs recorded in the work ledger.
 
 | Subcommand | Flags | Purpose |
 |---|---|---|
-| `report` | `--since DURATION`, `--workdir PATH`, `--json` | Finished runs with a classified outcome and one line of evidence. |
+| `report` | `--since DURATION`, `--workdir PATH`, `--json` | Run ledger outcomes with one line of evidence each. |
+| `scorecard RUN_ID` | `--workdir PATH`, `--verify` / `--no-verify`, `--json` | Build a per-run scorecard, or verify an existing artifact against the live ledger. |
+
+These commands answer different questions:
+
+| Command | Input | Data source | Output |
+|---|---|---|---|
+| `bernstein history FILE_PATH` | Required file path. | Archived tasks' recorded `owned_files`. | Matching archived task records, newest first. |
+| `bernstein runs report` | Optional `--since` filter; no positional argument. | Run directories with entries in the project `.sdd/` ledger. | Classified outcome and evidence for each run. |
+| `bernstein runs scorecard RUN_ID` | Required run ID. | That run's work ledger (and, in verify mode, its existing scorecard artifact). | A written scorecard, or a verification result. |
 
 ##### `bernstein runs report`
 
@@ -445,7 +527,22 @@ carries the outcome class and the one line of evidence it was classified from:
 `pr-opened` (a branch was published), `gate-failed` (a quality gate blocked the
 run), `no-changes` (zero commits over base), `infra-error` (adapter or transport
 death, or no wrap-up was ever recorded), and `wedged` (the run ended with open
-tasks nothing could spawn).
+tasks nothing could spawn). The report also includes runs that are still
+executing. Without a wrap-up record, a live run can appear as `infra-error`.
+
+##### `bernstein runs scorecard RUN_ID`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `RUN_ID` | required | Run whose scorecard to build or verify (positional). |
+| `--workdir PATH` | current directory | Project root. |
+| `--verify` / `--no-verify` | off | Recompute from the live ledger and compare with the existing scorecard artifact instead of creating one. |
+| `--json` | off | In build mode, print an object containing `artifact`, `sha256` and `content`; in verify mode, print `ok`, `artifact_sha256`, `recomputed_sha256`, `description` and `artifact_path`. |
+
+By default, writes a content-addressed scorecard under
+`.sdd/runs/<run_id>/scorecard/`. Use `--verify` only after a scorecard has
+been created; it compares the stored artifact with a fresh projection of the
+run's live work ledger and reports whether they match.
 
 ##### `bernstein runs helpers`
 
@@ -590,7 +687,7 @@ only accepts the reliability options listed below.
 |---|---|
 | `run SPEC` | Drive the golden harness or a YAML eval spec (`--tier`, `--compare`, `--save/--no-save`, `--output`). |
 | `swe-bench` | SWE-bench runner (`--subset`, `--sample`, `--instance`, `--dataset`, `--save/--no-save`). |
-| `programbench` | ProgramBench runner (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
+| `programbench` | ProgramBench runner. Requires Docker or Podman and a local `python:3.13-slim` image (`--adapter`, `--subset`, `--tasks`, `--task`, `--dataset`, `--out`). |
 | `simulate` | Replay the standard benchmark task set (`--tasks-dir`, `--seed`, `--task-id`, `--baseline`). |
 | `compare` | Compare eval runs (`--tasks-dir`, `--mode`). |
 | `golden` | Run the curated golden suite (`--workdir`). |
@@ -705,7 +802,7 @@ its merged branch, or the merge commit.
 | `--base REV` | `main` | Base branch to diff against. |
 | `--workdir PATH` | `.` | Project root. |
 | `--stat` | off | Show the `--stat` summary only. |
-| `--raw` | off | Print the raw diff without syntax highlighting. |
+| `--raw` | off | Write only the Git patch to stdout, preserving its bytes for redirection or `git apply`. |
 | `--fold` | off | Collapse each hunk to its header plus a few lines. |
 | `--fold-lines N` | 3 | Lines kept per hunk when `--fold` is set. |
 | `--word-diff` | off | Highlight only the tokens that changed on replaced lines. |
@@ -869,8 +966,8 @@ digest. (`cli/commands/skill_cmd.py`.)
 | Subcommand | Purpose |
 |---|---|
 | `list` | List available templates. |
-| `show TEMPLATE [OUTPUT]` | Print template content (or write to OUTPUT). |
-| `use TEMPLATE [OUTPUT]` | Copy TEMPLATE to OUTPUT (default `plans/<name>.yaml`). |
+| `show TEMPLATE_NAME` | Display the template on stdout. |
+| `use TEMPLATE_NAME [OUTPUT]` | Copy the template to the given file path (default `plans/<name>.yaml`). An existing directory is rejected before the overwrite prompt. |
 | `compress ROLE\|--all` | Operator-gated LLM compression of role prompt templates (`cli/commands/templates_cmd.py`). Rewrite via the configured adapter (`--model`, `--provider`), then mechanical validators (fenced blocks, headings, URLs, inline code, placeholders, completion-contract block; at most two targeted fix retries), then apply. Originals are stored under `~/.local/share/bernstein/template-backups/` keyed by content hash with readback verification; the receipt `{role, pre_sha256, post_sha256, pre_tokens, post_tokens, validators, adapter, model}` is chained to the audit log and a `templates.lock` row lets `bernstein team drift` classify the change as intentional. Prints only the template token delta; per-spawn savings come from `bernstein cost` grouped by role. `--workdir DIR`, `--yes` skips the confirmation. |
 | `restore ROLE` | Reverse the most recent receipted compression byte-identically (backup hash, on-disk hash, and directory digest all verified). `--workdir DIR`. |
 | `hooks list` / `hooks use` | Browse and scaffold bundled command-hook templates. |
@@ -986,7 +1083,8 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein govern posture` | Score the install's governance posture from chain-evidenced facts only: per-control coverage over the lineage log, no configuration read. Names every contributing chain event, the weights version, and its own denominator (the weight that was measurable). Signed with the audit-chain key; `--json-output` prints the canonical document. | `cli/commands/governance_cmd.py` |
 | `bernstein govern inventory --render` | Emit the inventory topology graph from a store as mermaid or dot. Same store, same bytes. | `cli/commands/govern_cmd.py` |
 | `bernstein govern reconcile` | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it. | `cli/commands/govern_cmd.py` |
-| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--json`. Opt-in areas, such as `duplication` (duplicate implementations in the install), run only when `--only` names them. | `cli/commands/govern_audit_cmd.py` |
+| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--format text\|json\|sarif` (`--json` remains an alias). `--quiet` suppresses reports and check-crash warnings. The default gate fails on unmeasurable checks; `--strict` distinguishes missing prerequisites. See the [exit-code table](../operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Declared findings do not affect the exit code. Opt-in areas, such as `duplication` (duplicate implementations in the install), run only when `--only` names them. | `cli/commands/govern_audit_cmd.py` |
+| `bernstein govern audit --since <HASH> --against <HASH>` | Compare two stored audit reports by their full SHA-256 hashes. Both anchors must verify with the existing audit key. Accepts text or JSON and reads only the stored reports and their lineage. | `cli/commands/govern_audit_cmd.py` |
 | `bernstein govern audit-keys` | Check whether verifier keys are stale relative to the install identity. | `cli/commands/governance_cmd.py` |
 | `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
@@ -1548,7 +1646,9 @@ systemd / launchd unit installer.
 
 #### `bernstein config-path`
 
-Print the path Bernstein would read config from. Useful for shell completion and CI. No flags.
+Print the project and workspace configuration paths in the current directory.
+Use `--json` to return the two paths and the working directory as JSON. A
+configuration file that is missing appears as `null`.
 
 ---
 
@@ -1634,7 +1734,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start a preview server in the current task's worktree. `--cwd`, `--command`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
+| `start` | Start an isolated preview server for the selected worktree. `--cwd`, `--command`, `--approve-discovered`, `--list-commands`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
 | `list` | List active previews. `--json`. |
 | `status ID` | Show a preview's URL and process. `--json`. |
 | `stop [ID]` | Stop one preview. `--all` stops every active preview. |
@@ -1647,7 +1747,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Command | Purpose | Source |
 |---|---|---|
-| `bernstein explain CONCEPT` | Concept explainer. | `cli/explain_help_cmd.py:171` |
+| `bernstein explain` | Detailed help and examples for CLI commands. | `cli/commands/explain_help_cmd.py:171` |
 | `bernstein help-all` | Comprehensive help screen. | `cli/commands/advanced_cmd.py:378` |
 | `bernstein aliases` | Show CLI aliases. | `cli/aliases.py` |
 | `bernstein fingerprint` | Replay verification (group). | `cli/fingerprint_cmd.py:37` |
@@ -1681,7 +1781,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 | `bernstein ledger verify <run>` | Walk a run's durable work ledger (`.sdd/runtime/ledger/<run-id>/`) and recompute every entry hash against the canonical-JSON contract. A tampered entry is named at its exact position (`entry <seq> (line <n>)`). `--expected-head HASH` additionally pins the tail. `--json` for machine output. Exit 0 verified, 1 no ledger, 2 mismatch. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger anchor <run>` | Verify the run's chain, then publish it -- chunked, with a deterministic tree identity -- to `refs/bernstein/work-ledger/<run-id>` and mirror the anchor into the HMAC audit chain as a `work_ledger.anchor` event. Re-anchoring an extended chain adds a child commit; an identical chain is idempotent. Exit 0 anchored, 1 no ledger, 2 broken chain or git refusal, 3 the anchored chain diverges from the local one. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger fetch <run>` | Pull the anchored ledger ref from a remote (default `origin`) after a clone and materialize it into `.sdd/runtime/ledger/<run-id>/`. Verifies the anchored chain end to end before writing; an existing local chain is only ever fast-forwarded -- a diverged pair is refused with the exact fork entry named. Exit 0 materialized, 1 no anchored ledger on the remote, 2 broken anchored chain, 3 divergence. | `cli/commands/ledger_cmd.py` |
-| `bernstein ledger resume <run>` | Resume a run from its work ledger on any clone: verify the chain end to end, rebuild scheduler state by deterministic replay (completed / in-flight / scheduled / failed tasks), record the resume as a new chain entry, and write one resume signal per frontier task for the resume watcher. `--dry-run` prints the plan without recording anything; `--json` for machine output. Exit 0 resumed, 1 no ledger, 2 verification failed (exact entry position reported), 3 two divergent resumes detected and refused. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger resume <run>` | Verify the work ledger and replay its task state. A live resume records a chain entry and writes one local signal per frontier task. `--dry-run` prints the plan. `--json` reports the signal paths and dispatch status. Runtime acknowledgement is unavailable. Exit 0 means preparation succeeded, 1 indicates a missing ledger or I/O error, 2 indicates an invalid run ID, failed verification or a rejected entry, and 3 indicates divergent histories. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger runs` | List runs with an anchored work ledger in this repository. `--json` for machine output. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger gc <run>` | Squash the run's anchor history to a single commit, preserving the current anchored tree byte for byte. Superseded chunk blobs become unreachable so a normal `git gc` reclaims them -- the repo-bloat bound for long runs. Exit 0 done, 1 no anchored ledger. | `cli/commands/ledger_cmd.py` |
 | `bernstein seal publish <run>` | Anchor the run's sealed journal head to an RFC 3161 timestamping authority, so the head carries an external witness of when it existed. Refuses a run whose journal chain does not verify or whose recomputed head disagrees with the seal in its lineage spine. `--tsa-url <url>` requests a token (the only option that opens a socket); `--token <file>` stores a DER reply obtained on another host, for installs with no network. The reply is written to `.sdd/runs/<run>/seal_anchor.json`. Exit 0 anchored, 1 nothing to anchor / refused. | `cli/commands/seal_cmd.py` |
@@ -1724,7 +1824,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 
 | Subcommand | Purpose |
 |---|---|
-| `tasks` | Render the current task dependency graph as ASCII or Mermaid. |
+| `tasks` | Show the current task dependency graph as ASCII. Use `--format mermaid` to write a standalone Mermaid diagram to stdout. |
 | `impact FILE_QUERY` | Print downstream files impacted by changing FILE_QUERY. |
 
 #### `bernstein govern`
@@ -1756,9 +1856,11 @@ Experimental voice control (see [`operations/voice-control.md`](../operations/vo
 
 #### `bernstein explain`
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `CONCEPT` | required | Concept name (e.g. `cascade-router`, `wal`, `janitor`). |
+Use `bernstein explain [COMMAND_NAME]` to see examples, tips, and related
+commands. For example, `bernstein explain run` shows ways to start a run.
+
+Run `bernstein explain` to list the commands with detailed help, or
+`bernstein explain --help` for usage.
 
 #### `bernstein test`
 
@@ -2013,7 +2115,10 @@ example widening `viewer` to `operator`) breaks its signature and the token
 stops validating. Every issue and revoke is mirrored onto the audit chain
 (`dashboard.token_grant`), and every login and write authorization is a
 signed governance decision in the `dashboard-auth` lineage run - recompute
-them offline with `bernstein governance verify dashboard-auth`.
+them offline with `bernstein govern verify dashboard-auth --bindings FILE`,
+where `FILE` contains the signed role bindings produced by
+`dashboard_role_bindings` in `bernstein.core.server.dashboard_tokens`.
+The dashboard generates these bindings in memory.
 
 | Subcommand | Purpose |
 |---|---|
@@ -2028,7 +2133,6 @@ root containing `.sdd/`.
 bernstein auth dashboard-token issue --principal alice --scope viewer
 bernstein auth dashboard-token list
 bernstein auth dashboard-token revoke 3f1a9c2d5e7b0a41
-bernstein governance verify dashboard-auth
 ```
 
 Startup posture: `bernstein gui serve` on a loopback host without any
@@ -2037,7 +2141,8 @@ non-loopback host it refuses to start until a token or password is
 configured. There is no silent open mode on a routable interface. Use the
 token as `Authorization: Bearer <token>` or in the dashboard login form
 (`POST /dashboard/auth/login`); the session cookie inherits exactly the
-token's principal and scope.
+token's principal and scope. Loopback binds also enforce the `Host` header
+guard unless hostnames are allowlisted via `BERNSTEIN_ALLOWED_HOSTS`.
 
 ## SPIFFE workload identity: `bernstein spiffe`
 

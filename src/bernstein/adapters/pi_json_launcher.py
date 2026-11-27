@@ -15,7 +15,9 @@ every stdout line to its own stdout as soon as it arrives, watches the
 message: an assistant message that stopped on ``error``, ``aborted`` or
 ``length`` turns a 0 into 1. An ``auto_retry_end`` with ``success: false``
 counts as a failure unless a later assistant message ended cleanly. A nonzero
-exit from pi itself is passed through unchanged.
+exit from pi itself is passed through unchanged, and a pi killed by a signal
+exits ``128 + signal`` as a shell reports it. pi's stdin is the null device:
+pi reads piped stdin to EOF before emitting, even in JSON mode (#7645).
 
 Usage::
 
@@ -24,6 +26,7 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import json
 import signal
 import subprocess
@@ -92,18 +95,29 @@ def run(argv: list[str]) -> int:
     """Run ``argv`` (the pi command), streaming its stdout, and return the exit code."""
     try:
         child = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=None, text=True, encoding="utf-8", errors="replace"
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=None,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     except FileNotFoundError:
         # The adapter launches this module, not pi, so a missing pi lands here.
         print(f"{argv[0]} not found in PATH. {PI_INSTALL_HINT}", file=sys.stderr, flush=True)
         return 127
+    except PermissionError as exc:
+        print(f"Permission denied executing {argv[0]}: {exc}", file=sys.stderr, flush=True)
+        return 126
 
     def _forward(signum: int, _frame: Any) -> None:
         # Heartbeat escalation and the timeout watchdog signal this process;
         # pi must stop with it rather than outlive it.
         if child.poll() is None:
-            child.send_signal(signum)
+            # pi can exit between the poll and the signal.
+            with contextlib.suppress(ProcessLookupError):
+                child.send_signal(signum)
 
     for name in ("SIGTERM", "SIGINT", "SIGHUP"):
         sig = getattr(signal, name, None)
@@ -117,6 +131,9 @@ def run(argv: list[str]) -> int:
         sys.stdout.flush()
         outcome.feed(line)
     code = child.wait()
+    if code < 0:
+        # POSIX: Popen reports death by signal N as -N; a shell reports 128 + N.
+        return 128 - code
     if code != 0:
         return code
     reason = outcome.failure()

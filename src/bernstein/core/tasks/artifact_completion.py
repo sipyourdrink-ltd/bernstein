@@ -55,6 +55,7 @@ not over repeated appends to one log.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -267,12 +268,17 @@ def load_artifact(task: Task, workdir: Path) -> Any:
     """
     relpath = artifact_output_path(task)
     path = _resolve_contained_artifact_path(Path(workdir), relpath)
+    no_output = f"task declares artifact kind {task.artifact_spec.kind.value!r} but wrote no output at {relpath}"
     try:
         raw = path.read_bytes()
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
-        raise ArtifactCompletionError(
-            f"task declares artifact kind {task.artifact_spec.kind.value!r} but wrote no output at {relpath}"
-        ) from None
+        raise ArtifactCompletionError(no_output) from None
+    except PermissionError:
+        # Windows reports reading a directory as EACCES, not EISDIR. A real
+        # permission failure on a file still propagates.
+        if not path.is_dir():
+            raise
+        raise ArtifactCompletionError(no_output) from None
     kind = task.artifact_spec.kind
 
     if kind is ArtifactKind.CODE_DIFF:  # pragma: no cover - guarded by is_artifact_mode
@@ -316,7 +322,7 @@ def load_artifact_identity(sdd_dir: Path) -> tuple[AgentCard, str]:
     """Provision (on first use) and return the artifact signing identity.
 
     Returns ``(agent_card, private_key_pem)``. The card is also published under
-    ``<sdd>/agents/<agent_id>/card.json`` where the lineage gate looks for it,
+    ``<sdd>/agents/<sha256(agent_id)>/card.json`` where the lineage gate looks for it,
     so a receipt recorded in one invocation verifies in the next without any
     operator key-management step.
     """
@@ -334,8 +340,17 @@ def load_artifact_identity(sdd_dir: Path) -> tuple[AgentCard, str]:
 
 
 def _publish_card(cards_dir: Path, card: AgentCard) -> None:
-    """Write ``card`` to the ``<agent-id>/card.json`` layout the gate reads."""
-    card_dir = cards_dir / card.agent_id
+    """Write ``card`` as ``<sha256(agent-id)>/card.json`` under ``cards_dir``.
+
+    The agent id ``agent:artifact-completion`` is not a legal Windows path
+    component (``:``), so using it as the directory name made every artifact
+    completion raise ``NotADirectoryError`` there. The lineage gate identifies a
+    card by the ``agent_id`` inside the JSON, not by its directory, so a hashed
+    name is read the same way; it is the encoding #6928 chose for datasource
+    receipt cards. A card left at the old path on a POSIX install is
+    byte-identical, which the gate accepts as a duplicate.
+    """
+    card_dir = cards_dir / hashlib.sha256(card.agent_id.encode("utf-8")).hexdigest()
     card_dir.mkdir(parents=True, exist_ok=True)
     (card_dir / "card.json").write_text(
         json.dumps(

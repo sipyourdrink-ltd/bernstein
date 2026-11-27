@@ -42,13 +42,18 @@ used by ``test_audit_chain_properties.py`` and ``test_wal_chain_properties.py``)
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from bernstein.core.persistence import wal
 from bernstein.core.persistence.lineage import (
     AgentRef,
     ArtifactRef,
@@ -112,7 +117,14 @@ def _agent_strategy() -> st.SearchStrategy[AgentRef]:
     )
 
 
-def _record_strategy() -> st.SearchStrategy[LineageRecord]:
+def _record_strategy(*, short_decimals: bool = False) -> st.SearchStrategy[LineageRecord]:
+    costs = st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False)
+    timestamps = st.floats(min_value=0.0, max_value=2_000_000_000.0, allow_nan=False, allow_infinity=False)
+    if short_decimals:
+        # Eighths are binary-exact and serialize with enough margin that a
+        # changed decimal digit cannot round back to the same float.
+        costs = st.integers(min_value=0, max_value=800).map(lambda value: value / 8)
+        timestamps = st.integers(min_value=0, max_value=16_000_000_000).map(lambda value: value / 8)
     return st.builds(
         LineageRecord,
         output_artifact=_artifact_strategy(),
@@ -120,9 +132,9 @@ def _record_strategy() -> st.SearchStrategy[LineageRecord]:
         producer=_agent_strategy(),
         prompt_sha=_TEXT,
         model=_TEXT,
-        cost_usd=st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False),
+        cost_usd=costs,
         tokens=st.integers(min_value=0, max_value=100_000),
-        timestamp=st.floats(min_value=0.0, max_value=2_000_000_000.0, allow_nan=False, allow_infinity=False),
+        timestamp=timestamps,
         regulatory_class=_REG_CLASS,
     )
 
@@ -132,13 +144,10 @@ def _record_strategy() -> st.SearchStrategy[LineageRecord]:
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
 def _make_signed_writer(
     run_id: str = "prop-run",
-) -> tuple[
-    LineageWriter,
-    Ed25519PublicKeyVerifier,
-    Path,
-]:
+) -> Iterator[tuple[LineageWriter, Ed25519PublicKeyVerifier, Path]]:
     """Return a signed writer + paired verifier + sdd tempdir.
 
     The Ed25519 private key is generated fresh per call so concurrent
@@ -146,19 +155,20 @@ def _make_signed_writer(
     public-key verifier is returned so the test body can attest each
     emitted record without reaching into private writer state.
     """
-    sdd = Path(tempfile.mkdtemp(prefix="bernstein-prop-lineage-"))
-    private = Ed25519PrivateKey.generate()
-    key_path = sdd / "lineage.key"
-    key_path.write_bytes(
-        private.private_bytes_raw()
-        if hasattr(private, "private_bytes_raw")
-        else private.private_numbers().private_bytes_raw()  # pragma: no cover
-    )
-    key_path.chmod(0o600)
-    signer = Ed25519FileKeySigner.from_path(key_path)
-    verifier = Ed25519PublicKeyVerifier.from_raw(signer.public_key_bytes())
-    writer = LineageWriter.for_run(run_id, sdd, signer=signer)
-    return writer, verifier, sdd
+    with tempfile.TemporaryDirectory(prefix="bernstein-prop-lineage-") as directory:
+        sdd = Path(directory)
+        private = Ed25519PrivateKey.generate()
+        key_path = sdd / "lineage.key"
+        key_path.write_bytes(
+            private.private_bytes_raw()
+            if hasattr(private, "private_bytes_raw")
+            else private.private_numbers().private_bytes_raw()  # pragma: no cover
+        )
+        key_path.chmod(0o600)
+        signer = Ed25519FileKeySigner.from_path(key_path)
+        verifier = Ed25519PublicKeyVerifier.from_raw(signer.public_key_bytes())
+        writer = LineageWriter.for_run(run_id, sdd, signer=signer)
+        yield writer, verifier, sdd
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +188,13 @@ def test_signed_records_roundtrip_through_verifier(
     The verifier must recompute the canonical bytes from the persisted
     payload and accept the signature for every record on the chain.
     """
-    writer, verifier, sdd = _make_signed_writer("prop-roundtrip")
-    for record in records:
-        writer.emit(record)
+    with _make_signed_writer("prop-roundtrip") as (writer, verifier, sdd):
+        for record in records:
+            writer.emit(record)
 
-    result = verify_run_chain(sdd, "prop-roundtrip", verifier=verifier)
-    assert result.ok, f"signed chain rejected its own writes: {result.errors}"
-    assert result.record_count == len(records), f"expected {len(records)} records, got {result.record_count}"
+        result = verify_run_chain(sdd, "prop-roundtrip", verifier=verifier)
+        assert result.ok, f"signed chain rejected its own writes: {result.errors}"
+        assert result.record_count == len(records), f"expected {len(records)} records, got {result.record_count}"
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +204,7 @@ def test_signed_records_roundtrip_through_verifier(
 
 @settings(max_examples=30)  # IO-heavy - tighter than smoke default.
 @given(
-    records=st.lists(_record_strategy(), min_size=2, max_size=6),
+    records=st.lists(_record_strategy(short_decimals=True), min_size=2, max_size=6),
     flip_offset=st.integers(min_value=0, max_value=50_000),
 )
 def test_byte_flip_breaks_chain_or_signature(
@@ -208,60 +218,62 @@ def test_byte_flip_breaks_chain_or_signature(
     Both are acceptable paths - what matters is that *something* in
     :func:`verify_run_chain` surfaces an error.
     """
-    writer, verifier, sdd = _make_signed_writer("prop-flip")
-    for record in records:
-        writer.emit(record)
+    with _make_signed_writer("prop-flip") as (writer, verifier, sdd):
+        # Use a short, exact decimal for the WAL envelope timestamp too.
+        with patch.object(wal, "time", SimpleNamespace(time=lambda: 1_700_000_000.5)):
+            for record in records:
+                writer.emit(record)
 
-    wal_path = sdd / "runtime" / "wal" / "prop-flip.wal.jsonl"
-    raw = wal_path.read_bytes()
-    if not raw:
-        pytest.skip("WAL produced no bytes")
+        wal_path = sdd / "runtime" / "wal" / "prop-flip.wal.jsonl"
+        raw = wal_path.read_bytes()
+        if not raw:
+            pytest.skip("WAL produced no bytes")
 
-    covered_indices: list[int] = []
-    offset = 0
-    for line in raw.splitlines(keepends=True):
-        line_stripped = line.rstrip(b"\r\n")
-        covered_indices.extend(range(offset, offset + len(line_stripped)))
-        offset += len(line)
+        covered_indices: list[int] = []
+        offset = 0
+        for line in raw.splitlines(keepends=True):
+            line_stripped = line.rstrip(b"\r\n")
+            covered_indices.extend(range(offset, offset + len(line_stripped)))
+            offset += len(line)
 
-    if not covered_indices:
-        pytest.skip("WAL produced no payload bytes")
+        if not covered_indices:
+            pytest.skip("WAL produced no payload bytes")
 
-    pos = covered_indices[flip_offset % len(covered_indices)]
-    mutated = bytearray(raw)
-    mutated[pos] ^= 0x01
-    if mutated == raw:
-        pytest.skip("XOR with 0x01 unchanged (impossible)")
-    wal_path.write_bytes(bytes(mutated))
+        pos = covered_indices[flip_offset % len(covered_indices)]
+        mutated = bytearray(raw)
+        mutated[pos] ^= 0x01
+        if mutated == raw:
+            pytest.skip("XOR with 0x01 unchanged (impossible)")
+        wal_path.write_bytes(bytes(mutated))
 
-    result = verify_run_chain(sdd, "prop-flip", verifier=verifier)
-    assert not result.ok, f"byte flip went undetected at offset {pos}"
-    assert result.errors, "verify_run_chain returned ok=False with empty error list"
+        result = verify_run_chain(sdd, "prop-flip", verifier=verifier)
+        assert not result.ok, f"byte flip went undetected at offset {pos}"
+        assert result.errors, "verify_run_chain returned ok=False with empty error list"
 
 
 @settings(max_examples=30)
 @given(records=st.lists(_record_strategy(), min_size=2, max_size=6))
 def test_byte_flip_uncovered_region_is_record_delimiters(records: list[LineageRecord]) -> None:
     """All bytes outside the signed/hashed JSON payloads are line delimiters."""
-    writer, _verifier, sdd = _make_signed_writer("prop-uncovered")
-    for record in records:
-        writer.emit(record)
+    with _make_signed_writer("prop-uncovered") as (writer, _verifier, sdd):
+        for record in records:
+            writer.emit(record)
 
-    wal_path = sdd / "runtime" / "wal" / "prop-uncovered.wal.jsonl"
-    raw = wal_path.read_bytes()
-    if not raw:
-        pytest.skip("WAL produced no bytes")
+        wal_path = sdd / "runtime" / "wal" / "prop-uncovered.wal.jsonl"
+        raw = wal_path.read_bytes()
+        if not raw:
+            pytest.skip("WAL produced no bytes")
 
-    covered_indices: set[int] = set()
-    offset = 0
-    for line in raw.splitlines(keepends=True):
-        line_stripped = line.rstrip(b"\r\n")
-        covered_indices.update(range(offset, offset + len(line_stripped)))
-        offset += len(line)
+        covered_indices: set[int] = set()
+        offset = 0
+        for line in raw.splitlines(keepends=True):
+            line_stripped = line.rstrip(b"\r\n")
+            covered_indices.update(range(offset, offset + len(line_stripped)))
+            offset += len(line)
 
-    uncovered_indices = [i for i in range(len(raw)) if i not in covered_indices]
-    for pos in uncovered_indices:
-        assert raw[pos] in b"\r\n", f"unexpected uncovered byte {raw[pos]!r} at offset {pos}"
+        uncovered_indices = [i for i in range(len(raw)) if i not in covered_indices]
+        for pos in uncovered_indices:
+            assert raw[pos] in b"\r\n", f"unexpected uncovered byte {raw[pos]!r} at offset {pos}"
 
 
 # ---------------------------------------------------------------------------
@@ -281,23 +293,23 @@ def test_records_iter_preserves_order_and_fields(
     schema_version/customer_signature on emit, so the in-memory record
     differs from the persisted one in those two fields by design.
     """
-    writer, _verifier, sdd = _make_signed_writer("prop-order")
-    for record in records:
-        writer.emit(record)
+    with _make_signed_writer("prop-order") as (writer, _verifier, sdd):
+        for record in records:
+            writer.emit(record)
 
-    reader = LineageReader(sdd)
-    read_back = list(reader.iter_records(run_id="prop-order"))
-    assert len(read_back) == len(records), f"reader yielded {len(read_back)} records, expected {len(records)}"
-    for original, restored in zip(records, read_back, strict=True):
-        assert restored.output_artifact.path == original.output_artifact.path
-        assert restored.output_artifact.sha256 == original.output_artifact.sha256
-        assert restored.producer.agent_id == original.producer.agent_id
-        assert restored.producer.run_id == original.producer.run_id
-        assert restored.prompt_sha == original.prompt_sha
-        assert restored.model == original.model
-        assert restored.cost_usd == original.cost_usd
-        assert restored.tokens == original.tokens
-        assert len(restored.inputs) == len(original.inputs)
+        reader = LineageReader(sdd)
+        read_back = list(reader.iter_records(run_id="prop-order"))
+        assert len(read_back) == len(records), f"reader yielded {len(read_back)} records, expected {len(records)}"
+        for original, restored in zip(records, read_back, strict=True):
+            assert restored.output_artifact.path == original.output_artifact.path
+            assert restored.output_artifact.sha256 == original.output_artifact.sha256
+            assert restored.producer.agent_id == original.producer.agent_id
+            assert restored.producer.run_id == original.producer.run_id
+            assert restored.prompt_sha == original.prompt_sha
+            assert restored.model == original.model
+            assert restored.cost_usd == original.cost_usd
+            assert restored.tokens == original.tokens
+            assert len(restored.inputs) == len(original.inputs)
 
 
 # ---------------------------------------------------------------------------
@@ -400,14 +412,14 @@ def test_signature_decodes_to_64_bytes(record: LineageRecord) -> None:
     silently reject every record. This property catches any future
     encoder that smuggles whitespace/padding into the field.
     """
-    writer, _verifier, sdd = _make_signed_writer("prop-sig-len")
-    writer.emit(record)
+    with _make_signed_writer("prop-sig-len") as (writer, _verifier, sdd):
+        writer.emit(record)
 
-    reader = LineageReader(sdd)
-    read_back = list(reader.iter_records(run_id="prop-sig-len"))
-    assert len(read_back) == 1
-    sig_b64 = read_back[0].customer_signature
-    assert sig_b64 is not None, "signed writer produced no customer_signature"
-    assert len(decode_signature(sig_b64)) == 64, (
-        f"Ed25519 signature must be 64 bytes, got {len(decode_signature(sig_b64))}"
-    )
+        reader = LineageReader(sdd)
+        read_back = list(reader.iter_records(run_id="prop-sig-len"))
+        assert len(read_back) == 1
+        sig_b64 = read_back[0].customer_signature
+        assert sig_b64 is not None, "signed writer produced no customer_signature"
+        assert len(decode_signature(sig_b64)) == 64, (
+            f"Ed25519 signature must be 64 bytes, got {len(decode_signature(sig_b64))}"
+        )

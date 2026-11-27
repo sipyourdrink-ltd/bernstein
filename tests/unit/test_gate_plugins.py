@@ -140,3 +140,52 @@ def test_registry_loads_entrypoint_plugin(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     assert plugin is not None
     assert plugin.name == "entrypoint_gate"
+
+
+def test_registry_loads_file_plugin_that_defines_a_dataclass(tmp_path: Path) -> None:
+    """A plugin file with ``@dataclass`` and postponed annotations must load.
+
+    ``dataclasses`` resolves the class's module through ``sys.modules``; the
+    registry must register the module before executing it.
+    """
+    gates_dir = tmp_path / ".bernstein" / "gates"
+    gates_dir.mkdir(parents=True)
+    (gates_dir / "dataclass_gate.py").write_text(
+        textwrap.dedent(
+            """
+            from __future__ import annotations
+
+            from dataclasses import dataclass
+
+            from bernstein.core.quality.gate_plugins import GatePlugin
+            from bernstein.core.quality.gate_runner import GateResult
+
+
+            @dataclass(frozen=True)
+            class Settings:
+                limit: int = 3
+
+
+            class DataclassGate(GatePlugin):
+                @property
+                def name(self) -> str:
+                    return "dataclass_gate"
+
+                def run(self, changed_files, run_dir, task_title, task_description):
+                    return GateResult(
+                        name=self.name,
+                        status="pass",
+                        required=True,
+                        blocked=False,
+                        cached=False,
+                        duration_ms=0,
+                        details=str(Settings().limit),
+                    )
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    plugin = GatePluginRegistry(tmp_path).get("dataclass_gate")
+
+    assert plugin is not None

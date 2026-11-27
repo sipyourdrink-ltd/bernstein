@@ -73,7 +73,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: "24"
+          node-version: "26"
 
       - name: Set up uv
         uses: ./.github/actions/bootstrap
@@ -232,14 +232,16 @@ jobs:
           # secret-less environments working; see docs/operations/ci.md.
           GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           set -euo pipefail
           if git diff --quiet -- src/bernstein/adapters/last_green.json docs/adapters/conformance-canary.md; then
             echo "last-green projection unchanged; nothing to propose"
             exit 0
           fi
-          git config user.email "canary@users.noreply.github.com"
-          git config user.name "Bernstein Canary"
           BRANCH=bot/adapter-canary-last-green
           # Rebuild the branch on origin/main as fetched *now*, not on the
           # workflow checkout: the checkout predates the matrix run, and a

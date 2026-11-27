@@ -8,7 +8,9 @@ charting libraries required.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -37,12 +39,59 @@ class BenchmarkDataPoint:
 # ---------------------------------------------------------------------------
 
 
+_SUBMICROSECOND_DIGITS = re.compile(
+    r"^\d{4}-?\d{2}-?\d{2}.\d{2}:?\d{2}:?\d{2}(?:[.,]\d{6}(\d+))?"
+    r"(?:([+-])\d{2}:?\d{2}(?::?\d{2}[.,]\d{6}(\d+))?)?"
+    r"Z?$"
+)
+_ONE_MICROSECOND = timedelta(microseconds=1)
+
+
+def _timestamp_sort_key(point: BenchmarkDataPoint) -> tuple[bool, datetime | str, str]:
+    try:
+        instant = datetime.fromisoformat(point.timestamp)
+    except ValueError:
+        # Keep undated rows, in their original lexical order, after dated rows.
+        return True, point.timestamp, ""
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=UTC)
+    # datetime truncates fractions to microseconds. Compare any remaining decimal
+    # digits on ties, folding fractional timezone-offset seconds into the tail so
+    # the key reflects the UTC instant rather than the wall-clock spelling.
+    match = _SUBMICROSECOND_DIGITS.search(point.timestamp)
+    if match is None:
+        return False, instant, ""
+    local_digits = match[1] or ""
+    offset_digits = match[3]
+    if offset_digits is None:
+        return False, instant, local_digits.rstrip("0")
+    width = max(len(local_digits), len(offset_digits))
+    scale = 10**width
+    remainder = int(local_digits or "0") * 10 ** (width - len(local_digits))
+    offset_tail = int(offset_digits) * 10 ** (width - len(offset_digits))
+    if match[2] == "+":
+        remainder -= offset_tail
+    else:
+        remainder += offset_tail
+    if remainder < 0:
+        instant -= _ONE_MICROSECOND
+        remainder += scale
+    elif remainder >= scale:
+        instant += _ONE_MICROSECOND
+        remainder -= scale
+    if remainder == 0:
+        return False, instant, ""
+    return False, instant, str(remainder).rjust(width, "0").rstrip("0")
+
+
 def load_benchmark_data(data_dir: Path) -> list[BenchmarkDataPoint]:
     """Load benchmark data points from JSON files in *data_dir*.
 
     Each JSON file must contain an object whose keys map to
     :class:`BenchmarkDataPoint` fields.  Files are returned sorted by
-    ``timestamp`` (ascending).
+    recorded instant (ascending): timestamps with a timezone offset are
+    ordered at their UTC position, and rows without a parseable timestamp
+    keep their lexical order at the end.
 
     Args:
         data_dir: Directory containing ``*.json`` benchmark result files.
@@ -72,7 +121,7 @@ def load_benchmark_data(data_dir: Path) -> list[BenchmarkDataPoint]:
         except (KeyError, TypeError, ValueError):
             continue  # skip malformed files
 
-    points.sort(key=lambda p: p.timestamp)
+    points.sort(key=_timestamp_sort_key)
     return points
 
 
