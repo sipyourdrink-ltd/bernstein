@@ -51,10 +51,10 @@ from bernstein.core.protocols.acp.session import (
     ACPSession,
     ACPSessionStore,
     load_persisted_session,
+    resolve_session_journal_path,
     sanitize_session_run_id,
     save_persisted_session,
 )
-from bernstein.core.replay.journal import JournalPathError, run_journal_path
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +183,19 @@ def extract_prompt_text(blocks: list[dict[str, Any]]) -> str:
                     if isinstance(res_uri, str):
                         parts.append(f"[resource]({res_uri})")
     return "\n".join(parts)
+
+
+def _resolve_validated_cwd(cwd: Any) -> Path:
+    """Validate *cwd* as an absolute path without NUL bytes and return its canonical ``Path``."""
+    if not isinstance(cwd, str) or not cwd or "\x00" in cwd:
+        raise ACPSchemaError(INVALID_PARAMS, "cwd must be a valid non-empty path string", {"field": "cwd"})
+    cwd_path = Path(cwd)
+    if not cwd_path.is_absolute():
+        raise ACPSchemaError(INVALID_PARAMS, "cwd must be an absolute path", {"field": "cwd"})
+    try:
+        return cwd_path.resolve()
+    except (OSError, ValueError) as exc:
+        raise ACPSchemaError(INVALID_PARAMS, f"invalid cwd path: {exc}", {"field": "cwd"}) from exc
 
 
 def _client_supports_terminal_auth(client_caps: dict[str, Any]) -> bool:
@@ -541,6 +554,7 @@ class ACPHandlerRegistry:
                 "authentication required before creating a session",
             )
         cwd: str = params["cwd"]
+        _resolve_validated_cwd(cwd)
         mcp_servers_raw: list[dict[str, Any]] = params["mcpServers"]
         additional_dirs_raw = params.get("additionalDirectories")
         additional_dirs: tuple[str, ...] = (
@@ -583,20 +597,20 @@ class ACPHandlerRegistry:
         session_id: str,
     ) -> tuple[ACPSession | None, list[dict[str, Any]]]:
         """Load session state and replayable journal updates from memory or disk."""
-        req_cwd = Path(cwd).resolve()
+        req_cwd = _resolve_validated_cwd(cwd)
         in_mem = await self.sessions.get(session_id)
         if in_mem is not None:
             if in_mem.protocol_version != ACP_V1_PROTOCOL_VERSION:
                 return None, []
+            if "\x00" in in_mem.cwd or not Path(in_mem.cwd).is_absolute():
+                return None, []
             if Path(in_mem.cwd).resolve() != req_cwd:
                 return None, []
-            jpath: Path | None = None
-            sdd_dir = req_cwd / ".sdd"
-            if sdd_dir.is_dir() and in_mem.run_id == sanitize_session_run_id(session_id):
-                with contextlib.suppress(JournalPathError):
-                    candidate = run_journal_path(sdd_dir, in_mem.run_id)
-                    if candidate.is_file():
-                        jpath = candidate
+            if in_mem.run_id != sanitize_session_run_id(session_id):
+                return None, []
+            jpath, journal_ok = resolve_session_journal_path(req_cwd / ".sdd", in_mem.run_id)
+            if not journal_ok:
+                return None, []
             updates = project_journal_to_acp_updates(jpath, include_user_messages=True) if jpath is not None else []
             return in_mem, updates
 
@@ -612,14 +626,18 @@ class ACPHandlerRegistry:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle ACP v1 ``session/load`` by streaming journal history then returning ``{modes}``."""
-        state = self._peer_states.get(ctx.peer)
+        state = self._get_peer_state(ctx.peer)
         if self.require_auth and not (state is not None and state.authenticated):
             raise ACPSchemaError(
                 AUTH_REQUIRED,
                 "authentication required before loading a session",
             )
-        session_id: str = params["sessionId"]
-        cwd: str = params["cwd"]
+        session_id = params.get("sessionId")
+        if not isinstance(session_id, str) or not session_id or "\x00" in session_id:
+            raise ACPSchemaError(INVALID_PARAMS, "sessionId must be a valid non-empty string", {"field": "sessionId"})
+        cwd = params.get("cwd")
+        req_cwd = _resolve_validated_cwd(cwd)
+        assert isinstance(cwd, str)
         mcp_servers_raw: list[dict[str, Any]] = params["mcpServers"]
         additional_dirs_raw = params.get("additionalDirectories")
         additional_dirs: tuple[str, ...] = (
@@ -629,10 +647,14 @@ class ACPHandlerRegistry:
         )
         system_prompt = params.get("systemPrompt")
 
-        req_cwd = Path(cwd).resolve()
         existing = await self.sessions.get(session_id)
         if existing is not None:
-            if existing.protocol_version != ACP_V1_PROTOCOL_VERSION or Path(existing.cwd).resolve() != req_cwd:
+            if (
+                existing.protocol_version != ACP_V1_PROTOCOL_VERSION
+                or "\x00" in existing.cwd
+                or not Path(existing.cwd).is_absolute()
+                or Path(existing.cwd).resolve() != req_cwd
+            ):
                 raise ACPSchemaError(
                     RESOURCE_NOT_FOUND,
                     f"unknown session {session_id!r}",
@@ -651,6 +673,8 @@ class ACPHandlerRegistry:
             session is None
             or session.session_id != session_id
             or session.protocol_version != ACP_V1_PROTOCOL_VERSION
+            or "\x00" in session.cwd
+            or not Path(session.cwd).is_absolute()
             or Path(session.cwd).resolve() != req_cwd
         ):
             raise ACPSchemaError(

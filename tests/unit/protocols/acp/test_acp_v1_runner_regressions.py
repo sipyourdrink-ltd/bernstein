@@ -7,15 +7,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
+import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bernstein.adapters.base import SpawnResult
+from bernstein.adapters import registry as adapter_registry
+from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.cli.commands.acp_cmd import run_terminal_setup
 from bernstein.core.config.platform_compat import reap_process_group
 from bernstein.core.protocols.acp import (
@@ -33,18 +38,28 @@ from bernstein.core.protocols.acp.handlers import (
     TaskCreator,
 )
 from bernstein.core.protocols.acp.projection import project_journal_to_acp_updates
-from bernstein.core.protocols.acp.runner import EmbeddedOrchestratorRunner
+from bernstein.core.protocols.acp.runner import (
+    EmbeddedOrchestratorRunner,
+    _ActiveWorker,  # pyright: ignore[reportPrivateUsage]
+    _reap_worker,  # pyright: ignore[reportPrivateUsage]
+)
 from bernstein.core.protocols.acp.schema import (
     AUTH_REQUIRED,
     INTERNAL_ERROR,
+    INVALID_PARAMS,
     INVALID_REQUEST,
     RESOURCE_NOT_FOUND,
     ACPSchemaError,
+    validate_request,
 )
 from bernstein.core.protocols.acp.server import build_default_server
+from bernstein.core.protocols.acp.session import (
+    _SAFE_ID_RE,  # pyright: ignore[reportPrivateUsage]
+    load_persisted_session,
+)
 from bernstein.core.protocols.acp.transport import StdioAcpTransport
 from bernstein.core.replay.journal import EventJournal, load_events
-from bernstein.core.tasks.models import TaskStatus
+from bernstein.core.tasks.models import ModelConfig, TaskStatus
 from bernstein.core.tasks.task_store_core import TaskStore
 
 
@@ -714,3 +729,275 @@ def test_stdin_eof_during_permission_wait_cancels_task_with_eof_reason(tmp_path:
     journal_path = tmp_path / ".sdd" / "runs" / sid / "journal.jsonl"
     cancelled_events = [e for e in load_events(journal_path).events if e.get("event") == "task_cancelled"]
     assert cancelled_events and cancelled_events[-1].get("reason") == "transport_eof"
+
+
+def test_concurrent_turns_sharing_singleton_cli_adapter_do_not_cross_kill_or_mutate_instance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent turns sharing a singleton CLIAdapter must not mutate the instance or cross-kill."""
+    entered_lock = threading.Lock()
+    entered_sessions: list[str] = []
+    mutated_probe_attr = False
+
+    class _SingletonProbeAdapter(CLIAdapter):
+        default_model = "singleton-mock"
+
+        def name(self) -> str:
+            return "Singleton Probe"
+
+        def spawn(
+            self,
+            *,
+            prompt: str,
+            workdir: Path,
+            model_config: ModelConfig,
+            session_id: str,
+            mcp_config: dict[str, Any] | None = None,
+            timeout_seconds: int = 120,
+            task_scope: str = "medium",
+            budget_multiplier: float = 1.0,
+            system_addendum: str = "",
+            multimodal_context: Any | None = None,
+        ) -> SpawnResult:
+            nonlocal mutated_probe_attr
+            del prompt, model_config, mcp_config, timeout_seconds, task_scope, budget_multiplier
+            del system_addendum, multimodal_context
+            if "_probe_fast_exit" in self.__dict__:
+                mutated_probe_attr = True
+            log_dir = workdir / ".sdd" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / f"{session_id}.log"
+            log_path.write_text("singleton turn completed\n", encoding="utf-8")
+            proc = subprocess.Popen(["/bin/sh", "-c", "sleep 0.45"], start_new_session=True)
+            with entered_lock:
+                entered_sessions.append(session_id)
+            self._probe_fast_exit(proc, log_path, provider_name="shared", timeout_seconds=1.5)
+            return SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
+
+    singleton = _SingletonProbeAdapter()
+    monkeypatch.setitem(adapter_registry._ADAPTERS, "_probe_singleton", singleton)  # pyright: ignore[reportPrivateUsage]
+
+    ws1 = tmp_path / "ws1"
+    ws2 = tmp_path / "ws2"
+    ws1.mkdir()
+    ws2.mkdir()
+    (ws1 / "bernstein.yaml").write_text("approvals:\n  interactive: false\n", encoding="utf-8")
+    (ws2 / "bernstein.yaml").write_text("approvals:\n  interactive: false\n", encoding="utf-8")
+
+    server = build_default_server(server_url=None, adapter_name="_probe_singleton")
+
+    async def _run() -> None:
+        await server.registry.dispatch(ACPRequestContext("initialize", 1), {"protocolVersion": 1})
+        s1 = await server.registry.dispatch(ACPRequestContext("session/new", 2), {"cwd": str(ws1), "mcpServers": []})
+        s2 = await server.registry.dispatch(ACPRequestContext("session/new", 3), {"cwd": str(ws2), "mcpServers": []})
+        sid1 = s1["sessionId"]
+        sid2 = s2["sessionId"]
+        await server.registry.dispatch(ACPRequestContext("session/set_mode", 4), {"sessionId": sid1, "modeId": "auto"})
+        await server.registry.dispatch(ACPRequestContext("session/set_mode", 5), {"sessionId": sid2, "modeId": "auto"})
+
+        t1 = asyncio.create_task(
+            server.registry.dispatch(
+                ACPRequestContext("session/prompt", 6),
+                {"sessionId": sid1, "prompt": [{"type": "text", "text": "Turn 1"}]},
+            )
+        )
+        await asyncio.sleep(0.05)
+        t2 = asyncio.create_task(
+            server.registry.dispatch(
+                ACPRequestContext("session/prompt", 7),
+                {"sessionId": sid2, "prompt": [{"type": "text", "text": "Turn 2"}]},
+            )
+        )
+
+        for _ in range(40):
+            with entered_lock:
+                count = len(entered_sessions)
+            if count >= 2:
+                break
+            await asyncio.sleep(0.02)
+        assert len(entered_sessions) == 2
+        assert "_probe_fast_exit" not in singleton.__dict__
+
+        await server.registry.dispatch(ACPRequestContext("session/cancel", None), {"sessionId": sid1})
+        r1 = await asyncio.wait_for(t1, timeout=3.0)
+        r2 = await asyncio.wait_for(t2, timeout=3.0)
+        assert r1["stopReason"] == "cancelled"
+        assert r2["stopReason"] == "end_turn"
+
+    asyncio.run(_run())
+    assert not mutated_probe_attr
+    assert "_probe_fast_exit" not in singleton.__dict__
+
+    st1 = TaskStore(ws1 / ".sdd" / "runtime" / "tasks.jsonl")
+    st1.replay_jsonl()
+    assert st1.list_tasks()[0].status == TaskStatus.CANCELLED
+
+    st2 = TaskStore(ws2 / ".sdd" / "runtime" / "tasks.jsonl")
+    st2.replay_jsonl()
+    assert st2.list_tasks()[0].status == TaskStatus.DONE
+
+
+def test_reap_worker_reaps_sigterm_group_without_zombie_stall_and_deduplicates_concurrent_reaps(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_reap_worker must reap SIGTERM-responsive children without a 3s zombie wait and deduplicate reaps."""
+    caplog.set_level(logging.WARNING)
+    proc = subprocess.Popen(["/bin/sh", "-c", "sleep 30 & wait"], start_new_session=True)
+    worker = _ActiveWorker(adapter=GeminiAdapter(), proc=proc, pid=proc.pid)
+    try:
+        t0 = time.monotonic()
+        _reap_worker(worker)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 0.8, f"_reap_worker stalled on zombie leader: {elapsed:.3f}s"
+        assert proc.returncode == -signal.SIGTERM
+        assert not _pid_alive(proc.pid)
+        assert "did not exit within" not in caplog.text
+    finally:
+        if _pid_alive(proc.pid):
+            reap_process_group(proc.pid, grace_seconds=0.1)
+
+    kill_calls = 0
+    kill_lock = threading.Lock()
+
+    class _CountingKillAdapter:
+        def kill(self, pid: int) -> object:
+            nonlocal kill_calls
+            with kill_lock:
+                kill_calls += 1
+            return reap_process_group(pid, grace_seconds=0.25)
+
+    stubborn = subprocess.Popen(["/bin/sh", "-c", "trap '' TERM; sleep 30"], start_new_session=True)
+    time.sleep(0.05)
+    stubborn_worker = _ActiveWorker(adapter=_CountingKillAdapter(), proc=stubborn, pid=stubborn.pid)
+    try:
+        threads = [threading.Thread(target=_reap_worker, args=(stubborn_worker,)) for _ in range(2)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=3.0)
+        assert kill_calls == 1
+        assert not _pid_alive(stubborn.pid)
+    finally:
+        if _pid_alive(stubborn.pid):
+            reap_process_group(stubborn.pid, grace_seconds=0.1)
+
+
+def test_session_load_rejects_relative_cwd_in_persisted_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persisted metadata with relative 'cwd' (e.g. '.') must be rejected even if process CWD matches."""
+    monkeypatch.chdir(tmp_path)
+    acp_dir = tmp_path / ".sdd" / "runtime" / "acp_sessions"
+    acp_dir.mkdir(parents=True, exist_ok=True)
+    (acp_dir / "sess-rel.json").write_text(
+        json.dumps({"session_id": "sess-rel", "cwd": ".", "run_id": "sess-rel", "mode": "manual"}),
+        encoding="utf-8",
+    )
+
+    assert load_persisted_session(str(tmp_path), "sess-rel") == (None, None)
+
+    server = build_default_server(server_url=None, adapter_name="mock")
+
+    async def _run() -> None:
+        await server.registry.dispatch(ACPRequestContext("initialize", 1), {"protocolVersion": 1})
+        with pytest.raises(ACPSchemaError) as exc_info:
+            await server.registry.dispatch(
+                ACPRequestContext("session/load", 2),
+                {"sessionId": "sess-rel", "cwd": str(tmp_path), "mcpServers": []},
+            )
+        assert exc_info.value.code == RESOURCE_NOT_FOUND
+
+    asyncio.run(_run())
+
+
+def test_session_load_nul_cwd_returns_invalid_params_and_safe_id_rejects_trailing_newline(
+    tmp_path: Path,
+) -> None:
+    """NUL byte in session/load cwd must return -32602 (INVALID_PARAMS), and _SAFE_ID_RE uses \\Z."""
+    assert _SAFE_ID_RE.match("sess-valid\n") is None
+
+    with pytest.raises(ACPSchemaError) as schema_exc:
+        validate_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session/load",
+                "params": {"sessionId": "sess-1", "cwd": f"{tmp_path}\x00tail", "mcpServers": []},
+            }
+        )
+    assert schema_exc.value.code == INVALID_PARAMS
+
+    server = build_default_server(server_url=None, adapter_name="mock")
+
+    async def _run() -> None:
+        await server.registry.dispatch(ACPRequestContext("initialize", 1), {"protocolVersion": 1})
+        with pytest.raises(ACPSchemaError) as dispatch_exc:
+            await server.registry.dispatch(
+                ACPRequestContext("session/load", 2),
+                {"sessionId": "sess-1", "cwd": f"{tmp_path}\x00tail", "mcpServers": []},
+            )
+        assert dispatch_exc.value.code == INVALID_PARAMS
+
+    asyncio.run(_run())
+
+
+def test_session_load_rejects_intra_runs_symlinked_journal(tmp_path: Path) -> None:
+    """session/load must reject journal paths escaping .sdd/runs/<run_id> into sibling runs."""
+    foreign = EventJournal("cli-run-sibling", tmp_path / ".sdd")
+    foreign.record("agent_message", text="SIBLING_RUN_SECRET_PAYLOAD")
+
+    frames: list[dict[str, Any]] = []
+
+    async def _publish(frame: dict[str, Any]) -> None:
+        frames.append(frame)
+
+    server1 = build_default_server(server_url=None, adapter_name="mock", stream_publisher=_publish)
+    sid_file_link = ""
+    sid_dir_link = ""
+
+    async def _setup_and_check_inmem() -> None:
+        nonlocal sid_file_link, sid_dir_link
+        await server1.registry.dispatch(ACPRequestContext("initialize", 1), {"protocolVersion": 1})
+        c1 = await server1.registry.dispatch(
+            ACPRequestContext("session/new", 2),
+            {"cwd": str(tmp_path), "mcpServers": []},
+        )
+        c2 = await server1.registry.dispatch(
+            ACPRequestContext("session/new", 3),
+            {"cwd": str(tmp_path), "mcpServers": []},
+        )
+        sid_file_link = c1["sessionId"]
+        sid_dir_link = c2["sessionId"]
+
+        run_dir_1 = tmp_path / ".sdd" / "runs" / sid_file_link
+        run_dir_1.mkdir(parents=True, exist_ok=True)
+        (run_dir_1 / "journal.jsonl").symlink_to("../cli-run-sibling/journal.jsonl")
+
+        (tmp_path / ".sdd" / "runs" / sid_dir_link).symlink_to("cli-run-sibling")
+
+        for bad_sid in (sid_file_link, sid_dir_link):
+            with pytest.raises(ACPSchemaError) as inmem_exc:
+                await server1.registry.dispatch(
+                    ACPRequestContext("session/load", 4),
+                    {"sessionId": bad_sid, "cwd": str(tmp_path), "mcpServers": []},
+                )
+            assert inmem_exc.value.code == RESOURCE_NOT_FOUND
+
+    asyncio.run(_setup_and_check_inmem())
+
+    server2 = build_default_server(server_url=None, adapter_name="mock", stream_publisher=_publish)
+
+    async def _check_persisted() -> None:
+        await server2.registry.dispatch(ACPRequestContext("initialize", 1), {"protocolVersion": 1})
+        for bad_sid in (sid_file_link, sid_dir_link):
+            with pytest.raises(ACPSchemaError) as disk_exc:
+                await server2.registry.dispatch(
+                    ACPRequestContext("session/load", 2),
+                    {"sessionId": bad_sid, "cwd": str(tmp_path), "mcpServers": []},
+                )
+            assert disk_exc.value.code == RESOURCE_NOT_FOUND
+
+    asyncio.run(_check_persisted())
+    assert "SIBLING_RUN_SECRET_PAYLOAD" not in json.dumps(frames)

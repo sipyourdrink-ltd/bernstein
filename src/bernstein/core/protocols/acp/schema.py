@@ -193,6 +193,8 @@ def _is_int(value: Any) -> bool:
 
 
 def _is_absolute_path(path_str: str) -> bool:
+    if "\x00" in path_str:
+        return False
     return PurePosixPath(path_str).is_absolute() or PureWindowsPath(path_str).is_absolute()
 
 
@@ -317,7 +319,13 @@ def _validate_session_new(params: dict[str, Any]) -> None:
 
 def _validate_session_load(params: dict[str, Any]) -> None:
     """Validate the params for the ACP v1 ``session/load`` request."""
-    _require_str(params, "sessionId")
+    sid = _require_str(params, "sessionId")
+    if "\x00" in sid:
+        raise ACPSchemaError(
+            INVALID_PARAMS,
+            "sessionId must not contain NUL bytes",
+            {"field": "sessionId"},
+        )
     _validate_session_new(params)
 
 

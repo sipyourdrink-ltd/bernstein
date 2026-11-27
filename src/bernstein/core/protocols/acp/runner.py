@@ -23,12 +23,14 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.adapters.base import WaitableProcess, observe_fast_exit_probe
 from bernstein.core.approval.gate import ApprovalConfig, ApprovalTimeoutError, await_tool_call, load_approval_config
 from bernstein.core.approval.models import (
     ApprovalDecision,
@@ -39,7 +41,7 @@ from bernstein.core.approval.models import (
     internal_principal,
 )
 from bernstein.core.approval.queue import ApprovalQueue
-from bernstein.core.config.platform_compat import reap_process_group
+from bernstein.core.config.platform_compat import IS_WINDOWS, kill_process_group, reap_process_group
 from bernstein.core.protocols.acp.handlers import (
     ACPHandlerRegistry,
     PromptResult,
@@ -73,11 +75,42 @@ _CANCEL_PRINCIPAL = internal_principal("acp-runner/session-cancel")
 
 @dataclass
 class _ActiveWorker:
-    """Live spawned worker process and its owning adapter for group reaping."""
+    """Live spawned worker process and its owning adapter for idempotent group reaping."""
 
     adapter: Any
     proc: subprocess.Popen[bytes] | None
     pid: int
+    _reap_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _reaped: bool = field(default=False, init=False, repr=False)
+
+    def reap(self) -> None:
+        """Idempotently reap the worker process group without zombie-leader stalls."""
+        with self._reap_lock:
+            if self._reaped:
+                return
+            self._reaped = True
+
+            proc = self.proc
+            if self.pid > 0 and not IS_WINDOWS:
+                with contextlib.suppress(OSError):
+                    kill_process_group(self.pid, signal.SIGTERM)
+            if proc is not None and proc.poll() is None:
+                if self.pid <= 0 or proc.pid != self.pid:
+                    with contextlib.suppress(OSError):
+                        proc.terminate()
+                with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+                    proc.wait(timeout=0.2)
+
+            if self.pid > 0:
+                kill_fn = getattr(self.adapter, "kill", None)
+                if callable(kill_fn):
+                    with contextlib.suppress(Exception):
+                        kill_fn(self.pid)
+                else:
+                    with contextlib.suppress(Exception):
+                        reap_process_group(self.pid)
+
+            _terminate_and_reap(proc)
 
 
 def _terminate_and_reap(proc: subprocess.Popen[bytes] | None) -> None:
@@ -96,17 +129,9 @@ def _terminate_and_reap(proc: subprocess.Popen[bytes] | None) -> None:
 
 
 def _reap_worker(worker: _ActiveWorker | None) -> None:
-    """Reap an entire worker process group (including adapter wrappers) and wait on Popen."""
-    if worker is None:
-        return
-    if worker.pid > 0:
-        kill_fn = getattr(worker.adapter, "kill", None)
-        if callable(kill_fn):
-            with contextlib.suppress(Exception):
-                kill_fn(worker.pid)
-        with contextlib.suppress(Exception):
-            reap_process_group(worker.pid)
-    _terminate_and_reap(worker.proc)
+    """Idempotently reap an entire worker process group without zombie-leader stalls."""
+    if worker is not None:
+        worker.reap()
 
 
 def _read_utf8_text_if_valid(path: Path | None) -> str | None:
@@ -727,25 +752,19 @@ class EmbeddedOrchestratorRunner:
         run_sess_id = f"{session.run_id}-{session.turn_count}"
         adapter_any: Any = adapter
 
+        probe_worker: _ActiveWorker | None = None
+
+        def _on_probe_start(proc_obj: WaitableProcess) -> None:
+            nonlocal probe_worker
+            pid_val = int(getattr(proc_obj, "pid", 0) or 0)
+            raw_p = cast("subprocess.Popen[bytes]", proc_obj) if isinstance(proc_obj, subprocess.Popen) else None
+            probe_worker = _ActiveWorker(adapter=adapter, proc=raw_p, pid=pid_val)
+            self._set_active_worker(session.session_id, probe_worker)
+            if cancel_event.is_set():
+                _reap_worker(probe_worker)
+
         def _spawn_sync() -> SpawnResult:
-            orig_probe = getattr(adapter, "_probe_fast_exit", None)
-            had_instance_probe = "_probe_fast_exit" in getattr(adapter, "__dict__", {})
-            if callable(orig_probe):
-
-                def _wrapped_probe(proc_obj: Any, *p_args: Any, **p_kwargs: Any) -> Any:
-                    pid_val = int(getattr(proc_obj, "pid", 0) or 0)
-                    raw_p = (
-                        cast("subprocess.Popen[bytes]", proc_obj) if isinstance(proc_obj, subprocess.Popen) else None
-                    )
-                    worker_handle = _ActiveWorker(adapter=adapter, proc=raw_p, pid=pid_val)
-                    self._set_active_worker(session.session_id, worker_handle)
-                    if cancel_event.is_set():
-                        _reap_worker(worker_handle)
-                    return orig_probe(proc_obj, *p_args, **p_kwargs)
-
-                adapter_any._probe_fast_exit = _wrapped_probe
-
-            try:
+            with observe_fast_exit_probe(_on_probe_start):
                 if isinstance(adapter, MockAgentAdapter):
                     return adapter_any.spawn(
                         prompt=prompt_text,
@@ -763,20 +782,13 @@ class EmbeddedOrchestratorRunner:
                     session_id=run_sess_id,
                     timeout_seconds=120,
                 )
-            finally:
-                if callable(orig_probe):
-                    if had_instance_probe:
-                        adapter_any._probe_fast_exit = orig_probe
-                    else:
-                        with contextlib.suppress(AttributeError):
-                            delattr(adapter_any, "_probe_fast_exit")
 
         spawn_res: SpawnResult
         try:
             spawn_res = await asyncio.to_thread(_spawn_sync)
         except Exception:
             if cancel_event.is_set():
-                worker = self._pop_active_worker(session.session_id)
+                worker = self._pop_active_worker(session.session_id) or probe_worker
                 if worker is not None:
                     await asyncio.to_thread(_reap_worker, worker)
                 return "Cancelled", 0, True
@@ -787,8 +799,16 @@ class EmbeddedOrchestratorRunner:
             cast("subprocess.Popen[bytes]", raw_proc) if isinstance(raw_proc, subprocess.Popen) else None
         )
         worker_pid = spawn_res.pid or (proc.pid if proc is not None else 0)
-        worker_handle = _ActiveWorker(adapter=adapter, proc=proc, pid=worker_pid)
-        self._set_active_worker(session.session_id, worker_handle)
+        if probe_worker is not None:
+            worker_handle = probe_worker
+            if worker_handle.proc is None and proc is not None:
+                worker_handle.proc = proc
+            if worker_handle.pid <= 0 and worker_pid > 0:
+                worker_handle.pid = worker_pid
+        else:
+            worker_handle = _ActiveWorker(adapter=adapter, proc=proc, pid=worker_pid)
+        if not cancel_event.is_set():
+            self._set_active_worker(session.session_id, worker_handle)
         if worker_pid > 0:
             journal.record("worker_spawned", task_id=task_id, pid=worker_pid, adapter=chosen_adapter)
 

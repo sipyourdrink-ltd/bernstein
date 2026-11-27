@@ -32,7 +32,7 @@ from bernstein.core.protocols.acp.schema import (
     ACP_V1_PROTOCOL_VERSION,
     VALID_MODES,
 )
-from bernstein.core.replay.journal import JournalPathError, run_journal_path
+from bernstein.core.replay.journal import JOURNAL_FILENAME
 from bernstein.core.security.path_containment import PathContainmentError, contained_path
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_SAFE_ID_RE = re.compile(r"\A[A-Za-z0-9_.-]{1,64}\Z")
 
 
 def sanitize_session_run_id(session_id: str) -> str:
@@ -292,15 +292,60 @@ def save_persisted_session(session: ACPSession) -> Path | None:
     return target
 
 
+def resolve_session_journal_path(sdd_dir: Path, run_id: str) -> tuple[Path | None, bool]:
+    """Resolve ``<sdd_dir>/runs/<run_id>/journal.jsonl`` contained strictly under ``<run_id>``.
+
+    Returns ``(journal_path, ok)``. ``ok`` is ``False`` when *run_id* is unsafe or any
+    component (``.sdd``, ``runs``, ``<run_id>``, or ``journal.jsonl``) is a symlink or
+    escapes ``<sdd_dir>/runs/<run_id>``. ``(None, True)`` means no journal exists yet.
+    """
+    if run_id in {".", ".."} or not _SAFE_ID_RE.match(run_id):
+        return None, False
+    if sdd_dir.is_symlink():
+        return None, False
+    if not sdd_dir.exists():
+        return None, True
+    if not sdd_dir.is_dir():
+        return None, False
+
+    runs_dir = sdd_dir / "runs"
+    if runs_dir.is_symlink():
+        return None, False
+    if not runs_dir.exists():
+        return None, True
+    if not runs_dir.is_dir():
+        return None, False
+
+    run_dir = runs_dir / run_id
+    if run_dir.is_symlink():
+        return None, False
+    if not run_dir.exists():
+        return None, True
+    if not run_dir.is_dir():
+        return None, False
+
+    raw_journal = run_dir / JOURNAL_FILENAME
+    if raw_journal.is_symlink():
+        return None, False
+    try:
+        canonical_run_dir = run_dir.resolve()
+        jpath = contained_path(canonical_run_dir, JOURNAL_FILENAME, label="acp session journal")
+    except (OSError, ValueError, PathContainmentError):
+        return None, False
+    return (jpath if jpath.is_file() else None), True
+
+
 def load_persisted_session(cwd: str, session_id: str) -> tuple[ACPSession | None, Path | None]:
     """Load persisted :class:`ACPSession` and its ``journal.jsonl`` path from *cwd*.
 
     Only loads sessions explicitly persisted under ``<cwd>/.sdd/runtime/acp_sessions/``
-    whose recorded ``session_id``, canonical ``cwd``, and ``run_id`` match *session_id*
-    and *cwd* (preventing non-ACP CLI run replay or cross-workspace rebinding).
+    whose recorded ``session_id``, absolute canonical ``cwd``, and ``run_id`` match
+    *session_id* and *cwd* (preventing non-ACP CLI run replay or cross-workspace rebinding).
     """
+    if "\x00" in cwd:
+        return None, None
     workdir = Path(cwd)
-    if not workdir.is_dir():
+    if not workdir.is_absolute() or not workdir.is_dir():
         return None, None
 
     canonical_cwd = workdir.resolve()
@@ -319,7 +364,11 @@ def load_persisted_session(cwd: str, session_id: str) -> tuple[ACPSession | None
         if not isinstance(recorded_sid, str) or recorded_sid != session_id:
             logger.warning("acp.session metadata id mismatch in %s", meta_path)
             return None, None
-        if not isinstance(recorded_cwd, str) or Path(recorded_cwd).resolve() != canonical_cwd:
+        if not isinstance(recorded_cwd, str) or "\x00" in recorded_cwd:
+            logger.warning("acp.session metadata invalid cwd in %s", meta_path)
+            return None, None
+        recorded_cwd_path = Path(recorded_cwd)
+        if not recorded_cwd_path.is_absolute() or recorded_cwd_path.resolve() != canonical_cwd:
             logger.warning("acp.session metadata cwd mismatch in %s", meta_path)
             return None, None
 
@@ -333,11 +382,11 @@ def load_persisted_session(cwd: str, session_id: str) -> tuple[ACPSession | None
         if sess.run_id != expected_run_id:
             logger.warning("acp.session resolved run_id mismatch in %s", meta_path)
             return None, None
-        try:
-            jpath = run_journal_path(sdd_dir, sess.run_id)
-        except JournalPathError:
-            jpath = None
-        return sess, (jpath if jpath is not None and jpath.is_file() else None)
+        jpath, journal_ok = resolve_session_journal_path(sdd_dir, sess.run_id)
+        if not journal_ok:
+            logger.warning("acp.session rejected uncontained journal for %s", meta_path)
+            return None, None
+        return sess, jpath
     except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
         logger.warning("acp.session unreadable metadata %s: %s", meta_path, exc)
         return None, None

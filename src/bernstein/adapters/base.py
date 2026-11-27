@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import json
@@ -14,6 +15,7 @@ import sys
 import threading
 import time
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -28,7 +30,7 @@ from bernstein.core.platform_compat import (
 from bernstein.core.resource_limits import ResourceLimits, make_preexec_fn
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
     from pathlib import Path
 
     from bernstein.core.config.platform_compat import ProcessReapReceipt
@@ -386,6 +388,22 @@ class WaitableProcess(Protocol):
 
     def wait(self, timeout: float | None = None) -> object:
         """Wait for process completion and return its exit status."""
+
+
+_FAST_EXIT_PROBE_OBSERVER: ContextVar[Callable[[WaitableProcess], None] | None] = ContextVar(
+    "bernstein_fast_exit_probe_observer",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def observe_fast_exit_probe(callback: Callable[[WaitableProcess], None]) -> Generator[None]:
+    """Register a per-context observer called at the start of :meth:`CLIAdapter._probe_fast_exit`."""
+    token = _FAST_EXIT_PROBE_OBSERVER.set(callback)
+    try:
+        yield
+    finally:
+        _FAST_EXIT_PROBE_OBSERVER.reset(token)
 
 
 #: Process-environment channel carrying the orchestrator root's heartbeat
@@ -1017,6 +1035,9 @@ class CLIAdapter(ABC):
             StandingCapError: Provider immediately exited due to a standing cap.
             SpawnError: Provider immediately exited for another reason.
         """
+        observer = _FAST_EXIT_PROBE_OBSERVER.get()
+        if observer is not None:
+            observer(proc)
         try:
             exit_code = proc.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
