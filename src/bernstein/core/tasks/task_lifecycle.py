@@ -5119,32 +5119,6 @@ def _ingest_remote_completion(orch: Any, task: Task) -> str | None:
     return branch
 
 
-def _claiming_cluster_node(orch: Any, task: Task) -> str | None:
-    """Return the registered cluster node that claimed ``task``, or None (issue #6611).
-
-    A remote worker claims under its node id (``worker_cmd._claim_task``); the
-    orchestrator claims under its own per-process session id, which changes on
-    restart. Membership in the server's node registry is therefore the signal
-    that a completion came from outside this host, not "claimed by someone
-    else". Offline nodes stay in the registry and still count. No claim owner,
-    an unregistered owner, or an unreachable cluster API answers None, which
-    keeps the pre-existing behaviour rather than failing a local task.
-    """
-    node = getattr(task, "claimed_by_session", None)
-    server_url = getattr(getattr(orch, "_config", None), "server_url", None)
-    client = getattr(orch, "_client", None)
-    if not node or not server_url or client is None:
-        return None
-    try:
-        resp = client.get(f"{server_url}/cluster/nodes")
-        resp.raise_for_status()
-        ids = {str(entry.get("id")) for entry in resp.json() if isinstance(entry, dict)}
-    except Exception as exc:
-        logger.info("janitor: cluster node list unavailable for task=%s (%s); treating as local", task.id, exc)
-        return None
-    return str(node) if str(node) in ids else None
-
-
 def _enqueue_alive_exit_janitor_pass(
     orch: Any,
     task: Task,
@@ -5178,15 +5152,17 @@ def _enqueue_alive_exit_janitor_pass(
 
     Returns:
         The future tracking the verification result, or None if the
-        task has no completion signals (a no-op enqueue; a subsequent
-        process_completed_tasks iteration can still process it as
-        auto-verified).
+        task has no completion signals and no cluster-node claim (a no-op
+        enqueue; a subsequent process_completed_tasks iteration can still
+        process it as auto-verified).
     """
     # An artifact-mode task is enqueued even with no declared signals: its
     # completion identity *is* the signed receipt this pass records, so
     # skipping the pass would leave the task with nothing to complete on
-    # (issue #2608). A signal-less coding task keeps the auto-verify default.
-    if not task.completion_signals and not is_artifact_mode(task):
+    # (issue #2608). A signal-less coding task keeps the auto-verify default,
+    # unless a cluster node claimed it: that completion must still show a
+    # posted artifact before it can pass (issue #6611).
+    if not task.completion_signals and not is_artifact_mode(task) and not task.claimed_by_node:
         logger.info(
             "janitor: enqueued pass task=%s session=%s role=%s reason=%s "
             "no_completion_signals=true (will be marked verified by default)",
@@ -5229,18 +5205,17 @@ def _enqueue_alive_exit_janitor_pass(
         preview_branch = _ingest_remote_completion(orch, task)
         if preview_branch is not None:
             session_id = f"remote-{task.id}"
-        else:
-            node = _claiming_cluster_node(orch, task)
-            if node is not None:
-                # The worker that completed this task posted nothing verifiable,
-                # and grading the run checkout instead would pass it on whatever
-                # bytes an earlier run left at the declared output path.
-                reason = (
-                    f"artifact_missing_remote: task {task.id} was completed by cluster node {node} "
-                    "without a verified posted artifact"
-                )
-                logger.warning("janitor: %s", reason)
-                return _JanitorSyncFuture((False, [reason]))
+        elif task.claimed_by_node:
+            # The server recorded at claim time that a registered node owns
+            # this task, and that node posted nothing verifiable. Grading the
+            # run checkout instead would pass it on whatever bytes an earlier
+            # run left at the declared output path.
+            failure = (
+                f"artifact_missing_remote: task {task.id} was completed by cluster node "
+                f"{task.claimed_by_node} without a verified posted artifact"
+            )
+            logger.warning("janitor: %s", failure)
+            return _JanitorSyncFuture((False, [failure]))
     preview_setup = _preview_setup(orch) if preview_branch is not None else None
     if executor is None:
         # Defensive: if the orchestrator has no executor we still want a

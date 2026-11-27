@@ -418,15 +418,28 @@ can pick it up instead of being stranded in `claimed` (#3018).
 
 **A remote worker completes a task without posting its output.** A worker
 hands its result back as an artifact (`POST /tasks/{id}/artifacts`) before
-`POST /tasks/{id}/complete`. When the task was claimed by a node in the
-registry (`GET /cluster/nodes`, offline nodes included) and no verified
-artifact was posted, the janitor fails the task with
-`artifact_missing_remote` instead of grading the run checkout, where stale
-bytes at the declared output path, or a file that already satisfies a
-`path_exists` signal, would otherwise pass it (#6611). The task then takes
-the ordinary reopen budget. A completion with no claim owner, an owner that
-is not a registered node, or a cluster API that cannot be read is graded as
-before.
+`POST /tasks/{id}/complete`. The server records remote provenance at claim
+time: when the claim owner (`claimed_by_session`) is a node in its registry,
+`GET /tasks/next/{role}`, `POST /tasks/{id}/claim` and
+`POST /tasks/claim-batch` store that node id on the task as
+`claimed_by_node`. An orchestrator that names its own registered node only
+through `node_id` (for the health gate) still owns the claim as its session,
+so its claims stay local. Releasing, reopening, force-claiming, restart
+recovery and node-departure recovery clear the field, and a later claim
+overwrites it. Because the field lives on the task, it survives the worker
+unregistering its node right after completing.
+
+When a task carrying `claimed_by_node` completes with no verified artifact,
+the janitor fails it with `artifact_missing_remote` instead of grading the
+run checkout, where stale bytes at the declared output path, or a file that
+already satisfies a `path_exists` signal, would otherwise pass it (#6611).
+This applies to artifact-mode tasks, `code_diff` tasks with signals, and
+code tasks with no completion signals, which no longer auto-verify when a
+node claimed them. The task then takes the ordinary reopen budget. A task
+without `claimed_by_node` (a local claim, or one recorded before this field
+existed) is graded as before. The janitor reads the field from the task
+payload it already holds, so the decision makes no network call and has no
+timeout or auth failure mode of its own.
 
 ## Observability for cluster health
 
