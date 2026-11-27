@@ -471,6 +471,22 @@ and holds it to the same standard, and asserts the discovered set of lanes
 exactly, so a widened matcher cannot quietly demand a PAT of a lane that
 only reads pull requests.
 
+#### Dependabot auto-merge and manual queue entry (#6845)
+
+`.github/workflows/dependabot-auto-merge.yml` runs on Dependabot `pull_request`
+events with `secrets.GITHUB_TOKEN`. Because GitHub does not advance a
+`GITHUB_TOKEN`-armed auto-merge into a merge queue (for the same recursion
+guard as `GITHUB_TOKEN`-opened PRs above), Dependabot PRs armed by
+`github-actions[bot]` wait in a `clean` state even after every required check
+is green.
+
+We deliberately keep manual enqueueing rather than storing a write-capable PAT
+or GitHub App token in Dependabot secrets. Once a ready Dependabot PR has
+green required checks (`CI gate`, `quorum`, and any applicable bundle checks),
+a maintainer enqueues it by hand via `gh pr merge <number> --auto` or the
+GitHub UI **Merge when ready** button. Draft Dependabot PRs are never armed by
+the workflow (#6758).
+
 ### What the pool actually spends
 
 The free-tier public-repo ceiling is 20 concurrent jobs, so the budget
@@ -493,8 +509,9 @@ the durable fix for that is the merge queue (see *Concurrency policy*).
 Advisory lanes are kept cheap instead of removed:
 `pr-observability-summary` runs only on PRs labelled `deep-review`,
 `dependabot-auto-merge` gates its only job on the Dependabot user id
-and never arms a Draft (its `ready_for_review` event brings the update
-back through the same gates),
+and never arms a Draft (its `ready_for_review` event brings the update back
+through the same gates; queue entry remains manual because the workflow stays
+on `GITHUB_TOKEN`, see #6845),
 `pr-policy` and `pr-labels` are consolidated single-job lanes, and the
 vulture / refurb / perflint jobs run weekly rather than per PR.
 
