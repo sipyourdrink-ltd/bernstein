@@ -63,6 +63,7 @@ ACP_V1_METHODS: Final[frozenset[str]] = frozenset(
         "initialize",
         "authenticate",
         "session/new",
+        "session/load",
         "session/set_mode",
         "session/prompt",
         "session/cancel",
@@ -75,6 +76,7 @@ ACP_V1_PRE_INIT_BLOCKED_METHODS: Final[frozenset[str]] = frozenset(
     {
         "authenticate",
         "session/new",
+        "session/load",
         "session/set_mode",
         "session/prompt",
         "session/cancel",
@@ -191,6 +193,8 @@ def _is_int(value: Any) -> bool:
 
 
 def _is_absolute_path(path_str: str) -> bool:
+    if "\x00" in path_str:
+        return False
     return PurePosixPath(path_str).is_absolute() or PureWindowsPath(path_str).is_absolute()
 
 
@@ -311,6 +315,18 @@ def _validate_session_new(params: dict[str, Any]) -> None:
                 {"field": "configOptions"},
             )
     _validate_optional_dict(params, "_meta")
+
+
+def _validate_session_load(params: dict[str, Any]) -> None:
+    """Validate the params for the ACP v1 ``session/load`` request."""
+    sid = _require_str(params, "sessionId")
+    if "\x00" in sid:
+        raise ACPSchemaError(
+            INVALID_PARAMS,
+            "sessionId must not contain NUL bytes",
+            {"field": "sessionId"},
+        )
+    _validate_session_new(params)
 
 
 def _validate_session_set_mode(params: dict[str, Any]) -> None:
@@ -521,6 +537,7 @@ _PARAM_VALIDATORS: dict[str, Any] = {
     "initialize": _validate_initialize,
     "authenticate": _validate_authenticate,
     "session/new": _validate_session_new,
+    "session/load": _validate_session_load,
     "session/set_mode": _validate_session_set_mode,
     "session/prompt": _validate_session_prompt,
     "session/cancel": _validate_session_cancel,

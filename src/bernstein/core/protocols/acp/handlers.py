@@ -1,11 +1,11 @@
 """ACP request handlers wired onto the existing Bernstein primitives.
 
 Supports official ACP v1 (``protocolVersion = 1``: ``initialize``,
-``authenticate``, ``session/new``, ``session/set_mode``, blocking
-``session/prompt`` with ``stopReason``, notification ``session/cancel``,
-``session/update``, and Agent -> Client ``session/request_permission`` RPCs)
-alongside the legacy ``"2025-04-01"`` methods so existing tests and
-integrations stay dual-compatible.
+``authenticate``, ``session/new``, ``session/load``, ``session/set_mode``,
+blocking ``session/prompt`` with ``stopReason`` and ``usage``, notification
+``session/cancel``, ``session/update``, and Agent -> Client
+``session/request_permission`` RPCs) alongside the legacy ``"2025-04-01"``
+methods so existing tests and integrations stay dual-compatible.
 """
 
 from __future__ import annotations
@@ -17,14 +17,21 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.metadata import version as _pkg_version
+from pathlib import Path
 from typing import Any, Final, cast
 
 from bernstein.core.protocols.acp.metrics import (
     record_acp_message,
     set_active_sessions,
+)
+from bernstein.core.protocols.acp.projection import (
+    MAX_SESSION_LOAD_BYTES,
+    MAX_SESSION_LOAD_UPDATES,
+    project_journal_to_acp_updates,
 )
 from bernstein.core.protocols.acp.schema import (
     ACP_AUTH_EXEMPT_METHODS,
@@ -45,7 +52,14 @@ from bernstein.core.protocols.acp.schema import (
     ACPSchemaError,
     make_notification,
 )
-from bernstein.core.protocols.acp.session import ACPSession, ACPSessionStore
+from bernstein.core.protocols.acp.session import (
+    ACPSession,
+    ACPSessionStore,
+    load_persisted_session,
+    resolve_session_journal_path,
+    sanitize_session_run_id,
+    save_persisted_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,29 +116,23 @@ class PromptResult:
     message: str = ""
 
 
-TaskCreator = Callable[[str, str, str], Awaitable[PromptResult]]
-"""Signature: ``async (prompt, cwd, role) -> PromptResult``."""
+@dataclass(frozen=True)
+class PromptRunOutcome:
+    """Structured return value from a :data:`PromptRunner` execution."""
 
-TaskCanceller = Callable[[str, str], Awaitable[bool]]
-"""Signature: ``async (session_id, reason) -> bool``."""
+    stop_reason: str
+    usage: dict[str, int] | None = None
 
-StreamPublisher = Callable[[dict[str, Any]], Awaitable[None]]
-"""Signature: ``async (frame) -> None`` - publishes a JSON-RPC frame to the client."""
 
-ClientRequester = Callable[[str, dict[str, Any], float | None], Awaitable[dict[str, Any]]]
-"""Signature: ``async (method, params, timeout_s) -> result_dict`` for Agent -> Client RPCs."""
-
-PromptRunner = Callable[[ACPSession, list[dict[str, Any]], asyncio.Event], Awaitable[str]]
-"""Signature: ``async (session, content_blocks, cancel_event) -> stop_reason``."""
-
-AuthHandler = Callable[[str], Awaitable[bool]]
-"""Signature: ``async (method_id) -> bool``."""
-
-PermissionAsker = Callable[[str, str, str], Awaitable[str]]
-"""Signature: ``async (session_id, tool, detail) -> "approved"|"rejected"``."""
-
-AuditEmitter = Callable[[str, str, dict[str, Any]], None]
-"""Signature: ``(event_type, resource_id, details) -> None``."""
+type TaskCreator = Callable[[str, str, str], Awaitable[PromptResult]]
+type TaskCanceller = Callable[[str, str], Awaitable[bool]]
+type StreamPublisher = Callable[[dict[str, Any]], Awaitable[None]]
+type ClientRequester = Callable[[str, dict[str, Any], float | None], Awaitable[dict[str, Any]]]
+type PromptRunner = Callable[[ACPSession, list[dict[str, Any]], asyncio.Event], Awaitable[str | PromptRunOutcome]]
+type SessionLoader = Callable[[str, str], Awaitable[tuple[ACPSession | None, list[dict[str, Any]]]]]
+type AuthHandler = Callable[[str], Awaitable[bool]]
+type PermissionAsker = Callable[[str, str, str], Awaitable[str]]
+type AuditEmitter = Callable[[str, str, dict[str, Any]], None]
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +163,8 @@ def _default_audit_emitter(event_type: str, resource_id: str, details: dict[str,
     logger.info("acp.audit event=%s resource=%s details=%s", event_type, resource_id, details)
 
 
-def _extract_prompt_text(blocks: list[dict[str, Any]]) -> str:
-    """Flatten ACP v1 ContentBlock list into plain prompt text for task_creator."""
+def extract_prompt_text(blocks: list[dict[str, Any]]) -> str:
+    """Flatten ACP v1 ContentBlock list into plain prompt text."""
     parts: list[str] = []
     for block in blocks:
         btype = block.get("type")
@@ -180,6 +188,19 @@ def _extract_prompt_text(blocks: list[dict[str, Any]]) -> str:
                     if isinstance(res_uri, str):
                         parts.append(f"[resource]({res_uri})")
     return "\n".join(parts)
+
+
+def _resolve_validated_cwd(cwd: Any) -> Path:
+    """Validate *cwd* as an absolute path without NUL bytes and return its canonical ``Path``."""
+    if not isinstance(cwd, str) or not cwd or "\x00" in cwd:
+        raise ACPSchemaError(INVALID_PARAMS, "cwd must be a valid non-empty path string", {"field": "cwd"})
+    cwd_path = Path(cwd)
+    if not cwd_path.is_absolute():
+        raise ACPSchemaError(INVALID_PARAMS, "cwd must be an absolute path", {"field": "cwd"})
+    try:
+        return cwd_path.resolve()
+    except (OSError, ValueError) as exc:
+        raise ACPSchemaError(INVALID_PARAMS, f"invalid cwd path: {exc}", {"field": "cwd"}) from exc
 
 
 def _client_supports_terminal_auth(client_caps: dict[str, Any]) -> bool:
@@ -222,6 +243,22 @@ class ACPRequestContext:
     connection_scoped: bool = True
 
 
+_CURRENT_ACP_CONTEXT: ContextVar[ACPRequestContext | None] = ContextVar("current_acp_context", default=None)
+
+
+def current_request_context() -> ACPRequestContext | None:
+    """Return the active :class:`ACPRequestContext` inside handler dispatch, if any."""
+    return _CURRENT_ACP_CONTEXT.get()
+
+
+def is_http_peer(peer: str, *, connection_scoped: bool = True) -> bool:
+    """Return ``True`` when *peer* or *connection_scoped* denotes an unauthenticated HTTP client."""
+    if not connection_scoped:
+        return True
+    lowered = peer.strip().lower()
+    return lowered == "http" or lowered.startswith(("http://", "https://"))
+
+
 # ---------------------------------------------------------------------------
 # Handler registry
 # ---------------------------------------------------------------------------
@@ -261,6 +298,7 @@ class ACPHandlerRegistry:
     permission_timeout_s: float = _PERMISSION_TIMEOUT_S
     agent_version: str = field(default_factory=_resolve_agent_version)
     prompt_runner: PromptRunner | None = None
+    session_loader: SessionLoader | None = None
     client_requester: ClientRequester | None = None
     auth_handler: AuthHandler | None = None
     terminal_auth_method: dict[str, Any] | None = None
@@ -293,6 +331,27 @@ class ACPHandlerRegistry:
             state = _PeerState()
             self._peer_states[peer] = state
         return state
+
+    def client_name_for_peer(self, peer: str = "stdio") -> str:
+        """Return negotiated client name for *peer* (or ``'acp-client'`` fallback)."""
+        state = self._peer_states.get(peer)
+        if state is not None and isinstance(state.client_info, dict):
+            name = state.client_info.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return "acp-client"
+
+    @property
+    def client_name(self) -> str:
+        """Return negotiated client name (preferring ``stdio``, else latest peer, else ``'acp-client'``)."""
+        stdio_name = self.client_name_for_peer("stdio")
+        if stdio_name != "acp-client" or "stdio" in self._peer_states:
+            return stdio_name
+        for peer in reversed(list(self._peer_states)):
+            candidate = self.client_name_for_peer(peer)
+            if candidate != "acp-client":
+                return candidate
+        return "acp-client"
 
     # -- Public dispatch ----------------------------------------------------
 
@@ -337,6 +396,7 @@ class ACPHandlerRegistry:
                 {"method": ctx.method},
             ) from exc
 
+        ctx_token = _CURRENT_ACP_CONTEXT.set(ctx)
         try:
             result = await handler(ctx, params)
         except ACPSchemaError as exc:
@@ -347,6 +407,8 @@ class ACPHandlerRegistry:
             record_acp_message(ctx.method, "error")
             logger.exception("acp.handler crashed method=%s", ctx.method)
             raise ACPSchemaError(INTERNAL_ERROR, f"handler crashed: {exc}") from exc
+        finally:
+            _CURRENT_ACP_CONTEXT.reset(ctx_token)
 
         record_acp_message(ctx.method, "ok")
         return result
@@ -358,6 +420,7 @@ class ACPHandlerRegistry:
             "initialize": self._handle_initialize,
             "authenticate": self._handle_authenticate,
             "session/new": self._handle_session_new,
+            "session/load": self._handle_session_load,
             "session/set_mode": self._handle_session_set_mode,
             "session/prompt": self._handle_session_prompt,
             "session/cancel": self._handle_session_cancel,
@@ -412,7 +475,7 @@ class ACPHandlerRegistry:
             result: dict[str, Any] = {
                 "protocolVersion": ACP_V1_PROTOCOL_VERSION,
                 "agentCapabilities": {
-                    "loadSession": False,
+                    "loadSession": True,
                     "promptCapabilities": {
                         "audio": False,
                         "embeddedContext": False,
@@ -500,7 +563,7 @@ class ACPHandlerRegistry:
         self.audit_emitter("acp.authenticate", "session", {"peer": ctx.peer, "methodId": method_id})
         return {}
 
-    # -- ACP v1: session/new ------------------------------------------------
+    # -- ACP v1: session/new & session/load ---------------------------------
 
     async def _handle_session_new(
         self,
@@ -515,6 +578,7 @@ class ACPHandlerRegistry:
                 "authentication required before creating a session",
             )
         cwd: str = params["cwd"]
+        _resolve_validated_cwd(cwd)
         mcp_servers_raw: list[dict[str, Any]] = params["mcpServers"]
         additional_dirs_raw = params.get("additionalDirectories")
         additional_dirs: tuple[str, ...] = (
@@ -533,8 +597,11 @@ class ACPHandlerRegistry:
             additional_directories=additional_dirs,
             system_prompt=system_prompt,
             protocol_version=ACP_V1_PROTOCOL_VERSION,
+            peer=ctx.peer,
+            owner_peer=ctx.peer,
         )
         await self.sessions.add(session)
+        save_persisted_session(session)
         set_active_sessions(await self.sessions.count())
         self.audit_emitter(
             "acp.session_new",
@@ -543,6 +610,175 @@ class ACPHandlerRegistry:
         )
         return {
             "sessionId": session_id,
+            "modes": {
+                "currentModeId": session.mode,
+                "availableModes": [dict(m) for m in _AVAILABLE_SESSION_MODES],
+            },
+        }
+
+    async def _default_session_loader(
+        self,
+        cwd: str,
+        session_id: str,
+    ) -> tuple[ACPSession | None, list[dict[str, Any]]]:
+        """Load session state and replayable journal updates from memory or disk."""
+        req_cwd = _resolve_validated_cwd(cwd)
+        in_mem = await self.sessions.get(session_id)
+        if in_mem is not None:
+            if in_mem.protocol_version != ACP_V1_PROTOCOL_VERSION:
+                return None, []
+            if "\x00" in in_mem.cwd or not Path(in_mem.cwd).is_absolute():
+                return None, []
+            if Path(in_mem.cwd).resolve() != req_cwd:
+                return None, []
+            if in_mem.run_id != sanitize_session_run_id(session_id):
+                return None, []
+            jpath, journal_ok = resolve_session_journal_path(req_cwd / ".sdd", in_mem.run_id)
+            if not journal_ok:
+                return None, []
+            updates = (
+                project_journal_to_acp_updates(
+                    jpath,
+                    include_user_messages=True,
+                    max_updates=MAX_SESSION_LOAD_UPDATES,
+                    max_bytes=MAX_SESSION_LOAD_BYTES,
+                )
+                if jpath is not None
+                else []
+            )
+            return in_mem, updates
+
+        loaded, jpath = load_persisted_session(cwd, session_id)
+        if loaded is None:
+            return None, []
+        updates = (
+            project_journal_to_acp_updates(
+                jpath,
+                include_user_messages=True,
+                max_updates=MAX_SESSION_LOAD_UPDATES,
+                max_bytes=MAX_SESSION_LOAD_BYTES,
+            )
+            if jpath is not None
+            else []
+        )
+        return loaded, updates
+
+    async def _handle_session_load(
+        self,
+        ctx: ACPRequestContext,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Handle ACP v1 ``session/load`` by streaming journal history then returning ``{modes}``."""
+        state = self._get_peer_state(ctx.peer)
+        if self.require_auth and not (state is not None and state.authenticated):
+            raise ACPSchemaError(
+                AUTH_REQUIRED,
+                "authentication required before loading a session",
+            )
+        session_id = params.get("sessionId")
+        if not isinstance(session_id, str) or not session_id or "\x00" in session_id:
+            raise ACPSchemaError(INVALID_PARAMS, "sessionId must be a valid non-empty string", {"field": "sessionId"})
+        cwd = params.get("cwd")
+        req_cwd = _resolve_validated_cwd(cwd)
+        assert isinstance(cwd, str)
+        mcp_servers_raw: list[dict[str, Any]] = params["mcpServers"]
+        additional_dirs_raw = params.get("additionalDirectories")
+        additional_dirs: tuple[str, ...] = (
+            tuple(str(d) for d in cast("list[Any]", additional_dirs_raw))
+            if isinstance(additional_dirs_raw, list)
+            else ()
+        )
+        system_prompt = params.get("systemPrompt")
+
+        existing = await self.sessions.get(session_id)
+        if existing is not None:
+            if (
+                existing.protocol_version != ACP_V1_PROTOCOL_VERSION
+                or (existing.owner_peer is not None and existing.owner_peer != ctx.peer)
+                or "\x00" in existing.cwd
+                or not Path(existing.cwd).is_absolute()
+                or Path(existing.cwd).resolve() != req_cwd
+            ):
+                raise ACPSchemaError(
+                    RESOURCE_NOT_FOUND,
+                    f"unknown session {session_id!r}",
+                    {"sessionId": session_id},
+                )
+            if existing.has_active_turn:
+                raise ACPSchemaError(
+                    INVALID_REQUEST,
+                    f"session {session_id!r} already has an active prompt turn",
+                    {"sessionId": session_id},
+                )
+
+        loader = self.session_loader or self._default_session_loader
+        session, replayed_updates = await loader(cwd, session_id)
+        if (
+            session is None
+            or session.session_id != session_id
+            or session.protocol_version != ACP_V1_PROTOCOL_VERSION
+            or (session.owner_peer is not None and session.owner_peer != ctx.peer)
+            or "\x00" in session.cwd
+            or not Path(session.cwd).is_absolute()
+            or Path(session.cwd).resolve() != req_cwd
+        ):
+            raise ACPSchemaError(
+                RESOURCE_NOT_FOUND,
+                f"unknown session {session_id!r}",
+                {"sessionId": session_id},
+            )
+        if session.has_active_turn:
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"session {session_id!r} already has an active prompt turn",
+                {"sessionId": session_id},
+            )
+
+        latest = await self.sessions.get(session_id)
+        if latest is not None:
+            if (
+                latest.protocol_version != ACP_V1_PROTOCOL_VERSION
+                or (latest.owner_peer is not None and latest.owner_peer != ctx.peer)
+                or "\x00" in latest.cwd
+                or not Path(latest.cwd).is_absolute()
+                or Path(latest.cwd).resolve() != req_cwd
+            ):
+                raise ACPSchemaError(
+                    RESOURCE_NOT_FOUND,
+                    f"unknown session {session_id!r}",
+                    {"sessionId": session_id},
+                )
+            if latest.has_active_turn:
+                raise ACPSchemaError(
+                    INVALID_REQUEST,
+                    f"session {session_id!r} already has an active prompt turn",
+                    {"sessionId": session_id},
+                )
+
+        session.peer = ctx.peer
+        session.owner_peer = ctx.peer
+        session.set_mode("manual")
+        session.always_allowed_tools.clear()
+        session.mcp_servers = tuple(dict(s) for s in mcp_servers_raw)
+        session.additional_directories = additional_dirs
+        if system_prompt is not None:
+            session.system_prompt = system_prompt
+        session.protocol_version = ACP_V1_PROTOCOL_VERSION
+        session.touch()
+
+        await self.sessions.upsert(session)
+        save_persisted_session(session)
+        set_active_sessions(await self.sessions.count())
+
+        for update in replayed_updates:
+            await self.emit_session_update(session_id, update)
+
+        self.audit_emitter(
+            "acp.session_load",
+            session_id,
+            {"peer": ctx.peer, "cwd": cwd, "replayedUpdates": len(replayed_updates)},
+        )
+        return {
             "modes": {
                 "currentModeId": session.mode,
                 "availableModes": [dict(m) for m in _AVAILABLE_SESSION_MODES],
@@ -572,13 +808,26 @@ class ACPHandlerRegistry:
                 f"session {session_id!r} is not an ACP v1 session",
                 {"sessionId": session_id},
             )
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            raise ACPSchemaError(
+                RESOURCE_NOT_FOUND,
+                f"unknown session {session_id!r}",
+                {"sessionId": session_id},
+            )
         if mode_id not in VALID_MODES:
             raise ACPSchemaError(
                 INVALID_PARAMS,
                 f"modeId must be one of {sorted(VALID_MODES)}",
                 {"field": "modeId", "got": mode_id},
             )
+        if mode_id == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
+                {"sessionId": session_id, "modeId": mode_id},
+            )
         session.set_mode(mode_id)
+        save_persisted_session(session)
         self.audit_emitter("acp.set_mode", session_id, {"peer": ctx.peer, "mode": mode_id})
         return {}
 
@@ -590,10 +839,10 @@ class ACPHandlerRegistry:
         blocks: list[dict[str, Any]],
         cancel_event: asyncio.Event,
     ) -> str:
-        """Default PR 1 runner delegating to ``task_creator``."""
+        """Default runner delegating to ``task_creator`` (used with ``--server-url``)."""
         if cancel_event.is_set():
             return "cancelled"
-        prompt_text = _extract_prompt_text(blocks) or "(empty prompt)"
+        prompt_text = extract_prompt_text(blocks) or "(empty prompt)"
         outcome = await self.task_creator(prompt_text, session.cwd, session.role)
         if not outcome.accepted:
             raise ACPSchemaError(INTERNAL_ERROR, outcome.message or "task creation rejected")
@@ -611,7 +860,7 @@ class ACPHandlerRegistry:
         ctx: ACPRequestContext,
         params: dict[str, Any],
     ) -> dict[str, Any]:
-        """Handle ACP v1 blocking ``session/prompt`` returning ``{stopReason}``."""
+        """Handle ACP v1 blocking ``session/prompt`` returning ``{stopReason, usage?}``."""
         session_id: str = params["sessionId"]
         blocks: list[dict[str, Any]] = params["prompt"]
         session = await self.sessions.get(session_id)
@@ -627,6 +876,18 @@ class ACPHandlerRegistry:
                 f"session {session_id!r} is not an ACP v1 session",
                 {"sessionId": session_id},
             )
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            raise ACPSchemaError(
+                RESOURCE_NOT_FOUND,
+                f"unknown session {session_id!r}",
+                {"sessionId": session_id},
+            )
+        if session.mode == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
+                {"sessionId": session_id},
+            )
         if session.has_active_turn:
             raise ACPSchemaError(
                 INVALID_REQUEST,
@@ -634,6 +895,9 @@ class ACPHandlerRegistry:
                 {"sessionId": session_id},
             )
 
+        session.peer = ctx.peer
+        if session.owner_peer is None:
+            session.owner_peer = ctx.peer
         cancel_event = session.begin_turn()
         self.audit_emitter(
             "acp.prompt",
@@ -641,8 +905,14 @@ class ACPHandlerRegistry:
             {"peer": ctx.peer, "cwd": session.cwd, "role": session.role, "mode": session.mode},
         )
         runner = self.prompt_runner or self._default_prompt_runner
+        usage_payload: dict[str, int] | None = None
         try:
-            stop_reason = await runner(session, blocks, cancel_event)
+            raw_outcome = await runner(session, blocks, cancel_event)
+            if isinstance(raw_outcome, PromptRunOutcome):
+                stop_reason = raw_outcome.stop_reason
+                usage_payload = raw_outcome.usage
+            else:
+                stop_reason = raw_outcome
         except asyncio.CancelledError:
             current = asyncio.current_task()
             if current is not None and current.cancelling() > 0:
@@ -650,13 +920,17 @@ class ACPHandlerRegistry:
             stop_reason = "cancelled"
         finally:
             session.end_turn()
+            save_persisted_session(session)
 
         if stop_reason not in VALID_STOP_REASONS:
             raise ACPSchemaError(
                 INTERNAL_ERROR,
                 f"prompt runner returned invalid stopReason {stop_reason!r}",
             )
-        return {"stopReason": stop_reason}
+        response: dict[str, Any] = {"stopReason": stop_reason}
+        if usage_payload is not None:
+            response["usage"] = usage_payload
+        return response
 
     # -- ACP v1: session/cancel (notification) ------------------------------
 
@@ -665,17 +939,14 @@ class ACPHandlerRegistry:
         ctx: ACPRequestContext,
         params: dict[str, Any],
     ) -> None:
-        """Handle ACP v1 one-way ``session/cancel`` notification.
-
-        Signals the active turn's cancel event, cancels the active Bernstein
-        task id when one is already bound to the turn, keeps the session
-        alive for subsequent turns, and returns ``None`` so the transport
-        never emits a response envelope.
-        """
+        """Handle ACP v1 one-way ``session/cancel`` notification."""
         session_id: str = params["sessionId"]
         session = await self.sessions.get(session_id)
         if session is None:
             logger.debug("acp.session_cancel ignored for unknown session=%s", session_id)
+            return None
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            logger.debug("acp.session_cancel ignored from non-owner peer=%s for session=%s", ctx.peer, session_id)
             return None
 
         had_active = session.request_cancel("client_cancel")
@@ -728,7 +999,7 @@ class ACPHandlerRegistry:
             {"sessionUpdate": "current_mode_update", "currentModeId": mode_id},
         )
 
-    async def ask_permission(
+    async def ask_permission_outcome(
         self,
         session_id: str,
         tool: str,
@@ -736,41 +1007,56 @@ class ACPHandlerRegistry:
         *,
         tool_call_id: str | None = None,
         kind: str = "other",
+        locations: list[dict[str, Any]] | None = None,
         options: list[dict[str, Any]] | None = None,
-    ) -> str:
-        """Request tool permission via ACP v1 bidirectional RPC or legacy flow.
-
-        For ACP v1 sessions connected over a bidirectional transport
-        (``client_requester`` wired), sends an outbound JSON-RPC request
-        ``session/request_permission`` and maps the client's ``outcome``
-        (``selected`` / ``cancelled``) onto ``"approved"`` or ``"rejected"``
-        (failing closed on timeout, transport error, or unrecognized option).
-
-        For legacy sessions (or transports without ``client_requester``),
-        delegates to ``permission_asker``.
-        """
+    ) -> tuple[str, str]:
+        """Request tool permission and return ``(decision, selected_option_kind)``."""
         session = await self.sessions.get(session_id)
         if session is None:
-            return "rejected"
+            return "rejected", "cancelled"
         if session.mode == "auto":
-            return "approved"
+            return "approved", "auto"
+        if tool in session.always_allowed_tools:
+            return "approved", "allow_always"
 
-        if self.client_requester is not None and session.protocol_version == ACP_V1_PROTOCOL_VERSION:
+        if session.protocol_version == ACP_V1_PROTOCOL_VERSION:
             tc_id = tool_call_id or f"call-{uuid.uuid4().hex[:12]}"
+            if self.client_requester is None:
+                logger.warning(
+                    "acp.request_permission failed closed: bidirectional client_requester unavailable for session=%s",
+                    session_id,
+                )
+                self.audit_emitter(
+                    "acp.permission",
+                    session_id,
+                    {
+                        "peer": session.peer,
+                        "decision": "rejected",
+                        "optionKind": "transport_unsupported",
+                        "reason": "client_requester_unavailable",
+                        "toolCallId": tc_id,
+                        "tool": tool,
+                    },
+                )
+                return "rejected", "transport_unsupported"
+
             perm_options = (
                 [dict(opt) for opt in options]
                 if options is not None
                 else [dict(opt) for opt in _DEFAULT_PERMISSION_OPTIONS]
             )
+            tool_call_obj: dict[str, Any] = {
+                "toolCallId": tc_id,
+                "title": detail or tool,
+                "name": tool,
+                "kind": kind,
+                "status": "pending",
+            }
+            if locations:
+                tool_call_obj["locations"] = locations
             params: dict[str, Any] = {
                 "sessionId": session_id,
-                "toolCall": {
-                    "toolCallId": tc_id,
-                    "title": detail or tool,
-                    "name": tool,
-                    "kind": kind,
-                    "status": "pending",
-                },
+                "toolCall": tool_call_obj,
                 "options": perm_options,
             }
             try:
@@ -782,21 +1068,56 @@ class ACPHandlerRegistry:
                     ),
                     session.active_cancel_event,
                 )
-            except (TimeoutError, ConnectionError, ACPSchemaError) as exc:
+            except ConnectionError as exc:
+                logger.warning("acp.request_permission transport closed: %s", exc)
+                session.request_cancel("transport_eof")
+                decision, selected_kind = "rejected", "cancelled"
+            except (TimeoutError, ACPSchemaError) as exc:
                 logger.warning("acp.request_permission failed closed: %s", exc)
-                decision = "rejected"
+                decision, selected_kind = "rejected", "cancelled"
             else:
-                decision = _interpret_permission_outcome(response, perm_options)
+                decision, selected_kind = _interpret_permission_outcome(response, perm_options)
+                if selected_kind == "allow_always":
+                    session.always_allowed_tools.add(tool)
+                    save_persisted_session(session)
 
             self.audit_emitter(
                 "acp.permission",
                 session_id,
-                {"peer": "acp-v1", "decision": decision, "toolCallId": tc_id, "tool": tool},
+                {
+                    "peer": "acp-v1",
+                    "decision": decision,
+                    "optionKind": selected_kind,
+                    "toolCallId": tc_id,
+                    "tool": tool,
+                },
             )
-            return decision
+            return decision, selected_kind
 
         assert self.permission_asker is not None
-        return await self.permission_asker(session_id, tool, detail)
+        legacy_decision = await self.permission_asker(session_id, tool, detail)
+        return legacy_decision, ("allow_once" if legacy_decision == "approved" else "reject_once")
+
+    async def ask_permission(
+        self,
+        session_id: str,
+        tool: str,
+        detail: str,
+        *,
+        tool_call_id: str | None = None,
+        kind: str = "other",
+        options: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Request tool permission and return ``'approved'`` or ``'rejected'``."""
+        decision, _ = await self.ask_permission_outcome(
+            session_id,
+            tool,
+            detail,
+            tool_call_id=tool_call_id,
+            kind=kind,
+            options=options,
+        )
+        return decision
 
     # -- Legacy 2025-04-01 handlers (preserved for dual-compatibility) ------
 
@@ -822,6 +1143,11 @@ class ACPHandlerRegistry:
         mode_param = params.get("mode")
         if mode_param is not None and mode_param not in {"auto", "manual"}:
             raise ACPSchemaError(INVALID_PARAMS, f"invalid mode {mode_param!r}")
+        if mode_param == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
+            )
 
         outcome = await self.task_creator(prompt, cwd, role)
         if not outcome.accepted:
@@ -833,6 +1159,8 @@ class ACPHandlerRegistry:
             role=role,
             mode=mode_param or "manual",
             protocol_version=ACP_LEGACY_PROTOCOL_VERSION,
+            peer=ctx.peer,
+            owner_peer=ctx.peer,
         )
         await self.sessions.add(session)
         set_active_sessions(await self.sessions.count())
@@ -894,6 +1222,13 @@ class ACPHandlerRegistry:
                 INVALID_REQUEST,
                 f"session {session_id!r} is an ACP v1 session; use 'session/set_mode'",
                 {"sessionId": session_id},
+            )
+        if session.owner_peer is not None and session.owner_peer != ctx.peer:
+            raise ACPSchemaError(SESSION_NOT_FOUND, f"unknown session {session_id!r}")
+        if mode == "auto" and is_http_peer(ctx.peer, connection_scoped=ctx.connection_scoped):
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                "mode 'auto' is not permitted over unauthenticated HTTP transport; use '--stdio'",
             )
         try:
             session.set_mode(mode)
@@ -958,6 +1293,8 @@ class ACPHandlerRegistry:
             return "rejected"
         if session.mode == "auto":
             return "approved"
+        if session.protocol_version == ACP_V1_PROTOCOL_VERSION:
+            return "rejected"
 
         waiter = session.open_permission_waiter(tool, detail)
         frame = make_notification(
@@ -988,7 +1325,6 @@ async def _await_permission_or_cancel(
     if cancel_event is None:
         return await req_coro
     if cancel_event.is_set():
-        # Close unawaited coroutine cleanly if turn is already cancelled.
         if asyncio.iscoroutine(req_coro):
             req_coro.close()
         return {"outcome": {"outcome": "cancelled"}}
@@ -1003,30 +1339,38 @@ async def _await_permission_or_cancel(
         if req_task in done:
             return req_task.result()
         req_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await req_task
         return {"outcome": {"outcome": "cancelled"}}
     finally:
         if not cancel_task.done():
             cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_task
+        if not req_task.done():
+            req_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await req_task
 
 
 def _interpret_permission_outcome(
     response: dict[str, Any],
     options: list[dict[str, Any]],
-) -> str:
-    """Map an ACP v1 ``RequestPermissionResponse`` result dict onto approved/rejected."""
+) -> tuple[str, str]:
+    """Map an ACP v1 ``RequestPermissionResponse`` result dict onto ``(decision, option_kind)``."""
     outcome_raw = response.get("outcome")
     if not isinstance(outcome_raw, dict):
-        return "rejected"
+        return "rejected", "cancelled"
     outcome = cast("dict[str, Any]", outcome_raw)
     if outcome.get("outcome") != "selected":
-        return "rejected"
+        return "rejected", "cancelled"
     option_id = outcome.get("optionId")
     if not isinstance(option_id, str):
-        return "rejected"
+        return "rejected", "cancelled"
     by_id = {str(opt.get("optionId")): str(opt.get("kind", "")) for opt in options}
     kind = by_id.get(option_id)
     if kind in {"allow_once", "allow_always"}:
-        return "approved"
-    return "rejected"
+        return "approved", kind
+    if kind in {"reject_once", "reject_always"}:
+        return "rejected", kind
+    return "rejected", "cancelled"

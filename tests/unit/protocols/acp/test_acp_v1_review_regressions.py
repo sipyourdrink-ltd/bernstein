@@ -334,8 +334,8 @@ def test_s3_require_auth_blocks_legacy_bypass_and_fails_closed_without_handler()
 
 def test_s4_default_initialize_does_not_advertise_missing_setup_target() -> None:
     async def _run() -> None:
-        server = build_default_server(adapters=(), sandbox_backends=())
-        res = await server.registry.dispatch(
+        unset_server = build_default_server(adapters=(), sandbox_backends=(), terminal_auth_method=None)
+        res_unset = await unset_server.registry.dispatch(
             _ctx("initialize", 1),
             {
                 "protocolVersion": 1,
@@ -345,7 +345,22 @@ def test_s4_default_initialize_does_not_advertise_missing_setup_target() -> None
                 },
             },
         )
-        assert res["authMethods"] == []
+        assert res_unset["authMethods"] == []
+
+        server = build_default_server(adapters=(), sandbox_backends=())
+        res = await server.registry.dispatch(
+            _ctx("initialize", 2),
+            {
+                "protocolVersion": 1,
+                "clientCapabilities": {
+                    "auth": {"terminal": True},
+                    "_meta": {"terminal-auth": True},
+                },
+            },
+        )
+        assert len(res["authMethods"]) == 1
+        assert res["authMethods"][0]["type"] == "terminal"
+        assert res["authMethods"][0]["args"] == ["--setup"]
 
     asyncio.run(_run())
 
