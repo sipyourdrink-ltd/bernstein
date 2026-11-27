@@ -284,8 +284,16 @@ def test_stop_all_sigterms_every_pid(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     sent: list[tuple[int, int]] = []
     monkeypatch.setattr(
-        "bernstein.cli.commands.tunnel_cmd.os.kill",
+        "bernstein.core.tunnels.process_guard.os.kill",
         lambda pid, sig: sent.append((pid, sig)),
+    )
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.is_process_alive",
+        lambda _pid: True,
+    )
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.pid_command_line",
+        lambda _pid: "cloudflared tunnel --url http://localhost:3000",
     )
     # Re-import registry in the command under test: it reads the same state file.
     monkeypatch.setattr(
@@ -320,7 +328,7 @@ def test_stop_all_is_noop_with_no_tunnels(tmp_path: Path, monkeypatch: pytest.Mo
     )
     sent: list[int] = []
     monkeypatch.setattr(
-        "bernstein.cli.commands.tunnel_cmd.os.kill",
+        "bernstein.core.tunnels.process_guard.os.kill",
         lambda pid, _sig: sent.append(pid),
     )
 
@@ -363,3 +371,173 @@ def test_signal_sigterm_is_defined() -> None:
     """``signal.SIGTERM`` must exist on the running platform."""
     assert hasattr(signal, "SIGTERM")
     _ = os  # silence unused-import warning
+
+
+def test_tunnel_stop_cmd_skips_guarded_and_reused_pids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``bernstein tunnel stop --all`` must skip pid=1, self, pgrp, tailscale, and unrelated live PIDs."""
+    import subprocess
+    import sys
+
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.tunnel_cmd import tunnel_group
+
+    state = tmp_path / "tunnels.json"
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        tunnels: list[dict[str, Any]] = [
+            {"name": "init", "provider": "cloudflared", "port": 3000, "public_url": "https://a.example", "pid": 1},
+            {
+                "name": "self",
+                "provider": "cloudflared",
+                "port": 3001,
+                "public_url": "https://b.example",
+                "pid": os.getpid(),
+            },
+            {
+                "name": "reused",
+                "provider": "cloudflared",
+                "port": 3002,
+                "public_url": "https://c.example",
+                "pid": proc.pid,
+            },
+            {
+                "name": "ts",
+                "provider": "tailscale",
+                "port": 3003,
+                "public_url": "https://d.example",
+                "pid": proc.pid,
+            },
+        ]
+        state.write_text(json.dumps({"tunnels": tunnels}), encoding="utf-8")
+        monkeypatch.setattr(
+            "bernstein.cli.commands.tunnel_cmd.TunnelRegistry",
+            lambda: TunnelRegistry(state_path=state),
+        )
+        sent: list[tuple[int, int]] = []
+        real_kill = os.kill
+
+        def spy_kill(pid: int, sig: int) -> None:
+            if sig != 0:
+                sent.append((pid, sig))
+            if sig == 0:
+                real_kill(pid, sig)
+
+        with monkeypatch.context() as mp:
+            mp.setattr(os, "kill", spy_kill)
+            result = CliRunner().invoke(tunnel_group, ["stop", "--all"])
+        assert result.exit_code == 0, result.output
+        assert sent == [], f"tunnel stop --all must not SIGTERM guarded/reused PIDs, sent={sent}"
+        assert proc.poll() is None
+        assert TunnelRegistry(state_path=state).list_active() == []
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+def test_stop_active_tunnels_skips_guarded_and_reused_pids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``stop_cmd.stop_active_tunnels`` must skip pid=1, self, and unrelated live PIDs."""
+    import subprocess
+    import sys
+
+    from bernstein.cli.commands.stop_cmd import stop_active_tunnels
+
+    state = tmp_path / "tunnels.json"
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        tunnels = [
+            {"name": "init", "provider": "cloudflared", "port": 3000, "public_url": "https://a.example", "pid": 1},
+            {
+                "name": "self",
+                "provider": "cloudflared",
+                "port": 3001,
+                "public_url": "https://b.example",
+                "pid": os.getpid(),
+            },
+            {
+                "name": "reused",
+                "provider": "cloudflared",
+                "port": 3002,
+                "public_url": "https://c.example",
+                "pid": proc.pid,
+            },
+        ]
+        state.write_text(json.dumps({"tunnels": tunnels}), encoding="utf-8")
+        monkeypatch.setattr(
+            "bernstein.core.tunnels.registry.STATE_PATH",
+            state,
+        )
+        sent: list[tuple[int, int]] = []
+        real_kill = os.kill
+
+        def spy_kill(pid: int, sig: int) -> None:
+            if sig != 0:
+                sent.append((pid, sig))
+            if sig == 0:
+                real_kill(pid, sig)
+
+        with monkeypatch.context() as mp:
+            mp.setattr(os, "kill", spy_kill)
+            count = stop_active_tunnels()
+        assert count == 3
+        assert sent == [], f"stop_active_tunnels must not SIGTERM guarded/reused PIDs, sent={sent}"
+        assert proc.poll() is None
+        assert TunnelRegistry(state_path=state).list_active() == []
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+def test_is_signallable_tunnel_pid_and_terminate_guards(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct unit coverage for bool, <=1, self, pgrp, dead/zombie, empty-provider, and cmdline mismatch."""
+    from bernstein.core.tunnels.process_guard import (
+        is_signallable_tunnel_pid,
+        terminate_tunnel_process,
+    )
+
+    assert is_signallable_tunnel_pid(False) is False
+    assert is_signallable_tunnel_pid(True) is False
+    assert is_signallable_tunnel_pid(-41001) is False
+    assert is_signallable_tunnel_pid(-1) is False
+    assert is_signallable_tunnel_pid(0) is False
+    assert is_signallable_tunnel_pid(1) is False
+    assert is_signallable_tunnel_pid(os.getpid()) is False
+    if hasattr(os, "getpgrp"):
+        assert is_signallable_tunnel_pid(os.getpgrp()) is False
+
+    # Dead / zombie process skipped cleanly.
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.os.kill", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.is_process_alive", lambda _pid: False)
+    handle = TunnelHandle(name="dead", provider="cloudflared", port=8000, public_url="https://x.example", pid=54321)
+    assert terminate_tunnel_process(handle) is False
+    assert sent == []
+
+    # Empty provider fails closed even when process is alive.
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.is_process_alive", lambda _pid: True)
+    empty_provider = TunnelHandle(name="empty", provider="", port=8000, public_url="https://x.example", pid=54321)
+    assert terminate_tunnel_process(empty_provider) is False
+    assert sent == []
+
+    # Matching cmdline delivers SIGTERM; non-matching cmdline skips.
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.pid_command_line",
+        lambda _pid: "python3 -m http.server 8000",
+    )
+    assert terminate_tunnel_process(handle) is False
+    assert sent == []
+
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.pid_command_line",
+        lambda _pid: "/usr/local/bin/cloudflared tunnel --url http://localhost:8000",
+    )
+    assert terminate_tunnel_process(handle) is True
+    assert sent == [(54321, signal.SIGTERM)]

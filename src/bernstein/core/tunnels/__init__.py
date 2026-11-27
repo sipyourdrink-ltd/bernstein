@@ -6,6 +6,10 @@ interface so ``bernstein tunnel`` can pick whichever is installed.
 
 from __future__ import annotations
 
+from bernstein.core.tunnels.process_guard import (
+    is_signallable_tunnel_pid,
+    terminate_tunnel_process,
+)
 from bernstein.core.tunnels.protocol import (
     Detected,
     ProviderNotAvailable,
@@ -20,4 +24,6 @@ __all__ = [
     "TunnelHandle",
     "TunnelProvider",
     "TunnelRegistry",
+    "is_signallable_tunnel_pid",
+    "terminate_tunnel_process",
 ]

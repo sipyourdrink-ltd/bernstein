@@ -12,13 +12,11 @@ Subcommands:
 
 from __future__ import annotations
 
-import os
-import signal
-
 import click
 
 from bernstein.cli.helpers import console
 from bernstein.core.tunnels.drivers import register_default_drivers
+from bernstein.core.tunnels.process_guard import terminate_tunnel_process
 from bernstein.core.tunnels.protocol import ProviderNotAvailable
 from bernstein.core.tunnels.registry import TunnelRegistry
 
@@ -34,29 +32,6 @@ def _build_registry() -> TunnelRegistry:
     reg = TunnelRegistry()
     register_default_drivers(reg)
     return reg
-
-
-def _sigterm_pid(pid: int) -> bool:
-    """Send ``SIGTERM`` to ``pid``; return ``True`` if the syscall succeeded.
-
-    Args:
-        pid: Target process id.  Ignored if ``<= 0``.
-
-    Returns:
-        ``True`` if the signal was delivered, ``False`` otherwise.
-    """
-    if pid <= 0:
-        return False
-    try:
-        # We only ever SIGTERM PIDs we wrote into tunnels.json ourselves,
-        # so the signal target is always a tunnel process we own
-        # (Sonar python:S4828).
-        os.kill(pid, signal.SIGTERM)  # NOSONAR python:S4828
-    except OSError:
-        # ProcessLookupError is a subclass of OSError - catching both
-        # would be redundant (Sonar python:S5713).
-        return False
-    return True
 
 
 @click.group("tunnel")
@@ -125,7 +100,7 @@ def stop_cmd(name: str | None, stop_all: bool) -> None:
             console.print("[dim]No active tunnels to stop.[/dim]")
             return
         for h in handles:
-            _sigterm_pid(h.pid)
+            terminate_tunnel_process(h, providers=reg.providers())
             reg.destroy(h.name)
             console.print(f"[yellow]Stopped[/yellow] {h.name} ({h.provider})")
         return
@@ -135,6 +110,6 @@ def stop_cmd(name: str | None, stop_all: bool) -> None:
     if handle is None:
         console.print(f"[red]No tunnel named '{name}'.[/red]")
         raise SystemExit(1)
-    _sigterm_pid(handle.pid)
+    terminate_tunnel_process(handle, providers=reg.providers())
     reg.destroy(handle.name)
     console.print(f"[yellow]Stopped[/yellow] {handle.name} ({handle.provider})")

@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -48,6 +50,7 @@ class _FakeProvider(TunnelProvider):
         self._pid = base_pid
         self.started: list[str] = []
         self.stopped: list[str] = []
+        self.killed: list[tuple[int, int]] = []
 
     def detect(self) -> Any:  # pragma: no cover - unused
         raise NotImplementedError
@@ -79,7 +82,11 @@ def tunnel_state_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_registry(monkeypatch: pytest.MonkeyPatch, tunnel_state_path: Path) -> _FakeProvider:
-    """Replace ``_build_tunnel_registry`` with one wired to a fake provider."""
+    """Replace ``_build_tunnel_registry`` with one wired to a fake provider.
+
+    Also intercepts ``os.kill`` by default so no test using synthetic PIDs
+    can ever leak a real signal to an unrelated host process.
+    """
     fake = _FakeProvider()
 
     def _build() -> Any:
@@ -89,6 +96,10 @@ def fake_registry(monkeypatch: pytest.MonkeyPatch, tunnel_state_path: Path) -> _
         reg.register(fake)
         return reg
 
+    def _fake_kill(pid: int, sig: int) -> None:
+        fake.killed.append((pid, sig))
+
+    monkeypatch.setattr(os, "kill", _fake_kill)
     monkeypatch.setattr(gui_cli, "_build_tunnel_registry", _build)
     return fake
 
@@ -338,8 +349,10 @@ def test_cli_serve_with_tunnel_prints_onboarding(
     assert parsed["public_url"] == "https://fake-cloudflared.example.com"
     assert parsed["provider"] == "cloudflared"
     assert parsed["passphrase"]
-    # Tunnel was started and torn down via stop.
+    # Tunnel was started and torn down via stop without leaking a real os.kill.
     assert fake_registry.started, "tunnel was never started"
+    assert fake_registry.stopped == fake_registry.started
+    assert hasattr(fake_registry, "killed"), "fake_registry must intercept os.kill by default"
 
 
 def test_cli_serve_with_tunnel_handles_provider_unavailable(
@@ -400,6 +413,11 @@ def test_stop_tunnel_helper_kills_and_destroys(fake_registry: _FakeProvider, mon
         sent.append(pid)
 
     monkeypatch.setattr(os, "kill", fake_kill)
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.pid_command_line",
+        lambda _pid: "cloudflared tunnel --url http://localhost:9999",
+    )
     gui_cli._stop_tunnel(handle.name)
     assert sent == [handle.pid]
 
@@ -412,20 +430,49 @@ def test_stop_tunnel_helper_survives_oserror(fake_registry: _FakeProvider, monke
         raise OSError("dead")
 
     monkeypatch.setattr(os, "kill", fake_kill)
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.pid_command_line",
+        lambda _pid: "cloudflared tunnel --url http://localhost:9999",
+    )
     # Should not raise - _stop_tunnel swallows OSError.
     gui_cli._stop_tunnel(handle.name)
 
 
-@pytest.mark.parametrize("bad_pid", [-1, 0, 1])
+@pytest.mark.parametrize(
+    "pid_case",
+    [False, True, -41001, -1, 0, 1, "self", "pgrp"],
+)
 def test_stop_tunnel_helper_skips_kill_for_non_process_pids(
     fake_registry: _FakeProvider,
     monkeypatch: pytest.MonkeyPatch,
-    bad_pid: int,
+    pid_case: Any,
 ) -> None:
-    """PIDs <= 1 (tailscale's 0, broadcast -1, init/container PID 1) must never be signaled."""
-    fake_registry._pid = bad_pid - 1
-    handle = gui_cli._start_tunnel(port=9999, provider="cloudflared")
-    assert handle.pid == bad_pid
+    """Guarded PID classes (bool, <=1, <-1, self, pgrp) must never be signaled."""
+    if pid_case == "self":
+        bad_pid: Any = os.getpid()
+    elif pid_case == "pgrp":
+        if not hasattr(os, "getpgrp"):
+            pytest.skip("os.getpgrp unavailable on this platform")
+        bad_pid = os.getpgrp()
+    else:
+        bad_pid = pid_case
+
+    if isinstance(bad_pid, bool):
+        reg = gui_cli._build_tunnel_registry()
+        handle = TunnelHandle(
+            name=f"bool-pid-{bad_pid}",
+            provider="cloudflared",
+            port=9999,
+            public_url="https://fake-cloudflared.example.com",
+            pid=bad_pid,
+        )
+        reg._active[handle.name] = handle
+        monkeypatch.setattr(gui_cli, "_build_tunnel_registry", lambda: reg)
+    else:
+        fake_registry._pid = bad_pid - 1
+        handle = gui_cli._start_tunnel(port=9999, provider="cloudflared")
+        assert handle.pid == bad_pid
 
     sent: list[tuple[int, int]] = []
 
@@ -434,8 +481,91 @@ def test_stop_tunnel_helper_skips_kill_for_non_process_pids(
 
     monkeypatch.setattr(os, "kill", fake_kill)
     gui_cli._stop_tunnel(handle.name)
-    assert sent == [], f"_stop_tunnel must not call os.kill for pid={bad_pid}, sent={sent}"
+    assert sent == [], f"_stop_tunnel must not call os.kill for pid={bad_pid!r}, sent={sent}"
     assert gui_cli._build_tunnel_registry().get(handle.name) is None
+
+
+def test_stop_tunnel_helper_skips_kill_for_reused_unrelated_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale tunnels.json entry pointing at a live unrelated process must not kill it."""
+    from bernstein.core.tunnels.registry import TunnelRegistry
+
+    state_path = tmp_path / "tunnels.json"
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        state_path.write_text(
+            json.dumps(
+                {
+                    "tunnels": [
+                        {
+                            "name": "stale-cf",
+                            "provider": "cloudflared",
+                            "port": 8052,
+                            "public_url": "https://stale.example.com",
+                            "pid": proc.pid,
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(gui_cli, "_build_tunnel_registry", lambda: TunnelRegistry(state_path=state_path))
+        gui_cli._stop_tunnel("stale-cf")
+        # Give any accidental SIGTERM a brief moment to land before polling.
+        with pytest.raises(subprocess.TimeoutExpired):
+            proc.wait(timeout=0.3)
+        assert proc.poll() is None, "unrelated live subprocess was killed by stale tunnels.json"
+        assert TunnelRegistry(state_path=state_path).get("stale-cf") is None
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+def test_stop_tunnel_helper_never_signals_tailscale_even_with_live_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TailscaleDriver manages no child daemon; teardown must never os.kill its handle.pid."""
+    from bernstein.core.tunnels.registry import TunnelRegistry
+
+    state_path = tmp_path / "tunnels.json"
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        state_path.write_text(
+            json.dumps(
+                {
+                    "tunnels": [
+                        {
+                            "name": "ts-1",
+                            "provider": "tailscale",
+                            "port": 8052,
+                            "public_url": "https://node.ts.net",
+                            "pid": proc.pid,
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(gui_cli, "_build_tunnel_registry", lambda: TunnelRegistry(state_path=state_path))
+        gui_cli._stop_tunnel("ts-1")
+        with pytest.raises(subprocess.TimeoutExpired):
+            proc.wait(timeout=0.3)
+        assert proc.poll() is None, "tailscale tunnel teardown must never signal a live process"
+        assert TunnelRegistry(state_path=state_path).get("ts-1") is None
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 # ---------------------------------------------------------------------------

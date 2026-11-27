@@ -13,7 +13,7 @@ import shutil
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
@@ -81,20 +81,24 @@ class TunnelRegistry:
         if not self._state_path.exists():
             return
         try:
-            raw = json.loads(self._state_path.read_text(encoding="utf-8"))
+            raw: Any = json.loads(self._state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        items = raw.get("tunnels", []) if isinstance(raw, dict) else []
-        for item in items:
-            if not isinstance(item, dict):
+        raw_items: Any = cast("dict[str, Any]", raw).get("tunnels", []) if isinstance(raw, dict) else []
+        items: list[Any] = cast("list[Any]", raw_items) if isinstance(raw_items, list) else []
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
                 continue
+            item = cast("dict[str, Any]", raw_item)
             try:
+                raw_pid: Any = item["pid"]
+                pid = 0 if isinstance(raw_pid, bool) else int(raw_pid)
                 handle = TunnelHandle(
                     name=str(item["name"]),
                     provider=str(item["provider"]),
                     port=int(item["port"]),
                     public_url=str(item["public_url"]),
-                    pid=int(item["pid"]),
+                    pid=pid,
                 )
             except (KeyError, TypeError, ValueError):
                 continue

@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import signal
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -145,14 +144,13 @@ def _start_tunnel(port: int, provider: str) -> TunnelHandle:
 
 def _stop_tunnel(name: str) -> None:
     """Stop a previously started tunnel by name; idempotent on missing."""
+    from bernstein.core.tunnels.process_guard import terminate_tunnel_process
+
     reg = _build_tunnel_registry()
     handle = reg.get(name)
     if handle is None:
         return
-    if handle.pid > 1:
-        with contextlib.suppress(OSError):
-            # OSError swallowed: the tunnel process may already be gone.
-            os.kill(handle.pid, signal.SIGTERM)
+    terminate_tunnel_process(handle, providers=reg.providers())
     reg.destroy(name)
 
 
