@@ -51,10 +51,13 @@ def test_write_jobs_use_only_default_branch_code_and_untrusted_data_inputs() -> 
     assert jobs["autosync"]["permissions"] == {"contents": "read", "pull-requests": "read"}
     assert jobs["autosync"]["environment"] == "automation"
     for job_name, job in jobs.items():
+        first = job["steps"][0]
+        assert first.get("uses", "").startswith("step-security/harden-runner@")
+        assert first.get("with") == {"egress-policy": "audit"}
         if job_name == "verify-autosync":
             continue  # The separate verifier reads the PR as data (checked below).
         checked_out = False
-        for step in job["steps"]:
+        for step in job["steps"][1:]:
             uses = step.get("uses", "")
             if uses.startswith("actions/checkout@"):
                 assert step["with"] == {"ref": "${{ github.sha }}", "path": "trusted", "persist-credentials": False}
@@ -85,13 +88,20 @@ def test_write_jobs_use_only_default_branch_code_and_untrusted_data_inputs() -> 
     assert comment["with"]["path"] == "${{ runner.temp }}/observability.md"
     assert "secrets." not in str(jobs["prepare"]) + str(jobs["comment"])
     assert str(jobs["autosync"]).count("secrets.") == 1
+    prepare_if = str(jobs["prepare"]["if"])
+    for action in ("opened", "synchronize", "ready_for_review"):
+        assert f"({action})" in prepare_if
+    for skipped_action in ("edited", "labeled", "unlabeled"):
+        assert f"({skipped_action})" not in prepare_if
 
 
 def test_verifier_uses_base_tools_and_discards_pr_checkout_credentials() -> None:
     job = load("pr-publish.yml")["jobs"]["verify-autosync"]
     assert job["permissions"] == {"contents": "read"}
     assert "secrets." not in str(job)
-    base, setup, install, source, verify = job["steps"]
+    harden, base, setup, install, source, verify = job["steps"]
+    assert harden["uses"].startswith("step-security/harden-runner@")
+    assert harden["with"] == {"egress-policy": "audit"}
     assert base["with"] == {"ref": "${{ github.sha }}", "path": "trusted", "persist-credentials": False}
     assert setup["uses"].startswith("astral-sh/setup-uv@")
     assert install["working-directory"] == "trusted" and "--locked --no-editable" in install["run"]

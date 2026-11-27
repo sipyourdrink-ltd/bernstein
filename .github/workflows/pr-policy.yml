@@ -13,8 +13,9 @@ run-name: PR policy for ${{ github.event.pull_request.number }} (${{ github.even
 #   * andon gate: fails while TRUNK_UNSTABLE == 'true' unless the PR
 #     carries `hotfix-cleared`.
 #   * autosync: same-repo non-bot PRs without `skip-autosync`, on
-#     opened/synchronize/ready_for_review actions; pushes regen commits
-#     with BERNSTEIN_AUTOSYNC_TOKEN only (never GITHUB_TOKEN).
+#     opened/synchronize/ready_for_review actions; computes regen drift
+#     read-only and uploads a bounded patch artifact for pr-publish.yml to
+#     verify and push with BERNSTEIN_AUTOSYNC_TOKEN (never GITHUB_TOKEN).
 
 on:
   pull_request:
@@ -300,12 +301,12 @@ jobs:
 
       # ─── Pre-merge autosync (same-repo PRs only) ──────────────────────
       #
-      # Auto-amends PR branches with the output of `bernstein agents-md
-      # sync` and `ruff check --fix` / `ruff format`, so mirror docs and
-      # formatting cannot drift onto main post-merge. Push requires
-      # BERNSTEIN_AUTOSYNC_TOKEN; the workflow refuses to push with
-      # GITHUB_TOKEN because those commits do not retrigger the source
-      # PR's downstream checks.
+      # Computes mirror/formatting drift (`bernstein agents-md sync` and
+      # `ruff check --fix` / `ruff format`) in a read-only runner and
+      # uploads a bounded patch artifact. The default-branch
+      # `pr-publish.yml` workflow independently verifies the diff and
+      # pushes it with BERNSTEIN_AUTOSYNC_TOKEN (never GITHUB_TOKEN,
+      # because GITHUB_TOKEN pushes do not retrigger downstream PR checks).
 
       - name: Skip if PR already merged or head ref deleted
         id: premerge_guard

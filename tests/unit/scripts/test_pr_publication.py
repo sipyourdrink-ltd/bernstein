@@ -31,6 +31,23 @@ def test_report_renders_the_trusted_table_and_keeps_fields_literal() -> None:
 
 
 @pytest.mark.parametrize(
+    "payload",
+    [
+        b"[]",
+        b"1",
+        b'{"backends":["x"]}',
+        b'{"summary":1}',
+        b'{"backends":"x"}',
+        b'{"backends":[{"metrics":["x"]}]}',
+    ],
+)
+def test_render_publication_handles_malformed_json_shapes_without_attribute_error(payload: bytes) -> None:
+    report = render_publication(payload, 42, "topic").decode()
+    assert "observe JSON could not be parsed" in report
+    assert "error=1" in report
+
+
+@pytest.mark.parametrize(
     ("name", "length", "valid"), [("observe.json", 4, True), ("other.json", 4, False), ("observe.json", 65537, False)]
 )
 def test_artifact_requires_the_named_bounded_member(name: str, length: int, valid: bool) -> None:

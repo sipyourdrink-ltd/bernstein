@@ -17,7 +17,10 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.id == github.event.repository.id &&
       ((github.event.workflow_run.path == '.github/workflows/pr-policy.yml' &&
-        github.event.workflow_run.event == 'pull_request') ||
+        github.event.workflow_run.event == 'pull_request' &&
+        (endsWith(github.event.workflow_run.display_title, ' (opened)') ||
+         endsWith(github.event.workflow_run.display_title, ' (synchronize)') ||
+         endsWith(github.event.workflow_run.display_title, ' (ready_for_review)'))) ||
        (github.event.workflow_run.path == '.github/workflows/pr-observability-summary.yml' &&
         (github.event.workflow_run.event == 'pull_request' ||
          github.event.workflow_run.event == 'workflow_dispatch')))
@@ -34,6 +37,10 @@ jobs:
       sha: ${{ steps.prepare.outputs.sha }}
       data: ${{ steps.prepare.outputs.data }}
     steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
       - name: Checkout publisher from the default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -57,6 +64,10 @@ jobs:
     permissions:
       pull-requests: write
     steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
       - name: Check the target again after waiting for the comment runner
         id: target
         env:
@@ -93,6 +104,10 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
       - name: Checkout trusted verification tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -130,6 +145,10 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
       - name: Checkout publisher from the default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

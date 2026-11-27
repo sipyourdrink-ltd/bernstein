@@ -147,22 +147,47 @@ def render_publication(raw: bytes, number: int, branch: str) -> bytes:
     if len(raw) > 65536:
         raise ValueError("Observation exceeds 64 KiB")
     try:
-        observed = json.loads(raw)
+        parsed: Any = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        observed = {"summary": {"error": 1}, "_parse_error": str(exc)}
+        parsed = {"summary": {"error": 1}, "_parse_error": str(exc)}
 
-    def fields(row: dict, names: tuple[str, ...]) -> dict:
+    def fields(row: dict[str, Any], names: tuple[str, ...]) -> dict[str, str]:
         return {key: _publication_scalar(row[key]) for key in names if key in row}
 
+    def invalid_shape(detail: str) -> dict[str, Any]:
+        return {"summary": {"error": 1}, "_parse_error": detail}
+
+    observed: dict[str, Any]
+    if not isinstance(parsed, dict):
+        observed = invalid_shape(f"expected JSON object, got {type(parsed).__name__}")
+    else:
+        observed = parsed
+        raw_summary: Any = observed.get("summary")
+        raw_backends: Any = observed.get("backends")
+        if raw_summary is not None and not isinstance(raw_summary, dict):
+            observed = invalid_shape(f"expected object for summary, got {type(raw_summary).__name__}")
+        elif raw_backends is not None and (
+            not isinstance(raw_backends, list) or any(not isinstance(item, dict) for item in raw_backends)
+        ):
+            observed = invalid_shape("expected list of objects for backends")
+        elif isinstance(raw_backends, list) and any(
+            (metrics := item.get("metrics")) is not None
+            and (not isinstance(metrics, list) or any(not isinstance(metric, dict) for metric in metrics))
+            for item in raw_backends
+        ):
+            observed = invalid_shape("expected list of objects for backend metrics")
+
+    summary_row: dict[str, Any] = observed.get("summary") or {}
+    backend_rows: list[dict[str, Any]] = observed.get("backends") or []
     clean: dict[str, Any] = {
-        "summary": fields(observed.get("summary") or {}, ("ok", "warn", "fail", "error", "skipped")),
+        "summary": fields(summary_row, ("ok", "warn", "fail", "error", "skipped")),
         "backends": [],
     }
-    for backend in observed.get("backends") or []:
-        row = fields(backend, ("backend", "status", "detail"))
+    for backend in backend_rows:
+        row: dict[str, Any] = fields(backend, ("backend", "status", "detail"))
+        metric_rows: list[dict[str, Any]] = backend.get("metrics") or []
         row["metrics"] = [
-            fields(metric, ("name", "value", "delta", "threshold", "threshold_status"))
-            for metric in backend.get("metrics") or []
+            fields(metric, ("name", "value", "delta", "threshold", "threshold_status")) for metric in metric_rows
         ]
         clean["backends"].append(row)
     if "_parse_error" in observed:
