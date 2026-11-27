@@ -5016,15 +5016,16 @@ def _discard_remote_worktree(orch: Any, session: AgentSession, worktree: Path, b
     from bernstein.core.git.git_basic import run_git
 
     orch._spawner.cleanup_worktree(session.id)
+    # Without a WorktreeManager (worktrees disabled), the session cleanup only
+    # deletes the directory: git's ``.git/worktrees`` record and the branch
+    # survive it. Finish the job here either way; after a manager cleanup each
+    # step is a no-op. ``-d``, not ``-D``: a merged branch goes, an unmerged one
+    # stays, as the manager's cleanup preserves unmerged commits.
+    workdir = Path(orch._workdir)
     if worktree.exists():
-        # No worktree manager was registered for the run (worktrees disabled),
-        # so the session cleanup had nothing to act on; remove what the
-        # merge-back created itself. ``-d``, not ``-D``: a merged branch goes,
-        # an unmerged one stays, as the manager's cleanup preserves unmerged
-        # commits rather than dropping them.
-        workdir = Path(orch._workdir)
         run_git(["worktree", "remove", "--force", str(worktree)], workdir, timeout=60)
-        run_git(["branch", "-d", branch], workdir, timeout=30)
+    run_git(["worktree", "prune"], workdir, timeout=30)
+    run_git(["branch", "-d", branch], workdir, timeout=30)
 
 
 def _merge_remote_completion(

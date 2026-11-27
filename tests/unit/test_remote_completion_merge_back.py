@@ -197,6 +197,39 @@ def test_passed_remote_completion_merges_closes_and_cleans_up(tmp_path: Path) ->
     assert _BRANCH not in _git(repo, "branch", "--list", _BRANCH)
 
 
+class _UnmanagedSpawner(_Spawner):
+    """Cleans up through the real ``cleanup_worktree`` with no WorktreeManager (``use_worktrees=False``)."""
+
+    def cleanup_worktree(self, session_id: str) -> None:
+        from bernstein.core.agents.spawner_worktree import cleanup_worktree
+
+        self.cleaned.append(session_id)
+        cleanup_worktree(
+            session_id,
+            worktree_roots={},
+            worktree_paths=self.registered,
+            worktree_managers={},
+            worktree_mgr=None,
+            workdir=self.workdir,
+        )
+
+
+def test_merge_back_without_a_worktree_manager_prunes_the_worktree_and_deletes_the_branch(tmp_path: Path) -> None:
+    """With no manager, ``cleanup_worktree`` only rmtree's the directory; git's record and the branch must still go."""
+    repo = _repo_with_remote_branch(tmp_path)
+    spawner = _UnmanagedSpawner(MergeResult(success=True, conflicting_files=[], merge_commit="abc123"))
+    orch = _orch(repo, spawner)
+    orch._remote_completion_branches = {_TASK: _BRANCH}
+
+    _process_single_completed_task(orch, _task(), _verdict(True), _tick_result())
+
+    assert spawner.cleaned == [_SESSION]
+    assert not (repo / ".sdd" / "worktrees" / _SESSION).exists()
+    assert _SESSION not in _git(repo, "worktree", "list", "--porcelain")
+    assert not (repo / ".git" / "worktrees" / _SESSION).exists()
+    assert _BRANCH not in _git(repo, "branch", "--list", _BRANCH)
+
+
 def test_non_conflict_merge_failure_takes_the_reopen_budget_and_keeps_the_branch(tmp_path: Path) -> None:
     repo = _repo_with_remote_branch(tmp_path)
     spawner = _Spawner(MergeResult(success=False, conflicting_files=[], error="unrelated histories"))
