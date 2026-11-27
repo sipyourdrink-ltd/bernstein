@@ -28,7 +28,7 @@ from bernstein.core.protocols.acp.handlers import (
     PromptRunOutcome,
 )
 from bernstein.core.protocols.acp.metrics import set_active_sessions
-from bernstein.core.protocols.acp.runner import EmbeddedOrchestratorRunner
+from bernstein.core.protocols.acp.runner import EmbeddedOrchestratorRunner, is_adapter_usable
 from bernstein.core.protocols.acp.session import ACPSession, ACPSessionStore
 from bernstein.core.protocols.acp.transport import (
     MAX_FRAME_BYTES,
@@ -232,12 +232,25 @@ def build_default_server(
         if effective_canceller is None:
             effective_canceller = _http_task_canceller(server_url, sessions=sessions, task_cwds=remote_task_cwds)
 
+    effective_auth_handler = auth_handler
+    if effective_auth_handler is None and resolved_terminal_auth is not None:
+        expected_auth_id = str(resolved_terminal_auth.get("id") or "")
+
+        async def _default_terminal_auth(method_id: str) -> bool:
+            if not expected_auth_id or method_id != expected_auth_id:
+                return False
+            if use_remote:
+                return True
+            return is_adapter_usable(adapter_name)
+
+        effective_auth_handler = _default_terminal_auth
+
     registry = ACPHandlerRegistry(
         sessions=sessions,
         adapters=tuple(d.name for d in adapters),
         sandbox_backends=tuple(d.name for d in sandbox_backends if d.available),
         prompt_runner=prompt_runner,
-        auth_handler=auth_handler,
+        auth_handler=effective_auth_handler,
         terminal_auth_method=resolved_terminal_auth,
         require_auth=require_auth,
     )

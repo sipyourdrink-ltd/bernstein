@@ -15,8 +15,12 @@ from typing import TYPE_CHECKING
 
 import click
 
-from bernstein.cli.commands.doctor_cmd import check_adapters_installed
 from bernstein.cli.helpers import console
+from bernstein.core.protocols.acp.runner import (
+    adapter_binary_name,
+    find_installed_cli_adapters,
+    is_adapter_usable,
+)
 from bernstein.core.protocols.acp.server import (
     ACPServer,
     build_default_server,
@@ -42,8 +46,8 @@ def run_terminal_setup(
 ) -> int:
     """Verify local adapter availability for ACP ``terminal`` authentication.
 
-    Returns ``0`` when at least one usable CLI adapter (or explicit ``mock``)
-    is available; returns ``1`` with remediation guidance when none are found.
+    Returns ``0`` when the requested CLI adapter (or at least one selectable CLI
+    adapter when unpinned) is available; returns ``1`` with guidance otherwise.
     """
     eff_env = env if env is not None else os.environ
     pinned = (adapter_name or eff_env.get("BERNSTEIN_DEFAULT_CLI") or "").strip().lower()
@@ -51,19 +55,19 @@ def run_terminal_setup(
         click.echo("Bernstein ACP setup: mock adapter active (ready).", err=True)
         return 0
 
-    checks = check_adapters_installed(env=eff_env)
-    installed = [c["name"].removeprefix("Adapter: ") for c in checks if c.get("status") == "PASS"]
     if pinned and pinned != "auto":
-        if pinned in installed:
+        if is_adapter_usable(pinned, env=eff_env):
             click.echo(f"Bernstein ACP setup: adapter '{pinned}' found in PATH (ready).", err=True)
             return 0
+        binary = adapter_binary_name(pinned)
         click.echo(
-            f"Bernstein ACP setup: adapter '{pinned}' not found in PATH. "
+            f"Bernstein ACP setup: adapter '{pinned}' (binary '{binary}') not found in PATH. "
             "Install the adapter CLI or run 'bernstein connect' to configure credentials.",
             err=True,
         )
         return 1
 
+    installed = find_installed_cli_adapters(eff_env)
     if installed:
         click.echo(
             f"Bernstein ACP setup: found usable adapter(s): {', '.join(installed)}.",

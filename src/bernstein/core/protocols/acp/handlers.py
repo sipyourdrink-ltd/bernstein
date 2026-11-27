@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import Any, Final, cast
 
 from bernstein.core.protocols.acp.metrics import (
     record_acp_message,
@@ -51,12 +51,10 @@ from bernstein.core.protocols.acp.session import (
     ACPSession,
     ACPSessionStore,
     load_persisted_session,
+    sanitize_session_run_id,
     save_persisted_session,
 )
 from bernstein.core.replay.journal import JournalPathError, run_journal_path
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -121,15 +119,15 @@ class PromptRunOutcome:
     usage: dict[str, int] | None = None
 
 
-TaskCreator = "Callable[[str, str, str], Awaitable[PromptResult]]"
-TaskCanceller = "Callable[[str, str], Awaitable[bool]]"
-StreamPublisher = "Callable[[dict[str, Any]], Awaitable[None]]"
-ClientRequester = "Callable[[str, dict[str, Any], float | None], Awaitable[dict[str, Any]]]"
-PromptRunner = "Callable[[ACPSession, list[dict[str, Any]], asyncio.Event], Awaitable[str | PromptRunOutcome]]"
-SessionLoader = "Callable[[str, str], Awaitable[tuple[ACPSession | None, list[dict[str, Any]]]]]"
-AuthHandler = "Callable[[str], Awaitable[bool]]"
-PermissionAsker = "Callable[[str, str, str], Awaitable[str]]"
-AuditEmitter = "Callable[[str, str, dict[str, Any]], None]"
+type TaskCreator = Callable[[str, str, str], Awaitable[PromptResult]]
+type TaskCanceller = Callable[[str, str], Awaitable[bool]]
+type StreamPublisher = Callable[[dict[str, Any]], Awaitable[None]]
+type ClientRequester = Callable[[str, dict[str, Any], float | None], Awaitable[dict[str, Any]]]
+type PromptRunner = Callable[[ACPSession, list[dict[str, Any]], asyncio.Event], Awaitable[str | PromptRunOutcome]]
+type SessionLoader = Callable[[str, str], Awaitable[tuple[ACPSession | None, list[dict[str, Any]]]]]
+type AuthHandler = Callable[[str], Awaitable[bool]]
+type PermissionAsker = Callable[[str, str, str], Awaitable[str]]
+type AuditEmitter = Callable[[str, str, dict[str, Any]], None]
 
 
 # ---------------------------------------------------------------------------
@@ -258,19 +256,17 @@ class ACPHandlerRegistry:
     sessions: ACPSessionStore = field(default_factory=ACPSessionStore)
     adapters: tuple[str, ...] = ()
     sandbox_backends: tuple[str, ...] = ()
-    task_creator: Callable[[str, str, str], Awaitable[PromptResult]] = field(default=_default_task_creator)
-    task_canceller: Callable[[str, str], Awaitable[bool]] = field(default=_default_task_canceller)
-    stream_publisher: Callable[[dict[str, Any]], Awaitable[None]] = field(default=_default_stream_publisher)
-    permission_asker: Callable[[str, str, str], Awaitable[str]] | None = None
-    audit_emitter: Callable[[str, str, dict[str, Any]], None] = field(default=_default_audit_emitter)
+    task_creator: TaskCreator = field(default=_default_task_creator)
+    task_canceller: TaskCanceller = field(default=_default_task_canceller)
+    stream_publisher: StreamPublisher = field(default=_default_stream_publisher)
+    permission_asker: PermissionAsker | None = None
+    audit_emitter: AuditEmitter = field(default=_default_audit_emitter)
     permission_timeout_s: float = _PERMISSION_TIMEOUT_S
     agent_version: str = field(default_factory=_resolve_agent_version)
-    prompt_runner: (
-        Callable[[ACPSession, list[dict[str, Any]], asyncio.Event], Awaitable[str | PromptRunOutcome]] | None
-    ) = None
-    session_loader: Callable[[str, str], Awaitable[tuple[ACPSession | None, list[dict[str, Any]]]]] | None = None
-    client_requester: Callable[[str, dict[str, Any], float | None], Awaitable[dict[str, Any]]] | None = None
-    auth_handler: Callable[[str], Awaitable[bool]] | None = None
+    prompt_runner: PromptRunner | None = None
+    session_loader: SessionLoader | None = None
+    client_requester: ClientRequester | None = None
+    auth_handler: AuthHandler | None = None
     terminal_auth_method: dict[str, Any] | None = None
     extra_auth_methods: tuple[dict[str, Any], ...] = ()
     require_auth: bool = False
@@ -563,6 +559,7 @@ class ACPHandlerRegistry:
             additional_directories=additional_dirs,
             system_prompt=system_prompt,
             protocol_version=ACP_V1_PROTOCOL_VERSION,
+            peer=ctx.peer,
         )
         await self.sessions.add(session)
         save_persisted_session(session)
@@ -586,11 +583,16 @@ class ACPHandlerRegistry:
         session_id: str,
     ) -> tuple[ACPSession | None, list[dict[str, Any]]]:
         """Load session state and replayable journal updates from memory or disk."""
+        req_cwd = Path(cwd).resolve()
         in_mem = await self.sessions.get(session_id)
         if in_mem is not None:
+            if in_mem.protocol_version != ACP_V1_PROTOCOL_VERSION:
+                return None, []
+            if Path(in_mem.cwd).resolve() != req_cwd:
+                return None, []
             jpath: Path | None = None
-            sdd_dir = Path(cwd) / ".sdd"
-            if sdd_dir.is_dir():
+            sdd_dir = req_cwd / ".sdd"
+            if sdd_dir.is_dir() and in_mem.run_id == sanitize_session_run_id(session_id):
                 with contextlib.suppress(JournalPathError):
                     candidate = run_journal_path(sdd_dir, in_mem.run_id)
                     if candidate.is_file():
@@ -610,6 +612,12 @@ class ACPHandlerRegistry:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle ACP v1 ``session/load`` by streaming journal history then returning ``{modes}``."""
+        state = self._peer_states.get(ctx.peer)
+        if self.require_auth and not (state is not None and state.authenticated):
+            raise ACPSchemaError(
+                AUTH_REQUIRED,
+                "authentication required before loading a session",
+            )
         session_id: str = params["sessionId"]
         cwd: str = params["cwd"]
         mcp_servers_raw: list[dict[str, Any]] = params["mcpServers"]
@@ -621,16 +629,58 @@ class ACPHandlerRegistry:
         )
         system_prompt = params.get("systemPrompt")
 
+        req_cwd = Path(cwd).resolve()
+        existing = await self.sessions.get(session_id)
+        if existing is not None:
+            if existing.protocol_version != ACP_V1_PROTOCOL_VERSION or Path(existing.cwd).resolve() != req_cwd:
+                raise ACPSchemaError(
+                    RESOURCE_NOT_FOUND,
+                    f"unknown session {session_id!r}",
+                    {"sessionId": session_id},
+                )
+            if existing.has_active_turn:
+                raise ACPSchemaError(
+                    INVALID_REQUEST,
+                    f"session {session_id!r} already has an active prompt turn",
+                    {"sessionId": session_id},
+                )
+
         loader = self.session_loader or self._default_session_loader
         session, replayed_updates = await loader(cwd, session_id)
-        if session is None:
+        if (
+            session is None
+            or session.session_id != session_id
+            or session.protocol_version != ACP_V1_PROTOCOL_VERSION
+            or Path(session.cwd).resolve() != req_cwd
+        ):
             raise ACPSchemaError(
                 RESOURCE_NOT_FOUND,
                 f"unknown session {session_id!r}",
                 {"sessionId": session_id},
             )
+        if session.has_active_turn:
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"session {session_id!r} already has an active prompt turn",
+                {"sessionId": session_id},
+            )
 
-        session.cwd = cwd
+        latest = await self.sessions.get(session_id)
+        if latest is not None:
+            if latest.protocol_version != ACP_V1_PROTOCOL_VERSION or Path(latest.cwd).resolve() != req_cwd:
+                raise ACPSchemaError(
+                    RESOURCE_NOT_FOUND,
+                    f"unknown session {session_id!r}",
+                    {"sessionId": session_id},
+                )
+            if latest.has_active_turn:
+                raise ACPSchemaError(
+                    INVALID_REQUEST,
+                    f"session {session_id!r} already has an active prompt turn",
+                    {"sessionId": session_id},
+                )
+
+        session.peer = ctx.peer
         session.mcp_servers = tuple(dict(s) for s in mcp_servers_raw)
         session.additional_directories = additional_dirs
         if system_prompt is not None:
@@ -742,6 +792,7 @@ class ACPHandlerRegistry:
                 {"sessionId": session_id},
             )
 
+        session.peer = ctx.peer
         cancel_event = session.begin_turn()
         self.audit_emitter(
             "acp.prompt",
@@ -890,7 +941,11 @@ class ACPHandlerRegistry:
                     ),
                     session.active_cancel_event,
                 )
-            except (TimeoutError, ConnectionError, ACPSchemaError) as exc:
+            except ConnectionError as exc:
+                logger.warning("acp.request_permission transport closed: %s", exc)
+                session.request_cancel("transport_eof")
+                decision, selected_kind = "rejected", "cancelled"
+            except (TimeoutError, ACPSchemaError) as exc:
                 logger.warning("acp.request_permission failed closed: %s", exc)
                 decision, selected_kind = "rejected", "cancelled"
             else:
@@ -1141,12 +1196,18 @@ async def _await_permission_or_cancel(
         if req_task in done:
             return req_task.result()
         req_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await req_task
         return {"outcome": {"outcome": "cancelled"}}
     finally:
         if not cancel_task.done():
             cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_task
+        if not req_task.done():
+            req_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await req_task
 
 
 def _interpret_permission_outcome(

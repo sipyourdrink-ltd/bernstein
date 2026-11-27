@@ -538,3 +538,104 @@ def test_stdio_eof_preserves_inflight_prompt_response(tmp_path: Path) -> None:
     remaining_stdout, _ = proc.communicate(timeout=15)
     frames = [json.loads(ln) for ln in remaining_stdout.splitlines() if ln.strip()]
     assert any(f.get("id") == 4 and "result" in f for f in frames), frames
+
+
+@pytest.mark.asyncio
+async def test_sdk_subprocess_real_adapter_binary_setup_and_hermetic_turn(tmp_path: Path) -> None:
+    """Real installed CLI binary (--setup + hermetic zero-key turn with 127.0.0.1:1 endpoints)."""
+    import shutil
+
+    chosen_cli = next(
+        (name for name in ("opencode", "codex", "claude", "gemini") if shutil.which(name) is not None),
+        None,
+    )
+    if chosen_cli is None:
+        pytest.skip("No real CLI adapter binary installed on host")
+
+    setup_proc = subprocess.run(
+        [sys.executable, "-m", "bernstein", "acp", "serve", "--stdio", "--setup", "--cli", chosen_cli],
+        cwd=tmp_path,
+        env=_subprocess_env({"BERNSTEIN_DEFAULT_CLI": ""}),
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert setup_proc.returncode == 0, setup_proc.stderr
+    assert setup_proc.stdout == ""
+
+    workspace = tmp_path / "real_bin_ws"
+    _init_demo_workspace(workspace, interactive_approvals=False)
+    isolated_home = tmp_path / "isolated_home"
+    isolated_home.mkdir()
+
+    hermetic_env = _subprocess_env(
+        {
+            "BERNSTEIN_DEFAULT_CLI": chosen_cli,
+            "HOME": str(isolated_home),
+            "XDG_CONFIG_HOME": str(isolated_home / ".config"),
+            "OPENAI_BASE_URL": "http://127.0.0.1:1",
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:1",
+            "GOOGLE_GEMINI_BASE_URL": "http://127.0.0.1:1",
+            "HTTPS_PROXY": "http://127.0.0.1:1",
+            "HTTP_PROXY": "http://127.0.0.1:1",
+        }
+    )
+    for key in list(hermetic_env):
+        if any(tok in key.upper() for tok in ("API_KEY", "ACCESS_TOKEN", "AUTH_TOKEN", "OPENROUTER")):
+            hermetic_env.pop(key, None)
+
+    client = _RecordingSdkClient()
+    async with acp.spawn_agent_process(
+        client,
+        sys.executable,
+        "-m",
+        "bernstein",
+        "acp",
+        "serve",
+        "--stdio",
+        "--cli",
+        chosen_cli,
+        env=hermetic_env,
+    ) as (conn, _proc):
+        init = await conn.initialize(
+            protocol_version=1,
+            client_capabilities=ClientCapabilities(auth=AuthCapabilities(terminal=True)),
+        )
+        assert init.auth_methods
+        await conn.authenticate(method_id=init.auth_methods[0].id)
+
+        sess = await conn.new_session(cwd=str(workspace), mcp_servers=[])
+        await conn.set_session_mode(session_id=sess.session_id, mode_id="auto")
+
+        prompt_task = asyncio.create_task(
+            conn.prompt(
+                session_id=sess.session_id,
+                prompt=[TextContentBlock(type="text", text="Inspect app.py")],
+            )
+        )
+        done, _ = await asyncio.wait({prompt_task}, timeout=2.0)
+        if not done:
+            await conn.cancel(session_id=sess.session_id)
+        try:
+            resp = await asyncio.wait_for(prompt_task, timeout=10.0)
+            assert resp.stop_reason in {"end_turn", "cancelled"}
+        except RequestError as exc:
+            assert exc.code == -32603
+
+    store = TaskStore(workspace / ".sdd" / "runtime" / "tasks.jsonl")
+    store.replay_jsonl()
+    tasks = store.list_tasks()
+    assert len(tasks) == 1
+    settled_status = tasks[0].status
+    assert settled_status in {TaskStatus.FAILED, TaskStatus.CANCELLED}, settled_status
+
+    runs_root = workspace / ".sdd" / "runs"
+    if runs_root.is_dir():
+        for run_dir in runs_root.iterdir():
+            jpath = contained_run_journal(runs_root, run_dir.name) if run_dir.is_dir() else None
+            if jpath is not None and jpath.is_file():
+                for ev in load_events(jpath).events:
+                    if ev.get("event") == "worker_spawned" and ev.get("pid"):
+                        pid_val = int(ev["pid"])
+                        with pytest.raises(ProcessLookupError):
+                            os.kill(pid_val, 0)

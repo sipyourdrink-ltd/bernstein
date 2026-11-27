@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -79,6 +80,7 @@ class ACPSession:
     protocol_version: int | str = ACP_PROTOCOL_VERSION
     turn_count: int = 0
     run_id: str = ""
+    peer: str = "stdio"
     always_allowed_tools: set[str] = field(default_factory=set[str])
     _waiters: dict[str, _PermissionWaiter] = field(default_factory=dict[str, _PermissionWaiter])
     _active_cancel_event: asyncio.Event | None = field(default=None, init=False, repr=False)
@@ -209,6 +211,9 @@ class ACPSession:
     @classmethod
     def from_persisted_dict(cls, data: dict[str, Any], *, cwd_override: str | None = None) -> ACPSession:
         """Reconstruct an :class:`ACPSession` from persisted metadata."""
+        raw_sid = data.get("session_id")
+        if not isinstance(raw_sid, str) or not raw_sid.strip():
+            raise ValueError("persisted session_id must be a non-empty string")
         mode_raw = str(data.get("mode") or "manual")
         mode = mode_raw if mode_raw in VALID_MODES else "manual"
         allowed_raw = data.get("always_allowed_tools")
@@ -217,14 +222,33 @@ class ACPSession:
             if isinstance(allowed_raw, list)
             else set[str]()
         )
+
+        def _parse_timestamp(raw_ts: Any) -> float:
+            if raw_ts is None:
+                return time.time()
+            if isinstance(raw_ts, bool) or not isinstance(raw_ts, (int, float)):
+                raise ValueError("persisted timestamp must be numeric")
+            val = float(raw_ts)
+            if not math.isfinite(val):
+                raise ValueError("persisted timestamp must be finite")
+            return val
+
+        raw_turns = data.get("turn_count", 0)
+        if raw_turns is None:
+            turns = 0
+        elif isinstance(raw_turns, bool) or not isinstance(raw_turns, int) or raw_turns < 0:
+            raise ValueError("persisted turn_count must be a non-negative integer")
+        else:
+            turns = raw_turns
+
         return cls(
-            session_id=str(data["session_id"]),
+            session_id=raw_sid,
             cwd=cwd_override or str(data.get("cwd") or "."),
             mode=mode,
             role=str(data.get("role") or "backend"),
-            created_at=float(data.get("created_at") or time.time()),
-            last_activity=float(data.get("last_activity") or time.time()),
-            turn_count=int(data.get("turn_count") or 0),
+            created_at=_parse_timestamp(data.get("created_at")),
+            last_activity=_parse_timestamp(data.get("last_activity")),
+            turn_count=turns,
             run_id=str(data.get("run_id") or ""),
             always_allowed_tools=allowed,
             protocol_version=ACP_V1_PROTOCOL_VERSION,
@@ -269,40 +293,54 @@ def save_persisted_session(session: ACPSession) -> Path | None:
 
 
 def load_persisted_session(cwd: str, session_id: str) -> tuple[ACPSession | None, Path | None]:
-    """Load persisted :class:`ACPSession` and its ``journal.jsonl`` path (if any) from *cwd*."""
+    """Load persisted :class:`ACPSession` and its ``journal.jsonl`` path from *cwd*.
+
+    Only loads sessions explicitly persisted under ``<cwd>/.sdd/runtime/acp_sessions/``
+    whose recorded ``session_id``, canonical ``cwd``, and ``run_id`` match *session_id*
+    and *cwd* (preventing non-ACP CLI run replay or cross-workspace rebinding).
+    """
     workdir = Path(cwd)
     if not workdir.is_dir():
         return None, None
 
-    sdd_dir = workdir / ".sdd"
-    meta_path = _persisted_session_path(workdir, session_id)
-    if meta_path is not None and meta_path.is_file():
-        try:
-            raw = json.loads(meta_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                sess = ACPSession.from_persisted_dict(cast("dict[str, Any]", raw), cwd_override=cwd)
-                try:
-                    jpath = run_journal_path(sdd_dir, sess.run_id)
-                except JournalPathError:
-                    jpath = None
-                return sess, (jpath if jpath is not None and jpath.is_file() else None)
-        except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
-            logger.warning("acp.session unreadable metadata %s: %s", meta_path, exc)
+    canonical_cwd = workdir.resolve()
+    sdd_dir = canonical_cwd / ".sdd"
+    meta_path = _persisted_session_path(canonical_cwd, session_id)
+    if meta_path is None or not meta_path.is_file():
+        return None, None
 
     try:
-        direct_journal = run_journal_path(sdd_dir, session_id)
-    except JournalPathError:
+        raw = json.loads(meta_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return None, None
+        raw_dict = cast("dict[str, Any]", raw)
+        recorded_sid = raw_dict.get("session_id")
+        recorded_cwd = raw_dict.get("cwd")
+        if not isinstance(recorded_sid, str) or recorded_sid != session_id:
+            logger.warning("acp.session metadata id mismatch in %s", meta_path)
+            return None, None
+        if not isinstance(recorded_cwd, str) or Path(recorded_cwd).resolve() != canonical_cwd:
+            logger.warning("acp.session metadata cwd mismatch in %s", meta_path)
+            return None, None
+
+        expected_run_id = sanitize_session_run_id(session_id)
+        recorded_run_id = raw_dict.get("run_id")
+        if recorded_run_id is not None and (not isinstance(recorded_run_id, str) or recorded_run_id != expected_run_id):
+            logger.warning("acp.session metadata run_id mismatch in %s", meta_path)
+            return None, None
+
+        sess = ACPSession.from_persisted_dict(raw_dict, cwd_override=str(canonical_cwd))
+        if sess.run_id != expected_run_id:
+            logger.warning("acp.session resolved run_id mismatch in %s", meta_path)
+            return None, None
+        try:
+            jpath = run_journal_path(sdd_dir, sess.run_id)
+        except JournalPathError:
+            jpath = None
+        return sess, (jpath if jpath is not None and jpath.is_file() else None)
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+        logger.warning("acp.session unreadable metadata %s: %s", meta_path, exc)
         return None, None
-    if direct_journal.is_file():
-        sess = ACPSession(
-            session_id=session_id,
-            cwd=cwd,
-            mode="manual",
-            run_id=session_id,
-            protocol_version=ACP_V1_PROTOCOL_VERSION,
-        )
-        return sess, direct_journal
-    return None, None
 
 
 class ACPSessionStore:

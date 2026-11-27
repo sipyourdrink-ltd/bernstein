@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -38,6 +39,7 @@ from bernstein.core.approval.models import (
     internal_principal,
 )
 from bernstein.core.approval.queue import ApprovalQueue
+from bernstein.core.config.platform_compat import reap_process_group
 from bernstein.core.protocols.acp.handlers import (
     ACPHandlerRegistry,
     PromptResult,
@@ -55,16 +57,27 @@ from bernstein.core.tasks.models import ModelConfig
 from bernstein.core.tasks.task_store_core import TaskStore
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
     from bernstein.adapters.base import SpawnResult
     from bernstein.core.protocols.acp.session import ACPSession
 
 logger = logging.getLogger(__name__)
 
-_PROBE_CLI_BINARIES: tuple[str, ...] = ("claude", "codex", "gemini", "agy", "qwen", "aider")
+_PROBE_CLI_ADAPTERS: tuple[str, ...] = ("claude", "codex", "gemini", "agy", "qwen", "aider")
+_NON_CLI_RUNTIME_ADAPTERS: frozenset[str] = frozenset({"generic", "openai_agents", "python_runtime"})
+_MAX_DIFF_SNAPSHOT_BYTES: int = 2 * 1024 * 1024
 _FILE_HINT_RE = re.compile(r"\b([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8})\b")
 _CANCEL_PRINCIPAL = internal_principal("acp-runner/session-cancel")
+
+
+@dataclass
+class _ActiveWorker:
+    """Live spawned worker process and its owning adapter for group reaping."""
+
+    adapter: Any
+    proc: subprocess.Popen[bytes] | None
+    pid: int
 
 
 def _terminate_and_reap(proc: subprocess.Popen[bytes] | None) -> None:
@@ -80,6 +93,99 @@ def _terminate_and_reap(proc: subprocess.Popen[bytes] | None) -> None:
             proc.kill()
         with contextlib.suppress(subprocess.TimeoutExpired, OSError):
             proc.wait(timeout=0.5)
+
+
+def _reap_worker(worker: _ActiveWorker | None) -> None:
+    """Reap an entire worker process group (including adapter wrappers) and wait on Popen."""
+    if worker is None:
+        return
+    if worker.pid > 0:
+        kill_fn = getattr(worker.adapter, "kill", None)
+        if callable(kill_fn):
+            with contextlib.suppress(Exception):
+                kill_fn(worker.pid)
+        with contextlib.suppress(Exception):
+            reap_process_group(worker.pid)
+    _terminate_and_reap(worker.proc)
+
+
+def _read_utf8_text_if_valid(path: Path | None) -> str | None:
+    """Return UTF-8 text content of *path*, or ``None`` for missing/oversized/binary/non-UTF-8 files."""
+    if path is None or not path.is_file():
+        return None
+    try:
+        if path.stat().st_size > _MAX_DIFF_SNAPSHOT_BYTES:
+            return None
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in raw:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _which_in_env(binary: str, env: Mapping[str, str] | None) -> str | None:
+    if not binary:
+        return None
+    if env is not None:
+        return shutil.which(binary, path=env.get("PATH", ""))
+    return shutil.which(binary)
+
+
+def adapter_binary_name(adapter_name: str) -> str:
+    """Resolve the CLI executable name on ``PATH`` for a registered adapter key."""
+    from bernstein.adapters.capability_profile import profile_binary_for
+    from bernstein.adapters.report import _BINARY_OVERRIDES  # pyright: ignore[reportPrivateUsage]
+
+    key = adapter_name.strip().lower()
+    if key == "generic":
+        return "generic-cli"
+    override = _BINARY_OVERRIDES.get(key)
+    if override is not None:
+        return override
+    return profile_binary_for(key) or key
+
+
+def find_installed_cli_adapters(env: Mapping[str, str] | None = None) -> list[str]:
+    """Return selectable CLI-backed adapter names whose binaries resolve on ``PATH``."""
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    selectable = selectable_adapter_names()
+    ordered_candidates: list[str] = [
+        *[name for name in _PROBE_CLI_ADAPTERS if name in selectable],
+        *sorted(selectable - set(_PROBE_CLI_ADAPTERS) - _NON_CLI_RUNTIME_ADAPTERS),
+    ]
+    found: list[str] = []
+    for name in ordered_candidates:
+        binary = adapter_binary_name(name)
+        if binary and _which_in_env(binary, env) is not None:
+            found.append(name)
+    return found
+
+
+def is_adapter_usable(
+    explicit: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """Return ``True`` when the pinned adapter (or at least one selectable CLI adapter) is usable."""
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    eff_env = env if env is not None else os.environ
+    pinned = (explicit or eff_env.get("BERNSTEIN_DEFAULT_CLI") or "").strip().lower()
+    if pinned == "mock":
+        return True
+    if pinned and pinned != "auto":
+        if pinned not in selectable_adapter_names():
+            return False
+        if pinned in {"openai_agents", "python_runtime"}:
+            return (_which_in_env("python3", eff_env) or _which_in_env("python", eff_env)) is not None
+        binary = adapter_binary_name(pinned)
+        return bool(binary) and _which_in_env(binary, eff_env) is not None
+    return bool(find_installed_cli_adapters(eff_env))
 
 
 @dataclass(slots=True)
@@ -239,7 +345,7 @@ class ACPApprovalGateBridge:
             mapped = ApprovalDecision.REJECT
 
         principal = ApprovalPrincipal(
-            identifier=f"acp-user:{self._registry.client_name}",
+            identifier=f"acp-user:{self._registry.client_name_for_peer(self._session.peer)}",
             auth_method="acp-v1",
             kind=PrincipalKind.HUMAN,
             grant=self._session.session_id,
@@ -261,9 +367,9 @@ def resolve_embedded_adapter_name(explicit: str | None = None) -> str:
     candidate = (explicit or os.environ.get("BERNSTEIN_DEFAULT_CLI") or "").strip().lower()
     if candidate and candidate != "auto":
         return candidate
-    for binary in _PROBE_CLI_BINARIES:
-        if shutil.which(binary) is not None:
-            return binary
+    installed = find_installed_cli_adapters()
+    if installed:
+        return installed[0]
     return "mock"
 
 
@@ -288,8 +394,13 @@ class EmbeddedOrchestratorRunner:
     registry: ACPHandlerRegistry
     adapter_name: str | None = None
     worker_executor: Callable[[ACPSession, str, Path, asyncio.Event], Awaitable[str]] | None = None
-    _active_procs: dict[str, subprocess.Popen[bytes]] = field(
-        default_factory=dict[str, subprocess.Popen[bytes]],
+    _active_workers: dict[str, _ActiveWorker] = field(
+        default_factory=dict[str, _ActiveWorker],
+        init=False,
+        repr=False,
+    )
+    _workers_lock: threading.Lock = field(
+        default_factory=threading.Lock,
         init=False,
         repr=False,
     )
@@ -298,6 +409,14 @@ class EmbeddedOrchestratorRunner:
         init=False,
         repr=False,
     )
+
+    def _pop_active_worker(self, session_id: str) -> _ActiveWorker | None:
+        with self._workers_lock:
+            return self._active_workers.pop(session_id, None)
+
+    def _set_active_worker(self, session_id: str, worker: _ActiveWorker) -> None:
+        with self._workers_lock:
+            self._active_workers[session_id] = worker
 
     async def create_legacy_task(self, prompt: str, cwd: str, role: str) -> PromptResult:
         """Persist a task directly into ``<cwd>/.sdd/runtime/tasks.jsonl`` for legacy ``prompt``."""
@@ -315,13 +434,13 @@ class EmbeddedOrchestratorRunner:
         return PromptResult(session_id=task.id, accepted=True)
 
     async def cancel_session(self, session_id: str, reason: str) -> bool:
-        """Drain pending approvals and terminate/reap any active worker subprocess."""
+        """Drain pending approvals and reap the entire active worker process group."""
         bridge = self._active_bridges.get(session_id)
         if bridge is not None:
             bridge.reject_all_pending(reason)
-        proc = self._active_procs.pop(session_id, None)
-        if proc is not None:
-            await asyncio.to_thread(_terminate_and_reap, proc)
+        worker = self._pop_active_worker(session_id)
+        if worker is not None:
+            await asyncio.to_thread(_reap_worker, worker)
         return True
 
     async def run_prompt(
@@ -361,6 +480,9 @@ class EmbeddedOrchestratorRunner:
                 for upd in batch:
                     await self.registry.emit_session_update(session.session_id, upd)
 
+        def _cancel_reason() -> str:
+            return session.cancel_reason or "cancelled by client"
+
         journal.set_observer(_on_journal_entry)
         bridge = ACPApprovalGateBridge(workdir=workdir, session=session, registry=self.registry)
         self._active_bridges[session.session_id] = bridge
@@ -371,9 +493,9 @@ class EmbeddedOrchestratorRunner:
         async def _settle_cancelled(task_id: str, reason: str) -> PromptRunOutcome:
             nonlocal settled
             bridge.reject_all_pending(reason)
-            proc = self._active_procs.pop(session.session_id, None)
-            if proc is not None:
-                await asyncio.to_thread(_terminate_and_reap, proc)
+            worker = self._pop_active_worker(session.session_id)
+            if worker is not None:
+                await asyncio.to_thread(_reap_worker, worker)
             with contextlib.suppress(KeyError, ValueError):
                 await store.cancel(task_id, reason)
             await store.flush_buffer()
@@ -402,7 +524,7 @@ class EmbeddedOrchestratorRunner:
 
             target_file = _guess_target_file(workdir, prompt_text)
             rel_target = target_file.relative_to(workdir).as_posix() if target_file is not None else "."
-            before_text = target_file.read_text(encoding="utf-8") if target_file is not None else None
+            before_text = _read_utf8_text_if_valid(target_file)
 
             journal.record(
                 "task_claimed",
@@ -414,7 +536,7 @@ class EmbeddedOrchestratorRunner:
             await _flush_updates()
 
             if cancel_event.is_set():
-                return await _settle_cancelled(task.id, "cancelled by client")
+                return await _settle_cancelled(task.id, _cancel_reason())
 
             # Gate workspace write/execution through core.approval.gate + ApprovalQueue,
             # racing against cancel_event so mid-permission cancel or EOF wakes immediately.
@@ -446,14 +568,17 @@ class EmbeddedOrchestratorRunner:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if cancel_wait in done or cancel_event.is_set():
-                    bridge.reject_all_pending("cancelled by client")
+                    reason_str = _cancel_reason()
+                    bridge.reject_all_pending(reason_str)
                     if not gate_task.done():
                         gate_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError, ApprovalTimeoutError):
                         await gate_task
-                    return await _settle_cancelled(task.id, "cancelled by client")
+                    return await _settle_cancelled(task.id, reason_str)
                 resolution = await gate_task
             except ApprovalTimeoutError as exc:
+                bridge.reject_all_pending("approval timeout")
+                await bridge.stop()
                 await store.fail(task.id, str(exc))
                 await store.flush_buffer()
                 settled = True
@@ -468,7 +593,7 @@ class EmbeddedOrchestratorRunner:
                         await cancel_wait
 
             if cancel_event.is_set():
-                return await _settle_cancelled(task.id, "cancelled by client")
+                return await _settle_cancelled(task.id, _cancel_reason())
 
             if resolution is not None and resolution.decision is ApprovalDecision.REJECT:
                 reason_msg = resolution.reason or "Tool execution rejected by client"
@@ -487,7 +612,7 @@ class EmbeddedOrchestratorRunner:
                 return PromptRunOutcome(stop_reason="end_turn", usage=projector.usage_summary())
 
             # Execute worker turn (custom executor or registered CLI adapter).
-            summary_text, was_cancelled = await self._execute_worker(
+            summary_text, exit_code, was_cancelled = await self._execute_worker(
                 session=session,
                 task_id=task.id,
                 task_title=title,
@@ -497,26 +622,42 @@ class EmbeddedOrchestratorRunner:
                 cancel_event=cancel_event,
             )
             if was_cancelled:
-                return await _settle_cancelled(task.id, "cancelled by client")
+                return await _settle_cancelled(task.id, _cancel_reason())
 
-            if target_file is not None and target_file.is_file():
-                after_text = target_file.read_text(encoding="utf-8")
-                if before_text is not None and after_text != before_text:
-                    journal.record(
-                        "task_diff_captured",
-                        task_id=task.id,
-                        path=rel_target,
-                        old_text=before_text,
-                        new_text=after_text,
-                    )
+            in_tokens = max(1, len(prompt_text) // 4)
+            out_tokens = max(1, len(summary_text) // 4)
+
+            if exit_code != 0:
+                fail_reason = f"Worker exited with code {exit_code}: {summary_text}"
+                await store.fail(task.id, fail_reason)
+                await store.flush_buffer()
+                settled = True
+                journal.record("task_failed", task_id=task.id, reason=fail_reason)
+                journal.record(
+                    "usage_update",
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    size=DEFAULT_CONTEXT_WINDOW_TOKENS,
+                )
+                journal.record("agent_message", text=fail_reason)
+                await _flush_updates()
+                return PromptRunOutcome(stop_reason="end_turn", usage=projector.usage_summary())
+
+            after_text = _read_utf8_text_if_valid(target_file)
+            if before_text is not None and after_text is not None and after_text != before_text:
+                journal.record(
+                    "task_diff_captured",
+                    task_id=task.id,
+                    path=rel_target,
+                    old_text=before_text,
+                    new_text=after_text,
+                )
 
             await store.complete(task.id, summary_text)
             await store.flush_buffer()
             settled = True
 
             journal.record("task_completed", task_id=task.id, summary=summary_text)
-            in_tokens = max(1, len(prompt_text) // 4)
-            out_tokens = max(1, len(summary_text) // 4)
             journal.record(
                 "usage_update",
                 input_tokens=in_tokens,
@@ -529,13 +670,28 @@ class EmbeddedOrchestratorRunner:
         except asyncio.CancelledError:
             if created_task_id is not None and not settled:
                 bridge.reject_all_pending("transport closed")
-                proc = self._active_procs.pop(session.session_id, None)
-                if proc is not None:
-                    _terminate_and_reap(proc)
+                worker = self._pop_active_worker(session.session_id)
+                if worker is not None:
+                    _reap_worker(worker)
                 with contextlib.suppress(KeyError, ValueError):
                     await store.cancel(created_task_id, "transport closed")
                 await store.flush_buffer()
+                settled = True
                 journal.record("task_cancelled", task_id=created_task_id, reason="transport closed")
+            raise
+        except Exception as exc:
+            if created_task_id is not None and not settled:
+                bridge.reject_all_pending(str(exc))
+                worker = self._pop_active_worker(session.session_id)
+                if worker is not None:
+                    await asyncio.to_thread(_reap_worker, worker)
+                with contextlib.suppress(KeyError, ValueError):
+                    await store.fail(created_task_id, str(exc))
+                await store.flush_buffer()
+                settled = True
+                journal.record("task_failed", task_id=created_task_id, reason=str(exc))
+                with contextlib.suppress(Exception):
+                    await _flush_updates()
             raise
         finally:
             self._active_bridges.pop(session.session_id, None)
@@ -555,11 +711,11 @@ class EmbeddedOrchestratorRunner:
         workdir: Path,
         journal: EventJournal,
         cancel_event: asyncio.Event,
-    ) -> tuple[str, bool]:
-        """Run worker step and return ``(summary_text, was_cancelled)``."""
+    ) -> tuple[str, int, bool]:
+        """Run worker step and return ``(summary_text, exit_code, was_cancelled)``."""
         if self.worker_executor is not None:
             out = await self.worker_executor(session, prompt_text, workdir, cancel_event)
-            return out, cancel_event.is_set()
+            return out, 0, cancel_event.is_set()
 
         chosen_adapter = resolve_embedded_adapter_name(self.adapter_name)
         from bernstein.adapters.mock import MockAgentAdapter
@@ -570,63 +726,111 @@ class EmbeddedOrchestratorRunner:
         model_cfg = ModelConfig(model=model_name, effort="medium")
         run_sess_id = f"{session.run_id}-{session.turn_count}"
         adapter_any: Any = adapter
+
+        def _spawn_sync() -> SpawnResult:
+            orig_probe = getattr(adapter, "_probe_fast_exit", None)
+            had_instance_probe = "_probe_fast_exit" in getattr(adapter, "__dict__", {})
+            if callable(orig_probe):
+
+                def _wrapped_probe(proc_obj: Any, *p_args: Any, **p_kwargs: Any) -> Any:
+                    pid_val = int(getattr(proc_obj, "pid", 0) or 0)
+                    raw_p = (
+                        cast("subprocess.Popen[bytes]", proc_obj) if isinstance(proc_obj, subprocess.Popen) else None
+                    )
+                    worker_handle = _ActiveWorker(adapter=adapter, proc=raw_p, pid=pid_val)
+                    self._set_active_worker(session.session_id, worker_handle)
+                    if cancel_event.is_set():
+                        _reap_worker(worker_handle)
+                    return orig_probe(proc_obj, *p_args, **p_kwargs)
+
+                adapter_any._probe_fast_exit = _wrapped_probe
+
+            try:
+                if isinstance(adapter, MockAgentAdapter):
+                    return adapter_any.spawn(
+                        prompt=prompt_text,
+                        workdir=workdir,
+                        model_config=model_cfg,
+                        session_id=run_sess_id,
+                        timeout_seconds=120,
+                        task_id=task_id,
+                        task_title=task_title,
+                    )
+                return adapter_any.spawn(
+                    prompt=prompt_text,
+                    workdir=workdir,
+                    model_config=model_cfg,
+                    session_id=run_sess_id,
+                    timeout_seconds=120,
+                )
+            finally:
+                if callable(orig_probe):
+                    if had_instance_probe:
+                        adapter_any._probe_fast_exit = orig_probe
+                    else:
+                        with contextlib.suppress(AttributeError):
+                            delattr(adapter_any, "_probe_fast_exit")
+
         spawn_res: SpawnResult
-        if isinstance(adapter, MockAgentAdapter):
-            spawn_res = adapter_any.spawn(
-                prompt=prompt_text,
-                workdir=workdir,
-                model_config=model_cfg,
-                session_id=run_sess_id,
-                timeout_seconds=120,
-                task_id=task_id,
-                task_title=task_title,
-            )
-        else:
-            spawn_res = adapter_any.spawn(
-                prompt=prompt_text,
-                workdir=workdir,
-                model_config=model_cfg,
-                session_id=run_sess_id,
-                timeout_seconds=120,
-            )
+        try:
+            spawn_res = await asyncio.to_thread(_spawn_sync)
+        except Exception:
+            if cancel_event.is_set():
+                worker = self._pop_active_worker(session.session_id)
+                if worker is not None:
+                    await asyncio.to_thread(_reap_worker, worker)
+                return "Cancelled", 0, True
+            raise
+
         raw_proc = spawn_res.proc
         proc: subprocess.Popen[bytes] | None = (
             cast("subprocess.Popen[bytes]", raw_proc) if isinstance(raw_proc, subprocess.Popen) else None
         )
-        if proc is not None:
-            self._active_procs[session.session_id] = proc
-            journal.record("worker_spawned", task_id=task_id, pid=proc.pid, adapter=chosen_adapter)
+        worker_pid = spawn_res.pid or (proc.pid if proc is not None else 0)
+        worker_handle = _ActiveWorker(adapter=adapter, proc=proc, pid=worker_pid)
+        self._set_active_worker(session.session_id, worker_handle)
+        if worker_pid > 0:
+            journal.record("worker_spawned", task_id=task_id, pid=worker_pid, adapter=chosen_adapter)
+
         try:
             while proc is not None and proc.poll() is None:
                 if cancel_event.is_set():
-                    await asyncio.to_thread(_terminate_and_reap, proc)
-                    return "Cancelled", True
+                    self._pop_active_worker(session.session_id)
+                    await asyncio.to_thread(_reap_worker, worker_handle)
+                    return "Cancelled", 0, True
                 await asyncio.sleep(0.03)
         except asyncio.CancelledError:
-            _terminate_and_reap(proc)
+            self._pop_active_worker(session.session_id)
+            _reap_worker(worker_handle)
             raise
         finally:
-            self._active_procs.pop(session.session_id, None)
+            self._pop_active_worker(session.session_id)
             if spawn_res.timeout_timer is not None:
                 spawn_res.timeout_timer.cancel()
             if cancel_event.is_set() and proc is not None and proc.poll() is None:
-                _terminate_and_reap(proc)
+                _reap_worker(worker_handle)
 
         if cancel_event.is_set():
-            return "Cancelled", True
+            await asyncio.to_thread(_reap_worker, worker_handle)
+            return "Cancelled", 0, True
 
+        exit_code = int(proc.returncode) if proc is not None and proc.returncode is not None else 0
         log_tail = ""
         if spawn_res.log_path.is_file():
             with contextlib.suppress(OSError):
-                lines = [ln.strip() for ln in spawn_res.log_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+                text = spawn_res.log_path.read_text(encoding="utf-8", errors="replace")
+                lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
                 if lines:
                     log_tail = lines[-1]
         summary = log_tail or f"Completed task ({chosen_adapter}): {task_title}"
-        return summary, False
+        return summary, exit_code, False
 
 
 __all__ = [
     "ACPApprovalGateBridge",
     "EmbeddedOrchestratorRunner",
+    "adapter_binary_name",
+    "find_installed_cli_adapters",
+    "is_adapter_usable",
     "resolve_embedded_adapter_name",
 ]

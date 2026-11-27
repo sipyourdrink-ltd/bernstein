@@ -12,6 +12,7 @@ hash-anchored ACP v1 ``session/update`` notifications:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, cast
 
@@ -90,6 +91,39 @@ def _journal_meta(index: int | None, event_hash: str) -> dict[str, Any] | None:
     if event_hash:
         meta["eventHash"] = event_hash
     return meta or None
+
+
+def _safe_int(raw: Any, default: int = 0) -> int:
+    if isinstance(raw, bool) or raw is None:
+        return default
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw) if math.isfinite(raw) else default
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return default
+        try:
+            return int(stripped)
+        except ValueError:
+            return default
+    return default
+
+
+def _safe_float(raw: Any) -> float | None:
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        val = float(raw)
+        return val if math.isfinite(val) else None
+    if isinstance(raw, str):
+        try:
+            val = float(raw.strip())
+        except ValueError:
+            return None
+        return val if math.isfinite(val) else None
+    return None
 
 
 @dataclass
@@ -357,9 +391,9 @@ class JournalACPProjector:
             return updates
 
         if event_type in {"usage_update", "token_usage", "cost_recorded", "run_completed"}:
-            in_tok = int(payload.get("input_tokens") or 0)
-            out_tok = int(payload.get("output_tokens") or 0)
-            th_tok = int(payload.get("thought_tokens") or 0)
+            in_tok = _safe_int(payload.get("input_tokens"), 0)
+            out_tok = _safe_int(payload.get("output_tokens"), 0)
+            th_tok = _safe_int(payload.get("thought_tokens"), 0)
             self.input_tokens += max(0, in_tok)
             self.output_tokens += max(0, out_tok)
             self.thought_tokens += max(0, th_tok)
@@ -367,19 +401,25 @@ class JournalACPProjector:
             raw_used = payload.get("used")
             if raw_used is None:
                 raw_used = payload.get("total_tokens")
-            if raw_used is None and (in_tok or out_tok or th_tok):
-                raw_used = self.input_tokens + self.output_tokens + self.thought_tokens
-            if raw_used is not None:
-                size_val = int(payload.get("size") or payload.get("context_window") or self.context_window_tokens)
+            has_usage_signal = raw_used is not None or any(
+                k in payload for k in ("input_tokens", "output_tokens", "thought_tokens", "used", "total_tokens")
+            )
+            if has_usage_signal:
+                computed_total = self.input_tokens + self.output_tokens + self.thought_tokens
+                used_val = _safe_int(raw_used, computed_total) if raw_used is not None else computed_total
+                raw_size = payload.get("size") if payload.get("size") is not None else payload.get("context_window")
+                size_val = _safe_int(raw_size, self.context_window_tokens)
+                if size_val <= 0:
+                    size_val = self.context_window_tokens
                 usage_upd: dict[str, Any] = {
                     "sessionUpdate": "usage_update",
-                    "used": max(0, int(raw_used)),
+                    "used": max(0, used_val),
                     "size": max(1, size_val),
                 }
-                cost_raw = payload.get("cost_usd")
-                if isinstance(cost_raw, (int, float)) and not isinstance(cost_raw, bool):
+                cost_val = _safe_float(payload.get("cost_usd"))
+                if cost_val is not None:
                     usage_upd["cost"] = {
-                        "amount": float(cost_raw),
+                        "amount": cost_val,
                         "currency": str(payload.get("currency") or "USD"),
                     }
                 if meta is not None:
