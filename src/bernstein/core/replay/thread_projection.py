@@ -30,10 +30,12 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.replay.journal import load_events, verify_journal
+from bernstein.core.replay.journal import load_events, load_events_from_file, verify_journal
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
+    from typing import IO
 
 #: SSE event type carried by every projected journal row. The specific
 #: journal event (``task_claimed`` etc.) is preserved inside the payload so
@@ -86,23 +88,14 @@ class ThreadStreamEvent:
 _ENVELOPE_FIELDS = frozenset({"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash", "event"})
 
 
-def project_journal(path: Path, *, after_index: int | None = None) -> list[ThreadStreamEvent]:
-    """Project a run journal into an ordered list of stream events.
-
-    Args:
-        path: Path to a ``journal.jsonl`` file. A missing or empty file
-            projects an empty list.
-        after_index: When set, only rows with a journal index strictly
-            greater than this value are projected. A reconnecting client
-            passes its last-seen index here so it resumes without a gap and
-            without a duplicate (AC5).
-
-    Returns:
-        Stream events in journal order. The projection is a pure function
-        of the file, so repeated calls are byte-identical (determinism).
-    """
+def _project_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    after_index: int | None = None,
+) -> list[ThreadStreamEvent]:
+    """Project raw journal rows into ordered :class:`ThreadStreamEvent` entries."""
     events: list[ThreadStreamEvent] = []
-    for row in load_events(path).events:
+    for row in rows:
         try:
             index = int(row.get("index", 0))
         except (TypeError, ValueError):
@@ -120,6 +113,37 @@ def project_journal(path: Path, *, after_index: int | None = None) -> list[Threa
             )
         )
     return events
+
+
+def project_journal_from_file(
+    raw_file: IO[bytes],
+    *,
+    after_index: int | None = None,
+) -> list[ThreadStreamEvent]:
+    """Project an already-open binary run journal into ordered stream events.
+
+    Shares the exact scan and row-projection pipeline with :func:`project_journal`
+    so callers that verify an opened file descriptor never drift from it.
+    """
+    return _project_rows(load_events_from_file(raw_file).events, after_index=after_index)
+
+
+def project_journal(path: Path, *, after_index: int | None = None) -> list[ThreadStreamEvent]:
+    """Project a run journal into an ordered list of stream events.
+
+    Args:
+        path: Path to a ``journal.jsonl`` file. A missing or empty file
+            projects an empty list.
+        after_index: When set, only rows with a journal index strictly
+            greater than this value are projected. A reconnecting client
+            passes its last-seen index here so it resumes without a gap and
+            without a duplicate (AC5).
+
+    Returns:
+        Stream events in journal order. The projection is a pure function
+        of the file, so repeated calls are byte-identical (determinism).
+    """
+    return _project_rows(load_events(path).events, after_index=after_index)
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,5 +217,6 @@ __all__ = [
     "ThreadStreamEvent",
     "ThreadVerifyResult",
     "project_journal",
+    "project_journal_from_file",
     "verify_thread_against_journal",
 ]

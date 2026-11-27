@@ -1,9 +1,10 @@
 """Deterministic projection of :class:`EventJournal` rows onto ACP v1 ``session/update`` payloads.
 
-Matches :func:`bernstein.core.replay.thread_projection.project_journal` so live
+Builds on :func:`bernstein.core.replay.thread_projection.project_journal`
+(via :func:`~bernstein.core.replay.thread_projection.project_journal_from_file`
+over an ``O_NOFOLLOW`` + ``fstat``-verified descriptor) so live
 ``session/prompt`` streaming and ``session/load`` replay produce identical,
-hash-anchored ACP v1 ``session/update`` notifications while verifying the opened
-journal descriptor (``O_NOFOLLOW`` + ``fstat``):
+hash-anchored ACP v1 ``session/update`` notifications:
 
 * ``plan`` (``AgentPlanUpdate``)
 * ``tool_call`` (``ToolCallStart``) and ``tool_call_update`` (``ToolCallProgress``)
@@ -13,13 +14,14 @@ journal descriptor (``O_NOFOLLOW`` + ``fstat``):
 
 from __future__ import annotations
 
-import io
 import json
 import math
 import os
 import stat
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, cast
+
+from bernstein.core.replay.thread_projection import project_journal_from_file
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -454,24 +456,8 @@ class JournalACPProjector:
         )
 
 
-_ENVELOPE_FIELDS: Final[frozenset[str]] = frozenset(
-    {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash", "event"}
-)
-
-
 class _UnsafeSessionJournalError(OSError):
     """Raised when an opened ACP journal descriptor is non-regular or hardlinked."""
-
-
-def _is_decodable(line: str) -> bool:
-    """Return True iff *line* decoded from valid UTF-8 (no lone surrogates)."""
-    if line.isascii():
-        return True
-    try:
-        line.encode("utf-8")
-    except UnicodeEncodeError:
-        return False
-    return True
 
 
 def _open_verified_journal_fd(journal_path: Path) -> int | None:
@@ -484,6 +470,7 @@ def _open_verified_journal_fd(journal_path: Path) -> int | None:
     """
     flags = (
         os.O_RDONLY
+        | int(getattr(os, "O_BINARY", 0))
         | int(getattr(os, "O_NOFOLLOW", 0))
         | int(getattr(os, "O_NONBLOCK", 0))
         | int(getattr(os, "O_CLOEXEC", 0))
@@ -507,39 +494,6 @@ def _open_verified_journal_fd(journal_path: Path) -> int | None:
     return fd
 
 
-def _read_verified_journal_steps(
-    journal_path: Path,
-    *,
-    after_index: int | None = None,
-) -> list[tuple[int, str, str, dict[str, Any]]]:
-    """Read journal rows directly from an ``O_NOFOLLOW`` + ``fstat``-verified descriptor."""
-    fd = _open_verified_journal_fd(journal_path)
-    if fd is None:
-        return []
-    steps: list[tuple[int, str, str, dict[str, Any]]] = []
-    with os.fdopen(fd, "rb") as raw_file, io.TextIOWrapper(raw_file, encoding="utf-8", errors="surrogateescape") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or not _is_decodable(line):
-                continue
-            try:
-                decoded = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(decoded, dict):
-                continue
-            row = cast("dict[str, Any]", decoded)
-            try:
-                index = int(row.get("index", 0))
-            except (TypeError, ValueError):
-                continue
-            if after_index is not None and index <= after_index:
-                continue
-            payload = {k: v for k, v in row.items() if k not in _ENVELOPE_FIELDS}
-            steps.append((index, str(row.get("event", "")), str(row.get("event_hash", "")), payload))
-    return steps
-
-
 def project_journal_to_acp_updates(
     journal_path: Path,
     *,
@@ -552,22 +506,26 @@ def project_journal_to_acp_updates(
 
     Opens *journal_path* with ``O_NOFOLLOW`` where available and re-checks the
     opened descriptor via ``os.fstat`` for ``S_ISREG`` and ``st_nlink == 1``
-    before reading, raising :class:`OSError` on refusal.
+    before projecting through :func:`project_journal_from_file`, raising
+    :class:`OSError` on refusal.
 
     When *max_updates* or *max_bytes* is supplied (e.g. during ``session/load``),
     returns at most the newest updates fitting within both caps in chronological order.
     """
+    fd = _open_verified_journal_fd(journal_path)
+    if fd is None:
+        return []
+    with os.fdopen(fd, "rb") as raw_file:
+        steps = project_journal_from_file(raw_file, after_index=after_index)
     projector = JournalACPProjector()
     out: list[dict[str, Any]] = []
-    for journal_index, journal_event, event_hash, payload in _read_verified_journal_steps(
-        journal_path, after_index=after_index
-    ):
+    for step in steps:
         out.extend(
             projector.feed_event(
-                journal_event,
-                payload,
-                journal_index=journal_index,
-                event_hash=event_hash,
+                step.journal_event,
+                step.payload,
+                journal_index=step.journal_index,
+                event_hash=step.event_hash,
                 include_user_messages=include_user_messages,
             )
         )
