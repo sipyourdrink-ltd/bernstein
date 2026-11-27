@@ -30,7 +30,9 @@ from typing import Any
 from bernstein.core.protocols.acp.handlers import (
     ACPHandlerRegistry,
     AuditEmitter,
+    AuthHandler,
     PromptResult,
+    PromptRunner,
     StreamPublisher,
     TaskCanceller,
     TaskCreator,
@@ -38,6 +40,7 @@ from bernstein.core.protocols.acp.handlers import (
 from bernstein.core.protocols.acp.metrics import set_active_sessions
 from bernstein.core.protocols.acp.session import ACPSessionStore
 from bernstein.core.protocols.acp.transport import (
+    MAX_FRAME_BYTES,
     HttpAcpTransport,
     StdioAcpTransport,
 )
@@ -91,9 +94,16 @@ class ACPServer:
     Attributes:
         registry: The bound handler registry.  Constructed by
             :func:`build_default_server` from injected callables.
+        eof_drain_grace_s: Seconds to wait on stdin half-close (EOF) for
+            in-flight ``session/prompt`` turns to finish and flush their
+            responses before signalling ``transport_eof`` cancellation.
+        eof_cancel_timeout_s: Additional seconds to wait for cancelled turns
+            to resolve cleanly before hard-cancelling them on shutdown.
     """
 
     registry: ACPHandlerRegistry
+    eof_drain_grace_s: float = 0.5
+    eof_cancel_timeout_s: float = 0.5
 
     async def run_stdio(
         self,
@@ -115,11 +125,18 @@ class ACPServer:
             registry=self.registry,
             reader=reader,
             writer=writer,
+            eof_drain_grace_s=self.eof_drain_grace_s,
+            eof_cancel_timeout_s=self.eof_cancel_timeout_s,
         )
         await transport.serve_forever()
 
     def http_transport(self) -> HttpAcpTransport:
-        """Return an :class:`HttpAcpTransport` bound to this server."""
+        """Return an :class:`HttpAcpTransport` bound to this server.
+
+        Raises:
+            ValueError: If ``self.registry.require_auth`` is ``True`` (HTTP
+                requires token-bound authentication before enforcing auth).
+        """
         return HttpAcpTransport(registry=self.registry)
 
 
@@ -140,7 +157,7 @@ async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     :class:`asyncio.StreamReader`.
     """
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader(loop=loop)
+    reader = asyncio.StreamReader(limit=MAX_FRAME_BYTES + 2, loop=loop)
 
     try:
         protocol = asyncio.StreamReaderProtocol(reader)
@@ -227,6 +244,12 @@ def build_default_server(
     task_creator: TaskCreator | None = None,
     task_canceller: TaskCanceller | None = None,
     stream_publisher: StreamPublisher | None = None,
+    prompt_runner: PromptRunner | None = None,
+    auth_handler: AuthHandler | None = None,
+    terminal_auth_method: dict[str, Any] | None = None,
+    require_auth: bool = False,
+    eof_drain_grace_s: float = 0.5,
+    eof_cancel_timeout_s: float = 0.5,
 ) -> ACPServer:
     """Build an :class:`ACPServer` with sensible defaults.
 
@@ -247,6 +270,14 @@ def build_default_server(
         task_creator: Override for task creation.
         task_canceller: Override for task cancellation.
         stream_publisher: Override for stream publication.
+        prompt_runner: Optional ACP v1 blocking prompt runner override.
+        auth_handler: Optional ACP v1 ``authenticate`` callback.
+        terminal_auth_method: Optional opt-in terminal auth method descriptor.
+        require_auth: Require ``authenticate`` before non-exempt methods.
+        eof_drain_grace_s: Half-close stdin EOF grace window in seconds before
+            signalling ``transport_eof`` cancellation on active turns.
+        eof_cancel_timeout_s: Additional seconds to wait for cancelled turns
+            to resolve before hard-cancelling on shutdown.
 
     Returns:
         A fully composed :class:`ACPServer`.
@@ -270,13 +301,21 @@ def build_default_server(
         sandbox_backends=tuple(d.name for d in sandbox_backends if d.available),
         task_creator=task_creator,
         task_canceller=task_canceller,
+        prompt_runner=prompt_runner,
+        auth_handler=auth_handler,
+        terminal_auth_method=terminal_auth_method,
+        require_auth=require_auth,
     )
     if audit_emitter is not None:
         registry.audit_emitter = audit_emitter
     if stream_publisher is not None:
         registry.stream_publisher = stream_publisher
 
-    return ACPServer(registry=registry)
+    return ACPServer(
+        registry=registry,
+        eof_drain_grace_s=eof_drain_grace_s,
+        eof_cancel_timeout_s=eof_cancel_timeout_s,
+    )
 
 
 # ---------------------------------------------------------------------------

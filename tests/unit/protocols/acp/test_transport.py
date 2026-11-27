@@ -336,3 +336,183 @@ def test_transport_parity_initialize() -> None:
         assert http_envelope == stdio_envelope
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# ACP v1 bidirectional transport & notification error suppression
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_frame_never_replies_to_invalid_or_unknown_notifications() -> None:
+    async def _run() -> None:
+        registry = _make_registry()
+        # Unknown notification method -> None (no illegal id:null error frame)
+        assert (
+            await dispatch_frame(
+                registry,
+                {"jsonrpc": "2.0", "method": "does/not/exist", "params": {}},
+                peer="stdio",
+            )
+            is None
+        )
+        # Pre-init session/cancel notification -> None
+        assert (
+            await dispatch_frame(
+                registry,
+                {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": "s1"}},
+                peer="stdio",
+            )
+            is None
+        )
+        # Malformed session/cancel params (missing sessionId) without id -> None
+        assert (
+            await dispatch_frame(
+                registry,
+                {"jsonrpc": "2.0", "method": "session/cancel", "params": {}},
+                peer="stdio",
+            )
+            is None
+        )
+
+    asyncio.run(_run())
+
+
+def test_stdio_bidirectional_send_request_and_concurrent_prompt_cancel() -> None:
+    """StdioAcpTransport multiplexes Agent->Client RPCs and cancel during session/prompt."""
+
+    async def _run() -> None:
+        registry = _make_registry()
+        seen_decisions: list[str] = []
+        turn_started = asyncio.Event()
+
+        async def _runner(session: Any, blocks: list[dict[str, Any]], cancel_ev: asyncio.Event) -> str:
+            text = blocks[0]["text"]
+            if text == "ask":
+                decision = await registry.ask_permission(session.session_id, "write_file", "edit x.py")
+                seen_decisions.append(decision)
+                return "end_turn"
+            turn_started.set()
+            await cancel_ev.wait()
+            return "cancelled"
+
+        registry.prompt_runner = _runner
+
+        reader, writer, capture = _wire_stdio_pair()
+        transport = StdioAcpTransport(registry=registry, reader=reader, writer=writer)
+        serve_task = asyncio.create_task(transport.serve_forever())
+
+        # Initialize + session/new
+        reader.feed_data(
+            (
+                json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}}) + "\n"
+            ).encode()
+        )
+        init_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        assert init_resp["result"]["protocolVersion"] == 1
+
+        reader.feed_data(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "session/new",
+                        "params": {"cwd": "/work", "mcpServers": []},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        sess_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        sid = sess_resp["result"]["sessionId"]
+
+        # Turn 1: prompt triggers outbound session/request_permission RPC.
+        reader.feed_data(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "session/prompt",
+                        "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "ask"}]},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        perm_req = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        assert perm_req["method"] == "session/request_permission"
+        assert "id" in perm_req
+        # Client replies with JSON-RPC result matched to outbound request id.
+        reader.feed_data(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": perm_req["id"],
+                        "result": {"outcome": {"outcome": "selected", "optionId": "allow_once"}},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        prompt_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        assert prompt_resp == {"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "end_turn"}}
+        assert seen_decisions == ["approved"]
+
+        # Turn 2: blocking prompt interrupted by session/cancel notification.
+        reader.feed_data(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 4,
+                        "method": "session/prompt",
+                        "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "wait"}]},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        await asyncio.wait_for(turn_started.wait(), timeout=1.0)
+        reader.feed_data(
+            (json.dumps({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": sid}}) + "\n").encode()
+        )
+        cancel_prompt_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        assert cancel_prompt_resp == {"jsonrpc": "2.0", "id": 4, "result": {"stopReason": "cancelled"}}
+
+        reader.feed_eof()
+        await asyncio.wait_for(serve_task, timeout=1.0)
+
+    asyncio.run(_run())
+
+
+def test_stdio_send_request_rejects_pending_on_eof() -> None:
+    """If client disconnects while an outbound request is pending, send_request fails cleanly."""
+
+    async def _run() -> None:
+        registry = _make_registry()
+        reader, writer, capture = _wire_stdio_pair()
+        transport = StdioAcpTransport(registry=registry, reader=reader, writer=writer)
+        serve_task = asyncio.create_task(transport.serve_forever())
+        await asyncio.sleep(0)
+
+        req_task = asyncio.create_task(
+            transport.send_request(
+                "session/request_permission",
+                {
+                    "sessionId": "s1",
+                    "toolCall": {"toolCallId": "tc-1"},
+                    "options": [{"optionId": "allow_once", "name": "Allow", "kind": "allow_once"}],
+                },
+                timeout=5.0,
+            )
+        )
+        outbound = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        assert outbound["method"] == "session/request_permission"
+        reader.feed_eof()
+        with pytest.raises(ConnectionError):
+            await asyncio.wait_for(req_task, timeout=1.0)
+        await asyncio.wait_for(serve_task, timeout=1.0)
+
+    asyncio.run(_run())

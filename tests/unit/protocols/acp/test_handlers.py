@@ -18,13 +18,17 @@ from bernstein.core.protocols.acp.handlers import (
     PromptResult,
 )
 from bernstein.core.protocols.acp.schema import (
+    ACP_V1_PROTOCOL_VERSION,
+    AUTH_REQUIRED,
     INVALID_PARAMS,
+    INVALID_REQUEST,
     PERMISSION_DENIED,
+    RESOURCE_NOT_FOUND,
     SESSION_NOT_FOUND,
     ACPSchemaError,
     make_notification,
 )
-from bernstein.core.protocols.acp.session import ACPSessionStore
+from bernstein.core.protocols.acp.session import ACPSession, ACPSessionStore
 
 
 def _ctx(method: str, request_id: int | str | None = 1) -> ACPRequestContext:
@@ -307,5 +311,245 @@ def test_invalid_params_surfaces_through_dispatch() -> None:
         with pytest.raises(ACPSchemaError) as exc:
             await registry.dispatch(_ctx("prompt"), {"prompt": "x", "mode": "yolo"})
         assert exc.value.code == INVALID_PARAMS
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# ACP v1 handler tests
+# ---------------------------------------------------------------------------
+
+
+def test_v1_pre_init_guard_rejects_session_methods_with_invalid_request() -> None:
+    registry = _build_registry()
+
+    async def _run() -> None:
+        for method, params in (
+            ("authenticate", {"methodId": "bernstein-setup"}),
+            ("session/new", {"cwd": "/work", "mcpServers": []}),
+            ("session/set_mode", {"sessionId": "s1", "modeId": "auto"}),
+            ("session/prompt", {"sessionId": "s1", "prompt": [{"type": "text", "text": "hi"}]}),
+        ):
+            with pytest.raises(ACPSchemaError) as exc:
+                await registry.dispatch(_ctx(method), params)
+            assert exc.value.code == INVALID_REQUEST
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize(
+    "client_caps",
+    [
+        {"auth": {"terminal": True}},
+        {"auth": {"terminal": False}, "_meta": {"terminal-auth": True}},
+    ],
+)
+def test_v1_initialize_shape_and_terminal_auth_capability_flags(client_caps: dict[str, Any]) -> None:
+    registry = _build_registry()
+    registry.terminal_auth_method = {
+        "id": "bernstein-setup",
+        "name": "Configure Bernstein adapters",
+        "type": "terminal",
+        "args": ["--setup"],
+    }
+
+    async def _run() -> None:
+        res = await registry.dispatch(
+            _ctx("initialize"),
+            {
+                "protocolVersion": 1,
+                "clientCapabilities": client_caps,
+                "clientInfo": {"name": "zed", "version": "0.1"},
+            },
+        )
+        assert res["protocolVersion"] == ACP_V1_PROTOCOL_VERSION
+        assert res["agentInfo"]["name"] == "bernstein"
+        assert res["agentInfo"]["version"]
+        assert "agentCapabilities" in res
+        assert res["_meta"]["adapters"] == ["claude", "codex"]
+        assert res["_meta"]["sandboxBackends"] == ["none"]
+        assert "serverInfo" not in res
+        assert any(m["type"] == "terminal" for m in res["authMethods"])
+
+    asyncio.run(_run())
+
+
+def test_v1_authenticate_and_require_auth_gate() -> None:
+    calls: list[str] = []
+
+    async def _auth(method_id: str) -> bool:
+        calls.append(method_id)
+        return method_id == "bernstein-setup"
+
+    registry = _build_registry()
+    registry.terminal_auth_method = {
+        "id": "bernstein-setup",
+        "name": "Configure Bernstein adapters",
+        "type": "terminal",
+        "args": ["--setup"],
+    }
+    registry.auth_handler = _auth
+    registry.require_auth = True
+
+    async def _run() -> None:
+        init = await registry.dispatch(
+            _ctx("initialize"),
+            {"protocolVersion": 1, "clientCapabilities": {"auth": {"terminal": True}}},
+        )
+        method_id = init["authMethods"][0]["id"]
+
+        # Unauthenticated session/new rejected with -32000.
+        with pytest.raises(ACPSchemaError) as unauth_exc:
+            await registry.dispatch(_ctx("session/new"), {"cwd": "/work", "mcpServers": []})
+        assert unauth_exc.value.code == AUTH_REQUIRED
+
+        # Unknown methodId rejected with -32602.
+        with pytest.raises(ACPSchemaError) as unknown_exc:
+            await registry.dispatch(_ctx("authenticate"), {"methodId": "nope"})
+        assert unknown_exc.value.code == INVALID_PARAMS
+
+        # Valid methodId authenticates and unlocks session/new.
+        assert await registry.dispatch(_ctx("authenticate"), {"methodId": method_id}) == {}
+        assert calls == [method_id]
+        sess = await registry.dispatch(_ctx("session/new"), {"cwd": "/work", "mcpServers": []})
+        assert sess["sessionId"]
+
+    asyncio.run(_run())
+
+
+def test_v1_session_new_set_mode_multiturn_prompt_and_cancel() -> None:
+    turns: list[str] = []
+    started = asyncio.Event()
+
+    async def _runner(session: ACPSession, blocks: list[dict[str, Any]], cancel_ev: asyncio.Event) -> str:
+        text = " ".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        turns.append(f"{session.session_id}:{text}")
+        if text == "block":
+            started.set()
+            await cancel_ev.wait()
+            return "cancelled"
+        return "end_turn"
+
+    registry = _build_registry()
+    registry.prompt_runner = _runner
+
+    async def _run() -> None:
+        await registry.dispatch(_ctx("initialize"), {"protocolVersion": 1})
+        created = await registry.dispatch(_ctx("session/new"), {"cwd": "/work", "mcpServers": []})
+        sid = created["sessionId"]
+        assert created["modes"]["currentModeId"] == "manual"
+        assert {m["id"] for m in created["modes"]["availableModes"]} == {"manual", "auto"}
+
+        # session/set_mode returns {} and persists; unknown session -> -32002.
+        assert await registry.dispatch(_ctx("session/set_mode"), {"sessionId": sid, "modeId": "auto"}) == {}
+        with pytest.raises(ACPSchemaError) as missing_exc:
+            await registry.dispatch(_ctx("session/set_mode"), {"sessionId": "ghost", "modeId": "auto"})
+        assert missing_exc.value.code == RESOURCE_NOT_FOUND
+
+        # Turn 1 completes with end_turn.
+        r1 = await registry.dispatch(
+            _ctx("session/prompt"),
+            {"sessionId": sid, "prompt": [{"type": "text", "text": "one"}]},
+        )
+        assert r1 == {"stopReason": "end_turn"}
+
+        # Turn 2 blocks until session/cancel notification arrives; session stays alive.
+        t2 = asyncio.create_task(
+            registry.dispatch(
+                _ctx("session/prompt", 2),
+                {"sessionId": sid, "prompt": [{"type": "text", "text": "block"}]},
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        # Concurrent prompt on same session rejected with -32600.
+        with pytest.raises(ACPSchemaError) as overlap_exc:
+            await registry.dispatch(
+                _ctx("session/prompt", 3),
+                {"sessionId": sid, "prompt": [{"type": "text", "text": "overlap"}]},
+            )
+        assert overlap_exc.value.code == INVALID_REQUEST
+
+        cancel_res = await registry.dispatch(_ctx("session/cancel", None), {"sessionId": sid})
+        assert cancel_res is None
+        assert await asyncio.wait_for(t2, timeout=1.0) == {"stopReason": "cancelled"}
+
+        # Turn 3 reuses the same sessionId after cancellation.
+        r3 = await registry.dispatch(
+            _ctx("session/prompt", 4),
+            {"sessionId": sid, "prompt": [{"type": "text", "text": "three"}]},
+        )
+        assert r3 == {"stopReason": "end_turn"}
+        assert len(turns) == 3
+
+    asyncio.run(_run())
+
+
+def test_v1_ask_permission_rpc_outcomes_and_cancel_race() -> None:
+    stream_frames: list[dict[str, Any]] = []
+    registry = _build_registry(stream_log=stream_frames)
+
+    async def _run() -> None:
+        await registry.dispatch(_ctx("initialize"), {"protocolVersion": 1})
+        created = await registry.dispatch(_ctx("session/new"), {"cwd": "/work", "mcpServers": []})
+        sid = created["sessionId"]
+
+        # 1. Selected allow_once -> approved
+        async def _allow(_method: str, _params: dict[str, Any], _timeout: float | None) -> dict[str, Any]:
+            return {"outcome": {"outcome": "selected", "optionId": "allow_once"}}
+
+        registry.client_requester = _allow
+        assert await registry.ask_permission(sid, "edit_file", "edit a.py") == "approved"
+
+        # 2. Selected reject_once -> rejected
+        async def _reject(_method: str, _params: dict[str, Any], _timeout: float | None) -> dict[str, Any]:
+            return {"outcome": {"outcome": "selected", "optionId": "reject_once"}}
+
+        registry.client_requester = _reject
+        assert await registry.ask_permission(sid, "edit_file", "edit a.py") == "rejected"
+
+        # 3. Cancelled outcome -> rejected
+        async def _cancelled(_method: str, _params: dict[str, Any], _timeout: float | None) -> dict[str, Any]:
+            return {"outcome": {"outcome": "cancelled"}}
+
+        registry.client_requester = _cancelled
+        assert await registry.ask_permission(sid, "edit_file", "edit a.py") == "rejected"
+
+        # 4. Unknown optionId or timeout -> fails closed (rejected)
+        async def _unknown(_method: str, _params: dict[str, Any], _timeout: float | None) -> dict[str, Any]:
+            return {"outcome": {"outcome": "selected", "optionId": "fabricated"}}
+
+        registry.client_requester = _unknown
+        assert await registry.ask_permission(sid, "edit_file", "edit a.py") == "rejected"
+
+        async def _timeout(_method: str, _params: dict[str, Any], _timeout: float | None) -> dict[str, Any]:
+            raise TimeoutError("timed out")
+
+        registry.client_requester = _timeout
+        assert await registry.ask_permission(sid, "edit_file", "edit a.py") == "rejected"
+
+        # 5. Mid-turn session/cancel interrupts pending permission request immediately
+        never = asyncio.Event()
+
+        async def _hang(_method: str, _params: dict[str, Any], _timeout: float | None) -> dict[str, Any]:
+            await never.wait()
+            return {}
+
+        registry.client_requester = _hang
+        session = await registry.sessions.get(sid)
+        assert session is not None
+        session.begin_turn()
+        ask_task = asyncio.create_task(registry.ask_permission(sid, "edit_file", "edit a.py"))
+        await asyncio.sleep(0.02)
+        await registry.dispatch(_ctx("session/cancel", None), {"sessionId": sid})
+        assert await asyncio.wait_for(ask_task, timeout=1.0) == "rejected"
+        session.end_turn()
+
+        # 6. Outbound session/update and current_mode_update helpers
+        await registry.emit_session_update(
+            sid, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ok"}}
+        )
+        await registry.emit_current_mode_update(sid, "auto")
+        assert stream_frames[-2]["method"] == "session/update"
+        assert stream_frames[-1]["params"]["update"]["sessionUpdate"] == "current_mode_update"
 
     asyncio.run(_run())
