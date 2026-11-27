@@ -471,6 +471,37 @@ and holds it to the same standard, and asserts the discovered set of lanes
 exactly, so a widened matcher cannot quietly demand a PAT of a lane that
 only reads pull requests.
 
+#### Dependabot auto-merge and manual queue entry (#6845)
+
+`.github/workflows/dependabot-auto-merge.yml` runs on Dependabot `pull_request`
+events with `secrets.GITHUB_TOKEN` and arms auto-merge only for ready
+`version-update:semver-patch` and `version-update:semver-minor` updates
+(including the patch/minor groups in `.github/dependabot.yml`); major updates
+(`version-update:semver-major`) and Draft PRs are skipped (#6758). As observed
+on #6770, #6800, and #6813, auto-merge enabled by `github-actions[bot]` under
+`GITHUB_TOKEN` does not advance the PR into the merge queue even after every
+required check (`CI gate`, `quorum`, and any applicable bundle checks) is
+green; the PR waits until a maintainer clears the bot-owned auto-merge and
+enqueues it under their own credentials.
+
+We deliberately keep manual enqueueing rather than storing a write-capable PAT
+or GitHub App token in Dependabot secrets. On a ready patch/minor Dependabot
+PR, `dependabot-auto-merge.yml` has already enabled auto-merge as
+`github-actions[bot]`: a second `gh pr merge <number> --auto` is a silent
+no-op that leaves `github-actions[bot]` as the enabler, and the GitHub UI shows
+**Disable auto-merge** instead of **Merge when ready**. Disable the bot
+auto-merge first, then re-arm or enqueue under a maintainer identity (omit
+`--squash` / `--merge`; the merge queue owns the merge method):
+
+```sh
+gh pr merge <number> --disable-auto && gh pr merge <number> --auto
+```
+
+In the GitHub UI, click **Disable auto-merge** first, then **Merge when
+ready**. A single `gh pr merge <number> --auto` (or **Merge when ready**
+directly) applies only when auto-merge is still off (for example, on major
+Dependabot PRs that the workflow skips).
+
 ### What the pool actually spends
 
 The free-tier public-repo ceiling is 20 concurrent jobs, so the budget
@@ -493,8 +524,9 @@ the durable fix for that is the merge queue (see *Concurrency policy*).
 Advisory lanes are kept cheap instead of removed:
 `pr-observability-summary` runs only on PRs labelled `deep-review`,
 `dependabot-auto-merge` gates its only job on the Dependabot user id
-and never arms a Draft (its `ready_for_review` event brings the update
-back through the same gates),
+and never arms a Draft (its `ready_for_review` event brings the update back
+through the same gates; queue entry remains manual because the workflow stays
+on `GITHUB_TOKEN`, see #6845),
 `pr-policy` and `pr-labels` are consolidated single-job lanes, and the
 vulture / refurb / perflint jobs run weekly rather than per PR.
 

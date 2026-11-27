@@ -115,7 +115,8 @@ Risk: external UI; the egress data stays publicly visible.
 ## 8. (Optional) Renovate vs Dependabot evaluation
 
 Both are configured: `.github/dependabot.yml` (weekly, grouped; patch/minor
-groups are auto-enqueued by `dependabot-auto-merge.yml`) and `renovate.json`
+groups are armed by `dependabot-auto-merge.yml` on `GITHUB_TOKEN` and enqueued
+into the merge queue manually by a maintainer, see #6845) and `renovate.json`
 (custom managers and package rules). No action required now; if the two
 produce duplicate PRs, retire one.
 
