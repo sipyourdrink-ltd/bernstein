@@ -1,4 +1,4 @@
-"""Regression tests for ACP v1 PR 1 review findings (B1, S1-S5, N1-N4)."""
+"""Regression tests for ACP v1 PR 1 review findings (B1, S1-S6, N1-N7)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from bernstein.core.protocols.acp.handlers import (
 from bernstein.core.protocols.acp.metrics import acp_messages_total
 from bernstein.core.protocols.acp.schema import (
     AUTH_REQUIRED,
+    INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
@@ -27,6 +28,8 @@ from bernstein.core.protocols.acp.server import build_default_server
 from bernstein.core.protocols.acp.session import ACPSession, ACPSessionStore
 from bernstein.core.protocols.acp.transport import (
     MAX_FRAME_BYTES,
+    HttpAcpTransport,
+    JsonRpcFraming,
     StdioAcpTransport,
     dispatch_frame,
 )
@@ -535,3 +538,341 @@ def test_n4_acp_protocol_version_keeps_legacy_str_and_v1_uses_new_constant() -> 
     assert isinstance(getattr(acp_schema, "ACP_V1_PROTOCOL_VERSION", None), int)
     default_session = ACPSession(session_id="legacy-s", cwd="/tmp")
     assert default_session.protocol_version == "2025-04-01"
+
+
+# ---------------------------------------------------------------------------
+# S6: HTTP multi-peer isolation (negotiated protocol version, pre-init, auth)
+# ---------------------------------------------------------------------------
+
+
+def test_s6_http_two_peers_isolate_protocol_version_and_auth() -> None:
+    async def _post(
+        transport: HttpAcpTransport,
+        peer: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        status, _headers, body = await transport.handle_request(
+            json.dumps(payload).encode("utf-8"),
+            accept="application/json",
+            peer=peer,
+        )
+        assert status == 200
+        assert isinstance(body, bytes)
+        return json.loads(body)
+
+    async def _run() -> None:
+        # Part 1: legacy lock-out and pre-init isolation across two HTTP peers.
+        created: list[str] = []
+
+        async def _creator(prompt: str, cwd: str, role: str) -> PromptResult:
+            del cwd, role
+            created.append(prompt)
+            return PromptResult(session_id=f"task-{len(created)}", accepted=True)
+
+        registry = ACPHandlerRegistry(sessions=ACPSessionStore(), task_creator=_creator)
+        http = HttpAcpTransport(registry=registry)
+        peer_a = "http://10.0.0.1"
+        peer_b = "http://10.0.0.2"
+
+        # peerA negotiates ACP v1.
+        init_a = await _post(
+            http,
+            peer_a,
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}},
+        )
+        assert init_a["result"]["protocolVersion"] == 1
+
+        # peerB (separate HTTP peer) can still use legacy prompt without getting locked out.
+        legacy_b = await _post(
+            http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 2, "method": "prompt", "params": {"prompt": "legacy work"}},
+        )
+        assert "result" in legacy_b, legacy_b
+        assert legacy_b["result"]["sessionId"] == "task-1"
+
+        # peerA itself is still locked out of legacy methods after negotiating ACP v1.
+        legacy_a = await _post(
+            http,
+            peer_a,
+            {"jsonrpc": "2.0", "id": 3, "method": "prompt", "params": {"prompt": "disallowed"}},
+        )
+        assert legacy_a["error"]["code"] == INVALID_REQUEST
+
+        # peerB has NOT called initialize yet, so pre-init v1 methods still fail for peerB.
+        pre_init_b = await _post(
+            http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 4, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
+        )
+        assert pre_init_b["error"]["code"] == INVALID_REQUEST
+
+        # Part 2: shared-auth and advertised-auth-method isolation with require_auth=True.
+        auth_calls: list[str] = []
+
+        async def _auth(method_id: str) -> bool:
+            auth_calls.append(method_id)
+            return method_id in {"token-auth", "term-setup"}
+
+        auth_registry = ACPHandlerRegistry(
+            sessions=ACPSessionStore(),
+            task_creator=_creator,
+            require_auth=True,
+            auth_handler=_auth,
+            terminal_auth_method={
+                "id": "term-setup",
+                "name": "Terminal setup",
+                "type": "terminal",
+                "args": ["--setup"],
+            },
+            extra_auth_methods=({"id": "token-auth", "name": "Token", "type": "agent"},),
+        )
+        auth_http = HttpAcpTransport(registry=auth_registry)
+
+        # peerA initializes (with terminal auth capability) and authenticates.
+        await _post(
+            auth_http,
+            peer_a,
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "initialize",
+                "params": {"protocolVersion": 1, "clientCapabilities": {"auth": {"terminal": True}}},
+            },
+        )
+        auth_a = await _post(
+            auth_http,
+            peer_a,
+            {"jsonrpc": "2.0", "id": 11, "method": "authenticate", "params": {"methodId": "token-auth"}},
+        )
+        assert auth_a["result"] == {}
+        sess_a = await _post(
+            auth_http,
+            peer_a,
+            {"jsonrpc": "2.0", "id": 12, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
+        )
+        assert "result" in sess_a, sess_a
+
+        # peerB initializes without terminal auth and MUST NOT inherit peerA's auth state.
+        init_auth_b = await _post(
+            auth_http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 20, "method": "initialize", "params": {"protocolVersion": 1}},
+        )
+        assert [m["id"] for m in init_auth_b["result"]["authMethods"]] == ["token-auth"]
+
+        unauth_sess_b = await _post(
+            auth_http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 21, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
+        )
+        assert unauth_sess_b["error"]["code"] == AUTH_REQUIRED
+
+        unauth_legacy_b = await _post(
+            auth_http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 22, "method": "prompt", "params": {"prompt": "bypass"}},
+        )
+        assert unauth_legacy_b["error"]["code"] in {AUTH_REQUIRED, INVALID_REQUEST}
+
+        # peerB cannot use a terminal auth method that was advertised only to peerA.
+        leaked_method_b = await _post(
+            auth_http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 23, "method": "authenticate", "params": {"methodId": "term-setup"}},
+        )
+        assert leaked_method_b["error"]["code"] == INVALID_PARAMS
+
+        # Once peerB authenticates with its own advertised method, session/new succeeds.
+        auth_b = await _post(
+            auth_http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 24, "method": "authenticate", "params": {"methodId": "token-auth"}},
+        )
+        assert auth_b["result"] == {}
+        sess_b = await _post(
+            auth_http,
+            peer_b,
+            {"jsonrpc": "2.0", "id": 25, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}},
+        )
+        assert "result" in sess_b, sess_b
+        assert auth_calls == ["token-auth", "token-auth"]
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# N5: exact MAX_FRAME_BYTES payload + trailing newline succeeds
+# ---------------------------------------------------------------------------
+
+
+def test_n5_exact_max_frame_bytes_plus_newline_succeeds() -> None:
+    prefix = b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"'
+    suffix = b'"}}}'
+    exact_pad = MAX_FRAME_BYTES - len(prefix) - len(suffix)
+    assert exact_pad > 0
+    exact_body = prefix + (b"a" * exact_pad) + suffix
+    assert len(exact_body) == MAX_FRAME_BYTES
+
+    parsed_lf = JsonRpcFraming.parse(exact_body + b"\n")
+    assert parsed_lf["id"] == 1
+    parsed_crlf = JsonRpcFraming.parse(exact_body + b"\r\n")
+    assert parsed_crlf["id"] == 1
+    parsed_str = JsonRpcFraming.parse(exact_body.decode("ascii") + "\n")
+    assert parsed_str["id"] == 1
+
+    over_body = prefix + (b"a" * (exact_pad + 1)) + suffix
+    assert len(over_body) == MAX_FRAME_BYTES + 1
+    with pytest.raises(ACPSchemaError) as over_exc:
+        JsonRpcFraming.parse(over_body + b"\n")
+    assert over_exc.value.code == PARSE_ERROR
+
+    async def _run_stdio() -> None:
+        registry = ACPHandlerRegistry(sessions=ACPSessionStore())
+        reader, writer, capture = _wire_stdio_pair(reader_limit=64 * 1024)
+        transport = StdioAcpTransport(registry=registry, reader=reader, writer=writer)
+        serve_task = asyncio.create_task(transport.serve_forever())
+
+        reader.feed_data(exact_body + b"\n" + over_body + b"\n")
+        reader.feed_eof()
+
+        ok_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=2.0))
+        assert ok_resp["id"] == 1
+        assert ok_resp["result"]["protocolVersion"] == 1
+
+        err_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=2.0))
+        assert err_resp["error"]["code"] == PARSE_ERROR
+
+        await asyncio.wait_for(serve_task, timeout=2.0)
+
+    asyncio.run(_run_stdio())
+
+
+# ---------------------------------------------------------------------------
+# N6: EOF-triggered cancel passes "transport_eof" to task_canceller
+# ---------------------------------------------------------------------------
+
+
+def test_n6_eof_cancel_passes_transport_eof_reason_to_task_canceller() -> None:
+    async def _run() -> None:
+        cancelled_calls: list[tuple[str, str]] = []
+
+        async def _slow_creator(prompt: str, cwd: str, role: str) -> PromptResult:
+            del prompt, cwd, role
+            await asyncio.sleep(0.25)
+            return PromptResult(session_id="task-77", accepted=True)
+
+        async def _canceller(task_id: str, reason: str) -> bool:
+            cancelled_calls.append((task_id, reason))
+            return True
+
+        registry = ACPHandlerRegistry(
+            sessions=ACPSessionStore(),
+            task_creator=_slow_creator,
+            task_canceller=_canceller,
+        )
+        reader, writer, capture = _wire_stdio_pair()
+        transport = StdioAcpTransport(
+            registry=registry,
+            reader=reader,
+            writer=writer,
+            eof_drain_grace_s=0.1,
+            eof_cancel_timeout_s=0.5,
+        )
+        serve_task = asyncio.create_task(transport.serve_forever())
+
+        reader.feed_data(
+            (
+                json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}})
+                + "\n"
+                + json.dumps(
+                    {"jsonrpc": "2.0", "id": 2, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}}
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        _ = await asyncio.wait_for(capture.readline(), timeout=1.0)
+        sid = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))["result"]["sessionId"]
+
+        reader.feed_data(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "session/prompt",
+                        "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "slow"}]},
+                    }
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        reader.feed_eof()
+
+        await asyncio.wait_for(serve_task, timeout=2.0)
+        prompt_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        assert prompt_resp["id"] == 3
+        assert prompt_resp["result"] == {"stopReason": "cancelled"}
+        assert cancelled_calls == [("task-77", "transport_eof")]
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# N7: build_default_server exposes and wires EOF drain timeouts
+# ---------------------------------------------------------------------------
+
+
+def test_n7_build_default_server_wires_eof_drain_timeouts() -> None:
+    async def _run() -> None:
+        async def _slow_creator(prompt: str, cwd: str, role: str) -> PromptResult:
+            del prompt, cwd, role
+            await asyncio.sleep(0.15)
+            return PromptResult(session_id="task-90", accepted=True)
+
+        server = build_default_server(
+            adapters=(),
+            sandbox_backends=(),
+            task_creator=_slow_creator,
+            eof_drain_grace_s=0.6,
+            eof_cancel_timeout_s=0.4,
+        )
+        assert server.eof_drain_grace_s == 0.6
+        assert server.eof_cancel_timeout_s == 0.4
+
+        reader, writer, capture = _wire_stdio_pair()
+        serve_task = asyncio.create_task(server.run_stdio(reader=reader, writer=writer))
+        reader.feed_data(
+            (
+                json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}})
+                + "\n"
+                + json.dumps(
+                    {"jsonrpc": "2.0", "id": 2, "method": "session/new", "params": {"cwd": "/work", "mcpServers": []}}
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        _ = await asyncio.wait_for(capture.readline(), timeout=1.0)
+        sid = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))["result"]["sessionId"]
+
+        reader.feed_data(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "session/prompt",
+                        "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "slow-ok"}]},
+                    }
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        reader.feed_eof()
+
+        await asyncio.wait_for(serve_task, timeout=2.0)
+        prompt_resp = json.loads(await asyncio.wait_for(capture.readline(), timeout=1.0))
+        assert prompt_resp["id"] == 3
+        assert prompt_resp["result"] == {"stopReason": "end_turn"}
+
+    asyncio.run(_run())

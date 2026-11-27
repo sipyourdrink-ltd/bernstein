@@ -65,18 +65,20 @@ class JsonRpcFraming:
 
     @staticmethod
     def parse(line: bytes | str) -> Any:
-        """Decode a single JSON-RPC frame."""
+        """Decode a single JSON-RPC frame (payload up to ``MAX_FRAME_BYTES``)."""
         if isinstance(line, bytes):
-            if len(line) > MAX_FRAME_BYTES:
+            payload = line.rstrip(b"\r\n")
+            if len(payload) > MAX_FRAME_BYTES:
                 raise ACPSchemaError(PARSE_ERROR, "frame exceeds size limit")
             try:
-                text = line.decode("utf-8")
+                text = payload.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise ACPSchemaError(PARSE_ERROR, f"invalid utf-8: {exc}") from exc
         else:
-            text = line
-            if len(text) > MAX_FRAME_BYTES:
+            payload_str = line.rstrip("\r\n")
+            if len(payload_str.encode("utf-8")) > MAX_FRAME_BYTES:
                 raise ACPSchemaError(PARSE_ERROR, "frame exceeds size limit")
+            text = payload_str
 
         text = text.strip()
         if not text:
@@ -154,6 +156,16 @@ class StdioAcpTransport:
     behind an async write lock.  Supports outbound Agent -> Client RPCs via
     :meth:`send_request` correlated by JSON-RPC ``id`` while concurrently
     running blocking ``session/prompt`` turns.
+
+    Half-close (stdin EOF) shutdown semantics:
+    1. Rejects any pending outbound Agent -> Client RPCs immediately.
+    2. Waits up to ``eof_drain_grace_s`` for fast in-flight turns to finish
+       and flush their responses to ``writer``.
+    3. Signals ``transport_eof`` cancellation on any remaining active sessions
+       and waits up to ``eof_cancel_timeout_s`` for them to resolve cleanly.
+    4. Hard-cancels any tasks that still ignore cancellation before closing
+       output.  Callers piping slow requests over half-close can raise
+       ``eof_drain_grace_s``.
     """
 
     registry: ACPHandlerRegistry
@@ -272,7 +284,7 @@ class StdioAcpTransport:
                         part = await self.reader.readexactly(step)
                         remaining -= len(part)
                         if not oversized:
-                            if len(buf) + len(part) > MAX_FRAME_BYTES:
+                            if len(buf) + len(part) > MAX_FRAME_BYTES + 1:
                                 oversized = True
                                 buf.clear()
                             else:
@@ -280,9 +292,13 @@ class StdioAcpTransport:
                 else:
                     part = await self.reader.read(65536)
                     if not part:
-                        return (b"", True) if oversized else ((bytes(buf), False) if buf else (None, False))
+                        if oversized:
+                            return b"", True
+                        if len(buf.rstrip(b"\r\n")) > MAX_FRAME_BYTES:
+                            return b"", True
+                        return (bytes(buf), False) if buf else (None, False)
                     if not oversized:
-                        if len(buf) + len(part) > MAX_FRAME_BYTES:
+                        if len(buf) + len(part) > MAX_FRAME_BYTES + 1:
                             oversized = True
                             buf.clear()
                         else:
@@ -291,25 +307,36 @@ class StdioAcpTransport:
             except asyncio.IncompleteReadError as exc:
                 if exc.partial:
                     if not oversized:
-                        if len(buf) + len(exc.partial) > MAX_FRAME_BYTES:
+                        if len(buf) + len(exc.partial) > MAX_FRAME_BYTES + 2:
                             oversized = True
                             buf.clear()
                         else:
                             buf.extend(exc.partial)
+                            if len(buf.rstrip(b"\r\n")) > MAX_FRAME_BYTES:
+                                oversized = True
+                                buf.clear()
                     return (b"", True) if oversized else (bytes(buf), False)
                 if oversized:
+                    return b"", True
+                if len(buf.rstrip(b"\r\n")) > MAX_FRAME_BYTES:
                     return b"", True
                 return (bytes(buf), False) if buf else (None, False)
 
             if not chunk:
                 if oversized:
                     return b"", True
+                if len(buf.rstrip(b"\r\n")) > MAX_FRAME_BYTES:
+                    return b"", True
                 return (bytes(buf), False) if buf else (None, False)
 
             if oversized:
                 return b"", True
 
-            if len(buf) + len(chunk.rstrip(b"\r\n")) > MAX_FRAME_BYTES:
+            stripped_chunk = chunk.rstrip(b"\r\n")
+            body_len = len(buf) + len(stripped_chunk)
+            if not stripped_chunk and buf.endswith(b"\r"):
+                body_len -= 1
+            if body_len > MAX_FRAME_BYTES:
                 return b"", True
             buf.extend(chunk)
             return bytes(buf), False
@@ -324,7 +351,7 @@ class StdioAcpTransport:
 
         if externally_cancelled:
             for session in list(self.registry.sessions):
-                session.request_cancel()
+                session.request_cancel("transport_cancelled")
             tasks = list(self._inflight_tasks)
             for task in tasks:
                 task.cancel()

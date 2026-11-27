@@ -73,6 +73,7 @@ class ACPSession:
     _active_cancel_event: asyncio.Event | None = field(default=None, init=False, repr=False)
     _active_task_id: str | None = field(default=None, init=False, repr=False)
     _task_cancel_sent: bool = field(default=False, init=False, repr=False)
+    _cancel_reason: str | None = field(default=None, init=False, repr=False)
 
     def touch(self) -> None:
         """Update :attr:`last_activity` to ``time.time()``."""
@@ -107,6 +108,11 @@ class ACPSession:
         """Return the Bernstein task id backing the active turn, if any."""
         return self._active_task_id
 
+    @property
+    def cancel_reason(self) -> str | None:
+        """Return the reason supplied to :meth:`request_cancel` for the active turn."""
+        return self._cancel_reason
+
     def set_active_task_id(self, task_id: str) -> None:
         """Record the Bernstein task id created for the active prompt turn."""
         self._active_task_id = task_id
@@ -125,11 +131,12 @@ class ACPSession:
         self._active_cancel_event = cancel_event
         self._active_task_id = None
         self._task_cancel_sent = False
+        self._cancel_reason = None
         self.turn_count += 1
         self.touch()
         return cancel_event
 
-    def request_cancel(self) -> bool:
+    def request_cancel(self, reason: str = "client_cancel") -> bool:
         """Signal cancellation for the active prompt turn, if any.
 
         Returns ``True`` when an active turn was signalled, ``False`` when
@@ -138,6 +145,8 @@ class ACPSession:
         """
         self.touch()
         if self._active_cancel_event is not None:
+            if self._cancel_reason is None:
+                self._cancel_reason = reason
             self._active_cancel_event.set()
             return True
         return False
@@ -147,6 +156,7 @@ class ACPSession:
         self._active_cancel_event = None
         self._active_task_id = None
         self._task_cancel_sent = False
+        self._cancel_reason = None
         self.touch()
 
     def open_permission_waiter(self, tool_name: str, detail: str) -> _PermissionWaiter:

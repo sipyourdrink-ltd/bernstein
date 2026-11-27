@@ -246,8 +246,8 @@ async def test_sdk_subprocess_initialize_auth_session_mode_cancel(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_sdk_subprocess_registry_meta_terminal_auth_flag() -> None:
-    """Opt-in terminal auth responds to clientCapabilities._meta['terminal-auth']."""
+async def test_sdk_inprocess_registry_meta_terminal_auth_flag_and_authenticate() -> None:
+    """In-process opt-in terminal auth responds to clientCapabilities._meta['terminal-auth']."""
     loop = asyncio.get_running_loop()
     client_to_server_r, client_to_server_w = _make_pipe_pair(loop)
     server_to_client_r, server_to_client_w = _make_pipe_pair(loop)
@@ -297,6 +297,59 @@ async def test_sdk_subprocess_registry_meta_terminal_auth_flag() -> None:
         await conn.close()
         client_to_server_w.close()
         await asyncio.wait_for(server_task, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_sdk_subprocess_opt_in_terminal_auth_and_authenticate(tmp_path: Path) -> None:
+    """Real subprocess stdio server with opt-in terminal auth completes authenticate and unlocks session/new."""
+    script = (
+        "import asyncio\n"
+        "from bernstein.core.protocols.acp.server import build_default_server\n"
+        "async def _auth(method_id: str) -> bool:\n"
+        "    return method_id == 'custom-terminal-setup'\n"
+        "server = build_default_server(\n"
+        "    adapters=(),\n"
+        "    sandbox_backends=(),\n"
+        "    auth_handler=_auth,\n"
+        "    require_auth=True,\n"
+        "    terminal_auth_method={\n"
+        "        'id': 'custom-terminal-setup',\n"
+        "        'name': 'Custom setup',\n"
+        "        'type': 'terminal',\n"
+        "        'args': ['--custom-setup'],\n"
+        "    },\n"
+        ")\n"
+        "asyncio.run(server.run_stdio())\n"
+    )
+    client = _RecordingClient()
+    async with acp.spawn_agent_process(
+        client,
+        sys.executable,
+        "-c",
+        script,
+        env=_subprocess_env(),
+    ) as (conn, _proc):
+        init = await conn.initialize(
+            protocol_version=1,
+            client_capabilities=ClientCapabilities(
+                auth=AuthCapabilities(terminal=False),
+                field_meta={"terminal-auth": True},
+            ),
+            client_info=Implementation(name="registry-ci-validator", version="1.0.0"),
+        )
+        assert init.protocol_version == 1
+        assert init.auth_methods
+        assert any(getattr(m, "type", None) == "terminal" for m in init.auth_methods)
+
+        with pytest.raises(RequestError) as unauth:
+            await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
+        assert unauth.value.code == -32000
+
+        auth_resp = await conn.authenticate(method_id="custom-terminal-setup")
+        assert auth_resp is not None
+
+        sess = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
+        assert sess.session_id
 
 
 @pytest.mark.asyncio

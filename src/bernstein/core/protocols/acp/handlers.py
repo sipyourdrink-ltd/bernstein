@@ -57,6 +57,7 @@ class SessionMode(StrEnum):
 
 
 _PERMISSION_TIMEOUT_S: Final[float] = 60.0
+_MAX_PEER_STATES: Final[int] = 1024
 
 _AVAILABLE_SESSION_MODES: Final[tuple[dict[str, str], ...]] = (
     {
@@ -214,6 +215,18 @@ class ACPRequestContext:
 
 
 @dataclass
+class _PeerState:
+    """Per-peer protocol negotiation and authentication state."""
+
+    initialized: bool = False
+    negotiated_version: int | str | None = None
+    client_capabilities: dict[str, Any] = field(default_factory=dict[str, Any])
+    client_info: dict[str, Any] | None = None
+    advertised_auth_method_ids: set[str] = field(default_factory=set[str])
+    authenticated: bool = False
+
+
+@dataclass
 class ACPHandlerRegistry:
     """Bundle of ACP method handlers supporting ACP v1 and legacy 2025-04-01."""
 
@@ -234,22 +247,32 @@ class ACPHandlerRegistry:
     extra_auth_methods: tuple[dict[str, Any], ...] = ()
     require_auth: bool = False
 
-    _initialized: bool = field(default=False, init=False, repr=False)
-    _negotiated_version: int | str | None = field(default=None, init=False, repr=False)
-    _client_capabilities: dict[str, Any] = field(default_factory=dict[str, Any], init=False, repr=False)
-    _client_info: dict[str, Any] | None = field(default=None, init=False, repr=False)
-    _advertised_auth_method_ids: set[str] = field(default_factory=set[str], init=False, repr=False)
-    _authenticated: bool = field(default=False, init=False, repr=False)
+    _peer_states: dict[str, _PeerState] = field(default_factory=dict[str, _PeerState], init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.permission_asker is None:
             object.__setattr__(self, "permission_asker", self._default_permission_asker)
 
+    def _get_or_create_peer_state(self, peer: str) -> _PeerState:
+        """Return existing per-peer state or allocate a bounded entry for *peer*."""
+        state = self._peer_states.get(peer)
+        if state is None:
+            if len(self._peer_states) >= _MAX_PEER_STATES:
+                self._peer_states.pop(next(iter(self._peer_states)))
+            state = _PeerState()
+            self._peer_states[peer] = state
+        return state
+
     # -- Public dispatch ----------------------------------------------------
 
     async def dispatch(self, ctx: ACPRequestContext, params: dict[str, Any]) -> Any:
         """Dispatch *ctx.method* and return the JSON-serialisable result."""
-        if ctx.method in ACP_V1_PRE_INIT_BLOCKED_METHODS and not self._initialized:
+        peer_state = self._peer_states.get(ctx.peer)
+        is_initialized = peer_state.initialized if peer_state is not None else False
+        negotiated_version = peer_state.negotiated_version if peer_state is not None else None
+        is_authenticated = peer_state.authenticated if peer_state is not None else False
+
+        if ctx.method in ACP_V1_PRE_INIT_BLOCKED_METHODS and not is_initialized:
             record_acp_message(ctx.method, "error")
             raise ACPSchemaError(
                 INVALID_REQUEST,
@@ -257,7 +280,7 @@ class ACPHandlerRegistry:
                 {"method": ctx.method},
             )
 
-        if self._negotiated_version == ACP_V1_PROTOCOL_VERSION and ctx.method in ACP_LEGACY_METHODS:
+        if negotiated_version == ACP_V1_PROTOCOL_VERSION and ctx.method in ACP_LEGACY_METHODS:
             record_acp_message(ctx.method, "error")
             raise ACPSchemaError(
                 INVALID_REQUEST,
@@ -265,7 +288,7 @@ class ACPHandlerRegistry:
                 {"method": ctx.method},
             )
 
-        if self.require_auth and not self._authenticated and ctx.method not in ACP_AUTH_EXEMPT_METHODS:
+        if self.require_auth and not is_authenticated and ctx.method not in ACP_AUTH_EXEMPT_METHODS:
             record_acp_message(ctx.method, "error")
             raise ACPSchemaError(
                 AUTH_REQUIRED,
@@ -335,18 +358,20 @@ class ACPHandlerRegistry:
             dict(cast("dict[str, Any]", client_info_raw)) if isinstance(client_info_raw, dict) else None
         )
 
-        self._initialized = True
-        self._client_capabilities = client_caps
-        self._client_info = client_info
+        state = self._get_or_create_peer_state(ctx.peer)
+        state.initialized = True
+        state.client_capabilities = client_caps
+        state.client_info = client_info
+        state.authenticated = False
 
         if isinstance(raw_version, int) and not isinstance(raw_version, bool):
-            self._negotiated_version = ACP_V1_PROTOCOL_VERSION
+            state.negotiated_version = ACP_V1_PROTOCOL_VERSION
             auth_methods: list[dict[str, Any]] = []
             if self.terminal_auth_method is not None and _client_supports_terminal_auth(client_caps):
                 auth_methods.append(dict(self.terminal_auth_method))
             for method_def in self.extra_auth_methods:
                 auth_methods.append(dict(method_def))
-            self._advertised_auth_method_ids = {str(m["id"]) for m in auth_methods if isinstance(m.get("id"), str)}
+            state.advertised_auth_method_ids = {str(m["id"]) for m in auth_methods if isinstance(m.get("id"), str)}
 
             result: dict[str, Any] = {
                 "protocolVersion": ACP_V1_PROTOCOL_VERSION,
@@ -381,7 +406,8 @@ class ACPHandlerRegistry:
 
         # Legacy 2025-04-01 handshake (string protocolVersion or omitted)
         requested = raw_version if isinstance(raw_version, str) and raw_version else ACP_LEGACY_PROTOCOL_VERSION
-        self._negotiated_version = ACP_LEGACY_PROTOCOL_VERSION
+        state.negotiated_version = ACP_LEGACY_PROTOCOL_VERSION
+        state.advertised_auth_method_ids = set()
         legacy_result: dict[str, Any] = {
             "protocolVersion": ACP_LEGACY_PROTOCOL_VERSION,
             "negotiatedProtocolVersion": ACP_LEGACY_PROTOCOL_VERSION,
@@ -412,7 +438,9 @@ class ACPHandlerRegistry:
     ) -> dict[str, Any]:
         """Handle ACP v1 ``authenticate({methodId}) -> {}``."""
         method_id: str = params["methodId"]
-        if method_id not in self._advertised_auth_method_ids:
+        state = self._peer_states.get(ctx.peer)
+        advertised: set[str] = state.advertised_auth_method_ids if state is not None else set()
+        if method_id not in advertised:
             raise ACPSchemaError(
                 INVALID_PARAMS,
                 f"unknown authentication method {method_id!r}",
@@ -431,7 +459,8 @@ class ACPHandlerRegistry:
                 f"authentication failed for method {method_id!r}",
                 {"methodId": method_id},
             )
-        self._authenticated = True
+        assert state is not None
+        state.authenticated = True
         self.audit_emitter("acp.authenticate", "session", {"peer": ctx.peer, "methodId": method_id})
         return {}
 
@@ -443,7 +472,8 @@ class ACPHandlerRegistry:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle ACP v1 ``session/new`` and return ``{sessionId, modes}``."""
-        if self.require_auth and not self._authenticated:
+        state = self._peer_states.get(ctx.peer)
+        if self.require_auth and not (state is not None and state.authenticated):
             raise ACPSchemaError(
                 AUTH_REQUIRED,
                 "authentication required before creating a session",
@@ -535,7 +565,7 @@ class ACPHandlerRegistry:
         if cancel_event.is_set():
             task_id = session.claim_cancel_task_id()
             if task_id is not None:
-                ok = await self.task_canceller(task_id, "client_cancel")
+                ok = await self.task_canceller(task_id, session.cancel_reason or "client_cancel")
                 return "cancelled" if ok else "end_turn"
             return "cancelled"
         return "end_turn"
@@ -612,7 +642,7 @@ class ACPHandlerRegistry:
             logger.debug("acp.session_cancel ignored for unknown session=%s", session_id)
             return None
 
-        had_active = session.request_cancel()
+        had_active = session.request_cancel("client_cancel")
         ok = False
         if had_active:
             task_id = session.claim_cancel_task_id()
@@ -630,7 +660,7 @@ class ACPHandlerRegistry:
         for session in list(self.sessions):
             if not session.has_active_turn:
                 continue
-            session.request_cancel()
+            session.request_cancel(reason)
             task_id = session.claim_cancel_task_id()
             if task_id is not None:
                 with contextlib.suppress(Exception):
@@ -793,6 +823,12 @@ class ACPHandlerRegistry:
         session = await self.sessions.get(session_id)
         if session is None:
             raise ACPSchemaError(SESSION_NOT_FOUND, f"unknown session {session_id!r}")
+        if session.protocol_version == ACP_V1_PROTOCOL_VERSION:
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"session {session_id!r} is an ACP v1 session; use 'session/cancel'",
+                {"sessionId": session_id},
+            )
 
         ok = await self.task_canceller(session_id, reason)
         await self.sessions.remove(session_id)
@@ -817,6 +853,12 @@ class ACPHandlerRegistry:
         session = await self.sessions.get(session_id)
         if session is None:
             raise ACPSchemaError(SESSION_NOT_FOUND, f"unknown session {session_id!r}")
+        if session.protocol_version == ACP_V1_PROTOCOL_VERSION:
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"session {session_id!r} is an ACP v1 session; use 'session/set_mode'",
+                {"sessionId": session_id},
+            )
         try:
             session.set_mode(mode)
         except ValueError as exc:
@@ -836,6 +878,12 @@ class ACPHandlerRegistry:
         session = await self.sessions.get(session_id)
         if session is None:
             raise ACPSchemaError(SESSION_NOT_FOUND, f"unknown session {session_id!r}")
+        if session.protocol_version == ACP_V1_PROTOCOL_VERSION:
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"session {session_id!r} is an ACP v1 session; use bidirectional 'session/request_permission'",
+                {"sessionId": session_id},
+            )
         if not session.resolve_permission(prompt_id, decision):
             raise ACPSchemaError(
                 PERMISSION_DENIED,
