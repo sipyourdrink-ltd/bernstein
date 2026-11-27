@@ -1,0 +1,41 @@
+id: owasp-agentic-threat-review
+name: OWASP Agentic Top 10 Threat and Guardrail Review
+version: "1.0"
+description: |
+  Audit autonomous and multi-agent workflows against OWASP Agentic Top 10 risks:
+  goal hijack, tool misuse, non-human identity privilege abuse, supply-chain
+  plugins, unexpected code execution, and memory/context poisoning.
+tags: [ai-governance, security, owasp-agentic, red-team, guardrails]
+tasks:
+  - title: Inventory agent tools, credentials, and untrusted input channels
+    role: security
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Catalog every tool, shell/file/network capability, inherited token, and
+      external untrusted data source reachable by each agent role.
+  - title: Probe goal-hijack, tool-misuse, and memory-poisoning pathways
+    role: adversary
+    priority: 1
+    scope: medium
+    complexity: high
+    description: |
+      Evaluate indirect prompt-injection, cross-agent handoff spoofing, and
+      persistent context/RAG poisoning vectors inside an offline sandbox.
+  - title: Implement fail-closed tool and approval-gate barriers
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Add schema validation, least-privilege tool allowlists, and mandatory
+      human approval gates on state-mutating or outbound operations.
+  - title: Verify guardrail regression suite and publish threat matrix
+    role: qa
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      Run deterministic guardrail tests across benign and adversarial fixtures
+      and record the signed threat-mitigation matrix.

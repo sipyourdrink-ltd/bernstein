@@ -218,11 +218,18 @@ The scanner runs without LLM calls, using static regex patterns:
 - Path traversal patterns in code
 - SQL injection vectors
 
-Scan a task's diff for security findings:
+Scan a diff for security findings:
 
 ```bash
-bernstein security-review <task-id>
+bernstein security-review                    # working tree vs main
+bernstein security-review <task-id>          # what one agent changed
+git diff | bernstein security-review --diff-file -
 ```
+
+`--as-json` emits the findings as JSON. The exit code is `0` when the diff
+is clean or has only advisory findings, `1` on a critical or high finding,
+and `2` when there is no diff to scan. `--fail-on-any` makes any finding
+exit non-zero, so the command can gate a pre-commit hook or a CI step.
 
 ## Secret management
 

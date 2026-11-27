@@ -118,6 +118,7 @@ jobs:
             --week-label "${WEEK_LABEL}" \
             --since "${SINCE}" \
             --lookback-days "${LOOKBACK_DAYS}" \
+            --quality-repo "${REPO}" \
             --body-file "${BODY_FILE}" \
             > "${SUMMARY_FILE}"
 

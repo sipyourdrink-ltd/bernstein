@@ -1,0 +1,32 @@
+id: etl-pipeline-modernization
+name: Legacy SQL and ETL Pipeline Modernization
+version: "1.0"
+description: |
+  Translate legacy SQL or batch ETL jobs into modern typed transformations with
+  explicit column-level lineage, idempotency keys, and shadow parity validation.
+tags: [data, etl, sql, lineage, modernization]
+tasks:
+  - title: Extract upstream/downstream lineage and grain contracts
+    role: analyst
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Map source tables, join keys, null/timezone semantics, and downstream SLA
+      consumers for each legacy transformation.
+  - title: Rewrite transformations with idempotent partition semantics
+    role: backend
+    priority: 1
+    scope: large
+    complexity: medium
+    description: |
+      Port the pipeline so reruns over any date/partition window are strictly
+      idempotent and schema-validated.
+  - title: Run shadow output diff on historical partitions
+    role: qa
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Compare row counts, null rates, and numeric aggregates between legacy and
+      modernized outputs across representative partitions.

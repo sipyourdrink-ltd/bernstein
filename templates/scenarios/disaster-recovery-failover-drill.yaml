@@ -1,0 +1,48 @@
+id: disaster-recovery-failover-drill
+name: Disaster Recovery and Backup Restore Drill
+version: "1.1"
+description: |
+  Prove backup and WAL restore readiness inside an isolated sandbox environment,
+  measuring actual RTO/RPO and verifying hash-chain and schema integrity without
+  touching live production state. Stages chain via explicit task-store
+  `depends_on` edges (gated on accepted task completion), and the middle drill
+  stage executes restore, verification, and guaranteed teardown sequentially
+  without racing or leaving restored backup data behind on failure.
+tags: [ops, sre, disaster-recovery, backup, compliance]
+tasks:
+  - id: inventory-backups
+    title: Inventory backup snapshots, encryption state, and target RTO/RPO
+    role: devops
+    priority: 0
+    scope: small
+    complexity: low
+    description: |
+      Perform a read-only pre-drill check of backup snapshot recency, encryption
+      status, retention policy, and target RTO/RPO thresholds before provisioning
+      any restore sandbox.
+  - id: execute-dr-drill
+    depends_on: [inventory-backups]
+    title: Execute sequenced DR restore, verification, and guaranteed sandbox teardown
+    role: devops
+    priority: 1
+    scope: large
+    complexity: medium
+    description: |
+      Provision the isolated sandbox, execute the documented cold restore,
+      verify database checksums and audit-log hash chains, and tear down all
+      temporary targets/volumes in a guaranteed finally/trap handler (or drive
+      the task-store-backed `.bernstein/workflows/disaster-recovery-drill.yaml`
+      DAG) so validation cannot race restore and teardown cannot be skipped on
+      provisioning, restore, or verification failure. Record measured RTO/RPO,
+      integrity results, and disposal confirmation before completing.
+  - id: audit-dr-receipt
+    depends_on: [execute-dr-drill]
+    title: Audit DR drill receipt, RTO/RPO deltas, and teardown confirmation
+    role: security
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Review the accepted DR drill evidence and teardown attestation produced by
+      `execute-dr-drill`, confirm zero residual secrets or temporary volumes,
+      and file remediation items for any RTO/RPO gap.

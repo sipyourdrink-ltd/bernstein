@@ -61,7 +61,7 @@ _BUILTIN_DEFAULTS: dict[str, Any] = {
     "auto_decompose": True,
     "merge_strategy": "pr",
     "auto_merge": True,
-    "internal_llm_provider": "openrouter_free",
+    "internal_llm_provider": "none",
     "internal_llm_model": "nvidia/nemotron-3-super-120b-a12b",
     "log_level": "INFO",
     "timeout": 1800,

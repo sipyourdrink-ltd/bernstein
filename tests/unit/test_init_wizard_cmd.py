@@ -43,14 +43,34 @@ class TestInitWizardCmd:
             assert (Path(td) / ".sdd" / "backlog").exists()
             assert (Path(td) / ".sdd" / "runtime").exists()
 
-    def test_init_wizard_yaml_content(self) -> None:
+    def test_init_wizard_yaml_content(self, caplog) -> None:
+        import logging
+
+        import yaml as pyyaml
+
+        from bernstein.core.config.config_schema import BernsteinConfig
+        from bernstein.core.config.seed_parser import parse_seed
+
         with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
             runner = CliRunner()
-            result = runner.invoke(init_wizard_cmd, ["--dir", td, "--non-interactive"])
+            with caplog.at_level(logging.WARNING):
+                result = runner.invoke(init_wizard_cmd, ["--dir", td, "--non-interactive"])
             assert result.exit_code == 0
-            content = (Path(td) / "bernstein.yaml").read_text()
+            content = (root / "bernstein.yaml").read_text()
             assert "goal:" in content
-            assert "orchestrator:" in content
+            assert "orchestration:" in content
+            assert "orchestrator:" not in content
+            assert ".sdd/runtime/" in (root / ".gitignore").read_text()
+            assert (root / "templates" / "roles" / "backend").is_dir()
+
+            seed = parse_seed(root / "bernstein.yaml")
+            assert seed.internal_llm_provider == "none"
+            assert not [r for r in caplog.records if "unknown top-level key" in r.getMessage()]
+            assert not [r for r in caplog.records if "openrouter_free" in r.getMessage()]
+
+            validated = BernsteinConfig(**pyyaml.safe_load(content))
+            assert validated.internal_llm_provider == "none"
 
     def testdetect_project_type_python(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -77,7 +97,40 @@ class TestInitWizardCmd:
         )
         assert "Test goal" in yaml
         assert "max_agents: 3" in yaml
-        assert "budget_usd: 5.00" in yaml
+        assert "budget: 5.00" in yaml
+        assert "orchestration:" in yaml
+        assert "orchestrator:" not in yaml
+
+    def test_generate_yaml_review_approval_sets_pr_non_automerge(self) -> None:
+        yaml = generate_yaml(
+            goal="Test review goal",
+            project_type="python",
+            max_agents=2,
+            budget=10.0,
+            adapter="auto",
+            approval="review",
+        )
+        assert "merge_strategy: pr" in yaml
+        assert "auto_merge: false" in yaml
+        assert "approvals:" not in yaml
+
+    def test_init_wizard_review_persists_post_completion_run_config(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            runner = CliRunner()
+            # Interactive prompts: goal, max_agents, budget, adapter, approval
+            result = runner.invoke(
+                init_wizard_cmd,
+                ["--dir", td],
+                input="Ship review gate\n2\n5\nauto\nreview\n",
+            )
+            assert result.exit_code == 0, result.output
+            run_cfg = json.loads((root / ".sdd" / "runtime" / "run_config.json").read_text(encoding="utf-8"))
+            assert run_cfg["approval"] == "review"
+            assert run_cfg["merge_strategy"] == "pr"
+            assert run_cfg["auto_merge"] is False
 
     def testgenerate_yaml_with_adapter(self) -> None:
         yaml = generate_yaml(

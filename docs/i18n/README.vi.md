@@ -10,7 +10,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### tầng governance mã nguồn mở cho AI agent
-<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:b33785a1ad25" -->
+<!-- l10n: en="an open-source governance layer for AI agents" hash="sha256:f988e1e29b9e" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -19,7 +19,7 @@
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/sipyourdrink-ltd/bernstein?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/sipyourdrink-ltd/bernstein)
 ![built with Bernstein](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/built-with-bernstein.svg)
 
-[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [deepwiki](https://deepwiki.com/sipyourdrink-ltd/bernstein) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [deepwiki](https://deepwiki.com/sipyourdrink-ltd/bernstein) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [plugins](https://github.com/sipyourdrink-ltd/bernstein-addons) &middot; [org-kit](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/org-kit) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -212,7 +212,7 @@ Lý do bộ lập lịch được xây dựng bằng Python thuần túy và cá
 Phép kiểm tra `can_spawn()` của bộ theo dõi chi phí trả về `False` khi tổng chi phí lũy kế sau điều chỉnh đạt hoặc vượt ngưỡng dừng đã đặt cho ngân sách, ngay cả khi không có token mới nào được báo cáo. Sau khi khởi động lại, chỉ dựa vào số token đã lưu thì không thể khôi phục chính xác chi phí lũy kế đã được báo cáo trước đó cho một tổ hợp tác nhân, tác vụ và mô hình cụ thể.
 
 ### lệnh thông dụng
-<!-- l10n: en="everyday commands" hash="sha256:64b361eb2668" -->
+<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Khi tiếp tục, hãy truyền lại cùng giá trị `-g` để thay thế `{goal}` trong prompt của các nút chưa hoàn tất.
+Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.sdd/runs/<run_id>/` ở mỗi nút. Việc tiếp tục sẽ xác thực giá trị băm (digest) của manifest khi phiên chạy bắt đầu, do đó một thay đổi đặc tả sẽ bị từ chối thay vì âm thầm thực thi một manifest khác. Các nút dọn dẹp có thể đặt `always_run: true` để thực thi sau khi xảy ra lỗi lệnh hoặc lỗi điều phối mà không biến một phiên chạy bị hủy thành thành công (cơ chế kiểm soát hoàn tất tác tử đang được theo dõi tại [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Xem [manifest của workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Khi tiếp tục, hãy truyền lại cùng giá trị `-g` để thay thế `{goal}` trong prompt của các nút chưa hoàn tất.
 
 `bernstein compliance controls` hiển thị các bộ kiểm thử cho từng biện pháp kiểm soát và phép đo đầy đủ gần nhất nếu có. [Phạm vi kiểm thử](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

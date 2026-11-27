@@ -16,7 +16,9 @@ and misreported it as "server unreachable". These tests pin the fix:
 
 from __future__ import annotations
 
+import os
 import stat
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,6 +50,37 @@ def test_persist_then_read_round_trips(tmp_path: Path) -> None:
 
 
 def test_read_run_auth_token_missing_returns_none(tmp_path: Path) -> None:
+    assert read_run_auth_token(tmp_path) is None
+
+
+def test_read_run_auth_token_rejects_symlink_and_directory(tmp_path: Path) -> None:
+    secret_target = tmp_path / "other.txt"
+    secret_target.write_text("leaked-token", encoding="utf-8")
+    token_path = run_auth_token_path(tmp_path)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.symlink_to(secret_target)
+    assert read_run_auth_token(tmp_path) is None
+
+    token_path.unlink()
+    token_path.mkdir()
+    assert read_run_auth_token(tmp_path) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits and UID checks do not apply on Windows")
+@pytest.mark.parametrize("bad_mode", [0o644, 0o640, 0o604, 0o601])
+def test_read_run_auth_token_rejects_group_or_world_permissions(tmp_path: Path, bad_mode: int) -> None:
+    token_path = persist_run_auth_token(tmp_path, "secret-token")
+    assert token_path is not None
+    token_path.chmod(bad_mode)
+    assert read_run_auth_token(tmp_path) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX UID ownership checks do not apply on Windows")
+def test_read_run_auth_token_rejects_foreign_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    token_path = persist_run_auth_token(tmp_path, "secret-token")
+    assert token_path is not None
+    foreign_uid = token_path.stat().st_uid + 1
+    monkeypatch.setattr(os, "getuid", lambda: foreign_uid)
     assert read_run_auth_token(tmp_path) is None
 
 

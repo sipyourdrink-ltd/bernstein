@@ -1,0 +1,62 @@
+# Incident triage, containment, fix, and postmortem workflow.
+name: incident-response
+version: "1.0.0"
+
+phases:
+  - name: triage
+    allowed_roles: [analyst, security, devops]
+  - name: remediate
+  - name: verify
+    allowed_roles: [qa, security, reviewer]
+  - name: close
+    allowed_roles: [docs, manager]
+
+nodes:
+  reconstruct-timeline:
+    phase: triage
+    role: analyst
+    description: "Correlate alerts, logs, and recent deployments to isolate the trigger"
+    estimated_minutes: 25
+
+  assess-blast-radius:
+    phase: triage
+    role: security
+    description: "Check tenant isolation, auth boundaries, and data integrity impact"
+    estimated_minutes: 25
+
+  implement-containment-fix:
+    phase: remediate
+    role: backend
+    description: "Land the minimal fail-closed fix and regression test"
+    estimated_minutes: 45
+    depends_on:
+      - reconstruct-timeline
+      - assess-blast-radius
+
+  verify-recovery:
+    phase: verify
+    role: qa
+    description: "Run regression suite and synthetic probe against the containment fix"
+    estimated_minutes: 20
+    depends_on:
+      - implement-containment-fix
+
+  rework-fix:
+    phase: remediate
+    role: backend
+    description: "Address verification failures before closing the incident"
+    depends_on:
+      - source: verify-recovery
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  publish-postmortem:
+    phase: close
+    role: docs
+    description: "Record blameless postmortem, root cause, and follow-up remediation items"
+    estimated_minutes: 30
+    depends_on:
+      - source: verify-recovery
+        condition: "status == 'done'"

@@ -54,8 +54,21 @@ def _get_a2a_federation(request: Request) -> A2AFederation:
 
 
 def _get_a2a_receipt_issuer(request: Request) -> A2AReceiptIssuer | None:
-    """Return the receipt issuer, or ``None`` when the node cannot attest."""
-    return getattr(request.app.state, "a2a_receipt_issuer", None)
+    """Return the receipt issuer, provisioning lazily when A2A attestation is used."""
+    issuer = getattr(request.app.state, "a2a_receipt_issuer", None)
+    if issuer is not None:
+        return issuer
+    if getattr(request.app.state, "_a2a_receipt_issuer_checked", False):
+        return None
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    request.app.state._a2a_receipt_issuer_checked = True  # type: ignore[attr-defined]
+    if sdd_dir is None:
+        return None
+    from bernstein.core.protocols.a2a.server_receipts import build_receipt_issuer
+
+    issuer = build_receipt_issuer(sdd_dir)
+    request.app.state.a2a_receipt_issuer = issuer  # type: ignore[attr-defined]
+    return issuer
 
 
 def _attest(

@@ -1,0 +1,41 @@
+id: eu-ai-act-iso42001-readiness
+name: EU AI Act and ISO/IEC 42001 AIMS Readiness Pack
+version: "1.0"
+description: |
+  Build an auditable AI Management System (ISO/IEC 42001) register entry and
+  EU AI Act risk/transparency compliance pack covering model inventory, human
+  oversight gates, Article 50 disclosure, and trace retention.
+tags: [ai-governance, compliance, iso-42001, eu-ai-act, audit]
+tasks:
+  - title: Catalog active models, prompts, adapters, and risk classifications
+    role: analyst
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Inventory every production and internal AI workflow, its decision impact,
+      processed data classes, and applicable EU AI Act risk tier.
+  - title: Verify human-in-the-loop gates and HMAC audit-log completeness
+    role: security
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Confirm high-impact actions fail closed without human sign-off and that
+      delegation and tool receipts verify cleanly via bernstein audit verify.
+  - title: Check Article 50 transparency labels and evaluation repeatability
+    role: qa
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Verify machine- and user-visible AI disclosures and confirm held-out
+      evaluation benchmarks run reproducibly with pinned seeds/datasets.
+  - title: Assemble ISO 42001 AIMS register and compliance gap report
+    role: docs
+    priority: 2
+    scope: medium
+    complexity: low
+    description: |
+      Cross-reference control evidence against ISO/IEC 42001 clauses and list
+      any open legal or operational sign-off items.

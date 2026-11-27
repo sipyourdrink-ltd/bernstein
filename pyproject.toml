@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "4.0.1"
+version = "4.0.2"
 description = "An open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs CLI agents through 55 selectable adapter names, including Claude Code, Codex and Gemini CLI; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -416,7 +416,8 @@ graph_trace_ingest = "bernstein.adapters.graph_trace_ingest:GraphTraceIngestPlug
 # redirect map / import chain points to files stripped from the wheel.
 exclude = [
     ".sdd/",
-    "tests/",
+    # Anchor top-level tests/ so templates/demo/tests/ survives into sdist and wheel.
+    "/tests/",
     "scripts/",
     "docs/",
     ".github/",

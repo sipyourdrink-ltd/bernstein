@@ -1,0 +1,32 @@
+id: runbook-verification-sweep
+name: Operational Runbook and CLI Drift Sweep
+version: "1.0"
+description: |
+  Verify every command, flag, config key, and recovery recipe in operator
+  runbooks against the live CLI and schema definitions, fixing stale examples.
+tags: [docs, runbooks, cli, operations, maintenance]
+tasks:
+  - title: Extract CLI invocations and config snippets from docs
+    role: analyst
+    priority: 1
+    scope: medium
+    complexity: low
+    description: |
+      Scan markdown guides and runbooks for command blocks, subcommands, flags,
+      and YAML/TOML configuration keys.
+  - title: Validate extracted commands against live CLI help and schemas
+    role: qa
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Execute --help checks and schema validation to pinpoint renamed flags,
+      removed commands, or outdated output examples.
+  - title: Patch drifted runbooks and add regression guard
+    role: docs
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Update stale examples to match current behavior and ensure strict docs
+      build and link checks pass cleanly.

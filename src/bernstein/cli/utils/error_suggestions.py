@@ -72,8 +72,8 @@ _SUGGESTIONS: list[ErrorSuggestion] = [
         pattern=r"(?i)GOOGLE_API_KEY.*not set|missing.*api.?key.*gemini",
         title="Google API key not configured",
         steps=[
-            "export GOOGLE_API_KEY=...",
-            "Or authenticate via gcloud: gcloud auth login",
+            "export GEMINI_API_KEY=...  # or GOOGLE_API_KEY=...",
+            "Or run 'gemini' to sign in, or: gcloud auth application-default login",
         ],
     ),
     ErrorSuggestion(

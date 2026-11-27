@@ -1,0 +1,41 @@
+id: zero-downtime-db-migration
+name: Zero-Downtime Schema and Data Migration
+version: "1.0"
+description: |
+  Plan, rehearse, and verify an expand-backfill-contract database migration
+  with N/N-1 application compatibility, deterministic row-hash parity checks,
+  and a tested down-migration runbook.
+tags: [data, database, migration, reliability, zero-downtime]
+tasks:
+  - title: Design additive expand schema and dual-read/write plan
+    role: architect
+    priority: 0
+    scope: medium
+    complexity: high
+    description: |
+      Specify expand, idempotent backfill, and contract phases so live N-1
+      service instances operate safely without table-locking DDL.
+  - title: Implement migration scripts, batched backfill, and rollback
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Write forward migration, throttled idempotent backfill job, and explicit
+      down-migration scripts with lock-timeout guards.
+  - title: Verify row counts, checksums, and rollback timing on staging clone
+    role: qa
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Execute full forward-and-rollback rehearsal on a fixture/staging dataset
+      and assert zero row loss, zero lock timeouts, and checksum parity.
+  - title: Document cutover sequence, abort thresholds, and contract gate
+    role: devops
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Publish the step-by-step cutover checklist and human approval gate before
+      any destructive column/table drop phase.
