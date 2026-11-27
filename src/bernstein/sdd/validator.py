@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import math
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from importlib import resources
+from operator import is_
 from pathlib import Path
+from threading import Lock
 from typing import Any, cast
 
 import jsonschema
@@ -138,7 +142,43 @@ class ValidationReport:
 # Schema loading
 # ---------------------------------------------------------------------------
 
-_SCHEMA_CACHE: dict[str, dict[str, Any]] = {}
+
+def _members(value: Any) -> Iterator[Collection[Any]]:
+    """Yield live, ordered views of the containers in a freshly decoded JSON schema."""
+    children: Collection[Any]
+    if isinstance(value, dict):
+        yield value.keys()
+        children = value.values()
+    elif isinstance(value, list):
+        children = value
+    else:
+        return
+    yield children
+    for child in children:
+        yield from _members(child)
+
+
+@dataclass
+class _PackagedSchema:
+    definition: str
+    public_view: dict[str, Any]
+    exposed: bool = False
+    original_members: tuple[tuple[Collection[Any], tuple[Any, ...]], ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.original_members = tuple((view, tuple(view)) for view in _members(self.public_view))
+
+    def unchanged(self) -> bool:
+        # Package leaves are immutable JSON scalars. A change anywhere must
+        # change a container's length, order or member identity. Compare by
+        # identity so Python overrides cannot be coerced or considered equal.
+        return all(
+            len(view) == len(original) and all(map(is_, view, original)) for view, original in self.original_members
+        )
+
+
+_SCHEMA_CACHE: dict[str, _PackagedSchema] = {}
+_SCHEMA_LOCK = Lock()
 _VERSION_RE = re.compile(r"^v\d+(?:\.\d+)?$", re.ASCII)
 
 
@@ -156,6 +196,12 @@ def load_schema(version: str = "v1") -> dict[str, Any]:
 
     Raises :class:`SchemaNotFoundError` if the file is not packaged.
     """
+    entry = _packaged_schema(version)
+    entry.exposed = True
+    return entry.public_view
+
+
+def _packaged_schema(version: str) -> _PackagedSchema:
     canonical = _coerce_version(version)
     cached = _SCHEMA_CACHE.get(canonical)
     if cached is not None:
@@ -177,8 +223,11 @@ def load_schema(version: str = "v1") -> dict[str, Any]:
     loaded: dict[str, Any] = cast("dict[str, Any]", loaded_raw).copy()
     # Sanity-check it really is Draft-07 compatible.
     jsonschema.Draft7Validator.check_schema(loaded)
-    _SCHEMA_CACHE[canonical] = loaded
-    return loaded
+    entry = _PackagedSchema(json.dumps(loaded), loaded)
+    # Concurrent cold readers can load independently; everyone receives the
+    # same published entry and the same mutable dict for this version.
+    with _SCHEMA_LOCK:
+        return _SCHEMA_CACHE.setdefault(canonical, entry)
 
 
 def list_recommended_keys(version: str = "v1") -> tuple[str, ...]:
@@ -294,6 +343,45 @@ def _format_checker() -> FormatChecker:
     return _format_checker_singleton
 
 
+@lru_cache(maxsize=8)
+def _validator_for_definition(version: str, definition: str) -> Any:
+    """Compile a private snapshot. JSON object order also determines diagnostic order."""
+    return jsonschema.Draft7Validator(json.loads(definition), format_checker=_format_checker())
+
+
+def _json_copy(value: Any) -> Any:
+    """Copy only native JSON values whose types and diagnostic representation survive encoding."""
+    if type(value) is dict:
+        copied = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise TypeError("Python object key in public schema")
+            key.encode("utf-8")
+            copied[key] = _json_copy(item)
+        return copied
+    if type(value) is list:
+        return [_json_copy(item) for item in value]
+    if type(value) is str:
+        # Reject lone surrogates or surrogate pairs that json.loads would recombine or alter.
+        value.encode("utf-8")
+        return value
+    if type(value) in (int, bool, type(None)) or (type(value) is float and math.isfinite(value)):
+        return value
+    raise TypeError("public schema contains a Python override")
+
+
+def _ticket_validator(version: str) -> Any:
+    entry = _packaged_schema(version)
+    if not entry.exposed or entry.unchanged():
+        return _validator_for_definition(version, entry.definition)
+    try:
+        definition = json.dumps(_json_copy(entry.public_view))
+    except (TypeError, ValueError, RecursionError):
+        # Preserve the original objects for Draft 7 and its error messages.
+        return jsonschema.Draft7Validator(entry.public_view, format_checker=_format_checker())
+    return _validator_for_definition(version, definition)
+
+
 def _issue_from_error(err: jsonschema.ValidationError) -> ValidationIssue:
     path_parts: tuple[str | int, ...] = tuple(err.absolute_path)
     code = err.validator if isinstance(err.validator, str) else ""
@@ -331,8 +419,7 @@ def validate_ticket_metadata(
     if not isinstance(metadata, Mapping):  # type: ignore[unreachable]
         return ValidationReport.error(target, "frontmatter is not a mapping", code="not_mapping")
 
-    schema = load_schema(schema_version)
-    validator: Any = jsonschema.Draft7Validator(schema, format_checker=_format_checker())
+    validator = _ticket_validator(schema_version)
     instance: dict[str, Any] = dict(metadata)
     raw_errors = cast("list[jsonschema.ValidationError]", list(validator.iter_errors(instance)))
     errors = [_issue_from_error(e) for e in raw_errors]

@@ -10,9 +10,14 @@ upsert does not thrash the issue).
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
+import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 _SPEC = importlib.util.spec_from_file_location("ci_weekly_digest", _SCRIPTS / "ci_weekly_digest.py")
@@ -23,6 +28,13 @@ sys.modules["ci_weekly_digest"] = _MOD
 _SPEC.loader.exec_module(_MOD)
 
 Run = _MOD.Run
+QualityReport = _MOD.QualityReport
+QualityRunMeta = _MOD.QualityRunMeta
+QUALITY_ARTIFACT_NAMES = _MOD.QUALITY_ARTIFACT_NAMES
+fetch_quality_report = _MOD.fetch_quality_report
+parse_quality_artifact_files = _MOD.parse_quality_artifact_files
+render_quality_section = _MOD.render_quality_section
+select_quality_artifacts = _MOD.select_quality_artifacts
 parse_runs = _MOD.parse_runs
 parse_issue_numbers = _MOD.parse_issue_numbers
 build_summary = _MOD.build_summary
@@ -279,3 +291,190 @@ def test_main_reports_no_signal_for_a_clean_or_cancelled_only_week(tmp_path, cap
     assert rc == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["has_signal"] is False
+
+
+# --- weekly code quality summary (K-2..K-5, K-7) ----------------------------
+
+
+def _sarif_bytes(tool: str, rules: list[str], *, path: str = "src/a.py", msg: str = "m") -> bytes:
+    loc = [{"physicalLocation": {"artifactLocation": {"uri": path}, "region": {"startLine": 9}}}]
+    res = [{"ruleId": rid, "message": {"text": msg}, "locations": loc} for rid in rules]
+    return json.dumps({"version": "2.1.0", "runs": [{"tool": {"driver": {"name": tool}}, "results": res}]}).encode()
+
+
+def _zip_bytes(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in files.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def _base_files() -> dict[str, dict[str, bytes]]:
+    return {
+        "vulture-sarif": {"vulture.sarif": _sarif_bytes("vulture", ["vulture/dead-code"])},
+        "refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB123", "FURB184"])},
+        "perflint-sarif": {
+            "perflint.sarif": _sarif_bytes("perflint", []),
+            "perflint.txt": (
+                b"************* Module pkg.mod\n"
+                b"Command line:1: [W0012(unknown-option-value), ] Unknown option value for '--enable', got 'W8203'\n"
+                b"src/pkg/mod.py:12: [W8201(loop-invariant-statement), fn] Consider moving outside loop.\n"
+            ),
+        },
+    }
+
+
+def _mock_gh_bytes(requested: list[str] | None = None):
+    specs = [
+        (14757695286, "trivy-iac-sarif"),
+        (14757557538, "semgrep-sarif"),
+        (14757317720, "perflint-sarif"),
+        (14757142903, "vulture-sarif"),
+        (14756778848, "refurb-sarif"),
+    ]
+    all_five = [{"id": aid, "name": n, "expired": False} for aid, n in specs]
+    base = _base_files()
+    zips = {aid: _zip_bytes(base[n]) for aid, n in specs if n in base}
+    run_obj = {
+        "id": 45027559316,
+        "event": "schedule",
+        "status": "completed",
+        "created_at": "2026-11-22T13:27:13Z",
+        "head_sha": "22d40089c762952f52a220696fb978f79365bbf0",
+        "html_url": "https://github.com/sipyourdrink-ltd/bernstein/actions/runs/45027559316",
+    }
+
+    def _fetch(ep: str) -> bytes:
+        if "event=schedule" in ep:
+            return json.dumps({"workflow_runs": [run_obj]}).encode()
+        if "event=workflow_dispatch" in ep:
+            return b'{"workflow_runs": []}'
+        if ep.endswith("/artifacts?per_page=30"):
+            return json.dumps({"artifacts": all_five}).encode()
+        if requested is not None:
+            requested.append(ep)
+        return zips[int(ep.rstrip("/zip").rsplit("/", 1)[-1])]
+
+    return _fetch
+
+
+def test_quality_fetch_requests_exact_three_allowlisted_artifacts_only() -> None:
+    assert QUALITY_ARTIFACT_NAMES == ("vulture-sarif", "refurb-sarif", "perflint-sarif")
+    requested: list[str] = []
+    report = fetch_quality_report(
+        "sipyourdrink-ltd/bernstein",
+        now=datetime(2026, 11, 22, 19, 8, tzinfo=UTC),
+        api_get_bytes=_mock_gh_bytes(requested),
+    )
+    assert report.status == "ok"
+    assert requested == [
+        f"repos/sipyourdrink-ltd/bernstein/actions/artifacts/{aid}/zip"
+        for aid in (14757142903, 14756778848, 14757317720)
+    ]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"vulture-sarif": {"vulture.sarif": _sarif_bytes("semgrep", ["vulture/dead-code"])}},
+        {"vulture-sarif": {"vulture.sarif": _sarif_bytes("vulture", ["vulture/unused-import\n"])}},
+        {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB123", "B101"])}},
+        {
+            "refurb-sarif": {
+                "refurb.sarif": _sarif_bytes("refurb", ["FURB101` [x](https://evil)\n# pwned src/secrets.py:12"])
+            }
+        },
+        {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB101\n"])}},
+        {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB1234"])}},
+        {"refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB\u0661\u0662\u0663"])}},
+        {"perflint-sarif": {"perflint.sarif": _sarif_bytes("perflint", ["W8101\n"])}},
+        {
+            "perflint-sarif": {
+                "perflint.sarif": _sarif_bytes("perflint", []),
+                "perflint.txt": b"src/a.py:9: [W9001(other), fn] nope\n",
+            }
+        },
+        {
+            "perflint-sarif": {
+                "perflint.sarif": _sarif_bytes("perflint", []),
+                "perflint.txt": b"src/a.py:9: [W8101` [x](https://evil), fn] msg\n# pwned src/secrets.py:12\n",
+            }
+        },
+        {
+            "perflint-sarif": {
+                "perflint.sarif": _sarif_bytes("perflint", []),
+                "perflint.txt": b"src/a.py:9: [W81012(x), fn] nope\n",
+            }
+        },
+    ],
+    ids=[
+        "foreign-tool",
+        "vulture-trailing-newline",
+        "bad-sarif-rule",
+        "refurb-markdown-injection",
+        "refurb-trailing-newline",
+        "refurb-four-digits",
+        "refurb-unicode-digits",
+        "perflint-sarif-trailing-newline",
+        "bad-perflint-rule",
+        "perflint-txt-markdown-injection",
+        "perflint-txt-four-digits",
+    ],
+)
+def test_quality_fail_closed_omits_section_with_neutral_line(bad: dict[str, dict[str, bytes]]) -> None:
+    meta = QualityRunMeta(45027559316, "schedule", "2026-11-22T13:27:13Z", "22d40089c7", "https://example/run")
+    report = parse_quality_artifact_files(_base_files() | bad, meta)
+    section = render_quality_section(report)
+    assert report.status == "rejected" and "\n" not in section and "omitted" in section
+    for forbidden in ("FURB", "W8201", "W8101", "evil", "pwned", "secrets.py"):
+        assert forbidden not in section
+
+
+def test_quality_render_omits_paths_lines_messages_and_snippets() -> None:
+    meta = QualityRunMeta(45027559316, "schedule", "2026-11-22T13:27:13Z", "22d40089c7", "https://example/run")
+    files = {
+        "vulture-sarif": {
+            "vulture.sarif": _sarif_bytes("vulture", ["vulture/dead-code"], path="src/sec/key.py", msg="SECRET_1")
+        },
+        "refurb-sarif": {"refurb.sarif": _sarif_bytes("refurb", ["FURB123"], path="src/sec/tok.py", msg="SECRET_2")},
+        "perflint-sarif": {
+            "perflint.sarif": _sarif_bytes("perflint", []),
+            "perflint.txt": b"src/sec/hot.py:98765: [W8201(fake-slug-leak), secret_fn] SECRET_3\n",
+        },
+    }
+    full = render_quality_section(parse_quality_artifact_files(files, meta))
+    assert all(
+        s not in full
+        for s in ("src/sec", "key.py", "tok.py", "hot.py", "98765", "SECRET_", "fake-slug-leak", "secret_fn")
+    )
+    assert "vulture/dead-code" in full and "FURB123" in full and "W8201" in full
+
+
+def test_quality_staleness_guard_via_cli(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(_MOD, "_gh_api_bytes", _mock_gh_bytes())
+    runs_file, stale_out, fresh_out = tmp_path / "runs.jsonl", tmp_path / "stale.md", tmp_path / "fresh.md"
+    runs_file.write_text(json.dumps(_run(conclusion="success")), encoding="utf-8")
+    base_args = [
+        "--runs-file",
+        str(runs_file),
+        "--week-label",
+        "2026-W47",
+        "--since",
+        "2026-11-15T12:00:00Z",
+        "--quality-repo",
+        "sipyourdrink-ltd/bernstein",
+    ]
+    assert main([*base_args, "--now", "2026-11-30T13:27:14Z", "--body-file", str(stale_out)]) == 0
+    assert (
+        "older than 8 days" in stale_out.read_text(encoding="utf-8")
+        and json.loads(capsys.readouterr().out)["quality_status"] == "stale"
+    )
+    assert main([*base_args, "--now", "2026-11-30T13:27:13Z", "--body-file", str(fresh_out)]) == 0
+    fresh_text = fresh_out.read_text(encoding="utf-8")
+    assert "## Weekly code quality summary (advisory)" in fresh_text and "(2026-11-22, `22d4008`)" in fresh_text
+    assert json.loads(capsys.readouterr().out)["quality_status"] == "ok"
+
+    monkeypatch.setattr(_MOD, "_gh_api_bytes", lambda _ep: (_ for _ in ()).throw(OSError("offline")))
+    assert fetch_quality_report("sipyourdrink-ltd/bernstein").status == "unavailable"

@@ -148,11 +148,14 @@ def _launch_server(state: _SupervisorState) -> int:
 
     pid_path = workdir / ".sdd" / "runtime" / "server.pid"
 
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+
     env = os.environ.copy()
     _apply_selected_seed(env, state.seed_path)
     if state.cluster_enabled:
         env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
     env["BERNSTEIN_BIND_HOST"] = bind_host
+    env["BERNSTEIN_LOOPBACK_HOST_GUARD"] = "1" if is_loopback_host(bind_host) else "0"
     if state.auth_token:
         env["BERNSTEIN_AUTH_TOKEN"] = state.auth_token
     for var in ("BERNSTEIN_STORAGE_BACKEND", "BERNSTEIN_DATABASE_URL", "BERNSTEIN_REDIS_URL"):

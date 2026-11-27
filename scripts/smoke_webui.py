@@ -3,11 +3,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import secrets
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from capture_webui_renders import gui_server, resolve_bernstein
 from playwright.sync_api import Locator, Page, Request, Route, expect, sync_playwright
@@ -162,7 +167,7 @@ def check_governance_receipt(page: Page, base: str) -> None:
 
 
 def check_trace_highlight_contrast(page: Page, drawer: Locator, base: str, task_id: str) -> None:
-    trace_url = f"{base}/api/v1/dashboard/tasks/{task_id}/trace?**"
+    trace_url = f"{base}/api/v1/tasks/{task_id}/trace?**"
     timestamp = 1_768_000_000
     response = {
         "task_id": task_id,
@@ -273,48 +278,84 @@ def check_task(page: Page, base: str, task_id: str, headers: dict[str, str]) -> 
     assert task.json()["status"] == "cancelled"
 
 
+@contextlib.contextmanager
+def _active_runner_mode(page: Page, base: str, empty_tasks_url: str | None = None) -> Iterator[None]:
+    """Stub /gui-meta with runner_active=True (and optional one-shot empty /tasks)."""
+    gui_meta_url = f"{base}/api/v1/gui-meta"
+    page.route(
+        gui_meta_url,
+        lambda route: route.fulfill(
+            json={"version": "dev", "commit": "smoke", "build_time": "", "runner_active": True}
+        ),
+    )
+    if empty_tasks_url is not None:
+        page.route(empty_tasks_url, lambda route: route.fulfill(json=[]), times=1)
+    try:
+        yield
+    finally:
+        if empty_tasks_url is not None:
+            page.unroute(empty_tasks_url)
+        page.unroute(gui_meta_url)
+
+
 def check_task_creation(page: Page, base: str, headers: dict[str, str]) -> None:
     tasks_url = f"{base}/api/v1/tasks"
     for index, entry in enumerate(("header", "prompt", "empty state"), start=1):
-        page.goto(f"{base}/ui/tasks")
-        if entry == "empty state":
-            page.get_by_role("button", name="Failed").click()
-            expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
-            trigger = page.get_by_role("button", name="Create task", exact=True).last
-        elif entry == "prompt":
-            trigger = page.get_by_role("button", name="New from prompt", exact=True)
-        else:
-            trigger = page.get_by_role("button", name="Create task", exact=True)
-        trigger.click()
-        form = page.get_by_role("dialog", name="Create task", exact=True)
-        expect(form.get_by_label("Prompt" if entry == "prompt" else "Title")).to_be_focused()
-        if entry == "header":
+        with (
+            _active_runner_mode(page, base, f"{tasks_url}?page=1")
+            if entry == "empty state"
+            else contextlib.nullcontext()
+        ):
+            page.goto(f"{base}/ui/tasks")
+            if entry == "empty state":
+                expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+                trigger = page.get_by_role("button", name="Create task", exact=True).last
+            elif entry == "prompt":
+                trigger = page.get_by_role("button", name="New from prompt", exact=True)
+            else:
+                trigger = page.get_by_role("button", name="Create task", exact=True)
+            trigger.click()
+            form = page.get_by_role("dialog", name="Create task", exact=True)
+            expect(form.get_by_label("Prompt" if entry == "prompt" else "Title")).to_be_focused()
+            if entry == "header":
+                page.keyboard.press("Escape")
+                expect(trigger).to_be_focused()
+                trigger.click()
+                expect(form.get_by_label("Title")).to_be_focused()
+                page.mouse.click(1, 1)
+                expect(form).to_be_hidden()
+                expect(trigger).to_be_focused()
+                trigger.click()
+            title = f"Task creation smoke {index}"
+            description = f"Created from the {entry} control."
+            form.get_by_label("Title").fill(title)
+            form.get_by_label("Prompt").fill(description)
+            form.get_by_label("Role (optional)").fill("qa")
+            with page.expect_response(
+                lambda reply: reply.url == tasks_url and reply.request.method == "POST"
+            ) as created:
+                form.get_by_role("button", name="Create task", exact=True).click()
+            assert created.value.status == 201
+            task_id = created.value.json()["id"]
+            expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+            task = page.request.get(f"{tasks_url}/{task_id}", headers=headers)
+            expect(task).to_be_ok()
+            assert (task.json()["title"], task.json()["description"], task.json()["role"]) == (
+                title,
+                description,
+                "qa",
+            )
             page.keyboard.press("Escape")
-            expect(trigger).to_be_focused()
-            trigger.click()
-            expect(form.get_by_label("Title")).to_be_focused()
-            page.mouse.click(1, 1)
-            expect(form).to_be_hidden()
-            expect(trigger).to_be_focused()
-            trigger.click()
-        title = f"Task creation smoke {index}"
-        description = f"Created from the {entry} control."
-        form.get_by_label("Title").fill(title)
-        form.get_by_label("Prompt").fill(description)
-        form.get_by_label("Role (optional)").fill("qa")
-        with page.expect_response(lambda reply: reply.url == tasks_url and reply.request.method == "POST") as created:
-            form.get_by_role("button", name="Create task", exact=True).click()
-        assert created.value.status == 201
-        task_id = created.value.json()["id"]
-        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
-        task = page.request.get(f"{tasks_url}/{task_id}", headers=headers)
-        expect(task).to_be_ok()
-        assert (task.json()["title"], task.json()["description"], task.json()["role"]) == (title, description, "qa")
-        page.keyboard.press("Escape")
-        return_target = (
-            page.get_by_role("button", name="Create task", exact=True).first if entry == "empty state" else trigger
-        )
-        expect(return_target).to_be_focused()
+            return_target = (
+                page.get_by_role("button", name="Create task", exact=True).first if entry == "empty state" else trigger
+            )
+            expect(return_target).to_be_focused()
+
+    page.goto(f"{base}/ui/tasks")
+    page.get_by_role("button", name="Failed").click()
+    expect(page.get_by_text("No matching tasks", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Clear filters", exact=True).click()
+    expect(page.get_by_role("row").filter(has_text=TASK_TITLE)).to_be_visible()
 
 
 def check_task_creation_failures(page: Page, base: str, headers: dict[str, str]) -> None:
@@ -437,11 +478,11 @@ def check_task_creation_during_initial_list(page: Page, base: str, headers: dict
         page.keyboard.press("Escape")
 
         title = "Created from an empty task list"
-        page.route(list_url, lambda route: route.fulfill(json=[]), times=1)
-        page.reload()
-        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
-        submit_from(page.get_by_role("button", name="Create task", exact=True).last, title)
-        form.get_by_role("button", name="Cancel", exact=True).click()
+        with _active_runner_mode(page, base, list_url):
+            page.reload()
+            expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+            submit_from(page.get_by_role("button", name="Create task", exact=True).last, title)
+            form.get_by_role("button", name="Cancel", exact=True).click()
         expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
         expect(header).to_be_focused()
         header.click()
@@ -477,9 +518,9 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
 
     page.goto(f"{base}/ui/tasks")
     page.get_by_role("button", name="Failed").click()
-    expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+    expect(page.get_by_text("No matching tasks", exact=True)).to_be_visible()
     header = page.get_by_role("button", name="Create task", exact=True).first
-    page.get_by_role("button", name="Create task", exact=True).last.click()
+    header.click()
     form = page.get_by_role("dialog", name="Create task", exact=True)
     form.get_by_label("Title").fill(title)
     form.get_by_label("Prompt").fill("Look up the exact task despite response loss.")
@@ -538,7 +579,7 @@ def check_unconfirmed_task_lookup(page: Page, base: str, headers: dict[str, str]
         assert len(saved_ids) == 1
         page.keyboard.press("Escape")
         expect(header).to_be_focused()
-        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+        expect(page.get_by_text("No matching tasks", exact=True)).to_be_visible()
     finally:
         page.unroute(tasks_url, respond_to_create)
 
@@ -728,28 +769,53 @@ def check_task_creation_empty_state_focus(page: Page, base: str) -> None:
     events_url = f"{base}/api/v1/events"
     page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
     try:
-        page.route(list_url, lambda route: route.fulfill(json=[]), times=1)
+        with _active_runner_mode(page, base, list_url):
+            page.goto(f"{base}/ui/tasks")
+            expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
+            trigger = page.get_by_role("button", name="Create task", exact=True)
+            trigger.last.click()
+            form = page.get_by_role("dialog", name="Create task", exact=True)
+            form.get_by_role("button", name="Cancel", exact=True).click()
+            expect(trigger.first).to_be_focused()
+            trigger.last.click()
+            title = "Created before the empty task list refreshed"
+            form.get_by_label("Title").fill(title)
+            form.get_by_label("Prompt").fill("Keep focus on a stable control after closing the drawer.")
+            deferred: list[Route] = []
+            page.route(list_url, lambda route: deferred.append(route), times=1)
+            with page.expect_request(list_url):
+                form.get_by_role("button", name="Create task", exact=True).click()
+            expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
+            assert len(deferred) == 1
+            page.keyboard.press("Escape")
+            deferred[0].continue_()
+            expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
+            expect(trigger).to_be_focused()
+    finally:
+        page.unroute(list_url)
+        page.unroute(events_url)
+
+
+def check_monitor_only_empty_state(page: Page, base: str) -> None:
+    list_url = f"{base}/api/v1/tasks?page=1"
+    events_url = f"{base}/api/v1/events"
+    page.route(events_url, lambda route: route.fulfill(content_type="text/event-stream", body=": no events\n\n"))
+    page.route(list_url, lambda route: route.fulfill(json=[]), times=1)
+    try:
         page.goto(f"{base}/ui/tasks")
-        expect(page.get_by_text("No tasks yet", exact=True)).to_be_visible()
-        trigger = page.get_by_role("button", name="Create task", exact=True)
-        trigger.last.click()
+        banner = page.get_by_role("complementary", name="Monitor-only mode")
+        expect(banner).to_be_visible()
+        expect(banner).to_contain_text("No active task runner is attached to this server.")
+        expect(banner).to_contain_text("bernstein demo")
+        expect(banner).to_contain_text("bernstein run")
+        expect(banner).to_contain_text('bernstein -g "<goal>"')
+        expect(page.get_by_text("No tasks recorded", exact=True)).to_be_visible()
+        expect(page.get_by_text("No tasks yet", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="Create task", exact=True)).to_have_count(1)
+        page.get_by_role("button", name="Create task", exact=True).first.click()
         form = page.get_by_role("dialog", name="Create task", exact=True)
+        expect(form).to_contain_text("Monitor-only mode: no active task runner is attached")
         form.get_by_role("button", name="Cancel", exact=True).click()
-        expect(trigger.first).to_be_focused()
-        trigger.last.click()
-        title = "Created before the empty task list refreshed"
-        form.get_by_label("Title").fill(title)
-        form.get_by_label("Prompt").fill("Keep focus on a stable control after closing the drawer.")
-        deferred: list[Route] = []
-        page.route(list_url, lambda route: deferred.append(route), times=1)
-        with page.expect_request(list_url):
-            form.get_by_role("button", name="Create task", exact=True).click()
-        expect(page.get_by_role("dialog", name=title, exact=True)).to_be_visible()
-        assert len(deferred) == 1
-        page.keyboard.press("Escape")
-        deferred[0].continue_()
-        expect(page.get_by_role("row").filter(has_text=title)).to_be_visible()
-        expect(trigger).to_be_focused()
     finally:
         page.unroute(list_url)
         page.unroute(events_url)
@@ -987,6 +1053,7 @@ def main() -> None:
             check_task_creation_keeps_two_background_confirmations(page, base)
             check_task_creation(page, base, headers)
             check_task_creation_empty_state_focus(page, base)
+            check_monitor_only_empty_state(page, base)
             check_governance_receipt(page, base)
             assert not errors, "Browser errors:\n" + "\n".join(errors)
             browser.close()

@@ -200,7 +200,7 @@
     "/agents/{session_id}/logs": {
       "get": {
         "summary": "Agent Logs",
-        "description": "Return log file content for a session.\n\nArgs:\n    session_id: Agent session ID.\n    tail_bytes: If > 0, return only the last N bytes of the log.",
+        "description": "Return the log content for a running or finished agent session.\n\nArgs:\n    session_id: Agent session identifier (e.g. ``backend-abc12345``).\n    tail_bytes: When > 0, only the last *tail_bytes* of the file are\n        returned (partial leading line is stripped).  0 means full file.\n\nReturns:\n    JSON with ``session_id``, ``content`` string, and ``size`` in bytes.\n\nRaises:\n    HTTPException: 400 when session_id contains illegal characters,\n        404 when no log file exists for the session.",
         "operationId": "agent_logs_agents__session_id__logs_get",
         "parameters": [
           {
@@ -235,7 +235,7 @@
             }
           },
           "404": {
-            "description": "No log file for session"
+            "description": "No log for session"
           },
           "422": {
             "description": "Validation Error",
@@ -253,7 +253,7 @@
     "/agents/{session_id}/kill": {
       "post": {
         "summary": "Agent Kill",
-        "description": "Request that an agent session be killed.\n\nWrites a ``.kill`` signal file that the orchestrator picks up on\nits next tick.",
+        "description": "Request termination of an agent by writing a ``.kill`` signal file.\n\nThe orchestrator polls for these files on each tick and calls\n``spawner.kill(session)`` for the matching session.\n\nArgs:\n    session_id: Agent session to terminate.\n\nReturns:\n    JSON with ``session_id`` and ``kill_requested: true``.\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_kill_agents__session_id__kill_post",
         "parameters": [
           {
@@ -293,7 +293,7 @@
     "/agents/{session_id}/stream": {
       "get": {
         "summary": "Agent Stream",
-        "description": "SSE stream of live log output for a session.",
+        "description": "Server-Sent Events stream of agent output for the given session.\n\nReplays all existing log content first, then tails the file for new\nlines.  Closes automatically after ``_MAX_IDLE_TICKS`` consecutive\npolls with no new data (or no log file).\n\nFor synthetic agents (no real log file) the stream emits a single\n``unavailable`` event and closes immediately, avoiding an infinite\nreconnect loop in the browser.\n\nSSE event format::\n\n    data: {\"type\": \"connected\", \"session_id\": \"<id>\"}\n\n    data: {\"line\": \"<log line>\"}\n\n    data: {\"type\": \"unavailable\", \"reason\": \"synthetic\"}\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_stream_agents__session_id__stream_get",
         "parameters": [
           {
@@ -9771,7 +9771,7 @@
     "/api/v1/agents/{session_id}/logs": {
       "get": {
         "summary": "Agent Logs",
-        "description": "Return log file content for a session.\n\nArgs:\n    session_id: Agent session ID.\n    tail_bytes: If > 0, return only the last N bytes of the log.",
+        "description": "Return the log content for a running or finished agent session.\n\nArgs:\n    session_id: Agent session identifier (e.g. ``backend-abc12345``).\n    tail_bytes: When > 0, only the last *tail_bytes* of the file are\n        returned (partial leading line is stripped).  0 means full file.\n\nReturns:\n    JSON with ``session_id``, ``content`` string, and ``size`` in bytes.\n\nRaises:\n    HTTPException: 400 when session_id contains illegal characters,\n        404 when no log file exists for the session.",
         "operationId": "agent_logs_api_v1_agents__session_id__logs_get",
         "parameters": [
           {
@@ -9806,7 +9806,7 @@
             }
           },
           "404": {
-            "description": "No log file for session"
+            "description": "No log for session"
           },
           "422": {
             "description": "Validation Error",
@@ -9824,7 +9824,7 @@
     "/api/v1/agents/{session_id}/kill": {
       "post": {
         "summary": "Agent Kill",
-        "description": "Request that an agent session be killed.\n\nWrites a ``.kill`` signal file that the orchestrator picks up on\nits next tick.",
+        "description": "Request termination of an agent by writing a ``.kill`` signal file.\n\nThe orchestrator polls for these files on each tick and calls\n``spawner.kill(session)`` for the matching session.\n\nArgs:\n    session_id: Agent session to terminate.\n\nReturns:\n    JSON with ``session_id`` and ``kill_requested: true``.\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_kill_api_v1_agents__session_id__kill_post",
         "parameters": [
           {
@@ -9864,7 +9864,7 @@
     "/api/v1/agents/{session_id}/stream": {
       "get": {
         "summary": "Agent Stream",
-        "description": "SSE stream of live log output for a session.",
+        "description": "Server-Sent Events stream of agent output for the given session.\n\nReplays all existing log content first, then tails the file for new\nlines.  Closes automatically after ``_MAX_IDLE_TICKS`` consecutive\npolls with no new data (or no log file).\n\nFor synthetic agents (no real log file) the stream emits a single\n``unavailable`` event and closes immediately, avoiding an infinite\nreconnect loop in the browser.\n\nSSE event format::\n\n    data: {\"type\": \"connected\", \"session_id\": \"<id>\"}\n\n    data: {\"line\": \"<log line>\"}\n\n    data: {\"type\": \"unavailable\", \"reason\": \"synthetic\"}\n\nRaises:\n    HTTPException 400 when session_id contains illegal characters.",
         "operationId": "agent_stream_api_v1_agents__session_id__stream_get",
         "parameters": [
           {

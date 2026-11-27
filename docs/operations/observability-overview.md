@@ -401,9 +401,9 @@ state machine with per-provider rate-limit awareness; they feed into
 
 | Concern                                | File                                                                    |
 | -------------------------------------- | ----------------------------------------------------------------------- |
-| Prometheus counters/gauges             | `src/bernstein/core/prometheus.py`, `core/observability/prometheus.py`  |
+| Prometheus counters/gauges             | `src/bernstein/core/observability/prometheus.py`                        |
 | `/metrics` route                       | `src/bernstein/core/routes/status_lifecycle.py:251-265`                 |
-| Grafana dashboard generator            | `src/bernstein/core/grafana_dashboard.py`, `core/routes/grafana.py`     |
+| Grafana dashboard generator            | `src/bernstein/core/observability/grafana_dashboard.py`, `core/routes/grafana.py` |
 | OpenTelemetry tracer + presets         | `src/bernstein/core/observability/telemetry.py`                         |
 | Datadog / New Relic APM                | `src/bernstein/core/observability/apm_integration.py`                   |
 | OTLP exporters                         | `src/bernstein/core/observability/apm_export.py`, `metric_export.py`    |
@@ -414,7 +414,7 @@ state machine with per-provider rate-limit awareness; they feed into
 | Cascading-failure circuit breaker      | `src/bernstein/core/observability/cascading_failure_circuit_breaker.py` |
 | Provider circuit breaker               | `src/bernstein/core/observability/provider_circuit_breaker.py`          |
 | Provider latency tracker               | `src/bernstein/core/observability/provider_latency.py`, `routes/provider_latency.py` |
-| Custom metrics evaluator               | `src/bernstein/core/custom_metrics.py`, `routes/custom_metrics.py`      |
+| Custom metrics evaluator               | `src/bernstein/core/observability/custom_metrics.py`, `routes/custom_metrics.py` |
 | Predictive alerts                      | `src/bernstein/core/observability/predictive_alerts.py`, `routes/predictive.py` |
 | Observability detail routes            | `src/bernstein/core/routes/observability.py`                            |
 | Cost routes (12 endpoints)             | `src/bernstein/core/routes/costs.py`                                    |

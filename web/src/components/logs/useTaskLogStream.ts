@@ -79,7 +79,7 @@ export function useTaskLogStream({
 
   const url = useMemo(() => {
     if (!taskId) return '';
-    return `/api/v1/dashboard/tasks/${encodeURIComponent(taskId)}/logs/stream`;
+    return `/api/v1/tasks/${encodeURIComponent(taskId)}/logs/stream`;
   }, [taskId]);
 
   const ingestLine = useCallback((raw: string, receivedAt: number) => {
@@ -177,7 +177,7 @@ export function useTaskLogStream({
     // ``apiGet`` prepends ``/api/v1`` via ``buildUrl``; pass the bare path so
     // there's no risk of a future regression producing ``/api/v1/api/v1/...``.
     apiGet<{ log_tail?: string }>(
-      `/dashboard/tasks/${encodeURIComponent(taskId)}`,
+      `/tasks/${encodeURIComponent(taskId)}/detail`,
     )
       .then((detail) => {
         if (cancelled) return;

@@ -14,7 +14,7 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 | `sigstore_attestation.py` | Rekor attestation with a local Ed25519 fallback; verifies local bundles |
 | `result_receipt_bundle.py` | Result receipt bundle with offline DSSE verification |
 | `capability_delta.py`, `surface_grant_delta.py` | Pure grant comparisons (`AgentPermissions`; workflow/Dockerfile/Compose); no production caller yet |
-| `key_custody.py`, `key_derivation.py` | Ed25519 signing custody (file/env; HSM is a subclassable stub) and HKDF-SHA256 per-store key derivation with scheme versioning |
+| `key_custody.py`, `key_derivation.py`, `auth.py` | Ed25519 signing custody (`0600` owner-only file, env, subclassable HSM stub), HKDF-SHA256 store keys, and EdDSA / HMAC JWT primitives (#8193) |
 | `approval_decision.py` | Signed, nonce-bound decision records read by the task approval gates |
 | `auth_rate_limiter.py` | Per-client request and auth-attempt limits keyed by the real TCP peer; exhausted windows and failed credentials start a bounded exponential lockout (#6874) |
 | `external_policy_hook.py` | `PolicyHookRegistry` for OPA/Cedar/custom hooks; a registry passed to `AgentSpawner` gates each resolved dispatch and fails closed: anything but an explicit ALLOW stops the action, and a refusal never selects another executor (`../agents/spawner_core.py`, #6956) |
@@ -37,4 +37,4 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 
 Single files only: `uv run pytest tests/unit/test_audit.py -x -q`.
 
-<!-- Reviewed 2026-11-11 against main 535af7532; the notes above still hold. -->
+<!-- Reviewed 2026-11-26 against main de5758b72b98; the notes above still hold. -->

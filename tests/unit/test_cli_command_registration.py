@@ -465,6 +465,7 @@ PARTIAL_TABLE_FULL_SURFACES: dict[str, frozenset[str]] = {
             "--model",
             "--no-container",
             "--no-two-phase-sandbox",
+            "--open-ui",
             "--permission-profile",
             "--plan-only",
             "--port",

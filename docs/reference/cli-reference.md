@@ -121,10 +121,20 @@ The full flag list is large (see `bernstein run --help` and `cli/run_bootstrap.p
 | `--task PATTERN` | none | Run only matching backlog tasks. |
 | `--wait [SECONDS]` | off | Block until the run reaches a terminal state and exit with its outcome. Optional ceiling in seconds, default 3600. |
 | `--port N` | 8052 | Task server port. |
+| `--open-ui` | off | Open `/ui/` in your browser once the local task server is ready. |
 | `-v / -q` | off | Verbosity. |
 
 The merge strategy is not a `run` flag: set `merge_strategy: pr|direct` in
 `bernstein.yaml` (default `pr`).
+
+When the task server binds to a loopback address (`127.0.0.1`, `localhost`,
+`::1`), `BERNSTEIN_LOOPBACK_HOST_GUARD=1` is enabled automatically and rejects
+requests whose `Host` header is not loopback (`localhost`,
+`localhost.localdomain`, loopback IP literals) with HTTP `403`. To expose a
+loopback server behind a reverse proxy, tunnel hostname, or container alias
+such as `host.docker.internal`, set `BERNSTEIN_ALLOWED_HOSTS` to a
+comma-separated list of permitted hostnames. `BERNSTEIN_ALLOWED_HOSTS` accepts
+hostnames only, with no port and no wildcard (exact lowercase hostname matching).
 
 Before computing a cost estimate, planning, or prompting for plan approval
 (including under `--auto-approve` and `--remote`), `bernstein run` verifies that
@@ -2131,7 +2141,8 @@ non-loopback host it refuses to start until a token or password is
 configured. There is no silent open mode on a routable interface. Use the
 token as `Authorization: Bearer <token>` or in the dashboard login form
 (`POST /dashboard/auth/login`); the session cookie inherits exactly the
-token's principal and scope.
+token's principal and scope. Loopback binds also enforce the `Host` header
+guard unless hostnames are allowlisted via `BERNSTEIN_ALLOWED_HOSTS`.
 
 ## SPIFFE workload identity: `bernstein spiffe`
 

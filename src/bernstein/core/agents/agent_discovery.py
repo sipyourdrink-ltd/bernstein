@@ -318,7 +318,8 @@ def _detect_gemini() -> tuple[AgentCapabilities | None, list[str]]:
 
     if binary and not logged_in:
         warnings.append(
-            "gemini found but not logged in - set GOOGLE_API_KEY, GEMINI_API_KEY, or run: gcloud auth login"
+            "gemini found but not logged in - set GEMINI_API_KEY or GOOGLE_API_KEY, "
+            "run 'gemini' to sign in, or run: gcloud auth application-default login"
         )
 
     return AgentCapabilities(

@@ -76,6 +76,7 @@ def _get_agent_log_path(runtime_dir: Path, session_id: str) -> Path | None:
     return None
 
 
+@router.get("/tasks/{task_id}/detail", responses={404: {"description": "Task not found"}}, include_in_schema=False)
 @router.get("/dashboard/tasks/{task_id}", responses={404: {"description": "Task not found"}})
 def task_detail(request: Request, task_id: str) -> TaskDetailResponse:
     """Return detailed task view including log tail and progress.
@@ -161,9 +162,16 @@ def _try_read_session_log(
     log_path = _get_agent_log_path(runtime_dir, session_id)
     if log_path is None or not log_path.exists():
         return None
-    return read_fn(log_path, last_size)
+    result: tuple[str, int] | None = read_fn(log_path, last_size)
+    return result
 
 
+@router.get(
+    "/tasks/{task_id}/logs/stream",
+    response_class=StreamingResponse,
+    responses={**SSE_RESPONSES, 404: {"description": "Task not found"}},
+    include_in_schema=False,
+)
 @router.get(
     "/dashboard/tasks/{task_id}/logs/stream",
     response_class=StreamingResponse,
@@ -214,7 +222,9 @@ async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
                 yield f'event: complete\ndata: {{"status": "{current_task.status.value}"}}\n\n'
                 break
 
-            new_data = _try_read_session_log(session_id, runtime_dir, _read_new_log_content, last_size)
+            new_data = await asyncio.to_thread(
+                _try_read_session_log, session_id, runtime_dir, _read_new_log_content, last_size
+            )
             if new_data is not None:
                 new_content, last_size = new_data
                 idle_ticks = 0
@@ -484,6 +494,11 @@ def _resolve_branch_for_task(workdir: Path, assigned_agent: str | None) -> str |
     return None
 
 
+@router.get(
+    "/tasks/{task_id}/diff",
+    responses={404: {"description": "Task not found"}},
+    include_in_schema=False,
+)
 @router.get(
     "/dashboard/tasks/{task_id}/diff",
     responses={404: {"description": "Task not found"}},

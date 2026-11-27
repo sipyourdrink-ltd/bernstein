@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। दोबारा शुरू करते समय वही `-g` मान फिर से दें, ताकि अधूरे नोड्स के प्रॉम्प्ट में `{goal}` की जगह वह मान डाला जाए।
+रन अवस्था हर नोड पर `.sdd/runs/<run_id>/` में चेकपॉइंट होती है। रन दोबारा शुरू करते समय मैनिफ़ेस्ट डाइजेस्ट को रन की शुरुआत में सत्यापित किया जाता है, इसलिए स्पेसिफ़िकेशन में हुए बदलाव को अस्वीकार कर दिया जाता है, बजाय इसके कि किसी अलग मैनिफ़ेस्ट को चुपचाप चला दिया जाए। क्लीनअप नोड्स किसी कमांड या डिस्पैच विफलता के बाद निष्पादित होने के लिए `always_run: true` सेट कर सकते हैं, बिना किसी निरस्त किए गए रन को सफलता में बदले (एजेंट पूर्णता गेटिंग को [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) में ट्रैक किया जा रहा है)। देखिए [वर्कफ़्लो मैनिफ़ेस्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)। दोबारा शुरू करते समय वही `-g` मान फिर से दें, ताकि अधूरे नोड्स के प्रॉम्प्ट में `{goal}` की जगह वह मान डाला जाए।
 
 `bernstein compliance controls` हर नियंत्रण के लिए परीक्षण समूह और उपलब्ध होने पर नवीनतम पूर्ण माप दिखाता है। [बेंचमार्क कवरेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

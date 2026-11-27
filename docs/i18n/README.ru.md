@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Контрольные точки прогона попадают в `.sdd/runs/<run_id>/` на каждом узле. Возобновление проверяет хеш манифеста в начале прогона, поэтому изменившаяся спецификация приводит к отказу, а не к молчаливому выполнению другого манифеста. См. [манифесты workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). При возобновлении передайте то же значение `-g` ещё раз, чтобы подставить его вместо `{goal}` в промпты незавершённых узлов.
+Контрольные точки прогона попадают в `.sdd/runs/<run_id>/` на каждом узле. Возобновление проверяет хеш манифеста в начале прогона, поэтому изменившаяся спецификация приводит к отказу, а не к молчаливому выполнению другого манифеста. Узлы очистки могут задавать `always_run: true`, чтобы выполняться после сбоя команды или диспетчеризации, не превращая прерванный прогон в успешный (гейтинг завершения агента отслеживается в [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). См. [манифесты workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). При возобновлении передайте то же значение `-g` ещё раз, чтобы подставить его вместо `{goal}` в промпты незавершённых узлов.
 
 `bernstein compliance controls` показывает наборы тестов для каждого контроля и последний полный результат измерения, если он есть. [Покрытие тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

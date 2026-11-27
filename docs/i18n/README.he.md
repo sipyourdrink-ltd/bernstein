@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-מצב הריצה נשמר כנקודת שמירה תחת `.sdd/runs/<run_id>/` בכל צומת. החידוש מאמת את גיבוב המניפסט בתחילת הריצה, כך ששינוי במפרט נדחה במקום להריץ בשקט מניפסט אחר. ראה [מניפסטים של זרימת עבודה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). בעת החידוש יש לספק שוב את אותו ערך `-g` כדי להחליף את `{goal}` בפרומפטים של הצמתים שטרם הושלמו.
+מצב הריצה נשמר כנקודת שמירה תחת `.sdd/runs/<run_id>/` בכל צומת. החידוש מאמת את גיבוב המניפסט בתחילת הריצה, כך ששינוי במפרט נדחה במקום להריץ בשקט מניפסט אחר. צומתי ניקוי יכולים להגדיר `always_run: true` כדי לפעול לאחר כשל פקודה או כשל שיגור, מבלי להפוך ריצה שבוטלה להצלחה (שער השלמת סוכן נמצא במעקב ב-[#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). ראה [מניפסטים של זרימת עבודה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). בעת החידוש יש לספק שוב את אותו ערך `-g` כדי להחליף את `{goal}` בפרומפטים של הצמתים שטרם הושלמו.
 
 `bernstein compliance controls` מציגה את ערכות הבדיקות לכל בקרה ואת המדידה המלאה האחרונה, אם קיימת. [כיסוי הבדיקות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

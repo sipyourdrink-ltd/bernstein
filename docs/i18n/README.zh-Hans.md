@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-每个节点上的运行状态都会作为检查点写入 `.sdd/runs/<run_id>/`。恢复在运行起始时校验清单摘要，因此规格变更会被拒绝，而不是静默地按另一份清单执行。见[工作流清单](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 恢复时请再次传入相同的 `-g` 值，以替换未完成节点提示词中的 `{goal}`。
+每个节点上的运行状态都会作为检查点写入 `.sdd/runs/<run_id>/`。恢复在运行起始时校验清单摘要，因此规格变更会被拒绝，而不是静默地按另一份清单执行。清理节点可以设置 `always_run: true`，以便在命令或调度失败后继续执行，同时不会将已中止的运行变为成功（智能体完成门控在 [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) 中跟踪）。见[工作流清单](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md)。 恢复时请再次传入相同的 `-g` 值，以替换未完成节点提示词中的 `{goal}`。
 
 `bernstein compliance controls` 列出各控制项的基准测试套件，并在有完整测量结果时显示最近一次结果。 [基准测试覆盖范围](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
