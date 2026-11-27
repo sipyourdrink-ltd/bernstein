@@ -20,7 +20,6 @@ conformance` job against the `agent-client-protocol` Python SDK and tracks
 prepared ACP Registry package assets under `packaging/acp-registry/bernstein/`
 (#8211, #8212).
 
-<!-- begin: #8213 (trim this paragraph if PR 2 lands in a later release) -->
 When paired with the embedded ACP runner, `bernstein acp serve --stdio` executes
 workspace turns in-process without `--server-url`, projects `EventJournal`
 events as `session/update` notifications, bridges runtime approval gates over
@@ -28,4 +27,3 @@ events as `session/update` notifications, bridges runtime approval gates over
 (`loadSession: true`), provides `bernstein acp serve --setup` terminal-auth
 verification and default `authenticate("bernstein-setup")`, and forwards
 `auth_headers()` when `--server-url` is configured (#8213).
-<!-- end: #8213 -->

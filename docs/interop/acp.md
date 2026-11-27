@@ -13,11 +13,11 @@ Bernstein speaks the [Agent Client Protocol](https://agentclientprotocol.org)
 > `src/bernstein/core/routes/acp.py` (`/.well-known/acp.json`, `/acp/v0/*`)
 > are a separate legacy REST v0 surface and do not carry ACP v1 JSON-RPC.
 >
-> **Server runner placeholders:** The ACP v1 wire schema, handshake,
-> bidirectional transport, and session lifecycle are implemented; embedded
-> runner execution, `EventJournal` -> `session/update` projection, live
-> approval-gate wiring, and `session/load` replay are tracked in
-> [ACP bridge](../reference/acp-bridge.md#planned-in-follow-up-runner-integration-pr-2-placeholders).
+> **Server runner:** `bernstein acp serve --stdio` runs the embedded workspace
+> runner with live `EventJournal` -> `session/update` projection, runtime
+> approval-gate bridging over `session/request_permission`, persisted
+> `session/load` replay, and `--setup` terminal authentication; see
+> [ACP bridge](../reference/acp-bridge.md#embedded-runner-session-replay-and-terminal-setup).
 
 This page documents the **client** role: Bernstein consuming ACP from an
 upstream CLI, so an adapter receives typed lifecycle events with no bespoke
@@ -92,8 +92,9 @@ transcript, shrinking the conformance surface to frames the protocol actually
 defines.
 
 For the server role, `.github/workflows/ci.yml` runs the `ACP v1 conformance`
-job (`tests/integration/acp/test_acp_v1_conformance.py` and
-`tests/integration/acp/test_acp_v1_sdk.py`) against live
+job (`tests/integration/acp/test_acp_v1_conformance.py`,
+`tests/integration/acp/test_acp_v1_sdk.py`, and
+`tests/integration/acp/test_acp_v1_pr2_runner.py`) against live
 `bernstein acp serve --stdio` subprocesses.
 
 ---

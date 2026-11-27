@@ -5,11 +5,11 @@ Bernstein speaks the [Agent Client Protocol](https://agentclientprotocol.org)
 support can drive Bernstein directly over stdio or HTTP/SSE.
 
 Existing clients using the legacy `"2025-04-01"` dialect remain supported on
-the same transport. Tasks dispatched by the bridge to the Bernstein task server
-(`--server-url`) reuse the server's routing and sandbox-backend configuration;
-see [Audit](#audit) and
-[Planned in follow-up runner integration](#planned-in-follow-up-runner-integration-pr-2-placeholders)
-for what is active on `bernstein acp serve` today versus tracked for PR 2.
+the same transport. By default, `bernstein acp serve` runs the embedded
+in-process workspace runner against `<cwd>/.sdd` (see
+[Embedded runner, session replay, and terminal setup](#embedded-runner-session-replay-and-terminal-setup)).
+Pass `--server-url` to forward tasks to a running Bernstein task server with
+`auth_headers()` instead.
 
 > **Legacy REST surface:** The FastAPI endpoints in
 > `src/bernstein/core/routes/acp.py` (`GET /.well-known/acp.json`,
@@ -51,14 +51,14 @@ the following limits relative to `stdio`:
   scoped to the creating HTTP peer (a known limit on the HTTP transport). ACP
   v1 session IDs are 64-bit random identifiers (`sess-` plus 16 hex digits from
   `uuid4`).
-- **Library-only HTTP `authenticate` is a no-op with per-IP method state:**
-  When embedding `HttpAcpTransport` in library code with `require_auth=False`,
-  `authenticate` is still dispatched if called, but its result is not checked
-  by subsequent HTTP requests. Its advertised `authMethods` list is shared per
-  client IP and reset on each `initialize`, so one client's `initialize` from
-  the same IP can cause another client's `authenticate` call to fail with
-  `-32602` (`unknown authentication method`). The `bernstein acp serve` CLI
-  offers no auth methods (`authMethods: []`) by default.
+- **HTTP `authenticate` is a no-op with per-IP method state:**
+  With `require_auth=False`, `authenticate` is still dispatched on HTTP if
+  called (for example against the default `bernstein-setup` terminal-auth
+  method when advertised), but its result is not checked by subsequent HTTP
+  requests. Its advertised `authMethods` list is shared per client IP and reset
+  on each `initialize`, so one client's `initialize` from the same IP (for
+  instance without terminal-auth capabilities) can cause another client's
+  `authenticate` call to fail with `-32602` (`unknown authentication method`).
 
 ## Zed `settings.json`
 
@@ -96,14 +96,15 @@ handshake first; pre-initialization requests return JSON-RPC error `-32600`
 
 | Method | Direction | Notes |
 | ------ | --------- | ----- |
-| `initialize` | client -> server | negotiates `protocolVersion: 1`; returns `agentCapabilities`, `agentInfo`, `authMethods` (empty by default until PR 2 wires the terminal-auth setup target; opt-in `terminal_auth_method` is gated on `clientCapabilities.auth.terminal = true` or `clientCapabilities._meta["terminal-auth"] = true`), and `_meta` (`adapters`, `sandboxBackends`). Legacy methods are rejected with `-32600` on an ACP v1 `stdio` connection (HTTP relies on per-session version checks; see [HTTP transport limits](#http-transport-limits)). |
-| `authenticate` | client -> server | validates `methodId` against advertised `authMethods` (`-32602` on unknown method) and delegates to the configured `auth_handler`, failing closed with `-32000` when no `auth_handler` is configured or authentication fails. Auth enforcement applies on `stdio` only; see [HTTP transport limits](#http-transport-limits). |
-| `session/new` | client -> server | requires an absolute `cwd` and `mcpServers` list; returns `{sessionId, modes}` with `manual` (default) and `auto` modes. |
-| `session/set_mode` | client -> server | switches the session approval mode between `manual` and `auto`; returns `-32002` for unknown session or `-32602` for invalid mode. |
-| `session/prompt` | client -> server | blocking multi-turn request accepting ACP v1 `ContentBlock` arrays (`text`, `resource_link`, `resource`) and resolving with `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). On the default `bernstein acp serve` CLI (PR 1), `_default_prompt_runner` forwards the prompt to `--server-url` (`POST /tasks`) and returns `end_turn` or `cancelled` without streaming `session/update`; embedded execution and live streaming are pending PR 2. |
-| `session/cancel` | client -> server (notification) | notification-only (no `id`, no reply frame); signals cancellation for the active turn while keeping the session alive for subsequent turns. |
-| `session/update` | server -> client (notification) | transport-level outbound notification primitive for turn updates (message chunks, tool-call updates, plan updates, mode updates); live `EventJournal` emission from the default CLI is pending PR 2. |
-| `session/request_permission` | server -> client (request) | transport-level bidirectional multiplexed request from agent to client (resolving with `{outcome: {outcome: "selected", optionId}}` or `{outcome: {outcome: "cancelled"}}`); live janitor approval-gate wiring on the default CLI is pending PR 2. |
+| `initialize` | client -> server | negotiates `protocolVersion: 1`; returns `agentCapabilities` (`loadSession: true`), `agentInfo`, `authMethods` (advertises the `bernstein-setup` terminal-auth method with `args: ["--setup"]` when `clientCapabilities.auth.terminal = true` or `clientCapabilities._meta["terminal-auth"] = true`; empty otherwise unless extra methods are configured), and `_meta` (`adapters`, `sandboxBackends`). Legacy methods are rejected with `-32600` on an ACP v1 `stdio` connection (HTTP relies on per-session version checks; see [HTTP transport limits](#http-transport-limits)). |
+| `authenticate` | client -> server | validates `methodId` against advertised `authMethods` (`-32602` on unknown method) and delegates to the configured `auth_handler` (by default validating `bernstein-setup` against local adapter availability, or accepting in `--server-url` mode), failing closed with `-32000` when no `auth_handler` is configured or authentication fails. Auth enforcement applies on `stdio` only; see [HTTP transport limits](#http-transport-limits). |
+| `session/new` | client -> server | requires an absolute `cwd` and `mcpServers` list; returns `{sessionId, modes}` with `manual` (default) and `auto` modes and persists session metadata under `<cwd>/.sdd/runtime/acp_sessions/`. |
+| `session/load` | client -> server | reloads a persisted ACP v1 session from `<cwd>/.sdd/runtime/acp_sessions/` (verifying `sessionId`, canonical absolute `cwd`, `run_id`, and strict journal containment under `<cwd>/.sdd/runs/<run_id>/`), replays persisted `EventJournal` entries as `session/update` notifications, and returns `{modes}`. |
+| `session/set_mode` | client -> server | switches the session approval mode between `manual` and `auto` and persists the updated mode; returns `-32002` for unknown session or `-32602` for invalid mode. |
+| `session/prompt` | client -> server | blocking multi-turn request accepting ACP v1 `ContentBlock` arrays (`text`, `resource_link`, `resource`) and resolving with `{stopReason, usage?}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). In standalone mode (default when `--server-url` is unset), `EmbeddedOrchestratorRunner` runs governed workspace turns in-process against `<cwd>/.sdd`, streams `EventJournal` updates as `session/update`, and bridges approval gates over `session/request_permission`. With `--server-url`, prompts are forwarded to `POST /tasks` with `auth_headers()`. |
+| `session/cancel` | client -> server (notification) | notification-only (no `id`, no reply frame); signals cancellation for the active turn, rejects pending approvals, and reaps the active worker process group (or cancels the remote task when `--server-url` is set) while keeping the session alive for subsequent turns. |
+| `session/update` | server -> client (notification) | outbound turn updates projected from `EventJournal` (`agent_message_chunk`, `agent_thought_chunk`, `user_message_chunk`, `tool_call`, `tool_call_update`, `plan`, `usage_update`, `current_mode_update`). |
+| `session/request_permission` | server -> client (request) | bidirectional multiplexed agent-to-client request bridging runtime `ApprovalQueue` gates in `manual` mode (resolving with `{outcome: {outcome: "selected", optionId}}` or `{outcome: {outcome: "cancelled"}}`; `allow_always` persists per-session tool allowlists). |
 
 ## Legacy `"2025-04-01"` dialect compatibility
 
@@ -113,36 +114,45 @@ dialect and continues accepting `initialized`, `prompt`, `streamUpdate`,
 `cancel`, `setMode`, and `requestPermission` so existing fixtures and
 integrations keep working without breakage.
 
-## Planned in follow-up runner integration (PR 2 placeholders)
+## Embedded runner, session replay, and terminal setup
 
-The wire schema, bidirectional stdio multiplexing, handshake, and session
-lifecycle above are implemented now. The following runtime features are
-tracked for the follow-up runner PR and are **not yet wired** in
-`bernstein acp serve --stdio`:
-
-- **Embedded standalone runner:** `build_default_server()` currently forwards
-  `session/prompt` to `--server-url` (a running Bernstein task server).
-  Standalone in-process execution without a separate server is pending PR 2.
-- **`EventJournal` to `session/update` projection:** mapping live orchestrator
-  journal events to `agent_message_chunk`, `tool_call`, `tool_call_update`,
-  `plan`, and `usage_update` notifications is pending PR 2.
-- **Live approval-gate wiring:** routing runtime janitor approval gates
-  through `session/request_permission` is pending PR 2 (transport-level
-  bidirectional RPC multiplexing is already active).
-- **`session/load` replay:** `agentCapabilities.loadSession` currently reports
-  `false`; persisted session reload and replay are pending PR 2.
-- **Terminal-auth setup flow and server auth headers:** executing the terminal
-  setup flow advertised in `authMethods` and forwarding `auth_headers()` to
-  `--server-url` are pending PR 2.
+- **Embedded standalone runner:** When `--server-url` is omitted,
+  `build_default_server()` wires `EmbeddedOrchestratorRunner` to execute turns
+  in-process against `<cwd>/.sdd`, persisting tasks in
+  `<cwd>/.sdd/runtime/tasks.jsonl` and events in
+  `<cwd>/.sdd/runs/<run_id>/journal.jsonl`. Pass `--cli <adapter>` (or set
+  `BERNSTEIN_DEFAULT_CLI`) to pin a specific adapter CLI.
+- **`EventJournal` to `session/update` projection:** Live journal entries are
+  projected by `JournalACPProjector` into ACP v1 `session/update` notifications
+  (`agent_message_chunk`, `agent_thought_chunk`, `tool_call`,
+  `tool_call_update`, `plan`, and `usage_update`).
+- **Live approval-gate bridging:** In `manual` mode, `ACPApprovalGateBridge`
+  forwards pending `ApprovalQueue` items over `session/request_permission`,
+  records the resolved `ApprovalPrincipal`, and interrupts pending waits on
+  `session/cancel` or transport EOF.
+- **`session/load` replay:** `agentCapabilities.loadSession` reports `true`.
+  Persisted session metadata under `<cwd>/.sdd/runtime/acp_sessions/` is
+  validated for exact `session_id`, absolute canonical `cwd`, matching
+  `run_id`, and symlink-free journal containment under
+  `<cwd>/.sdd/runs/<run_id>/` before replaying history.
+- **Terminal-auth setup and `--server-url` auth headers:**
+  `bernstein acp serve --setup` (and `bernstein acp --setup`) checks local
+  adapter availability on `PATH` (returning exit code `0` when ready or `1`
+  with guidance on `stderr`) and backs the advertised `bernstein-setup`
+  terminal-auth method. When `--server-url` is configured, task creation and
+  cancellation attach `auth_headers()` resolved for the session workspace.
 
 ## Conformance and registry packaging
 
 - **CI conformance gate:** `.github/workflows/ci.yml` runs the `ACP v1
-  conformance` job against `tests/integration/acp/test_acp_v1_conformance.py`
-  and `tests/integration/acp/test_acp_v1_sdk.py` using the official
+  conformance` job against `tests/integration/acp/test_acp_v1_conformance.py`,
+  `tests/integration/acp/test_acp_v1_sdk.py`, and
+  `tests/integration/acp/test_acp_v1_pr2_runner.py` using the official
   `agent-client-protocol>=1.1` Python SDK. It verifies the registry
-  `run_auth_check` initialize handshake, strict JSON-RPC `stdout` purity,
-  official SDK interoperability, and registry package asset rules.
+  `run_auth_check` initialize handshake (including non-empty default
+  `authMethods`), strict JSON-RPC `stdout` purity, embedded runner updates,
+  permission bridging, `session/load` replay, official SDK interoperability,
+  and registry package asset rules.
 - **Registry assets (prepared, not submitted):**
   `packaging/acp-registry/bernstein/agent.json` and
   `packaging/acp-registry/bernstein/icon.svg` hold the prepared ACP Registry
@@ -169,10 +179,9 @@ HMAC-chained audit entries that are byte-identical (modulo timestamp + chain
 HMAC) to the entries the CLI surface emits for the same operation. See
 `tests/integration/acp/test_audit_parity.py` for the parity guard.
 
-When `bernstein acp serve` runs with `audit_emitter=None` (the current default
-in `src/bernstein/cli/commands/acp_cmd.py`), bridge audit events fall back to
-standard Python `logging` on `stderr` until PR 2 wires CLI `AuditLog`
-persistence.
+When `bernstein acp serve` runs with `audit_emitter=None` (the current CLI
+default in `src/bernstein/cli/commands/acp_cmd.py`), bridge audit events fall
+back to standard Python `logging` on `stderr`.
 
 ## Out of scope
 

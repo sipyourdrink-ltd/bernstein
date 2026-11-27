@@ -1925,7 +1925,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Run ACP v1 conformance and SDK integration tests
-        run: uv run pytest tests/integration/acp/test_acp_v1_conformance.py tests/integration/acp/test_acp_v1_sdk.py -x -q --timeout=60
+        run: uv run pytest tests/integration/acp/test_acp_v1_conformance.py tests/integration/acp/test_acp_v1_sdk.py tests/integration/acp/test_acp_v1_pr2_runner.py -x -q --timeout=60
 
   adapter-integration-macos:
     # macOS half of adapter-integration. Gated on three conditions (see

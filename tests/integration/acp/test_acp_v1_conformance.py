@@ -5,10 +5,10 @@ Mirrors the upstream ``agentclientprotocol/registry`` CI verification surface:
 1. Raw JSON-RPC ``run_auth_check`` handshake against ``bernstein acp serve --stdio``
    sending the registry validator's exact ``initialize`` payload (including
    ``clientCapabilities._meta["terminal-auth"] = true``) and asserting a valid
-   ``protocolVersion: 1`` response. On PR 1's default CLI ``authMethods`` is
-   ``[]`` until PR 2 wires ``--setup`` (if any methods are advertised they are
-   validated); configured terminal-auth conformance and empty/invalid
-   ``authMethods`` rejection are covered by dedicated tests below.
+   ``protocolVersion: 1`` response with non-empty valid ``authMethods``
+   (``bernstein-setup`` terminal auth). Configured terminal-auth conformance and
+   empty/invalid ``authMethods`` rejection are also covered by dedicated unit
+   tests below.
 2. Strict stdout purity: every single line emitted on ``stdout`` by
    ``bernstein acp serve --stdio`` across a multi-frame session must be a valid
    JSON-RPC 2.0 envelope, with zero banners, log lines, or illegal notification
@@ -178,18 +178,16 @@ def test_registry_run_auth_check_mirror() -> None:
     raw_methods_obj: object = result.get("authMethods", [])
     assert isinstance(raw_methods_obj, list)
     raw_methods = cast("list[dict[str, Any]]", raw_methods_obj)
-    # PR 2 placeholder: once PR 2 adds the real terminal-auth setup target,
-    # require raw_methods to be non-empty on the default CLI too. Until then,
-    # PR 1 intentionally advertises no nonexistent --setup target; if any
-    # methods are advertised they must satisfy the registry validator rules.
-    if raw_methods:
-        auth_methods = _parse_registry_auth_methods(raw_methods)
-        ok, msg = _validate_registry_auth_methods(auth_methods)
-        assert ok, msg
+    assert raw_methods, (
+        "default 'bernstein acp serve --stdio' must advertise non-empty authMethods for terminal-auth clients"
+    )
+    auth_methods = _parse_registry_auth_methods(raw_methods)
+    ok, msg = _validate_registry_auth_methods(auth_methods)
+    assert ok, msg
 
 
 def test_registry_run_auth_check_accepts_configured_terminal_auth() -> None:
-    """When terminal auth is wired (PR 2), registry run_auth_check passes."""
+    """Configured terminal auth on ACPHandlerRegistry passes registry run_auth_check."""
 
     async def _run() -> None:
         loop = asyncio.get_running_loop()

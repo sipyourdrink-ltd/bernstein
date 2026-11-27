@@ -13,7 +13,7 @@ standalone runner, and session updates) is published to PyPI.
    local ACP v1 conformance suite:
 
    ```bash
-   uv run pytest tests/integration/acp/test_acp_v1_conformance.py tests/integration/acp/test_acp_v1_sdk.py
+   uv run pytest tests/integration/acp/test_acp_v1_conformance.py tests/integration/acp/test_acp_v1_sdk.py tests/integration/acp/test_acp_v1_pr2_runner.py
    ```
 
 2. Confirm `version` and `distribution.uvx.package` in
