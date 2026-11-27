@@ -7,7 +7,7 @@ adapter: charm
 binary: crush
 install:
   method: npm
-  spec: "@charmland/crush@0.101.0"
+  spec: "@charmland/crush@0.102.0"
 auth:
   required_for_help: false
   required_for_models: false
