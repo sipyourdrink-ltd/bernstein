@@ -58,9 +58,11 @@ jobs:
         # a literal true/false means the event did not say, and an update is
         # not armed on a guess.
         #
-        # No merge-method flag: main is behind a merge queue, so --auto
-        # enqueues and the queue applies its own configured method. An
-        # explicit --merge asks for a method the ruleset does not allow.
+        # No merge-method flag: main is behind a merge queue that applies its
+        # own configured method, so an explicit --merge asks for a method the
+        # ruleset does not allow. Under GITHUB_TOKEN this call only arms
+        # auto-merge and does not enqueue the PR; a maintainer still disables
+        # and re-arms/enqueues it manually once checks are green (#6845).
         run: |
           case "$PR_DRAFT" in
             true)

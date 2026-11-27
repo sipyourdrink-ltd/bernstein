@@ -474,18 +474,33 @@ only reads pull requests.
 #### Dependabot auto-merge and manual queue entry (#6845)
 
 `.github/workflows/dependabot-auto-merge.yml` runs on Dependabot `pull_request`
-events with `secrets.GITHUB_TOKEN`. Because GitHub does not advance a
-`GITHUB_TOKEN`-armed auto-merge into a merge queue (for the same recursion
-guard as `GITHUB_TOKEN`-opened PRs above), Dependabot PRs armed by
-`github-actions[bot]` wait in a `clean` state even after every required check
-is green.
+events with `secrets.GITHUB_TOKEN` and arms auto-merge only for ready
+`version-update:semver-patch` and `version-update:semver-minor` updates
+(including the patch/minor groups in `.github/dependabot.yml`); major updates
+(`version-update:semver-major`) and Draft PRs are skipped (#6758). As observed
+on #6770, #6800, and #6813, auto-merge enabled by `github-actions[bot]` under
+`GITHUB_TOKEN` does not advance the PR into the merge queue even after every
+required check (`CI gate`, `quorum`, and any applicable bundle checks) is
+green; the PR waits until a maintainer clears the bot-owned auto-merge and
+enqueues it under their own credentials.
 
 We deliberately keep manual enqueueing rather than storing a write-capable PAT
-or GitHub App token in Dependabot secrets. Once a ready Dependabot PR has
-green required checks (`CI gate`, `quorum`, and any applicable bundle checks),
-a maintainer enqueues it by hand via `gh pr merge <number> --auto` or the
-GitHub UI **Merge when ready** button. Draft Dependabot PRs are never armed by
-the workflow (#6758).
+or GitHub App token in Dependabot secrets. On a ready patch/minor Dependabot
+PR, `dependabot-auto-merge.yml` has already enabled auto-merge as
+`github-actions[bot]`: a second `gh pr merge <number> --auto` is a silent
+no-op that leaves `github-actions[bot]` as the enabler, and the GitHub UI shows
+**Disable auto-merge** instead of **Merge when ready**. Disable the bot
+auto-merge first, then re-arm or enqueue under a maintainer identity (omit
+`--squash` / `--merge`; the merge queue owns the merge method):
+
+```sh
+gh pr merge <number> --disable-auto && gh pr merge <number> --auto
+```
+
+In the GitHub UI, click **Disable auto-merge** first, then **Merge when
+ready**. A single `gh pr merge <number> --auto` (or **Merge when ready**
+directly) applies only when auto-merge is still off (for example, on major
+Dependabot PRs that the workflow skips).
 
 ### What the pool actually spends
 
