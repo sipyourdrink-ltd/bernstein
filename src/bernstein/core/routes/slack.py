@@ -260,6 +260,7 @@ async def slack_events(request: Request) -> JSONResponse:
     clean_text = text.replace(f"<@{bot_user_id}>", "").strip() if bot_user_id else text.strip()
 
     if clean_text:
+        from bernstein.core.routes._trigger_gate import gate_direct_trigger, record_direct_trigger_fire
         from bernstein.core.server import TaskCreate, TaskStore
 
         store: TaskStore = request.app.state.store  # type: ignore[attr-defined]
@@ -277,7 +278,24 @@ async def slack_events(request: Request) -> JSONResponse:
             slack_context=slack_context,
             tenant_id=request_tenant_id(request),
         )
+        pending_gate = gate_direct_trigger(
+            request,
+            trigger_event,
+            summary=f"slack message in {slack_context['channel']} by {trigger_event.sender}",
+        )
+        if pending_gate is not None and pending_gate.gate.suppressed:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "skipped_reason": (
+                        f"trigger_suppressed ({pending_gate.gate.trigger_name}: {pending_gate.gate.reason})"
+                    ),
+                },
+            )
         task = await store.create(task_create)
+        if pending_gate is not None:
+            record_direct_trigger_fire(pending_gate, task_id=task.id)
         from bernstein.core.security.sanitize import sanitize_log as _sl
 
         logger.info(
