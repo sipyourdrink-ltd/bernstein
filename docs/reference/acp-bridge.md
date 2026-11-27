@@ -31,6 +31,35 @@ JSON-RPC 2.0 frames over `stdin` and `stdout`. All diagnostic logs go to
 The HTTP transport accepts a single JSON-RPC frame per `POST /acp` request and
 supports `Accept: text/event-stream` for streaming responses.
 
+### HTTP transport limits
+
+Because `POST /acp` requests are stateless per request, the HTTP transport has
+the following limits relative to `stdio`:
+
+- **No connection-level dialect lockout:** Unlike `stdio`, HTTP does not reject
+  legacy `"2025-04-01"` calls after a v1 `initialize` (or vice versa) across
+  requests. Isolation is enforced per session instead: calling legacy session
+  methods (`cancel`, `setMode`, `requestPermission`) on a v1 session or v1
+  session methods (`session/prompt`, `session/set_mode`) on a legacy session
+  returns `-32600`.
+- **`require_auth` is refused on HTTP:** `HttpAcpTransport` raises `ValueError`
+  if constructed with `registry.require_auth=True` and fails closed with
+  `-32000` (`AUTH_REQUIRED`) on requests (or HTTP `202` / empty SSE stream on
+  notifications) if `require_auth` is enabled after construction, because HTTP
+  does not bind authentication to a per-request token.
+- **Sessions are not bound to the peer that created them:** Session IDs are not
+  scoped to the creating HTTP peer (a known limit on the HTTP transport). ACP
+  v1 session IDs are 64-bit random identifiers (`sess-` plus 16 hex digits from
+  `uuid4`).
+- **Library-only HTTP `authenticate` is a no-op with per-IP method state:**
+  When embedding `HttpAcpTransport` in library code with `require_auth=False`,
+  `authenticate` is still dispatched if called, but its result is not checked
+  by subsequent HTTP requests. Its advertised `authMethods` list is shared per
+  client IP and reset on each `initialize`, so one client's `initialize` from
+  the same IP can cause another client's `authenticate` call to fail with
+  `-32602` (`unknown authentication method`). The `bernstein acp serve` CLI
+  offers no auth methods (`authMethods: []`) by default.
+
 ## Zed `settings.json`
 
 ```json
@@ -67,8 +96,8 @@ handshake first; pre-initialization requests return JSON-RPC error `-32600`
 
 | Method | Direction | Notes |
 | ------ | --------- | ----- |
-| `initialize` | client -> server | negotiates `protocolVersion: 1`; returns `agentCapabilities`, `agentInfo`, `authMethods` (empty by default until PR 2 wires the terminal-auth setup target; opt-in `terminal_auth_method` is gated on `clientCapabilities.auth.terminal = true` or `clientCapabilities._meta["terminal-auth"] = true`), and `_meta` (`adapters`, `sandboxBackends`). Legacy methods are rejected with `-32600` on an ACP v1 connection. |
-| `authenticate` | client -> server | validates `methodId` against advertised `authMethods` (`-32602` on unknown method) and delegates to the configured `auth_handler`, failing closed with `-32000` when no `auth_handler` is configured or authentication fails. |
+| `initialize` | client -> server | negotiates `protocolVersion: 1`; returns `agentCapabilities`, `agentInfo`, `authMethods` (empty by default until PR 2 wires the terminal-auth setup target; opt-in `terminal_auth_method` is gated on `clientCapabilities.auth.terminal = true` or `clientCapabilities._meta["terminal-auth"] = true`), and `_meta` (`adapters`, `sandboxBackends`). Legacy methods are rejected with `-32600` on an ACP v1 `stdio` connection (HTTP relies on per-session version checks; see [HTTP transport limits](#http-transport-limits)). |
+| `authenticate` | client -> server | validates `methodId` against advertised `authMethods` (`-32602` on unknown method) and delegates to the configured `auth_handler`, failing closed with `-32000` when no `auth_handler` is configured or authentication fails. Auth enforcement applies on `stdio` only; see [HTTP transport limits](#http-transport-limits). |
 | `session/new` | client -> server | requires an absolute `cwd` and `mcpServers` list; returns `{sessionId, modes}` with `manual` (default) and `auto` modes. |
 | `session/set_mode` | client -> server | switches the session approval mode between `manual` and `auto`; returns `-32002` for unknown session or `-32602` for invalid mode. |
 | `session/prompt` | client -> server | blocking multi-turn request accepting ACP v1 `ContentBlock` arrays (`text`, `resource_link`, `resource`) and resolving with `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). On the default `bernstein acp serve` CLI (PR 1), `_default_prompt_runner` forwards the prompt to `--server-url` (`POST /tasks`) and returns `end_turn` or `cancelled` without streaming `session/update`; embedded execution and live streaming are pending PR 2. |
