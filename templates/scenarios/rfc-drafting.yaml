@@ -1,0 +1,59 @@
+id: rfc-drafting
+name: Cross-Team RFC Drafting
+version: "1.0"
+description: |
+  Author a cross-team RFC for an architectural change that touches more
+  than one bounded context. Produces a written proposal, a comment-ready
+  draft circulated to stakeholders, and an accepted decision recorded as
+  an ADR.
+tags:
+  - docs
+  - rfc
+  - architecture
+tasks:
+  - title: Capture the problem statement and success criteria
+    role: architect
+    priority: 1
+    scope: small
+    complexity: medium
+    description: |
+      Open the RFC with the problem in concrete terms. Describe the user
+      or system pain in two paragraphs. List the success criteria the
+      change must meet to be considered accepted.
+  - title: Enumerate at least three options including a do-nothing branch
+    role: architect
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Each option carries a cost, a benefit, a reversibility note, and
+      a fitness function or metric that would tell the team whether the
+      option worked. The do-nothing branch is mandatory.
+  - title: Run a threat model and capture privacy implications
+    role: security
+    priority: 2
+    scope: small
+    complexity: medium
+    description: |
+      Apply STRIDE to the chosen direction. If the change touches personal
+      data, also apply LINDDUN. Capture findings under a risk section the
+      reviewers must read before approving.
+  - title: Circulate to stakeholders with a written comment window
+    role: manager
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Assign a comment deadline. Tag specific reviewers per section. A
+      missing reviewer is the author's problem; chase explicitly. Track
+      every comment and the author's response in the RFC itself.
+  - title: Promote to an accepted ADR
+    role: docs
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Once stakeholders sign off, write the ADR using MADR or Nygard
+      format. Reference the RFC. Mark the RFC superseded by the ADR.
+      Future readers should find the decision through the ADR, not the
+      original discussion thread.

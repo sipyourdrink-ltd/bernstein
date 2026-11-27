@@ -102,12 +102,21 @@ bearer. (A `bernstein auth dashboard-token` scoped token only unlocks the
 `/api/v1/dashboard/*` mirror - not these routes.) A bare local `serve` used to
 open `/ui/` with no credential, so the browser had nothing to send.
 
-**Fix (automatic on loopback).** On a loopback bind (`127.0.0.1` / `localhost` /
-`::1`) with no `BERNSTEIN_AUTH_TOKEN` set, `serve` now mints an ephemeral
-operator bearer, exports it for the API, and opens the browser pre-seeded with
-the same token - the panels authenticate with zero manual steps. `serve` prints
+**Fix (automatic on loopback).**
+This loopback token flow and the Host-header check ship in the release after 4.0.1.
+
+On a loopback bind (`127.0.0.1` / `localhost` /
+`::1`) with no `BERNSTEIN_AUTH_TOKEN` set, `serve` (default, `--no-open`, and
+`--dev`) reuses `.sdd/runtime/auth.token` when `.sdd/` exists or mints an
+ephemeral operator bearer and exports it for the API. In default auto-open mode,
+`serve` opens the browser pre-seeded with `/ui/#t=<token>` and prints
 `Dashboard ready at http://127.0.0.1:8052/ui/ (browser authenticated
-automatically).` to confirm. Nothing to configure:
+automatically).`. With `--no-open` or `--dev`, read the bearer from
+`.sdd/runtime/auth.token` inside a `.sdd/` workspace; outside one, `serve`
+prints it on an interactive terminal, and in a non-interactive run you pass
+`BERNSTEIN_AUTH_TOKEN` explicitly. Similarly,
+`bernstein run` writes `.sdd/runtime/auth.token` (`0600`), prints `web ui ...
+(API token: .sdd/runtime/auth.token)`, and accepts `--open-ui` on loopback. Nothing to configure:
 
 ```bash
 bernstein gui serve
@@ -122,9 +131,12 @@ BERNSTEIN_AUTH_TOKEN=<your-secret> bernstein gui serve
 
 Either way the token rides the opened browser's URL fragment only (the SPA
 scrubs it from the address bar after capture) - it never appears in the console
-URL or the access log. Posture is unchanged: a non-loopback bind still refuses
-to start without configured auth and is never auto-minted a bearer, and an
-external, tokenless `/api/v1/*` request still returns `401`.
+URL or the access log. Loopback binds without `--tunnel` also enforce loopback `Host` headers
+(`403` on non-loopback `Host` to block DNS rebinding; extend with
+`BERNSTEIN_ALLOWED_HOSTS` if needed). Posture is unchanged: `--tunnel` and
+non-loopback binds never auto-mint an API bearer, non-loopback binds still refuse
+to start without configured auth, and an external tokenless `/api/v1/*` request
+still returns `401`.
 
 **In the UI.** When the server refuses the browser's token, a banner under the
 top bar asks for it: paste the value of `BERNSTEIN_AUTH_TOKEN` and press

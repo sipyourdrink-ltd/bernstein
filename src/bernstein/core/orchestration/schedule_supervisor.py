@@ -398,6 +398,7 @@ class ScheduleSupervisor:
         collision_policy: CollisionPolicy | str = CollisionPolicy.CANCEL_NEW,
         concurrency_cap: int = 1,
         sla_monitor: Any | None = None,
+        create_dirs: bool = True,
     ) -> None:
         self._store = store
         self._dispatch = dispatch
@@ -413,7 +414,8 @@ class ScheduleSupervisor:
         self._collision_policy = CollisionPolicy(collision_policy)
         self._concurrency_cap = max(1, concurrency_cap)
         self._receipts_dir = store.directory.parent / "schedule_receipts"
-        self._receipts_dir.mkdir(parents=True, exist_ok=True)
+        if create_dirs:
+            self._receipts_dir.mkdir(parents=True, exist_ok=True)
         self._last_tick_at = 0.0
         self._last_fire_at = 0.0
         # #2545 -- input contract. The refusal chain and install identity are

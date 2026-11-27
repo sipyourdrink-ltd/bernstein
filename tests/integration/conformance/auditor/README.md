@@ -74,8 +74,11 @@ uv run python -m tests.integration.conformance.auditor.scenario --out /tmp/audit
 | `isolation.py` | the stranger's interpreter: no `bernstein`, no network |
 | `conftest.py` | session fixtures and the question bookkeeping |
 | `test_harness.py` | the instrument's own guarantees (no question numbers) |
-| `test_vectors_integrity.py` | question 17, the worked example, plus the integrity group: 15, 16, 18, 19, 20 (#5062) |
+| `test_attribution_vectors.py` | attribution questions 1, 2, 7, 14 (#5058), all strict expected failures |
+| `test_authority_vectors.py` | authority questions 3, 4, 5, 21 (#5059), all strict expected failures |
 | `test_policy_approval_vectors.py` | policy and approval questions 6, 11, 12, 13 (#5060), all strict expected failures |
+| `test_data_endpoint_vectors.py` | data and endpoint questions 8, 9, 10 (#5061); Q9 passes, Q8/Q10 strict expected failures |
+| `test_vectors_integrity.py` | question 17, the worked example, plus the integrity group: 15, 16, 18, 19, 20 (#5062) |
 | `test_scoreboard.py` | what `n/21` means |
 
 The policy/approval slice reads only the exported audit and run receipts. The current

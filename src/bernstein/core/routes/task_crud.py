@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import subprocess
-import time
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -15,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from starlette.responses import StreamingResponse
 
 from bernstein.core.administrative_runs import AdministrativeRunStatus
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, DirectChannel, SignalActionFailure
@@ -33,7 +31,6 @@ from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.store import RoleMismatchError
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
-from bernstein.core.routes._sse import SSE_RESPONSES
 from bernstein.core.security.auth_middleware import agent_task_scope, enforce_agent_task_scope_for_ids
 from bernstein.core.security.path_containment import (
     PathContainmentError,
@@ -46,8 +43,6 @@ from bernstein.core.security.sanitize import sanitize_log
 # __getattr__ defers the `app` creation, so the module body (class defs)
 # loads without triggering create_app().
 from bernstein.core.server import (
-    AgentKillResponse,
-    AgentLogsResponse,
     BatchClaimRequest,
     BatchClaimResponse,
     BatchCreateRequest,
@@ -78,7 +73,6 @@ from bernstein.core.server import (
     TaskSelfCreate,
     TaskStore,
     TaskWaitForSubtasksRequest,
-    read_log_tail,
     task_to_response,
 )
 from bernstein.core.task_store import ArchiveRecord, EmptyCompletionError, SnapshotEntry
@@ -108,7 +102,7 @@ logger = logging.getLogger(__name__)
 _DRAINING_DETAIL = "Server is draining -- no new claims accepted"
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
     from bernstein.core.models import NodeInfo, Task
@@ -2842,99 +2836,6 @@ def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> 
     ts = store.heartbeat(agent_id, body.role, body.status)
     sse_bus.publish("agent_update", json.dumps({"agent_id": agent_id, "status": body.status}))
     return HeartbeatResponse(agent_id=agent_id, acknowledged=True, server_ts=ts)
-
-
-@router.get(
-    "/agents/{session_id}/logs",
-    responses={404: {"description": "No log file for session"}},
-)
-def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> AgentLogsResponse:
-    """Return log file content for a session.
-
-    Args:
-        session_id: Agent session ID.
-        tail_bytes: If > 0, return only the last N bytes of the log.
-    """
-    runtime_dir = _get_runtime_dir(request)
-    log_path = runtime_dir / f"{session_id}.log"
-    if not log_path.exists():
-        raise HTTPException(status_code=404, detail=f"No log file for session '{session_id}'")
-    size = log_path.stat().st_size
-    offset = max(0, size - tail_bytes) if tail_bytes > 0 else 0
-    content = read_log_tail(log_path, offset)
-    return AgentLogsResponse(session_id=session_id, content=content, size=size)
-
-
-@router.post("/agents/{session_id}/kill")
-def agent_kill(session_id: str, request: Request) -> AgentKillResponse:
-    """Request that an agent session be killed.
-
-    Writes a ``.kill`` signal file that the orchestrator picks up on
-    its next tick.
-    """
-    runtime_dir = _get_runtime_dir(request)
-    sse_bus = _get_sse_bus(request)
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    (runtime_dir / f"{session_id}.kill").write_text(str(time.time()))
-    sse_bus.publish(
-        "session_kill",
-        json.dumps({"session_id": session_id}),
-    )
-    return AgentKillResponse(session_id=session_id, kill_requested=True)
-
-
-@router.get("/agents/{session_id}/stream", response_class=StreamingResponse, responses=SSE_RESPONSES)
-def agent_stream(session_id: str, request: Request) -> StreamingResponse:
-    """SSE stream of live log output for a session."""
-    runtime_dir = _get_runtime_dir(request)
-    log_path = runtime_dir / f"{session_id}.log"
-
-    async def _generate() -> AsyncGenerator[str, None]:
-        yield f"data: {json.dumps({'connected': True, 'session_id': session_id})}\n\n"
-
-        offset = 0
-        idle_ticks = 0
-        max_idle = 60
-
-        while True:
-            if await request.is_disconnected():
-                return
-
-            if not log_path.exists():
-                idle_ticks += 1
-                if idle_ticks >= max_idle:
-                    yield f"data: {json.dumps({'done': True, 'reason': 'no_log_file'})}\n\n"
-                    return
-                await asyncio.sleep(0.5)
-                continue
-
-            size = log_path.stat().st_size
-            if size <= offset:
-                idle_ticks += 1
-                if idle_ticks >= max_idle:
-                    yield f"data: {json.dumps({'done': True, 'reason': 'idle'})}\n\n"
-                    return
-                await asyncio.sleep(0.5)
-                continue
-
-            chunk = read_log_tail(log_path, offset)
-            offset = size
-            idle_ticks = 0
-            for line in chunk.splitlines():
-                if line.strip():
-                    yield f"data: {json.dumps({'line': line})}\n\n"
-
-            await asyncio.sleep(0.5)
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 # ---------------------------------------------------------------------------

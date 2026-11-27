@@ -41,20 +41,23 @@ See [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md) for th
 
 ## bernstein-addons
 
-- [role-pack](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/role-pack) records roles and reporting lines, requires acceptance tied to file SHA-256 hashes by a different registered principal with review rights, and blocks a new task with the same role and title while an earlier one is unknown.
-- [sandcastle](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/sandcastle) calls Sandcastle for a task attempt and records run evidence; Bernstein's gates control merges.
-- [brand-gate](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/brand-gate) checks a domain or URL with `brand-impersonation-detector` before an action and records the verdict in a journal.
+Official companion packages maintained in [sipyourdrink-ltd/bernstein-addons](https://github.com/sipyourdrink-ltd/bernstein-addons):
 
-Install from a clone of [bernstein-addons](https://github.com/sipyourdrink-ltd/bernstein-addons), following its [README](https://github.com/sipyourdrink-ltd/bernstein-addons/blob/main/README.md#quickstart) and the plugin's README. These packages are not currently published on PyPI. For role-pack:
+- [org-kit](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/org-kit) (`bernstein-org-kit`) — starter organization kit across 6 presets (`minimal`, `engineering`, `secops`, `product`, `compliance`, and `full` — up to 36 roles, 16 SOPs, 20 workflows, and 32 scenarios), auto-generated `roles.toml`, deterministic SHA-256 workflow DAG compiler, fail-closed stage runner over Bernstein's native CLI adapters, and an `AGENTS.md` governance hook.
+- [role-pack](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/role-pack) (`bernstein-role-pack`) — records roles and reporting lines, requires acceptance tied to file SHA-256 hashes by a different registered principal with review rights (`role_pack_acceptance` gate), and blocks replaying an unknown task under a new ID.
+- [sandcastle](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/sandcastle) (`bernstein-sandcastle`) — runs isolated task attempts through Sandcastle and records run evidence while leaving merge decisions to Bernstein's gates.
+- [brand-gate](https://github.com/sipyourdrink-ltd/bernstein-addons/tree/main/plugins/brand-gate) (`bernstein-brand-gate`) — opt-in pre-tool domain and URL check backed by `brand-impersonation-detector`, appending validated verdicts to the journal.
+
+Install from a clone of [bernstein-addons](https://github.com/sipyourdrink-ltd/bernstein-addons), following its [README](https://github.com/sipyourdrink-ltd/bernstein-addons/blob/main/README.md#quickstart-role-pack-and-org-kit-demos) and each plugin's README (packages are installed from source rather than PyPI):
 
 ```bash
 git clone https://github.com/sipyourdrink-ltd/bernstein-addons.git
 cd bernstein-addons
 python3.12 -m venv .venv
 . .venv/bin/activate
-pip install "bernstein==3.24.1"
-pip install ./plugins/role-pack
+pip install "bernstein>=4.0.1,<5" ./plugins/role-pack ./plugins/org-kit
 bernstein-role-pack demo
+bernstein-org-kit demo
 ```
 
 ---

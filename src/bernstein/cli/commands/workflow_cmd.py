@@ -44,7 +44,8 @@ def _detect_kind(path: Path) -> str:
 
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        # Undecodable is inconclusive too; the loader then names the encoding problem (#7869).
         return "unknown"
     if not isinstance(data, dict):
         return "unknown"

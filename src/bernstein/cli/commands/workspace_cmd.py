@@ -373,8 +373,8 @@ def config_validate() -> None:
     """
     import sys
 
+    from bernstein.core.config.seed_parser import SeedError, validate_seed_syntax
     from bernstein.core.router import TierAwareRouter, load_model_policy_from_yaml, load_providers_from_yaml
-    from bernstein.core.seed import SeedError, parse_seed
 
     # Find seed file
     seed_path = find_seed_file()
@@ -382,9 +382,9 @@ def config_validate() -> None:
         console.print("[red]Error:[/red] No bernstein.yaml found in current directory or parents")
         sys.exit(1)
 
-    # Parse seed
+    # Validate seed syntax (starter configs from `bernstein init` may omit `goal`)
     try:
-        _cfg = parse_seed(seed_path)
+        has_goal = validate_seed_syntax(seed_path)
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 
@@ -409,8 +409,11 @@ def config_validate() -> None:
         # Try to load from bernstein.yaml
         load_model_policy_from_yaml(seed_path, router)
 
-    # Validate router configuration
-    issues = router.validate_policy()
+    # Validate router configuration; skip per-tier provider checks when no custom providers are configured
+    if providers_path.exists() or router.state.providers:
+        issues = router.validate_policy()
+    else:
+        issues = router.state.model_policy.validate()
 
     if issues:
         console.print("[red]Configuration issues found:[/red]")
@@ -418,7 +421,13 @@ def config_validate() -> None:
             console.print(f"  [red]•[/red] {issue}")
         sys.exit(1)
 
-    console.print("[green]✓[/green] Configuration is valid")
+    if has_goal:
+        console.print("[green]✓[/green] Configuration is valid")
+    else:
+        console.print(
+            "[green]✓[/green] Configuration is valid "
+            "[dim](set 'goal' in bernstein.yaml or pass -g \"goal\" to run)[/dim]"
+        )
     _render_provider_summary(router)
 
 

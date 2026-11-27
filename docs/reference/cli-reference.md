@@ -121,10 +121,28 @@ The full flag list is large (see `bernstein run --help` and `cli/run_bootstrap.p
 | `--task PATTERN` | none | Run only matching backlog tasks. |
 | `--wait [SECONDS]` | off | Block until the run reaches a terminal state and exit with its outcome. Optional ceiling in seconds, default 3600. |
 | `--port N` | 8052 | Task server port. |
+| `--open-ui` | off | Open `/ui/` in your browser once the local task server is ready. |
 | `-v / -q` | off | Verbosity. |
 
 The merge strategy is not a `run` flag: set `merge_strategy: pr|direct` in
 `bernstein.yaml` (default `pr`).
+
+When the task server binds to a loopback address (`127.0.0.1`, `localhost`,
+`::1`), `BERNSTEIN_LOOPBACK_HOST_GUARD=1` is enabled automatically and rejects
+requests whose `Host` header is not loopback (`localhost`,
+`localhost.localdomain`, loopback IP literals) with HTTP `403`. To expose a
+loopback server behind a reverse proxy, tunnel hostname, or container alias
+such as `host.docker.internal`, set `BERNSTEIN_ALLOWED_HOSTS` to a
+comma-separated list of permitted hostnames. `BERNSTEIN_ALLOWED_HOSTS` accepts
+hostnames only, with no port and no wildcard (exact lowercase hostname matching).
+
+Before computing a cost estimate, planning, or prompting for plan approval
+(including under `--auto-approve` and `--remote`), `bernstein run` verifies that
+the resolved CLI executable (`--cli`, `BERNSTEIN_ADAPTER`, or `cli:` in
+`bernstein.yaml`) is installed on `PATH`, or that at least one CLI agent is
+discoverable when resolved to `auto`. When none is installed, it exits `1` with
+install instructions and suggests `bernstein demo` (`--dry-run`, `--plan-only`,
+`--idle`, and `mock` skip the local binary check).
 
 `--max-cost-usd` is a hard cap, separate from the soft `--budget`
 threshold model. It writes the value to `BERNSTEIN_MAX_COST_USD`
@@ -199,7 +217,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `--add-badge` | off | Insert a shields.io "powered by bernstein" badge into `README.md`. |
 | `--badge-variant NAME` | `signed` | Badge wording when `--add-badge` is passed. |
 
-`init-wizard` adds an interactive prompt flow (project type, default agent, budget, etc.) and is preferred for first-time users.
+`bernstein init --wizard` adds an interactive prompt flow (project goal, agent budget, adapter, approval gate mode) and writes schema-valid `bernstein.yaml` (`orchestration:`, `merge_strategy`, `auto_merge`, optional `routing:`), `.sdd/config.yaml`, `.sdd/runtime/run_config.json`, bundled `templates/`, and the `.sdd/runtime/` entry in root `.gitignore`. Both `bernstein init` and `bernstein init --wizard` leave `internal_llm_provider` at its `"none"` default unless explicitly configured.
 
 ---
 
@@ -2123,7 +2141,8 @@ non-loopback host it refuses to start until a token or password is
 configured. There is no silent open mode on a routable interface. Use the
 token as `Authorization: Bearer <token>` or in the dashboard login form
 (`POST /dashboard/auth/login`); the session cookie inherits exactly the
-token's principal and scope.
+token's principal and scope. Loopback binds also enforce the `Host` header
+guard unless hostnames are allowlisted via `BERNSTEIN_ALLOWED_HOSTS`.
 
 ## SPIFFE workload identity: `bernstein spiffe`
 

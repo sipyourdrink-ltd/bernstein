@@ -89,9 +89,12 @@ def test_init_creates_the_artifacts_the_docs_describe(tmp_path: Path) -> None:
     assert ".sdd/runtime/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
 
 
-def test_documented_first_goal_passes_branch_preflight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_documented_first_goal_passes_branch_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli_fixture: FakeCLIHandle
+) -> None:
     """Execute the First Run example until the CLI reaches its run preview."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", f"{fake_cli_fixture.bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.delenv("BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH", raising=False)

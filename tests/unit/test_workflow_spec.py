@@ -497,6 +497,26 @@ def test_workflow_node_construction_minimal_command() -> None:
     assert node.kind == "command"
     assert node.depends_on == []
     assert node.fresh_context is False
+    assert node.always_run is False
+
+
+def test_workflow_node_parses_always_run() -> None:
+    spec = load_workflow_spec_from_text(
+        """
+name: cleanup-spec
+description: "Parse always_run flag"
+version: "1.0.0"
+nodes:
+  - id: step
+    command: "true"
+  - id: cleanup
+    depends_on: [step]
+    always_run: true
+    command: "true"
+"""
+    )
+    assert spec.node_by_id("step").always_run is False
+    assert spec.node_by_id("cleanup").always_run is True
 
 
 def test_bundled_stock_workflows_load() -> None:

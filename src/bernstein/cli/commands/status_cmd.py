@@ -892,7 +892,7 @@ def _doctor_check_version_posture(
     from bernstein.cli.commands.doctor_cmd import emit_version_posture_receipt
 
     try:
-        sealed = emit_version_posture_receipt(workdir, env=env)
+        sealed = emit_version_posture_receipt(workdir, env=env, anchor=False)
     except Exception:  # posture is advisory: never break the doctor run
         return None
     entries = sealed["entries"]
@@ -900,7 +900,7 @@ def _doctor_check_version_posture(
         return None  # no tracked adapter installed: nothing to attest
     below = sum(1 for e in entries if e["verdict"] == "below_floor")
     unknown = sum(1 for e in entries if e["verdict"] == "unknown_version")
-    anchored = "chain-anchored" if sealed["anchored"] else "unanchored (audit write failed)"
+    anchored = "chain-anchored" if sealed["anchored"] else "unanchored (read-only)"
     detail = (
         f"{len(entries)} tracked adapter(s), {below} below floor, {unknown} unknown; "
         f"receipt sha256:{sealed['receipt_sha256'][:12]} ({anchored})"
@@ -962,7 +962,12 @@ def _doctor_check_auth(checks: list[dict[str, Any]], *, env: Mapping[str, str] |
         "Auth: gemini",
         gemini_authed,
         gemini_method if gemini_authed else _NOT_AUTHENTICATED_MSG,
-        "export GOOGLE_API_KEY=key, or: gcloud auth login" if not gemini_authed else "",
+        (
+            "export GEMINI_API_KEY=key (or GOOGLE_API_KEY), run 'gemini' to sign in, "
+            "or: gcloud auth application-default login"
+        )
+        if not gemini_authed
+        else "",
         fix_id="gemini_auth" if not gemini_authed else "",
     )
 
@@ -999,7 +1004,7 @@ def _doctor_check_workspace(checks: list[dict[str, Any]], workdir: Path) -> None
         ".sdd workspace",
         sdd_ok,
         "present" if sdd_ok else "missing or incomplete",
-        "Run 'bernstein' or 'bernstein -g \"goal\"' to initialise" if not sdd_ok else "",
+        "Run 'bernstein init' to initialise" if not sdd_ok else "",
         fix_id="sdd_missing" if not sdd_ok else "",
     )
 
@@ -1052,9 +1057,14 @@ def _doctor_check_guardrails(checks: list[dict[str, Any]], workdir: Path) -> Non
 
 
 @doctor_producer("INS-010")
-def _doctor_check_ci_tools(checks: list[dict[str, Any]]) -> None:
-    """Check CI tool dependencies (ruff, pytest, pyright)."""
-    from bernstein.core.ci_fix import check_test_dependencies
+def _doctor_check_ci_tools(checks: list[dict[str, Any]], workdir: Path | None = None) -> None:
+    """Check CI tool dependencies (ruff, pytest, pyright) for Python repos."""
+    from bernstein.core.ci_fix import check_test_dependencies, has_python_project_markers
+
+    root = workdir if workdir is not None else Path.cwd()
+    if not has_python_project_markers(root):
+        _add_check(checks, "CI tools", True, "skipped (not a Python project)", "")
+        return
 
     for dep in check_test_dependencies():
         _add_check(checks, f"CI tool: {dep['name']}", dep["ok"] == "True", dep["detail"], dep["fix"])
@@ -1096,10 +1106,37 @@ def _doctor_check_context_and_plugins(checks: list[dict[str, Any]], workdir: Pat
 @doctor_producer("INS-015")
 def _doctor_check_commit_attribution(checks: list[dict[str, Any]], workdir: Path) -> None:
     """Check git commit attribution stats."""
+    import shutil
+    import subprocess
+
     from bernstein.cli.commit_stats import collect_commit_stats
 
     commit_result = collect_commit_stats(repo_dir=str(workdir))
     if commit_result.error:
+        if shutil.which("git") is not None:
+            try:
+                inside = subprocess.run(
+                    ["git", "-C", str(workdir), "rev-parse", "--is-inside-work-tree"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if inside.returncode != 0:
+                    _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True, "skipped (not a git repository)")
+                    return
+                head = subprocess.run(
+                    ["git", "-C", str(workdir), "rev-parse", "--verify", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if head.returncode != 0:
+                    _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True, "no commits in repository yet")
+                    return
+            except (OSError, subprocess.SubprocessError):
+                pass
         _add_check(
             checks,
             _COMMIT_ATTRIBUTION_LABEL,
@@ -1128,12 +1165,15 @@ def _doctor_check_schedule_supervisor(checks: list[dict[str, Any]], workdir: Pat
     sdd_dir = workdir / ".sdd"
     if not sdd_dir.exists():
         return
+    if not (sdd_dir / "runtime" / "schedules").is_dir():
+        _add_check(checks, "Schedule supervisor", True, "no schedules registered")
+        return
     try:
         from bernstein.core.orchestration.schedule_supervisor import ScheduleSupervisor
         from bernstein.core.planning.schedule_store import ScheduleStore
 
-        store = ScheduleStore(sdd_dir)
-        supervisor = ScheduleSupervisor(store, lambda _e: None, None)
+        store = ScheduleStore(sdd_dir, create=False)
+        supervisor = ScheduleSupervisor(store, lambda _e: None, None, create_dirs=False)
         status = supervisor.status()
     except Exception as exc:
         _add_check(
@@ -1287,7 +1327,7 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     stale_pid_paths: list[Path] = []
     findings.append(_doctor_check_stale_pids(checks, workdir, stale_pid_paths=stale_pid_paths))
     findings.append(_doctor_check_guardrails(checks, workdir))
-    findings.append(_doctor_check_ci_tools(checks))
+    findings.append(_doctor_check_ci_tools(checks, workdir))
 
     def _check_fn(name: str, ok: bool, detail: str, fix: str = "", fix_id: str = "") -> None:
         _add_check(checks, name, ok, detail, fix, fix_id)

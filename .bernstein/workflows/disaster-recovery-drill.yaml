@@ -1,0 +1,69 @@
+# Isolated backup restore rehearsal, RTO/RPO measurement, always-run teardown, and integrity sign-off.
+name: disaster-recovery-drill
+version: "1.1.0"
+
+phases:
+  - name: prepare
+    allowed_roles: [devops, security]
+  - name: restore
+    allowed_roles: [devops, backend]
+  - name: verify
+    allowed_roles: [qa, security]
+  - name: teardown
+    allowed_roles: [security, devops]
+  - name: certify
+    allowed_roles: [docs, reviewer]
+
+nodes:
+  provision-isolated-target:
+    phase: prepare
+    role: devops
+    description: "Stand up network-isolated restore sandbox and record snapshot age"
+    estimated_minutes: 20
+
+  execute-runbook-restore:
+    phase: restore
+    role: devops
+    description: "Restore datastore and .sdd ledger from snapshot and measure RTO/RPO"
+    estimated_minutes: 35
+    depends_on:
+      - provision-isolated-target
+
+  verify-ledger-and-data-integrity:
+    phase: verify
+    role: qa
+    description: "Verify row checksums, HMAC audit chain continuity, and health probes"
+    estimated_minutes: 25
+    depends_on:
+      - execute-runbook-restore
+
+  cleanup-sandbox-on-failure:
+    phase: teardown
+    role: security
+    description: "Tear down partial or restored sandbox targets and purge temporary artifacts after provisioning, restore, or verification failure"
+    estimated_minutes: 15
+    depends_on:
+      - source: provision-isolated-target
+        condition: "status != 'done' and status != 'closed'"
+      - source: execute-runbook-restore
+        condition: "status != 'done' and status != 'closed'"
+      - source: verify-ledger-and-data-integrity
+        condition: "status != 'done' and status != 'closed'"
+
+  verify-sandbox-disposal:
+    phase: teardown
+    role: security
+    description: "Tear down temporary volumes and confirm zero leaked secrets after successful verification"
+    estimated_minutes: 15
+    depends_on:
+      - source: verify-ledger-and-data-integrity
+        condition: "status == 'done' or status == 'closed'"
+
+  emit-dr-receipt:
+    phase: certify
+    role: docs
+    description: "Write dated DR drill receipt with measured RTO/RPO, integrity evidence, and disposal sign-off"
+    estimated_minutes: 15
+    depends_on:
+      - source: verify-sandbox-disposal
+        condition: "status == 'done' or status == 'closed'"

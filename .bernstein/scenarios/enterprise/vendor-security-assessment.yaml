@@ -1,0 +1,41 @@
+id: vendor-security-assessment
+name: Vendor Security and Architecture Assessment
+version: "1.0"
+description: |
+  Evaluate an external vendor, SDK, or MCP server before production adoption:
+  network egress, credential scope, supply-chain provenance, and SOC 2 / ISO
+  control alignment.
+tags: [enterprise, security, procurement, vendor-risk, mcp]
+tasks:
+  - title: Map data egress, permissions, and credential storage
+    role: security
+    priority: 0
+    scope: medium
+    complexity: medium
+    description: |
+      Inspect outbound endpoints, required OAuth scopes or API keys, telemetry
+      defaults, and local filesystem reach.
+  - title: Verify release provenance, maintainers, and CVE history
+    role: analyst
+    priority: 1
+    scope: small
+    complexity: low
+    description: |
+      Check signed releases, SBOM availability, bus factor, and response cadence
+      on historical security advisories.
+  - title: Test sandboxed integration under least-privilege policy
+    role: devops
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Run the integration inside an egress-restricted sandbox and confirm it
+      fails closed when unauthorized hosts or paths are accessed.
+  - title: Write procurement verdict and containment rules
+    role: docs
+    priority: 2
+    scope: small
+    complexity: low
+    description: |
+      Record approve/reject conditions, pinned version constraints, and required
+      Bernstein policy rules for production use.

@@ -425,6 +425,18 @@ def _isolate_agent_card_keystore(
     _wk._reset_signing_keypair_for_tests(key_dir)
 
 
+@pytest.fixture(autouse=True)
+def _reset_agent_jwt_env_kms_cache() -> Iterator[None]:
+    """Keep the in-process env KMS adapter cache isolated between tests."""
+    from bernstein.core.identity import agent_jwt as _aj
+
+    _aj._reset_env_kms_adapter_cache_for_tests()
+    try:
+        yield
+    finally:
+        _aj._reset_env_kms_adapter_cache_for_tests()
+
+
 _NETWORK_POSTURE_ENV_VARS = (
     "BERNSTEIN_PROFILE_MODE",
     "BERNSTEIN_NETWORK_POLICY",

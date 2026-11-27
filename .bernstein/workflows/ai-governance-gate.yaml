@@ -1,0 +1,84 @@
+# OWASP Agentic threat model, eval repeatability, and ISO 42001 governance gate.
+name: ai-governance-gate
+version: "1.0.0"
+
+phases:
+  - name: inventory
+    allowed_roles: [analyst, architect, security]
+  - name: assess
+    allowed_roles: [security, adversary, qa]
+  - name: remediate
+  - name: verify
+    allowed_roles: [security, qa, reviewer]
+  - name: register
+    allowed_roles: [reviewer, docs]
+
+nodes:
+  catalog-agent-surface:
+    phase: inventory
+    role: analyst
+    description: "Inventory models, prompts, MCP tools, credentials, and human gates"
+    estimated_minutes: 20
+
+  assess-owasp-agentic-risks:
+    phase: assess
+    role: adversary
+    description: "Audit goal-hijack, tool-misuse, privilege, and memory-poisoning vectors"
+    estimated_minutes: 35
+    depends_on:
+      - catalog-agent-surface
+
+  verify-eval-repeatability:
+    phase: assess
+    role: qa
+    description: "Run held-out outcome evaluations and verify pass^k stability"
+    estimated_minutes: 30
+    depends_on:
+      - catalog-agent-surface
+
+  harden-guardrails:
+    phase: remediate
+    role: backend
+    description: "Enforce fail-closed tool schemas and approval gates on flagged paths"
+    estimated_minutes: 40
+    depends_on:
+      - assess-owasp-agentic-risks
+      - verify-eval-repeatability
+
+  security-signoff:
+    phase: verify
+    role: security
+    description: "Verify every high-severity risk has an enforced technical control"
+    estimated_minutes: 25
+    depends_on:
+      - harden-guardrails
+
+  rework-guardrails:
+    phase: remediate
+    role: backend
+    description: "Resolve remaining governance or guardrail gaps"
+    depends_on:
+      - source: security-signoff
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 2
+      until: "status == 'done'"
+
+  reverify-security-signoff:
+    phase: verify
+    role: security
+    description: "Re-verify enforced technical controls and guardrails after remediation"
+    estimated_minutes: 20
+    depends_on:
+      - rework-guardrails
+
+  publish-aims-record:
+    phase: register
+    role: docs
+    description: "Write signed ISO 42001 / EU AI Act AIMS register entry"
+    estimated_minutes: 20
+    depends_on:
+      - source: security-signoff
+        condition: "status == 'done'"
+      - source: reverify-security-signoff
+        condition: "status == 'done'"

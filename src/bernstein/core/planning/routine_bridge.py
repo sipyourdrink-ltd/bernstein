@@ -37,10 +37,10 @@ from bernstein.core.planning.scenario_library import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
-    from bernstein.core.planning.scenario_library import ScenarioLibrary
+    from bernstein.core.planning.scenario_library import ScenarioLibrary, ScenarioTaskTemplate
     from bernstein.core.tasks.artifacts import ArtifactSpec
 
 logger = logging.getLogger(__name__)
@@ -91,12 +91,15 @@ class ScenarioTaskPayload:
     scenario_id: str
     orchestration_id: str
     artifact_spec: ArtifactSpec
+    template_id: str = ""
+    depends_on_template_ids: tuple[str, ...] = ()
+    depends_on: tuple[str, ...] = ()
 
-    def as_server_payload(self) -> dict[str, Any]:
+    def as_server_payload(self, *, resolved_depends_on: Sequence[str] | None = None) -> dict[str, Any]:
         """Return a dict suitable for ``POST /tasks``."""
         from bernstein.core.tasks.artifacts import ArtifactSpec
 
-        payload = {
+        payload: dict[str, Any] = {
             "title": self.title,
             "description": self.description,
             "role": self.role,
@@ -108,6 +111,11 @@ class ScenarioTaskPayload:
                 "orchestration_id": self.orchestration_id,
             },
         }
+        if self.template_id:
+            payload["metadata"]["scenario_task_id"] = self.template_id
+        deps = tuple(resolved_depends_on) if resolved_depends_on is not None else self.depends_on
+        if deps:
+            payload["depends_on"] = list(deps)
         if self.artifact_spec and self.artifact_spec != ArtifactSpec():
             payload["artifact_spec"] = self.artifact_spec.to_dict()
         return payload
@@ -165,6 +173,39 @@ def _build_context_block(context: str, pr_number: int | None, branch: str | None
     return "\n".join(parts) + "\n"
 
 
+def _order_scenario_tasks(tasks: tuple[ScenarioTaskTemplate, ...]) -> list[ScenarioTaskTemplate]:
+    """Return scenario tasks in topological order, preserving declaration order on ties."""
+    if not any(task.depends_on for task in tasks):
+        return list(tasks)
+
+    id_to_idx: dict[str, int] = {task.id: idx for idx, task in enumerate(tasks) if task.id}
+    indegree: list[int] = [0] * len(tasks)
+    children: list[list[int]] = [[] for _ in tasks]
+    for idx, task in enumerate(tasks):
+        for dep in dict.fromkeys(task.depends_on):
+            parent_idx = id_to_idx.get(dep)
+            if parent_idx is None:
+                continue
+            children[parent_idx].append(idx)
+            indegree[idx] += 1
+
+    ready = [idx for idx, deg in enumerate(indegree) if deg == 0]
+    ordered_indices: list[int] = []
+    while ready:
+        ready.sort()
+        current = ready.pop(0)
+        ordered_indices.append(current)
+        for child_idx in children[current]:
+            indegree[child_idx] -= 1
+            if indegree[child_idx] == 0:
+                ready.append(child_idx)
+
+    if len(ordered_indices) != len(tasks):
+        # Fallback to declaration order if a caller constructed an unvalidated cyclic recipe in memory.
+        return list(tasks)
+    return [tasks[idx] for idx in ordered_indices]
+
+
 def build_task_payloads(
     scenario: ScenarioRecipe,
     *,
@@ -183,15 +224,16 @@ def build_task_payloads(
         orchestration_id: Reuse an id (for retries). Generated when omitted.
 
     Returns:
-        A list of payloads - one per scenario task template, in scenario
-        order. Empty when the scenario has no tasks.
+        A list of payloads - one per scenario task template, ordered so any
+        declared ``depends_on`` parent precedes its dependents. Empty when
+        the scenario has no tasks.
     """
     from bernstein.core.tasks.artifacts import ArtifactSpec
 
     orch_id = orchestration_id or f"scn-{uuid.uuid4().hex[:12]}"
     context_block = _build_context_block(context, pr_number, branch)
     out: list[ScenarioTaskPayload] = []
-    for tpl in scenario.tasks:
+    for tpl in _order_scenario_tasks(scenario.tasks):
         description = (tpl.description or tpl.title) + context_block
         out.append(
             ScenarioTaskPayload(
@@ -204,6 +246,8 @@ def build_task_payloads(
                 scenario_id=scenario.scenario_id,
                 orchestration_id=orch_id,
                 artifact_spec=tpl.artifact_spec if tpl.artifact_spec else ArtifactSpec(),
+                template_id=tpl.id,
+                depends_on_template_ids=tpl.depends_on,
             )
         )
     return out
@@ -212,9 +256,11 @@ def build_task_payloads(
 def estimate_minutes(scenario: ScenarioRecipe) -> int:
     """Conservative wall-clock estimate for a full scenario run.
 
-    Heuristic: scope and complexity each contribute base minutes, summed
-    across tasks; parallel execution divides the total by the number of
-    distinct roles (capped at four).
+    Heuristic: scope and complexity each contribute base minutes per task.
+    For unconstrained parallel scenarios, total effort is divided by the number
+    of distinct roles (capped at four). When any task declares ``depends_on``,
+    the estimate respects the dependency DAG critical path so sequential chains
+    are not discounted as if they ran in parallel.
 
     Args:
         scenario: Source scenario.
@@ -231,7 +277,20 @@ def estimate_minutes(scenario: ScenarioRecipe) -> int:
         total += scope_min.get(t.scope, 25) + complexity_min.get(t.complexity, 15)
     distinct_roles = len({t.role for t in scenario.tasks}) or 1
     parallel_factor = min(distinct_roles, 4)
-    return max(5, total // parallel_factor)
+    parallel_bound = total // parallel_factor
+    if not any(t.depends_on for t in scenario.tasks):
+        return max(5, parallel_bound)
+
+    earliest_finish: dict[str, int] = {}
+    critical_path = 0
+    for t in _order_scenario_tasks(scenario.tasks):
+        task_duration = scope_min.get(t.scope, 25) + complexity_min.get(t.complexity, 15)
+        parent_finish = max((earliest_finish.get(dep, 0) for dep in t.depends_on), default=0)
+        finish = parent_finish + task_duration
+        if t.id:
+            earliest_finish[t.id] = finish
+        critical_path = max(critical_path, finish)
+    return max(5, critical_path, parallel_bound)
 
 
 @dataclass
@@ -477,9 +536,21 @@ def spawn_scenario_tasks(
         msg = "poster must be callable"
         raise TypeError(msg)
     task_ids: list[str] = []
+    spawned_by_template_id: dict[str, str] = {}
     for payload in payloads:
+        resolved_deps: list[str] | None = None
+        if payload.depends_on_template_ids:
+            missing = [dep for dep in payload.depends_on_template_ids if dep not in spawned_by_template_id]
+            if missing:
+                logger.warning(
+                    "Skipping scenario task %s because upstream template dependencies failed to spawn: %s",
+                    payload.title,
+                    ", ".join(missing),
+                )
+                continue
+            resolved_deps = [spawned_by_template_id[dep] for dep in payload.depends_on_template_ids]
         try:
-            result = poster("/tasks", payload.as_server_payload())
+            result = poster("/tasks", payload.as_server_payload(resolved_depends_on=resolved_deps))
         except Exception:
             logger.exception("Failed to POST scenario task %s", payload.title)
             continue
@@ -490,4 +561,6 @@ def spawn_scenario_tasks(
         task_id = str(result_dict.get("id", "")).strip()
         if task_id:
             task_ids.append(task_id)
+            if payload.template_id:
+                spawned_by_template_id[payload.template_id] = task_id
     return task_ids

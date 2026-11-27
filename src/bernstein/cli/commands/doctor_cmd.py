@@ -245,14 +245,21 @@ def build_version_posture_receipt(entries: list[dict[str, Any]], *, generated_at
     }
 
 
-def emit_version_posture_receipt(workdir: Path, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """Seal the version posture into a receipt and anchor it in the chain (#2515).
+def emit_version_posture_receipt(
+    workdir: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    anchor: bool = True,
+) -> dict[str, Any]:
+    """Seal the version posture into a receipt and optionally anchor it (#2515).
 
     The console version-posture rows become a projection of this receipt:
     "only floor-satisfying binaries were spawnable in this environment during
     window X" is provable offline from a contiguous chain slice, not merely a
     console print an operator may never run. Best-effort anchoring: a doctor
-    run must never fail because the audit chain could not be written.
+    run must never fail because the audit chain could not be written. Pass
+    ``anchor=False`` for read-only inspection (e.g. ``bernstein doctor``) so
+    uninitialized directories are never mutated.
 
     Returns:
         ``{"receipt": <dict>, "receipt_sha256": <hex>, "entries": [...],
@@ -266,22 +273,23 @@ def emit_version_posture_receipt(workdir: Path, *, env: Mapping[str, str] | None
     receipt = build_version_posture_receipt(entries, generated_at=datetime.now(UTC).isoformat())
     sha = receipt_sha256(receipt)
     anchored = False
-    try:
-        from bernstein.core.security.audit_chain import (
-            AuditChainStore,
-            record_adapter_version_posture_receipt,
-        )
+    if anchor:
+        try:
+            from bernstein.core.security.audit_chain import (
+                AuditChainStore,
+                record_adapter_version_posture_receipt,
+            )
 
-        chain = AuditChainStore(workdir / ".sdd" / "audit")
-        record_adapter_version_posture_receipt(
-            chain=chain,
-            receipt_sha256=sha,
-            floor_map_hash=receipt["floor_map_hash"],
-            entries=entries,
-        )
-        anchored = True
-    except Exception as exc:  # audit write must never break the doctor run
-        logger.warning("Could not anchor adapter.version_posture receipt: %s", type(exc).__name__)
+            chain = AuditChainStore(workdir / ".sdd" / "audit")
+            record_adapter_version_posture_receipt(
+                chain=chain,
+                receipt_sha256=sha,
+                floor_map_hash=receipt["floor_map_hash"],
+                entries=entries,
+            )
+            anchored = True
+        except Exception as exc:  # audit write must never break the doctor run
+            logger.warning("Could not anchor adapter.version_posture receipt: %s", type(exc).__name__)
     return {"receipt": receipt, "receipt_sha256": sha, "entries": entries, "anchored": anchored}
 
 
@@ -754,12 +762,19 @@ def check_schedule_supervisor() -> dict[str, Any]:
             "detail": "no .sdd workspace",
             "fix": "Run 'bernstein init' first",
         }
+    if not (sdd_dir / "runtime" / "schedules").is_dir():
+        return {
+            "name": "Schedule supervisor",
+            "status": _CHECK_PASS,
+            "detail": "no schedules registered",
+            "fix": "",
+        }
     try:
         from bernstein.core.orchestration.schedule_supervisor import ScheduleSupervisor
         from bernstein.core.planning.schedule_store import ScheduleStore
 
-        store = ScheduleStore(sdd_dir)
-        supervisor = ScheduleSupervisor(store, lambda _e: None, None)
+        store = ScheduleStore(sdd_dir, create=False)
+        supervisor = ScheduleSupervisor(store, lambda _e: None, None, create_dirs=False)
         status = supervisor.status()
     except Exception as exc:  # pragma: no cover - defensive
         return {
@@ -950,7 +965,7 @@ def check_audit_anchoring(workdir: Path | None = None) -> dict[str, Any]:
         "Anchor the newest checkpoint: bernstein audit anchor --print-request, "
         "then bernstein audit anchor --rfc3161-token <tsa response>"
     )
-    if not audit_dir.is_dir():
+    if not audit_dir.is_dir() or (not any(audit_dir.glob("*.jsonl*")) and not (audit_dir / "checkpoints").exists()):
         return {"name": name, "status": _CHECK_PASS, "detail": "no audit log yet", "fix": ""}
 
     state = anchoring_state(audit_dir)

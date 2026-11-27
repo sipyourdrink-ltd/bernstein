@@ -1,0 +1,54 @@
+# Supply-chain, permission, and prompt-injection vetting for MCP servers & plugins.
+name: mcp-plugin-onboarding
+version: "1.0.0"
+
+phases:
+  - name: inventory
+    allowed_roles: [analyst, security]
+  - name: audit
+    allowed_roles: [security, adversary]
+  - name: sandbox
+    allowed_roles: [devops, qa]
+  - name: verdict
+    allowed_roles: [reviewer, docs]
+
+nodes:
+  pin-artifact-and-permissions:
+    phase: inventory
+    role: analyst
+    description: "Pin commit/wheel SHA-256, license, env vars, and declared tool schemas"
+    estimated_minutes: 20
+
+  static-security-audit:
+    phase: audit
+    role: security
+    description: "Inspect subprocess, filesystem, and outbound network calls"
+    estimated_minutes: 30
+    depends_on:
+      - pin-artifact-and-permissions
+
+  adversarial-injection-probe:
+    phase: audit
+    role: adversary
+    description: "Test indirect prompt injection via crafted MCP tool responses"
+    estimated_minutes: 30
+    depends_on:
+      - pin-artifact-and-permissions
+
+  sandbox-containment-test:
+    phase: sandbox
+    role: qa
+    description: "Verify plugin runs under egress/path restrictions and fails closed"
+    estimated_minutes: 25
+    depends_on:
+      - static-security-audit
+      - adversarial-injection-probe
+
+  record-onboarding-verdict:
+    phase: verdict
+    role: reviewer
+    description: "Approve or reject with pinned digest and required policy rules"
+    estimated_minutes: 15
+    depends_on:
+      - source: sandbox-containment-test
+        condition: "status == 'done'"

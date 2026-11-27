@@ -1,0 +1,58 @@
+# Built-in team manifest for full-stack web + API delivery.
+#
+# Pairs architect, backend, frontend, qa, and security under review-chain
+# coordination. Verify with `bernstein team show fullstack`.
+
+name = "fullstack"
+version = "1.0.0"
+
+[coordination]
+parallelism = 4
+review_chain = true
+
+[[roles]]
+response_profile = "balanced"
+role = "architect"
+
+[roles.model_policy]
+effort = "high"
+model = "opus"
+
+[[roles]]
+response_profile = "balanced"
+role = "backend"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[[roles]]
+response_profile = "balanced"
+role = "frontend"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[[roles]]
+response_profile = "terse"
+role = "qa"
+
+[roles.model_policy]
+effort = "high"
+model = "sonnet"
+
+[[roles]]
+response_profile = "balanced"
+role = "security"
+
+[roles.model_policy]
+effort = "max"
+model = "opus"
+
+[role_template_digests]
+"architect" = "a584e03f3995da9fd985f7919e6bc0c8b25aa97a2fae91de66366f768518df08"
+"backend" = "f65d22622b5c27ecb252deebeaea527f5c62035ee5a8d24ee86967cbb7bc6ce7"
+"frontend" = "26a3b803645ed11a1605f9b547e06ecbebe54295ea979ac25756938220285e7e"
+"qa" = "22deacee87d27ccfab1f526c2954bfed807a32437c7a1dd61c34b947de682bc7"
+"security" = "0c56312e6096b44050aec3c7046d45b55663660db7592679a729030fe0aca463"

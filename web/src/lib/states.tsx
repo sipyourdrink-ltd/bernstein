@@ -9,12 +9,20 @@ type Action = { label: string; onClick: MouseEventHandler<HTMLButtonElement>; va
 interface EmptyStateProps {
   title: string;
   description?: string;
+  children?: ReactNode;
   action?: Action;
   icon?: ReactNode;
   className?: string;
 }
 
-export function EmptyState({ title, description, action, icon, className }: EmptyStateProps) {
+export function EmptyState({
+  title,
+  description,
+  children,
+  action,
+  icon,
+  className,
+}: EmptyStateProps) {
   return (
     <div
       className={cn(
@@ -27,6 +35,7 @@ export function EmptyState({ title, description, action, icon, className }: Empt
       {description && (
         <p className="max-w-md text-body text-muted-foreground">{description}</p>
       )}
+      {children}
       {action && (
         <button
           type="button"
