@@ -1,12 +1,13 @@
 """Per-IDE ACP session state.
 
-Each ACP ``prompt`` opens a Bernstein task; the session id returned to
-the IDE is the same string the orchestrator uses to address that task in
-the existing task store.  We keep auxiliary state (mode, working dir,
-pending permission prompts, registered stream subscribers) in a small
-in-process store so handlers can answer ``setMode`` and route
-``requestPermission`` round-trips without reaching into the task store
-internals.
+In ACP v1, ``session/new`` allocates a persistent session that spans
+multiple ``session/prompt`` turns and survives ``session/cancel``
+notifications.  In the legacy ``"2025-04-01"`` dialect, ``prompt``
+allocates a one-shot session keyed by the Bernstein task id.
+
+Both dialects share :class:`ACPSession` and :class:`ACPSessionStore` so
+``bernstein status --json`` continues to surface live ACP sessions with
+``source="acp"``.
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from bernstein.core.protocols.acp.schema import VALID_MODES
+from bernstein.core.protocols.acp.schema import ACP_PROTOCOL_VERSION, VALID_MODES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class _PermissionWaiter:
-    """Internal wrapper holding an asyncio.Event for permission round-trips."""
+    """Internal wrapper holding an asyncio.Event for legacy permission round-trips."""
 
     prompt_id: str
     tool_name: str
@@ -40,16 +41,20 @@ class ACPSession:
     """A live ACP session.
 
     Attributes:
-        session_id: Bernstein task id (and ACP session id) - the same
-            string is returned by the task server for ``GET /tasks/{id}``.
-        cwd: Working directory the editor reported in ``initialize`` /
-            ``prompt``.
-        mode: Either ``"auto"`` (always-allow on, janitor approval gate
-            bypassed) or ``"manual"`` (interactive approval gate on).
+        session_id: Unique session identifier (task id in legacy mode,
+            persistent session id in ACP v1).
+        cwd: Working directory reported by the client.
+        mode: Either ``"auto"`` (approval gate bypassed) or ``"manual"``
+            (interactive approval gate enabled).
         role: Optional Bernstein role hint forwarded to the task store.
         created_at: Unix timestamp.
         last_activity: Unix timestamp of the most recent inbound message.
         source: Always ``"acp"`` - surfaced via ``bernstein status --json``.
+        mcp_servers: MCP server descriptors passed in ``session/new``.
+        additional_directories: Additional absolute workspace roots.
+        system_prompt: Optional session-level system prompt override.
+        protocol_version: Negotiated protocol version for this session.
+        turn_count: Number of ``session/prompt`` turns executed on this session.
     """
 
     session_id: str
@@ -59,7 +64,13 @@ class ACPSession:
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
     source: str = "acp"
+    mcp_servers: tuple[dict[str, Any], ...] = ()
+    additional_directories: tuple[str, ...] = ()
+    system_prompt: str | dict[str, Any] | None = None
+    protocol_version: int | str = ACP_PROTOCOL_VERSION
+    turn_count: int = 0
     _waiters: dict[str, _PermissionWaiter] = field(default_factory=dict[str, _PermissionWaiter])
+    _active_cancel_event: asyncio.Event | None = field(default=None, init=False, repr=False)
 
     def touch(self) -> None:
         """Update :attr:`last_activity` to ``time.time()``."""
@@ -79,20 +90,44 @@ class ACPSession:
         self.mode = new_mode
         self.touch()
 
-    def open_permission_waiter(self, tool_name: str, detail: str) -> _PermissionWaiter:
-        """Create a pending permission round-trip and return its waiter.
+    @property
+    def has_active_turn(self) -> bool:
+        """Return ``True`` while a blocking ``session/prompt`` turn is running."""
+        return self._active_cancel_event is not None
 
-        The session stores the waiter so the inbound ``requestPermission``
-        response (with ``decision``) can resolve the corresponding
-        :class:`asyncio.Event`.
+    @property
+    def active_cancel_event(self) -> asyncio.Event | None:
+        """Return the active turn's cancel event, or ``None`` when idle."""
+        return self._active_cancel_event
 
-        Args:
-            tool_name: Name of the tool the agent wants to call.
-            detail: Human-readable description for the IDE prompt.
+    def begin_turn(self) -> asyncio.Event:
+        """Mark a ``session/prompt`` turn active and return its cancel event."""
+        cancel_event = asyncio.Event()
+        self._active_cancel_event = cancel_event
+        self.turn_count += 1
+        self.touch()
+        return cancel_event
 
-        Returns:
-            The :class:`_PermissionWaiter` instance.
+    def request_cancel(self) -> bool:
+        """Signal cancellation for the active prompt turn, if any.
+
+        Returns ``True`` when an active turn was signalled, ``False`` when
+        the session was idle.  Unlike legacy ``cancel``, this keeps the
+        session alive for future turns.
         """
+        self.touch()
+        if self._active_cancel_event is not None:
+            self._active_cancel_event.set()
+            return True
+        return False
+
+    def end_turn(self) -> None:
+        """Clear active turn bookkeeping when ``session/prompt`` resolves."""
+        self._active_cancel_event = None
+        self.touch()
+
+    def open_permission_waiter(self, tool_name: str, detail: str) -> _PermissionWaiter:
+        """Create a pending legacy permission round-trip and return its waiter."""
         prompt_id = uuid.uuid4().hex
         waiter = _PermissionWaiter(
             prompt_id=prompt_id,
@@ -104,16 +139,7 @@ class ACPSession:
         return waiter
 
     def resolve_permission(self, prompt_id: str, decision: str) -> bool:
-        """Resolve an open permission waiter with the IDE's decision.
-
-        Args:
-            prompt_id: The id returned by :meth:`open_permission_waiter`.
-            decision: ``"approved"`` or ``"rejected"``.
-
-        Returns:
-            ``True`` if a waiter was resolved, ``False`` if no matching
-            waiter existed.
-        """
+        """Resolve an open legacy permission waiter with the IDE's decision."""
         waiter = self._waiters.get(prompt_id)
         if waiter is None:
             return False
@@ -122,36 +148,19 @@ class ACPSession:
         return True
 
     def discard_waiter(self, prompt_id: str) -> None:
-        """Remove a waiter once it has been consumed.
-
-        Args:
-            prompt_id: The id returned by :meth:`open_permission_waiter`.
-        """
+        """Remove a legacy waiter once it has been consumed."""
         self._waiters.pop(prompt_id, None)
 
 
 class ACPSessionStore:
-    """Thread-safe registry of live :class:`ACPSession` instances.
-
-    ACP sessions are created by ``prompt`` handlers and torn down by
-    ``cancel`` or transport disconnect.  The store exposes ``snapshot``
-    so ``bernstein status`` can surface ACP-initiated sessions alongside
-    CLI sessions with ``source="acp"``.
-    """
+    """Thread-safe registry of live :class:`ACPSession` instances."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, ACPSession] = {}
         self._lock = asyncio.Lock()
 
     async def add(self, session: ACPSession) -> None:
-        """Register *session*.
-
-        Args:
-            session: A new :class:`ACPSession`.
-
-        Raises:
-            ValueError: If a session with the same id already exists.
-        """
+        """Register *session*."""
         async with self._lock:
             if session.session_id in self._sessions:
                 raise ValueError(f"session {session.session_id!r} already registered")
@@ -173,18 +182,7 @@ class ACPSessionStore:
             return len(self._sessions)
 
     def snapshot(self) -> list[dict[str, str | float]]:
-        """Return a synchronous, JSON-serialisable snapshot.
-
-        Used by ``bernstein status --json`` so the read path does not
-        need to enter the async lock.
-
-        Returns:
-            One dict per session containing ``session_id``, ``mode``,
-            ``role``, ``cwd``, ``source``, ``created_at``, and
-            ``last_activity``.
-        """
-        # Copy under no lock - snapshot tolerates a torn read because the
-        # caller only consumes immutable strings/floats.
+        """Return a synchronous, JSON-serialisable snapshot."""
         return [
             {
                 "session_id": session.session_id,

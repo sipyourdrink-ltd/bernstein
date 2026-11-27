@@ -30,7 +30,9 @@ from typing import Any
 from bernstein.core.protocols.acp.handlers import (
     ACPHandlerRegistry,
     AuditEmitter,
+    AuthHandler,
     PromptResult,
+    PromptRunner,
     StreamPublisher,
     TaskCanceller,
     TaskCreator,
@@ -227,6 +229,9 @@ def build_default_server(
     task_creator: TaskCreator | None = None,
     task_canceller: TaskCanceller | None = None,
     stream_publisher: StreamPublisher | None = None,
+    prompt_runner: PromptRunner | None = None,
+    auth_handler: AuthHandler | None = None,
+    require_auth: bool = False,
 ) -> ACPServer:
     """Build an :class:`ACPServer` with sensible defaults.
 
@@ -270,6 +275,9 @@ def build_default_server(
         sandbox_backends=tuple(d.name for d in sandbox_backends if d.available),
         task_creator=task_creator,
         task_canceller=task_canceller,
+        prompt_runner=prompt_runner,
+        auth_handler=auth_handler,
+        require_auth=require_auth,
     )
     if audit_emitter is not None:
         registry.audit_emitter = audit_emitter

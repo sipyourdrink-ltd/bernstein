@@ -73,7 +73,10 @@ from bernstein.core.protocols.acp.client import (  # noqa: E402 - legacy shim ru
 from bernstein.core.protocols.acp.handlers import (  # noqa: E402 - legacy shim runs first
     ACPHandlerRegistry,
     ACPRequestContext,
+    AuthHandler,
+    ClientRequester,
     PromptResult,
+    PromptRunner,
     SessionMode,
 )
 from bernstein.core.protocols.acp.metrics import (  # noqa: E402
@@ -82,7 +85,13 @@ from bernstein.core.protocols.acp.metrics import (  # noqa: E402
     record_acp_message,
 )
 from bernstein.core.protocols.acp.schema import (  # noqa: E402
+    ACP_LEGACY_PROTOCOL_VERSION,
+    ACP_PROTOCOL_VERSION,
+    AUTH_REQUIRED,
+    REQUEST_CANCELLED,
+    RESOURCE_NOT_FOUND,
     ACPSchemaError,
+    make_request,
     validate_request,
     validate_response,
 )
@@ -105,6 +114,11 @@ from bernstein.core.protocols.acp.transport import (  # noqa: E402
 
 __all__ = [
     "ACP_EVENT_TYPE",
+    "ACP_LEGACY_PROTOCOL_VERSION",
+    "ACP_PROTOCOL_VERSION",
+    "AUTH_REQUIRED",
+    "REQUEST_CANCELLED",
+    "RESOURCE_NOT_FOUND",
     "ACPEvent",
     "ACPEventJournalSink",
     "ACPHandler",
@@ -119,9 +133,12 @@ __all__ = [
     "AcpDivergence",
     "AcpLifecycleResult",
     "AdapterDescriptor",
+    "AuthHandler",
+    "ClientRequester",
     "HttpAcpTransport",
     "JsonRpcFraming",
     "PromptResult",
+    "PromptRunner",
     "SandboxBackendDescriptor",
     "ServerCapabilities",
     "SessionMode",
@@ -134,6 +151,7 @@ __all__ = [
     "drive_acp_lifecycle",
     "frame_content_hash",
     "is_terminal_frame",
+    "make_request",
     "parse_inbound_frame",
     "record_acp_message",
     "replay_acp_content_hashes",
