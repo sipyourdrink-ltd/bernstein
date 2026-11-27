@@ -16,9 +16,11 @@ standalone runner, and session updates) is published to PyPI.
    uv run pytest tests/integration/acp/test_acp_v1_conformance.py tests/integration/acp/test_acp_v1_sdk.py
    ```
 
-2. Update `version` and `distribution.uvx.package` in
-   `packaging/acp-registry/bernstein/agent.json` to match the published PyPI
-   release version.
+2. Confirm `version` and `distribution.uvx.package` in
+   `packaging/acp-registry/bernstein/agent.json` match the published PyPI
+   release version (`scripts/bump_version.py` and
+   `scripts/gen_distribution_manifests.py` keep them synchronized with
+   `pyproject.toml`).
 
 3. Open a pull request against `agentclientprotocol/registry` copying
    `bernstein/agent.json` and `bernstein/icon.svg` to the top-level

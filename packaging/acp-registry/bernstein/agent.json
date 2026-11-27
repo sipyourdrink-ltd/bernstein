@@ -5,13 +5,19 @@
   "description": "Open-source governance layer for AI coding agents with per-task git worktrees, deterministic replay, and signed lineage.",
   "repository": "https://github.com/sipyourdrink-ltd/bernstein",
   "website": "https://bernstein.run",
-  "authors": ["Alex Chernysh"],
+  "authors": [
+    "Alex Chernysh"
+  ],
   "license": "Apache-2.0",
   "license_url": "https://github.com/sipyourdrink-ltd/bernstein/blob/main/LICENSE",
   "distribution": {
     "uvx": {
       "package": "bernstein==4.0.2",
-      "args": ["acp", "serve", "--stdio"]
+      "args": [
+        "acp",
+        "serve",
+        "--stdio"
+      ]
     }
   }
 }

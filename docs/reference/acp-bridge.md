@@ -4,9 +4,12 @@ Bernstein speaks the [Agent Client Protocol](https://agentclientprotocol.org)
 (**ACP v1**, `protocolVersion: 1`) over JSON-RPC 2.0 so editors with ACP
 support can drive Bernstein directly over stdio or HTTP/SSE.
 
-Cost-aware routing, HMAC audit logging, and sandbox-backend selection apply to
-ACP-initiated sessions alongside CLI-initiated sessions. Existing clients using
-the legacy `"2025-04-01"` dialect remain supported on the same transport.
+Existing clients using the legacy `"2025-04-01"` dialect remain supported on
+the same transport. Tasks dispatched by the bridge to the Bernstein task server
+(`--server-url`) reuse the server's routing and sandbox-backend configuration;
+see [Audit](#audit) and
+[Planned in follow-up runner integration](#planned-in-follow-up-runner-integration-pr-2-placeholders)
+for what is active on `bernstein acp serve` today versus tracked for PR 2.
 
 > **Legacy REST surface:** The FastAPI endpoints in
 > `src/bernstein/core/routes/acp.py` (`GET /.well-known/acp.json`,
@@ -68,10 +71,10 @@ handshake first; pre-initialization requests return JSON-RPC error `-32600`
 | `authenticate` | client -> server | validates `methodId` against advertised `authMethods` (`-32602` on unknown method) and delegates to the configured `auth_handler`, failing closed with `-32000` when no `auth_handler` is configured or authentication fails. |
 | `session/new` | client -> server | requires an absolute `cwd` and `mcpServers` list; returns `{sessionId, modes}` with `manual` (default) and `auto` modes. |
 | `session/set_mode` | client -> server | switches the session approval mode between `manual` and `auto`; returns `-32002` for unknown session or `-32602` for invalid mode. |
-| `session/prompt` | client -> server | blocking multi-turn request accepting ACP v1 `ContentBlock` arrays (`text`, `resource_link`, `resource`); streams `session/update` notifications while running and resolves with `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). |
+| `session/prompt` | client -> server | blocking multi-turn request accepting ACP v1 `ContentBlock` arrays (`text`, `resource_link`, `resource`) and resolving with `{stopReason}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). On the default `bernstein acp serve` CLI (PR 1), `_default_prompt_runner` forwards the prompt to `--server-url` (`POST /tasks`) and returns `end_turn` or `cancelled` without streaming `session/update`; embedded execution and live streaming are pending PR 2. |
 | `session/cancel` | client -> server (notification) | notification-only (no `id`, no reply frame); signals cancellation for the active turn while keeping the session alive for subsequent turns. |
-| `session/update` | server -> client (notification) | delivers turn updates (message chunks, tool-call updates, plan updates, mode updates). |
-| `session/request_permission` | server -> client (request) | bidirectional multiplexed request from agent to client; resolves with `{outcome: {outcome: "selected", optionId}}` or `{outcome: {outcome: "cancelled"}}`. |
+| `session/update` | server -> client (notification) | transport-level outbound notification primitive for turn updates (message chunks, tool-call updates, plan updates, mode updates); live `EventJournal` emission from the default CLI is pending PR 2. |
+| `session/request_permission` | server -> client (request) | transport-level bidirectional multiplexed request from agent to client (resolving with `{outcome: {outcome: "selected", optionId}}` or `{outcome: {outcome: "cancelled"}}`); live janitor approval-gate wiring on the default CLI is pending PR 2. |
 
 ## Legacy `"2025-04-01"` dialect compatibility
 
@@ -131,10 +134,16 @@ task server's `/metrics` endpoint scrapes them automatically.
 
 ## Audit
 
-Every ACP-driven mutation produces an HMAC-chained audit entry that is
-byte-identical (modulo timestamp + chain HMAC) to the entry the CLI
-surface emits for the same operation. See
+When an `AuditLog` emitter is injected into
+`build_default_server(audit_emitter=...)`, ACP-driven mutations produce
+HMAC-chained audit entries that are byte-identical (modulo timestamp + chain
+HMAC) to the entries the CLI surface emits for the same operation. See
 `tests/integration/acp/test_audit_parity.py` for the parity guard.
+
+When `bernstein acp serve` runs with `audit_emitter=None` (the current default
+in `src/bernstein/cli/commands/acp_cmd.py`), bridge audit events fall back to
+standard Python `logging` on `stderr` until PR 2 wires CLI `AuditLog`
+persistence.
 
 ## Out of scope
 

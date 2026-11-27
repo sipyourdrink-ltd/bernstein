@@ -5,15 +5,17 @@ Mirrors the upstream ``agentclientprotocol/registry`` CI verification surface:
 1. Raw JSON-RPC ``run_auth_check`` handshake against ``bernstein acp serve --stdio``
    sending the registry validator's exact ``initialize`` payload (including
    ``clientCapabilities._meta["terminal-auth"] = true``) and asserting a valid
-   ``protocolVersion: 1`` response with at least one ``agent`` or ``terminal``
-   auth method.
+   ``protocolVersion: 1`` response. On PR 1's default CLI ``authMethods`` is
+   ``[]`` until PR 2 wires ``--setup`` (if any methods are advertised they are
+   validated); configured terminal-auth conformance and empty/invalid
+   ``authMethods`` rejection are covered by dedicated tests below.
 2. Strict stdout purity: every single line emitted on ``stdout`` by
    ``bernstein acp serve --stdio`` across a multi-frame session must be a valid
    JSON-RPC 2.0 envelope, with zero banners, log lines, or illegal notification
    replies.
 3. Prepared ACP registry assets (``packaging/acp-registry/bernstein/agent.json``
    and ``icon.svg``) satisfy the upstream manifest and 16x16 monochrome SVG
-   validation rules.
+   validation rules (including ``<style>`` blocks and strict allowed color set).
 4. The ``agent-client-protocol`` SDK is installed in the dev test environment so
    ``test_acp_v1_sdk.py`` runs rather than skipping silently.
 """
@@ -29,7 +31,7 @@ import sys
 import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -44,7 +46,9 @@ AGENT_JSON_PATH = REGISTRY_DIR / "agent.json"
 ICON_SVG_PATH = REGISTRY_DIR / "icon.svg"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
-_ALLOWED_SVG_COLORS = frozenset({"none", "currentcolor", "inherit", "transparent"})
+_ALLOWED_SVG_COLORS = frozenset({"none", "currentcolor", "inherit"})
+_STYLE_COLOR_RE = re.compile(r"(?:^|[;{\s])(fill|stroke)\s*:\s*([^;}\n]+)", re.IGNORECASE)
+_IMPORTANT_RE = re.compile(r"\s*!important\s*$", re.IGNORECASE)
 _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
@@ -105,10 +109,11 @@ def _parse_pure_jsonrpc_stdout(raw_stdout: bytes) -> list[dict[str, Any]]:
         assert line.strip(), f"stdout line {lineno} is blank (breaks strict JSONL framing)"
         assert "\x1b" not in line, f"stdout line {lineno} contains ANSI escape bytes: {line!r}"
         try:
-            frame = json.loads(line)
+            raw_frame: object = json.loads(line)
         except json.JSONDecodeError as exc:
             raise AssertionError(f"stdout line {lineno} is not valid JSON ({exc}): {line!r}") from exc
-        assert isinstance(frame, dict), f"stdout line {lineno} is not a JSON object: {frame!r}"
+        assert isinstance(raw_frame, dict), f"stdout line {lineno} is not a JSON object: {raw_frame!r}"
+        frame = cast("dict[str, Any]", raw_frame)
         assert frame.get("jsonrpc") == "2.0", f"stdout line {lineno} missing jsonrpc='2.0': {frame!r}"
         has_method = "method" in frame
         has_result = "result" in frame
@@ -170,8 +175,9 @@ def test_registry_run_auth_check_mirror() -> None:
     assert result["agentInfo"]["name"] == "bernstein"
     assert result["agentInfo"]["version"]
 
-    raw_methods = result.get("authMethods", [])
-    assert isinstance(raw_methods, list)
+    raw_methods_obj: object = result.get("authMethods", [])
+    assert isinstance(raw_methods_obj, list)
+    raw_methods = cast("list[dict[str, Any]]", raw_methods_obj)
     # PR 2 placeholder: once PR 2 adds the real terminal-auth setup target,
     # require raw_methods to be non-empty on the default CLI too. Until then,
     # PR 1 intentionally advertises no nonexistent --setup target; if any
@@ -196,9 +202,9 @@ def test_registry_run_auth_check_accepts_configured_terminal_auth() -> None:
                 super().__init__()
                 self._closed = False
 
-            def write(self, data: bytes) -> None:
+            def write(self, data: bytes | bytearray | memoryview[Any]) -> None:
                 if not self._closed:
-                    capture.feed_data(data)
+                    capture.feed_data(bytes(data))
 
             def close(self) -> None:
                 if not self._closed:
@@ -270,7 +276,7 @@ def test_stdio_stdout_purity_across_v1_session(tmp_path: Path) -> None:
             "clientInfo": {"name": "purity-check", "version": "1.0.0"},
         },
     }
-    new_sess_req = {
+    new_sess_req: dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": 2,
         "method": "session/new",
@@ -313,27 +319,28 @@ def test_stdout_purity_parser_rejects_non_jsonrpc_noise() -> None:
 
 def test_acp_sdk_dev_dependency_is_installed() -> None:
     """``agent-client-protocol>=1.1`` is declared in dev deps and importable."""
-    import acp
+    from acp import PROTOCOL_VERSION
 
-    assert acp.PROTOCOL_VERSION == 1
+    assert PROTOCOL_VERSION == 1
 
 
 def test_registry_agent_json_matches_upstream_schema() -> None:
     """Prepared ``packaging/acp-registry/bernstein/agent.json`` satisfies registry schema."""
     assert AGENT_JSON_PATH.is_file(), f"missing registry manifest: {AGENT_JSON_PATH}"
-    manifest = json.loads(AGENT_JSON_PATH.read_text(encoding="utf-8"))
-    assert isinstance(manifest, dict)
+    raw_manifest: object = json.loads(AGENT_JSON_PATH.read_text(encoding="utf-8"))
+    assert isinstance(raw_manifest, dict)
+    manifest = cast("dict[str, Any]", raw_manifest)
 
     pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    pkg_version = pyproject["project"]["version"]
+    pkg_version = str(pyproject["project"]["version"])
 
     for required_key in ("id", "name", "version", "description", "license_url", "distribution"):
         assert required_key in manifest, f"missing required key {required_key!r}"
 
     assert manifest["id"] == "bernstein"
-    assert _ID_RE.fullmatch(manifest["id"])
+    assert isinstance(manifest["id"], str) and _ID_RE.fullmatch(manifest["id"])
     assert isinstance(manifest["name"], str) and manifest["name"]
-    assert _SEMVER_RE.fullmatch(manifest["version"])
+    assert isinstance(manifest["version"], str) and _SEMVER_RE.fullmatch(manifest["version"])
     assert manifest["version"] == pkg_version
     assert isinstance(manifest["description"], str) and manifest["description"]
     assert manifest.get("license") == "Apache-2.0"
@@ -341,30 +348,43 @@ def test_registry_agent_json_matches_upstream_schema() -> None:
     # Upstream build_registry.py populates ``icon`` from ``icon.svg`` automatically.
     assert "icon" not in manifest
 
-    dist = manifest["distribution"]
-    assert isinstance(dist, dict) and set(dist.keys()) <= {"binary", "npx", "uvx"}
+    raw_dist: object = manifest["distribution"]
+    assert isinstance(raw_dist, dict)
+    dist = cast("dict[str, Any]", raw_dist)
+    assert set(dist.keys()) <= {"binary", "npx", "uvx"}
     assert "uvx" in dist
-    uvx = dist["uvx"]
+    raw_uvx: object = dist["uvx"]
+    assert isinstance(raw_uvx, dict)
+    uvx = cast("dict[str, Any]", raw_uvx)
     assert set(uvx.keys()) <= {"package", "args", "env"}
     assert uvx["package"] == f"bernstein=={pkg_version}"
     assert uvx["args"] == ["acp", "serve", "--stdio"]
 
 
-def test_registry_icon_svg_is_16x16_square_monochrome_without_comments() -> None:
-    """Prepared ``packaging/acp-registry/bernstein/icon.svg`` satisfies registry icon rules."""
-    assert ICON_SVG_PATH.is_file(), f"missing registry icon: {ICON_SVG_PATH}"
-    content = ICON_SVG_PATH.read_text(encoding="utf-8")
-    assert "<!--" not in content, "icon.svg must not contain HTML/XML comments"
+def _validate_icon_svg(content: str) -> list[str]:
+    """Mirror ``agentclientprotocol/registry/.github/workflows/build_registry.py`` SVG checks."""
+    errors: list[str] = []
+    if "<!--" in content:
+        errors.append("icon.svg must not contain HTML/XML comments")
 
-    root = ET.fromstring(content)
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError as exc:
+        return [*errors, f"icon.svg is not valid XML: {exc}"]
+
     tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
-    assert tag == "svg"
-    assert root.get("width") == "16"
-    assert root.get("height") == "16"
-    assert root.get("viewBox") == "0 0 16 16"
+    if tag != "svg":
+        errors.append(f"root element must be <svg>, got <{tag}>")
+    if root.get("width") != "16":
+        errors.append(f"icon.svg width must be '16', got {root.get('width')!r}")
+    if root.get("height") != "16":
+        errors.append(f"icon.svg height must be '16', got {root.get('height')!r}")
+    if root.get("viewBox") != "0 0 16 16":
+        errors.append(f"icon.svg viewBox must be '0 0 16 16', got {root.get('viewBox')!r}")
 
     has_current_color = False
     for elem in root.iter():
+        elem_tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
         for attr in ("fill", "stroke"):
             val = elem.get(attr)
             if val is None:
@@ -372,18 +392,97 @@ def test_registry_icon_svg_is_16x16_square_monochrome_without_comments() -> None
             norm = val.strip().lower()
             if norm == "currentcolor":
                 has_current_color = True
-            else:
-                assert norm in _ALLOWED_SVG_COLORS, f"hardcoded {attr}={val!r} in icon.svg"
-        style = elem.get("style")
-        if style:
-            for prop in style.split(";"):
+            elif norm not in _ALLOWED_SVG_COLORS:
+                errors.append(f'Icon has hardcoded {attr}="{val}" (use currentColor or none)')
+
+        inline_style = elem.get("style")
+        if inline_style:
+            for prop in inline_style.split(";"):
                 if ":" not in prop:
                     continue
                 k, v = prop.split(":", 1)
                 if k.strip().lower() in {"fill", "stroke"}:
-                    norm = v.strip().lower()
+                    norm = _IMPORTANT_RE.sub("", v).strip().lower()
                     if norm == "currentcolor":
                         has_current_color = True
-                    else:
-                        assert norm in _ALLOWED_SVG_COLORS, f"hardcoded style {k}={v!r} in icon.svg"
-    assert has_current_color, "icon.svg must use currentColor for monochrome theming"
+                    elif norm not in _ALLOWED_SVG_COLORS:
+                        errors.append(f"Icon has hardcoded style {k.strip().lower()}: {v.strip()}")
+
+        if elem_tag.lower() == "style" and elem.text:
+            for match in _STYLE_COLOR_RE.finditer(elem.text):
+                prop_name = match.group(1).lower()
+                raw_val = match.group(2).strip()
+                norm = _IMPORTANT_RE.sub("", raw_val).strip().lower()
+                if norm == "currentcolor":
+                    has_current_color = True
+                elif norm not in _ALLOWED_SVG_COLORS:
+                    errors.append(f"Icon has hardcoded CSS {prop_name}: {raw_val}")
+
+    if not has_current_color:
+        errors.append("icon.svg must use currentColor for monochrome theming")
+    return errors
+
+
+def test_registry_icon_svg_is_16x16_square_monochrome_without_comments() -> None:
+    """Prepared ``packaging/acp-registry/bernstein/icon.svg`` satisfies registry icon rules."""
+    assert ICON_SVG_PATH.is_file(), f"missing registry icon: {ICON_SVG_PATH}"
+    content = ICON_SVG_PATH.read_text(encoding="utf-8")
+    errors = _validate_icon_svg(content)
+    assert not errors, "; ".join(errors)
+
+
+def test_registry_auth_method_validator_self_test() -> None:
+    """Self-test: empty authMethods, unsupported types, and ``_meta`` inference match upstream."""
+    ok, msg = _validate_registry_auth_methods([])
+    assert ok is False
+    assert msg == "No authMethods in response"
+
+    unsupported = _parse_registry_auth_methods([{"id": "oauth", "name": "OAuth", "type": "oauth"}])
+    ok, msg = _validate_registry_auth_methods(unsupported)
+    assert ok is False
+    assert "oauth" in msg
+
+    inferred = _parse_registry_auth_methods(
+        [
+            {"id": "t", "name": "Term", "_meta": {"terminal-auth": {"command": "bernstein"}}},
+            {"id": "a", "name": "Agent", "_meta": {"agent-auth": True}},
+            {"id": "d", "name": "Default"},
+        ]
+    )
+    assert [m["type"] for m in inferred] == ["terminal", "agent", "agent"]
+    ok, msg = _validate_registry_auth_methods(inferred)
+    assert ok is True
+
+
+def test_registry_icon_svg_validator_matches_upstream_rules() -> None:
+    """Self-test: SVG validator rejects ``transparent`` and hardcoded ``<style>`` CSS colors."""
+    assert "transparent" not in _ALLOWED_SVG_COLORS
+    assert _validate_icon_svg(ICON_SVG_PATH.read_text(encoding="utf-8")) == []
+
+    transparent_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" '
+        'fill="transparent"><path d="M0 0h16" stroke="currentColor"/></svg>'
+    )
+    errors = _validate_icon_svg(transparent_svg)
+    assert any("transparent" in err for err in errors), errors
+
+    style_hex_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
+        "<style>path { fill: #ff0000; }</style>"
+        '<path d="M0 0h16" stroke="currentColor"/></svg>'
+    )
+    errors = _validate_icon_svg(style_hex_svg)
+    assert any("#ff0000" in err for err in errors), errors
+
+    style_current_color_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
+        "<style>path { fill: none; stroke: currentColor; }</style>"
+        '<path d="M0 0h16"/></svg>'
+    )
+    assert _validate_icon_svg(style_current_color_svg) == []
+
+    comment_svg = (
+        '<!-- bad --><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
+        'viewBox="0 0 16 16"><path d="M0 0h16" stroke="currentColor"/></svg>'
+    )
+    assert any("comment" in err for err in _validate_icon_svg(comment_svg))

@@ -106,6 +106,8 @@ NON_IGNORED_SAMPLES = (
     "docs/operations/ci-topology.md",
     "docs/observability/tracing.md",
     "docs/skills/authoring.md",
+    "packaging/acp-registry/bernstein/agent.json",
+    "packaging/acp-registry/bernstein/icon.svg",
 )
 
 # The diff that merged untested: one ignored path, two that are not.
@@ -449,6 +451,26 @@ def test_non_ignored_samples_are_not_ignored(path: str, patterns: list[str]) -> 
 def test_empty_diff_is_not_all_ignored(patterns: list[str]) -> None:
     """An unreadable or empty file list must fail closed."""
     assert all_paths_ignored([], patterns) is False
+
+
+def test_acp_registry_paths_not_ignored_by_ci_gate_stub(patterns: list[str]) -> None:
+    """ACP registry asset edits must trigger real CI (`acp-conformance`), not the stub."""
+    registry_paths = [
+        "packaging/acp-registry/bernstein/agent.json",
+        "packaging/acp-registry/bernstein/icon.svg",
+    ]
+    for path in registry_paths:
+        assert is_ignored(path, patterns) is False, f"{path!r} must not be ignored by ci.yml"
+    assert all_paths_ignored(registry_paths, patterns) is False
+
+    ci_doc = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    ci_on = ci_doc.get(True, ci_doc.get("on"))
+    assert isinstance(ci_on, dict)
+    for event_name in ("push", "pull_request"):
+        event = ci_on[event_name]
+        assert "!packaging/acp-registry/**" in event["paths-ignore"], (
+            f"ci.yml {event_name}.paths-ignore must unignore packaging/acp-registry/**"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -127,6 +127,17 @@ def test_render_server_json_retags_oci_identifier_on_version_bump() -> None:
     assert packages["pypi"]["version"] == "9.9.9"
 
 
+def test_acp_registry_agent_json_tracks_version_bump() -> None:
+    """``packaging/acp-registry/bernstein/agent.json`` must move with release bumps."""
+    module = _gen_module()
+
+    assert "packaging/acp-registry/bernstein/agent.json" in module.GENERATED_MANIFESTS
+    rendered = json.loads(module.render_acp_registry_agent_json("9.9.9"))
+    assert rendered["version"] == "9.9.9"
+    assert rendered["distribution"]["uvx"]["package"] == "bernstein==9.9.9"
+    assert rendered["distribution"]["uvx"]["args"] == ["acp", "serve", "--stdio"]
+
+
 def _gen_module() -> object:
     spec = importlib.util.spec_from_file_location(
         "gen_distribution_manifests",
@@ -275,6 +286,9 @@ def test_gen_script_check_mode_passes_and_is_idempotent(tmp_path: Path) -> None:
         ".plugin/plugin.json": (_REPO / ".plugin" / "plugin.json").read_bytes(),
         "plugin.json": (_REPO / "plugin.json").read_bytes(),
         "mcp.json": (_REPO / "mcp.json").read_bytes(),
+        "packaging/acp-registry/bernstein/agent.json": (
+            _REPO / "packaging" / "acp-registry" / "bernstein" / "agent.json"
+        ).read_bytes(),
     }
     regen = subprocess.run(
         [sys.executable, str(_REPO / "scripts" / "gen_distribution_manifests.py")],
