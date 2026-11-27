@@ -202,8 +202,9 @@ async def test_sdk_subprocess_initialize_auth_session_mode_cancel(tmp_path: Path
         assert init.agent_info is not None
         assert init.agent_info.name == "bernstein"
         assert init.agent_info.version
-        # Default PR 1 server does not advertise nonexistent --setup terminal auth.
-        assert init.auth_methods == []
+        # Default PR 2 server advertises --setup terminal auth.
+        assert init.auth_methods
+        assert any(getattr(m, "type", None) == "terminal" for m in init.auth_methods)
 
         # Unknown auth method fails with -32602.
         with pytest.raises(RequestError) as bad_auth:

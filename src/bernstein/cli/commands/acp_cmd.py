@@ -1,38 +1,106 @@
 """CLI surface for the Agent Client Protocol (ACP) bridge.
 
-Exposes ``bernstein acp serve --stdio`` (default; for IDE embedding) and
-``bernstein acp serve --http :PORT`` (for remote IDEs and debugging).
-
-Stdio is the canonical IDE transport: the editor spawns ``bernstein acp
-serve --stdio`` as a subprocess and communicates via line-delimited
-JSON-RPC.  HTTP is provided for remote and CI usage; it rides the
-existing tunnel wrapper for non-loopback access.
+Exposes ``bernstein acp serve --stdio`` (default; embedded workspace runner),
+``bernstein acp serve --stdio --setup`` (terminal-auth adapter check), and
+``bernstein acp serve --http :PORT`` (HTTP/SSE transport).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import click
 
-from bernstein.cli.helpers import SERVER_URL, console
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+from bernstein.cli.commands.doctor_cmd import check_adapters_installed
+from bernstein.cli.helpers import console
 from bernstein.core.protocols.acp.server import (
     ACPServer,
     build_default_server,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Mapping
+
 logger = logging.getLogger(__name__)
 
 
-@click.group("acp")
-def acp_group() -> None:
+def _acp_cli_choice() -> click.Choice[str]:
+    """Return ``click.Choice`` of selectable adapters plus ``auto`` and ``mock``."""
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    return click.Choice(sorted({*selectable_adapter_names(), "auto", "mock"}), case_sensitive=False)
+
+
+def run_terminal_setup(
+    *,
+    adapter_name: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> int:
+    """Verify local adapter availability for ACP ``terminal`` authentication.
+
+    Returns ``0`` when at least one usable CLI adapter (or explicit ``mock``)
+    is available; returns ``1`` with remediation guidance when none are found.
+    """
+    eff_env = env if env is not None else os.environ
+    pinned = (adapter_name or eff_env.get("BERNSTEIN_DEFAULT_CLI") or "").strip().lower()
+    if pinned == "mock":
+        click.echo("Bernstein ACP setup: mock adapter active (ready).", err=True)
+        return 0
+
+    checks = check_adapters_installed(env=eff_env)
+    installed = [c["name"].removeprefix("Adapter: ") for c in checks if c.get("status") == "PASS"]
+    if pinned and pinned != "auto":
+        if pinned in installed:
+            click.echo(f"Bernstein ACP setup: adapter '{pinned}' found in PATH (ready).", err=True)
+            return 0
+        click.echo(
+            f"Bernstein ACP setup: adapter '{pinned}' not found in PATH. "
+            "Install the adapter CLI or run 'bernstein connect' to configure credentials.",
+            err=True,
+        )
+        return 1
+
+    if installed:
+        click.echo(
+            f"Bernstein ACP setup: found usable adapter(s): {', '.join(installed)}.",
+            err=True,
+        )
+        return 0
+
+    click.echo(
+        "Bernstein ACP setup: no supported CLI adapter found in PATH. "
+        "Install claude/codex/gemini or run 'bernstein connect' to configure a provider.",
+        err=True,
+    )
+    return 1
+
+
+@click.group("acp", invoke_without_command=True)
+@click.option(
+    "--setup",
+    "run_setup",
+    is_flag=True,
+    default=False,
+    help="Verify local CLI adapters and credentials for ACP terminal authentication.",
+)
+@click.option(
+    "--cli",
+    "adapter_name",
+    type=_acp_cli_choice(),
+    default=None,
+    help="Adapter CLI to validate or run (defaults to auto-detect).",
+)
+@click.pass_context
+def acp_group(ctx: click.Context, run_setup: bool, adapter_name: str | None) -> None:
     """Agent Client Protocol (ACP) bridge: IDE integration surface."""
+    if run_setup and ctx.invoked_subcommand is None:
+        ctx.exit(run_terminal_setup(adapter_name=adapter_name))
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
 
 
 @acp_group.command("serve")
@@ -52,21 +120,42 @@ def acp_group() -> None:
 )
 @click.option(
     "--server-url",
-    default=SERVER_URL,
-    show_default=True,
-    help="URL of the running Bernstein task server.",
+    default=lambda: os.environ.get("BERNSTEIN_SERVER_URL") or None,
+    show_default=False,
+    help="Forward tasks to an external Bernstein task server URL instead of the embedded runner.",
 )
-def serve(use_stdio: bool, http_addr: str | None, server_url: str) -> None:
-    """Run the ACP server using the requested transport.
+@click.option(
+    "--cli",
+    "adapter_name",
+    type=_acp_cli_choice(),
+    default=None,
+    help="Adapter CLI for embedded workspace execution.",
+)
+@click.option(
+    "--setup",
+    "run_setup",
+    is_flag=True,
+    default=False,
+    help="Verify local CLI adapters and credentials for ACP terminal authentication and exit.",
+)
+@click.pass_context
+def serve(
+    ctx: click.Context,
+    use_stdio: bool,
+    http_addr: str | None,
+    server_url: str | None,
+    adapter_name: str | None,
+    run_setup: bool,
+) -> None:
+    """Run the ACP server using the requested transport."""
+    if run_setup:
+        ctx.exit(run_terminal_setup(adapter_name=adapter_name))
 
-    The ``--stdio`` flag is the default for IDE embedding; supply
-    ``--http :PORT`` to switch to HTTP/SSE.  ``--http`` overrides
-    ``--stdio`` when both are supplied.
-    """
-    server = build_default_server(server_url=server_url)
+    server = build_default_server(server_url=server_url, adapter_name=adapter_name)
     if http_addr:
         host, port = _parse_addr(http_addr)
-        console.print(f"[cyan]ACP[/cyan] HTTP transport on [bold]{host}:{port}[/bold] (backend: {server_url})")
+        backend_label = server_url or "embedded"
+        console.print(f"[cyan]ACP[/cyan] HTTP transport on [bold]{host}:{port}[/bold] (backend: {backend_label})")
         asyncio.run(_run_http(server, host, port))
         return
     if not use_stdio:
@@ -75,17 +164,7 @@ def serve(use_stdio: bool, http_addr: str | None, server_url: str) -> None:
 
 
 def _parse_addr(addr: str) -> tuple[str, int]:
-    """Parse ``[host]:port`` into ``(host, port)``.
-
-    Args:
-        addr: The address string.
-
-    Returns:
-        ``(host, port)`` - host defaults to ``127.0.0.1`` when omitted.
-
-    Raises:
-        click.UsageError: If the address is malformed.
-    """
+    """Parse ``[host]:port`` into ``(host, port)``."""
     raw = addr.strip()
     if not raw:
         raise click.UsageError("--http requires a HOST:PORT or :PORT argument")
@@ -108,12 +187,7 @@ def _parse_addr(addr: str) -> tuple[str, int]:
 
 
 async def _run_http(server: ACPServer, host: str, port: int) -> None:
-    """Start a tiny HTTP/1.1 server that delegates to :class:`HttpAcpTransport`.
-
-    Uses :mod:`asyncio` directly to avoid pulling FastAPI / Starlette into
-    the import path of every CLI invocation.  The server understands a
-    single route (``POST /acp``) and exits on Ctrl-C.
-    """
+    """Start a tiny HTTP/1.1 server that delegates to :class:`HttpAcpTransport`."""
     transport = server.http_transport()
 
     async def _handle_client(
@@ -160,10 +234,7 @@ async def _run_http(server: ACPServer, host: str, port: int) -> None:
 async def _read_http_request(
     reader: asyncio.StreamReader,
 ) -> tuple[str, str, dict[str, str], bytes] | None:
-    """Read one HTTP/1.1 request from *reader*.
-
-    Returns ``None`` on EOF.
-    """
+    """Read one HTTP/1.1 request from *reader*."""
     request_line = await reader.readline()
     if not request_line:
         return None
@@ -226,11 +297,7 @@ async def _write_streaming_response(
     headers: dict[str, str],
     chunks: AsyncIterator[bytes],
 ) -> None:
-    """Write an HTTP/1.1 chunked-transfer streaming response.
-
-    *chunks* is an async iterator yielding bytes; each chunk becomes one
-    HTTP chunk.
-    """
+    """Write an HTTP/1.1 chunked-transfer streaming response."""
     header_lines = [f"HTTP/1.1 {status} {_REASONS.get(status, 'OK')}"]
     merged = {
         "transfer-encoding": "chunked",
@@ -255,4 +322,4 @@ _REASONS: dict[int, str] = {
 }
 
 
-__all__ = ["acp_group", "serve"]
+__all__ = ["acp_group", "run_terminal_setup", "serve"]

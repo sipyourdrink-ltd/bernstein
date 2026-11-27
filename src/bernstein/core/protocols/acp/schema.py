@@ -63,6 +63,7 @@ ACP_V1_METHODS: Final[frozenset[str]] = frozenset(
         "initialize",
         "authenticate",
         "session/new",
+        "session/load",
         "session/set_mode",
         "session/prompt",
         "session/cancel",
@@ -75,6 +76,7 @@ ACP_V1_PRE_INIT_BLOCKED_METHODS: Final[frozenset[str]] = frozenset(
     {
         "authenticate",
         "session/new",
+        "session/load",
         "session/set_mode",
         "session/prompt",
         "session/cancel",
@@ -313,6 +315,12 @@ def _validate_session_new(params: dict[str, Any]) -> None:
     _validate_optional_dict(params, "_meta")
 
 
+def _validate_session_load(params: dict[str, Any]) -> None:
+    """Validate the params for the ACP v1 ``session/load`` request."""
+    _require_str(params, "sessionId")
+    _validate_session_new(params)
+
+
 def _validate_session_set_mode(params: dict[str, Any]) -> None:
     """Validate the params for the ACP v1 ``session/set_mode`` request."""
     _require_str(params, "sessionId")
@@ -521,6 +529,7 @@ _PARAM_VALIDATORS: dict[str, Any] = {
     "initialize": _validate_initialize,
     "authenticate": _validate_authenticate,
     "session/new": _validate_session_new,
+    "session/load": _validate_session_load,
     "session/set_mode": _validate_session_set_mode,
     "session/prompt": _validate_session_prompt,
     "session/cancel": _validate_session_cancel,
