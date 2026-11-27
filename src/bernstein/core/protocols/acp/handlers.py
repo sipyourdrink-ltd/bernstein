@@ -26,13 +26,16 @@ from bernstein.core.protocols.acp.metrics import (
     set_active_sessions,
 )
 from bernstein.core.protocols.acp.schema import (
+    ACP_AUTH_EXEMPT_METHODS,
+    ACP_LEGACY_METHODS,
     ACP_LEGACY_PROTOCOL_VERSION,
-    ACP_PROTOCOL_VERSION,
     ACP_V1_PRE_INIT_BLOCKED_METHODS,
+    ACP_V1_PROTOCOL_VERSION,
     AUTH_REQUIRED,
     INTERNAL_ERROR,
     INVALID_PARAMS,
     INVALID_REQUEST,
+    METHOD_NOT_FOUND,
     PERMISSION_DENIED,
     RESOURCE_NOT_FOUND,
     SESSION_NOT_FOUND,
@@ -54,8 +57,6 @@ class SessionMode(StrEnum):
 
 
 _PERMISSION_TIMEOUT_S: Final[float] = 60.0
-
-_TERMINAL_AUTH_METHOD_ID: Final[str] = "bernstein-setup"
 
 _AVAILABLE_SESSION_MODES: Final[tuple[dict[str, str], ...]] = (
     {
@@ -229,6 +230,7 @@ class ACPHandlerRegistry:
     prompt_runner: PromptRunner | None = None
     client_requester: ClientRequester | None = None
     auth_handler: AuthHandler | None = None
+    terminal_auth_method: dict[str, Any] | None = None
     extra_auth_methods: tuple[dict[str, Any], ...] = ()
     require_auth: bool = False
 
@@ -255,15 +257,36 @@ class ACPHandlerRegistry:
                 {"method": ctx.method},
             )
 
+        if self._negotiated_version == ACP_V1_PROTOCOL_VERSION and ctx.method in ACP_LEGACY_METHODS:
+            record_acp_message(ctx.method, "error")
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"legacy method {ctx.method!r} cannot be used on an ACP v1 connection",
+                {"method": ctx.method},
+            )
+
+        if self.require_auth and not self._authenticated and ctx.method not in ACP_AUTH_EXEMPT_METHODS:
+            record_acp_message(ctx.method, "error")
+            raise ACPSchemaError(
+                AUTH_REQUIRED,
+                "authentication required",
+                {"method": ctx.method},
+            )
+
         try:
             handler = self._handlers[ctx.method]
-        except KeyError as exc:  # pragma: no cover - schema layer rejects first
-            raise ACPSchemaError(INTERNAL_ERROR, f"no handler for {ctx.method!r}") from exc
+        except KeyError as exc:
+            record_acp_message(ctx.method, "error")
+            raise ACPSchemaError(
+                METHOD_NOT_FOUND,
+                f"method {ctx.method!r} is not accepted from client",
+                {"method": ctx.method},
+            ) from exc
 
         try:
             result = await handler(ctx, params)
         except ACPSchemaError as exc:
-            outcome = "rejected" if exc.code == PERMISSION_DENIED else "error"
+            outcome = "rejected" if (exc.code == PERMISSION_DENIED and ctx.method == "requestPermission") else "error"
             record_acp_message(ctx.method, outcome)
             raise
         except Exception as exc:
@@ -317,24 +340,16 @@ class ACPHandlerRegistry:
         self._client_info = client_info
 
         if isinstance(raw_version, int) and not isinstance(raw_version, bool):
-            self._negotiated_version = ACP_PROTOCOL_VERSION
+            self._negotiated_version = ACP_V1_PROTOCOL_VERSION
             auth_methods: list[dict[str, Any]] = []
-            if _client_supports_terminal_auth(client_caps):
-                auth_methods.append(
-                    {
-                        "id": _TERMINAL_AUTH_METHOD_ID,
-                        "name": "Configure Bernstein adapters",
-                        "description": "Verify local CLI adapters and credentials via bernstein setup",
-                        "type": "terminal",
-                        "args": ["--setup"],
-                    }
-                )
+            if self.terminal_auth_method is not None and _client_supports_terminal_auth(client_caps):
+                auth_methods.append(dict(self.terminal_auth_method))
             for method_def in self.extra_auth_methods:
                 auth_methods.append(dict(method_def))
             self._advertised_auth_method_ids = {str(m["id"]) for m in auth_methods if isinstance(m.get("id"), str)}
 
             result: dict[str, Any] = {
-                "protocolVersion": ACP_PROTOCOL_VERSION,
+                "protocolVersion": ACP_V1_PROTOCOL_VERSION,
                 "agentCapabilities": {
                     "loadSession": False,
                     "promptCapabilities": {
@@ -403,14 +418,19 @@ class ACPHandlerRegistry:
                 f"unknown authentication method {method_id!r}",
                 {"field": "methodId", "methodId": method_id},
             )
-        if self.auth_handler is not None:
-            ok = await self.auth_handler(method_id)
-            if not ok:
-                raise ACPSchemaError(
-                    AUTH_REQUIRED,
-                    f"authentication failed for method {method_id!r}",
-                    {"methodId": method_id},
-                )
+        if self.auth_handler is None:
+            raise ACPSchemaError(
+                AUTH_REQUIRED,
+                "no authentication handler is configured",
+                {"methodId": method_id},
+            )
+        ok = await self.auth_handler(method_id)
+        if not ok:
+            raise ACPSchemaError(
+                AUTH_REQUIRED,
+                f"authentication failed for method {method_id!r}",
+                {"methodId": method_id},
+            )
         self._authenticated = True
         self.audit_emitter("acp.authenticate", "session", {"peer": ctx.peer, "methodId": method_id})
         return {}
@@ -446,7 +466,7 @@ class ACPHandlerRegistry:
             mcp_servers=tuple(dict(s) for s in mcp_servers_raw),
             additional_directories=additional_dirs,
             system_prompt=system_prompt,
-            protocol_version=ACP_PROTOCOL_VERSION,
+            protocol_version=ACP_V1_PROTOCOL_VERSION,
         )
         await self.sessions.add(session)
         set_active_sessions(await self.sessions.count())
@@ -480,6 +500,12 @@ class ACPHandlerRegistry:
                 f"unknown session {session_id!r}",
                 {"sessionId": session_id},
             )
+        if session.protocol_version != ACP_V1_PROTOCOL_VERSION:
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"session {session_id!r} is not an ACP v1 session",
+                {"sessionId": session_id},
+            )
         if mode_id not in VALID_MODES:
             raise ACPSchemaError(
                 INVALID_PARAMS,
@@ -505,7 +531,14 @@ class ACPHandlerRegistry:
         outcome = await self.task_creator(prompt_text, session.cwd, session.role)
         if not outcome.accepted:
             raise ACPSchemaError(INTERNAL_ERROR, outcome.message or "task creation rejected")
-        return "cancelled" if cancel_event.is_set() else "end_turn"
+        session.set_active_task_id(outcome.session_id)
+        if cancel_event.is_set():
+            task_id = session.claim_cancel_task_id()
+            if task_id is not None:
+                ok = await self.task_canceller(task_id, "client_cancel")
+                return "cancelled" if ok else "end_turn"
+            return "cancelled"
+        return "end_turn"
 
     async def _handle_session_prompt(
         self,
@@ -520,6 +553,12 @@ class ACPHandlerRegistry:
             raise ACPSchemaError(
                 RESOURCE_NOT_FOUND,
                 f"unknown session {session_id!r}",
+                {"sessionId": session_id},
+            )
+        if session.protocol_version != ACP_V1_PROTOCOL_VERSION:
+            raise ACPSchemaError(
+                INVALID_REQUEST,
+                f"session {session_id!r} is not an ACP v1 session",
                 {"sessionId": session_id},
             )
         if session.has_active_turn:
@@ -539,6 +578,9 @@ class ACPHandlerRegistry:
         try:
             stop_reason = await runner(session, blocks, cancel_event)
         except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling() > 0:
+                raise
             stop_reason = "cancelled"
         finally:
             session.end_turn()
@@ -559,9 +601,10 @@ class ACPHandlerRegistry:
     ) -> None:
         """Handle ACP v1 one-way ``session/cancel`` notification.
 
-        Signals the active turn's cancel event, calls ``task_canceller``,
-        keeps the session alive for subsequent turns, and returns ``None``
-        so the transport never emits a response envelope.
+        Signals the active turn's cancel event, cancels the active Bernstein
+        task id when one is already bound to the turn, keeps the session
+        alive for subsequent turns, and returns ``None`` so the transport
+        never emits a response envelope.
         """
         session_id: str = params["sessionId"]
         session = await self.sessions.get(session_id)
@@ -570,13 +613,28 @@ class ACPHandlerRegistry:
             return None
 
         had_active = session.request_cancel()
-        ok = await self.task_canceller(session_id, "client_cancel")
+        ok = False
+        if had_active:
+            task_id = session.claim_cancel_task_id()
+            if task_id is not None:
+                ok = await self.task_canceller(task_id, "client_cancel")
         self.audit_emitter(
             "acp.cancel",
             session_id,
             {"peer": ctx.peer, "reason": "client_cancel", "ok": ok, "active": had_active},
         )
         return None
+
+    async def cancel_active_sessions(self, reason: str = "transport_eof") -> None:
+        """Signal cancellation on all sessions with an active turn (e.g. on EOF)."""
+        for session in list(self.sessions):
+            if not session.has_active_turn:
+                continue
+            session.request_cancel()
+            task_id = session.claim_cancel_task_id()
+            if task_id is not None:
+                with contextlib.suppress(Exception):
+                    await self.task_canceller(task_id, reason)
 
     async def _handle_session_update(
         self,
@@ -631,7 +689,7 @@ class ACPHandlerRegistry:
         if session.mode == "auto":
             return "approved"
 
-        if self.client_requester is not None and session.protocol_version == ACP_PROTOCOL_VERSION:
+        if self.client_requester is not None and session.protocol_version == ACP_V1_PROTOCOL_VERSION:
             tc_id = tool_call_id or f"call-{uuid.uuid4().hex[:12]}"
             perm_options = (
                 [dict(opt) for opt in options]

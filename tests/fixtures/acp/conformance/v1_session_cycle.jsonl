@@ -1,6 +1,5 @@
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"auth":{"terminal":true}}}}
-{"jsonrpc":"2.0","id":2,"method":"authenticate","params":{"methodId":"bernstein-setup"}}
-{"jsonrpc":"2.0","id":3,"method":"session/new","params":{"cwd":"/tmp/work","mcpServers":[]}}
-{"jsonrpc":"2.0","id":4,"method":"session/set_mode","params":{"sessionId":"__SESSION__","modeId":"auto"}}
-{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"__SESSION__","prompt":[{"type":"text","text":"Add a hello function"}]}}
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp/work","mcpServers":[]}}
+{"jsonrpc":"2.0","id":3,"method":"session/set_mode","params":{"sessionId":"__SESSION__","modeId":"auto"}}
+{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"__SESSION__","prompt":[{"type":"text","text":"Add a hello function"}]}}
 {"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"__SESSION__"}}

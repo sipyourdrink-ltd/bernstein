@@ -18,7 +18,7 @@ from bernstein.core.protocols.acp.handlers import (
     PromptResult,
 )
 from bernstein.core.protocols.acp.schema import (
-    ACP_PROTOCOL_VERSION,
+    ACP_V1_PROTOCOL_VERSION,
     AUTH_REQUIRED,
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -346,6 +346,12 @@ def test_v1_pre_init_guard_rejects_session_methods_with_invalid_request() -> Non
 )
 def test_v1_initialize_shape_and_terminal_auth_capability_flags(client_caps: dict[str, Any]) -> None:
     registry = _build_registry()
+    registry.terminal_auth_method = {
+        "id": "bernstein-setup",
+        "name": "Configure Bernstein adapters",
+        "type": "terminal",
+        "args": ["--setup"],
+    }
 
     async def _run() -> None:
         res = await registry.dispatch(
@@ -356,7 +362,7 @@ def test_v1_initialize_shape_and_terminal_auth_capability_flags(client_caps: dic
                 "clientInfo": {"name": "zed", "version": "0.1"},
             },
         )
-        assert res["protocolVersion"] == ACP_PROTOCOL_VERSION
+        assert res["protocolVersion"] == ACP_V1_PROTOCOL_VERSION
         assert res["agentInfo"]["name"] == "bernstein"
         assert res["agentInfo"]["version"]
         assert "agentCapabilities" in res
@@ -376,6 +382,12 @@ def test_v1_authenticate_and_require_auth_gate() -> None:
         return method_id == "bernstein-setup"
 
     registry = _build_registry()
+    registry.terminal_auth_method = {
+        "id": "bernstein-setup",
+        "name": "Configure Bernstein adapters",
+        "type": "terminal",
+        "args": ["--setup"],
+    }
     registry.auth_handler = _auth
     registry.require_auth = True
 

@@ -160,6 +160,8 @@ class StdioAcpTransport:
     reader: asyncio.StreamReader | None = None
     writer: asyncio.StreamWriter | None = None
     peer: str = "stdio"
+    eof_drain_grace_s: float = 0.5
+    eof_cancel_timeout_s: float = 0.5
 
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _pending_outbound: dict[str | int, asyncio.Future[dict[str, Any]]] = field(
@@ -173,7 +175,8 @@ class StdioAcpTransport:
         init=False,
         repr=False,
     )
-    _closed: bool = field(default=False, init=False, repr=False)
+    _input_closed: bool = field(default=False, init=False, repr=False)
+    _output_closed: bool = field(default=False, init=False, repr=False)
 
     async def send_request(
         self,
@@ -182,7 +185,7 @@ class StdioAcpTransport:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Send an outbound Agent -> Client JSON-RPC request and await its result."""
-        if self._closed or self.writer is None:
+        if self._input_closed or self._output_closed or self.writer is None:
             raise ConnectionError("ACP stdio transport is closed")
 
         self._outbound_seq += 1
@@ -221,9 +224,12 @@ class StdioAcpTransport:
         if self.reader is None or self.writer is None:
             raise RuntimeError("StdioAcpTransport requires reader+writer")
 
-        self._closed = False
+        self._input_closed = False
+        self._output_closed = False
 
         async def _publish(frame: dict[str, Any]) -> None:
+            if self._output_closed:
+                return
             await self._write_frame(frame)
 
         self.registry.stream_publisher = _publish
@@ -231,20 +237,112 @@ class StdioAcpTransport:
 
         try:
             while True:
-                try:
-                    line = await self.reader.readuntil(b"\n")
-                except asyncio.IncompleteReadError as exc:
-                    if exc.partial:
-                        await self._handle_line(exc.partial)
-                    break
-                if not line:
+                line, oversized = await self._read_line()
+                if oversized:
+                    await self._write_frame(make_error(None, PARSE_ERROR, "frame exceeds size limit"))
+                    continue
+                if line is None:
                     break
                 await self._handle_line(line)
         finally:
-            self._closed = True
+            self._input_closed = True
             self._reject_pending_outbound(ConnectionError("ACP stdio transport closed"))
-            if self._inflight_tasks:
-                await asyncio.gather(*list(self._inflight_tasks), return_exceptions=True)
+            await self._drain_inflight_on_shutdown()
+            self._output_closed = True
+
+    async def _read_line(self) -> tuple[bytes | None, bool]:
+        """Read one newline-delimited frame up to ``MAX_FRAME_BYTES``.
+
+        Accumulates across ``asyncio.LimitOverrunError`` so valid frames up to
+        ``MAX_FRAME_BYTES`` succeed even when ``reader`` has asyncio's default
+        64 KiB limit.  Oversized lines are drained to their newline (or EOF)
+        and flagged so the transport emits ``PARSE_ERROR`` and stays alive.
+        """
+        assert self.reader is not None
+        buf = bytearray()
+        oversized = False
+        while True:
+            try:
+                chunk = await self.reader.readuntil(b"\n")
+            except asyncio.LimitOverrunError as exc:
+                remaining = exc.consumed
+                if remaining > 0:
+                    while remaining > 0:
+                        step = min(remaining, 65536)
+                        part = await self.reader.readexactly(step)
+                        remaining -= len(part)
+                        if not oversized:
+                            if len(buf) + len(part) > MAX_FRAME_BYTES:
+                                oversized = True
+                                buf.clear()
+                            else:
+                                buf.extend(part)
+                else:
+                    part = await self.reader.read(65536)
+                    if not part:
+                        return (b"", True) if oversized else ((bytes(buf), False) if buf else (None, False))
+                    if not oversized:
+                        if len(buf) + len(part) > MAX_FRAME_BYTES:
+                            oversized = True
+                            buf.clear()
+                        else:
+                            buf.extend(part)
+                continue
+            except asyncio.IncompleteReadError as exc:
+                if exc.partial:
+                    if not oversized:
+                        if len(buf) + len(exc.partial) > MAX_FRAME_BYTES:
+                            oversized = True
+                            buf.clear()
+                        else:
+                            buf.extend(exc.partial)
+                    return (b"", True) if oversized else (bytes(buf), False)
+                if oversized:
+                    return b"", True
+                return (bytes(buf), False) if buf else (None, False)
+
+            if not chunk:
+                if oversized:
+                    return b"", True
+                return (bytes(buf), False) if buf else (None, False)
+
+            if oversized:
+                return b"", True
+
+            if len(buf) + len(chunk.rstrip(b"\r\n")) > MAX_FRAME_BYTES:
+                return b"", True
+            buf.extend(chunk)
+            return bytes(buf), False
+
+    async def _drain_inflight_on_shutdown(self) -> None:
+        """Let fast in-flight turns flush on half-close; cancel stalled turns on EOF."""
+        if not self._inflight_tasks:
+            return
+
+        current = asyncio.current_task()
+        externally_cancelled = current is not None and current.cancelling() > 0
+
+        if externally_cancelled:
+            for session in list(self.registry.sessions):
+                session.request_cancel()
+            tasks = list(self._inflight_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            return
+
+        _, pending = await asyncio.wait(list(self._inflight_tasks), timeout=self.eof_drain_grace_s)
+        if not pending:
+            return
+
+        await self.registry.cancel_active_sessions("transport_eof")
+        _, still_pending = await asyncio.wait(pending, timeout=self.eof_cancel_timeout_s)
+        if not still_pending:
+            return
+
+        for task in still_pending:
+            task.cancel()
+        await asyncio.gather(*still_pending, return_exceptions=True)
 
     async def _handle_line(self, line: bytes) -> None:
         """Decode one line and route responses, blocking prompts, or control frames."""
@@ -274,8 +372,12 @@ class StdioAcpTransport:
     def _spawn_dispatch(self, frame: dict[str, Any]) -> None:
         async def _run() -> None:
             response = await dispatch_frame(self.registry, frame, peer=self.peer)
-            if response is not None and not self._closed:
-                await self._write_frame(response)
+            if response is not None and not self._output_closed:
+                try:
+                    await self._write_frame(response)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    if not self._input_closed:
+                        raise
 
         task = asyncio.create_task(_run())
         self._inflight_tasks.add(task)

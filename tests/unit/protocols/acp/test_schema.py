@@ -11,6 +11,7 @@ import pytest
 from bernstein.core.protocols.acp.schema import (
     ACP_LEGACY_PROTOCOL_VERSION,
     ACP_PROTOCOL_VERSION,
+    ACP_V1_PROTOCOL_VERSION,
     INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
@@ -220,8 +221,10 @@ class TestEnvelopeBuilders:
 
 def test_protocol_version_constants() -> None:
     """Pin ACP v1 integer protocol version and legacy compatibility constant."""
-    assert ACP_PROTOCOL_VERSION == 1
-    assert isinstance(ACP_PROTOCOL_VERSION, int)
+    assert ACP_V1_PROTOCOL_VERSION == 1
+    assert isinstance(ACP_V1_PROTOCOL_VERSION, int)
+    assert ACP_PROTOCOL_VERSION == "2025-04-01"
+    assert isinstance(ACP_PROTOCOL_VERSION, str)
     assert ACP_LEGACY_PROTOCOL_VERSION == "2025-04-01"
 
 

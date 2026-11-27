@@ -40,6 +40,7 @@ from bernstein.core.protocols.acp.handlers import (
 from bernstein.core.protocols.acp.metrics import set_active_sessions
 from bernstein.core.protocols.acp.session import ACPSessionStore
 from bernstein.core.protocols.acp.transport import (
+    MAX_FRAME_BYTES,
     HttpAcpTransport,
     StdioAcpTransport,
 )
@@ -142,7 +143,7 @@ async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     :class:`asyncio.StreamReader`.
     """
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader(loop=loop)
+    reader = asyncio.StreamReader(limit=MAX_FRAME_BYTES + 1, loop=loop)
 
     try:
         protocol = asyncio.StreamReaderProtocol(reader)
@@ -231,6 +232,7 @@ def build_default_server(
     stream_publisher: StreamPublisher | None = None,
     prompt_runner: PromptRunner | None = None,
     auth_handler: AuthHandler | None = None,
+    terminal_auth_method: dict[str, Any] | None = None,
     require_auth: bool = False,
 ) -> ACPServer:
     """Build an :class:`ACPServer` with sensible defaults.
@@ -277,6 +279,7 @@ def build_default_server(
         task_canceller=task_canceller,
         prompt_runner=prompt_runner,
         auth_handler=auth_handler,
+        terminal_auth_method=terminal_auth_method,
         require_auth=require_auth,
     )
     if audit_emitter is not None:

@@ -71,6 +71,8 @@ class ACPSession:
     turn_count: int = 0
     _waiters: dict[str, _PermissionWaiter] = field(default_factory=dict[str, _PermissionWaiter])
     _active_cancel_event: asyncio.Event | None = field(default=None, init=False, repr=False)
+    _active_task_id: str | None = field(default=None, init=False, repr=False)
+    _task_cancel_sent: bool = field(default=False, init=False, repr=False)
 
     def touch(self) -> None:
         """Update :attr:`last_activity` to ``time.time()``."""
@@ -100,10 +102,29 @@ class ACPSession:
         """Return the active turn's cancel event, or ``None`` when idle."""
         return self._active_cancel_event
 
+    @property
+    def active_task_id(self) -> str | None:
+        """Return the Bernstein task id backing the active turn, if any."""
+        return self._active_task_id
+
+    def set_active_task_id(self, task_id: str) -> None:
+        """Record the Bernstein task id created for the active prompt turn."""
+        self._active_task_id = task_id
+        self.touch()
+
+    def claim_cancel_task_id(self) -> str | None:
+        """Atomically claim the active task id once for cancellation."""
+        if self._active_task_id is None or self._task_cancel_sent:
+            return None
+        self._task_cancel_sent = True
+        return self._active_task_id
+
     def begin_turn(self) -> asyncio.Event:
         """Mark a ``session/prompt`` turn active and return its cancel event."""
         cancel_event = asyncio.Event()
         self._active_cancel_event = cancel_event
+        self._active_task_id = None
+        self._task_cancel_sent = False
         self.turn_count += 1
         self.touch()
         return cancel_event
@@ -124,6 +145,8 @@ class ACPSession:
     def end_turn(self) -> None:
         """Clear active turn bookkeeping when ``session/prompt`` resolves."""
         self._active_cancel_event = None
+        self._active_task_id = None
+        self._task_cancel_sent = False
         self.touch()
 
     def open_permission_waiter(self, tool_name: str, detail: str) -> _PermissionWaiter:

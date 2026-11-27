@@ -94,6 +94,14 @@ ACP_LEGACY_METHODS: Final[frozenset[str]] = frozenset(
 
 SUPPORTED_METHODS: Final[frozenset[str]] = ACP_V1_METHODS | ACP_LEGACY_METHODS
 
+ACP_AUTH_EXEMPT_METHODS: Final[frozenset[str]] = frozenset(
+    {
+        "initialize",
+        "initialized",
+        "authenticate",
+    }
+)
+
 NOTIFICATION_METHODS: Final[frozenset[str]] = frozenset(
     {
         "initialized",
@@ -134,11 +142,12 @@ VALID_PERMISSION_OPTION_KINDS: Final[frozenset[str]] = frozenset(
     }
 )
 
+# Legacy string dialect kept under the original constant name for back-compat.
+ACP_PROTOCOL_VERSION: Final[str] = "2025-04-01"
+ACP_LEGACY_PROTOCOL_VERSION: Final[str] = ACP_PROTOCOL_VERSION
 # Official ACP v1 integer protocol version (spec schema-v1).
-ACP_PROTOCOL_VERSION: Final[int] = 1
-ACP_PROTOCOL_VERSION_MAX: Final[int] = 65535
-# Legacy string dialect retained for dual-compatible clients and fixtures.
-ACP_LEGACY_PROTOCOL_VERSION: Final[str] = "2025-04-01"
+ACP_V1_PROTOCOL_VERSION: Final[int] = 1
+ACP_V1_PROTOCOL_VERSION_MAX: Final[int] = 65535
 
 
 class ACPSchemaError(Exception):
@@ -206,10 +215,10 @@ def _validate_initialize(params: dict[str, Any]) -> None:
     proto = params.get("protocolVersion")
     if proto is not None:
         if _is_int(proto):
-            if proto < 0 or proto > ACP_PROTOCOL_VERSION_MAX:
+            if proto < 0 or proto > ACP_V1_PROTOCOL_VERSION_MAX:
                 raise ACPSchemaError(
                     INVALID_PARAMS,
-                    f"protocolVersion must be between 0 and {ACP_PROTOCOL_VERSION_MAX}",
+                    f"protocolVersion must be between 0 and {ACP_V1_PROTOCOL_VERSION_MAX}",
                     {"field": "protocolVersion"},
                 )
         elif isinstance(proto, str):

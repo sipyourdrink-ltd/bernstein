@@ -87,6 +87,7 @@ from bernstein.core.protocols.acp.metrics import (  # noqa: E402
 from bernstein.core.protocols.acp.schema import (  # noqa: E402
     ACP_LEGACY_PROTOCOL_VERSION,
     ACP_PROTOCOL_VERSION,
+    ACP_V1_PROTOCOL_VERSION,
     AUTH_REQUIRED,
     REQUEST_CANCELLED,
     RESOURCE_NOT_FOUND,
@@ -116,6 +117,7 @@ __all__ = [
     "ACP_EVENT_TYPE",
     "ACP_LEGACY_PROTOCOL_VERSION",
     "ACP_PROTOCOL_VERSION",
+    "ACP_V1_PROTOCOL_VERSION",
     "AUTH_REQUIRED",
     "REQUEST_CANCELLED",
     "RESOURCE_NOT_FOUND",

@@ -202,12 +202,10 @@ async def test_sdk_subprocess_initialize_auth_session_mode_cancel(tmp_path: Path
         assert init.agent_info is not None
         assert init.agent_info.name == "bernstein"
         assert init.agent_info.version
-        assert init.auth_methods
-        assert any(getattr(m, "type", None) == "terminal" for m in init.auth_methods)
+        # Default PR 1 server does not advertise nonexistent --setup terminal auth.
+        assert init.auth_methods == []
 
-        # authenticate with advertised method succeeds; unknown fails -32602.
-        auth_resp = await conn.authenticate(method_id=init.auth_methods[0].id)
-        assert auth_resp is not None
+        # Unknown auth method fails with -32602.
         with pytest.raises(RequestError) as bad_auth:
             await conn.authenticate(method_id="does-not-exist")
         assert bad_auth.value.code == -32602
@@ -249,19 +247,38 @@ async def test_sdk_subprocess_initialize_auth_session_mode_cancel(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_sdk_subprocess_registry_meta_terminal_auth_flag() -> None:
-    """Registry CI advertises terminal auth only via clientCapabilities._meta."""
-    client = _RecordingClient()
+    """Opt-in terminal auth responds to clientCapabilities._meta['terminal-auth']."""
+    loop = asyncio.get_running_loop()
+    client_to_server_r, client_to_server_w = _make_pipe_pair(loop)
+    server_to_client_r, server_to_client_w = _make_pipe_pair(loop)
 
-    async with acp.spawn_agent_process(
-        client,
-        sys.executable,
-        "-m",
-        "bernstein",
-        "acp",
-        "serve",
-        "--stdio",
-        env=_subprocess_env(),
-    ) as (conn, _proc):
+    auth_calls: list[str] = []
+
+    async def _auth_ok(method_id: str) -> bool:
+        auth_calls.append(method_id)
+        return method_id == "custom-terminal-setup"
+
+    registry = ACPHandlerRegistry(
+        sessions=ACPSessionStore(),
+        adapters=("claude",),
+        sandbox_backends=("none",),
+        auth_handler=_auth_ok,
+        terminal_auth_method={
+            "id": "custom-terminal-setup",
+            "name": "Custom setup",
+            "type": "terminal",
+            "args": ["--custom-setup"],
+        },
+    )
+    transport = StdioAcpTransport(
+        registry=registry,
+        reader=client_to_server_r,
+        writer=server_to_client_w,
+    )
+    server_task = asyncio.create_task(transport.serve_forever())
+    client = _RecordingClient()
+    conn = acp.connect_to_agent(client, client_to_server_w, server_to_client_r)
+    try:
         init = await conn.initialize(
             protocol_version=1,
             client_capabilities=ClientCapabilities(
@@ -273,6 +290,13 @@ async def test_sdk_subprocess_registry_meta_terminal_auth_flag() -> None:
         assert init.protocol_version == 1
         assert init.auth_methods
         assert any(getattr(m, "type", None) == "terminal" for m in init.auth_methods)
+        auth_resp = await conn.authenticate(method_id="custom-terminal-setup")
+        assert auth_resp is not None
+        assert auth_calls == ["custom-terminal-setup"]
+    finally:
+        await conn.close()
+        client_to_server_w.close()
+        await asyncio.wait_for(server_task, timeout=2.0)
 
 
 @pytest.mark.asyncio
