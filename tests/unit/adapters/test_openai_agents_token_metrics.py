@@ -24,7 +24,10 @@ from bernstein.adapters.openai_agents_runner import (
 )
 from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS, read_tokens_sidecar_totals
+from bernstein.core.cost.cost_tracker import CostTracker, estimate_cost
+from bernstein.core.cost.model_prices import price_model_usage
 from bernstein.core.observability import metric_collector as metric_collector_mod
+from bernstein.core.orchestration.orchestrator import Orchestrator
 from bernstein.core.tasks.task_lifecycle import _record_completion_metrics
 
 if TYPE_CHECKING:
@@ -73,21 +76,29 @@ def _manifest(tmp_path: Path, session_id: str, model: str = "gpt-5-mini") -> Run
     )
 
 
-def _orch_for_session(tmp_path: Path, session: AgentSession) -> Any:
+def _orch_for_session(tmp_path: Path, session: AgentSession, *, cost_tracker: Any = None) -> Any:
     return SimpleNamespace(
         _processed_done_tasks=collections.OrderedDict(),
         _executor=MagicMock(),
+        _agents={session.id: session},
         _find_session_for_task=lambda task_id: session if task_id in session.task_ids else None,
         _spawner=MagicMock(),
         _record_provider_health=MagicMock(),
         _approval_gate=None,
         _post_bulletin=MagicMock(),
         _notify=MagicMock(),
-        _cost_tracker=MagicMock(),
+        _cost_tracker=cost_tracker if cost_tracker is not None else MagicMock(),
+        _cost_cap_killed_agents=set(),
         _evolution=None,
         _response_cache=MagicMock(),
         _client=MagicMock(),
-        _config=SimpleNamespace(server_url="http://server", cross_model_verify=None, pr_labels=[], budget_usd=0.0),
+        _config=SimpleNamespace(
+            server_url="http://server",
+            cross_model_verify=None,
+            pr_labels=[],
+            budget_usd=0.0,
+            max_cost_per_agent=0.0,
+        ),
         _workdir=tmp_path,
         _quality_gate_config=None,
         _wal_writer=None,
@@ -434,3 +445,111 @@ class TestResumeAndLogFallback:
         )
         assert cost_usd > 0.0
         assert (task_m.tokens_prompt, task_m.tokens_completion, task_m.tokens_used) == (4_200, 600, 4_800)
+
+    def test_spawn_for_resume_skips_mcp_config_when_not_heartbeat_consumer(self, tmp_path: Path) -> None:
+        adapter = MagicMock()
+        adapter.name.return_value = "generic"
+        adapter.consumes_heartbeat_dir = False
+        adapter.spawn.return_value = MagicMock(
+            pid=99, log_path=tmp_path / "out.log", abort_reason=None, abort_detail=""
+        )
+        spawner = AgentSpawner(
+            adapter=adapter,
+            templates_dir=tmp_path / "templates",
+            workdir=tmp_path,
+            default_model="sonnet",
+            mcp_config={"extra": "val"},
+        )
+        task = Task(
+            id="T-resume-other",
+            title="Resume non-heartbeat task",
+            description="Continue",
+            role="backend",
+            scope=Scope.SMALL,
+            complexity=Complexity.LOW,
+            status=TaskStatus.OPEN,
+        )
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "prev-other"
+        worktree_path.mkdir(parents=True)
+
+        spawner.spawn_for_resume([task], worktree_path=worktree_path, changed_files=[])
+        assert "mcp_config" not in adapter.spawn.call_args.kwargs
+
+
+class TestRealCostTrackerLiveAndCompletion:
+    """Real CostTracker (no mocks) across per-turn live ticks and task completion."""
+
+    def test_estimate_cost_longest_key_and_none_tier(self) -> None:
+        # gpt-5-mini ($0.5/$2.5 per 1M) must not hit gpt-5 ($2.5/$15 per 1M).
+        assert estimate_cost("gpt-5-mini", 1_000_000, 1_000_000) == pytest.approx(3.0)
+        # MiniMax-M3 sets cache_write=None; must not raise TypeError.
+        assert estimate_cost("MiniMax-M3", 1_000_000, 1_000_000, cache_write_tokens=0) == pytest.approx(3.0)
+
+    @pytest.mark.parametrize("model_name", ["gpt-5-mini", "MiniMax-M3"])
+    def test_live_ticks_and_completion_match_with_real_cost_tracker(
+        self,
+        tmp_path: Path,
+        make_task: Any,
+        isolated_collector: metric_collector_mod.MetricsCollector,
+        model_name: str,
+    ) -> None:
+        session_id = f"oa-live-{model_name}"
+        manifest = _manifest(tmp_path, session_id, model=model_name)
+        task = make_task(id=f"T-live-{model_name}", title="live cost task", description="d", status=TaskStatus.DONE)
+        session = AgentSession(
+            id=session_id,
+            role="backend",
+            task_ids=[task.id],
+            status="working",
+            exit_code=None,
+            provider="openai_agents",
+            model_config=ModelConfig(model_name, "high"),
+        )
+        tracker = CostTracker(run_id=f"run-{model_name}", budget_usd=10.0)
+        orch = _orch_for_session(tmp_path, session, cost_tracker=tracker)
+
+        turn1 = SimpleNamespace(usage=_usage(input_tokens=1_000, output_tokens=200), output=[])
+        turn2 = SimpleNamespace(usage=_usage(input_tokens=2_000, output_tokens=400), output=[])
+        live_snapshots: list[float] = []
+
+        class _LiveTickRunner:
+            @staticmethod
+            def run_sync(agent: Any, prompt: str, **kwargs: Any) -> Any:
+                del prompt
+                hooks = kwargs["hooks"]
+                asyncio.run(hooks.on_llm_end(None, agent, turn1))
+                Orchestrator._record_live_costs(orch)
+                live_snapshots.append(tracker.status().spent_usd)
+
+                asyncio.run(hooks.on_llm_end(None, agent, turn2))
+                Orchestrator._record_live_costs(orch)
+                live_snapshots.append(tracker.status().spent_usd)
+
+                return SimpleNamespace(
+                    final_output="done",
+                    context_wrapper=SimpleNamespace(usage=_usage(input_tokens=3_000, output_tokens=600)),
+                    raw_responses=[turn1, turn2],
+                )
+
+        with patch.dict("sys.modules", {"agents": _fake_sdk(_LiveTickRunner)}):
+            assert run(manifest) == EXIT_OK
+
+        expected_turn1 = price_model_usage(model_name, 1_000, 200).cost_usd
+        expected_total = price_model_usage(model_name, 3_000, 600).cost_usd
+        assert live_snapshots[0] == pytest.approx(expected_turn1)
+        assert live_snapshots[1] == pytest.approx(expected_total)
+
+        session.exit_code = 0
+        isolated_collector.start_task(task.id, role="backend", model=model_name, provider="openai_agents")
+        task_m, completion_cost = _record_completion_metrics(
+            orch,
+            task,
+            session,
+            janitor_passed=True,
+            qg_result=None,
+            completion_data=None,
+            agent_just_reaped=True,
+        )
+        assert completion_cost == pytest.approx(expected_total)
+        assert tracker.status().spent_usd == pytest.approx(completion_cost)
+        assert (task_m.tokens_prompt, task_m.tokens_completion, task_m.tokens_used) == (3_000, 600, 3_600)

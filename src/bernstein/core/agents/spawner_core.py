@@ -6217,10 +6217,11 @@ class AgentSpawner:
             _resume_extra["task_title"] = tasks[0].title
         if "task_titles" in _resume_params:
             _resume_extra["task_titles"] = [t.title for t in tasks]
-        _accepts_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in _resume_params.values())
-        _resume_mcp = self._mcp_config_for_adapter(resume_adapter, self._mcp_config)
-        if _resume_mcp is not None and ("mcp_config" in _resume_params or _accepts_varkw):
-            _resume_extra["mcp_config"] = _resume_mcp
+        if getattr(resume_adapter, "consumes_heartbeat_dir", False) is True:
+            _accepts_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in _resume_params.values())
+            _resume_mcp = self._mcp_config_for_adapter(resume_adapter, self._mcp_config)
+            if _resume_mcp is not None and ("mcp_config" in _resume_params or _accepts_varkw):
+                _resume_extra["mcp_config"] = _resume_mcp
         if _resume_attachments is not None:
             if "multimodal_context" not in _resume_params:
                 raise AttachmentDispatchError(
