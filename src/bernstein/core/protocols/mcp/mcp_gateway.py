@@ -738,7 +738,7 @@ class MCPGateway:
         retried = build_retry_request(message, pre.payment_ref)
         retried_id = retried.get("id")
         retried_params: dict[str, Any] = retried.get("params") or {}
-        retry_of = prior_prepared[0].digest() if prior_prepared is not None else None
+        retry_of = prior_prepared[0].digest() if prior_prepared is not None and prior_prepared[1] is not None else None
         if retry_of is not None:
             retried_prepared = await self._prepare_tool_dispatch(
                 retried,

@@ -8,9 +8,11 @@ and ``retry_of`` semantics without importing ``bernstein.*``.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -27,6 +29,7 @@ from bernstein.core.persistence.wal import WALWriter
 from bernstein.core.protocols.mcp.mcp_gateway import MCPGateway
 from bernstein.core.protocols.payments.mandates import IntentMandate
 from bernstein.core.protocols.payments.x402 import SettlementContext, X402Config, X402SettlementCoordinator
+from bernstein.core.security import toolcall_interlock as interlock_mod
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.audit_chain import (
     EVENT_TOOLCALL_ATTESTATION,
@@ -42,6 +45,7 @@ from bernstein.core.security.toolcall_interlock import (
     AttestationVerdict,
     ToolCallAttestationInterlock,
     ToolCallIntent,
+    VerifiedDispatchEvidence,
     canonical_effect_digest,
     derive_attestation_verdict,
 )
@@ -575,3 +579,402 @@ async def test_cli_surfaces_forward_effects_dir_and_verifiers_stay_bernstein_fre
     )
     assert res_cli.exit_code == 0, res_cli.output
     assert "payload=verified" in res_cli.output
+
+
+def test_unreachable_security_controls_gate_passes_for_effect_helpers() -> None:
+    """B1 (#5053): internal preimage helpers must not surface as unreached public controls."""
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "check_unreachable_controls.py")],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "canonical_effect_preimage" not in interlock_mod.__all__
+    assert "effect_preimage_for_connector_response" not in interlock_mod.__all__
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+@pytest.mark.parametrize("bad_duration", [float("nan"), float("inf")])
+async def test_non_finite_duration_ms_fails_effect_leg(
+    tmp_path: Path,
+    verifier_kind: str,
+    bad_duration: float,
+) -> None:
+    """B2: NaN and Infinity duration_ms must fail closed in both offline verifiers."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+    intent = _intent(request_id=31, span_id="span-nan")
+    ev = await provider.prepare_dispatch(intent)
+    chain.log_with_prev_digest(
+        event_type="toolcall.effect",
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id=intent.scope_id,
+        details={
+            "attestation_ref": ev.attestation_ref,
+            "dispatch_ref": ev.dispatch_ref,
+            "intent_digest": ev.intent_digest,
+            "effect_digest": canonical_effect_digest({"ok": True}),
+            "outcome": "ok",
+            "duration_ms": bad_duration,
+        },
+    )
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "OVERALL: FAIL" in out
+    assert "[FAIL] toolcall_effects" in out
+    assert "duration_ms" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_retry_of_must_be_sha256_digest_across_intent_provider_and_verifiers(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """B3: retry_of must match ^sha256:[0-9a-f]{64}\\Z in from_request, prepare_dispatch, and verifiers."""
+    for bad_retry in ("not-a-sha256", "sha256:" + ("A" * 64), "sha256:" + ("a" * 64) + "\n"):
+        with pytest.raises(ValueError, match="retry_of"):
+            _intent(request_id=41, span_id="span-bad-req", retry_of=bad_retry)
+
+    chain = AuditChainStore(tmp_path / "audit", key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+    bypassed_intent = dataclasses.replace(_intent(request_id=42, span_id="span-bad-prov"), retry_of="not-a-sha256")
+    with pytest.raises(ValueError, match="retry_of"):
+        await provider.prepare_dispatch(bypassed_intent)
+
+    valid_intent = _intent(request_id=43, span_id="span-forged-retry")
+    chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_ATTESTATION,
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id=valid_intent.scope_id,
+        details={
+            "attestation_ref": "sha256:" + ("c" * 64),
+            "intent_digest": valid_intent.digest(),
+            "scope_id": valid_intent.scope_id,
+            "server_name": valid_intent.server_name,
+            "method": valid_intent.method,
+            "tool_name": valid_intent.tool_name,
+            "request_id": valid_intent.request_id,
+            "span_id": valid_intent.span_id,
+            "args_digest": valid_intent.args_digest,
+            "retry_of": "not-a-sha256-digest",
+        },
+    )
+    receipt_path, pub_path = _export_receipt(tmp_path / "audit", tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "[FAIL] toolcall_effects" in out
+    assert "retry_of" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_malformed_intent_digest_fails_without_effects_dir(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """B3: intent_digest format must be validated even when --effects-dir is omitted."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    att_ref = "sha256:" + ("d" * 64)
+    bad_intent_digest = "not-a-sha256-intent-digest"
+    chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_ATTESTATION,
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id="scope:run-1:agent-1",
+        details={
+            "attestation_ref": att_ref,
+            "intent_digest": bad_intent_digest,
+            "scope_id": "scope:run-1:agent-1",
+            "server_name": "filesystem",
+            "method": "tools/call",
+            "tool_name": "read_file",
+            "request_id": "51",
+            "span_id": "span-51",
+            "args_digest": "sha256:" + ("e" * 64),
+        },
+    )
+    disp = chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_ENFORCED_DISPATCH,
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id="scope:run-1:agent-1",
+        details={"attestation_ref": att_ref, "intent_digest": bad_intent_digest},
+    )
+    record_toolcall_effect(
+        chain=chain,
+        intent_digest=bad_intent_digest,
+        effect_digest=canonical_effect_digest({"ok": True}),
+        outcome="ok",
+        duration_ms=1.0,
+        attestation_ref=att_ref,
+        dispatch_ref="hmac:" + disp.hmac,
+        resource_id="scope:run-1:agent-1",
+    )
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "[FAIL] toolcall_effects" in out
+    assert "intent_digest" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+@pytest.mark.parametrize(
+    "override_kwargs",
+    [
+        {"scope_id": "scope:run-1:other-agent"},
+        {"server_name": "other-server"},
+        {"tool_name": "drop_table"},
+    ],
+)
+async def test_in_range_retry_of_must_match_scope_server_and_tool(
+    tmp_path: Path,
+    verifier_kind: str,
+    override_kwargs: dict[str, str],
+) -> None:
+    """B3: an in-range retry_of must match (scope_id, server_name, tool_name) of the prior attempt."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+
+    first = _intent(request_id=61, span_id="span-61")
+    await provider.prepare_dispatch(first)
+
+    retry_kwargs: dict[str, Any] = {
+        "scope_id": "scope:run-1:agent-1",
+        "server_name": "filesystem",
+        "method": "tools/call",
+        "tool_name": "read_file",
+        "request_id": "61:retry",
+        "span_id": "span-61-retry",
+        "arguments": {"path": "/tmp/example.txt"},
+        "retry_of": first.digest(),
+        **override_kwargs,
+    }
+    mismatched_retry = ToolCallIntent.from_request(**retry_kwargs)
+    ev_retry = await provider.prepare_dispatch(mismatched_retry)
+    await provider.record_effect(
+        mismatched_retry,
+        ev_retry,
+        response={"result": {"ok": True}},
+        duration_ms=2.0,
+        outcome="ok",
+        received=b'{"result":{"ok":true}}',
+    )
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "[FAIL] toolcall_effects" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_duplicate_intent_digest_fails_effect_leg(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """B4: duplicate intent_digest across distinct attestation_refs must fail closed."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+
+    intent = _intent(request_id=71, span_id="span-71")
+    ev1 = await provider.prepare_dispatch(intent)
+    await provider.record_effect(
+        intent,
+        ev1,
+        response={"result": {"ok": True}},
+        duration_ms=1.0,
+        outcome="ok",
+        received=b'{"result":{"ok":true}}',
+    )
+
+    second_att_ref = "sha256:" + ("f" * 64)
+    chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_ATTESTATION,
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id=intent.scope_id,
+        details={
+            "attestation_ref": second_att_ref,
+            "intent_digest": intent.digest(),
+            "scope_id": intent.scope_id,
+            "server_name": intent.server_name,
+            "method": intent.method,
+            "tool_name": intent.tool_name,
+            "request_id": "72",
+            "span_id": intent.span_id,
+            "args_digest": intent.args_digest,
+        },
+    )
+    disp2 = chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_ENFORCED_DISPATCH,
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id=intent.scope_id,
+        details={"attestation_ref": second_att_ref, "intent_digest": intent.digest()},
+    )
+    record_toolcall_effect(
+        chain=chain,
+        intent_digest=intent.digest(),
+        effect_digest=canonical_effect_digest(b'{"result":{"ok":true}}'),
+        outcome="ok",
+        duration_ms=1.0,
+        attestation_ref=second_att_ref,
+        dispatch_ref="hmac:" + disp2.hmac,
+        resource_id=intent.scope_id,
+    )
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "[FAIL] toolcall_effects" in out
+    assert "intent_digest" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_duplicate_same_scope_request_id_without_retry_of_fails_effect_leg(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """B4: duplicate same-scope request_id with no retry_of must fail closed."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+
+    first = _intent(request_id=81, span_id="span-81-a")
+    second = _intent(request_id=81, span_id="span-81-b")
+    ev1 = await provider.prepare_dispatch(first)
+    await provider.record_effect(first, ev1, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+    ev2 = await provider.prepare_dispatch(second)
+    await provider.record_effect(second, ev2, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "[FAIL] toolcall_effects" in out
+    assert "request_id" in out
+
+
+@pytest.mark.asyncio
+async def test_observed_mode_failed_pre_dispatch_does_not_emit_dangling_retry_of_on_x402_retry(
+    tmp_path: Path,
+) -> None:
+    """S1: mcp_gateway emits retry_of only when prior_prepared[1] is not None."""
+    audit_dir = tmp_path / "audit"
+    sdd = tmp_path / ".sdd"
+    sdd.mkdir(exist_ok=True)
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    inner = NativeToolCallEvidenceProvider(chain)
+    calls = 0
+
+    class _FlakyObservedProvider:
+        async def prepare_dispatch(self, intent: ToolCallIntent) -> VerifiedDispatchEvidence:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("transient audit write error")
+            return await inner.prepare_dispatch(intent)
+
+        async def record_effect(self, *args: Any, **kwargs: Any) -> None:
+            await inner.record_effect(*args, **kwargs)
+
+    gateway = MCPGateway(
+        upstream_cmd=[],
+        wal_writer=WALWriter(run_id="observed-retry", sdd_dir=sdd),
+        server_name="filesystem",
+        attestation_interlock=ToolCallAttestationInterlock(
+            provider=_FlakyObservedProvider(),
+            scope_id="scope:run-1:agent-1",
+            mode=AttestationMode.OBSERVED,
+        ),
+        settlement=_x402_settlement(tmp_path),
+    )
+    challenge = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "error": {
+            "code": 402,
+            "message": "Payment Required",
+            "data": {
+                "x402Version": 1,
+                "accepts": [{"scheme": "exact", "maxAmountRequired": "4000000", "amountUsd": 4.0}],
+            },
+        },
+    }
+    settled = {"jsonrpc": "2.0", "id": 7, "result": {"ok": True}}
+    request = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {"name": "read_file", "arguments": {"path": "/tmp/example.txt"}},
+    }
+    with patch.object(
+        gateway,
+        "_send_request",
+        new_callable=AsyncMock,
+        side_effect=[(challenge, 4.0), (settled, 5.0)],
+    ):
+        assert await gateway.handle_jsonrpc(request) == settled
+
+    attestations = [
+        e for e in chain.query(resource_id="scope:run-1:agent-1") if e.event_type == EVENT_TOOLCALL_ATTESTATION
+    ]
+    assert len(attestations) == 1
+    assert "retry_of" not in attestations[0].details
+    assert attestations[0].details["request_id"] == "7"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_effects_dir_rejects_symlink_and_sha256_regex_uses_strict_end_anchor(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """S2: --effects-dir rejects symlinks and _SHA256_PREFIXED_RE uses \\Z rather than $."""
+    verifier = _load_verifier(verifier_kind)
+    trailing_newline = "sha256:" + ("a" * 64) + "\n"
+    assert verifier._SHA256_PREFIXED_RE.match(trailing_newline) is None
+
+    audit_dir = tmp_path / "audit"
+    effects_dir = tmp_path / "effects"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain, effects_dir=effects_dir)
+    intent = _intent(request_id=91, span_id="span-symlink")
+    with pytest.raises(ValueError, match="retry_of"):
+        await provider.prepare_dispatch(dataclasses.replace(intent, retry_of=trailing_newline))
+    raw = b'{"jsonrpc":"2.0","id":91,"result":{"ok":true}}'
+    ev = await provider.prepare_dispatch(intent)
+    await provider.record_effect(intent, ev, response=json.loads(raw), duration_ms=2.0, outcome="ok", received=raw)
+
+    outside_target = tmp_path / "outside.effect"
+    outside_target.write_bytes(raw)
+    artifact = _artifact_file(effects_dir, intent.digest())
+    artifact.unlink()
+    artifact.symlink_to(outside_target)
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(
+        verifier_kind,
+        receipt_path,
+        "--public-key",
+        str(pub_path),
+        "--effects-dir",
+        str(effects_dir),
+    )
+    assert rc == 1, out
+    assert "[FAIL] toolcall_effects" in out
+    assert "symlink" in out.lower()

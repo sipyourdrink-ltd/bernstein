@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -31,7 +32,6 @@ from bernstein.core.security.toolcall_identity import (
 from bernstein.core.security.toolcall_interlock import (
     ToolCallIntent,
     VerifiedDispatchEvidence,
-    effect_preimage_for_connector_response,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +40,36 @@ if TYPE_CHECKING:
     from bernstein.core.security.audit import ChainScanCursor
     from bernstein.core.security.identity_spawn_anchor import AnchoredRunIdentity
 
-_SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
+_SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
+
+
+def _canonical_effect_preimage(payload: Any) -> bytes:
+    """Return the exact bytes hashed for one observed tool-call effect."""
+    if isinstance(payload, bytes):
+        return payload
+    if isinstance(payload, str):
+        return payload.encode("utf-8")
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _effect_preimage_for_connector_response(
+    response: Mapping[str, Any] | None,
+    received: bytes | None = None,
+    *,
+    patch: str | None = None,
+) -> bytes:
+    """Return the exact preimage bytes persisted for ``toolcall.effect.effect_digest``."""
+    if patch is not None:
+        return _canonical_effect_preimage(patch)
+    if response is None:
+        return _canonical_effect_preimage(None)
+    result = response.get("result")
+    error = response.get("error")
+    if error is None and isinstance(result, str):
+        return _canonical_effect_preimage(result)
+    if received is not None:
+        return _canonical_effect_preimage(received)
+    return _canonical_effect_preimage(response)
 
 
 def _intent_fields(intent: ToolCallIntent) -> dict[str, str]:
@@ -62,6 +91,10 @@ def _write_effect_payload(effects_dir: Path, intent_digest: str, preimage: bytes
         raise ValueError(f"cannot persist effect payload for malformed intent_digest: {intent_digest!r}")
     effects_dir.mkdir(parents=True, exist_ok=True)
     target = effects_dir / f"{match.group(1)}.effect"
+    if target.is_symlink():
+        raise ValueError(f"refusing to write effect payload through symlink: {target}")
+    if target.exists() and target.read_bytes() != preimage:
+        raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
     fd, tmp_name = tempfile.mkstemp(prefix=".effect-", suffix=".tmp", dir=str(effects_dir))
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -182,6 +215,8 @@ class NativeToolCallEvidenceProvider:
     async def prepare_dispatch(self, intent: ToolCallIntent) -> VerifiedDispatchEvidence:
         """Append attestation and admission markers before dispatch is allowed."""
         fields = _intent_fields(intent)
+        if intent.retry_of is not None and _SHA256_PREFIXED_RE.match(intent.retry_of) is None:
+            raise ValueError("tool-call retry_of must match ^sha256:[0-9a-f]{64}\\Z")
         intent_digest = intent.digest()
         if intent.retry_of is not None and intent.retry_of == intent_digest:
             raise ValueError("tool-call retry_of cannot reference itself")
@@ -329,7 +364,9 @@ class NativeToolCallEvidenceProvider:
         """Append ``toolcall.effect`` bound to the same intent digest (#6270)."""
         if evidence.intent_digest != intent.digest():
             raise ValueError("effect evidence is bound to a different tool-call intent")
-        preimage = effect_preimage_for_connector_response(response, received, patch=patch)
+        if isinstance(duration_ms, bool) or not math.isfinite(duration_ms) or duration_ms < 0:
+            raise ValueError("tool-call effect duration_ms must be finite and >= 0")
+        preimage = _effect_preimage_for_connector_response(response, received, patch=patch)
         effect_digest = "sha256:" + hashlib.sha256(preimage).hexdigest()
         if self.effects_dir is not None:
             _write_effect_payload(Path(self.effects_dir), evidence.intent_digest, preimage)

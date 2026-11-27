@@ -26,6 +26,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -36,6 +37,7 @@ from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.toolcall_identity import ToolCallIdentityError, verify_identity_envelope
 
 logger = logging.getLogger(__name__)
+_SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
 
 
 class AttestationMode(StrEnum):
@@ -84,10 +86,8 @@ class ToolCallIntent:
         retry_of: str | None = None,
     ) -> ToolCallIntent:
         """Build an intent without retaining raw connector arguments."""
-        if retry_of is not None:
-            if not retry_of.strip():
-                raise ValueError("retry_of must be a non-empty string when provided")
-            retry_of = retry_of.strip()
+        if retry_of is not None and (not isinstance(retry_of, str) or _SHA256_PREFIXED_RE.match(retry_of) is None):
+            raise ValueError("retry_of must match ^sha256:[0-9a-f]{64}\\Z when provided")
         canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return cls(
             scope_id=scope_id,
@@ -117,7 +117,7 @@ class ToolCallIntent:
         return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def canonical_effect_preimage(payload: Any) -> bytes:
+def _canonical_effect_preimage(payload: Any) -> bytes:
     """Return the exact bytes hashed by :func:`canonical_effect_digest`."""
     if isinstance(payload, bytes):
         return payload
@@ -136,10 +136,10 @@ def canonical_effect_digest(payload: Any) -> str:
     compact-JSON branch is not the primary form: a live connector return is
     digested from its received bytes.
     """
-    return "sha256:" + hashlib.sha256(canonical_effect_preimage(payload)).hexdigest()
+    return "sha256:" + hashlib.sha256(_canonical_effect_preimage(payload)).hexdigest()
 
 
-def effect_preimage_for_connector_response(
+def _effect_preimage_for_connector_response(
     response: Mapping[str, Any] | None,
     received: bytes | None = None,
     *,
@@ -147,16 +147,16 @@ def effect_preimage_for_connector_response(
 ) -> bytes:
     """Return the exact preimage bytes hashed into ``toolcall.effect.effect_digest``."""
     if patch is not None:
-        return canonical_effect_preimage(patch)
+        return _canonical_effect_preimage(patch)
     if response is None:
-        return canonical_effect_preimage(None)
+        return _canonical_effect_preimage(None)
     result = response.get("result")
     error = response.get("error")
     if error is None and isinstance(result, str):
-        return canonical_effect_preimage(result)
+        return _canonical_effect_preimage(result)
     if received is not None:
-        return canonical_effect_preimage(received)
-    return canonical_effect_preimage(response)
+        return _canonical_effect_preimage(received)
+    return _canonical_effect_preimage(response)
 
 
 def effect_digest_for_connector_response(
@@ -172,7 +172,7 @@ def effect_digest_for_connector_response(
     sent it, so key order, whitespace, escapes and echoed timestamps all
     count.  A response with no received bytes falls back to compact JSON.
     """
-    return "sha256:" + hashlib.sha256(effect_preimage_for_connector_response(response, received)).hexdigest()
+    return "sha256:" + hashlib.sha256(_effect_preimage_for_connector_response(response, received)).hexdigest()
 
 
 def _accepts_keyword(func: Any, name: str) -> bool:
@@ -667,10 +667,8 @@ __all__ = [
     "ToolCallInterlockError",
     "VerifiedDispatchEvidence",
     "canonical_effect_digest",
-    "canonical_effect_preimage",
     "derive_attestation_verdict",
     "effect_digest_for_connector_response",
-    "effect_preimage_for_connector_response",
     "project_attestation_mode",
     "toolcall_effect_outcome",
     "verified_tool_call_ids",
