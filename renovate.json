@@ -66,6 +66,16 @@
         "mkdocs-redirects"
       ],
       "allowedVersions": "<1.2.3"
+    },
+    {
+      "description": "Hold agent-manifest at 0.12.x until 0.15 compatibility is checked. Both pyproject.toml (optional extra manifest) and the agent-manifest-conformance workflow pin 0.12.0; lift this cap together with those pins once 0.15 compatibility is verified.",
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchPackageNames": [
+        "agent-manifest"
+      ],
+      "allowedVersions": "<0.13"
     }
   ]
 }

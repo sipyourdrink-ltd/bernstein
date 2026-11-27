@@ -57,5 +57,9 @@ updates:
       # letting a bump edit it.
       - dependency-name: "mkdocs-redirects"
         versions: [">=1.2.3"]
+      # Hold agent-manifest at 0.12.x until 0.15 compatibility is checked.
+      # pyproject.toml and agent-manifest-conformance.yml pin 0.12.0.
+      - dependency-name: "agent-manifest"
+        versions: [">=0.13"]
     # Majors stay individual PRs for a human decision.
     open-pull-requests-limit: 10
