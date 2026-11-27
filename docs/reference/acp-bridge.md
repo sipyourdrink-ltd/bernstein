@@ -59,6 +59,9 @@ the following limits relative to `stdio`:
   on each `initialize`, so one client's `initialize` from the same IP (for
   instance without terminal-auth capabilities) can cause another client's
   `authenticate` call to fail with `-32602` (`unknown authentication method`).
+- **No interactive `manual` permission prompts on HTTP:** On HTTP, `manual`
+  permission mode cannot prompt the client over `session/request_permission`,
+  so gated tool calls are rejected immediately; use `stdio` or `auto` mode.
 
 ## Zed `settings.json`
 
