@@ -1809,10 +1809,10 @@ verify` recomputes both and rejects a description whose diff has since changed.
 |---|---|---|
 | `--stdio/--no-stdio` | `--stdio` | Serve over POSIX stdio (line-delimited JSON-RPC), the IDE embedding transport. |
 | `--http HOST:PORT` | off | Serve over HTTP/SSE on a loopback `HOST:PORT` (e.g. `:8062` or `127.0.0.1:8062`); non-loopback binds are refused. Overrides `--stdio` when both are supplied. |
-| `--server-url URL` | unset on `--stdio`; `BERNSTEIN_SERVER_URL` or `http://localhost:8052` on `--http` | Forward tasks to an external Bernstein task server URL instead of the embedded workspace runner. Local `auth_headers()` are attached on `--stdio` only, never for HTTP peers. |
+| `--server-url URL` | `BERNSTEIN_SERVER_URL` (unset if empty) on `--stdio`; `BERNSTEIN_SERVER_URL` or `http://localhost:8052` on `--http` | Forward tasks to an external Bernstein task server URL instead of the embedded workspace runner. Local `auth_headers()` are attached on `--stdio` only, never for HTTP peers. |
 | `--cli ADAPTER` | auto-detect | Adapter CLI for embedded workspace execution (or `--setup` verification). |
-| `--setup` | off | Verify local CLI adapters and credentials for ACP terminal authentication and exit (`0` ready, `1` missing). |
-| `--allow-embedded-http` | off | Allow the embedded workspace runner on `--http` (loopback binds only; requires `--http` and cannot be combined with `--server-url`). |
+| `--setup` | off | Verify local CLI adapter availability on `PATH` for ACP terminal authentication and exit (`0` ready, `1` missing; does not verify provider credentials). |
+| `--allow-embedded-http` | off | Allow the embedded workspace runner on `--http` (loopback binds only; requires `--http` and cannot be combined with CLI `--server-url`; an exported `BERNSTEIN_SERVER_URL` is ignored, not rejected). |
 
 #### `bernstein fingerprint`
 

@@ -34,7 +34,7 @@ JSON-RPC 2.0 frames over `stdin` and `stdout`. All diagnostic logs go to
 
 The HTTP transport accepts a single JSON-RPC frame per `POST /acp` request,
 supports `Accept: text/event-stream` for streaming responses, and binds
-loopback addresses only (`127.0.0.1`, `::1`, or `localhost`).
+loopback addresses only (`127.0.0.0/8`, `::1`, or `localhost`).
 
 ### HTTP transport limits
 
@@ -43,14 +43,15 @@ HTTP transport enforces the following restrictions and carries the following
 known limits relative to `stdio`:
 
 - **Loopback bind only:** `bernstein acp serve --http HOST:PORT` (and
-  `_run_http`) refuses any non-loopback host (`127.0.0.1`, `::1`, and
+  `_run_http`) refuses any non-loopback host (`127.0.0.0/8`, `::1`, and
   `localhost` only). Remote HTTP access must go through a tunnel wrapper.
 - **Embedded runner requires `--allow-embedded-http`:** Without
   `--allow-embedded-http`, `--http` defaults to forwarding tasks to
   `--server-url` (falling back to `BERNSTEIN_SERVER_URL` or
   `http://localhost:8052`). Passing `--allow-embedded-http` enables the
   embedded workspace runner on a loopback HTTP bind; it requires `--http` and
-  cannot be combined with CLI `--server-url`.
+  cannot be combined with CLI `--server-url` (an exported
+  `BERNSTEIN_SERVER_URL` is ignored, not rejected).
 - **Local `auth_headers()` are never forwarded for HTTP peers:** `bernstein acp
   serve --http` disables upstream auth-header forwarding
   (`forward_auth_headers=False`), and `_should_attach_auth_headers()` prevents
@@ -60,9 +61,10 @@ known limits relative to `stdio`:
   exactly one loopback `Host` header (otherwise HTTP `403 forbidden host`).
   `Origin` is optional for non-browser clients, but when present it must appear
   once, must not be `null`, and must be an `http`/`https` loopback origin with
-  no userinfo, path, query, or fragment (otherwise HTTP `403 forbidden
-  origin`). **Known limit:** the `Origin` allow-list accepts any valid
-  localhost/loopback port rather than restricting to the listening port.
+  no userinfo, query, or fragment and at most a bare `"/"` path (non-root paths
+  are rejected; otherwise HTTP `403 forbidden origin`). **Known limit:** the
+  `Origin` allow-list accepts any valid loopback host/port (`127.0.0.0/8`,
+  `::1`, or `localhost`) rather than restricting to the listening address/port.
 - **`auto` mode is refused over HTTP:** HTTP peers cannot enable or run `auto`
   approval mode. `session/set_mode`, `session/prompt`, legacy `prompt`, and
   legacy `setMode` return `-32600` (`Invalid Request`) for `auto` mode over
@@ -70,14 +72,23 @@ known limits relative to `stdio`:
 - **No interactive `manual` permission prompts on HTTP:** Stateless HTTP has no
   bidirectional `client_requester`, so `manual` mode cannot send
   `session/request_permission` prompts to the client; gated embedded-runner
-  turns fail closed (`transport_unsupported` / rejected). Because HTTP also
+  turns fail closed (`transport_unsupported` / rejected), emitting a failed
+  `tool_call_update` (`status: "failed"`) and an `"Action skipped: ..."`
+  message and resolving `session/prompt` with `stopReason: "end_turn"` rather
+  than a JSON-RPC error envelope or `stopReason: "refusal"`. Because HTTP also
   refuses `auto` mode, embedded turns that require approval prompts or `auto`
   mode must use `--stdio`.
-- **Session ownership binding and known limits:** Sessions record `owner_peer`
-  (`"stdio"` on stdio; `"http://<peer_ip>"` on HTTP). ACP v1 `session/load`,
+- **Session ownership binding and known limits:** Live in-memory sessions
+  record `owner_peer` (`"stdio"` on stdio; `"http://<peer_ip>"` on HTTP). ACP
+  v1 `session/load` (when the session is already live in memory),
   `session/set_mode`, `session/prompt`, `session/cancel`, and legacy `setMode`
   enforce `owner_peer == ctx.peer` (rejecting non-owners with `-32002` /
   `-32001`, or ignoring `session/cancel` notifications). **Known limits:**
+  - Persisted `session/load` metadata under `<cwd>/.sdd/runtime/acp_sessions/`
+    does not store `owner_peer`. `owner_peer` is checked only against a live
+    in-memory session; reloading a session from disk (whether after a restart
+    or in another process) does not check `owner_peer` and binds ownership to
+    the peer that loads it.
   - On HTTP, ownership is bound by client IP (`http://<peer_ip>`), not a
     per-client credential, so processes sharing the same loopback IP share the
     same owner identity (ACP v1 session IDs are 64-bit random `sess-` + 16 hex
@@ -85,11 +96,11 @@ known limits relative to `stdio`:
   - Legacy `cancel` and legacy `requestPermission` do not enforce an
     `owner_peer` check (they still reject ACP v1 sessions with `-32600`).
 - **No connection-level dialect lockout:** Unlike `stdio`, HTTP does not reject
-  legacy `"2025-04-01"` calls after a v1 `initialize` (or vice versa) across
-  requests. Isolation is enforced per session instead: calling legacy session
-  methods (`cancel`, `setMode`, `requestPermission`) on a v1 session or v1
-  session methods (`session/prompt`, `session/set_mode`) on a legacy session
-  returns `-32600`.
+  legacy `"2025-04-01"` calls after a v1 `initialize` across requests.
+  Isolation is enforced per session instead: calling legacy session methods
+  (`cancel`, `setMode`, `requestPermission`) on a v1 session or v1 session
+  methods (`session/prompt`, `session/set_mode`) on a legacy session returns
+  `-32600` (`session/load` on an in-memory legacy session returns `-32002`).
 - **`require_auth` is refused on HTTP:** `HttpAcpTransport` raises `ValueError`
   if constructed with `registry.require_auth=True` and fails closed with
   `-32000` (`AUTH_REQUIRED`) on requests (or HTTP `202` / empty SSE stream on
@@ -145,12 +156,12 @@ handshake first; pre-initialization requests return JSON-RPC error `-32600`
 | `initialize` | client -> server | negotiates `protocolVersion: 1`; returns `agentCapabilities` (`loadSession: true`), `agentInfo`, `authMethods` (advertises the `bernstein-setup` terminal-auth method with `args: ["--setup"]` when `clientCapabilities.auth.terminal = true` or `clientCapabilities._meta["terminal-auth"] = true`; empty otherwise unless extra methods are configured), and `_meta` (`adapters`, `sandboxBackends`). Legacy methods are rejected with `-32600` on an ACP v1 `stdio` connection (HTTP relies on per-session version checks; see [HTTP transport limits](#http-transport-limits)). |
 | `authenticate` | client -> server | validates `methodId` against advertised `authMethods` (`-32602` on unknown method) and delegates to the configured `auth_handler` (by default validating `bernstein-setup` against local adapter availability, or accepting in `--server-url` mode; this default method is an adapter-readiness check rather than caller-identity access control), failing closed with `-32000` when no `auth_handler` is configured or authentication fails. Auth enforcement applies on `stdio` only; see [HTTP transport limits](#http-transport-limits). |
 | `session/new` | client -> server | requires an absolute `cwd` and `mcpServers` list; binds `owner_peer` to the creating peer, returns `{sessionId, modes}` starting in `manual` mode (with `manual` and `auto` advertised), and persists session metadata under `<cwd>/.sdd/runtime/acp_sessions/`. |
-| `session/load` | client -> server | reloads a persisted ACP v1 session from `<cwd>/.sdd/runtime/acp_sessions/` (verifying `sessionId`, `owner_peer`, canonical absolute `cwd`, `run_id`, and strict symlink-free journal containment under `<cwd>/.sdd/runs/<run_id>/`). Always resets the loaded session to `manual` mode with an empty `always_allowed_tools` set (never restoring approval-relaxing fields from the agent-writable workspace), replays persisted `EventJournal` entries as `session/update` notifications (capped to the newest 2,000 updates / 16 MiB; reads the full journal before slicing), and returns `{modes}`. |
+| `session/load` | client -> server | reloads a persisted ACP v1 session from `<cwd>/.sdd/runtime/acp_sessions/`, validating `session_id`, canonical absolute `cwd`, `run_id`, and strict symlink-free journal containment under `<cwd>/.sdd/runs/<run_id>/`. `owner_peer` is checked only against a live in-memory session (`-32002` on mismatch); persisted metadata does not store `owner_peer`, so a reload from disk (after a restart or in another process) binds ownership to the loading peer. Always resets the loaded session to `manual` mode with an empty `session.always_allowed_tools` set (never restoring approval-relaxing fields from the session metadata file; workspace `.bernstein/always_allow.yaml` rules promoted via `await_tool_call` / `gate_tool_call` persist independently; see `session/request_permission`), replays persisted `EventJournal` entries as `session/update` notifications (capped to the newest 2,000 updates / 16 MiB; reads the full journal before slicing), and returns `{modes}`. |
 | `session/set_mode` | client -> server | switches the session approval mode between `manual` and `auto` on `stdio`; returns `-32600` if an HTTP peer requests `auto`, `-32002` for unknown or non-owned session, or `-32602` for invalid mode. Loaded sessions always reset to `manual` on `session/load`. |
 | `session/prompt` | client -> server | blocking multi-turn request accepting ACP v1 `ContentBlock` arrays (`text`, `resource_link`, `resource`) and resolving with `{stopReason, usage?}` (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). Enforces `owner_peer` (`-32002`) and rejects `auto` mode over HTTP (`-32600`). In standalone embedded mode (default on `--stdio`; opt-in via `--allow-embedded-http` on loopback `--http`), `EmbeddedOrchestratorRunner` runs governed workspace turns in-process against `<cwd>/.sdd`, streams `EventJournal` updates as `session/update`, and bridges approval gates over `session/request_permission`. With `--server-url`, prompts are forwarded to `POST /tasks` with `auth_headers()` on `stdio` only (never for HTTP peers). |
 | `session/cancel` | client -> server (notification) | notification-only (no `id`, no reply frame); ignores non-owner peers, signals cancellation for the active turn, rejects pending approvals, and reaps the active worker process group (or cancels the remote task when `--server-url` is set) while keeping the session alive for subsequent turns. |
 | `session/update` | server -> client (notification) | outbound turn updates projected from `EventJournal` (`agent_message_chunk`, `agent_thought_chunk`, `user_message_chunk`, `tool_call`, `tool_call_update`, `plan`, `usage_update`), plus `current_mode_update` when emitted explicitly via `emit_current_mode_update()`. |
-| `session/request_permission` | server -> client (request) | bidirectional multiplexed agent-to-client request bridging runtime `ApprovalQueue` gates in `manual` mode (resolving with `{outcome: {outcome: "selected", optionId}}` or `{outcome: {outcome: "cancelled"}}`). For embedded turn execution (`run_agent_turn`), the prompt title reads `"run agent turn: <goal summary>"` (`kind: "execute"`) and offers `allow_once` (`Allow once`) and `reject_once` (`Reject`) only. Non-turn tool approvals offer `allow_once`, `allow_always`, and `reject_once`; `allow_always` applies only within the live in-memory session and is cleared on `session/load`. Fails closed (`transport_unsupported`) on HTTP. |
+| `session/request_permission` | server -> client (request) | bidirectional multiplexed agent-to-client request bridging runtime `ApprovalQueue` gates in `manual` mode (resolving with `{outcome: {outcome: "selected", optionId}}` or `{outcome: {outcome: "cancelled"}}`). For embedded turn execution (`run_agent_turn`), the prompt title reads `"run agent turn: <goal summary>"` (`kind: "execute"`) and offers `allow_once` (`Allow once`) and `reject_once` (`Reject`) only. Non-turn tool approvals offer `allow_once`, `allow_always`, and `reject_once`: `session.always_allowed_tools` is in-memory and cleared on `session/load`, while an `ALWAYS` decision on a non-turn tool approval routed through `await_tool_call` / `gate_tool_call` is additionally promoted to `<cwd>/.bernstein/always_allow.yaml` (signed by `<cwd>/.sdd/config/always_allow.manifest.json`), which persists across `session/load` and restarts for matching tool inputs. Fails closed (`transport_unsupported`) on HTTP, where gated embedded turns emit a failed `tool_call_update` and resolve `session/prompt` with `stopReason: "end_turn"` rather than a JSON-RPC error. |
 
 ## Legacy `"2025-04-01"` dialect compatibility
 
@@ -165,10 +176,10 @@ integrations keep working without breakage. On HTTP, legacy `prompt` and
 
 ## Embedded runner, session replay, and terminal setup
 
-- **Embedded standalone runner:** On `--stdio` with `--server-url` omitted,
-  `build_default_server()` wires `EmbeddedOrchestratorRunner` to execute turns
-  in-process against `<cwd>/.sdd`, persisting tasks in
-  `<cwd>/.sdd/runtime/tasks.jsonl` and events in
+- **Embedded standalone runner:** On `--stdio` with `--server-url` (and
+  `BERNSTEIN_SERVER_URL`) unset, `build_default_server()` wires
+  `EmbeddedOrchestratorRunner` to execute turns in-process against `<cwd>/.sdd`,
+  persisting tasks in `<cwd>/.sdd/runtime/tasks.jsonl` and events in
   `<cwd>/.sdd/runs/<run_id>/journal.jsonl`. On `--http`, the CLI defaults to
   forwarding to `--server-url` (`SERVER_URL` / `http://localhost:8052`) and
   requires `--allow-embedded-http` on a loopback bind to enable the embedded
@@ -186,18 +197,23 @@ integrations keep working without breakage. On HTTP, legacy `prompt` and
   and interrupts pending waits on `session/cancel` or transport EOF. Each
   embedded turn is gated under `run_agent_turn` (`"run agent turn: <goal
   summary>"`), offering `allow_once` and `reject_once` only.
-- **`session/load` replay and known limit:** `agentCapabilities.loadSession`
+- **`session/load` replay and known limits:** `agentCapabilities.loadSession`
   reports `true`. Persisted session metadata under
   `<cwd>/.sdd/runtime/acp_sessions/` is validated for exact `session_id`,
-  matching `owner_peer`, absolute canonical `cwd`, matching `run_id`, and
-  symlink-free journal containment under `<cwd>/.sdd/runs/<run_id>/` before
-  replaying history. Approval-relaxing fields (`mode` and
-  `always_allowed_tools`) are never restored from the workspace file: loaded
-  sessions always start in `manual` mode with an empty allowlist. Replay emits
-  at most the newest 2,000 updates and 16 MiB (`MAX_SESSION_LOAD_UPDATES` /
-  `MAX_SESSION_LOAD_BYTES`); **known limit:** `project_journal_to_acp_updates`
-  reads and projects the whole `journal.jsonl` file before slicing to those
-  caps.
+  canonical absolute `cwd`, matching `run_id`, and symlink-free journal
+  containment under `<cwd>/.sdd/runs/<run_id>/` before replaying history.
+  `owner_peer` is checked only against a live in-memory session: persisted
+  metadata does not store `owner_peer`, so a reload from disk (whether after a
+  restart or in another process) binds ownership to the peer that loads it.
+  Approval-relaxing fields (`mode` and `always_allowed_tools`) are never
+  restored from the session metadata file: loaded sessions always start in
+  `manual` mode with an empty `session.always_allowed_tools` set (workspace
+  `.bernstein/always_allow.yaml` rules promoted through `await_tool_call` /
+  `gate_tool_call` persist independently across `session/load` and restarts).
+  Replay emits at most the newest 2,000 updates and 16 MiB
+  (`MAX_SESSION_LOAD_UPDATES` / `MAX_SESSION_LOAD_BYTES`); **known limit:**
+  `project_journal_to_acp_updates` reads and projects the whole `journal.jsonl`
+  file before slicing to those caps.
 - **Terminal-auth setup and `--server-url` auth headers:**
   `bernstein acp serve --setup` (and `bernstein acp --setup`) checks local
   adapter availability on `PATH` (returning exit code `0` when ready or `1`
