@@ -1889,6 +1889,38 @@ jobs:
       - name: Run fake-CLI adapter integration tests
         run: uv run pytest tests/integration/test_adapter_e2e.py -x -q --timeout=60
 
+  acp-conformance:
+    # ACP v1 conformance gate: runs the registry run_auth_check mirror,
+    # strict stdio stdout-purity checks, registry asset validation, and the
+    # official agent-client-protocol SDK integration suite against live
+    # ``bernstein acp serve --stdio`` subprocesses.
+    # Skips only when a merge-queue group's combined diff is docs-only
+    # (determine-changes computes it from the group's base; its failure
+    # mode is over-broad, never over-narrow). The roll-up tolerates the
+    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
+    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
+    # and push runs everything, so main keeps the full suite.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
+    name: ACP v1 conformance
+    needs: [determine-changes, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+      - name: Run ACP v1 conformance and SDK integration tests
+        run: uv run pytest tests/integration/acp/test_acp_v1_conformance.py tests/integration/acp/test_acp_v1_sdk.py -x -q --timeout=60
+
   adapter-integration-macos:
     # macOS half of adapter-integration. Gated on three conditions (see
     # #1468):
@@ -2674,6 +2706,7 @@ jobs:
       - pyright-strict-zone
       - mypy-strict-zone
       - adapter-integration
+      - acp-conformance
       - adapter-integration-macos
       - adapter-conformance-windows
       - test
@@ -2724,6 +2757,7 @@ jobs:
               "property-tests",
               "beartype",
               "adapter-integration",
+              "acp-conformance",
               "pyright-strict-zone",
               "mypy-strict-zone",
               "semgrep",

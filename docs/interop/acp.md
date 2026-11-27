@@ -1,16 +1,27 @@
 # ACP: server and client roles
 
-Bernstein speaks the [Agent Client Protocol](https://agentclientprotocol.org),
-an open JSON-RPC 2.0 specification, in **both directions**.
+Bernstein speaks the [Agent Client Protocol](https://agentclientprotocol.org)
+(**ACP v1**, `protocolVersion: 1`), an open JSON-RPC 2.0 specification, in
+**both directions**.
 
 | Role | Command / surface | Direction | What it does |
 |------|-------------------|-----------|--------------|
-| Server | `bernstein acp serve` | IDE -> Bernstein | Exposes Bernstein as an ACP backend so an editor can drive it. See [ACP bridge](../reference/acp-bridge.md). |
+| Server | `bernstein acp serve --stdio` | IDE -> Bernstein | Exposes Bernstein as an ACP v1 backend over stdio or HTTP/SSE so an editor can drive it. See [ACP bridge](../reference/acp-bridge.md). |
 | Client | `EventChannel.ACP` adapter | upstream CLI -> Bernstein | Consumes ACP from an upstream CLI as a first-class adapter event transport. |
 
-The server role has always existed. This page documents the **client** role:
-Bernstein consuming ACP from an upstream CLI, so an adapter receives typed
-lifecycle events with no bespoke stdout parser.
+> **Legacy REST surface:** The FastAPI REST routes in
+> `src/bernstein/core/routes/acp.py` (`/.well-known/acp.json`, `/acp/v0/*`)
+> are a separate legacy REST v0 surface and do not carry ACP v1 JSON-RPC.
+>
+> **Server runner placeholders:** The ACP v1 wire schema, handshake,
+> bidirectional transport, and session lifecycle are implemented; embedded
+> runner execution, `EventJournal` -> `session/update` projection, live
+> approval-gate wiring, and `session/load` replay are tracked in
+> [ACP bridge](../reference/acp-bridge.md#planned-in-follow-up-runner-integration-pr-2-placeholders).
+
+This page documents the **client** role: Bernstein consuming ACP from an
+upstream CLI, so an adapter receives typed lifecycle events with no bespoke
+stdout parser.
 
 ---
 
@@ -31,9 +42,10 @@ directly, with no text parser in the path.
 ## How it works
 
 The upstream CLI is the ACP *agent*; Bernstein is the *client*. Bernstein
-sends `initialize` and `prompt`; the agent replies with a response and streams
-`streamUpdate` notifications until the `prompt` response carries a terminal
-`stopReason`.
+supports both ACP v1 (`protocolVersion: 1`, `session/new`, `session/prompt`,
+`session/update`, `session/request_permission`) and legacy `"2025-04-01"`
+fixtures (`prompt`, `streamUpdate`, `requestPermission`) so existing adapter
+recordings stay dual-compatible until upstream CLIs finish migrating.
 
 1. **Spawn.** The CLI is launched as a subprocess speaking line-delimited
    JSON-RPC on stdout (`bernstein.adapters.acp_channel.spawn_acp_subprocess`).
@@ -63,8 +75,9 @@ agent's output:
 
 This is the load-bearing difference from an ordinary parser swap: strip the
 content-addressed journal and the guarantee is gone. An upstream release that
-changes only human-readable text inside a `streamUpdate` delta leaves the
-structured lifecycle - and therefore the replay - unchanged.
+changes only human-readable text inside a `session/update` (or legacy
+`streamUpdate`) delta leaves the structured lifecycle - and therefore the
+replay - unchanged.
 
 ---
 
@@ -78,6 +91,11 @@ uses at runtime (`replay_acp_event_fixture` in
 transcript, shrinking the conformance surface to frames the protocol actually
 defines.
 
+For the server role, `.github/workflows/ci.yml` runs the `ACP v1 conformance`
+job (`tests/integration/acp/test_acp_v1_conformance.py` and
+`tests/integration/acp/test_acp_v1_sdk.py`) against live
+`bernstein acp serve --stdio` subprocesses.
+
 ---
 
 ## Declaring an adapter on the ACP channel
@@ -89,6 +107,6 @@ Add an `EventChannel.ACP` row in `STRATEGY_MATRIX`
 "my_agent": AdapterStrategy(event_channel=EventChannel.ACP),
 ```
 
-`kilo` and `goose`, whose upstream CLIs expose ACP, ship on this channel. See
+`kilo` and `kimchi`, whose upstream CLIs expose ACP, ship on this channel. See
 the [Adapter Guide](../adapters/ADAPTER_GUIDE.md#declaring-acp-as-the-event-channel)
 for the full walkthrough.

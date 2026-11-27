@@ -205,6 +205,11 @@ dev = [
     # Rendering-fetcher tests (#3120) exercise the headless browser against
     # a local fixture server. Runtime extra: bernstein[research-render].
     "playwright>=1.65.0",
+    # Official Agent Client Protocol v1 Python SDK used by the ACP v1
+    # conformance suite (tests/integration/acp/test_acp_v1_sdk.py and
+    # test_acp_v1_conformance.py). Runtime wire parsing in
+    # bernstein.core.protocols.acp stays dependency-free.
+    "agent-client-protocol>=1.1",
     # NOTE: semgrep is intentionally NOT a dev dep. Its transitive pins
     # (click<8.2, opentelemetry-sdk<1.38) collide with our production
     # floors (click>=8.3.3, opentelemetry-sdk>=1.41.1). Install via
@@ -959,6 +964,9 @@ dev = [
     "boto3-stubs>=1.44.0",  # boto3 (s3 / r2 extras), published by the mypy_boto3 project
     "botocore-stubs>=1.43.126",  # botocore, same publisher
     "playwright>=1.65.0",
+    # Official Agent Client Protocol v1 Python SDK (mirror of
+    # [project.optional-dependencies].dev) for tests/integration/acp/.
+    "agent-client-protocol>=1.1",
 ]
 
 # Documentation toolchain (mkdocs.yml): MkDocs Material, the `social` card
