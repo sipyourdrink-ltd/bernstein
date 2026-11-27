@@ -691,7 +691,12 @@ class ACPHandlerRegistry:
 
         latest = await self.sessions.get(session_id)
         if latest is not None:
-            if latest.protocol_version != ACP_V1_PROTOCOL_VERSION or Path(latest.cwd).resolve() != req_cwd:
+            if (
+                latest.protocol_version != ACP_V1_PROTOCOL_VERSION
+                or "\x00" in latest.cwd
+                or not Path(latest.cwd).is_absolute()
+                or Path(latest.cwd).resolve() != req_cwd
+            ):
                 raise ACPSchemaError(
                     RESOURCE_NOT_FOUND,
                     f"unknown session {session_id!r}",
@@ -935,8 +940,27 @@ class ACPHandlerRegistry:
         if tool in session.always_allowed_tools:
             return "approved", "allow_always"
 
-        if self.client_requester is not None and session.protocol_version == ACP_V1_PROTOCOL_VERSION:
+        if session.protocol_version == ACP_V1_PROTOCOL_VERSION:
             tc_id = tool_call_id or f"call-{uuid.uuid4().hex[:12]}"
+            if self.client_requester is None:
+                logger.warning(
+                    "acp.request_permission failed closed: bidirectional client_requester unavailable for session=%s",
+                    session_id,
+                )
+                self.audit_emitter(
+                    "acp.permission",
+                    session_id,
+                    {
+                        "peer": session.peer,
+                        "decision": "rejected",
+                        "optionKind": "transport_unsupported",
+                        "reason": "client_requester_unavailable",
+                        "toolCallId": tc_id,
+                        "tool": tool,
+                    },
+                )
+                return "rejected", "transport_unsupported"
+
             perm_options = (
                 [dict(opt) for opt in options]
                 if options is not None
@@ -1176,6 +1200,8 @@ class ACPHandlerRegistry:
             return "rejected"
         if session.mode == "auto":
             return "approved"
+        if session.protocol_version == ACP_V1_PROTOCOL_VERSION:
+            return "rejected"
 
         waiter = session.open_permission_waiter(tool, detail)
         frame = make_notification(

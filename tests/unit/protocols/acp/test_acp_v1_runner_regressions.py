@@ -55,9 +55,10 @@ from bernstein.core.protocols.acp.schema import (
 from bernstein.core.protocols.acp.server import build_default_server
 from bernstein.core.protocols.acp.session import (
     _SAFE_ID_RE,  # pyright: ignore[reportPrivateUsage]
+    ACPSession,
     load_persisted_session,
 )
-from bernstein.core.protocols.acp.transport import StdioAcpTransport
+from bernstein.core.protocols.acp.transport import StdioAcpTransport, dispatch_frame
 from bernstein.core.replay.journal import EventJournal, load_events
 from bernstein.core.tasks.models import ModelConfig, TaskStatus
 from bernstein.core.tasks.task_store_core import TaskStore
@@ -1001,3 +1002,154 @@ def test_session_load_rejects_intra_runs_symlinked_journal(tmp_path: Path) -> No
 
     asyncio.run(_check_persisted())
     assert "SIBLING_RUN_SECRET_PAYLOAD" not in json.dumps(frames)
+
+
+def test_http_v1_manual_mode_without_client_requester_fails_fast_without_legacy_permission_frame(
+    tmp_path: Path,
+) -> None:
+    """HTTP ACP v1 manual-mode turns with client_requester=None must fail closed immediately without legacy frames."""
+    (tmp_path / "bernstein.yaml").write_text(
+        "approvals:\n  interactive: true\n  timeout_seconds: 30\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+    server = build_default_server(server_url=None, adapter_name="mock")
+    server.registry.permission_timeout_s = 8.0
+    http = server.http_transport()
+
+    sse_frames: list[dict[str, Any]] = []
+    prompt_response: dict[str, Any] = {}
+    sid = ""
+
+    async def _post_json(payload: dict[str, Any]) -> dict[str, Any]:
+        status, _headers, body = await http.handle_request(
+            json.dumps(payload).encode("utf-8"),
+            "application/json",
+            peer="http://127.0.0.1",
+        )
+        assert status == 200
+        assert isinstance(body, (bytes, bytearray))
+        return json.loads(body.decode("utf-8"))
+
+    async def _run() -> None:
+        nonlocal prompt_response, sid
+        init_env = await _post_json(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1}}
+        )
+        assert init_env["result"]["protocolVersion"] == 1
+
+        new_env = await _post_json(
+            {"jsonrpc": "2.0", "id": 2, "method": "session/new", "params": {"cwd": str(tmp_path), "mcpServers": []}}
+        )
+        sid = new_env["result"]["sessionId"]
+        assert new_env["result"]["modes"]["currentModeId"] == "manual"
+        assert server.registry.client_requester is None
+
+        direct_t0 = time.monotonic()
+        direct_decision, direct_kind = await asyncio.wait_for(
+            server.registry.ask_permission_outcome(sid, "edit_file", "edit app.py"),
+            timeout=1.5,
+        )
+        assert time.monotonic() - direct_t0 < 0.5
+        assert direct_decision == "rejected"
+        assert direct_kind == "transport_unsupported"
+
+        t0 = time.monotonic()
+        status, _headers, stream = await http.handle_request(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/prompt",
+                    "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "Edit app.py"}]},
+                }
+            ).encode("utf-8"),
+            "text/event-stream",
+            peer="http://127.0.0.1",
+        )
+        assert status == 200
+        assert not isinstance(stream, (bytes, bytearray))
+
+        async def _collect_sse() -> None:
+            nonlocal prompt_response
+            async for chunk in stream:
+                for line in chunk.decode("utf-8").splitlines():
+                    if line.startswith("data: "):
+                        frame = json.loads(line[len("data: ") :])
+                        sse_frames.append(frame)
+                        if "id" in frame and frame.get("id") == 3:
+                            prompt_response = frame
+
+        await asyncio.wait_for(_collect_sse(), timeout=2.0)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.5, f"HTTP v1 manual turn hung waiting on permission timeout: {elapsed:.3f}s"
+
+    asyncio.run(_run())
+
+    assert not any(f.get("method") == "requestPermission" for f in sse_frames)
+    assert prompt_response.get("result", {}).get("stopReason") == "end_turn"
+
+    updates = [f["params"]["update"] for f in sse_frames if f.get("method") == "session/update"]
+    assert any(u.get("sessionUpdate") == "tool_call_update" and u.get("status") == "failed" for u in updates)
+    agent_msgs = [
+        u.get("content", {}).get("text", "") for u in updates if u.get("sessionUpdate") == "agent_message_chunk"
+    ]
+    assert any("session/request_permission" in m and "auto" in m for m in agent_msgs)
+
+    store = TaskStore(tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+    store.replay_jsonl()
+    settled = store.list_tasks()[0]
+    assert settled.status == TaskStatus.FAILED
+
+    journal_events = load_events(tmp_path / ".sdd" / "runs" / sid / "journal.jsonl").events
+    failed_reasons = [str(e.get("reason", "")) for e in journal_events if e.get("event") == "task_failed"]
+    assert failed_reasons and "session/request_permission" in failed_reasons[-1] and "auto" in failed_reasons[-1]
+
+
+def test_session_load_post_await_latest_recheck_rejects_relative_and_nul_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-await latest TOCTOU recheck in session/load must reject relative and NUL-containing cwd with -32002."""
+    monkeypatch.chdir(tmp_path)
+    server = build_default_server(server_url=None, adapter_name="mock")
+    injected_cwd = "."
+
+    async def _racing_loader(req_cwd_str: str, sid: str) -> tuple[ACPSession | None, list[dict[str, Any]]]:
+        await server.registry.sessions.upsert(ACPSession(session_id=sid, cwd=injected_cwd, protocol_version=1))
+        return ACPSession(session_id=sid, cwd=req_cwd_str, protocol_version=1), []
+
+    server.registry.session_loader = _racing_loader
+
+    async def _run() -> None:
+        nonlocal injected_cwd
+        await server.registry.dispatch(ACPRequestContext("initialize", 1), {"protocolVersion": 1})
+
+        injected_cwd = "."
+        rel_env = await dispatch_frame(
+            server.registry,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session/load",
+                "params": {"sessionId": "sess-race-rel", "cwd": str(tmp_path), "mcpServers": []},
+            },
+            peer="stdio",
+        )
+        assert rel_env is not None and rel_env.get("error", {}).get("code") == RESOURCE_NOT_FOUND
+
+        injected_cwd = f"{tmp_path}\x00evil"
+        nul_env = await dispatch_frame(
+            server.registry,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/load",
+                "params": {"sessionId": "sess-race-nul", "cwd": str(tmp_path), "mcpServers": []},
+            },
+            peer="stdio",
+        )
+        assert nul_env is not None and nul_env.get("error", {}).get("code") == RESOURCE_NOT_FOUND
+
+    asyncio.run(_run())

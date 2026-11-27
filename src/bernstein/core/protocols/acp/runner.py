@@ -71,6 +71,11 @@ _NON_CLI_RUNTIME_ADAPTERS: frozenset[str] = frozenset({"generic", "openai_agents
 _MAX_DIFF_SNAPSHOT_BYTES: int = 2 * 1024 * 1024
 _FILE_HINT_RE = re.compile(r"\b([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8})\b")
 _CANCEL_PRINCIPAL = internal_principal("acp-runner/session-cancel")
+_TRANSPORT_DENY_PRINCIPAL = internal_principal("acp-runner/transport-permission-unavailable")
+_UNSUPPORTED_TRANSPORT_PERMISSION_REASON: str = (
+    "Interactive permission prompt ('session/request_permission') is unavailable on stateless HTTP "
+    "transport (client_requester is None); use '--stdio' or switch session mode to 'auto'."
+)
 
 
 @dataclass
@@ -362,6 +367,19 @@ class ACPApprovalGateBridge:
             kind=infer_tool_kind(pending.tool_name),
             locations=locations,
         )
+        if selected_kind == "transport_unsupported":
+            with contextlib.suppress(KeyError, ApprovalNonceExpired):
+                self.queue.resolve(
+                    pending.id,
+                    ApprovalDecision.REJECT,
+                    principal=_TRANSPORT_DENY_PRINCIPAL,
+                    reason=_UNSUPPORTED_TRANSPORT_PERMISSION_REASON,
+                    nonce=pending.nonce,
+                    source="acp-transport",
+                    channel="acp-http" if self._session.peer.startswith("http://") else "acp",
+                )
+            return
+
         if selected_kind == "allow_always":
             mapped = ApprovalDecision.ALWAYS
         elif decision_str == "approved":
