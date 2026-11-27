@@ -323,13 +323,15 @@ def resolve_session_journal_path(sdd_dir: Path, run_id: str) -> tuple[Path | Non
     if not run_dir.is_dir():
         return None, False
 
-    raw_journal = run_dir / JOURNAL_FILENAME
-    if raw_journal.is_symlink():
-        return None, False
     try:
         canonical_run_dir = run_dir.resolve()
         jpath = contained_path(canonical_run_dir, JOURNAL_FILENAME, label="acp session journal")
     except (OSError, ValueError, PathContainmentError):
+        return None, False
+    # ``contained_path`` follows links, so a ``journal.jsonl`` that is itself a
+    # symlink - even one aimed at a sibling inside the run dir - resolves away
+    # from its own canonical location; a looped link stays a symlink. Refuse both.
+    if jpath.parent != canonical_run_dir or jpath.name != JOURNAL_FILENAME or jpath.is_symlink():
         return None, False
     return (jpath if jpath.is_file() else None), True
 
