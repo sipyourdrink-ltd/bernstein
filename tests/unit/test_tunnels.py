@@ -284,6 +284,14 @@ def test_stop_all_sigterms_every_pid(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     sent: list[tuple[int, int]] = []
     monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard._PROC_ROOT",
+        tmp_path / "no-proc",
+    )
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.IS_WINDOWS",
+        False,
+    )
+    monkeypatch.setattr(
         "bernstein.core.tunnels.process_guard.os.kill",
         lambda pid, sig: sent.append((pid, sig)),
     )
@@ -294,6 +302,10 @@ def test_stop_all_sigterms_every_pid(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         "bernstein.core.tunnels.process_guard.pid_command_line",
         lambda _pid: "cloudflared tunnel --url http://localhost:3000",
+    )
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard._ps_comm",
+        lambda _pid: None,
     )
     # Re-import registry in the command under test: it reads the same state file.
     monkeypatch.setattr(
@@ -496,7 +508,7 @@ def test_stop_active_tunnels_skips_guarded_and_reused_pids(tmp_path: Path, monke
             proc.wait(timeout=5)
 
 
-def test_is_signallable_tunnel_pid_and_terminate_guards(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_signallable_tunnel_pid_and_terminate_guards(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Direct unit coverage for bool, <=1, self, pgrp, dead/zombie, empty-provider, and cmdline mismatch."""
     from bernstein.core.tunnels.process_guard import (
         is_signallable_tunnel_pid,
@@ -515,6 +527,9 @@ def test_is_signallable_tunnel_pid_and_terminate_guards(monkeypatch: pytest.Monk
 
     # Dead / zombie process skipped cleanly.
     sent: list[tuple[int, int]] = []
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard._PROC_ROOT", tmp_path / "no-proc")
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.IS_WINDOWS", False)
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard._ps_comm", lambda _pid: None)
     monkeypatch.setattr("bernstein.core.tunnels.process_guard.os.kill", lambda pid, sig: sent.append((pid, sig)))
     monkeypatch.setattr("bernstein.core.tunnels.process_guard.is_process_alive", lambda _pid: False)
     handle = TunnelHandle(name="dead", provider="cloudflared", port=8000, public_url="https://x.example", pid=54321)
@@ -541,3 +556,244 @@ def test_is_signallable_tunnel_pid_and_terminate_guards(monkeypatch: pytest.Monk
     )
     assert terminate_tunnel_process(handle) is True
     assert sent == [(54321, signal.SIGTERM)]
+
+
+def test_terminate_fails_closed_when_cmdline_unreadable_and_reports_in_stop_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Unreadable command lines (missing ps, Windows, ps failure) must fail closed and report it."""
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands import stop_cmd
+    from bernstein.cli.commands.tunnel_cmd import tunnel_group
+    from bernstein.core.tunnels import process_guard
+    from bernstein.gui import cli as gui_cli
+
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(process_guard, "_PROC_ROOT", tmp_path / "no-proc", raising=False)
+    monkeypatch.setattr(process_guard, "IS_WINDOWS", False, raising=False)
+    monkeypatch.setattr(process_guard.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(process_guard, "is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(process_guard, "pid_command_line", lambda _pid: None)
+
+    handle = TunnelHandle(name="stale", provider="cloudflared", port=8052, public_url="https://x.example", pid=54321)
+    assert process_guard.terminate_tunnel_process(handle) is False
+    assert sent == [], f"must not signal when cmdline is None, sent={sent}"
+
+    # Windows must never signal without a verified process identity.
+    monkeypatch.setattr(process_guard, "IS_WINDOWS", True, raising=False)
+    assert process_guard.terminate_tunnel_process(handle) is False
+    assert sent == [], f"must not signal on Windows without verified identity, sent={sent}"
+    monkeypatch.setattr(process_guard, "IS_WINDOWS", False, raising=False)
+
+    # Real `pid_command_line` with `ps` missing from PATH (slim container without procfs/ps) fails closed.
+    from bernstein.core.orchestration.process_utils import pid_command_line as real_pid_command_line
+
+    with monkeypatch.context() as mp:
+        mp.setattr(process_guard, "pid_command_line", real_pid_command_line)
+        mp.setenv("PATH", "")
+        assert process_guard.terminate_tunnel_process(handle) is False
+    assert sent == [], f"must not signal when ps is missing from PATH, sent={sent}"
+
+    # `bernstein tunnel stop <name>` and `--all` must report that PID was not signaled.
+    state = tmp_path / "tunnels.json"
+    entry = {
+        "name": "stale-cf",
+        "provider": "cloudflared",
+        "port": 8052,
+        "public_url": "https://x.example",
+        "pid": 54321,
+    }
+    state.write_text(json.dumps({"tunnels": [entry]}), encoding="utf-8")
+    monkeypatch.setattr("bernstein.cli.commands.tunnel_cmd.TunnelRegistry", lambda: TunnelRegistry(state_path=state))
+    res_single = CliRunner().invoke(tunnel_group, ["stop", "stale-cf"])
+    assert res_single.exit_code == 0, res_single.output
+    assert sent == []
+    assert "command line" in res_single.output.lower(), res_single.output
+    assert "did not signal" in res_single.output.lower(), res_single.output
+    assert TunnelRegistry(state_path=state).list_active() == []
+
+    state.write_text(json.dumps({"tunnels": [entry]}), encoding="utf-8")
+    res_all = CliRunner().invoke(tunnel_group, ["stop", "--all"])
+    assert res_all.exit_code == 0, res_all.output
+    assert sent == []
+    assert "command line" in res_all.output.lower(), res_all.output
+    assert "did not signal" in res_all.output.lower(), res_all.output
+    assert TunnelRegistry(state_path=state).list_active() == []
+
+    # `stop_active_tunnels()` reports unreadable command line on console and removes entry.
+    state.write_text(json.dumps({"tunnels": [entry]}), encoding="utf-8")
+    monkeypatch.setattr("bernstein.core.tunnels.registry.STATE_PATH", state)
+    printed: list[str] = []
+    monkeypatch.setattr(stop_cmd.console, "print", lambda *args, **_kw: printed.append(" ".join(str(a) for a in args)))
+    assert stop_cmd.stop_active_tunnels() == 1
+    assert sent == []
+    assert any("command line" in line.lower() for line in printed), printed
+    assert TunnelRegistry(state_path=state).list_active() == []
+
+    # `gui_cli._stop_tunnel()` warns on stderr and removes entry.
+    state.write_text(json.dumps({"tunnels": [entry]}), encoding="utf-8")
+    monkeypatch.setattr(gui_cli, "_build_tunnel_registry", lambda: TunnelRegistry(state_path=state))
+    capsys.readouterr()
+    gui_cli._stop_tunnel("stale-cf")
+    captured = capsys.readouterr()
+    assert sent == []
+    assert "command line" in captured.err.lower(), captured
+    assert TunnelRegistry(state_path=state).list_active() == []
+
+
+def test_terminate_reads_proc_cmdline_first_and_matches_real_providers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linux `/proc/<pid>/cmdline` is read before `ps`, matching real providers and interpreter wrappers."""
+    from bernstein.core.tunnels import process_guard
+
+    fake_proc = tmp_path / "proc"
+    proc_cases: list[tuple[int, str, bytes, bool]] = [
+        (54321, "cloudflared", b"/usr/local/bin/cloudflared\x00tunnel\x00--url\x00http://localhost:8052\x00", True),
+        (54322, "bore", b"/opt/homebrew/bin/bore\x00local\x008052\x00--to\x00bore.pub\x00", True),
+        (54323, "ngrok", b"/usr/bin/ngrok\x00http\x008052\x00--log\x00stdout\x00", True),
+        (
+            54324,
+            "cloudflared",
+            b"/bin/sh\x00/usr/local/bin/cloudflared\x00tunnel\x00--url\x00http://localhost:8052\x00",
+            True,
+        ),
+        (54325, "bore", b"/usr/bin/env\x00bash\x00/opt/bin/bore\x00local\x008052\x00", True),
+        (54326, "ngrok", b"/usr/bin/python3\x00-u\x00/usr/local/bin/ngrok\x00http\x008052\x00", True),
+        (54327, "bore", b"/usr/bin/python3\x00/srv/laborer/worker.py\x00", False),
+        (54328, "ngrok", b"C:\\Program Files\\ngrok\\ngrok.exe\x00http\x008052\x00", True),
+    ]
+    for pid, _provider, raw, _expect in proc_cases:
+        pid_dir = fake_proc / str(pid)
+        pid_dir.mkdir(parents=True)
+        (pid_dir / "cmdline").write_bytes(raw)
+
+    sent: list[tuple[int, int]] = []
+    ps_calls: list[int] = []
+    monkeypatch.setattr(process_guard, "_PROC_ROOT", fake_proc, raising=False)
+    monkeypatch.setattr(process_guard, "IS_WINDOWS", False, raising=False)
+    monkeypatch.setattr(process_guard.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(process_guard, "is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(process_guard, "pid_command_line", lambda pid: ps_calls.append(pid) or None)
+    monkeypatch.setattr(process_guard, "_ps_comm", lambda _pid: None)
+
+    expected_killed: list[tuple[int, int]] = []
+    for pid, provider, _raw, should_kill in proc_cases:
+        handle = TunnelHandle(name=f"t-{pid}", provider=provider, port=8052, public_url="https://x.example", pid=pid)
+        assert process_guard.terminate_tunnel_process(handle) is should_kill, (pid, provider)
+        if should_kill:
+            expected_killed.append((pid, signal.SIGTERM))
+
+    assert sent == expected_killed
+    assert ps_calls == [], f"/proc/<pid>/cmdline should be preferred without calling ps, ps_calls={ps_calls}"
+
+    # Fallback to `ps` when `/proc` is absent still matches real cloudflared/bore/ngrok argv[0] & wrappers.
+    fallback_cases: list[tuple[str, str, str | None]] = [
+        ("cloudflared", "cloudflared tunnel --url http://localhost:8052", None),
+        ("bore", "/opt/homebrew/bin/bore local 8052 --to bore.pub", None),
+        ("ngrok", "/usr/local/bin/ngrok http 8052 --log stdout", None),
+        ("bore", "/bin/sh /usr/local/bin/bore local 8052", None),
+        (
+            "cloudflared",
+            "/Applications/My Tools/cloudflared tunnel --url http://localhost:8052",
+            "/Applications/My Tools/cloudflared",
+        ),
+    ]
+    for idx, (provider, cmdline, comm) in enumerate(fallback_cases, start=55000):
+        sent.clear()
+        monkeypatch.setattr(process_guard, "pid_command_line", lambda _pid, c=cmdline: c)
+        monkeypatch.setattr(process_guard, "_ps_comm", lambda _pid, cm=comm: cm)
+        handle = TunnelHandle(name=f"fb-{idx}", provider=provider, port=8052, public_url="https://x.example", pid=idx)
+        assert process_guard.terminate_tunnel_process(handle) is True, (provider, cmdline)
+        assert sent == [(idx, signal.SIGTERM)]
+
+
+def test_terminate_rejects_substring_false_positives_laborer_and_tunnel_provider_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Substring hits like `/srv/laborer/worker.py` or `--tunnel-provider cloudflared` must not match."""
+    import subprocess
+    import sys
+
+    from bernstein.core.tunnels import process_guard
+
+    # 1. Direct command-line unit cases (ps fallback, no /proc).
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(process_guard, "_PROC_ROOT", tmp_path / "no-proc", raising=False)
+    monkeypatch.setattr(process_guard, "IS_WINDOWS", False, raising=False)
+    monkeypatch.setattr(process_guard.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(process_guard, "is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(process_guard, "_ps_comm", lambda _pid: None)
+
+    false_positives: list[tuple[str, str]] = [
+        ("bore", "/usr/bin/python3 /srv/laborer/worker.py"),
+        ("bore", "/srv/laborer/worker.py"),
+        ("bore", "/usr/bin/python3 /tmp/bore_helper.py"),
+        ("bore", "/bin/sh -c 'sleep 60 # bore'"),
+        ("cloudflared", "/usr/local/bin/bernstein gui serve --tunnel --tunnel-provider cloudflared"),
+        ("cloudflared", "/usr/bin/python3 -m bernstein gui serve --tunnel --tunnel-provider cloudflared"),
+        ("cloudflared", "/usr/bin/python3 -c 'import time; time.sleep(60)' --tunnel-provider cloudflared"),
+        ("ngrok", "/usr/bin/python3 -m pytest -k ngrok"),
+    ]
+    for idx, (provider, cmdline) in enumerate(false_positives, start=56000):
+        monkeypatch.setattr(process_guard, "pid_command_line", lambda _pid, c=cmdline: c)
+        handle = TunnelHandle(name=f"fp-{idx}", provider=provider, port=8052, public_url="https://x.example", pid=idx)
+        assert process_guard.terminate_tunnel_process(handle) is False, (provider, cmdline)
+    assert sent == [], f"false-positive command lines must not be signaled, sent={sent}"
+
+    # 2. Live unrelated subprocesses whose path/args contain provider substrings.
+    laborer_dir = tmp_path / "laborer"
+    laborer_dir.mkdir()
+    laborer_worker = laborer_dir / "worker.py"
+    laborer_worker.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+
+    proc_laborer = subprocess.Popen([sys.executable, str(laborer_worker)])
+    proc_flag = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", "--tunnel-provider", "cloudflared"]
+    )
+    try:
+        monkeypatch.undo()
+        live_sent: list[tuple[int, int]] = []
+        real_kill = os.kill
+
+        def spy_kill(pid: int, sig: int) -> None:
+            if sig != 0:
+                live_sent.append((pid, sig))
+                return
+            real_kill(pid, sig)
+
+        with monkeypatch.context() as mp:
+            mp.setattr(os, "kill", spy_kill)
+            bore_handle = TunnelHandle(
+                name="stale-bore",
+                provider="bore",
+                port=8052,
+                public_url="tcp://bore.pub:1234",
+                pid=proc_laborer.pid,
+            )
+            cf_handle = TunnelHandle(
+                name="stale-cf",
+                provider="cloudflared",
+                port=8052,
+                public_url="https://stale.example",
+                pid=proc_flag.pid,
+            )
+            assert process_guard.terminate_tunnel_process(bore_handle) is False
+            assert process_guard.terminate_tunnel_process(cf_handle) is False
+
+        assert live_sent == [], f"unrelated live subprocesses must not be signaled, sent={live_sent}"
+        assert proc_laborer.poll() is None
+        assert proc_flag.poll() is None
+    finally:
+        for proc in (proc_laborer, proc_flag):
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)

@@ -54,7 +54,7 @@ def stop_active_tunnels() -> int:
     """
     try:
         from bernstein.core.tunnels.drivers import register_default_drivers
-        from bernstein.core.tunnels.process_guard import terminate_tunnel_process
+        from bernstein.core.tunnels.process_guard import terminate_tunnel_process_with_reason
         from bernstein.core.tunnels.registry import TunnelRegistry
     except ImportError:
         return 0
@@ -63,7 +63,12 @@ def stop_active_tunnels() -> int:
     providers = reg.providers()
     count = 0
     for handle in reg.list_active():
-        terminate_tunnel_process(handle, providers=providers)
+        _signaled, reason = terminate_tunnel_process_with_reason(handle, providers=providers)
+        if reason == "unreadable_cmdline":
+            console.print(
+                f"[yellow]Removed tunnel {handle.name} ({handle.provider}) from registry; "
+                f"did not signal pid {handle.pid} because its command line could not be read.[/yellow]"
+            )
         reg.destroy(handle.name)
         count += 1
     return count

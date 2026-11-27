@@ -144,13 +144,19 @@ def _start_tunnel(port: int, provider: str) -> TunnelHandle:
 
 def _stop_tunnel(name: str) -> None:
     """Stop a previously started tunnel by name; idempotent on missing."""
-    from bernstein.core.tunnels.process_guard import terminate_tunnel_process
+    from bernstein.core.tunnels.process_guard import terminate_tunnel_process_with_reason
 
     reg = _build_tunnel_registry()
     handle = reg.get(name)
     if handle is None:
         return
-    terminate_tunnel_process(handle, providers=reg.providers())
+    _signaled, reason = terminate_tunnel_process_with_reason(handle, providers=reg.providers())
+    if reason == "unreadable_cmdline":
+        click.echo(
+            f"Warning: removed tunnel '{handle.name}' ({handle.provider}) from registry; "
+            f"did not signal pid {handle.pid} because its command line could not be read.",
+            err=True,
+        )
     reg.destroy(name)
 
 

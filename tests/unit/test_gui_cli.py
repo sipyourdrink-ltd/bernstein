@@ -51,6 +51,7 @@ class _FakeProvider(TunnelProvider):
         self.started: list[str] = []
         self.stopped: list[str] = []
         self.killed: list[tuple[int, int]] = []
+        self.live_pids: set[int] = set()
 
     def detect(self) -> Any:  # pragma: no cover - unused
         raise NotImplementedError
@@ -58,6 +59,7 @@ class _FakeProvider(TunnelProvider):
     def start(self, port: int, name: str) -> TunnelHandle:
         self.started.append(name)
         self._pid += 1
+        self.live_pids.add(self._pid)
         return TunnelHandle(
             name=name,
             provider=self.name,
@@ -84,8 +86,8 @@ def tunnel_state_path(tmp_path: Path) -> Path:
 def fake_registry(monkeypatch: pytest.MonkeyPatch, tunnel_state_path: Path) -> _FakeProvider:
     """Replace ``_build_tunnel_registry`` with one wired to a fake provider.
 
-    Also intercepts ``os.kill`` by default so no test using synthetic PIDs
-    can ever leak a real signal to an unrelated host process.
+    Also intercepts ``os.kill`` and process probes by default so no test using
+    synthetic PIDs can leak a real signal or collide with host PIDs.
     """
     fake = _FakeProvider()
 
@@ -100,6 +102,14 @@ def fake_registry(monkeypatch: pytest.MonkeyPatch, tunnel_state_path: Path) -> _
         fake.killed.append((pid, sig))
 
     monkeypatch.setattr(os, "kill", _fake_kill)
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard._PROC_ROOT", tunnel_state_path.parent / "no-proc")
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.IS_WINDOWS", False)
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard.is_process_alive", lambda pid: pid in fake.live_pids)
+    monkeypatch.setattr(
+        "bernstein.core.tunnels.process_guard.pid_command_line",
+        lambda pid: f"{fake.binary} tunnel --url http://localhost:8052" if pid in fake.live_pids else None,
+    )
+    monkeypatch.setattr("bernstein.core.tunnels.process_guard._ps_comm", lambda _pid: None)
     monkeypatch.setattr(gui_cli, "_build_tunnel_registry", _build)
     return fake
 
