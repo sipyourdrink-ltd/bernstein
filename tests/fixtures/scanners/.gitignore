@@ -1,0 +1,10 @@
+# Deliberately vulnerable scanner conformance fixture targets (e.g. Cargo.lock,
+# package-lock.json). Git continues to track already-committed fixture files;
+# ignoring `*/target/` here instructs repo-root scanners that honour `.gitignore`
+# (such as OSSF Scorecard's osv-scanner Vulnerabilities check) to skip fixture
+# targets without modifying files inside any `<tool>/target/` directory (which
+# would alter adapter config_digest assertions or suppress live re-recording).
+#
+# When adding new fixture files under `tests/fixtures/scanners/<tool>/target/`,
+# stage them explicitly with `git add -f`.
+*/target/
