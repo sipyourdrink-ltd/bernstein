@@ -76,6 +76,21 @@
         "agent-manifest"
       ],
       "allowedVersions": "<0.13"
+    },
+    {
+      "description": "Hold Node on 24 in the two self-hosted VPS workflows: Node 26 fails with exit 127 during actions/setup-node on the VPS runner container image. Scoped strictly to those two workflows so GitHub-hosted workflows stay on Node 26+. Lift once the VPS runner image supports Node 26.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchFileNames": [
+        ".github/workflows/adapter-contract-drift.yml",
+        ".github/workflows/adapter-conformance-canary.yml"
+      ],
+      "matchPackageNames": [
+        "node",
+        "actions/node-versions"
+      ],
+      "allowedVersions": "<25"
     }
   ]
 }
