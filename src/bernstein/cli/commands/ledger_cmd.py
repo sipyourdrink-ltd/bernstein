@@ -355,6 +355,8 @@ def ledger_resume_cmd(run_id: str, workdir: Path | None, output_json: bool, dry_
             dispatch_status = "not_dispatched"
         elif all(status == ResumeDispatchStatus.RESUMED.value for status in statuses):
             dispatch_status = ResumeDispatchStatus.RESUMED.value
+        elif ResumeDispatchStatus.FAILED.value in statuses:
+            dispatch_status = ResumeDispatchStatus.FAILED.value
         elif ResumeDispatchStatus.QUEUED.value not in statuses and ResumeDispatchStatus.CLAIMED.value in statuses:
             dispatch_status = ResumeDispatchStatus.CLAIMED.value
         else:

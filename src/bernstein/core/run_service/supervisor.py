@@ -32,6 +32,7 @@ from bernstein.core.persistence.task_resume import (
     ResumeRequestRecord,
     claim_resume_request,
     consume_resume_request,
+    record_resume_failure,
     record_resume_outcome,
 )
 from bernstein.core.persistence.work_ledger import (
@@ -171,9 +172,9 @@ def advance_run(
                 if stop_phase == _STOP_COMPLETED and stop_after is not None and completed_count >= stop_after:
                     return _project(ledger_dir, run_id)
             except SSHRunnerError as exc:
-                # The worker consumed the attempt even though the runner failed.
+                # A failed runner is not an acknowledged resume; the request stays retryable.
                 if request is not None:
-                    record_resume_outcome(root, task_id, request.request_id, worker_id=worker_id)
+                    record_resume_failure(root, task_id, request.request_id, worker_id=worker_id)
                 payload: dict[str, Any] = {"reason": "ssh_runner_error"}
                 if exc.exit_code is not None:
                     payload["exit_code"] = exc.exit_code
