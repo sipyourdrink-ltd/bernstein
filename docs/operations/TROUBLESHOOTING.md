@@ -376,7 +376,7 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 **Cause:** Interactive Pi writes its TUI instead of streaming events to the redirected runner log, leaving log-mtime liveness without an activity signal. Even in JSON mode, Pi waits for EOF when stdin is a pipe; inheriting an open pipe can keep the log empty.
 
-**Resolution:** The Pi adapter launches `pi --no-extensions --print --mode json` with stdin connected to the null device, so Pi receives EOF immediately and non-interactive JSON events reach the runner log as the agent works. Update Bernstein if the spawned command lacks these flags or still inherits stdin. This uses the existing log-mtime liveness signal; it does not disable heartbeat escalation or increase its thresholds.
+**Resolution:** The Pi adapter launches `pi --no-extensions --print --mode json` with stdin connected to the null device, so Pi receives EOF immediately and non-interactive JSON events reach the runner log as the agent works. Update Bernstein if the spawned command lacks these flags or still inherits stdin. This uses the existing log-mtime liveness signal; it does not disable heartbeat escalation or increase its thresholds. JSON mode alone exits 0 after a failed turn, so the adapter runs pi under `python -m bernstein.adapters.pi_json_launcher`, which passes every event through and exits 1 when the last assistant message stopped on `error`, `aborted` or `length` (127 when `pi` is missing, 126 when it cannot be executed, `128 + N` when a signal kills it).
 
 **Symptom:** Agent is killed mid-task. Log shows `"Timeout after Xds: pid=... - sending SIGTERM"`.
 

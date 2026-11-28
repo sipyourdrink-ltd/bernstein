@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("no_watchdog_threads")
 
 
+#: pi runs under the JSON-mode exit-code launcher (#6943).
+_LAUNCHER = [sys.executable, "-m", "bernstein.adapters.pi_json_launcher", "--"]
+
+
 class TestPiAdapterSpawn:
     """PiAdapter.spawn() builds correct command."""
 
@@ -37,6 +41,7 @@ class TestPiAdapterSpawn:
             )
         inner = inner_cmd(popen.call_args.args[0])
         assert inner == [
+            *_LAUNCHER,
             "pi",
             "--no-extensions",
             "--print",
@@ -44,6 +49,7 @@ class TestPiAdapterSpawn:
             "json",
             "--model",
             "provider/model-name",
+            "--",
             "fix the bug",
         ]
         assert popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
@@ -59,7 +65,7 @@ class TestPiAdapterSpawn:
                 session_id="pi-s2",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "--no-extensions", "--print", "--mode", "json", "fix the bug"]
+        assert inner == [*_LAUNCHER, "pi", "--no-extensions", "--print", "--mode", "json", "--", "fix the bug"]
         assert popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
     def test_spawn_completes_with_parent_stdin_pipe_open(self, tmp_path: Path) -> None:

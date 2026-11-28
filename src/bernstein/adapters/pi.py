@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -76,10 +77,17 @@ class PiAdapter(CLIAdapter):
         # bernstein passes pi no extension of its own, so none is lost.
         # Stream events to the runner log so log-mtime liveness sees active
         # work, and exit after the prompt instead of opening the TUI (#6943).
-        cmd = ["pi", _NO_EXTENSIONS, "--print", "--mode", "json"]
+        pi_cmd = ["pi", _NO_EXTENSIONS, "--print", "--mode", "json"]
         if model_config.model and model_config.model.lower() != "auto":
-            cmd.extend(["--model", model_config.model])
-        cmd.append(prompt)
+            pi_cmd.extend(["--model", model_config.model])
+        # ``--`` ends option parsing, so a prompt that starts with ``-`` is
+        # still the prompt and not an unknown flag.
+        pi_cmd.extend(["--", prompt])
+        # JSON mode exits 0 even when the final turn failed: pi decides a
+        # nonzero exit only in text mode. ``pi_json_launcher`` streams each
+        # line through unchanged and applies text mode's rule to the last
+        # assistant message (#6943).
+        cmd = [sys.executable, "-m", "bernstein.adapters.pi_json_launcher", "--", *pi_cmd]
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(

@@ -354,6 +354,10 @@ def _import_adapter_class(dotted: str) -> type[CLIAdapter]:
     return cls
 
 
+#: Golden token for this interpreter, for adapters that launch a ``python -m`` helper.
+_PYTHON = "{python}"
+
+
 def _split_inner_argv(argv: list[str]) -> list[str]:
     """Return the portion of argv after the bernstein-worker ``--`` separator.
 
@@ -363,7 +367,7 @@ def _split_inner_argv(argv: list[str]) -> list[str]:
     """
     for i, tok in enumerate(argv):
         if tok == "--":
-            return argv[i + 1 :]
+            return [_PYTHON if part == sys.executable else part for part in argv[i + 1 :]]
     return argv
 
 
