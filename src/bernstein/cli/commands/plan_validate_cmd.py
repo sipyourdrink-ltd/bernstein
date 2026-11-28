@@ -201,6 +201,17 @@ def _print_validation_results(
         raise SystemExit(1)
 
 
+def _unreadable_reason(plan_file: Path) -> str | None:
+    """Return why *plan_file* cannot be read as UTF-8 text, or ``None`` when it can."""
+    try:
+        plan_file.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        return f"it is not valid UTF-8 (byte 0x{exc.object[exc.start]:02x} at offset {exc.start})"
+    except OSError as exc:
+        return exc.strerror or str(exc)
+    return None
+
+
 @click.command("validate")
 @click.argument("plan_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 def validate_plan(plan_file: Path) -> None:
@@ -213,6 +224,13 @@ def validate_plan(plan_file: Path) -> None:
     so warnings deliberately stay on stdout next to the verdict they qualify.
     """
     console.print(f"Validating plan: {plan_file}\n")
+
+    # Read once, before any check: every check below reads the file, and an invalid UTF-8 byte or an
+    # I/O error there was a traceback instead of a finding (#7870).
+    unreadable = _unreadable_reason(plan_file)
+    if unreadable is not None:
+        console.print(f"[red]Plan file could not be read:[/red] {plan_file}: {unreadable}")
+        raise SystemExit(1)
 
     errors: list[str] = []
     warnings: list[str] = []
