@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import math
@@ -59,6 +60,7 @@ TOOLCALL_DISPATCH_EVENT = "toolcall.enforced_dispatch"
 TOOLCALL_EFFECT_EVENT = "toolcall.effect"
 TOOLCALL_EFFECT_OUTCOMES = frozenset({"ok", "error", "timeout", "partial"})
 _SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
+_GENESIS_PREV_HMAC = "0" * 64
 
 # Key-trust notes returned by ``_resolve_public_key``. Only a key pinned out of
 # band proves who signed the receipt; the embedded key proves only that the
@@ -543,14 +545,33 @@ def _read_regular_effect_file(
     """Read ``<effects_dir>/<digest_hex>.effect`` rejecting symlinks and non-regular files."""
     artifact_path = effects_dir / f"{digest_hex}.effect"
     intent_short = intent_digest[:19]
-    if artifact_path.is_symlink():
+    try:
+        lstat_res = os.lstat(artifact_path)
+    except FileNotFoundError:
+        return None, f"effect payload missing in --effects-dir for intent {intent_short}"
+    except OSError as exc:
+        return (
+            None,
+            f"effect payload in --effects-dir unreadable for intent {intent_short}: {exc}",
+        )
+
+    if stat.S_ISLNK(lstat_res.st_mode):
         return (
             None,
             f"effect payload in --effects-dir must not be a symlink for intent {intent_short}",
         )
-    if not artifact_path.exists():
-        return None, f"effect payload missing in --effects-dir for intent {intent_short}"
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    if not stat.S_ISREG(lstat_res.st_mode):
+        return (
+            None,
+            f"effect payload in --effects-dir is not a regular file for intent {intent_short}",
+        )
+
+    flags = (
+        getattr(os, "O_RDONLY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
     try:
         fd = os.open(artifact_path, flags)
     except OSError as exc:
@@ -559,14 +580,60 @@ def _read_regular_effect_file(
             f"effect payload in --effects-dir unreadable or symlink for intent {intent_short}: "
             f"{exc}",
         )
-    with os.fdopen(fd, "rb") as handle:
-        st = os.fstat(handle.fileno())
-        if not stat.S_ISREG(st.st_mode):
-            return (
-                None,
-                f"effect payload in --effects-dir is not a regular file for intent {intent_short}",
-            )
-        return handle.read(), None
+
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            fstat_res = os.fstat(handle.fileno())
+            if not stat.S_ISREG(fstat_res.st_mode):
+                return (
+                    None,
+                    "effect payload in --effects-dir is not a regular file for intent "
+                    f"{intent_short}",
+                )
+            if (fstat_res.st_dev, fstat_res.st_ino) != (lstat_res.st_dev, lstat_res.st_ino):
+                return (
+                    None,
+                    "effect payload in --effects-dir changed between stat and open for intent "
+                    f"{intent_short}",
+                )
+            return handle.read(), None
+    except OSError as exc:
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        return (
+            None,
+            f"effect payload in --effects-dir unreadable for intent {intent_short}: {exc}",
+        )
+
+
+def _request_id_key(raw_request_id: Any) -> str | None:
+    """Return a canonical JSON key for duplicate detection, or ``None`` when absent/blank."""
+    if raw_request_id is None:
+        return None
+    if isinstance(raw_request_id, str) and not raw_request_id.strip():
+        return None
+    try:
+        return json.dumps(raw_request_id, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError):
+        return repr(raw_request_id)
+
+
+def _range_starts_at_genesis(receipt: dict[str, Any], events: list[Any]) -> bool:
+    """Return ``True`` when the receipt's embedded range starts at the genesis sentinel."""
+    for raw_event in events:
+        if isinstance(raw_event, dict):
+            typed_event = cast("dict[str, Any]", raw_event)
+            prev_val = typed_event.get("prev_hmac")
+            if isinstance(prev_val, str):
+                return prev_val == _GENESIS_PREV_HMAC
+            break
+    raw_range = receipt.get("range")
+    if isinstance(raw_range, dict):
+        typed_range = cast("dict[str, Any]", raw_range)
+        return typed_range.get("genesis_prev_hmac") == _GENESIS_PREV_HMAC
+    return False
 
 
 def verify_toolcall_effects(
@@ -580,7 +647,8 @@ def verify_toolcall_effects(
     at all) remain valid and report ``effect unobserved``. Broken bindings,
     duplicate dispatches/effects, malformed records, invalid ``retry_of`` links,
     or tampered/missing payload artifacts under ``effects_dir`` fail the effect
-    leg.
+    leg. Duplicate-request detection enforces the contract that JSON-RPC
+    ``request_id`` values are unique per ``scope_id`` (keyed by raw JSON value).
     """
     events = receipt.get("events")
     if not isinstance(events, list):
@@ -620,7 +688,9 @@ def verify_toolcall_effects(
             raw_intent_digest = payload.get("intent_digest")
             att_ref = raw_att_ref.strip() if isinstance(raw_att_ref, str) else ""
             intent_digest = raw_intent_digest.strip() if isinstance(raw_intent_digest, str) else ""
-            req_id = str(payload.get("request_id", "")).strip()
+            raw_req_id = payload.get("request_id")
+            req_id = str(raw_req_id).strip() if raw_req_id is not None else ""
+            req_id_key = _request_id_key(raw_req_id)
             scope_id = str(payload.get("scope_id", event.get("resource_id", ""))).strip()
             server_name = str(payload.get("server_name", "")).strip()
             tool_name = str(payload.get("tool_name", "")).strip()
@@ -647,11 +717,11 @@ def verify_toolcall_effects(
                 errors.append(msg)
                 per_ref_errors.setdefault(att_ref, []).append(msg)
 
-            if req_id:
-                scope_req_key = (scope_id, req_id)
-                if raw_retry_of is None and scope_req_key in seen_scope_requests:
+            if req_id_key is not None:
+                scope_req_key = (scope_id, req_id_key)
+                if scope_req_key in seen_scope_requests:
                     msg = (
-                        f"duplicate request_id {req_id!r} in scope {scope_id!r} without retry_of "
+                        f"duplicate request_id {raw_req_id!r} in scope {scope_id!r} "
                         f"on attestation {att_ref[:19]}"
                     )
                     errors.append(msg)
@@ -677,8 +747,14 @@ def verify_toolcall_effects(
                     elif retry_of in attestations_by_intent:
                         prior = attestations_by_intent[retry_of]
                         retry_status = "in-range"
-                        if req_id and prior["request_id"] and req_id == prior["request_id"]:
-                            msg = f"retry {intent_digest[:19]} reuses prior request_id {req_id!r}"
+                        if (
+                            req_id_key is not None
+                            and prior["request_id_key"] is not None
+                            and req_id_key == prior["request_id_key"]
+                        ):
+                            msg = (
+                                f"retry {intent_digest[:19]} reuses prior request_id {raw_req_id!r}"
+                            )
                             errors.append(msg)
                             per_ref_errors.setdefault(att_ref, []).append(msg)
                         current_target = (scope_id, server_name, tool_name)
@@ -701,6 +777,7 @@ def verify_toolcall_effects(
                 "attestation_ref": att_ref,
                 "intent_digest": intent_digest,
                 "request_id": req_id,
+                "request_id_key": req_id_key,
                 "scope_id": scope_id,
                 "server_name": server_name,
                 "tool_name": tool_name,
@@ -835,16 +912,23 @@ def verify_toolcall_effects(
                 "payload_verified": payload_verified,
             }
 
+    starts_at_genesis = _range_starts_at_genesis(receipt, typed_events)
     for att_ref in ordered_refs:
         att = attestations[att_ref]
-        if (
-            att["retry_of"] is not None
-            and att["retry_status"] == "outside-range"
-            and att["retry_of"] in attestations_by_intent
-        ):
-            msg = f"retry_of on {att['intent_digest'][:19]} points forward to a later attestation"
-            errors.append(msg)
-            per_ref_errors.setdefault(att_ref, []).append(msg)
+        if att["retry_of"] is not None and att["retry_status"] == "outside-range":
+            if att["retry_of"] in attestations_by_intent:
+                msg = (
+                    f"retry_of on {att['intent_digest'][:19]} points forward to a later attestation"
+                )
+                errors.append(msg)
+                per_ref_errors.setdefault(att_ref, []).append(msg)
+            elif starts_at_genesis:
+                msg = (
+                    f"retry_of on {att['intent_digest'][:19]} references missing prior intent "
+                    f"{att['retry_of'][:19]} in receipt starting at genesis"
+                )
+                errors.append(msg)
+                per_ref_errors.setdefault(att_ref, []).append(msg)
 
     if not saw_toolcall:
         return (

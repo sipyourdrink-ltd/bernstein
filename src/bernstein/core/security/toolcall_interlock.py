@@ -40,6 +40,15 @@ logger = logging.getLogger(__name__)
 _SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
 
 
+def _validate_retry_of(retry_of: object) -> str | None:
+    """Validate optional ``retry_of`` at runtime without triggering unnecessary-isinstance errors."""
+    if retry_of is None:
+        return None
+    if not isinstance(retry_of, str) or _SHA256_PREFIXED_RE.match(retry_of) is None:
+        raise ValueError("retry_of must match ^sha256:[0-9a-f]{64}\\Z when provided")
+    return retry_of
+
+
 class AttestationMode(StrEnum):
     """Runtime behavior when attestation preparation fails."""
 
@@ -86,8 +95,7 @@ class ToolCallIntent:
         retry_of: str | None = None,
     ) -> ToolCallIntent:
         """Build an intent without retaining raw connector arguments."""
-        if retry_of is not None and (not isinstance(retry_of, str) or _SHA256_PREFIXED_RE.match(retry_of) is None):
-            raise ValueError("retry_of must match ^sha256:[0-9a-f]{64}\\Z when provided")
+        validated_retry_of = _validate_retry_of(retry_of)
         canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return cls(
             scope_id=scope_id,
@@ -97,7 +105,7 @@ class ToolCallIntent:
             request_id=str(request_id),
             span_id=span_id,
             args_digest="sha256:" + hashlib.sha256(canonical).hexdigest(),
-            retry_of=retry_of,
+            retry_of=validated_retry_of,
         )
 
     def digest(self) -> str:

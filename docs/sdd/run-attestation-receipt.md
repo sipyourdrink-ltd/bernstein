@@ -107,7 +107,11 @@ the authenticated chain contains a terminal statement for a specific verified
 state anchor and no later retained event for that run. Governed tool calls write `toolcall.effect` after the connector returns, and
 both `verify-audit-receipt` and `bernstein-verify-receipt` report per-attestation
 decision → dispatch → effect closure, `retry_of` linkage, and offline
-`effect_digest` recomputation when `--effects-dir` is supplied (#6270). `LineageGate`, external identity, result-bundle
+`effect_digest` recomputation when `--effects-dir` is supplied (#6270). Both
+verifiers enforce the uniqueness contract that JSON-RPC `request_id` values are
+unique per `scope_id` (by raw JSON value, across initial calls and retries) and
+fail closed on outside-range `retry_of` links when the receipt range starts at
+genesis. `LineageGate`, external identity, result-bundle
 attestation, revocation, and transparency publication remain separate
 boundaries. Closure reuses the existing audit key and receipt formats; it
 creates no new key lifecycle.

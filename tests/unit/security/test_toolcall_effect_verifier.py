@@ -8,10 +8,13 @@ and ``retry_of`` semantics without importing ``bernstein.*``.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import importlib.util
 import io
 import json
+import os
+import stat
 import subprocess
 import sys
 from contextlib import redirect_stdout
@@ -29,6 +32,7 @@ from bernstein.core.persistence.wal import WALWriter
 from bernstein.core.protocols.mcp.mcp_gateway import MCPGateway
 from bernstein.core.protocols.payments.mandates import IntentMandate
 from bernstein.core.protocols.payments.x402 import SettlementContext, X402Config, X402SettlementCoordinator
+from bernstein.core.security import native_toolcall_evidence as native_evidence_mod
 from bernstein.core.security import toolcall_interlock as interlock_mod
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.audit_chain import (
@@ -582,17 +586,35 @@ async def test_cli_surfaces_forward_effects_dir_and_verifiers_stay_bernstein_fre
 
 
 def test_unreachable_security_controls_gate_passes_for_effect_helpers() -> None:
-    """B1 (#5053): internal preimage helpers must not surface as unreached public controls."""
-    proc = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "check_unreachable_controls.py")],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
+    """B1/S-b/N4 (#5053): internal preimage helpers stay private, shared in one module, and off the allowlist."""
+    interlock_path = REPO_ROOT / "src" / "bernstein" / "core" / "security" / "toolcall_interlock.py"
+    native_path = REPO_ROOT / "src" / "bernstein" / "core" / "security" / "native_toolcall_evidence.py"
+    allowlist_text = (REPO_ROOT / "unreachable_controls_allowlist.txt").read_text(encoding="utf-8")
+
+    def _top_level_defs(path: Path) -> set[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+
+    interlock_defs = _top_level_defs(interlock_path)
+    native_defs = _top_level_defs(native_path)
+
+    for public_name in ("canonical_effect_preimage", "effect_preimage_for_connector_response"):
+        assert public_name not in interlock_defs
+        assert public_name not in native_defs
+        assert public_name not in interlock_mod.__all__
+        assert public_name not in native_evidence_mod.__all__
+        assert f"::{public_name}" not in allowlist_text
+
+    # S-b: exactly one definition in toolcall_interlock.py, shared by native_toolcall_evidence.py.
+    for private_name in ("_canonical_effect_preimage", "_effect_preimage_for_connector_response"):
+        assert private_name in interlock_defs
+        assert private_name not in native_defs
+    assert (
+        native_evidence_mod._effect_preimage_for_connector_response  # pyright: ignore[reportPrivateUsage]
+        is interlock_mod._effect_preimage_for_connector_response  # pyright: ignore[reportPrivateUsage]
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "canonical_effect_preimage" not in interlock_mod.__all__
-    assert "effect_preimage_for_connector_response" not in interlock_mod.__all__
 
 
 @pytest.mark.asyncio
@@ -978,3 +1000,338 @@ async def test_effects_dir_rejects_symlink_and_sha256_regex_uses_strict_end_anch
     assert rc == 1, out
     assert "[FAIL] toolcall_effects" in out
     assert "symlink" in out.lower()
+
+
+def _run_verifier_subprocess(
+    verifier_kind: str,
+    receipt_path: Path,
+    *extra: str,
+    timeout: float = 5.0,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    if verifier_kind == "tools":
+        cmd = [sys.executable, str(TOOLS_VERIFIER), "--receipt", str(receipt_path), *extra]
+    elif verifier_kind == "verify_cli":
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{VERIFY_CLI_ROOT}{os.pathsep}{existing}" if existing else str(VERIFY_CLI_ROOT)
+        cmd = [sys.executable, "-m", "bernstein_verify_receipt.verify", "--receipt", str(receipt_path), *extra]
+    else:
+        raise ValueError(f"unknown verifier kind: {verifier_kind}")
+    return subprocess.run(cmd, capture_output=True, text=True, check=False, env=env, timeout=timeout)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_b4r_case_a_duplicate_request_id_with_outside_range_retry_of_fails(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """B4-R(a): same-scope duplicate request_id with an outside-range retry_of must FAIL."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+
+    first = _intent(request_id=81, span_id="span-b4ra-1")
+    ev1 = await provider.prepare_dispatch(first)
+    await provider.record_effect(first, ev1, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+
+    replay = _intent(request_id=81, span_id="span-b4ra-2", retry_of="sha256:" + ("0" * 64))
+    ev2 = await provider.prepare_dispatch(replay)
+    await provider.record_effect(replay, ev2, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "OVERALL: FAIL" in out
+    assert "[FAIL] toolcall_effects" in out
+    assert "duplicate request_id" in out
+
+    # Also verify B4-R(a) fails specifically due to duplicate request_id on a mid-chain
+    # non-genesis receipt (independent of N3's genesis outside-range rule).
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt_data["events"][0]["prev_hmac"] = "a" * 64
+    verifier = _load_verifier(verifier_kind)
+    check, _lines = verifier.verify_toolcall_effects(receipt_data)
+    assert check.ok is False
+    assert "duplicate request_id" in check.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_b4r_case_b_duplicate_request_id_with_unrelated_in_range_retry_of_fails(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """B4-R(b): A(req=81), C(req=99), B(req=81, retry_of=C) must FAIL in both verifiers."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+
+    intent_a = _intent(request_id=81, span_id="span-b4rb-a")
+    ev_a = await provider.prepare_dispatch(intent_a)
+    await provider.record_effect(intent_a, ev_a, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+
+    intent_c = _intent(request_id=99, span_id="span-b4rb-c")
+    ev_c = await provider.prepare_dispatch(intent_c)
+    await provider.record_effect(intent_c, ev_c, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+
+    intent_b = _intent(request_id=81, span_id="span-b4rb-b", retry_of=intent_c.digest())
+    ev_b = await provider.prepare_dispatch(intent_b)
+    await provider.record_effect(intent_b, ev_b, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "OVERALL: FAIL" in out
+    assert "[FAIL] toolcall_effects" in out
+    assert "duplicate request_id" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_s2r_effects_dir_rejects_directory_without_traceback(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """S2-R: a directory at <intent>.effect must return clean OVERALL: FAIL, never a traceback."""
+    audit_dir = tmp_path / "audit"
+    effects_dir = tmp_path / "effects"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain, effects_dir=effects_dir)
+    intent = _intent(request_id=92, span_id="span-dir")
+    raw = b'{"jsonrpc":"2.0","id":92,"result":{"ok":true}}'
+    ev = await provider.prepare_dispatch(intent)
+    await provider.record_effect(intent, ev, response=json.loads(raw), duration_ms=1.5, outcome="ok", received=raw)
+
+    artifact = _artifact_file(effects_dir, intent.digest())
+    artifact.unlink()
+    artifact.mkdir()
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    proc = _run_verifier_subprocess(
+        verifier_kind,
+        receipt_path,
+        "--public-key",
+        str(pub_path),
+        "--effects-dir",
+        str(effects_dir),
+        timeout=5.0,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "OVERALL: FAIL" in proc.stdout
+    assert "[FAIL] toolcall_effects" in proc.stdout
+    assert "not a regular file" in proc.stdout.lower()
+    assert "Traceback" not in proc.stdout + proc.stderr
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_s2r_effects_dir_rejects_fifo_without_hanging(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """S2-R: a FIFO at <intent>.effect must return clean OVERALL: FAIL without hanging."""
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("os.mkfifo is not available on this platform")
+
+    audit_dir = tmp_path / "audit"
+    effects_dir = tmp_path / "effects"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain, effects_dir=effects_dir)
+    intent = _intent(request_id=93, span_id="span-fifo")
+    raw = b'{"jsonrpc":"2.0","id":93,"result":{"ok":true}}'
+    ev = await provider.prepare_dispatch(intent)
+    await provider.record_effect(intent, ev, response=json.loads(raw), duration_ms=1.5, outcome="ok", received=raw)
+
+    artifact = _artifact_file(effects_dir, intent.digest())
+    artifact.unlink()
+    os.mkfifo(artifact)
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    proc = _run_verifier_subprocess(
+        verifier_kind,
+        receipt_path,
+        "--public-key",
+        str(pub_path),
+        "--effects-dir",
+        str(effects_dir),
+        timeout=5.0,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "OVERALL: FAIL" in proc.stdout
+    assert "[FAIL] toolcall_effects" in proc.stdout
+    assert "not a regular file" in proc.stdout.lower()
+    assert "Traceback" not in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+def test_s2r_sa_read_regular_effect_file_flags_inode_identity_and_oserror(
+    tmp_path: Path,
+    verifier_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S2-R + S-a: lstat before open, O_NONBLOCK|O_BINARY flags, fstat (dev, ino) check, and OSError handling."""
+    verifier = _load_verifier(verifier_kind)
+    digest_hex = "a" * 64
+    intent_digest = f"sha256:{digest_hex}"
+    target = tmp_path / f"{digest_hex}.effect"
+    target.write_bytes(b"payload")
+
+    # 1. Verify open flags include O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_BINARY (each via getattr).
+    seen_flags: list[int] = []
+    real_open = os.open
+
+    def _recording_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        seen_flags.append(flags)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(verifier.os, "open", _recording_open)
+    data, err = verifier._read_regular_effect_file(tmp_path, digest_hex, intent_digest)
+    assert err is None and data == b"payload"
+    expected_flags = (
+        getattr(os, "O_RDONLY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    assert seen_flags == [expected_flags]
+    monkeypatch.undo()
+
+    # 2. Verify (st_dev, st_ino) mismatch between lstat and fstat fails closed.
+    real_fstat = os.fstat
+
+    class _SwappedStat:
+        def __init__(self, base: os.stat_result) -> None:
+            self.st_mode = stat.S_IFREG | 0o600
+            self.st_dev = base.st_dev
+            self.st_ino = base.st_ino + 1
+
+    def _swapped_fstat(fd: int) -> _SwappedStat:
+        return _SwappedStat(real_fstat(fd))
+
+    monkeypatch.setattr(verifier.os, "fstat", _swapped_fstat)
+    data_swap, err_swap = verifier._read_regular_effect_file(tmp_path, digest_hex, intent_digest)
+    assert data_swap is None and err_swap is not None
+    monkeypatch.undo()
+
+    # 3. Verify OSError during fdopen/read produces a clean error instead of raising.
+    def _failing_fdopen(fd: int, *args: Any, **kwargs: Any) -> Any:
+        os.close(fd)
+        raise OSError("simulated read error")
+
+    monkeypatch.setattr(verifier.os, "fdopen", _failing_fdopen)
+    data_err, err_read = verifier._read_regular_effect_file(tmp_path, digest_hex, intent_digest)
+    assert data_err is None and err_read is not None and "simulated read error" in err_read
+
+
+def test_sd_write_effect_payload_links_without_os_replace_and_refuses_clobber_or_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S-d: _write_effect_payload publishes via os.link (never os.replace), compares on EEXIST, rejects symlinks."""
+    effects_dir = tmp_path / "effects"
+    intent_digest = "sha256:" + ("b" * 64)
+
+    def _forbid_replace(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("must not call os.replace")
+
+    monkeypatch.setattr(native_evidence_mod.os, "replace", _forbid_replace)
+
+    # Fresh write publishes without os.replace.
+    written = native_evidence_mod._write_effect_payload(effects_dir, intent_digest, b"first-bytes")  # pyright: ignore[reportPrivateUsage]
+    assert written.read_bytes() == b"first-bytes"
+    assert not list(effects_dir.glob(".effect-*.tmp"))
+
+    # Equal bytes on EEXIST succeeds idempotently.
+    written_again = native_evidence_mod._write_effect_payload(effects_dir, intent_digest, b"first-bytes")  # pyright: ignore[reportPrivateUsage]
+    assert written_again == written
+    assert written.read_bytes() == b"first-bytes"
+
+    # Different bytes on EEXIST raises FileExistsError and preserves original bytes.
+    with pytest.raises(FileExistsError, match="existing effect payload"):
+        native_evidence_mod._write_effect_payload(effects_dir, intent_digest, b"tampered-bytes")  # pyright: ignore[reportPrivateUsage]
+    assert written.read_bytes() == b"first-bytes"
+    assert not list(effects_dir.glob(".effect-*.tmp"))
+
+    # Pre-placed (or raced) symlink raises ValueError and leaves both symlink and outside file untouched.
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"original-outside")
+    sym_digest = "sha256:" + ("c" * 64)
+    sym_target = effects_dir / f"{'c' * 64}.effect"
+    sym_target.symlink_to(outside)
+    with pytest.raises(ValueError, match="symlink"):
+        native_evidence_mod._write_effect_payload(effects_dir, sym_digest, b"new-bytes")  # pyright: ignore[reportPrivateUsage]
+    assert sym_target.is_symlink()
+    assert outside.read_bytes() == b"original-outside"
+    assert not list(effects_dir.glob(".effect-*.tmp"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_n3_outside_range_retry_of_fails_on_genesis_receipt_and_passes_mid_chain(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """N3: an outside-range retry_of on a receipt starting at genesis must FAIL; mid-chain stays PASS."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+
+    dangling = _intent(request_id="95:retry", span_id="span-n3", retry_of="sha256:" + ("0" * 64))
+    ev = await provider.prepare_dispatch(dangling)
+    await provider.record_effect(dangling, ev, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok")
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "OVERALL: FAIL" in out
+    assert "[FAIL] toolcall_effects" in out
+    assert "genesis" in out.lower()
+
+    # Mid-chain slice (non-genesis prev_hmac on first event) still accepts prior intent outside range.
+    mid_chain = json.loads(receipt_path.read_text(encoding="utf-8"))
+    mid_chain["events"][0]["prev_hmac"] = "a" * 64
+    verifier = _load_verifier(verifier_kind)
+    check, lines = verifier.verify_toolcall_effects(mid_chain)
+    assert check.ok is True, check.detail
+    assert any("prior intent outside range" in line for line in lines)
+
+
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+def test_n5_duplicate_request_id_keys_on_raw_json_value(verifier_kind: str) -> None:
+    """N5: int 1, str '1', and padded ' 1 ' are distinct JSON-RPC request_ids; identical raw values collide."""
+    verifier = _load_verifier(verifier_kind)
+
+    def _att_event(att_hex: str, intent_hex: str, raw_req_id: Any) -> dict[str, Any]:
+        return {
+            "event_type": EVENT_TOOLCALL_ATTESTATION,
+            "resource_id": "scope:run-1:agent-1",
+            "details": {
+                "attestation_ref": f"sha256:{att_hex}",
+                "intent_digest": f"sha256:{intent_hex}",
+                "scope_id": "scope:run-1:agent-1",
+                "server_name": "filesystem",
+                "tool_name": "read_file",
+                "request_id": raw_req_id,
+            },
+        }
+
+    distinct_receipt: dict[str, Any] = {
+        "events": [
+            _att_event("1" * 64, "a" * 64, 1),
+            _att_event("2" * 64, "b" * 64, "1"),
+            _att_event("3" * 64, "c" * 64, " 1 "),
+        ]
+    }
+    check_ok, _ = verifier.verify_toolcall_effects(distinct_receipt)
+    assert check_ok.ok is True, check_ok.detail
+
+    duplicate_int_receipt: dict[str, Any] = {
+        "events": [
+            _att_event("1" * 64, "a" * 64, 1),
+            _att_event("4" * 64, "d" * 64, 1),
+        ]
+    }
+    check_dup, _ = verifier.verify_toolcall_effects(duplicate_int_receipt)
+    assert check_dup.ok is False
+    assert "duplicate request_id" in check_dup.detail

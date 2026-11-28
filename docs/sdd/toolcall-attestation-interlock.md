@@ -107,9 +107,16 @@ Verification path: both `tools/verify_audit_receipt.py` and
 in embedded receipt events, fail closed on broken bindings or duplicate
 dispatches, and — when `--effects-dir` is supplied — recompute every
 `effect_digest` from `<effects_dir>/<intent_sha256>.effect` and fail the effect
-leg on any missing or tampered payload. Without `--effects-dir`, chain bindings
-and `retry_of` links are verified and missing effect records read as
-`"dispatched, effect unobserved"`, never as closed success.
+leg on any missing, non-regular (symlink, directory, FIFO, device), or tampered
+payload. Without `--effects-dir`, chain bindings and `retry_of` links are
+verified and missing effect records read as `"dispatched, effect unobserved"`,
+never as closed success. Request-id uniqueness contract: offline verification
+requires JSON-RPC `request_id` values to be unique per `scope_id` (compared by
+raw JSON value across initial calls and retries); transports that multiplex
+multiple clients through one gateway must assign distinct `scope_id` values per
+client session or ensure non-colliding `request_id` values within the shared
+scope. An outside-range `retry_of` fails closed on receipts whose range starts
+at genesis.
 
 With a run identity, lineage signer, and journal-head reader configured, the
 native provider additionally creates a versioned, JCS-canonicalized Ed25519

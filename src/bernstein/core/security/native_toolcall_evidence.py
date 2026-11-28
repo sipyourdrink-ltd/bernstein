@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import math
 import os
 import re
+import stat
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
@@ -32,6 +34,7 @@ from bernstein.core.security.toolcall_identity import (
 from bernstein.core.security.toolcall_interlock import (
     ToolCallIntent,
     VerifiedDispatchEvidence,
+    _effect_preimage_for_connector_response,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -41,35 +44,15 @@ if TYPE_CHECKING:
     from bernstein.core.security.identity_spawn_anchor import AnchoredRunIdentity
 
 _SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
-
-
-def _canonical_effect_preimage(payload: Any) -> bytes:
-    """Return the exact bytes hashed for one observed tool-call effect."""
-    if isinstance(payload, bytes):
-        return payload
-    if isinstance(payload, str):
-        return payload.encode("utf-8")
-    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
-def _effect_preimage_for_connector_response(
-    response: Mapping[str, Any] | None,
-    received: bytes | None = None,
-    *,
-    patch: str | None = None,
-) -> bytes:
-    """Return the exact preimage bytes persisted for ``toolcall.effect.effect_digest``."""
-    if patch is not None:
-        return _canonical_effect_preimage(patch)
-    if response is None:
-        return _canonical_effect_preimage(None)
-    result = response.get("result")
-    error = response.get("error")
-    if error is None and isinstance(result, str):
-        return _canonical_effect_preimage(result)
-    if received is not None:
-        return _canonical_effect_preimage(received)
-    return _canonical_effect_preimage(response)
+_HARDLINK_UNSUPPORTED_ERRNOS = frozenset(
+    {
+        errno.EPERM,
+        errno.EOPNOTSUPP,
+        getattr(errno, "ENOTSUP", errno.EOPNOTSUPP),
+        errno.EXDEV,
+        errno.EMLINK,
+    }
+)
 
 
 def _intent_fields(intent: ToolCallIntent) -> dict[str, str]:
@@ -84,28 +67,77 @@ def _intent_fields(intent: ToolCallIntent) -> dict[str, str]:
     return fields
 
 
+def _verify_existing_effect_target(target: Path, intent_digest: str, preimage: bytes) -> None:
+    """Confirm an existing effect artifact is a regular file with identical bytes."""
+    lstat_res = os.lstat(target)
+    if stat.S_ISLNK(lstat_res.st_mode):
+        raise ValueError(f"refusing to write effect payload through symlink: {target}")
+    if not stat.S_ISREG(lstat_res.st_mode):
+        raise ValueError(f"refusing to overwrite non-regular effect payload target: {target}")
+    flags = (
+        getattr(os, "O_RDONLY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    fd = os.open(target, flags)
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            fstat_res = os.fstat(handle.fileno())
+            if not stat.S_ISREG(fstat_res.st_mode):
+                raise ValueError(f"refusing to overwrite non-regular effect payload target: {target}")
+            if (fstat_res.st_dev, fstat_res.st_ino) != (lstat_res.st_dev, lstat_res.st_ino):
+                raise ValueError(f"effect payload target changed between stat and open: {target}")
+            existing = handle.read()
+    except BaseException:
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        raise
+    if existing != preimage:
+        raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
+
+
 def _write_effect_payload(effects_dir: Path, intent_digest: str, preimage: bytes) -> Path:
-    """Atomically persist the exact effect preimage bytes keyed by intent digest."""
+    """Atomically publish the exact effect preimage bytes keyed by intent digest without clobbering."""
     match = _SHA256_PREFIXED_RE.match(intent_digest)
     if match is None:
         raise ValueError(f"cannot persist effect payload for malformed intent_digest: {intent_digest!r}")
     effects_dir.mkdir(parents=True, exist_ok=True)
     target = effects_dir / f"{match.group(1)}.effect"
-    if target.is_symlink():
-        raise ValueError(f"refusing to write effect payload through symlink: {target}")
-    if target.exists() and target.read_bytes() != preimage:
-        raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
     fd, tmp_name = tempfile.mkstemp(prefix=".effect-", suffix=".tmp", dir=str(effects_dir))
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(preimage)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, target)
-    except BaseException:
+        try:
+            os.link(tmp_name, target)
+        except FileExistsError:
+            _verify_existing_effect_target(target, intent_digest, preimage)
+        except OSError as exc:
+            if exc.errno not in _HARDLINK_UNSUPPORTED_ERRNOS:
+                raise
+            excl_flags = (
+                getattr(os, "O_WRONLY", 0)
+                | getattr(os, "O_CREAT", 0)
+                | getattr(os, "O_EXCL", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_BINARY", 0)
+            )
+            try:
+                excl_fd = os.open(target, excl_flags, 0o600)
+            except FileExistsError:
+                _verify_existing_effect_target(target, intent_digest, preimage)
+            else:
+                with os.fdopen(excl_fd, "wb") as excl_handle:
+                    excl_handle.write(preimage)
+                    excl_handle.flush()
+                    os.fsync(excl_handle.fileno())
+    finally:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        raise
     return target
 
 
