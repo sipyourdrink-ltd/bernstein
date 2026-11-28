@@ -169,7 +169,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 認証が必要なサーバーでは、ターミナル用に `BERNSTEIN_AUTH_TOKEN` を設定し、ブラウザのログイン画面に許可されたトークンを入力してください。 [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### 実行を証明する
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 ここでの決定性は、信じるものではなく確かめるものである。監査を有効にして一度走らせ、記録された内容を検証する:
 
@@ -196,6 +196,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 機械可読な検査結果には `bernstein govern audit --format json` または `--format sarif` を、CI の判定には `--strict --quiet` を使います。詳しくは [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` エビデンスパックには、2026-01-08付の文書の固定バージョンにあるMCP脅威クラスと、未対応の範囲が明記されます。
 
 `bernstein delegation verify RUN` は、監査キーを使った HMAC によって実行マニフェストに封印された最終ヘッドとホップ数をレシートチェーンと比較し、末尾の削除、置き換え、終了後のチェーンの延長を検出します。キーを持たずに宣言を書き換える行為も検出対象です。宣言を削除すると、実行は未完了（終了コード `3`）となり、有効とは判定されません。古い真正なスナップショットの再利用は検出できず、監査キーを持つ書き手からの保護も提供しません。詳しくは[委任の検証手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)を参照してください。
+
+`self-conformance-bench-v1` は、署名付きの対照データとオフライン再生を使い、ベンチマーク結果の形式に対する5種類の改ざん検査を測定します。[ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md)を参照してください。
 
 ### 仕組み
 <!-- l10n: en="how it works" hash="sha256:b734c935f998" -->

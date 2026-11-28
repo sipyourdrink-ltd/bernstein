@@ -164,10 +164,13 @@ class TestComplianceControlsCoverageCLI:
         assert json_res.exit_code == 0, json_res.output
         rows = json.loads(json_res.stdout)
         by_id = {row["control_id"]: row for row in rows}
-        assert by_id["CTL-ROB-01"]["suites"] == ["golden-v1"]
+        assert by_id["CTL-ROB-01"]["suites"] == ["golden-v1", "self-conformance-bench-v1"]
         assert by_id["CTL-ROB-01"]["latest_measurement"] is None
         assert by_id["CTL-ROB-01"]["latest_measurement_display"] == "unavailable"
-        assert by_id["CTL-ROB-01"]["suite_measurements"] == {"golden-v1": None}
+        assert by_id["CTL-ROB-01"]["suite_measurements"] == {
+            "golden-v1": None,
+            "self-conformance-bench-v1": None,
+        }
 
     def test_controls_cli_prefers_latest_bundle_across_argument_order(self, tmp_path: Path) -> None:
         older_path = tmp_path / "older.json"
@@ -195,10 +198,12 @@ class TestComplianceControlsCoverageCLI:
 
         by_id = {row["control_id"]: row for row in rows_a}
         rob_01 = by_id["CTL-ROB-01"]
-        assert rob_01["suites"] == ["golden-v1"]
+        assert rob_01["suites"] == ["golden-v1", "self-conformance-bench-v1"]
         assert rob_01["latest_measurement"]["submitted_at"] == 300.0
         assert rob_01["latest_measurement"]["pass_rate"] == pytest.approx(0.6)
-        assert rob_01["latest_measurement_display"] == "60.0% (3/5)"
+        assert rob_01["latest_measurement_display"] == (
+            "golden-v1: 60.0% (3/5), self-conformance-bench-v1: unavailable"
+        )
 
         # Controls whose declaring suite has no recorded bundle stay unavailable.
         sec_04 = by_id["CTL-SEC-04"]

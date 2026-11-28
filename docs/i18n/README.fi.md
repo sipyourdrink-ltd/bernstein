@@ -169,7 +169,7 @@ Käynnissä olevaa ajoa voidaan seurata kummasta tahansa käyttöliittymästä. 
 Jos palvelin vaatii todennuksen, aseta terminaalille `BERNSTEIN_AUTH_TOKEN` ja anna valtuutettu tunniste selaimen kirjautumisnäkymässä. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### ajon todistaminen
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 Deterministiikka on täällä ominaisuus, jonka voit tarkistaa, ei asia jota pitäisi uskoa sokeasti. Aja kerran auditointi päällä ja vahvista tallennetut tiedot:
 
@@ -196,6 +196,8 @@ Sama todennettavuus koskee arviointituloksia. `bernstein bench run <suite> --rel
 Käytä `bernstein govern audit --format json`- tai `--format sarif`-valintaa koneluettaviin tarkistustuloksiin ja `--strict --quiet`-valintaa CI:n hyväksymisehtona. Katso [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai`-todistepaketti sisältää MCP-uhkaluokat 2026-01-08 päivätyn julkaisun kiinnitetystä versiosta ja kertoo jäljellä olevat kattavuuspuutteet.
 
 `bernstein delegation verify RUN` vertaa kuittiketjua lopulliseen ketjun päähän ja hyppyjen määrään, jotka on sinetöity ajon manifestiin auditointiavaimella lasketulla HMAC-tunnisteella. Se havaitsee ketjun loppuosan poistamisen, korvaamisen ja ketjun kasvattamisen sulkemisen jälkeen sekä ilmoituksen uudelleenkirjoittamisen ilman avainta. Ilmoituksen poistaminen jättää ajon keskeneräiseksi (paluukoodi `3`), eikä ajoa koskaan pidetä kelvollisena. Tämä ei havaitse vanhemman aidon tilannekuvan uudelleenkäyttöä eikä suojaa kirjoittajalta, jolla on auditointiavain. Katso [delegoinnin tarkistuksen työnkulku](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`self-conformance-bench-v1` mittaa viisi vertailutulospaketin peukalointitestiä allekirjoitetuilla verrokeilla ja offline-toistolla; katso [opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md).
 
 ### miten se toimii
 <!-- l10n: en="how it works" hash="sha256:b734c935f998" -->

@@ -26,6 +26,7 @@ import hashlib
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from bernstein.core.security.key_custody import KMSAdapter
     from bernstein.eval.bench.bundle import SubmissionBundle
 
 #: JWS `typ` for a bundle signature. Distinct from the reliability-receipt and agent-card types so
@@ -130,11 +131,16 @@ class AgentCardSigner:
         self,
         private_key_pem: bytes | None = None,
         public_key_pem: bytes | None = None,
+        *,
+        kms_adapter: KMSAdapter | None = None,
     ) -> None:
+        if kms_adapter is not None and (private_key_pem is not None or public_key_pem is not None):
+            raise ValueError("Provide either kms_adapter or (private_key_pem, public_key_pem), not both.")
         if (private_key_pem is None) != (public_key_pem is None):
             raise ValueError("Provide both private_key_pem and public_key_pem, or neither.")
         self._private_key_pem = private_key_pem
         self._public_key_pem = public_key_pem
+        self._kms_adapter = kms_adapter
 
     def _key_material(self) -> tuple[bytes, bytes]:
         if self._private_key_pem is not None and self._public_key_pem is not None:
@@ -147,11 +153,14 @@ class AgentCardSigner:
         """The install-identity keyid this signer stamps into bundles."""
         from bernstein.core.identity.http_signing import install_identity_keyid
 
-        _, public_pem = self._key_material()
-        return install_identity_keyid(public_pem)
+        return install_identity_keyid(self.public_key_pem())
 
     def public_key_pem(self) -> bytes:
         """SPKI PEM of the verifying key, for building a trusted-key map."""
+        if self._kms_adapter is not None:
+            from bernstein.core.security.agent_card_signer import ed25519_pem_from_jwk
+
+            return ed25519_pem_from_jwk(self._kms_adapter.public_key_jwk())
         _, public_pem = self._key_material()
         return public_pem
 
@@ -161,8 +170,18 @@ class AgentCardSigner:
         from bernstein.core.identity.http_signing import install_identity_keyid
         from bernstein.core.security.agent_card_signer import (
             sign_detached_jws_over_canonical,
+            sign_detached_jws_with_signer,
         )
 
+        if self._kms_adapter is not None:
+            kid = install_identity_keyid(self.public_key_pem())
+            signature = sign_detached_jws_with_signer(
+                bundle.bundle_hash().encode(),
+                self._kms_adapter,
+                typ=BUNDLE_JWS_TYP,
+                kid=kid,
+            )
+            return dataclasses.replace(bundle, signature=signature, signer_fingerprint=kid)
         private_pem, public_pem = self._key_material()
         kid = install_identity_keyid(public_pem)
         signature = sign_detached_jws_over_canonical(

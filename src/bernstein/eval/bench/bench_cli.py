@@ -46,6 +46,7 @@ def _get_suite(name: str):
     from bernstein.eval.bench.goal_drift_suite import build_goal_drift_suite
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
     from bernstein.eval.bench.leakage_suite import build_leakage_suite_v1
+    from bernstein.eval.bench.self_conformance_suite import build_self_conformance_bench_suite
     from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
@@ -55,6 +56,7 @@ def _get_suite(name: str):
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
         "leakage-v1": build_leakage_suite_v1,
+        "self-conformance-bench-v1": build_self_conformance_bench_suite,
     }
     _BUILTIN = {suite_name: (builder, BUILTIN_SUITE_CONTROLS[suite_name]) for suite_name, builder in _BUILDERS.items()}
 
@@ -76,13 +78,18 @@ def _get_suite(name: str):
 def _resolve_adapter(suite_obj: BenchSuite) -> ReplayAdapter:
     """The adapter that scores *suite_obj*: the suite's own, else the synthetic mock.
 
-    Only ``tool-surface-v1``, ``gate-evasion-v1``, ``goal-drift-v1``, and ``leakage-v1`` have an adapter
-    that derives a verdict from a run. Every other suite (``golden-v1`` and any ``.json``
+    ``self-conformance-bench-v1``, ``tool-surface-v1``, ``gate-evasion-v1``,
+    ``goal-drift-v1``, and ``leakage-v1`` have an adapter that derives a verdict
+    from a run. Every other suite (``golden-v1`` and any ``.json``
     suite) falls back to ``MockReplayAdapter``, which passes everything; callers must check
     :func:`_is_synthetic`.
     """
     from bernstein.eval.bench.runner import MockReplayAdapter
 
+    if suite_obj.version == "self-conformance-bench-v1":
+        from bernstein.eval.bench.self_conformance_suite import SelfConformanceBenchReplayAdapter
+
+        return SelfConformanceBenchReplayAdapter()
     if suite_obj.version == "tool-surface-v1":
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
@@ -130,6 +137,7 @@ BUILTIN_SUITE_CONTROLS: dict[str, tuple[str, ...]] = {
     "golden-v1": ("CTL-ROB-01",),
     "tool-surface-v1": ("CTL-SEC-02",),
     "leakage-v1": ("CTL-SEC-03",),
+    "self-conformance-bench-v1": ("CTL-ROB-01",),
 }
 
 
@@ -168,7 +176,13 @@ def _suite_source_uri(name: str) -> str | None:
     """
     import inspect
 
-    from bernstein.eval.bench import gate_evasion_suite, goal_drift_suite, golden_suite, tool_surface_suite
+    from bernstein.eval.bench import (
+        gate_evasion_suite,
+        goal_drift_suite,
+        golden_suite,
+        self_conformance_suite,
+        tool_surface_suite,
+    )
 
     path = Path(name)
     if path.suffix == ".json" and path.exists():
@@ -178,6 +192,7 @@ def _suite_source_uri(name: str) -> str | None:
         "tool-surface-v1": tool_surface_suite,
         "gate-evasion-v1": gate_evasion_suite,
         "goal-drift-v1": goal_drift_suite,
+        "self-conformance-bench-v1": self_conformance_suite,
     }.get(name)
     if module is None:
         return None

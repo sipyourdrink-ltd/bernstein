@@ -169,7 +169,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 सर्वर पर प्रमाणीकरण चालू हो तो टर्मिनल के लिए `BERNSTEIN_AUTH_TOKEN` सेट करें और ब्राउज़र की लॉगिन स्क्रीन पर अधिकृत टोकन डालें। [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### रन को साबित कीजिए
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 यहाँ डिटर्मिनिज़्म भरोसे की चीज़ नहीं, जाँचने की चीज़ है। ऑडिट चालू करके एक बार चलाइए, फिर जो दर्ज हुआ उसे सत्यापित कीजिए:
 
@@ -196,6 +196,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 मशीन द्वारा पढ़े जा सकने वाले जाँच परिणामों के लिए `bernstein govern audit --format json` या `--format sarif` और CI में पास या फ़ेल तय करने के लिए `--strict --quiet` इस्तेमाल करें। देखें: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). `cosai` साक्ष्य पैक में 2026-01-08 के दस्तावेज़ के निश्चित संस्करण से MCP खतरों की श्रेणियाँ शामिल हैं और कवरेज में बची कमियाँ बताई गई हैं।
 
 `bernstein delegation verify RUN` रसीदों की शृंखला की तुलना अंतिम हेड और हॉप की संख्या से करता है, जिन्हें रन मैनिफेस्ट में ऑडिट कुंजी वाले HMAC से सील किया गया है। इससे शृंखला का अंतिम हिस्सा हटाना, प्रतिस्थापन और रन बंद होने के बाद शृंखला बढ़ाना पकड़ा जाता है, जिसमें कुंजी के बिना घोषणा को दोबारा लिखना भी शामिल है। घोषणा हटाने पर रन अधूरा रहता है (एग्ज़िट कोड `3`), उसे कभी वैध नहीं माना जाता। यह किसी पुराने प्रामाणिक स्नैपशॉट के दोबारा इस्तेमाल का पता नहीं लगाता और ऑडिट कुंजी रखने वाले लेखक से सुरक्षा नहीं देता। देखें [डेलिगेशन सत्यापन कार्यप्रवाह](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md)।
+
+`self-conformance-bench-v1` हस्ताक्षरित नियंत्रण नमूनों और ऑफ़लाइन रीप्ले से बेंचमार्क बंडल में छेड़छाड़ की पाँच जाँचें मापता है; [मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md) देखें।
 
 ### यह काम कैसे करता है
 <!-- l10n: en="how it works" hash="sha256:b734c935f998" -->

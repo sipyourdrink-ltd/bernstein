@@ -169,7 +169,7 @@ En pågående körning kan följas från båda operatörsgränssnitten. Båda l�
 Om servern kräver autentisering, ange `BERNSTEIN_AUTH_TOKEN` för terminalen och mata in en auktoriserad token på webbläsarens inloggningssida. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### bevisa en körning
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 Determinism är här något du verifierar, inte något du accepterar på god tro. Kör en gång med granskning aktiverad och kontrollera sedan vad som loggades:
 
@@ -196,6 +196,8 @@ Samma verifierbarhet gäller för utvärderingsresultat. `bernstein bench run <s
 Använd `bernstein govern audit --format json` eller `--format sarif` för maskinläsbara kontrollresultat och `--strict --quiet` som godkännandekrav i CI. Se [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Evidenspaketet `cosai` innehåller MCP-hotklasserna från den låsta versionen av dokumentet daterat 2026-01-08 och anger de återstående luckorna i täckningen.
 
 `bernstein delegation verify RUN` jämför kvittokedjan med det slutliga kedjehuvudet och antalet delegeringssteg, som förseglats i körningsmanifestet med en HMAC baserad på granskningsnyckeln. Det upptäcker borttagning av kedjans slut, utbyte och förlängning efter avslut, inklusive omskrivning av deklarationen utan nyckeln. Om deklarationen tas bort förblir körningen ofullständig (avslutskod `3`) och betraktas aldrig som giltig. Detta upptäcker inte återanvändning av en äldre autentisk ögonblicksbild och skyddar inte mot en skribent som har granskningsnyckeln. Se [arbetsflödet för delegeringsverifiering](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`self-conformance-bench-v1` mäter fem manipulationstester för benchmarkpaket med signerade kontrollprov och återspelning offline; se [guiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md).
 
 ### hur det fungerar
 <!-- l10n: en="how it works" hash="sha256:b734c935f998" -->

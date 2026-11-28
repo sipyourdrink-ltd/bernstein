@@ -169,7 +169,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 אם השרת דורש אימות, יש להגדיר `BERNSTEIN_AUTH_TOKEN` עבור הטרמינל ולהזין אסימון מורשה במסך הכניסה בדפדפן. [GUI authentication](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md#quickstart).
 
 ### הוכחת ריצה
-<!-- l10n: en="prove a run" hash="sha256:d4095258a0e7" -->
+<!-- l10n: en="prove a run" hash="sha256:a880d9a9bef1" -->
 
 דטרמיניזם כאן הוא מאפיין שאתה בודק בעצמך, לא משהו שמקבלים כמובן מאליו. הרץ פעם אחת עם ביקורת מופעלת, ואז אמת את מה שתועד:
 
@@ -196,6 +196,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 לתוצאות בדיקה קריאות למכונה, השתמשו ב־`bernstein govern audit --format json` או ב־`--format sarif`, וב־`--strict --quiet` כתנאי מעבר ב־CI. ראו [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). חבילת הראיות `cosai` כוללת את קטגוריות איומי ה־MCP מהגרסה המקובעת של המסמך מתאריך 2026-01-08, ומציינת את הפערים שנותרו בכיסוי.
 
 הפקודה `bernstein delegation verify RUN` משווה את שרשרת הקבלות לערך הראש הסופי ולמספר שלבי ההאצלה, שנחתמו במניפסט הריצה באמצעות HMAC עם מפתח הביקורת. כך היא מזהה מחיקה של סוף השרשרת, החלפה והארכת השרשרת לאחר סגירת הריצה, לרבות שכתוב ההצהרה ללא המפתח. הסרת ההצהרה משאירה את הריצה לא שלמה (קוד יציאה `3`), והיא לעולם אינה נחשבת תקינה. הבדיקה אינה מזהה שימוש חוזר בתמונת מצב אותנטית ישנה יותר ואינה מגינה מפני גורם כותב המחזיק במפתח הביקורת. ראו את [תהליך אימות ההאצלה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
+
+`self-conformance-bench-v1` בודק חמש דרכים לשיבוש חבילת תוצאות של מבחני ביצועים, באמצעות דגימות בקרה חתומות ואימות חוזר ללא חיבור לרשת; ראו [מדריך](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bench-envelope-conformance.md).
 
 ### איך זה עובד
 <!-- l10n: en="how it works" hash="sha256:b734c935f998" -->
