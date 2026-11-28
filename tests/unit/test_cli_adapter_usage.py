@@ -143,6 +143,39 @@ class TestParseStreamJsonUsage:
         assert parse_stream_json_usage("") == (0, 0, "")
         assert parse_stream_json_usage("not json at all\njust text\n") == (0, 0, "")
 
+    def test_parses_openai_agents_runner_usage_events(self) -> None:
+        log = "\n".join(
+            [
+                json.dumps({"type": "start", "session_id": "oa-1", "model": "gpt-5-mini"}),
+                json.dumps(
+                    {
+                        "type": "usage",
+                        "input_tokens": 2400,
+                        "output_tokens": 350,
+                        "model": "gpt-5-mini",
+                    }
+                ),
+            ]
+        )
+        assert parse_stream_json_usage(log) == (2400, 350, "gpt-5-mini")
+
+    def test_ignores_usage_missing_marker_on_openai_agents_events(self) -> None:
+        log = "\n".join(
+            [
+                json.dumps({"type": "start", "session_id": "oa-2", "model": "gpt-5-mini"}),
+                json.dumps(
+                    {
+                        "type": "usage",
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "model": "gpt-5-mini",
+                        "usage_missing": True,
+                    }
+                ),
+            ]
+        )
+        assert parse_stream_json_usage(log) == (0, 0, "gpt-5-mini")
+
 
 class TestCaptureCliAdapterUsage:
     """capture_cli_adapter_usage materialises the recovery sidecar."""

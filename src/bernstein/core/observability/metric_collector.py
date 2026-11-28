@@ -431,6 +431,8 @@ class MetricsCollector:
         files_modified: int = 0,
         lines_added: int = 0,
         lines_deleted: int = 0,
+        tokens_prompt: int | None = None,
+        tokens_completion: int | None = None,
     ) -> TaskMetrics | None:
         """Record task completion.
 
@@ -444,6 +446,8 @@ class MetricsCollector:
             files_modified: Number of files modified.
             lines_added: Lines of code added.
             lines_deleted: Lines of code deleted.
+            tokens_prompt: Optional prompt token count to store on ``TaskMetrics``.
+            tokens_completion: Optional completion token count to store on ``TaskMetrics``.
 
         Returns:
             TaskMetrics if found, None otherwise.
@@ -456,6 +460,10 @@ class MetricsCollector:
         metrics.end_time = time.time()
         metrics.success = success
         metrics.tokens_used = tokens_used
+        if tokens_prompt is not None:
+            metrics.tokens_prompt = tokens_prompt
+        if tokens_completion is not None:
+            metrics.tokens_completion = tokens_completion
         metrics.cost_usd = cost_usd
         metrics.error = error
         metrics.janitor_passed = janitor_passed

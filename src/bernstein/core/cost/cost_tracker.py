@@ -487,6 +487,17 @@ class BudgetStatus:
 # ---------------------------------------------------------------------------
 
 
+def _match_detailed_pricing(model: str) -> dict[str, float | None] | None:
+    """Return the longest-key matching entry in ``MODEL_COSTS_PER_1M_TOKENS``."""
+    from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS
+
+    model_lower = model.lower()
+    for key in sorted(MODEL_COSTS_PER_1M_TOKENS, key=len, reverse=True):
+        if key in model_lower:
+            return cast("dict[str, float | None]", MODEL_COSTS_PER_1M_TOKENS[key])
+    return None
+
+
 def estimate_cost(
     model: str,
     input_tokens: int,
@@ -509,31 +520,31 @@ def estimate_cost(
     Returns:
         Estimated cost in USD.
     """
-    from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS
-
-    model_lower = model.lower()
-    pricing = None
-    for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
-        if key in model_lower:
-            pricing = costs
-            break
-
+    pricing = _match_detailed_pricing(model)
     if pricing:
+        raw_input = pricing.get("input")
+        raw_output = pricing.get("output")
+        input_rate = 0.0 if raw_input is None else float(raw_input)
+        output_rate = 0.0 if raw_output is None else float(raw_output)
+        raw_cache_read = pricing.get("cache_read")
+        raw_cache_write = pricing.get("cache_write")
+        cache_read_rate = input_rate if raw_cache_read is None else float(raw_cache_read)
+        cache_write_rate = input_rate if raw_cache_write is None else float(raw_cache_write)
+
         cost: float = 0.0
         # pricing is in $/1M tokens
-        cost += (input_tokens / 1_000_000.0) * pricing.get("input", 0.0)
-        cost += (output_tokens / 1_000_000.0) * pricing.get("output", 0.0)
-        cost += (cache_read_tokens / 1_000_000.0) * cast("float", pricing.get("cache_read", pricing.get("input", 0.0)))
-        cost += (cache_write_tokens / 1_000_000.0) * cast(
-            "float", pricing.get("cache_write", pricing.get("input", 0.0))
-        )
+        cost += (input_tokens / 1_000_000.0) * input_rate
+        cost += (output_tokens / 1_000_000.0) * output_rate
+        cost += (cache_read_tokens / 1_000_000.0) * cache_read_rate
+        cost += (cache_write_tokens / 1_000_000.0) * cache_write_rate
         return cost
 
     # Fallback to blended rate
+    model_lower = model.lower()
     rate: float = 0.005  # safe fallback
-    for key, blended_cost in _MODEL_COST_USD_PER_1K.items():
+    for key in sorted(_MODEL_COST_USD_PER_1K, key=len, reverse=True):
         if key in model_lower:
-            rate = blended_cost
+            rate = _MODEL_COST_USD_PER_1K[key]
             break
     total_tokens = input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
     return (total_tokens / 1000.0) * rate
@@ -1762,17 +1773,12 @@ class CostTracker:
 
         # Running cache-read savings
         if usage.cache_read_tokens > 0:
-            from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS
-
-            model_lower = usage.model.lower()
-            pricing: dict[str, float] | None = None
-            for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
-                if key in model_lower:
-                    pricing = cast("dict[str, float]", costs)
-                    break
+            pricing = _match_detailed_pricing(usage.model)
             if pricing is not None:
-                input_price = pricing.get("input", 0.0)
-                cache_read_price = pricing.get("cache_read", input_price)
+                raw_input = pricing.get("input")
+                input_price = 0.0 if raw_input is None else float(raw_input)
+                raw_cache_read = pricing.get("cache_read")
+                cache_read_price = input_price if raw_cache_read is None else float(raw_cache_read)
                 self._cache_savings_usd += (usage.cache_read_tokens / 1_000_000.0) * (input_price - cache_read_price)
 
         # Running "vs all-Opus" baseline savings
