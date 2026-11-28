@@ -10,16 +10,22 @@ from __future__ import annotations
 import glob as _glob
 import hashlib
 import json
+import stat
+import tempfile
 import zipfile
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
 import bernstein
 from bernstein.cli.run_names import render_name
+from bernstein.core.observability.run_source import ArchiveRunSource, LiveRunSource, RunSource
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from bernstein.core.security.audit import AuditLog
 
 #: Read size for hashing. Large enough that a multi-megabyte trace store does
@@ -102,11 +108,11 @@ class ArchiveVerification:
 # ---------------------------------------------------------------------------
 
 ARCHIVE_SECTIONS: dict[str, list[str]] = {
-    "tasks": [".sdd/tasks/*.jsonl"],
-    "logs": [".sdd/runtime/*.log"],
+    "tasks": [".sdd/tasks/*.jsonl", ".sdd/runs/*/summary.json"],
+    "logs": [".sdd/runtime/*.log", ".sdd/logs/*.log"],
     "costs": [".sdd/runtime/costs/*.json"],
     "audit": [".sdd/audit/*.jsonl"],
-    "metrics": [".sdd/metrics/*.jsonl"],
+    "metrics": [".sdd/metrics/*.jsonl", ".sdd/metrics/task_*.json"],
     "traces": [".sdd/traces/*.json"],
     "config": [".sdd/config/*", "bernstein.yaml"],
 }
@@ -478,3 +484,58 @@ def _archive_run_name(run_id: str | None) -> str:
         return render_name(UUID(run_id))
     except ValueError:
         return "(unnamed)"
+
+
+def _safe_extract_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, root: Path, archive_path: Path) -> None:
+    """Extract a single validated non-manifest member into *root*."""
+    name = info.filename
+    if not name or name.startswith("/") or "\\" in name:
+        raise ArchiveManifestError(f"{archive_path} contains unsafe member path: {name!r}")
+    if stat.S_ISLNK(info.external_attr >> 16):
+        raise ArchiveManifestError(f"{archive_path} contains disallowed symlink member: {name!r}")
+    posix = PurePosixPath(name)
+    if ".." in posix.parts:
+        raise ArchiveManifestError(f"{archive_path} contains unsafe traversal member: {name!r}")
+
+    target = (root / posix).resolve()
+    resolved_root = root.resolve()
+    if not target.is_relative_to(resolved_root):
+        raise ArchiveManifestError(f"{archive_path} member escapes extraction root: {name!r}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zf.open(info) as src, target.open("wb") as dst:
+        while chunk := src.read(_HASH_CHUNK_BYTES):
+            dst.write(chunk)
+
+
+@contextmanager
+def open_verified_archive_workdir(archive_path: Path) -> Generator[Path]:
+    """Verify *archive_path* fail-closed and yield a temporary extracted workdir.
+
+    Raises:
+        ArchiveManifestError: If verification fails or any member path is unsafe.
+    """
+    verification = verify_archive(archive_path)
+    if not verification.ok:
+        raise ArchiveManifestError(format_verification(archive_path, verification))
+
+    with tempfile.TemporaryDirectory(prefix="bernstein-archive-") as tmp_dir:
+        root = Path(tmp_dir)
+        try:
+            with zipfile.ZipFile(archive_path) as zf:
+                for info in zf.infolist():
+                    if info.is_dir() or info.filename == "manifest.json":
+                        continue
+                    _safe_extract_member(zf, info, root, archive_path)
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise ArchiveManifestError(f"{archive_path} could not be extracted: {exc}") from exc
+        yield root
+
+
+def resolve_run_source(workdir: str | Path, from_archive: str | Path | None) -> RunSource:
+    """Build a :class:`RunSource` for either a live workspace or an archive bundle."""
+    if from_archive is not None:
+        return ArchiveRunSource(
+            archive_path=Path(from_archive).resolve(),
+            opener=open_verified_archive_workdir,
+        )
+    return LiveRunSource(workdir=Path(workdir).resolve())

@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
+from bernstein.cli.run_archive import ArchiveManifestError, resolve_run_source
 
 
 @click.command("postmortem")
@@ -14,8 +15,15 @@ from bernstein.cli.helpers import console
 @click.option(
     "--workdir",
     default=".",
-    type=click.Path(exists=True),
+    type=click.Path(),
     help="Project root directory.",
+)
+@click.option(
+    "--from-archive",
+    "from_archive",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Read run evidence from a verified archive ZIP instead of a live .sdd directory.",
 )
 @click.option(
     "--format",
@@ -41,6 +49,7 @@ from bernstein.cli.helpers import console
 def postmortem_cmd(
     run_id: str | None,
     workdir: str,
+    from_archive: str | None,
     fmt: str,
     output: str | None,
     save: bool,
@@ -59,43 +68,52 @@ def postmortem_cmd(
     Examples:
       bernstein report postmortem                        # latest run, markdown to stdout
       bernstein report postmortem abc123                 # specific run
+      bernstein report postmortem --from-archive r.zip   # inspect verified archive bundle
       bernstein report postmortem --format html --save   # HTML, also saved to .sdd/reports/
       bernstein report postmortem --format pdf -o r.pdf  # PDF (requires weasyprint or wkhtmltopdf)
       bernstein report postmortem -o report.md           # write markdown to file
     """
     from bernstein.core.postmortem import PostMortemGenerator
 
-    workdir_path = Path(workdir).resolve()
-    generator = PostMortemGenerator(workdir_path, run_id=run_id)
-    report = generator.generate()
+    if from_archive is None and not Path(workdir).is_dir():
+        raise click.BadParameter(f"Directory '{workdir}' does not exist.", param_hint="'--workdir'")
 
-    if report.run_id == "unknown" and report.total_tasks == 0:
-        console.print("[yellow]No run data found.[/yellow] Has a run completed in this project?")
-        raise SystemExit(1)
+    source = resolve_run_source(workdir, from_archive)
+    try:
+        with source.open_workdir() as resolved_workdir:
+            generator = PostMortemGenerator(resolved_workdir, run_id=run_id)
+            report = generator.generate()
 
-    if report.failed_tasks == 0:
-        console.print(f"[green]Run `{report.run_id}` had no failed tasks.[/green] Post-mortem not required.")
-        return
+            if report.run_id == "unknown" and report.total_tasks == 0:
+                console.print("[yellow]No run data found.[/yellow] Has a run completed in this project?")
+                raise SystemExit(1)
 
-    if fmt == "pdf":
-        # PDF always writes to a file - print path and return.
-        out_path = Path(output) if output else None
-        saved = generator.to_pdf(report, path=out_path)
-        console.print(f"[green]PDF report saved to {saved}[/green]")
-        if save and saved != out_path:
-            pass  # already saved by to_pdf
-        return
+            if report.failed_tasks == 0:
+                console.print(f"[green]Run `{report.run_id}` had no failed tasks.[/green] Post-mortem not required.")
+                return
 
-    content = generator.to_html(report) if fmt == "html" else generator.to_markdown(report)
+            if fmt == "pdf":
+                # PDF always writes to a file - print path and return.
+                out_path = Path(output) if output else None
+                saved = generator.to_pdf(report, path=out_path)
+                console.print(f"[green]PDF report saved to {saved}[/green]")
+                return
 
-    if output:
-        out_path = Path(output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
-        console.print(f"[green]Report written to {out_path}[/green]")
-    else:
-        console.print(content)
+            content = generator.to_html(report) if fmt == "html" else generator.to_markdown(report)
 
-    if save:
-        saved = generator.save(report, fmt=fmt)
-        console.print(f"\n[green]Report saved to {saved}[/green]")
+            if output:
+                out_path = Path(output)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(content, encoding="utf-8")
+                console.print(f"[green]Report written to {out_path}[/green]")
+            else:
+                console.print(content)
+
+            if save:
+                target_root = Path(workdir).resolve() if source.kind == "archive" else resolved_workdir
+                saver = generator if source.kind == "live" else PostMortemGenerator(target_root, run_id=report.run_id)
+                saved = saver.save(report, fmt=fmt)
+                console.print(f"\n[green]Report saved to {saved}[/green]")
+    except ArchiveManifestError as exc:
+        console.print(f"[red]Archive verification failed:[/red] {exc}")
+        raise SystemExit(1) from exc
