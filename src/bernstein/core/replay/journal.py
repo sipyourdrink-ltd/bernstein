@@ -54,6 +54,7 @@ from bernstein.core.security.path_containment import PathContainmentError, conta
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+    from typing import IO
 
 logger = logging.getLogger(__name__)
 
@@ -904,33 +905,14 @@ def _is_decodable(line: str) -> bool:
     return True
 
 
-def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
-    """Load all events from a journal JSONL file in append order.
+def _scan_events_from_file(raw_file: IO[bytes], *, strict: bool = False) -> JournalLoadResult:
+    """Single scan implementation shared by :func:`load_events` and :func:`load_events_from_file`.
 
-    One scan implementation serves both reader policies, so a journal-format
-    change can never make a diagnostic reader drift from the rest of replay:
-
-    * tolerant (default): malformed lines are skipped so a partial trailing
-      write cannot wedge an ordinary reader;
-    * ``strict=True``: any non-blank line that does not decode as a JSON
-      object raises :class:`JournalParseError` naming the 0-based physical
-      line index. Diagnostic readers (``bernstein audit diagnose``) use this
-      so no reported index can ever count parsed rows rather than physical
-      journal lines, and no finding is derived from a filtered sequence.
-
-    "Malformed" includes *undecodable*. A crash partway through an append can
-    land inside a multi-byte character as easily as between two, and a strict
-    decode would make the same class of crash produce two different outcomes
-    depending on where in the byte stream it stopped: a discarded line index
-    in one case, a bare ``UnicodeDecodeError`` out of the reader in the other.
-    Bytes that are not valid UTF-8 are therefore surfaced through the same two
-    policies as unparsable JSON - discarded by the tolerant reader, raised as
-    :class:`JournalParseError` naming the physical line by the strict one.
+    Leaves *raw_file* open (the wrapper detaches on exit) so callers retain
+    ownership of closing their own descriptor.
     """
     events: list[dict[str, Any]] = []
     discarded: list[int] = []
-    if not path.exists():
-        return JournalLoadResult(events=events)
     # Binary handle, decoded through the *same* TextIOWrapper machinery as
     # ``path.open(encoding="utf-8")``: universal-newline splitting is what
     # defines a physical line here, and re-implementing it over bytes would
@@ -939,7 +921,8 @@ def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
     # error policy changes. ``surrogateescape`` rather than ``replace``
     # because it is reversible: a caller inspecting or repairing a torn tail
     # still has the original bytes, which ``replace`` would destroy.
-    with path.open("rb") as raw_file, io.TextIOWrapper(raw_file, encoding="utf-8", errors="surrogateescape") as f:
+    f = io.TextIOWrapper(raw_file, encoding="utf-8", errors="surrogateescape")
+    try:
         for lineno, raw in enumerate(f):
             line = raw.strip()
             if not line:
@@ -965,7 +948,48 @@ def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
             if strict:
                 _validate_strict_row(row, lineno)
             events.append(row)
+    finally:
+        f.detach()
     return JournalLoadResult(events=events, discarded_line_indices=tuple(discarded))
+
+
+def load_events_from_file(raw_file: IO[bytes], *, strict: bool = False) -> JournalLoadResult:
+    """Load all events from an already-open binary journal file in append order.
+
+    Shares the exact scan implementation and tolerant/strict policies of
+    :func:`load_events`, enabling callers that verify an opened descriptor
+    (such as ``O_NOFOLLOW`` + ``fstat``) to read directly without reopening.
+    """
+    return _scan_events_from_file(raw_file, strict=strict)
+
+
+def load_events(path: Path, *, strict: bool = False) -> JournalLoadResult:
+    """Load all events from a journal JSONL file in append order.
+
+    One scan implementation serves both reader policies, so a journal-format
+    change can never make a diagnostic reader drift from the rest of replay:
+
+    * tolerant (default): malformed lines are skipped so a partial trailing
+      write cannot wedge an ordinary reader;
+    * ``strict=True``: any non-blank line that does not decode as a JSON
+      object raises :class:`JournalParseError` naming the 0-based physical
+      line index. Diagnostic readers (``bernstein audit diagnose``) use this
+      so no reported index can ever count parsed rows rather than physical
+      journal lines, and no finding is derived from a filtered sequence.
+
+    "Malformed" includes *undecodable*. A crash partway through an append can
+    land inside a multi-byte character as easily as between two, and a strict
+    decode would make the same class of crash produce two different outcomes
+    depending on where in the byte stream it stopped: a discarded line index
+    in one case, a bare ``UnicodeDecodeError`` out of the reader in the other.
+    Bytes that are not valid UTF-8 are therefore surfaced through the same two
+    policies as unparsable JSON - discarded by the tolerant reader, raised as
+    :class:`JournalParseError` naming the physical line by the strict one.
+    """
+    if not path.exists():
+        return JournalLoadResult(events=[])
+    with path.open("rb") as raw_file:
+        return _scan_events_from_file(raw_file, strict=strict)
 
 
 def _torn_tail_indices(path: Path) -> tuple[int, ...]:
@@ -1490,6 +1514,7 @@ __all__ = [
     "compute_event_hash",
     "contained_run_journal",
     "load_events",
+    "load_events_from_file",
     "read_sealed_journal_head",
     "rebuild_state",
     "record_dispatch_knob_selection",

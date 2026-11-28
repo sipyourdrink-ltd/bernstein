@@ -636,6 +636,25 @@ class ACPHandlerRegistry:
             jpath, journal_ok = resolve_session_journal_path(req_cwd / ".sdd", in_mem.run_id)
             if not journal_ok:
                 return None, []
+            try:
+                updates = (
+                    project_journal_to_acp_updates(
+                        jpath,
+                        include_user_messages=True,
+                        max_updates=MAX_SESSION_LOAD_UPDATES,
+                        max_bytes=MAX_SESSION_LOAD_BYTES,
+                    )
+                    if jpath is not None
+                    else []
+                )
+            except OSError:
+                return None, []
+            return in_mem, updates
+
+        loaded, jpath = load_persisted_session(cwd, session_id)
+        if loaded is None:
+            return None, []
+        try:
             updates = (
                 project_journal_to_acp_updates(
                     jpath,
@@ -646,21 +665,8 @@ class ACPHandlerRegistry:
                 if jpath is not None
                 else []
             )
-            return in_mem, updates
-
-        loaded, jpath = load_persisted_session(cwd, session_id)
-        if loaded is None:
+        except OSError:
             return None, []
-        updates = (
-            project_journal_to_acp_updates(
-                jpath,
-                include_user_messages=True,
-                max_updates=MAX_SESSION_LOAD_UPDATES,
-                max_bytes=MAX_SESSION_LOAD_BYTES,
-            )
-            if jpath is not None
-            else []
-        )
         return loaded, updates
 
     async def _handle_session_load(

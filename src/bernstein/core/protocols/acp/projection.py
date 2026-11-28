@@ -1,6 +1,8 @@
 """Deterministic projection of :class:`EventJournal` rows onto ACP v1 ``session/update`` payloads.
 
-Builds on :func:`bernstein.core.replay.thread_projection.project_journal` so live
+Builds on :func:`bernstein.core.replay.thread_projection.project_journal`
+(via :func:`~bernstein.core.replay.thread_projection.project_journal_from_file`
+over an ``O_NOFOLLOW`` + ``fstat``-verified descriptor) so live
 ``session/prompt`` streaming and ``session/load`` replay produce identical,
 hash-anchored ACP v1 ``session/update`` notifications:
 
@@ -14,10 +16,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import stat
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from bernstein.core.replay.thread_projection import project_journal
+from bernstein.core.replay.thread_projection import project_journal_from_file
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -452,6 +456,44 @@ class JournalACPProjector:
         )
 
 
+class _UnsafeSessionJournalError(OSError):
+    """Raised when an opened ACP journal descriptor is non-regular or hardlinked."""
+
+
+def _open_verified_journal_fd(journal_path: Path) -> int | None:
+    """Open *journal_path* without following leaf symlinks and verify its fd with ``fstat``.
+
+    Returns ``None`` when *journal_path* does not exist. Raises
+    :class:`_UnsafeSessionJournalError` when the leaf cannot be safely opened
+    (e.g. symlink under ``O_NOFOLLOW``), is not a regular file (directory, FIFO,
+    device), or has ``st_nlink != 1`` (hardlink).
+    """
+    flags = (
+        os.O_RDONLY
+        | int(getattr(os, "O_BINARY", 0))
+        | int(getattr(os, "O_NOFOLLOW", 0))
+        | int(getattr(os, "O_NONBLOCK", 0))
+        | int(getattr(os, "O_CLOEXEC", 0))
+    )
+    try:
+        fd = os.open(journal_path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _UnsafeSessionJournalError(f"cannot safely open session journal {journal_path}: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+    except OSError as exc:
+        os.close(fd)
+        raise _UnsafeSessionJournalError(f"cannot fstat session journal {journal_path}: {exc}") from exc
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        os.close(fd)
+        raise _UnsafeSessionJournalError(
+            f"refused unsafe session journal {journal_path} (mode={oct(st.st_mode)}, nlink={st.st_nlink})"
+        )
+    return fd
+
+
 def project_journal_to_acp_updates(
     journal_path: Path,
     *,
@@ -462,12 +504,22 @@ def project_journal_to_acp_updates(
 ) -> list[dict[str, Any]]:
     """Deterministically project a ``journal.jsonl`` file into ACP ``session/update`` dicts.
 
+    Opens *journal_path* with ``O_NOFOLLOW`` where available and re-checks the
+    opened descriptor via ``os.fstat`` for ``S_ISREG`` and ``st_nlink == 1``
+    before projecting through :func:`project_journal_from_file`, raising
+    :class:`OSError` on refusal.
+
     When *max_updates* or *max_bytes* is supplied (e.g. during ``session/load``),
     returns at most the newest updates fitting within both caps in chronological order.
     """
+    fd = _open_verified_journal_fd(journal_path)
+    if fd is None:
+        return []
+    with os.fdopen(fd, "rb") as raw_file:
+        steps = project_journal_from_file(raw_file, after_index=after_index)
     projector = JournalACPProjector()
     out: list[dict[str, Any]] = []
-    for step in project_journal(journal_path, after_index=after_index):
+    for step in steps:
         out.extend(
             projector.feed_event(
                 step.journal_event,

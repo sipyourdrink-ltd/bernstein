@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import re
+import stat
 import tempfile
 import time
 import uuid
@@ -294,9 +295,12 @@ def save_persisted_session(session: ACPSession) -> Path | None:
 def resolve_session_journal_path(sdd_dir: Path, run_id: str) -> tuple[Path | None, bool]:
     """Resolve ``<sdd_dir>/runs/<run_id>/journal.jsonl`` contained strictly under ``<run_id>``.
 
-    Returns ``(journal_path, ok)``. ``ok`` is ``False`` when *run_id* is unsafe or any
-    component (``.sdd``, ``runs``, ``<run_id>``, or ``journal.jsonl``) is a symlink or
-    escapes ``<sdd_dir>/runs/<run_id>``. ``(None, True)`` means no journal exists yet.
+    Returns ``(journal_path, ok)``. ``ok`` is ``False`` when *run_id* is unsafe,
+    when any component (``.sdd``, ``runs``, ``<run_id>``, or ``journal.jsonl``)
+    is a symlink or escapes ``<sdd_dir>/runs/<run_id>``, or when ``journal.jsonl``
+    is a hardlink (``st_nlink > 1``) or a non-regular entry such as a FIFO or a
+    directory named ``journal.jsonl``. ``(None, True)`` means no journal exists
+    yet.
     """
     if run_id in {".", ".."} or not _SAFE_ID_RE.match(run_id):
         return None, False
@@ -333,7 +337,15 @@ def resolve_session_journal_path(sdd_dir: Path, run_id: str) -> tuple[Path | Non
     # from its own canonical location; a looped link stays a symlink. Refuse both.
     if jpath.parent != canonical_run_dir or jpath.name != JOURNAL_FILENAME or jpath.is_symlink():
         return None, False
-    return (jpath if jpath.is_file() else None), True
+    try:
+        st = jpath.lstat()
+    except FileNotFoundError:
+        return None, True
+    except OSError:
+        return None, False
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+        return None, False
+    return jpath, True
 
 
 def load_persisted_session(cwd: str, session_id: str) -> tuple[ACPSession | None, Path | None]:
