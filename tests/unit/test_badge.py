@@ -142,3 +142,40 @@ class TestInjectBadge:
         bernstein_pos = new_text.find("/audited_by-bernstein")
         body_pos = new_text.find("\nbody\n")
         assert ci_pos != -1 < pypi_pos < bernstein_pos < body_pos
+
+
+@pytest.mark.parametrize(
+    ("original", "terminator"),
+    [
+        (b"# proj\n\nDoes a thing.\n", b"\n"),
+        (b"# proj\r\n\r\nDoes a thing.\r\n", b"\r\n"),
+        (b"# proj\r\n\nDoes a thing.\n", b"\r\n"),
+        (b"intro\n# proj\r\nbody\n", b"\r\n"),
+    ],
+    ids=["lf", "crlf", "mixed-crlf-heading", "mixed-lf-first"],
+)
+def test_inserting_badge_preserves_existing_line_endings(tmp_path: Path, original: bytes, terminator: bytes) -> None:
+    """Existing bytes stay as they were; the badge line takes the insertion point's terminator (#8059)."""
+    readme = tmp_path / "README.md"
+    readme.write_bytes(original)
+    variant = get_variant("signed")
+
+    assert inject_badge(readme, variant) is True
+    written = readme.read_bytes()
+
+    badge_line = variant.markdown().encode("utf-8") + terminator
+    heading_end = original.index(b"# proj") + len(b"# proj") + len(terminator)
+    assert written == original[:heading_end] + badge_line + original[heading_end:]
+
+    assert inject_badge(readme, variant) is False
+    assert readme.read_bytes() == written
+
+
+def test_prepended_badge_takes_the_first_line_terminator(tmp_path: Path) -> None:
+    """With no heading or badge stack, the prepended line copies the first line's terminator."""
+    readme = tmp_path / "README.md"
+    readme.write_bytes(b"body\r\nmore\n")
+    variant = get_variant("signed")
+
+    assert inject_badge(readme, variant) is True
+    assert readme.read_bytes() == variant.markdown().encode("utf-8") + b"\r\nbody\r\nmore\n"
