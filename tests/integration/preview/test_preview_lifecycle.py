@@ -86,12 +86,15 @@ def local_server() -> Iterator[_LocalServer]:
 
 
 @pytest.fixture(autouse=True)
-def recorded_signals(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int, int]]:
-    """Intercept ``os.kill`` / ``os.killpg`` so preview tests never emit real signals."""
+def recorded_signals(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[tuple[str, int, int]]:
+    """Intercept ``os.kill`` / ``os.killpg`` and isolate ``_PROC_ROOT`` from host ``/proc``."""
+    import bernstein.core.preview.manager as mgr_mod
+
     calls: list[tuple[str, int, int]] = []
     monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append(("kill", pid, int(sig))))
     if hasattr(os, "killpg"):
         monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append(("killpg", pgid, int(sig))))
+    monkeypatch.setattr(mgr_mod, "_PROC_ROOT", tmp_path / "_no_proc")
     return calls
 
 
