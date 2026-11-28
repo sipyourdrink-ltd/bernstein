@@ -86,6 +86,7 @@ DOCS_ONLY_GUARDED_JOBS = (
     "semgrep",
     "snapshot-tests",
     "test",
+    "verify-cli",
 )
 # install-smoke-rpm uses its own relevance flag on every event.
 

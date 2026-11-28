@@ -1283,6 +1283,94 @@ jobs:
           trap 'rm -rf "$DEMO_CWD"' EXIT
           (cd "$DEMO_CWD" && bernstein demo --timeout 120)
 
+  verify-cli:
+    # Standalone offline verifier suite (`verify_cli/tests`) plus wheel-build
+    # and clean-venv smoke checks for `bernstein_verify_receipt`,
+    # `bernstein_verify_envelope`, and `bernstein_verify`.
+    # Skips only on docs-only merge-queue entries (same pattern as
+    # install-smoke-uv / dist-size); runs on every code PR, merge_group, push,
+    # and dispatch so lineage/compliance schema changes cannot silently break
+    # verify_cli fixtures or ship empty standalone wheels.
+    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
+    name: Verify CLI suite & standalone wheels
+    needs: [determine-changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+      - name: Run verify_cli test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --locked --group dev --python 3.13
+          uv pip install --python .venv/bin/python --no-deps \
+            -e verify_cli \
+            verify_cli/bernstein_verify_receipt \
+            verify_cli/bernstein_verify_envelope
+          (cd verify_cli && ../.venv/bin/pytest -q tests/)
+      - name: Build and smoke-test standalone verifier wheels
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL_DIR="${RUNNER_TEMP}/verify-cli-wheels"
+          SMOKE_VENV="${RUNNER_TEMP}/verify-cli-wheel-smoke"
+          mkdir -p "${WHEEL_DIR}"
+          uv build --wheel --out-dir "${WHEEL_DIR}" verify_cli/bernstein_verify_receipt
+          uv build --wheel --out-dir "${WHEEL_DIR}" verify_cli/bernstein_verify_envelope
+          uv build --wheel --out-dir "${WHEEL_DIR}" verify_cli
+          python3 - "${WHEEL_DIR}" <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          wheel_dir = Path(sys.argv[1])
+          expected = {
+              "bernstein_verify_receipt": (
+                  "bernstein_verify_receipt/__init__.py",
+                  "bernstein_verify_receipt/__main__.py",
+                  "bernstein_verify_receipt/verify.py",
+              ),
+              "bernstein_verify_envelope": (
+                  "bernstein_verify_envelope/__init__.py",
+                  "bernstein_verify_envelope/__main__.py",
+                  "bernstein_verify_envelope/verify.py",
+              ),
+              "bernstein_verify": (
+                  "bernstein_verify/__init__.py",
+                  "bernstein_verify/__main__.py",
+                  "bernstein_verify/verify.py",
+              ),
+          }
+          for pkg, required in expected.items():
+              matches = sorted(wheel_dir.glob(f"{pkg}-*.whl"))
+              assert len(matches) == 1, f"expected 1 wheel for {pkg}, got {matches}"
+              with zipfile.ZipFile(matches[0]) as zf:
+                  names = set(zf.namelist())
+              missing = [entry for entry in required if entry not in names]
+              assert not missing, f"{matches[0].name} missing packaged modules: {missing}"
+              print(f"OK {matches[0].name}: {len(required)} modules verified")
+          PY
+          uv venv --python 3.13 "${SMOKE_VENV}"
+          uv pip install --python "${SMOKE_VENV}/bin/python" "${WHEEL_DIR}"/*.whl
+          (
+            cd "${RUNNER_TEMP}"
+            "${SMOKE_VENV}/bin/python" -c "import bernstein_verify, bernstein_verify_receipt.verify, bernstein_verify_envelope.verify"
+            "${SMOKE_VENV}/bin/bernstein-verify" --help >/dev/null
+            "${SMOKE_VENV}/bin/bernstein-verify-receipt" --help >/dev/null
+            "${SMOKE_VENV}/bin/bernstein-verify-envelope" --help >/dev/null
+          )
+
   install-smoke-rpm:
     # RPM-channel counterpart of the pipx / uv smokes above (#3558, #3559).
     # Builds the binary RPM from the SRPM this tree renders - the same
@@ -2663,6 +2751,7 @@ jobs:
       - dist-size
       - install-smoke-pipx
       - install-smoke-uv
+      - verify-cli
       - install-smoke-rpm
       - property-tests
       - snapshot-tests
@@ -2733,6 +2822,7 @@ jobs:
               "dist-size",
               "install-smoke-pipx",
               "install-smoke-uv",
+              "verify-cli",
           }
           # macOS-gated jobs (see #1468): on PRs these are skipped unless
           # the diff is macos_sensitive or the PR carries the

@@ -55,4 +55,7 @@ dev = [
 bernstein-verify-envelope = "bernstein_verify_envelope.__main__:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["bernstein_verify_envelope"]
+only-include = ["__init__.py", "__main__.py", "verify.py"]
+
+[tool.hatch.build.targets.wheel.sources]
+"" = "bernstein_verify_envelope"
