@@ -947,7 +947,7 @@ digest. (`cli/commands/skill_cmd.py`.)
 |---|---|
 | `list` | List all versioned prompts and their active versions. |
 | `show NAME` | Show all versions of a prompt with their metrics. |
-| `compare NAME V1 V2` | Compare metrics between two prompt versions. |
+| `compare NAME V1 V2` | Compare metrics between two prompt versions. `--json` writes one JSON object, unwrapped at any terminal width, with the prompt name exactly as stored. |
 | `promote NAME VERSION` | Promote a specific version to active. |
 | `ab-start NAME A B` | Start an A/B test between two prompt versions. |
 | `ab-stop NAME` | Stop an active A/B test without promoting either version. |
