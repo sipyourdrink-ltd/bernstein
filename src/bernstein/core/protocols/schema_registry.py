@@ -34,6 +34,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +107,7 @@ class SchemaRegistry:
 
     def __init__(self) -> None:
         self._schemas: dict[int, SchemaVersion] = {}
+        self._guard = DuplicateGuard("schema version")
 
     def register(self, schema: SchemaVersion) -> None:
         """Register a schema version.
@@ -115,9 +118,7 @@ class SchemaRegistry:
         Raises:
             ValueError: If a schema with the same version is already registered.
         """
-        if schema.version in self._schemas:
-            msg = f"Schema version {schema.version} is already registered"
-            raise ValueError(msg)
+        self._guard.register(str(schema.version), caller_module_name(), implementation=schema)
         self._schemas[schema.version] = schema
         logger.debug("Registered schema version %d", schema.version)
 
