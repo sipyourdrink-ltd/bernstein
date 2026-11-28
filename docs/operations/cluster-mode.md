@@ -691,3 +691,23 @@ no failure reason until the first reading. Omitting a later reading preserves
 the last observed value. Local workers report free disk space for their workspace,
 platform, and memory use when available. Mesh RTT is optional. The platform string is informational. Telemetry is not
 a substitute for authentication, and does not override cordon/drain intent.
+
+## Batch task assignment
+
+`batch_assign(registry, tasks, *, preferred_labels=None, rng=None)` in
+`src/bernstein/core/protocols/cluster/cluster.py` assigns a sequence of task
+descriptors across `NodeInfo.is_schedulable` workers (`ONLINE`, `health == "ok"`,
+and `available_slots > 0`) in one pass without over-subscribing any node within
+the batch:
+
+- Each task dict may specify `required_model` (matched against
+  `capacity.supported_models`) and `require_gpu` (matched against
+  `capacity.gpu_available`).
+- When `preferred_labels` is given, candidates matching the highest number of
+  label pairs are preferred first, spilling over to remaining eligible nodes
+  once higher-affinity slots in the batch are exhausted.
+- Among two or more eligible candidates in the selected affinity tier,
+  power-of-two-choices samples two nodes and picks the one with more remaining
+  slots, decrementing an in-memory slot counter per assignment while leaving
+  live `NodeRegistry` capacity records untouched until workers claim or
+  heartbeat.

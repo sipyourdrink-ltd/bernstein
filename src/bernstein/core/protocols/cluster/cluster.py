@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import operator
+import random
 import shutil
 import socket
 import sys
@@ -42,7 +43,7 @@ from bernstein.core.protocols.cluster.cluster_tls import (
 from bernstein.core.protocols.cluster.shard_ring import NodeShardStorage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, MutableMapping
+    from collections.abc import Callable, Mapping, MutableMapping, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -795,3 +796,79 @@ def health_verdict(
     if mesh_rtt_ms is not None and mesh_rtt_ms > t.max_mesh_rtt_ms:
         reasons.append("mesh-rtt")
     return "ok" if not reasons else "unhealthy:" + ",".join(reasons)
+
+
+# ---------------------------------------------------------------------------
+# Batch task assignment - assign N tasks to the best N workers in one call.
+# ---------------------------------------------------------------------------
+
+
+def batch_assign[TaskT: Mapping[str, Any]](
+    registry: NodeRegistry,
+    tasks: Sequence[TaskT],
+    *,
+    preferred_labels: Mapping[str, str] | None = None,
+    rng: random.Random | None = None,
+) -> list[tuple[TaskT, NodeInfo | None]]:
+    """Assign a batch of tasks to available schedulable workers.
+
+    Each task mapping may carry ``required_model`` and ``require_gpu``.
+    Returns ``(task, assigned_node_or_None)`` pairs. Slots are
+    decremented in-memory between picks so the same node is not
+    over-assigned within a single batch, while registry records remain
+    unchanged until claims or heartbeats update them.
+
+    When ``preferred_labels`` is supplied, candidates with the highest
+    label-affinity match count are preferred first, spilling over to
+    remaining eligible nodes once higher-affinity slots are exhausted.
+    Within the selected candidate pool, power-of-two-choices samples two
+    nodes and assigns to the one with more remaining slots.
+    """
+    if not tasks:
+        return []
+
+    schedulable = [n for n in registry.list_nodes(NodeStatus.ONLINE) if n.is_schedulable]
+    if not schedulable:
+        return [(t, None) for t in tasks]
+
+    remaining: dict[str, int] = {n.id: n.capacity.available_slots for n in schedulable}
+    node_map: dict[str, NodeInfo] = {n.id: n for n in schedulable}
+    sample: Callable[[Sequence[str], int], list[str]] = rng.sample if rng is not None else random.sample
+
+    results: list[tuple[TaskT, NodeInfo | None]] = []
+    for task in tasks:
+        raw_model: object = task.get("required_model")
+        req_model = raw_model if isinstance(raw_model, str) and raw_model else None
+        req_gpu = bool(task.get("require_gpu", False))
+
+        candidates = [
+            nid
+            for nid, slots in remaining.items()
+            if slots > 0
+            and (req_model is None or req_model in node_map[nid].capacity.supported_models)
+            and (not req_gpu or node_map[nid].capacity.gpu_available)
+        ]
+
+        if not candidates:
+            results.append((task, None))
+            continue
+
+        if preferred_labels and len(candidates) > 1:
+            scores = {
+                nid: sum(1 for k, v in preferred_labels.items() if node_map[nid].labels.get(k) == v)
+                for nid in candidates
+            }
+            best_score = max(scores.values())
+            if best_score > 0:
+                candidates = [nid for nid in candidates if scores[nid] == best_score]
+
+        if len(candidates) >= 2:
+            a, b = sample(candidates, 2)
+            pick = a if remaining[a] >= remaining[b] else b
+        else:
+            pick = candidates[0]
+
+        remaining[pick] -= 1
+        results.append((task, node_map[pick]))
+
+    return results
