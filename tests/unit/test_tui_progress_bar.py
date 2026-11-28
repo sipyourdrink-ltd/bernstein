@@ -45,6 +45,19 @@ class TestTaskProgress:
         p = TaskProgress(task_id="t1", custom_pct=150.0)
         assert p.percentage == 100.0
 
+    @pytest.mark.parametrize(
+        ("progress", "expected"),
+        [
+            (TaskProgress("steps", completed_steps=-1, total_steps=2), 0.0),
+            (TaskProgress("tests", tests_passing=-1, tests_total=2), 0.0),
+            (TaskProgress("tests", tests_passing=3, tests_total=2), 100.0),
+            (TaskProgress("both", completed_steps=1, total_steps=4, tests_passing=2, tests_total=2), 25.0),
+        ],
+        ids=["negative-steps", "negative-tests", "excess-tests", "steps-before-tests"],
+    )
+    def test_percentage_from_counters_stays_in_range(self, progress: TaskProgress, expected: float) -> None:
+        assert progress.percentage == expected
+
     def test_from_api_basic(self) -> None:
         raw = {
             "id": "task-123",
@@ -140,6 +153,17 @@ class TestRenderTaskProgress:
         p = TaskProgress(task_id="t1", custom_pct=50.0, files_changed=3)
         text = render_task_progress(p, compact=True)
         assert "3f" not in text.plain
+
+
+def test_counter_percentages_stay_within_bounds_in_summary() -> None:
+    completed = TaskProgress("first", completed_steps=3, total_steps=2)
+    unstarted = TaskProgress("second", tests_passing=0, tests_total=2)
+
+    summary = render_progress_summary([completed, unstarted]).plain
+    assert "50%" in summary
+    assert "1/2 tasks done" in summary
+    assert completed.percentage == 100.0
+    assert unstarted.percentage == 0.0
 
 
 class TestRenderProgressSummary:

@@ -29,8 +29,9 @@ def jsonl_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def app(jsonl_path: Path):  # type: ignore[no-untyped-def]
+def app(jsonl_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     """Create a fresh FastAPI app per test."""
+    monkeypatch.setenv("BERNSTEIN_COMPLETION_CHECKS", '{"unit":["pytest","tests/","-x"],"make-test":["make","test"]}')
     return create_app(jsonl_path=jsonl_path)
 
 
@@ -74,7 +75,7 @@ async def test_post_task_multiple_signals_stored(client: AsyncClient) -> None:
     """POST /tasks stores multiple completion_signals in order."""
     signals = [
         {"type": "path_exists", "value": "output.txt"},
-        {"type": "test_passes", "value": "pytest tests/ -x"},
+        {"type": "test_passes", "value": "unit"},
     ]
     resp = await client.post("/tasks", json=BASE_TASK | {"completion_signals": signals})
     assert resp.status_code == 201
@@ -92,7 +93,7 @@ async def test_get_task_returns_completion_signals(client: AsyncClient) -> None:
         json=BASE_TASK
         | {
             "completion_signals": [
-                {"type": "test_passes", "value": "pytest tests/ -x"},
+                {"type": "test_passes", "value": "unit"},
             ],
         },
     )
@@ -102,7 +103,7 @@ async def test_get_task_returns_completion_signals(client: AsyncClient) -> None:
     get_resp = await client.get(f"/tasks/{task_id}")
     assert get_resp.status_code == 200
     assert get_resp.json()["completion_signals"] == [
-        {"type": "test_passes", "value": "pytest tests/ -x"},
+        {"type": "test_passes", "value": "unit"},
     ]
 
 
@@ -115,7 +116,7 @@ async def test_all_six_signal_types_accepted(client: AsyncClient) -> None:
     signals = [
         {"type": "path_exists", "value": "src/foo.py"},
         {"type": "glob_exists", "value": "src/**/*.py"},
-        {"type": "test_passes", "value": "pytest tests/ -x"},
+        {"type": "test_passes", "value": "unit"},
         {"type": "file_contains", "value": "TODO: done"},
         {"type": "llm_review", "value": "Review the implementation"},
         {"type": "llm_judge", "value": "Is the feature complete?"},
@@ -269,11 +270,11 @@ async def test_list_tasks_filtered_by_status_includes_signals(client: AsyncClien
         "/tasks",
         json=BASE_TASK
         | {
-            "completion_signals": [{"type": "test_passes", "value": "make test"}],
+            "completion_signals": [{"type": "test_passes", "value": "make-test"}],
         },
     )
     resp = await client.get("/tasks?status=open")
     assert resp.status_code == 200
     tasks = resp.json()
     assert len(tasks) == 1
-    assert tasks[0]["completion_signals"] == [{"type": "test_passes", "value": "make test"}]
+    assert tasks[0]["completion_signals"] == [{"type": "test_passes", "value": "make-test"}]

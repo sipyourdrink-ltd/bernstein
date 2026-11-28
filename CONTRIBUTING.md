@@ -21,7 +21,9 @@ run `uv run --locked --group docs mkdocs serve`. For local Git checks, see
 
 ## Picking something to work on
 
-[ROADMAP.md](ROADMAP.md) says what is being built and when.
+[ROADMAP.md](ROADMAP.md) says where public work is tracked; the
+maintainer's own plans are kept privately, as [GOVERNANCE.md](GOVERNANCE.md)
+explains.
 
 **Start here:** the volunteer workers program
 ([#3863](https://github.com/sipyourdrink-ltd/bernstein/issues/3863)) is
@@ -34,7 +36,7 @@ the RFC count as contributions too.
 
 Bernstein follows a **two-track release model**: patch releases (every 3 days) and minor releases (every 2 weeks). Details in [docs/operations/release.md](docs/operations/release.md).
 
-Issues are assigned to milestones to plan what ships in each release. A milestone is **not a parking lot** — every issue in a milestone should be on track to ship in that release.
+Public issues are assigned to milestones to show the release they target. A milestone is **not a parking lot** — every issue in a milestone should be on track to ship in that release.
 
 **Triage rules:**
 
@@ -324,7 +326,7 @@ When adding a new CLI command, create a new `*_cmd.py` module in `cli/commands/`
 
 ## Supported CLI Adapters
 
-Bernstein ships with 50+ CLI agent adapters, plus a generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
+Bernstein ships with 55 selectable CLI agent adapter names, including the generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
 
 | Adapter | File | Agent |
 |---------|------|-------|

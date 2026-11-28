@@ -119,6 +119,7 @@ def test_missing_tool_is_not_measurable(tool: str, installation: Path, monkeypat
         helper = status_cmd._doctor_check_commit_attribution
         args = ([], installation)
     else:
+        (installation / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
         monkeypatch.setattr(
             "bernstein.core.ci_fix.check_test_dependencies",
             lambda: [
@@ -245,6 +246,7 @@ def test_missing_secrets_cli_is_not_measurable(installation: Path, monkeypatch: 
 
 
 def test_ci_probe_without_uv_is_not_measurable(installation: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (installation / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
     monkeypatch.setattr("bernstein.core.ci_fix.check_test_dependencies", real_test_dependencies)
     monkeypatch.setattr("subprocess.run", Mock(side_effect=FileNotFoundError("uv")))
     finding = status_cmd._doctor_check_ci_tools([])
@@ -256,6 +258,7 @@ def test_ci_probe_without_uv_is_not_measurable(installation: Path, monkeypatch: 
 def test_ci_probe_without_target_is_not_measurable(
     tool: str, installation: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    (installation / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
     monkeypatch.setattr("bernstein.core.ci_fix.check_test_dependencies", real_test_dependencies)
 
     def probe(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:

@@ -215,6 +215,9 @@ class PlanLifecycle:
         out: list[ArchivedPlan] = []
         for s in states:
             for path in sorted(self.bucket(s).glob("*.yaml")):
+                # A directory named `notes.yaml` matches the glob and is not a plan (#7943).
+                if not path.is_file():
+                    continue
                 out.append(ArchivedPlan(plan_id=path.stem, path=path, state=s))
         return out
 
@@ -229,7 +232,7 @@ class PlanLifecycle:
         """
         for state in PlanState:
             candidate = self.bucket(state) / f"{plan_id}.yaml"
-            if candidate.exists():
+            if candidate.is_file():
                 return ArchivedPlan(plan_id=plan_id, path=candidate, state=state)
         return None
 

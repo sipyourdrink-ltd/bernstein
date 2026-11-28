@@ -93,16 +93,19 @@ GET /.well-known/agent.json/keys
   "keys": [
     { "kty": "OKP", "crv": "Ed25519", "kid": "agent-bernstein-orchestrator", "x": "<current>" },
     { "kty": "OKP", "crv": "Ed25519", "kid": "<RFC 7638 thumbprint of current>", "x": "<current>" },
-    { "kty": "OKP", "crv": "Ed25519", "kid": "<RFC 7638 thumbprint of archived>", "x": "<archived>" }
+    { "kty": "OKP", "crv": "Ed25519", "kid": "<RFC 7638 thumbprint of archived>", "x": "<archived>" },
+    { "kty": "OKP", "crv": "Ed25519", "kid": "agent-jwt-<RFC 7638 thumbprint>", "x": "<agent-jwt-pubkey>" }
   ]
 }
 ```
 
-Three entries, two keys. The current key appears twice: once under the
+Four entries, three keys. The current agent-card key appears twice: once under the
 historical fixed `kid`, so a verifier that cached
 `agent-bernstein-orchestrator` keeps resolving what it resolves today, and
-once under its RFC 7638 thumbprint. Archived keys are published under
-*their* thumbprints.
+once under its RFC 7638 thumbprint. Archived agent-card keys are published under
+*their* thumbprints, and the install's agent-identity JWT Ed25519 public key is
+published under its own `agent-jwt-<thumbprint>` `kid` for offline token
+verification.
 
 A card is signed under the thumbprint of the key that signed it, so a
 verifier routing by `kid` reaches that key and not merely whichever key is

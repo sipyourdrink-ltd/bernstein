@@ -49,6 +49,8 @@ class ScenarioTaskTemplate:
     scope: str = "medium"
     complexity: str = "medium"
     artifact_spec: ArtifactSpec = field(default_factory=ArtifactSpec)
+    id: str = ""
+    depends_on: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,7 +144,7 @@ def load_layered_scenario_library(
 def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
     try:
         loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
         return None
     if not isinstance(loaded, dict):
         return None
@@ -176,6 +178,27 @@ def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
                 # Invalid artifact spec falls back to default (code_diff)
                 artifact_spec = ArtifactSpec()
 
+        raw_id = item_data.get("id", "")
+        task_id = str(raw_id).strip() if raw_id is not None else ""
+
+        depends_on_raw = item_data.get("depends_on")
+        depends_on: tuple[str, ...]
+        if depends_on_raw is None:
+            depends_on = ()
+        elif isinstance(depends_on_raw, list):
+            parsed_deps: list[str] = []
+            for dep in cast("list[object]", depends_on_raw):
+                dep_id = str(dep).strip()
+                if not dep_id:
+                    logger.warning("Scenario %s task %r has empty depends_on entry", path, title)
+                    return None
+                if dep_id not in parsed_deps:
+                    parsed_deps.append(dep_id)
+            depends_on = tuple(parsed_deps)
+        else:
+            logger.warning("Scenario %s task %r has non-list depends_on", path, title)
+            return None
+
         tasks.append(
             ScenarioTaskTemplate(
                 title=title,
@@ -185,10 +208,12 @@ def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
                 scope=_parse_scope(str(item_data.get("scope", "medium"))),
                 complexity=_parse_complexity(str(item_data.get("complexity", "medium"))),
                 artifact_spec=artifact_spec,
+                id=task_id,
+                depends_on=depends_on,
             )
         )
 
-    if not tasks:
+    if not tasks or not _validate_task_dependencies(tasks, path):
         return None
     tags_raw = data.get("tags", [])
     tags = (
@@ -235,3 +260,51 @@ def _parse_scope(raw: str) -> str:
 def _parse_complexity(raw: str) -> str:
     value = raw.strip().lower()
     return value if value in {"low", "medium", "high"} else "medium"
+
+
+def _validate_task_dependencies(tasks: list[ScenarioTaskTemplate], path: Path) -> bool:
+    """Validate optional task ids and acyclic ``depends_on`` references."""
+    seen_ids: set[str] = set()
+    for task in tasks:
+        if not task.id:
+            continue
+        if task.id in seen_ids:
+            logger.warning("Scenario %s has duplicate task id %r", path, task.id)
+            return False
+        seen_ids.add(task.id)
+
+    has_deps = any(task.depends_on for task in tasks)
+    if not has_deps:
+        return True
+
+    for task in tasks:
+        for dep in task.depends_on:
+            if dep not in seen_ids:
+                logger.warning("Scenario %s task %r depends on unknown task id %r", path, task.title, dep)
+                return False
+            if task.id and dep == task.id:
+                logger.warning("Scenario %s task %r cannot depend on itself", path, task.id)
+                return False
+
+    # Check acyclicity across named tasks using Kahn's algorithm.
+    id_tasks = {task.id: task for task in tasks if task.id}
+    indegree: dict[str, int] = {tid: len(task.depends_on) for tid, task in id_tasks.items()}
+    children: dict[str, list[str]] = {tid: [] for tid in id_tasks}
+    for tid, task in id_tasks.items():
+        for dep in task.depends_on:
+            children[dep].append(tid)
+
+    ready = [tid for tid, deg in indegree.items() if deg == 0]
+    visited = 0
+    while ready:
+        current = ready.pop()
+        visited += 1
+        for child in children[current]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+
+    if visited != len(id_tasks):
+        logger.warning("Scenario %s has a cyclic depends_on graph", path)
+        return False
+    return True

@@ -4,6 +4,8 @@ Bernstein exposes a pluggy-based hook system that lets you extend the
 orchestrator without modifying core code.  Plugins are plain Python classes
 - no base class required, no registration boilerplate.
 
+See the [plugin list](https://github.com/sipyourdrink-ltd/bernstein/blob/main/community/awesome-bernstein-plugins.md#bernstein-addons) for bernstein-addons and installation instructions.
+
 ## Contents
 
 - [How it works](#how-it-works)
@@ -16,6 +18,7 @@ orchestrator without modifying core code.  Plugins are plain Python classes
   - [Slack notifier](#slack-notifier)
   - [Discord notifier](#discord-notifier)
   - [Metrics collector](#metrics-collector)
+  - [Generate a quality gate](#generate-a-quality-gate)
   - [Custom quality gate](#custom-quality-gate)
   - [Cost-aware router](#cost-aware-router)
   - [Jira sync](#jira-sync)
@@ -596,6 +599,90 @@ Sample output in `.sdd/metrics/plugin_events.jsonl`:
 
 ---
 
+### Generate a quality gate
+
+From a Bernstein checkout with Cookiecutter and pytest available, generate a
+gate that checks Python files for TODO comments.
+
+```bash
+cookiecutter --no-input ./templates/quality_gate_plugin \
+  gate_name=no_todo_comments gate_class=NoTodoCommentsGate
+```
+
+`gate_name` names the output directory, Python module and pipeline step.
+Choose a snake_case Python identifier that starts with a letter and differs
+from the built-in gate names. `gate_class` names the generated class and
+its `Config` dataclass. The `description`
+input supplies the class docstring. The output directory also contains a
+README and `test_no_todo_comments.py`.
+
+The generated `scan()` returns `(0, 0)`. Replace that method on
+`NoTodoCommentsGate` in `no_todo_comments/no_todo_comments.py` with the
+following implementation. It counts lines beginning with `# TODO:` after
+leading whitespace in the changed Python files.
+
+```python
+def scan(self, changed_files: list[str], run_dir: Path) -> tuple[int, int]:
+    errors = 0
+    for name in changed_files:
+        path = run_dir / name
+        if path.suffix == ".py" and path.is_file():
+            with path.open(encoding="utf-8", errors="replace") as source:
+                errors += sum(line.lstrip().startswith("# TODO:") for line in source)
+    return errors, 0
+```
+
+The tuple contains errors first and warnings second. The generated `run()`
+returns a failed `GateResult` when errors exceed `threshold` (default
+`0`), or when warnings are present and `fail_on` is `"warning"`.
+`fail_on` defaults to `"error"`. With `enabled=False`, the gate returns
+`skipped`. Run the generated tests and copy the module to the project
+directory where `GatePluginRegistry` discovers it. Packaged gates can also
+register through the `bernstein.gates` entry-point group.
+
+```bash
+python -m pytest -q no_todo_comments/test_no_todo_comments.py
+mkdir -p .bernstein/gates
+cp no_todo_comments/no_todo_comments.py .bernstein/gates/
+```
+
+The run seed parser restricts `quality_gates.pipeline` to built-in names.
+To run a generated gate, give its name to a Python `GatePipelineStep`. This
+example runs just that gate against the generated test file, which contains
+two TODO reminders.
+
+```python
+import asyncio
+from pathlib import Path
+
+from bernstein.core.models import Task
+from bernstein.core.quality.gate_pipeline import GatePipelineStep
+from bernstein.core.quality.gate_runner import GateRunner
+from bernstein.core.quality.quality_gates import QualityGatesConfig
+
+root = Path.cwd()
+step = GatePipelineStep(name="no_todo_comments", required=True, condition="any_changed")
+runner = GateRunner(QualityGatesConfig(pipeline=[step], cache_enabled=False), root)
+task = Task(
+    id="check-todo-comments",
+    title="Check TODO comments",
+    description="Count TODO reminders in the generated test.",
+    role="backend",
+    owned_files=["no_todo_comments/test_no_todo_comments.py"],
+)
+report = asyncio.run(runner.run_all(task, root))
+result = report.results[0]
+print(result.status, result.metadata["errors"], result.blocked)
+```
+
+This prints `fail 2 True`. The generated gate returns `blocked=False`, and
+the runner applies the step's `required` setting. Set `required=False` to
+record the findings as advisory. If `scan()` raises an exception, the runner
+records `inconclusive` and blocks a required step. The report for this
+example is written to `.sdd/runtime/gates/check-todo-comments.json`.
+
+---
+
 ### Custom quality gate
 
 `examples/plugins/quality_gate_plugin.py` - runs a security scan on every
@@ -735,7 +822,7 @@ export BERNSTEIN_SECURITY_CMD="trivy fs . --exit-code 1 --severity HIGH,CRITICAL
 writes routing hints that the orchestrator reads on each scheduling tick.
 
 This is the plugin pattern for influencing **model selection** without touching
-`bernstein/core/router.py`.  The orchestrator reads
+`bernstein/core/routing/router.py`.  The orchestrator reads
 `.sdd/runtime/routing_hints.json` at startup and on each tick; if the file
 does not exist, routing falls back to the standard tier-aware algorithm.
 

@@ -12,7 +12,6 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.persistence.action_cache import (
-    ActionRecord,
     open_cache,
 )
 from bernstein.core.persistence.cache_eviction import (
@@ -331,16 +330,7 @@ def action_cache_replay(run_id: str, workdir: Path, as_json: bool) -> None:
       bernstein cache action replay 20240315-143022
     """
     cache = open_cache(workdir.resolve(), mode="replay", run_id=run_id)
-    found: list[ActionRecord] = []
-    for path, _size, _atime in cache.store._iter_entries():
-        try:
-            import pickle
-
-            raw = pickle.loads(path.read_bytes())
-        except (OSError, pickle.UnpicklingError, EOFError):
-            continue
-        if isinstance(raw, ActionRecord) and raw.run_id == run_id:
-            found.append(raw)
+    found = cache.records_for_run(run_id)
 
     if as_json:
         click.echo(

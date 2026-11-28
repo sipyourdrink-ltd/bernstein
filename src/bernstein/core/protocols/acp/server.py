@@ -1,58 +1,63 @@
 """Composition root for the ACP bridge.
 
 Wires the schema layer, handler registry, session store, transport, and
-the existing Bernstein primitives (task store, drain pipeline, HMAC
-audit chain, janitor approval gate) together.
+the existing Bernstein primitives together:
 
-The high-level call graph::
-
-    bernstein acp serve --stdio
-        -> build_default_server()          # composes everything
-        -> ACPServer.run_stdio()           # wires sys.stdin/stdout
-            -> StdioAcpTransport.serve_forever()
-                -> registry.dispatch()
-                    -> task_creator()      # POST /tasks on the task server
-                    -> audit_emitter()     # AuditLog.log()
-                    -> permission_asker()  # janitor gate
-
-In tests we instantiate :class:`ACPServer` directly with stub callables
-so the full request flow is exercised without a real task server.
+* **Standalone mode (default when ``server_url`` is ``None``)**: runs
+  :class:`~bernstein.core.protocols.acp.runner.EmbeddedOrchestratorRunner`
+  in-process against ``<cwd>/.sdd`` with live :class:`EventJournal` ->
+  ``session/update`` streaming and :class:`ApprovalQueue` ->
+  ``session/request_permission`` bridging.
+* **Remote server mode (``--server-url``)**: forwards task creation and
+  cancellation over HTTP with :func:`~bernstein.core.run_auth_token.auth_headers`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from bernstein.core.protocols.acp.handlers import (
     ACPHandlerRegistry,
-    AuditEmitter,
     PromptResult,
-    StreamPublisher,
-    TaskCanceller,
-    TaskCreator,
+    PromptRunOutcome,
+    current_request_context,
+    is_http_peer,
 )
 from bernstein.core.protocols.acp.metrics import set_active_sessions
-from bernstein.core.protocols.acp.session import ACPSessionStore
+from bernstein.core.protocols.acp.runner import EmbeddedOrchestratorRunner, is_adapter_usable
+from bernstein.core.protocols.acp.session import ACPSession, ACPSessionStore
 from bernstein.core.protocols.acp.transport import (
+    MAX_FRAME_BYTES,
     HttpAcpTransport,
     StdioAcpTransport,
 )
+from bernstein.core.run_auth_token import auth_headers
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TERMINAL_AUTH_METHOD: Final[dict[str, Any]] = {
+    "id": "bernstein-setup",
+    "name": "Configure Bernstein adapters",
+    "description": "Verify local CLI adapters and credentials via bernstein setup",
+    "type": "terminal",
+    "args": ["--setup"],
+}
+
+_UNSET_AUTH: Final[object] = object()
 
 
 @dataclass(frozen=True)
 class AdapterDescriptor:
-    """Lightweight descriptor for an adapter surfaced via ``initialize``.
-
-    Attributes:
-        name: Adapter id (e.g. ``"claude"``).
-        display_name: Optional user-visible name.
-    """
+    """Lightweight descriptor for an adapter surfaced via ``initialize``."""
 
     name: str
     display_name: str = ""
@@ -60,12 +65,7 @@ class AdapterDescriptor:
 
 @dataclass(frozen=True)
 class SandboxBackendDescriptor:
-    """Lightweight descriptor for a configured sandbox backend.
-
-    Attributes:
-        name: Backend id (e.g. ``"docker"``, ``"firejail"``, ``"none"``).
-        available: Whether the backend is usable on the current host.
-    """
+    """Lightweight descriptor for a configured sandbox backend."""
 
     name: str
     available: bool = True
@@ -73,12 +73,7 @@ class SandboxBackendDescriptor:
 
 @dataclass(frozen=True)
 class ServerCapabilities:
-    """Snapshot of the capabilities the server reports during ``initialize``.
-
-    Attributes:
-        adapters: Adapter descriptors.
-        sandbox_backends: Sandbox backend descriptors.
-    """
+    """Snapshot of the capabilities the server reports during ``initialize``."""
 
     adapters: tuple[AdapterDescriptor, ...] = ()
     sandbox_backends: tuple[SandboxBackendDescriptor, ...] = ()
@@ -91,23 +86,23 @@ class ACPServer:
     Attributes:
         registry: The bound handler registry.  Constructed by
             :func:`build_default_server` from injected callables.
+        eof_drain_grace_s: Seconds to wait on stdin half-close (EOF) for
+            in-flight ``session/prompt`` turns to finish and flush their
+            responses before signalling ``transport_eof`` cancellation.
+        eof_cancel_timeout_s: Additional seconds to wait for cancelled turns
+            to resolve cleanly before hard-cancelling them on shutdown.
     """
 
     registry: ACPHandlerRegistry
+    eof_drain_grace_s: float = 0.5
+    eof_cancel_timeout_s: float = 0.5
 
     async def run_stdio(
         self,
         reader: asyncio.StreamReader | None = None,
         writer: asyncio.StreamWriter | None = None,
     ) -> None:
-        """Serve ACP over stdio until the input stream closes.
-
-        Args:
-            reader: Optional pre-built reader.  When ``None`` the method
-                attaches to ``sys.stdin``.
-            writer: Optional pre-built writer.  When ``None`` the method
-                attaches to ``sys.stdout``.
-        """
+        """Serve ACP over stdio until the input stream closes."""
         if reader is None or writer is None:
             reader, writer = await _stdio_streams()
 
@@ -115,38 +110,30 @@ class ACPServer:
             registry=self.registry,
             reader=reader,
             writer=writer,
+            eof_drain_grace_s=self.eof_drain_grace_s,
+            eof_cancel_timeout_s=self.eof_cancel_timeout_s,
         )
         await transport.serve_forever()
 
     def http_transport(self) -> HttpAcpTransport:
-        """Return an :class:`HttpAcpTransport` bound to this server."""
+        """Return an :class:`HttpAcpTransport` bound to this server.
+
+        Raises:
+            ValueError: If ``self.registry.require_auth`` is ``True`` (HTTP
+                requires token-bound authentication before enforcing auth).
+        """
         return HttpAcpTransport(registry=self.registry)
 
 
-# ---------------------------------------------------------------------------
-# Stdio stream attachment (POSIX-only; ticket non-goals exclude Windows
-# named pipes for v1.9).
-# ---------------------------------------------------------------------------
-
-
 async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Attach asyncio stream wrappers to ``sys.stdin`` and ``sys.stdout``.
-
-    When the shell redirects stdin from a regular file (the common
-    debugging case ``bernstein acp serve --stdio < fixture.jsonl``),
-    :func:`asyncio.AbstractEventLoop.connect_read_pipe` rejects the
-    file because it is not a pipe/socket.  We fall back to a background
-    thread that reads the file and pumps bytes into an in-memory
-    :class:`asyncio.StreamReader`.
-    """
+    """Attach asyncio stream wrappers to ``sys.stdin`` and ``sys.stdout``."""
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader(loop=loop)
+    reader = asyncio.StreamReader(limit=MAX_FRAME_BYTES + 2, loop=loop)
 
     try:
         protocol = asyncio.StreamReaderProtocol(reader)
         await loop.connect_read_pipe(lambda: protocol, sys.stdin)
     except (ValueError, OSError):
-        # Regular-file fallback: spawn a daemon thread to drain stdin.
         import threading
 
         thread = threading.Thread(
@@ -160,7 +147,7 @@ async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         transport, protocol_w = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout)
         writer = asyncio.StreamWriter(transport, protocol_w, reader, loop)
     except (ValueError, OSError):
-        writer = _SyncStdoutWriter()  # type: ignore[assignment]
+        writer = cast("asyncio.StreamWriter", _SyncStdoutWriter())
     return reader, writer
 
 
@@ -169,12 +156,7 @@ def _drain_into_reader(
     reader: asyncio.StreamReader,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """Drain *source* (a regular file-like object) into *reader*.
-
-    Schedules ``feed_data`` on *loop* via :meth:`call_soon_threadsafe`
-    so the asyncio side observes incoming bytes.  Closes the reader on
-    EOF.
-    """
+    """Drain *source* (a regular file-like object) into *reader*."""
     try:
         while True:
             buffer = getattr(source, "buffer", source)
@@ -191,97 +173,134 @@ def _drain_into_reader(
 
 
 class _SyncStdoutWriter:
-    """Minimal asyncio-StreamWriter-like adapter for a regular stdout file.
-
-    Used only when the shell redirects ``stdout`` to a non-pipe; the
-    common IDE-embedding path takes the real pipe transport.
-    """
+    """Minimal asyncio-StreamWriter-like adapter for a regular stdout file."""
 
     def write(self, data: bytes) -> None:
-        """Write *data* to the underlying ``sys.stdout`` buffer."""
         sys.stdout.buffer.write(data)
 
     async def drain(self) -> None:
-        """Flush ``sys.stdout`` synchronously."""
         sys.stdout.flush()
 
     def close(self) -> None:
-        """Flush and ignore further writes."""
-        import contextlib
-
         with contextlib.suppress(Exception):
             sys.stdout.flush()
 
 
-# ---------------------------------------------------------------------------
-# Default wiring helpers
-# ---------------------------------------------------------------------------
-
-
 def build_default_server(
     *,
-    server_url: str = "http://127.0.0.1:8052",
+    server_url: str | None = None,
+    adapter_name: str | None = None,
     adapters: tuple[AdapterDescriptor, ...] | None = None,
     sandbox_backends: tuple[SandboxBackendDescriptor, ...] | None = None,
-    audit_emitter: AuditEmitter | None = None,
-    task_creator: TaskCreator | None = None,
-    task_canceller: TaskCanceller | None = None,
-    stream_publisher: StreamPublisher | None = None,
+    audit_emitter: Callable[[str, str, dict[str, Any]], None] | None = None,
+    task_creator: Callable[[str, str, str], Awaitable[PromptResult]] | None = None,
+    task_canceller: Callable[[str, str], Awaitable[bool]] | None = None,
+    stream_publisher: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    prompt_runner: (
+        Callable[[ACPSession, list[dict[str, Any]], asyncio.Event], Awaitable[str | PromptRunOutcome]] | None
+    ) = None,
+    auth_handler: Callable[[str], Awaitable[bool]] | None = None,
+    terminal_auth_method: dict[str, Any] | object | None = _UNSET_AUTH,
+    require_auth: bool = False,
+    forward_auth_headers: bool = True,
+    eof_drain_grace_s: float = 0.5,
+    eof_cancel_timeout_s: float = 0.5,
 ) -> ACPServer:
-    """Build an :class:`ACPServer` with sensible defaults.
+    """Build an :class:`ACPServer` in standalone embedded mode or HTTP proxy mode.
 
-    The defaults reach the running Bernstein task server over HTTP.  Any
-    callable can be overridden - tests inject in-memory stubs; the
-    production CLI command threads through the real audit log.
-
-    Args:
-        server_url: Base URL of the running Bernstein task server.
-            Defaults match :data:`bernstein.cli.helpers.SERVER_URL`.
-        adapters: Adapter descriptors to surface during ``initialize``.
-            When ``None``, queries the adapter registry.
-        sandbox_backends: Sandbox backends to surface during
-            ``initialize``.  When ``None``, ships an empty list.
-        audit_emitter: Override for the HMAC audit emitter.  When
-            ``None``, audit events go to the standard logger only -
-            production CLI overrides with a real :class:`AuditLog`.
-        task_creator: Override for task creation.
-        task_canceller: Override for task cancellation.
-        stream_publisher: Override for stream publication.
-
-    Returns:
-        A fully composed :class:`ACPServer`.
+    Note:
+        The default ``bernstein-setup`` terminal authentication method checks
+        local CLI adapter readiness (``PATH`` / ``--setup``) per ACP's
+        agent-credential readiness semantics; ``require_auth=True`` with that
+        default method on stdio is therefore an adapter-readiness gate rather
+        than caller-identity access control.  ``auth_headers()`` are attached to
+        ``--server-url`` requests only on local stdio connections and never on
+        behalf of unauthenticated HTTP peers.
     """
     if adapters is None:
         adapters = _discover_adapters()
     if sandbox_backends is None:
         sandbox_backends = _discover_sandbox_backends()
 
-    if task_creator is None:
-        task_creator = _http_task_creator(server_url)
-    if task_canceller is None:
-        task_canceller = _http_task_canceller(server_url)
+    resolved_terminal_auth: dict[str, Any] | None
+    if terminal_auth_method is _UNSET_AUTH:
+        resolved_terminal_auth = dict(DEFAULT_TERMINAL_AUTH_METHOD)
+    elif isinstance(terminal_auth_method, dict):
+        resolved_terminal_auth = dict(cast("dict[str, Any]", terminal_auth_method))
+    else:
+        resolved_terminal_auth = None
 
     sessions = ACPSessionStore()
     set_active_sessions(0)
+
+    use_remote = bool(server_url and server_url.strip())
+    effective_creator = task_creator
+    effective_canceller = task_canceller
+    remote_task_cwds: dict[str, str] = {}
+    http_peer_tasks: set[str] = set()
+
+    if use_remote:
+        assert server_url is not None
+        if effective_creator is None:
+            effective_creator = _http_task_creator(
+                server_url,
+                task_cwds=remote_task_cwds,
+                http_peer_tasks=http_peer_tasks,
+                forward_auth_headers=forward_auth_headers,
+            )
+        if effective_canceller is None:
+            effective_canceller = _http_task_canceller(
+                server_url,
+                sessions=sessions,
+                task_cwds=remote_task_cwds,
+                http_peer_tasks=http_peer_tasks,
+                forward_auth_headers=forward_auth_headers,
+            )
+
+    effective_auth_handler = auth_handler
+    if effective_auth_handler is None and resolved_terminal_auth is not None:
+        expected_auth_id = str(resolved_terminal_auth.get("id") or "")
+
+        async def _default_terminal_auth(method_id: str) -> bool:
+            if not expected_auth_id or method_id != expected_auth_id:
+                return False
+            if use_remote:
+                return True
+            return is_adapter_usable(adapter_name)
+
+        effective_auth_handler = _default_terminal_auth
 
     registry = ACPHandlerRegistry(
         sessions=sessions,
         adapters=tuple(d.name for d in adapters),
         sandbox_backends=tuple(d.name for d in sandbox_backends if d.available),
-        task_creator=task_creator,
-        task_canceller=task_canceller,
+        prompt_runner=prompt_runner,
+        auth_handler=effective_auth_handler,
+        terminal_auth_method=resolved_terminal_auth,
+        require_auth=require_auth,
     )
+    if effective_creator is not None:
+        registry.task_creator = effective_creator
+    if effective_canceller is not None:
+        registry.task_canceller = effective_canceller
+
+    if not use_remote and prompt_runner is None and task_creator is None:
+        embedded = EmbeddedOrchestratorRunner(registry=registry, adapter_name=adapter_name)
+        registry.prompt_runner = embedded.run_prompt
+        registry.task_creator = embedded.create_legacy_task
+        if effective_canceller is None:
+            registry.task_canceller = embedded.cancel_session
+
     if audit_emitter is not None:
         registry.audit_emitter = audit_emitter
     if stream_publisher is not None:
         registry.stream_publisher = stream_publisher
 
-    return ACPServer(registry=registry)
-
-
-# ---------------------------------------------------------------------------
-# Discovery helpers
-# ---------------------------------------------------------------------------
+    return ACPServer(
+        registry=registry,
+        eof_drain_grace_s=eof_drain_grace_s,
+        eof_cancel_timeout_s=eof_cancel_timeout_s,
+    )
 
 
 def _discover_adapters() -> tuple[AdapterDescriptor, ...]:
@@ -298,10 +317,6 @@ def _discover_adapters() -> tuple[AdapterDescriptor, ...]:
 
 def _discover_sandbox_backends() -> tuple[SandboxBackendDescriptor, ...]:
     """Return the configured sandbox backends in priority order."""
-    # The sandbox subsystem is feature-flagged and discovered at runtime.
-    # We return a conservative default list so the IDE knows what is
-    # negotiable.  Production deployments can override via
-    # build_default_server(sandbox_backends=...).
     return (
         SandboxBackendDescriptor(name="none", available=True),
         SandboxBackendDescriptor(name="firejail", available=False),
@@ -309,13 +324,33 @@ def _discover_sandbox_backends() -> tuple[SandboxBackendDescriptor, ...]:
     )
 
 
-# ---------------------------------------------------------------------------
-# HTTP-driven default task creator + canceller
-# ---------------------------------------------------------------------------
+def _resolve_request_headers(cwd: str | None) -> dict[str, str]:
+    """Resolve ``auth_headers`` for *cwd*, falling back to process-level headers."""
+    if cwd:
+        ws_headers = auth_headers(Path(cwd))
+        if ws_headers:
+            return ws_headers
+    return auth_headers()
 
 
-def _http_task_creator(server_url: str) -> TaskCreator:
-    """Return a :data:`TaskCreator` that POSTs to the task server."""
+def _should_attach_auth_headers(*, forward_auth_headers: bool, session_peer: str | None = None) -> bool:
+    """Return ``True`` only when local ``auth_headers()`` may be sent upstream."""
+    if not forward_auth_headers:
+        return False
+    req_ctx = current_request_context()
+    if req_ctx is not None and is_http_peer(req_ctx.peer, connection_scoped=req_ctx.connection_scoped):
+        return False
+    return not (session_peer is not None and is_http_peer(session_peer))
+
+
+def _http_task_creator(
+    server_url: str,
+    *,
+    task_cwds: dict[str, str] | None = None,
+    http_peer_tasks: set[str] | None = None,
+    forward_auth_headers: bool = True,
+) -> Callable[[str, str, str], Awaitable[PromptResult]]:
+    """Return a ``TaskCreator`` that POSTs to *server_url* (attaching ``auth_headers()`` on stdio only)."""
 
     async def _create(prompt: str, cwd: str, role: str) -> PromptResult:
         try:
@@ -332,9 +367,11 @@ def _http_task_creator(server_url: str) -> TaskCreator:
             "priority": 3,
             "metadata": {"source": "acp", "cwd": cwd},
         }
+        allow_auth = _should_attach_auth_headers(forward_auth_headers=forward_auth_headers)
+        headers = _resolve_request_headers(cwd) if allow_auth else {}
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(f"{server_url}/tasks", json=payload)
+                resp = await client.post(f"{server_url.rstrip('/')}/tasks", json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as exc:
@@ -344,24 +381,53 @@ def _http_task_creator(server_url: str) -> TaskCreator:
         sid = data.get("id") or data.get("task_id") or data.get("session_id") or ""
         if not sid:
             return PromptResult(session_id="", accepted=False, message="missing session id in response")
-        return PromptResult(session_id=str(sid), accepted=True)
+        sid_str = str(sid)
+        if allow_auth:
+            if task_cwds is not None and cwd:
+                task_cwds[sid_str] = cwd
+        elif http_peer_tasks is not None:
+            http_peer_tasks.add(sid_str)
+        return PromptResult(session_id=sid_str, accepted=True)
 
     return _create
 
 
-def _http_task_canceller(server_url: str) -> TaskCanceller:
-    """Return a :data:`TaskCanceller` that POSTs to ``/tasks/{id}/cancel``."""
+def _http_task_canceller(
+    server_url: str,
+    *,
+    sessions: ACPSessionStore | None = None,
+    task_cwds: dict[str, str] | None = None,
+    http_peer_tasks: set[str] | None = None,
+    forward_auth_headers: bool = True,
+) -> Callable[[str, str], Awaitable[bool]]:
+    """Return a ``TaskCanceller`` that POSTs to ``/tasks/{id}/cancel`` (stdio ``auth_headers()`` only)."""
 
-    async def _cancel(session_id: str, reason: str) -> bool:
+    async def _cancel(task_or_session_id: str, reason: str) -> bool:
         try:
             import httpx
         except ImportError:
             return False
+
+        was_http_task = http_peer_tasks is not None and task_or_session_id in http_peer_tasks
+        if http_peer_tasks is not None:
+            http_peer_tasks.discard(task_or_session_id)
+
+        cwd: str | None = task_cwds.pop(task_or_session_id, None) if task_cwds is not None else None
+        sess = await sessions.get(task_or_session_id) if sessions is not None else None
+        if cwd is None and sess is not None:
+            cwd = sess.cwd
+
+        allow_auth = not was_http_task and _should_attach_auth_headers(
+            forward_auth_headers=forward_auth_headers,
+            session_peer=sess.peer if sess is not None else None,
+        )
+        headers = _resolve_request_headers(cwd) if allow_auth else {}
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
-                    f"{server_url}/tasks/{session_id}/cancel",
+                    f"{server_url.rstrip('/')}/tasks/{task_or_session_id}/cancel",
                     json={"reason": reason},
+                    headers=headers,
                 )
                 return 200 <= resp.status_code < 300
         except Exception as exc:

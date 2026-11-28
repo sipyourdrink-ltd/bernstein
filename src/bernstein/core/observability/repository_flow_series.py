@@ -54,6 +54,10 @@ class RepositoryFlowSample:
     open_issues: int
 
 
+#: The integer counters of a sample, checked on read.
+_INTEGER_COUNTERS = ("open_prs", "churn_lines", "open_issues")
+
+
 def serialize_sample(sample: RepositoryFlowSample) -> bytes:
     """Serialize a sample to deterministic JSON bytes.
 
@@ -87,7 +91,8 @@ def deserialize_sample(line: bytes) -> RepositoryFlowSample:
 
     Raises:
         RepositoryFlowSeriesError: If the line is not valid UTF-8,
-            not a JSON object, or missing required fields.
+            not a JSON object, missing required fields, or a counter
+            is not an integer.
     """
     try:
         text = line.decode("utf-8").strip()
@@ -104,6 +109,13 @@ def deserialize_sample(line: bytes) -> RepositoryFlowSample:
 
     if not isinstance(obj, dict):
         raise RepositoryFlowSeriesError(f"Expected JSON object, got {type(obj).__name__}")
+
+    # The dataclass does not check its annotations, so "three" became an issue count (#8025).
+    # A bool is an int in Python, and is not a count either.
+    for field in _INTEGER_COUNTERS:
+        value = obj.get(field)
+        if field in obj and (isinstance(value, bool) or not isinstance(value, int)):
+            raise RepositoryFlowSeriesError(f"Field {field!r} must be an integer, got {value!r}")
 
     try:
         return RepositoryFlowSample(

@@ -208,3 +208,43 @@ def test_mutated_recorded_event_reported_as_divergence_naming_step(tmp_path: Pat
     assert divergence.expected_hash != divergence.actual_hash
     # The content hash is what caught it - re-parsing text could not.
     assert divergence.expected_hash == frame_content_hash(_RECORDED_SESSION[2])
+
+
+def test_client_dual_compatible_with_acp_v1_frames(tmp_path: Path) -> None:
+    """ACP v1 session/update + session/request_permission frames validate and journal identically."""
+    v1_session: list[dict] = [
+        {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1, "agentCapabilities": {}}},
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-v1",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": "working"},
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "acp-srv-1",
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": "sess-v1",
+                "toolCall": {"toolCallId": "tc-1", "title": "write file"},
+                "options": [{"optionId": "allow_once", "name": "Allow", "kind": "allow_once"}],
+            },
+        },
+        {"jsonrpc": "2.0", "id": 2, "result": {"stopReason": "end_turn"}},
+    ]
+    journal = EventJournal("run-v1", tmp_path)
+    result = drive_acp_lifecycle(_lines(v1_session), ACPEventJournalSink(journal))
+    assert result.ok is True
+    assert result.terminal is True
+    assert result.stop_reason == "end_turn"
+    assert result.event_count == len(v1_session)
+    assert result.events[1].kind == "notification"
+    assert result.events[1].method == "session/update"
+    assert result.events[2].kind == "request"
+    assert result.events[2].method == "session/request_permission"
+    assert journal.verify().chain_consistent

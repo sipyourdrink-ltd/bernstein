@@ -172,6 +172,8 @@ def _expand_field(spec: str, lo: int, hi: int, names: dict[str, int] | None = No
 
     result: set[int] = set()
     for part in spec.split(","):
+        if not part:
+            raise CronParseError(f"empty list item in cron field {spec!r}")
         step = 1
         if "/" in part:
             base, step_str = part.split("/", 1)
@@ -335,10 +337,11 @@ class ScheduleStore:
     triple twice returns the existing schedule unchanged.
     """
 
-    def __init__(self, sdd_dir: Path) -> None:
+    def __init__(self, sdd_dir: Path, *, create: bool = True) -> None:
         self._sdd_dir = sdd_dir
         self._dir = sdd_dir / "runtime" / "schedules"
-        self._dir.mkdir(parents=True, exist_ok=True)
+        if create:
+            self._dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def directory(self) -> Path:
@@ -453,6 +456,8 @@ class ScheduleStore:
         consumers that diff-compare two operator hosts.
         """
         out: list[Schedule] = []
+        if not self._dir.is_dir():
+            return out
         for path in sorted(self._dir.glob("*.json")):
             schedule = _load_schedule(path)
             if schedule is not None:
@@ -535,8 +540,8 @@ class ScheduleStore:
         """
         path = self._path_for(schedule.id)
         payload = asdict(schedule)
-        # Keep the schedule file's existing umask-based permissions.
-        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2), mode=0o666)
+        # Keep schedule definitions owner-only (0600) under .sdd/runtime/.
+        write_atomic_text(path, json.dumps(payload, sort_keys=True, indent=2))
 
 
 def _load_schedule(path: Path) -> Schedule | None:

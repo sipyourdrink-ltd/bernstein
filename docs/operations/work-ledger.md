@@ -17,6 +17,10 @@ bernstein ledger gc     <run-id>
 
 ## What the ledger is
 
+The work ledger records resumable task state. The per-step replay journal
+records the step data used for replay. They serve these separate roles
+while sharing the canonical encoding described below.
+
 A hash-chained, append-only JSONL record of the task graph and every state
 transition, stored per run under `.sdd/runtime/ledger/<run-id>/`. Each
 entry links the previous entry's hash:
@@ -87,9 +91,14 @@ bernstein ledger resume goal-42
 `resume` rebuilds scheduler state by replaying the verified chain --
 completed, in-flight, scheduled, and failed tasks -- then records the
 resume as a new chain entry and writes one signal per frontier task into
-`.sdd/runtime/resume/`, the same watch directory `bernstein resume` uses
-for checkpoint resumes. Completed work is never redone: it is part of the
-verified chain.
+`.sdd/runtime/resume/`. Each file is published with an atomic rename.
+The verified frontier excludes completed tasks.
+
+With `--json`, stdout contains one object. `signal_paths` lists the
+files written by this invocation, and `dispatch_status` is `queued` if
+at least one file was written or `not_dispatched` otherwise.
+`runtime_acknowledged` is currently `false`. For a failed write, the
+object includes an `error` and any paths written before the failure.
 
 ## Machine migration
 
@@ -109,10 +118,9 @@ bernstein ledger resume goal-42
 ```
 
 `fetch` verifies the anchored chain before a byte is written locally.
-`resume` verifies again end to end, replays state, and continues from the
-last verified entry. Worktree contents rehydrate from committed
-checkpoints -- fork-from-step on worktree commits is the existing
-substrate; the ledger carries the commit hashes in its payloads.
+`resume` verifies the chain again, replays it through the last verified
+entry, and writes signals for the frontier. The ledger carries worktree
+checkpoint commit hashes in its payloads.
 
 ## Handoff to a colleague
 
@@ -165,7 +173,10 @@ a normal `git gc` reclaims them.
 | Interior row edited after the fact | fail-closed refusal naming the position |
 | Two divergent resumes | refusal naming the fork entry and both heads |
 
-Exit codes across the group: `0` ok, `1` no ledger, `2` verification
-failed, `3` divergence. Human-readable diagnostics for missing ledgers,
+`ledger resume` exits with `0` on success, `1` for a missing ledger or an
+I/O error, `2` for an invalid run ID, failed verification or a rejected
+resume entry, and `3` when the histories diverge. Invalid UTF-8 in a local
+bucket, anchored metadata or an anchored chunk stops the resume before
+it records an entry or queues a signal. Human-readable diagnostics for missing ledgers,
 verification failures, and divergence go to stderr. When `verify --json` can read a ledger,
 it prints the structured result to stdout even if verification fails.

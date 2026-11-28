@@ -817,30 +817,39 @@ def _parse_latest_version(tags: list[str], tag_prefix: str) -> tuple[int, int, i
     return 0, 0, 0, None
 
 
-def _compute_bump(subjects: list[str]) -> str:
-    """Determine semver bump level from conventional commit subjects.
+def _compute_bump(messages: list[str]) -> str:
+    """Determine semver bump level from conventional commit subjects and footers.
 
     Args:
-        subjects: Commit subject lines.
+        messages: Commit subjects followed by their optional bodies.
 
     Returns:
         One of ``"major"``, ``"minor"``, or ``"patch"``.
     """
-    for subj in subjects:
-        lower = subj.lower()
-        if "breaking change" in lower or "!:" in subj:
+    bump = "patch"
+    for message in messages:
+        subject, _, body = message.partition("\n")
+        lower = subject.lower()
+        if (
+            "breaking change" in lower
+            or "!:" in subject
+            or any(line.startswith(("BREAKING CHANGE:", "BREAKING-CHANGE:")) for line in body.splitlines())
+        ):
             return "major"
-    if any(subj.lower().startswith("feat") for subj in subjects):
-        return "minor"
-    return "patch"
+        if lower.startswith("feat"):
+            bump = "minor"
+    return bump
 
 
 def version_from_commits(cwd: Path, tag_prefix: str = "v") -> str:
     """Compute the next semantic version from conventional commits since the last tag.
 
     Scans commit messages between the latest ``v*`` tag and HEAD.  Bumps
-    major on ``BREAKING CHANGE`` or ``!:`` in a subject, minor on ``feat``,
-    patch on anything else (``fix``, ``refactor``, ``chore``, etc.).
+    major on ``BREAKING CHANGE`` or ``!:`` in a subject or a ``BREAKING CHANGE:``
+    / ``BREAKING-CHANGE:`` footer, minor on ``feat``, patch on anything else
+    (``fix``, ``refactor``, etc.).  ``--no-show-signature`` keeps a user's
+    ``log.showSignature=true`` config from interleaving gpg diagnostics into
+    the parsed subjects.
 
     If no previous tag exists, starts from ``0.1.0``.
 
@@ -854,16 +863,14 @@ def version_from_commits(cwd: Path, tag_prefix: str = "v") -> str:
     tags = list_tags(cwd, pattern=f"{tag_prefix}*")
     major, minor, patch_v, latest_tag = _parse_latest_version(tags, tag_prefix)
 
-    log_cmd = ["log", "--pretty=format:%s"]
+    log_cmd = ["log", "--no-show-signature", "-z", "--pretty=format:%s%n%b"]
     if latest_tag:
         log_cmd.insert(1, f"{latest_tag}..HEAD")
     log_r = run_git(log_cmd, cwd, timeout=10)
 
-    has_commits = log_r.ok and bool(log_r.stdout.strip())
-    subjects = log_r.stdout.strip().splitlines() if has_commits else []
-
-    if subjects:
-        bump = _compute_bump(subjects)
+    messages = log_r.stdout.split("\0") if log_r.ok else []
+    if any(message.strip() for message in messages):
+        bump = _compute_bump(messages)
         if bump == "major":
             major += 1
             minor = 0

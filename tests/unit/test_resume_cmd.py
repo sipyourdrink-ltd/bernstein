@@ -13,7 +13,9 @@ Covers the four AC paths from ``feat-resume-from-checkpoint``:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -28,6 +30,7 @@ from bernstein.adapters._contract import (
 from bernstein.adapters.base import CLIAdapter
 from bernstein.cli.commands.resume_cmd import (
     EXIT_CORRUPT,
+    EXIT_IO_ERROR,
     EXIT_NO_CHECKPOINT,
     EXIT_OK,
     prepare_resume,
@@ -38,6 +41,8 @@ from bernstein.core.lifecycle.hooks import (
     LifecycleContext,
     LifecycleEvent,
 )
+from bernstein.core.persistence.agent_checkpoint import AgentCheckpoint, find_checkpoint_for_task
+from bernstein.core.persistence.agent_checkpoint import save_checkpoint as save_agent_checkpoint
 from bernstein.core.persistence.resume_prompt import (
     RESUME_BANNER,
     build_resume_context,
@@ -45,16 +50,27 @@ from bernstein.core.persistence.resume_prompt import (
 )
 from bernstein.core.persistence.task_resume import (
     CHECKPOINT_FILENAME,
+    SOURCE_WORK_LEDGER,
     CheckpointCorruptError,
     CheckpointMissingError,
+    ResumeDispatchStatus,
     TaskResumeCheckpoint,
     bump_resume_count,
     checkpoint_dir_for,
     checkpoint_path_for,
+    claim_resume_request,
     load_checkpoint,
+    load_resume_request,
+    publish_resume_request,
+    read_resume_requests,
+    record_resume_outcome,
+    resume_request_acknowledged,
+    resume_requests_path_for,
     save_checkpoint,
     scratchpad_sha256,
+    write_resume_signal,
 )
+from bernstein.core.security.path_containment import PathContainmentError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -270,11 +286,19 @@ def test_cli_resume_missing_checkpoint_exits_nonzero(workdir: Path) -> None:
     assert result.exit_code == EXIT_NO_CHECKPOINT
     assert "No checkpoint" in result.output
 
+    result = runner.invoke(resume_cmd, ["nope", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_NO_CHECKPOINT
+    payload = json.loads(result.stdout)
+    assert payload["dispatch_status"] == "not_dispatched"
+    assert payload["runtime_acknowledged"] is False
+    assert "No checkpoint" in payload["error"]
 
-def test_cli_resume_corrupt_exits_nonzero(workdir: Path) -> None:
+
+@pytest.mark.parametrize("contents", [b"not json", b"\xff"], ids=["invalid-json", "invalid-utf8"])
+def test_cli_resume_corrupt_exits_nonzero(workdir: Path, contents: bytes) -> None:
     target = checkpoint_dir_for(workdir, "bad")
     target.mkdir(parents=True)
-    (target / CHECKPOINT_FILENAME).write_text("not json", encoding="utf-8")
+    (target / CHECKPOINT_FILENAME).write_bytes(contents)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -283,6 +307,63 @@ def test_cli_resume_corrupt_exits_nonzero(workdir: Path) -> None:
     )
     assert result.exit_code == EXIT_CORRUPT
     assert "Corrupt" in result.output
+
+    result = runner.invoke(resume_cmd, ["bad", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_CORRUPT
+    payload = json.loads(result.stdout)
+    assert payload["runtime_acknowledged"] is False
+    assert "Corrupt" in payload["error"]
+
+
+def test_missing_checkpoint_returns_json_when_git_is_unavailable(
+    workdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(workdir))
+    result = CliRunner().invoke(resume_cmd, ["missing", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_NO_CHECKPOINT, result.output
+    assert "No checkpoint" in json.loads(result.stdout)["error"]
+
+
+def test_missing_checkpoint_survives_optional_git_timeout(workdir: Path) -> None:
+    timeout = subprocess.TimeoutExpired(["git", "for-each-ref"], 30)
+    with patch("bernstein.core.persistence.ledger_git.list_ledger_runs", side_effect=timeout):
+        result = CliRunner().invoke(resume_cmd, ["missing", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_NO_CHECKPOINT, result.exception
+    report = json.loads(result.stdout)
+    assert "No checkpoint" in report["error"]
+    assert "hint" not in report
+    assert report["signal_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("read_error", "exit_code"),
+    [(PermissionError("checkpoint read denied"), EXIT_IO_ERROR), (FileNotFoundError(), EXIT_NO_CHECKPOINT)],
+    ids=["unreadable", "disappeared"],
+)
+def test_checkpoint_read_failure_is_not_corruption(workdir: Path, read_error: OSError, exit_code: int) -> None:
+    path = save_checkpoint(workdir, _make_checkpoint())
+    before = path.read_bytes()
+    with patch.object(Path, "read_text", side_effect=read_error):
+        result = CliRunner().invoke(resume_cmd, ["t-1", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == exit_code, result.output
+    report = json.loads(result.stdout)
+    assert report["error"]
+    assert "hint" not in report
+    assert report["dispatch_status"] == "not_dispatched"
+    assert report["signal_paths"] == []
+    assert path.read_bytes() == before
+
+
+def test_missing_checkpoint_returns_json_when_the_optional_ledger_root_is_a_file(workdir: Path) -> None:
+    ledger_root = workdir / ".sdd" / "runtime" / "ledger"
+    ledger_root.parent.mkdir(parents=True, exist_ok=True)
+    ledger_root.write_text("unavailable")
+
+    result = CliRunner().invoke(resume_cmd, ["missing", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_NO_CHECKPOINT, result.exception
+    report = json.loads(result.stdout)
+    assert "No checkpoint" in report["error"]
+    assert report["dispatch_status"] == "not_dispatched"
 
 
 def test_cli_resume_happy_path_bumps_resume_count_and_writes_signal(workdir: Path) -> None:
@@ -293,7 +374,8 @@ def test_cli_resume_happy_path_bumps_resume_count_and_writes_signal(workdir: Pat
         ["ok", "--workdir", str(workdir)],
     )
     assert result.exit_code == EXIT_OK, result.output
-    assert "Resuming task" in result.output or "task_id" in result.output
+    assert "Resume plan for task" in result.output
+    assert "Runtime acknowledgement: unavailable" in result.output
 
     # resume_count persisted to 1
     persisted = load_checkpoint(workdir, "ok")
@@ -323,28 +405,146 @@ def test_cli_resume_dry_run_does_not_write_signal(workdir: Path) -> None:
     assert persisted.resume_count == 1
 
 
-def test_cli_resume_json_output_emits_machine_readable(workdir: Path) -> None:
+@pytest.mark.parametrize("dry_run", [False, True], ids=["queue", "dry-run"])
+def test_cli_resume_json_output_emits_machine_readable(workdir: Path, dry_run: bool) -> None:
     save_checkpoint(workdir, _make_checkpoint(task_id="jsn"))
-    runner = CliRunner()
-    result = runner.invoke(
-        resume_cmd,
-        ["jsn", "--workdir", str(workdir), "--json", "--dry-run"],
-    )
+    args = ["jsn", "--workdir", str(workdir), "--json"]
+    if dry_run:
+        args.append("--dry-run")
+    result = CliRunner().invoke(resume_cmd, args, color=True)
     assert result.exit_code == EXIT_OK, result.output
-    # The JSON line should parse and surface essential fields.
-    parsed: dict[str, object] | None = None
-    for line in result.output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            parsed = json.loads(stripped)
-            break
-        # rich.print_json may pretty-print across multiple lines; fall
-        # back to parsing the whole blob.
-    if parsed is None:
-        parsed = json.loads(result.output[result.output.index("{") : result.output.rindex("}") + 1])
-    assert parsed is not None
+    parsed = json.loads(result.stdout)
     assert parsed["task_id"] == "jsn"
     assert parsed["capability"] == RESUME_NATIVE
+    assert parsed["dry_run"] is dry_run
+    assert parsed["runtime_acknowledged"] is False
+    assert parsed["dispatch_status"] == ("not_dispatched" if dry_run else "queued")
+    signal = workdir / ".sdd" / "runtime" / "resume" / "jsn.signal"
+    assert parsed["signal_paths"] == ([] if dry_run else [str(signal)])
+    assert signal.exists() is (not dry_run)
+    assert load_checkpoint(workdir, "jsn").resume_count == 1
+
+
+def test_cli_resume_discard_reports_result_in_json(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="discard"))
+    runtime_dir = workdir / ".sdd" / "runtime"
+    checkpoint = AgentCheckpoint(agent_id="agent", task_id="discard", worktree_path=str(workdir))
+    save_agent_checkpoint(checkpoint, runtime_dir)
+
+    result = CliRunner().invoke(resume_cmd, ["discard", "--workdir", str(workdir), "--discard", "--json"])
+
+    assert result.exit_code == EXIT_OK, result.output
+    payload = json.loads(result.stdout)
+    assert payload["checkpoint_discarded"] is True
+    assert payload["dispatch_status"] == "queued"
+    assert payload["runtime_acknowledged"] is False
+    assert find_checkpoint_for_task("discard", runtime_dir) is None
+
+    again = CliRunner().invoke(resume_cmd, ["discard", "--workdir", str(workdir), "--discard", "--json"])
+    assert again.exit_code == EXIT_OK, again.output
+    assert json.loads(again.stdout)["checkpoint_discarded"] is False
+
+
+def test_failed_discard_stops_before_preparing_or_signalling(workdir: Path) -> None:
+    task = save_checkpoint(workdir, _make_checkpoint())
+    runtime = workdir / ".sdd" / "runtime"
+    agent = save_agent_checkpoint(AgentCheckpoint("agent", "t-1", str(workdir)), runtime)
+    before = task.read_bytes()
+    with patch.object(Path, "unlink", side_effect=PermissionError("checkpoint deletion denied")):
+        result = CliRunner().invoke(resume_cmd, ["t-1", "--workdir", str(workdir), "--discard", "--json"])
+    assert result.exit_code == EXIT_IO_ERROR, result.output
+    report = json.loads(result.stdout)
+    assert "checkpoint deletion denied" in report["error"]
+    assert report["checkpoint_discarded"] is False
+    assert report["dispatch_status"] == "not_dispatched"
+    assert report["signal_paths"] == []
+    assert report["runtime_acknowledged"] is False
+    assert agent.is_file()
+    assert task.read_bytes() == before
+    assert not (runtime / "resume").exists()
+
+
+def test_discard_cannot_report_absence_when_agent_directory_is_unreadable(workdir: Path) -> None:
+    task = save_checkpoint(workdir, _make_checkpoint())
+    runtime = workdir / ".sdd" / "runtime"
+    (runtime / "agents").write_text("not a directory")
+    before = task.read_bytes()
+    result = CliRunner().invoke(resume_cmd, ["t-1", "--workdir", str(workdir), "--discard", "--json"])
+    assert result.exit_code == EXIT_IO_ERROR, result.output
+    report = json.loads(result.stdout)
+    assert report["error"]
+    assert report["checkpoint_discarded"] is False
+    assert report["dispatch_status"] == "not_dispatched"
+    assert task.read_bytes() == before
+    assert not (runtime / "resume").exists()
+
+
+def test_resume_queues_long_signal_name(workdir: Path) -> None:
+    task_id = "t" * 240
+    save_checkpoint(workdir, _make_checkpoint(task_id))
+    result = CliRunner().invoke(resume_cmd, [task_id, "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_OK, result.output
+    report = json.loads(result.stdout)
+    signal = workdir / ".sdd" / "runtime" / "resume" / f"{task_id}.signal"
+    assert report["dispatch_status"] == "queued"
+    assert report["signal_paths"] == [str(signal)]
+    assert json.loads(signal.read_bytes())["task_id"] == task_id
+    # The companion request record lives beside the wake-up hint.
+    companion = signal.with_suffix(".requests.json")
+    assert sorted(signal.parent.iterdir()) == sorted([signal, companion])
+    assert json.loads(companion.read_bytes())["requests"][0]["task_id"] == task_id
+
+
+def test_cli_resume_signal_write_failure_reports_error_in_json(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="blocked"))
+    signal = workdir / ".sdd" / "runtime" / "resume" / "blocked.signal"
+    signal.mkdir(parents=True)
+
+    result = CliRunner().invoke(resume_cmd, ["blocked", "--workdir", str(workdir), "--json"])
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["signal_paths"] == []
+    assert payload["dispatch_status"] == "not_dispatched"
+    assert payload["runtime_acknowledged"] is False
+    assert "signal" in payload["error"].lower()
+
+
+def test_discard_refuses_ambiguous_agent_checkpoints_before_deletion(workdir: Path) -> None:
+    task = save_checkpoint(workdir, _make_checkpoint())
+    before = task.read_bytes()
+    runtime = workdir / ".sdd" / "runtime"
+    agent_files = [
+        save_agent_checkpoint(
+            AgentCheckpoint(agent_id, "t-1", str(workdir), checkpointed_at=stamp, observations={"notes": "changed"}),
+            runtime,
+        )
+        for agent_id, stamp in [("older", 1.0), ("newer", 2.0)]
+    ]
+    result = CliRunner().invoke(resume_cmd, ["t-1", "--discard", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_CORRUPT, result.output
+    report = json.loads(result.stdout)
+    assert "multiple agent checkpoints" in report["error"].lower()
+    assert report["checkpoint_discarded"] is False
+    assert report["dispatch_status"] == "not_dispatched"
+    assert report["signal_paths"] == []
+    assert all(path.is_file() for path in agent_files)
+    assert task.read_bytes() == before
+    assert not (runtime / "resume").exists()
+
+
+def test_non_utf8_scratchpad_uses_the_empty_fallback(workdir: Path) -> None:
+    scratchpad = workdir / "notes.txt"
+    scratchpad.write_bytes(b"\x96 previous step")
+    save_checkpoint(workdir, _make_checkpoint(scratchpad_path=str(scratchpad)))
+    result = CliRunner().invoke(resume_cmd, ["t-1", "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_OK, result.exception
+    report = json.loads(result.stdout)
+    assert report["dispatch_status"] == "queued"
+    assert report["resume_count"] == load_checkpoint(workdir, "t-1").resume_count == 1
+    assert json.loads(Path(report["signal_paths"][0]).read_bytes())["task_id"] == "t-1"
+    assert read_scratchpad(scratchpad) == ""
+    assert scratchpad.read_bytes() == b"\x96 previous step"
 
 
 # ---------------------------------------------------------------------------
@@ -398,3 +598,128 @@ def test_mid_step_kill_continues_from_next_step_boundary(workdir: Path) -> None:
     # And the resume_context block names the last completed step so the
     # adapter knows where to resume *from*.
     assert "step-5" in plan.resume_context
+
+
+# ---------------------------------------------------------------------------
+# Deterministic resume requests (#7854)
+# ---------------------------------------------------------------------------
+
+
+def _resume_json(workdir: Path, task_id: str) -> dict[str, object]:
+    result = CliRunner().invoke(resume_cmd, [task_id, "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_OK, result.output
+    return json.loads(result.stdout)
+
+
+def test_duplicate_resume_reuses_request_id_without_double_bump(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="dup"))
+    first = _resume_json(workdir, "dup")
+    second = _resume_json(workdir, "dup")
+
+    assert first["request_id"] == second["request_id"]
+    assert first["source_digest"] == second["source_digest"]
+    assert load_checkpoint(workdir, "dup").resume_count == 1
+    records = read_resume_requests(workdir, "dup")
+    assert len(records) == 1
+    assert records[0].request_id == first["request_id"]
+
+
+def test_queued_request_has_no_runtime_acknowledgement(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="queued"))
+    report = _resume_json(workdir, "queued")
+
+    assert report["dispatch_status"] == "queued"
+    assert report["runtime_acknowledged"] is False
+    request_id = str(report["request_id"])
+    record = load_resume_request(workdir, "queued", request_id)
+    assert record is not None
+    assert record.dispatch_status == ResumeDispatchStatus.QUEUED.value
+    assert resume_request_acknowledged(workdir, "queued", request_id) is False
+
+
+def test_claim_then_restart_recovers_from_record(workdir: Path) -> None:
+    save_checkpoint(workdir, _make_checkpoint(task_id="crash"))
+    report = _resume_json(workdir, "crash")
+    request_id = str(report["request_id"])
+
+    claimed = claim_resume_request(workdir, "crash", request_id, worker_id="worker-1")
+    assert claimed is not None
+    assert claimed.dispatch_status == ResumeDispatchStatus.CLAIMED.value
+    assert resume_request_acknowledged(workdir, "crash", request_id) is False
+
+    # Re-running the CLI while claimed checks status without bumping resume_count.
+    while_claimed = _resume_json(workdir, "crash")
+    assert while_claimed["dispatch_status"] == ResumeDispatchStatus.CLAIMED.value
+    assert while_claimed["runtime_acknowledged"] is False
+    assert while_claimed["resume_count"] == 1
+    assert load_checkpoint(workdir, "crash").resume_count == 1
+
+    # Worker restarts: recovery comes from the persisted claimed record.
+    recovered = claim_resume_request(workdir, "crash", request_id, worker_id="worker-1-restart")
+    assert recovered is not None
+    assert recovered.dispatch_status == ResumeDispatchStatus.CLAIMED.value
+    assert recovered.claimed_at == claimed.claimed_at
+    assert recovered.worker_id == "worker-1"
+
+    resumed = record_resume_outcome(workdir, "crash", request_id)
+    assert resumed is not None
+    assert resumed.dispatch_status == ResumeDispatchStatus.RESUMED.value
+    assert resumed.resumed_at
+    assert resume_request_acknowledged(workdir, "crash", request_id) is True
+    assert claim_resume_request(workdir, "crash", request_id) is None
+
+    # A repeat CLI command must report the real outcome, not re-queue or double-bump it.
+    repeat = _resume_json(workdir, "crash")
+    assert repeat["dispatch_status"] == ResumeDispatchStatus.RESUMED.value
+    assert repeat["runtime_acknowledged"] is True
+    assert repeat["resume_count"] == 1
+    assert load_checkpoint(workdir, "crash").resume_count == 1
+
+
+def test_legacy_signal_is_an_unacknowledged_hint_until_next_publish(workdir: Path) -> None:
+    resume_dir = workdir / ".sdd" / "runtime" / "resume"
+    resume_dir.mkdir(parents=True)
+    (resume_dir / "legacy.signal").write_text(
+        json.dumps({"task_id": "legacy", "resume_count": 1, "adapter": "claude"}), encoding="utf-8"
+    )
+
+    hints = read_resume_requests(workdir, "legacy")
+    assert len(hints) == 1
+    assert hints[0].dispatch_status == ResumeDispatchStatus.QUEUED.value
+    assert resume_request_acknowledged(workdir, "legacy", hints[0].request_id) is False
+
+    save_checkpoint(workdir, _make_checkpoint(task_id="legacy"))
+    report = _resume_json(workdir, "legacy")
+    assert json.loads((resume_dir / "legacy.signal").read_bytes())["request_id"] == report["request_id"]
+    assert resume_requests_path_for(workdir, "legacy").is_file()
+
+
+def test_claim_resume_request_filters_by_run_id(workdir: Path) -> None:
+    rec_a = publish_resume_request(
+        workdir,
+        "shared",
+        source_digest="digest-a",
+        source=SOURCE_WORK_LEDGER,
+        run_id="run-a",
+    )
+    assert claim_resume_request(workdir, "shared", source=SOURCE_WORK_LEDGER, run_id="run-b") is None
+    still_queued = load_resume_request(workdir, "shared", rec_a.request_id)
+    assert still_queued is not None
+    assert still_queued.dispatch_status == ResumeDispatchStatus.QUEUED.value
+
+    claimed_a = claim_resume_request(workdir, "shared", source=SOURCE_WORK_LEDGER, run_id="run-a", worker_id="w-a")
+    assert claimed_a is not None
+    assert claimed_a.request_id == rec_a.request_id
+    assert claimed_a.dispatch_status == ResumeDispatchStatus.CLAIMED.value
+
+
+@pytest.mark.parametrize("bad_task_id", ["../escape", "..\\escape", "nested/escape", "..", ".", ""])
+def test_resume_request_paths_reject_path_traversal(workdir: Path, bad_task_id: str) -> None:
+    with pytest.raises(PathContainmentError):
+        resume_requests_path_for(workdir, bad_task_id)
+    with pytest.raises(PathContainmentError):
+        write_resume_signal(workdir, bad_task_id)
+    with pytest.raises(PathContainmentError):
+        publish_resume_request(workdir, bad_task_id, source_digest="digest")
+    assert not list(workdir.rglob("*.requests.json"))
+    assert not list(workdir.rglob("*.signal"))

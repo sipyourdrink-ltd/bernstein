@@ -118,6 +118,11 @@ from urllib.parse import urlparse
 from bernstein.adapters._contract import AuthBasis
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
 from bernstein.core.integrations.tickets import fetch_ticket
+from bernstein.core.security.url_allowlist import (
+    StrictHTTPRedirectHandler,
+    UrlSchemeError,
+    ensure_public_http_url,
+)
 from bernstein.core.volunteer.adapter_selection import discover_local_endpoint, select_adapter_for_volunteer
 from bernstein.core.volunteer.claim import (
     DEFAULT_CLAIM_STALENESS,
@@ -141,6 +146,22 @@ if TYPE_CHECKING:
     from bernstein.core.volunteer.manifest import VolunteerManifest
     from bernstein.core.volunteer.sandbox_profile import VolunteerSandboxProfile
     from bernstein.core.volunteer.wall_clock import WallClockOutcome
+
+
+_MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+def _read_bounded_response(response: Any) -> bytes:
+    """Read at most 1 MiB, probing one extra byte to detect overflow."""
+    data = bytearray()
+    while True:
+        chunk = response.read(min(65536, _MAX_RESPONSE_BYTES + 1 - len(data)))
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+        if len(data) > _MAX_RESPONSE_BYTES:
+            raise OSError("response exceeds 1 MiB limit")
+
 
 #: Shortest phase worth starting.  Below this the budget is spent and the run
 #: refuses rather than launching something it will kill almost immediately.
@@ -910,6 +931,44 @@ def repo_url_problem(repo_url: str) -> str | None:
     return None
 
 
+_GITHUB_REPO_PATH_RE = re.compile(r"/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9_.-]+?)(?:\.git)?/?")
+
+
+def _parse_github_repo_path(url: str) -> str | None:
+    """Return canonical ``owner/repo`` for a strict HTTPS GitHub repo URL.
+
+    Rejects query strings, fragments, userinfo, non-default ports, extra path
+    segments, and dot segments so an untrusted task ``repo_url`` cannot
+    smuggle path-traversal or query injection into ``api.github.com`` or pass
+    visibility/license checks against a different path than ``git clone`` uses.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        return None
+    if (parsed.hostname or "").lower() != "github.com":
+        return None
+    if parsed.username or parsed.password or parsed.port is not None:
+        return None
+    if parsed.query or parsed.fragment or parsed.params:
+        return None
+    match = _GITHUB_REPO_PATH_RE.fullmatch(parsed.path)
+    if not match:
+        return None
+    owner, repo = match.group(1), match.group(2)
+    if repo in {".", ".."}:
+        return None
+    return f"{owner}/{repo}"
+
+
+def _open_github_api_url(api_url: str, *, headers: dict[str, str], timeout: int = 10) -> Any:
+    """Open a validated HTTPS GitHub API URL with strict redirect checks."""
+    ensure_public_http_url(api_url, allow_http=False, source="volunteer.runner")
+    req = urllib.request.Request(api_url, headers=headers)
+    opener = urllib.request.build_opener(StrictHTTPRedirectHandler(allow_http=False, source="volunteer.runner"))
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    return opener.open(req, timeout=timeout)
+
+
 def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapter_id: str | None = None) -> str | None:
     """Why this task must not run, based on open-source preflight checks.
 
@@ -953,6 +1012,8 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
     parsed = urlparse(url)
     scheme = parsed.scheme
 
+    github_repo_path: str | None = None
+
     # Local filesystem paths (no scheme) - we can see what we're executing
     if not scheme:
         # Allow local paths like "/srv/project", "./project", etc.
@@ -965,18 +1026,17 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
         # For remote repositories, we need to verify visibility
         if scheme.lower() in {"https", "http"}:
             # Check for GitHub URLs and verify they're public
-            if url.lower().startswith("https://github.com/"):
-                # GitHub repository path
-                repo_path_match = re.match(r"https?://github\.com/([^/]+/[^/]+)/?", url)
-                if repo_path_match:
-                    repo_path = repo_path_match.group(1)
+            if (parsed.hostname or "").lower() == "github.com" and scheme.lower() == "https":
+                github_repo_path = _parse_github_repo_path(url)
+                if github_repo_path:
                     # Use GitHub API to check if repository is public
-                    api_url = f"https://api.github.com/repos/{repo_path}"
+                    api_url = f"https://api.github.com/repos/{github_repo_path}"
                     try:
-                        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
-                        with urllib.request.urlopen(req, timeout=10) as response:
+                        with _open_github_api_url(
+                            api_url, headers={"Accept": "application/vnd.github.v3+json"}, timeout=10
+                        ) as response:
                             if response.status == 200:
-                                repo_data = json.loads(response.read().decode())
+                                repo_data = json.loads(_read_bounded_response(response).decode())
                                 if repo_data.get("private", True):
                                     return "repository is private; volunteer mode only works with public repositories"
                             elif response.status == 404:
@@ -984,7 +1044,14 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
                             else:
                                 # Unexpected status code
                                 return f"unexpected response from repository host: HTTP {response.status}"
-                    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError) as e:
+                    except (
+                        UrlSchemeError,
+                        urllib.error.URLError,
+                        urllib.error.HTTPError,
+                        json.JSONDecodeError,
+                        OSError,
+                        TimeoutError,
+                    ) as e:
                         # If we cannot verify visibility, refuse (fail closed)
                         return f"cannot verify repository visibility: {type(e).__name__}"
                 else:
@@ -1013,32 +1080,35 @@ def _validate_open_source_preflight(repo_url: str, manifest_license: str, adapte
     # Check 4: LICENSE file detection (if we can get it without cloning)
     # For public URLs that can be detected without cloning, we can check
     # if it's a GitHub repository and use the GitHub API to detect the license
-    if scheme.lower() in {"https", "http"}:
-        github_match = re.match(r"https?://github\.com/([^/]+/[^/]+)", url)
-        if github_match:
-            repo_path = github_match.group(1)
-            # Use GitHub API to detect license without cloning
-            headers = {"Accept": "application/vnd.github.v3+json"}
-            api_url = f"https://api.github.com/repos/{repo_path}/license"
+    if github_repo_path is not None:
+        # Use GitHub API to detect license without cloning
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        api_url = f"https://api.github.com/repos/{github_repo_path}/license"
 
-            try:
-                req = urllib.request.Request(api_url, headers=headers)
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    if response.status == 200:
-                        license_data = json.loads(response.read().decode())
-                        detected_license = license_data.get("spdx_id")
-                        if detected_license and detected_license != manifest_license:
-                            return (
-                                f"license mismatch: repository declares "
-                                f"'{detected_license}' but manifest specifies "
-                                f"'{manifest_license}'"
-                            )
-                    elif response.status == 404:
-                        # No license detected in GitHub API
-                        return "no license detected in repository"
-            except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
-                # If GitHub API fails, we cannot validate the license match
-                return "cannot verify repository license: network error"
+        try:
+            with _open_github_api_url(api_url, headers=headers, timeout=10) as response:
+                if response.status == 200:
+                    license_data = json.loads(_read_bounded_response(response).decode())
+                    detected_license = license_data.get("spdx_id")
+                    if detected_license and detected_license != manifest_license:
+                        return (
+                            f"license mismatch: repository declares "
+                            f"'{detected_license}' but manifest specifies "
+                            f"'{manifest_license}'"
+                        )
+                elif response.status == 404:
+                    # No license detected in GitHub API
+                    return "no license detected in repository"
+        except (
+            UrlSchemeError,
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            json.JSONDecodeError,
+            OSError,
+            TimeoutError,
+        ):
+            # If GitHub API fails, we cannot validate the license match
+            return "cannot verify repository license: network error"
 
     # For non-GitHub URLs or unsupported schemes, we cannot verify license match
     # without cloning, so we skip this check (best effort)

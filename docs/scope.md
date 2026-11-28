@@ -72,7 +72,7 @@ Record: [ADR-007](decisions/007-pluggy-plugin-system.md).
 
 ## Adapters wrap tools, they do not reimplement them
 
-Bernstein is the open-source governance layer for AI agents. An adapter
+Bernstein is an open-source governance layer for AI agents. An adapter
 integrates an agent's actual interface with that layer: shell-based coding
 CLIs are one integration type, and SDK-backed interfaces are another.
 The workload may produce code or a declared artifact. An adapter does not

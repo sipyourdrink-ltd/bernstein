@@ -13,6 +13,7 @@ real tunnel binary, no real Vite dev server.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -194,3 +195,91 @@ def test_onboarding_token_makes_url_unique() -> None:
     b = pwa.compose_onboarding_url("https://x.example.com", pwa.new_auth_token())
     assert a.split("#", 1)[0] == b.split("#", 1)[0]
     assert a != b
+
+
+@pytest.mark.auth_enabled
+@pytest.mark.anyio
+async def test_e2e_authenticated_spa_sse_and_task_log_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authenticated create_app()+mount() serves /ui/ publicly and unlocks API, /events, and logs stream."""
+    import asyncio
+    import time
+
+    from httpx import ASGITransport, AsyncClient
+
+    from bernstein.core.run_auth_token import persist_run_auth_token, read_run_auth_token
+    from bernstein.core.server.dashboard_tokens import (
+        SCOPE_OPERATOR,
+        DashboardTokenRegistry,
+        resolve_dashboard_hmac_key,
+    )
+    from bernstein.core.server.server_app import create_app
+
+    token = "e2e-spa-bearer-token"
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", token)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+
+    sdd = tmp_path / ".sdd"
+    (sdd / "runtime").mkdir(parents=True)
+    persist_run_auth_token(tmp_path, token)
+    persisted = read_run_auth_token(tmp_path)
+    assert persisted == token
+
+    key = resolve_dashboard_hmac_key(sdd)
+    reg = DashboardTokenRegistry(sdd / "auth" / "dashboard_tokens.jsonl", hmac_key=key)
+    dash_tok, _ = reg.issue(principal="operator", scope=SCOPE_OPERATOR, now=int(time.time()))
+
+    app = create_app(jsonl_path=sdd / "runtime" / "tasks.jsonl")
+    mount(app)
+    hdr = {"Authorization": f"Bearer {persisted}"}
+    dash_hdr = {"Authorization": f"Bearer {dash_tok}"}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://127.0.0.1:8052") as c:
+        assert (await c.get("/ui/")).status_code == 200
+        assert (await c.get("/api/v1/tasks")).status_code == 401
+        assert (await c.get("/api/v1/events")).status_code == 401
+        for unauth_route in (
+            "/api/v1/tasks/missing/detail",
+            "/api/v1/tasks/missing/diff",
+            "/api/v1/tasks/missing/trace",
+            "/api/v1/tasks/missing/logs/stream",
+        ):
+            assert (await c.get(unauth_route)).status_code == 401
+
+        assert (await c.get("/api/v1/tasks", headers=hdr)).status_code == 200
+        created = await c.post(
+            "/api/v1/tasks",
+            json={"title": "Log stream task", "description": "Check SPA SSE", "role": "backend"},
+            headers=hdr,
+        )
+        assert created.status_code == 201
+        task_id = created.json()["id"]
+        assert (await c.post(f"/tasks/{task_id}/claim", json={"agent_id": "a1"}, headers=hdr)).status_code == 200
+        assert (
+            await c.post(f"/tasks/{task_id}/complete", json={"result_summary": "ok"}, headers=hdr)
+        ).status_code == 200
+
+        async with c.stream("GET", "/api/v1/events", headers=hdr) as events_resp:
+            assert events_resp.status_code == 200
+            assert "text/event-stream" in events_resp.headers.get("content-type", "")
+            lines = events_resp.aiter_lines()
+            first_line = await anext(lines)
+            assert "event: heartbeat" in first_line
+            asyncio.get_running_loop().call_later(0.05, app.state.sse_bus.publish, "heartbeat")
+
+        for task_route in (
+            f"/api/v1/tasks/{task_id}/detail",
+            f"/api/v1/tasks/{task_id}/diff",
+            f"/api/v1/tasks/{task_id}/trace",
+            f"/api/v1/tasks/{task_id}/logs/stream",
+        ):
+            assert (await c.get(task_route, headers=dash_hdr)).status_code == 401
+            if not task_route.endswith("/logs/stream"):
+                assert (await c.get(task_route, headers=hdr)).status_code == 200
+
+        async with c.stream("GET", f"/api/v1/tasks/{task_id}/logs/stream", headers=hdr) as logs_resp:
+            assert logs_resp.status_code == 200
+            assert "text/event-stream" in logs_resp.headers.get("content-type", "")
+            body = (await logs_resp.aread()).decode("utf-8")
+            assert "event: complete" in body

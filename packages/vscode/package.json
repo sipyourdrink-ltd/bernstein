@@ -1,7 +1,7 @@
 {
   "name": "bernstein",
   "displayName": "Bernstein - Governance Layer for AI Agents",
-  "description": "The open-source governance layer for AI agents, driven from your editor. Monitor tasks, agents, costs in real-time.",
+  "description": "An open-source governance layer for AI agents, driven from your editor. Monitor tasks, agents, costs in real-time.",
   "version": "0.2.1",
   "publisher": "alex-chernysh",
   "engines": { "vscode": "^1.100.0" },
@@ -101,7 +101,7 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "@types/vscode": "^1.100.0",
     "@vscode/vsce": "^4.0.0",
     "ovsx": "^1.0.0",

@@ -9,28 +9,26 @@ without further wiring.
 from __future__ import annotations
 
 import contextlib
-from typing import Final
+from typing import Any, Final
 
-from bernstein.core.observability.prometheus import (
-    Counter,
-    Gauge,
-    registry,
-)
+from bernstein.core.observability import prometheus as _prom
+
+_prom_mod: Any = _prom
 
 # Allowed outcomes - closed set to avoid label cardinality explosions.
 VALID_OUTCOMES: Final[frozenset[str]] = frozenset({"ok", "error", "rejected", "cancelled", "permission_denied"})
 
-acp_messages_total: Counter = Counter(
+acp_messages_total: Any = _prom_mod.Counter(
     "bernstein_acp_messages_total",
     "ACP JSON-RPC messages handled, partitioned by method and outcome.",
     labelnames=["method", "outcome"],
-    registry=registry,
+    registry=_prom_mod.registry,
 )
 
-acp_active_sessions: Gauge = Gauge(
+acp_active_sessions: Any = _prom_mod.Gauge(
     "bernstein_acp_active_sessions",
-    "Number of currently open ACP sessions.",
-    registry=registry,
+    "ACP currently open sessions.",
+    registry=_prom_mod.registry,
 )
 
 

@@ -140,6 +140,7 @@ def parse_diff(diff_text: str) -> list[FileDiff]:
 
     for line in diff_text.splitlines():
         if line.startswith("diff --git"):
+            _finalize_hunk(current_hunk_header, current_hunk_lines, current_start, current_end, current_hunks)
             _finalize_file(current_file, current_hunks, files)
             current_file = None
             current_hunks = []

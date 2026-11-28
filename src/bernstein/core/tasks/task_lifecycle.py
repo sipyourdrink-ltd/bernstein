@@ -448,12 +448,43 @@ def _operator_pinned_model(
     return None
 
 
+def _retry_adapter_is_claude_compatible(
+    role: str,
+    role_model_policy: dict[str, dict[str, Any]] | None,
+    default_adapter_name: str | None,
+) -> bool:
+    """Return whether the adapter that will run the retry routes Claude tier names.
+
+    The escalation ladder's rungs ("haiku"/"sonnet"/"opus") are Claude
+    routing labels. They mean something only when the adapter running the
+    retry is Claude-compatible; on any other adapter (an OpenAI-compatible
+    gateway, a provider-pinned role) a bare tier name has no route and must
+    never be stamped onto the retry (#6605).
+
+    The adapter is resolved the way spawn resolves it: the role's
+    ``role_model_policy.<role>.provider`` pin wins over the run-level
+    default adapter name. Callers that supply neither (legacy tests, ad-hoc
+    scripts) get ``True`` - the historical Claude-tier-always behaviour,
+    which is correct for Claude-only runs.
+    """
+    entry = role_model_policy.get(role) if isinstance(role_model_policy, dict) else None
+    adapter_for_role = (entry.get("provider") if isinstance(entry, dict) else None) or default_adapter_name
+    if isinstance(adapter_for_role, str) and adapter_for_role:
+        from bernstein.adapters.registry import adapter_name_for_provider
+        from bernstein.core.bandit_router import BanditRouter
+
+        resolved = adapter_name_for_provider(adapter_for_role, "") or adapter_for_role
+        return BanditRouter.router_applicable(resolved)
+    return True
+
+
 def _choose_retry_escalation(
     task: Task,
     next_retry: int,
     current_model: str | None,
     current_effort: str,
     pinned_model: str | None = None,
+    adapter_is_claude_compatible: bool = True,
 ) -> tuple[str | None, str]:
     """Decide model and effort for the retry based on terminal reason and context.
 
@@ -466,6 +497,14 @@ def _choose_retry_escalation(
     A supplied provider-prefixed model is retained instead of a bare Claude
     tier. With no model context, leave resolution to the adapter as on the
     first attempt. Effort follows the existing branch policy independently.
+
+    ``adapter_is_claude_compatible`` (see
+    :func:`_retry_adapter_is_claude_compatible`) gates the ladder itself: on a
+    non-Claude adapter the tier rungs have no route, so an unpinned tier label
+    is dropped (the spawn re-resolves the adapter's configured default, the
+    same source the first attempt used) and any other unprefixed name is
+    retained rather than escalated into a tier (#6605). Callers that omit it
+    get the historical Claude-tier ladder, correct for Claude-only runs.
 
     Returns (new_model, new_effort).
     """
@@ -484,6 +523,19 @@ def _choose_retry_escalation(
         # Retain the supplied provider/model identity; the local Claude ladder
         # cannot establish a replacement in that provider's model catalog.
         if "/" in current_model and escalated in _MODEL_LADDER:
+            return current_model
+        if not adapter_is_claude_compatible:
+            # The ladder's rungs are Claude routing labels with no route on
+            # this adapter (#6605). An unpinned tier label is an escalation
+            # artifact, not an operator pin - the first attempt's spawn
+            # coerced it to the adapter's configured default, so leaving the
+            # retry unset re-resolves that same default. A metadata
+            # ``pinned_model`` marker (e.g. an A/B comparison) makes the tier
+            # name a genuine pin; any other unprefixed name is a real model
+            # identity and is retained, never escalated into a tier.
+            task_metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            if current_model in _MODEL_LADDER and not task_metadata.get("pinned_model"):
+                return None
             return current_model
         return escalated
 
@@ -706,6 +758,7 @@ def maybe_retry_task(
     session_id: str | None = None,
     role_model_policy: dict[str, dict[str, Any]] | None = None,
     run_pinned_model: str | None = None,
+    default_adapter_name: str | None = None,
 ) -> bool:
     """Queue a retry for a failed task with model/effort escalation.
 
@@ -715,7 +768,12 @@ def maybe_retry_task(
     Model escalation applies only when the operator did not name a model. A
     per-role ``role_model_policy.<role>.model`` or a run-level ``--model``
     (threaded in as ``run_pinned_model``) is carried through every retry
-    verbatim - see :func:`_operator_pinned_model` and #4274.
+    verbatim - see :func:`_operator_pinned_model` and #4274. When the retrying
+    role's adapter is not Claude-compatible (see
+    :func:`_retry_adapter_is_claude_compatible`), the tier ladder is skipped
+    entirely: an unpinned tier label is left unset so the spawn re-resolves
+    the adapter's configured default, and no other unprefixed name is
+    escalated into a tier the adapter cannot route (#6605).
 
     Args:
         task: The failed task to potentially retry.
@@ -728,9 +786,13 @@ def maybe_retry_task(
         workdir: Optional repo root used to inspect the failed agent log.
         session_id: Optional failed session ID for failure-context extraction.
         role_model_policy: Optional ``AgentSpawner.role_model_policy`` snapshot,
-            read for its per-role ``model`` pin.
+            read for its per-role ``model`` pin and ``provider`` adapter pin.
         run_pinned_model: Optional run-level ``--model`` pin
             (``AgentSpawner.default_model``).
+        default_adapter_name: Optional ``AgentSpawner.default_adapter_name``,
+            the run-level adapter the compatibility check falls back to when
+            the role has no ``provider`` pin. Callers that omit it (legacy
+            tests, ad-hoc scripts) get the historical Claude-tier ladder.
 
     Returns:
         True if a retry task was created, False otherwise.
@@ -784,12 +846,25 @@ def maybe_retry_task(
     current_effort = task.effort or "high"
 
     pinned_model = _operator_pinned_model(task.role, role_model_policy, run_pinned_model)
+    adapter_is_claude_compatible = _retry_adapter_is_claude_compatible(
+        task.role, role_model_policy, default_adapter_name
+    )
+    logger.info(
+        "Retry escalation adapter check for task %s (role=%s): "
+        "role_model_policy_provider=%r default_adapter_name=%r claude_compatible=%s",
+        task.id,
+        task.role,
+        (role_model_policy.get(task.role, {}) if isinstance(role_model_policy, dict) else {}).get("provider"),
+        default_adapter_name,
+        adapter_is_claude_compatible,
+    )
     new_model, escalated_effort = _choose_retry_escalation(
         task,
         next_retry,
         current_model,
         current_effort,
         pinned_model=pinned_model,
+        adapter_is_claude_compatible=adapter_is_claude_compatible,
     )
     # An effort-only override skips role-template resolution at spawn. When
     # the model was never resolved here, replay both original inputs instead
@@ -848,6 +923,7 @@ def maybe_retry_task(
         "role": task.role,
         "priority": task.priority,
         "scope": task.scope.value,
+        "dispatch_tier": task.dispatch_tier.value,
         "complexity": task.complexity.value,
         "estimated_minutes": progressive_minutes,
         "model": new_model,
@@ -1464,8 +1540,7 @@ def retry_or_fail_task(
         # value that has to be coerced/papered over downstream in
         # spawner_core.py. Callers that don't pass role_model_policy /
         # default_adapter_name (legacy tests, ad-hoc scripts) get
-        # ``adapter_for_role is None`` -> treated as Claude-compatible,
-        # i.e. today's historical behavior, unchanged.
+        # Claude-compatible -> today's historical behavior, unchanged.
         role_policy_entry = role_model_policy.get(task.role, {}) if isinstance(role_model_policy, dict) else {}
         pinned_model = role_policy_entry.get("model") if isinstance(role_policy_entry, dict) else None
         # The two pin routes converge here (#4274). The adapter check below
@@ -1476,24 +1551,18 @@ def retry_or_fail_task(
         # with "opus" anyway. The pin is now honoured on its own merit,
         # whatever the adapter turns out to be.
         operator_pinned_model = _operator_pinned_model(task.role, role_model_policy, run_pinned_model)
-        adapter_for_role = (
-            role_policy_entry.get("provider") if isinstance(role_policy_entry, dict) else None
-        ) or default_adapter_name
-        adapter_is_claude_compatible = True
-        if isinstance(adapter_for_role, str) and adapter_for_role:
-            from bernstein.core.bandit_router import BanditRouter
-
-            adapter_is_claude_compatible = BanditRouter.router_applicable(adapter_for_role)
+        adapter_is_claude_compatible = _retry_adapter_is_claude_compatible(
+            task.role, role_model_policy, default_adapter_name
+        )
         logger.info(
             "Retry escalation adapter check for task %s (role=%s): "
             "role_policy_provider=%r role_policy_model=%r default_adapter_name=%r "
-            "-> adapter_for_role=%r claude_compatible=%s",
+            "claude_compatible=%s",
             task_id,
             task.role,
             role_policy_entry.get("provider"),
             pinned_model,
             default_adapter_name,
-            adapter_for_role,
             adapter_is_claude_compatible,
         )
 
@@ -1521,7 +1590,20 @@ def retry_or_fail_task(
         elif adapter_is_claude_compatible:
             retry_model = tier_model
         else:
-            retry_model = pinned_model or task.model  # type: ignore[assignment]  # dynamic status
+            # Non-Claude adapter, no operator pin: the tier ladder's rungs
+            # have no route on the configured endpoint (#6605). An unpinned
+            # tier label is an escalation artifact, not a pin - leave the
+            # model unset so the spawn re-resolves the adapter's configured
+            # default, the same source the first attempt used (mirrors
+            # _choose_retry_escalation). A metadata ``pinned_model`` marker
+            # makes the tier name a genuine pin; any other unprefixed name
+            # is a real model identity and is retained.
+            task_metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            if task.model in _MODEL_LADDER and not task_metadata.get("pinned_model"):
+                retry_model = None
+                retry_effort = task.effort
+            else:
+                retry_model = pinned_model or task.model  # type: ignore[assignment]  # dynamic status
 
         logger.info(
             "Retry model decision for task %s (role=%s, retry_count=%s, scope=%s): "
@@ -1617,6 +1699,7 @@ def retry_or_fail_task(
             "role": task.role,
             "priority": task.priority,
             "scope": task.scope.value,
+            "dispatch_tier": task.dispatch_tier.value,
             "complexity": task.complexity.value,
             "estimated_minutes": progressive_minutes,
             "depends_on": task.depends_on,
@@ -2199,6 +2282,7 @@ def _claim_task_with_conflict_retry(
     task: Task,
     base: str,
     session_id: str | None,
+    node_id: str | None = None,
 ) -> tuple[httpx.Response | None, str | None]:
     """POST ``/tasks/{id}/claim``, recovering from stale-version 409s instead of looping forever.
 
@@ -2229,6 +2313,13 @@ def _claim_task_with_conflict_retry(
          bounded retries rather than an infinite tight loop.
     Retries within one call are capped at ``_CLAIM_CONFLICT_MAX_ATTEMPTS``.
 
+    ``node_id`` is the cluster-registry ID this orchestrator registered
+    under (from its heartbeat client), sent alongside the parent
+    ``session_id`` so the server's health gate can judge the registered
+    node while the parent session stays the recorded claim owner (#7853).
+    ``None`` on a single-host run with no registration; the param is then
+    omitted and the claim behaves as before.
+
     Per-attempt status and retry preparation are logged at DEBUG. Conflict
     outcomes are logged at INFO or WARNING.
 
@@ -2245,6 +2336,8 @@ def _claim_task_with_conflict_retry(
         params: dict[str, Any] = {"expected_version": current_task.version}
         if session_id is not None:
             params["claimed_by_session"] = session_id
+        if node_id is not None:
+            params["node_id"] = node_id
         resp = orch._client.post(f"{base}/tasks/{current_task.id}/claim", params=params)
         logger.debug(
             "claim attempt %d/%d task=%s sent_version=%s -> HTTP %d",
@@ -2805,6 +2898,11 @@ def claim_and_spawn_batches(
         claim_failed = False
         claimed_tasks: list[Task] = []
         _orch_session_id: str | None = getattr(orch, "session_id", None)
+        # The registry-assigned node ID, distinct from the parent session
+        # recorded as claim owner: the server's by-ID health gate keys on
+        # it (#7853). None until the heartbeat client has registered (and
+        # on single-host runs, where no gate applies).
+        _orch_node_id: str | None = getattr(getattr(orch, "_heartbeat_client", None), "node_id", None)
         for task in batch:
             if _claim_conflict_backoff_active(orch, task.id):
                 logger.debug(
@@ -2815,7 +2913,9 @@ def claim_and_spawn_batches(
                 claim_failed = True
                 break
             try:
-                resp, conflict_reason = _claim_task_with_conflict_retry(orch, task, base, _orch_session_id)
+                resp, conflict_reason = _claim_task_with_conflict_retry(
+                    orch, task, base, _orch_session_id, _orch_node_id
+                )
                 if conflict_reason is not None:
                     _record_claim_conflict_episode(orch, task.id)
                     result.errors.append(f"claim:{task.id}: {conflict_reason}")

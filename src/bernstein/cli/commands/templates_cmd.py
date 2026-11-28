@@ -120,7 +120,7 @@ def templates_list() -> None:
 
 @templates_group.command("use")
 @click.argument("template_name")
-@click.argument("output", required=False, default=None)
+@click.argument("output", required=False, type=click.Path(dir_okay=False, readable=False), default=None)
 def templates_use(template_name: str, output: str | None) -> None:
     """Copy TEMPLATE_NAME to OUTPUT (default: plans/<name>.yaml).
 
@@ -128,6 +128,10 @@ def templates_use(template_name: str, output: str | None) -> None:
 
         bernstein templates use rest-api plans/my-api.yaml
     """
+    from rich.text import Text
+
+    from bernstein.core.config.platform_compat import shell_quote
+
     tdir = _templates_dir()
     if tdir is None:
         console.print(_TEMPLATES_NOT_FOUND_MSG)
@@ -142,17 +146,24 @@ def templates_use(template_name: str, output: str | None) -> None:
         raise SystemExit(1)
 
     dest = Path(output) if output else Path("plans") / f"{template_name}.yaml"
+    if dest.is_dir():
+        # The OUTPUT argument is rejected by its click.Path type; the computed
+        # default needs the same guard or confirming the prompt would copy into
+        # the directory and overwrite a child the prompt never identified.
+        raise click.UsageError(f"Output {str(dest)!r} is a directory.")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    filename = str(dest)
 
     if dest.exists():
-        console.print(f"[yellow]File already exists:[/yellow] {dest}")
+        console.print("[yellow]File already exists:[/yellow]", Text(filename), soft_wrap=True)
         if not click.confirm("Overwrite?", default=False):
             console.print("[dim]Cancelled.[/dim]")
             return
 
     shutil.copy2(src, dest)
-    console.print(f"[green]Created[/green] [bold]{dest}[/bold]")
-    console.print(f"[dim]Edit the plan, then run:[/dim] [bold]bernstein run {dest}[/bold]")
+    console.print("[green]Created[/green]", Text(filename, style="bold"), soft_wrap=True)
+    command = Text(f"bernstein run {shell_quote(filename)}", style="bold")
+    console.print("[dim]Edit the plan, then run:[/dim]", command, soft_wrap=True)
 
 
 @templates_group.command("show")

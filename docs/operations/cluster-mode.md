@@ -542,66 +542,63 @@ Governed workloads' OTLP spans reach the ingest boundary under the source label
 spans came from. Nothing here sits in a workload's data path, and there is no
 admission webhook: a workload is never blocked from starting.
 
-## Proposed remote delivery and base contract (not implemented)
+## Remote delivery, base sync, and repository identity
 
-Issue #6538 is partially implemented on main: workers already push an agent
-branch and report its SHA, and the coordinator has a remote verification path.
-The remaining contract needs a public claim-schema and repository-identity
-decision. `WorkerLoop._claim_task` accepts the task dictionary without a run
-base or repository check; `_spawn_agent` passes it to the ordinary spawner.
-`WorktreeManager.create` consequently branches from the worker's local HEAD,
-which can predate accepted work on the coordinator.
+Issue #6538 is implemented on main in three parts.
 
-Proposed boundary for review:
+**Delivery.** After a clean agent exit the worker pushes `agent/{session_id}`
+to its configured `origin` and reports the branch and head SHA on
+`/tasks/{id}/complete` (`agent_branch` / `agent_sha`). The central fetches
+that ref before its auto-commit hook, so the standard gate pipeline merges
+the work as if the agent ran locally. A push failure fails the task instead
+of completing it: work that never leaves the node is not a completion.
 
-- Add a versioned execution context to a remote claim, binding run, task,
-  attempt, configured repository identity, base ref and exact base SHA.
-  Decide the durable repository identifier and compatibility policy first;
-  a matching root commit alone does not distinguish forks or separate runs.
-- Fetch only from the worker's configured trusted remote, verify repository
-  identity and the supplied ref/SHA relationship, then create the task
-  worktree at that exact SHA. Never execute a URL supplied in a claim.
-- Bind the delivered branch and SHA to that claim context. Require the
-  coordinator to resolve and verify the delivered commit before accepting a
-  remote code-diff report. Existing quality, approval, tenant and merge gates
-  still govern final acceptance; a process exit code is not their substitute.
-- Define old-worker/old-coordinator behavior explicitly. Missing context must
-  not silently fall back to local HEAD for claims requiring this contract.
-- Use ordinary pushes and commit hooks, with no force-push or verification
-  bypass. Preserve the existing artifact-mode completion contract and the
-  distinction between a reported `done` task and verified/merged `closed` work.
+**Base sync.** Before spawning a claimed task, the worker fetches the run
+branch from its configured `origin` - never a URL taken from the claim - and
+fast-forwards the workspace checkout to the fetched head
+(`WorkerLoop._sync_task_base`), so the task worktree branches from the run
+branch's current head instead of the clone-time commit. A claim may carry
+`base_ref` / `base_sha`: `base_ref` must match the workspace's checked-out
+branch, and `base_sha` must be reachable from the fetched head. A failed
+fetch, a non-fast-forwardable workspace, or an unreachable claimed base
+refuses the claim; refusal releases the task back to the pool rather than
+running it on a stale or unverified base.
 
-Numbered implementation test matrix (proposed, not shipped tests):
+**Repository identity.** Claim responses (`GET /tasks/next/{role}`) stamp
+`repo_root_commit`, the central workspace's root commit. A worker whose
+workspace root commit differs refuses the claim before any spawn and stops
+claiming from that central (the mismatch is a property of the workspace, not
+of one task); restart the worker with a checkout of the run's repository.
+Claims with no stamped identity (an older central) are not checked.
 
-1. `test_remote_task_worktree_includes_the_coordinator_latest_commit`:
-   advance the coordinator after cloning the worker; a real task worktree
-   contains the exact claimed base SHA and the accepted upstream change.
-2. `test_repository_mismatch_refuses_claim_before_agent_spawn`:
-   two synthetic repositories cannot exchange work under a valid credential.
-3. `test_claimed_base_ref_must_resolve_to_the_claimed_sha`:
-   moved, unavailable or inconsistent refs cannot start an agent.
-4. `test_remote_completion_requires_the_delivered_branch_and_exact_sha`:
-   a clean exit produces a resolvable delivery; failed delivery never reports
-   successful completion. Use local bare repositories, with no external calls.
-5. `test_remote_delivery_cannot_replace_existing_branch_history`:
+Worker-side coverage lives in `tests/unit/test_worker_cmd_base_sync.py`
+(worktree created from the fetched base SHA, fetch failure refuses the
+claim, claimed `base_sha` must be reachable, repository mismatch refuses the
+claim and latches) and `tests/unit/test_worker_cmd_reporting.py` (clean exit
+reports branch and SHA, failed push fails the task);
+`tests/unit/test_task_claim_repo_identity.py` pins the stamped claim
+response field.
+
+Still proposed (not implemented): a versioned execution context binding run,
+task, attempt, repository identity, base ref and exact base SHA into one
+structure (a root commit alone does not distinguish forks or separate runs);
+the central stamping `base_ref` / `base_sha` on every claim; binding the
+delivered branch and SHA to that context at acceptance time; and replacing
+the delivery force-push with ordinary pushes only. The remaining matrix for
+that work:
+
+1. `test_remote_delivery_cannot_replace_existing_branch_history`:
    conflicting branch history and failing hooks stop delivery without a force
    update or hook bypass.
-6. `test_remote_delivery_remains_pending_until_native_acceptance`:
+2. `test_remote_delivery_remains_pending_until_native_acceptance`:
    the actual coordinator rejects failed signals, approvals or merge gates;
    accepted work becomes a commit on the run branch before final closure.
-7. `test_stale_remote_attempt_cannot_complete_a_reclaimed_task`:
+3. `test_stale_remote_attempt_cannot_complete_a_reclaimed_task`:
    bind the report to its run/task/attempt and reject stale or duplicate reports
    according to the existing completion fencing contract.
-8. `test_legacy_remote_claims_follow_the_approved_compatibility_policy`:
+4. `test_legacy_remote_claims_follow_the_approved_compatibility_policy`:
    missing context, artifact-mode tasks and coordinator restarts preserve the
    chosen compatibility and recovery behavior without guessing a base.
-
-Evidence on main at `b80e0aa71`: a pytest fixture cloned a synthetic local Git
-repository, advanced the coordinator, and called the same
-`WorktreeManager.create` used by the worker spawner. The worktree retained the
-old commit, failing the first property. This isolates the Git base defect; it
-does not claim end-to-end worker or repository-authentication coverage. No
-production code is changed by this proposal.
 
 ## Code pointers
 
@@ -612,9 +609,85 @@ production code is changed by this proposal.
 | JWT cluster auth                 | `src/bernstein/core/protocols/cluster/cluster_auth.py`                          |
 | Task-stealing policy             | `src/bernstein/core/protocols/cluster/cluster.py:340-393`                       |
 | Worker CLI                       | `src/bernstein/cli/commands/worker_cmd.py`                                      |
-| Worker run loop                  | `src/bernstein/cli/commands/worker_cmd.py:50-368`                               |
+| Worker run loop                  | `src/bernstein/cli/commands/worker_cmd.py:83-996`                               |
 | Heartbeat client (library)       | `src/bernstein/core/protocols/cluster/cluster.py:396-...`                       |
 | Cluster autoscaler (optional)    | `src/bernstein/core/protocols/cluster/cluster_autoscaler.py`                    |
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
-| Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+| Models / data classes            | `src/bernstein/core/tasks/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+
+### Consistent hash ring primitive
+
+The internal `HashRing` maps UTF-8 node keys to shard IDs using the first
+eight SHA-256 bytes as a big-endian integer. Virtual-node keys are
+`<shard-id>#<index>`; lookup selects the first clockwise token and wraps
+around at the end. An empty ring rejects lookups. `ShardMap` keeps the
+configured URL metadata for each local partition. When `cluster.shards` is
+configured, the running `NodeRegistry` uses the ring to select separate local
+storage partitions inside that one registry process. All existing node routes
+operate on that storage; the URLs do not trigger remote requests.
+
+The default is `shards: {}` and `shard_vnodes: 128`. Empty shards keep the
+existing single dictionary, routes and persistence format unchanged. To opt in:
+
+```yaml
+cluster:
+  enabled: true
+  shards:
+    partition-a: https://metadata.example/partition-a
+    partition-b: https://metadata.example/partition-b
+  shard_vnodes: 128
+```
+
+Shard IDs must be unique ASCII identifiers matching
+`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`; at most 256 are accepted. URLs must be
+absolute HTTP(S) URLs with a hostname and valid port, without credentials,
+whitespace, ASCII control characters, query or fragment. A path prefix is allowed. `shard_vnodes` must be
+an integer from 1 to 1024; booleans, floats and numeric strings are rejected.
+Invalid values fail config loading, including direct `ClusterConfig` construction
+(the runtime `shards` value is a tuple of ID/URL pairs).
+
+This partitions storage inside one process and makes no distributed-scaling
+guarantee. Ring membership is fixed for that registry's lifetime; restart reloads
+the existing flat node file through the configured ring. Changing configuration
+is not an online migration protocol. HTTP shard-map discovery, 421 responses,
+forwarding and client/relay routing are outside this feature.
+
+## Worker health telemetry
+
+Heartbeats accept optional `disk_free_mb`, `mem_used_pct`, `mesh_rtt_ms` and
+`platform` fields inside `capacity`. Existing payloads remain accepted.
+Heartbeat responses, `GET /cluster/nodes` and `GET /cluster/status` return
+the recorded telemetry in each node's `capacity`, with `null` for missing values.
+The registry marks a worker `unhealthy:disk`, `unhealthy:memory` or
+`unhealthy:mesh-rtt` when its reported telemetry exceeds the configured
+thresholds. The registry skips unhealthy workers when selecting a node for a
+task or choosing a recipient for task stealing. A `bernstein worker` pull
+waits for recovery before claiming more work, and so does a claim for a
+specific task by ID (#7853).
+
+Both claim endpoints find the registered node behind a claim the same way.
+The registry assigns each node an ID at registration, which is not the parent
+orchestrator session a claim records as its owner, so the claim names the
+node explicitly in a `node_id` query parameter; `claimed_by_session` stays
+the recorded owner. A client that sends no `node_id` (older clients, the
+`bernstein worker` loop, which passes its node ID as `claimed_by_session`)
+is matched on `claimed_by_session` instead. The lookup keys on the presented
+identifiers, never on the request URL, so deployments serving the registry
+and the task server under separate URLs resolve the same node. A claimant
+the task server's registry does not know - a single-host run with no
+registration, or a node registered with a separate registry deployment -
+is not gated: the health check can only judge a node the server can see.
+A refused by-ID claim answers `409` and leaves the task open, so the
+orchestrator's bounded claim retry picks it up again once the node reports
+recovery.
+
+Multiple reasons are comma separated. Recovery resets `unhealthy_since`.
+
+Cluster seed keys `min_disk_free_mb` (512), `max_mem_used_pct` (95.0) and
+`max_mesh_rtt_ms` (5000.0) set the thresholds. Missing telemetry contributes
+no failure reason until the first reading. Omitting a later reading preserves
+the last observed value. Local workers report free disk space for their workspace,
+platform, and memory use when available. Mesh RTT is optional. The platform string is informational. Telemetry is not
+a substitute for authentication, and does not override cordon/drain intent.

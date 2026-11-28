@@ -2,7 +2,7 @@ site_name: Bernstein
 site_url: https://docs.bernstein.run/
 site_author: Alex Chernysh
 site_description: >-
-  The open-source governance layer for AI agents. No model in the coordination
+  An open-source governance layer for AI agents. No model in the coordination
   loop, so parallel runs in per-task git worktrees replay byte-identically.
   Signed lineage and an opt-in HMAC audit chain, air-gap friendly.
 repo_url: https://github.com/sipyourdrink-ltd/bernstein
@@ -121,6 +121,12 @@ plugins:
         'quickstart/remote.md': 'getting-started/remote.md'
         'operations/observability.md': 'operations/error-telemetry.md'
         'security/security-acknowledgments.md': 'security/bug-bounty.md'
+        'blog/ten-agents-one-release.md': 'https://bernstein.run/blog'
+        'blog/zero-llm-coordination.md': 'https://bernstein.run/blog'
+        'blog/multi-agent-benchmark.md': 'https://bernstein.run/blog'
+        'blog/self-evolution-30-days.md': 'https://bernstein.run/blog'
+        'blog/cobol-modernization.md': 'https://bernstein.run/blog'
+        'blog/v1.9-four-commands-last-mile.md': 'https://bernstein.run/blog'
   - minify:
       minify_html: true
 
@@ -170,16 +176,10 @@ nav:
           - Tamper-evident audit trail: use-cases/tamper-evident-audit-trail.md
           - Signed results from untrusted workers: use-cases/signed-worker-results.md
       - Scope (what this does not do): scope.md
+      - Enforced invariants: invariants.md
       - What's new: whats-new.md
       - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md
-      - Blog:
-          - Ten agents one release: blog/ten-agents-one-release.md
-          - Zero-LLM coordination: blog/zero-llm-coordination.md
-          - Multi-agent benchmark: blog/multi-agent-benchmark.md
-          - Self-evolution 30 days: blog/self-evolution-30-days.md
-          - COBOL modernization: blog/cobol-modernization.md
-          - v1.9 four commands: blog/v1.9-four-commands-last-mile.md
   - Get started:
       - getting-started/index.md
       - Install: getting-started/install.md
@@ -349,6 +349,7 @@ nav:
           - Schedule: operations/schedule.md
           - Resume: operations/resume.md
           - Replay: operations/replay.md
+          - Compare render receipts: operations/render-pairs.md
           - Seal anchors: operations/seal.md
           - Fork from step: operations/fork-from-step.md
           - Simulate: operations/simulate.md
@@ -586,6 +587,9 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v4.0.2: release-notes/v4.0.2.md
+          - v4.0.1: release-notes/v4.0.1.md
+          - v4.0.0: release-notes/v4.0.0.md
           - v3.24.0: release-notes/v3.24.0.md
           - v3.23.0: release-notes/v3.23.0.md
           - v3.22.0: release-notes/v3.22.0.md
@@ -768,4 +772,5 @@ exclude_docs: |
   /templates/
   _internal/
   /assets/*.md
+  /release-notes/fragments/7082-landed-group-release.md
   /i18n/

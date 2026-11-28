@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import pytest
+from rich.console import Console
+from rich.style import Style
 
 from bernstein.tui.diff_render import render_word_diff, word_diff
 
@@ -93,54 +95,39 @@ class TestWordDiff:
 class TestRenderWordDiff:
     """Tests for bernstein.diff_render.render_word_diff."""
 
-    def _mock_console(self) -> MagicMock:
-        """Return a mock Rich Console."""
-        return MagicMock()
-
-    def _last_print_call(self, console: MagicMock) -> str:
-        """Extract the string passed to the last console.print call."""
-        assert console.print.called
-        args, _kwargs = console.print.call_args
-        return args[0]
+    def _styled_lines(self, old_line: str, new_line: str) -> list[str]:
+        console = Console(width=80, color_system="standard", force_terminal=True, no_color=False, highlight=False)
+        with console.capture() as capture:
+            render_word_diff(console, old_line, new_line)
+        return capture.get().splitlines()
 
     def test_render_identical_lines(self) -> None:
-        console = self._mock_console()
-        render_word_diff(console, "identical", "identical")
-        assert console.print.call_count == 2
-        # Both lines should NOT contain any markup for changed text
-        last = self._last_print_call(console)
-        assert "[bold green]" not in last
-        assert "[strike green]" not in last
+        old, new = self._styled_lines("identical", "identical")
+        assert old.endswith(" identical")
+        assert new.endswith(" identical")
 
     def test_render_replaced_word(self) -> None:
-        console = self._mock_console()
-        render_word_diff(console, "hello world", "hello there")
-        assert console.print.call_count == 2
-        second_call = self._last_print_call(console)
-        assert "[bold green]" in second_call  # "there" should be bold green
+        _, new = self._styled_lines("hello world", "hello there")
+        assert new.endswith("hello " + Style.parse("bold green").render("there"))
 
     def test_render_deleted_word(self) -> None:
-        console = self._mock_console()
-        render_word_diff(console, "hello world", "hello")
-        calls = [args[0] for args, _ in console.print.call_args_list]
-        # First line (old) should have strikethrough for "world"
-        assert any("[strike green]" in call for call in calls)
-
-    def test_render_escapes_brackets(self) -> None:
-        """Brackets in text should be escaped so Rich doesn't crash."""
-        console = self._mock_console()
-        render_word_diff(console, "[old]", "[new]")
-        assert console.print.call_count == 2
-        # Ensure raw brackets are escaped
-        calls = [args[0] for args, _ in console.print.call_args_list]
-        for call in calls:
-            # Should contain \[  or \]  somewhere in the markup
-            assert "\\[" in call or "\\]" in call
+        old, _ = self._styled_lines("hello world", "hello")
+        assert old.endswith(Style.parse("strike green").render("world"))
 
     def test_render_prefix(self) -> None:
         """Each printed line should start with a dim - or + prefix."""
-        console = self._mock_console()
-        render_word_diff(console, "before", "after")
-        calls = [args[0] for args, _ in console.print.call_args_list]
-        assert "[dim]-[/]" in calls[0]
-        assert "[dim]+[/]" in calls[1]
+        old, new = self._styled_lines("before", "after")
+        assert old.startswith("  " + Style(dim=True).render("-") + " ")
+        assert new.startswith("  " + Style(dim=True).render("+") + " ")
+
+
+@pytest.mark.parametrize(
+    ("old_line", "new_line"),
+    [("items[0]", "items[1]"), ("[old]", "[new]"), ("items[bold]", "values[bold]")],
+    ids=["index", "bracketed-word", "literal-style-name"],
+)
+def test_word_diff_prints_literal_index_brackets(old_line: str, new_line: str) -> None:
+    console = Console(width=80, color_system=None, highlight=False)
+    with console.capture() as capture:
+        render_word_diff(console, old_line, new_line)
+    assert capture.get() == f"  - {old_line}\n  + {new_line}\n"

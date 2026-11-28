@@ -37,7 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.protocols.acp.schema import (
     INVALID_REQUEST,
@@ -96,8 +96,9 @@ def is_terminal_frame(frame: dict[str, Any]) -> tuple[bool, str]:
     """
     if "error" in frame:
         return True, "error"
-    result = frame.get("result")
-    if isinstance(result, dict):
+    result_raw = frame.get("result")
+    if isinstance(result_raw, dict):
+        result = cast("dict[str, Any]", result_raw)
         stop_reason = result.get("stopReason")
         if isinstance(stop_reason, str) and stop_reason:
             return True, stop_reason
@@ -153,9 +154,10 @@ def parse_inbound_frame(raw: bytes | str, *, seq: int) -> ACPEvent:
             request/response schema validation. The frame is refused at the
             boundary; the caller journals nothing for it.
     """
-    decoded = JsonRpcFraming.parse(raw)
-    if not isinstance(decoded, dict):
+    decoded_raw = JsonRpcFraming.parse(raw)
+    if not isinstance(decoded_raw, dict):
         raise ACPSchemaError(INVALID_REQUEST, "frame must be a JSON object")
+    decoded = cast("dict[str, Any]", decoded_raw)
 
     if "method" in decoded:
         parsed = validate_request(decoded)

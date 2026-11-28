@@ -37,7 +37,7 @@ def forecast_monthly_spend(
 
     Args:
         metrics_dir: Path to .sdd/metrics directory.
-        current_day: Current day of month (1-30). If None, auto-detect.
+        current_day: Current day of the month. If None, auto-detect.
         total_days: Total days in month (default 30).
 
     Returns:
@@ -61,7 +61,7 @@ def forecast_monthly_spend(
     daily_spend = current_spend / days_elapsed
 
     # Project remaining spend
-    days_remaining = total_days - days_elapsed
+    days_remaining = max(0, total_days - days_elapsed)
     projected_remaining = daily_spend * days_remaining
     projected_monthly = current_spend + projected_remaining
 

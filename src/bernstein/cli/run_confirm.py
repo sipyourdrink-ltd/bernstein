@@ -346,6 +346,19 @@ def detect_available_adapter() -> str | None:
     return None
 
 
+def _config_cli_value(adapter: str) -> str:
+    """Return a schema-valid ``cli:`` layer value for ``.sdd/config.yaml``.
+
+    Non-selectable stub adapters such as ``mock`` are pinned directly through
+    ``bootstrap_from_goal(..., cli="mock")`` at runtime, whereas writing
+    ``cli: mock`` into ``.sdd/config.yaml`` triggers ``LayerValidationError``
+    whenever config layers are resolved.
+    """
+    from bernstein.core.config.seed_parser import valid_cli_selections
+
+    return adapter if adapter in valid_cli_selections() else "auto"
+
+
 def setup_demo_project(project_dir: Path, adapter: str) -> None:
     """Copy demo template files, seed the backlog, and init a git repo.
 
@@ -355,8 +368,11 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
     """
     import shutil as _shutil
 
-    # Copy template files from templates/demo/
-    template_dir = Path(__file__).parent.parent.parent.parent / "templates" / "demo"
+    # Copy template files from templates/demo/ (source checkout) or the
+    # packaged wheel copy under bernstein/_demo_template/.
+    repo_template_dir = Path(__file__).parent.parent.parent.parent / "templates" / "demo"
+    wheel_template_dir = Path(__file__).parent.parent / "_demo_template"
+    template_dir = repo_template_dir if repo_template_dir.exists() else wheel_template_dir
     if template_dir.exists():
         _shutil.copytree(str(template_dir), str(project_dir), dirs_exist_ok=True)
     else:
@@ -409,7 +425,7 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
             "def test_hello_returns_200(client):\n"
             '    """BUG 4: asserts 404 instead of 200."""\n'
             '    resp = client.get("/")\n'
-            "    assert resp.status_code == 404  # wrong: should be 200\n\n\n"
+            "    assert resp.status_code == 404  # wrong - should be 200\n\n\n"
             "def test_hello_json_structure(client):\n"
             '    resp = client.get("/")\n'
             "    data = resp.get_json()\n"
@@ -425,6 +441,19 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
             "    assert resp.status_code == 200\n"
         )
 
+    # Ensure bernstein.yaml exists with an explicit merge-gate policy even in
+    # the inline fallback (pip/wheel without templates/demo) so run_started
+    # journals gate_config and `bernstein trace export` works out of the box.
+    if not (project_dir / "bernstein.yaml").exists():
+        (project_dir / "bernstein.yaml").write_text(
+            'goal: "Demo: implement a Flask REST API with health check, echo endpoint, and tests"\n'
+            "cli: auto\n"
+            "max_agents: 2\n"
+            'budget: "$2.00"\n'
+            "quality_gates:\n"
+            "  enabled: false\n"
+        )
+
     # Create .sdd/ structure
     for d in SDD_DIRS:
         (project_dir / d).mkdir(parents=True, exist_ok=True)
@@ -435,7 +464,7 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
         "max_workers: 2\n"
         "default_model: sonnet\n"
         "default_effort: normal\n"
-        f"cli: {adapter}\n"
+        f"cli: {_config_cli_value(adapter)}\n"
     )
     (project_dir / ".sdd" / "runtime" / ".gitignore").write_text("*.pid\n*.log\ntasks.jsonl\n")
 
@@ -631,10 +660,12 @@ def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed
     ruler = "\u2500" * 42
     console.print(f"\n[bold cyan]\u2500\u2500 Demo Summary {ruler}[/bold cyan]")
 
+    all_done = total > 0 and done >= total and failed == 0
+    bugs_style = "green" if all_done else "yellow"
     table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA, show_lines=False)
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
-    table.add_row("Bugs fixed", f"[green]{done}[/green] / {total}")
+    table.add_row("Bugs fixed", f"[{bugs_style}]{done}[/{bugs_style}] / {total}")
     if failed:
         table.add_row("Tasks failed", f"[red]{failed}[/red]")
     if outcome is not None and not outcome.server_reachable:
@@ -647,18 +678,78 @@ def _print_demo_summary(project_dir: Path, outcome: _DemoOutcome | None, elapsed
     table.add_row("API cost", f"${total_cost:.4f}")
     console.print(table)
 
-    # Governance story
-    console.print(
-        "\n[dim]Every agent decision was logged. "
-        "Run [bold]bernstein audit verify --merkle-only[/bold] to inspect the audit trail.[/dim]"
-    )
+    # Governance story: direct `audit verify --merkle-only` only applies when a
+    # Merkle seal and audit records exist on disk; `SDD_DIRS` creates an empty
+    # `.sdd/audit/` directory even when auditing is disabled.
+    audit_dir = project_dir / ".sdd" / "audit"
+    merkle_dir = audit_dir / "merkle"
+    has_audit_events = audit_dir.is_dir() and any(audit_dir.glob("*.jsonl"))
+    if has_audit_events and merkle_dir.is_dir() and any(merkle_dir.iterdir()):
+        console.print(
+            "\n[dim]Every agent decision was logged. "
+            "Run [bold]bernstein audit verify --merkle-only[/bold] to inspect the audit trail.[/dim]"
+        )
+    elif has_audit_events:
+        console.print(
+            "\n[dim]Audit events were logged. "
+            "Run [bold]bernstein audit seal && bernstein audit verify --merkle-only[/bold] "
+            "to seal and inspect the audit trail.[/dim]"
+        )
+    else:
+        console.print(
+            "\n[dim]Set [bold]BERNSTEIN_AUDIT=1[/bold] on a run to record an HMAC+Merkle audit trail "
+            "([bold]bernstein audit seal && bernstein audit verify --merkle-only[/bold]).[/dim]"
+        )
+
+    run_id = _latest_run_id_with_journal(project_dir)
+    if run_id is not None:
+        console.print("\n[bold cyan]Verify this run offline (your own signed receipt):[/bold cyan]")
+        console.print(f"  cd {project_dir}", soft_wrap=True)
+        console.print("  openssl genpkey -algorithm ED25519 -out demo.key", soft_wrap=True)
+        console.print("  openssl pkey -in demo.key -pubout -out demo.pub", soft_wrap=True)
+        console.print(f"  bernstein verify run {run_id} --signing-key-path demo.key", soft_wrap=True)
+        console.print(
+            f"  bernstein verify receipt .sdd/runs/{run_id}/run-receipt.json --public-key demo.pub",
+            soft_wrap=True,
+        )
 
     # Primary CTA
-    console.print(f"\n[bold green]Fixed {done} bug{'s' if done != 1 else ''} in {elapsed_str}.[/bold green]")
+    if all_done:
+        console.print(f"\n[bold green]Fixed {done} bug{'s' if done != 1 else ''} in {elapsed_str}.[/bold green]")
+    else:
+        console.print(
+            f"\n[bold yellow]Fixed {done} of {total} bug{'s' if total != 1 else ''} "
+            f"in {elapsed_str} ({failed} unresolved).[/bold yellow]"
+        )
     console.print("Run [bold cyan]bernstein run[/bold cyan] in your own project to get started.\n")
 
-    console.print(f"[dim]Project left at:[/dim] {project_dir}")
-    console.print("[dim]  cd <dir> && pip install -r requirements.txt && pytest tests/ -q[/dim]")
+    console.print(f"[dim]Project left at:[/dim] {project_dir}", soft_wrap=True)
+    console.print("[dim]  cd <dir> && pip install -r requirements.txt && pytest tests/ -q[/dim]", soft_wrap=True)
+
+
+def _latest_run_id_with_journal(project_dir: Path) -> str | None:
+    """Return the latest orchestration run_id under ``.sdd/runs/`` with a journal.
+
+    Prefers top-level orchestration runs over per-task ``task-*`` directories so
+    offline receipt verification binds the full run journal.
+    """
+    from bernstein.core.replay.journal import contained_run_journal
+
+    runs_dir = project_dir / ".sdd" / "runs"
+    if not runs_dir.is_dir():
+        return None
+    candidates: list[str] = []
+    for entry in runs_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        journal = contained_run_journal(runs_dir, entry.name)
+        if journal is not None and journal.is_file():
+            candidates.append(entry.name)
+    candidates.sort()
+    if not candidates:
+        return None
+    run_level = [name for name in candidates if not name.startswith("task-")]
+    return run_level[-1] if run_level else candidates[-1]
 
 
 @click.command("cook")
@@ -1025,7 +1116,7 @@ def demo(
 
     \b
       bernstein demo              # mock agents (no API key)
-      bernstein demo --real       # real agents (requires API key, ~$0.15)
+      bernstein demo --real       # real agents (requires an authenticated CLI agent)
       bernstein demo --dry-run    # preview the plan without spawning
       bernstein demo --flask-todo # run the Flask TODO API scenario
     """
@@ -1045,7 +1136,7 @@ def demo(
 
             no_cli_agent_found().print()
             raise SystemExit(1)
-        cost_estimate = "~$0.15 in API credits"
+        cost_estimate = "real agents (uses configured CLI agent)"
     else:
         detected = "mock"
         cost_estimate = "[green]free[/green] (simulated agents, no API calls)"

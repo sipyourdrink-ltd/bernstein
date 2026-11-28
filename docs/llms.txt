@@ -1,8 +1,8 @@
 # Bernstein
 
-> Bernstein is the open-source governance layer for AI agents, with a deterministic
+> Bernstein is an open-source governance layer for AI agents, with a deterministic
 > scheduler driving CLI coding agents (Claude Code, Codex,
-> Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination
+> Gemini CLI and others). Scheduling is plain Python - no LLM in the coordination
 > loop - so runs are reproducible end to end.
 >
 > Every coding task runs in its own git worktree behind lint/type/test gates;
@@ -24,7 +24,7 @@ HMAC-signed audit trail on top.
 ## Core Documentation
 - [Getting Started](https://docs.bernstein.run/getting-started/install/): Install, configure, run first orchestration in 60 seconds
 - [Architecture & Concepts](https://docs.bernstein.run/architecture/ARCHITECTURE/): Task server, agent spawner, janitor verification, worktree isolation
-- [Adapter Reference](https://docs.bernstein.run/adapters/): 40+ supported agents - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
+- [Adapter Reference](https://docs.bernstein.run/adapters/): 55 selectable CLI adapter names - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
 - [API Reference](https://docs.bernstein.run/reference/openapi-reference/): 120+ REST endpoints for tasks, agents, cost tracking, quality gates
 
 ## Guides
@@ -35,5 +35,5 @@ HMAC-signed audit trail on top.
 - [GitHub Repository](https://github.com/sipyourdrink-ltd/bernstein): Source code, issues, discussions
 - [PyPI Package](https://pypi.org/project/bernstein/): pip install bernstein
 - [Hosted MCP endpoint](https://mcp.bernstein.run/mcp): Read-only, no install - verify run receipts and list presets/adapters over Streamable HTTP
-- [Blog](https://docs.bernstein.run/blog/ten-agents-one-release/): Engineering articles on multi-agent orchestration patterns
+- [Blog](https://bernstein.run/blog): Engineering articles on governed multi-agent execution and release architecture
 - [Author](https://alexchernysh.com): Built by Alex Chernysh ([@alex_chernysh on X](https://x.com/alex_chernysh))

@@ -7,7 +7,7 @@
 
 ## Overview
 
-`bernstein-bench` is the public evaluation surface for Bernstein, the open-source governance layer for AI agents.
+`bernstein-bench` is the public evaluation surface for Bernstein, an open-source governance layer for AI agents.
 Unlike the internal harness (which runs operator-scored tasks on the operator's own
 machine), `bernstein-bench` is designed so that:
 
@@ -693,7 +693,16 @@ docs/eval/
 
 The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). The evaluator consumes trajectory JSON (`events` and `diff`; schema documented in `goal_drift_suite.py`); an automatic converter from `.sdd` run journals is follow-up. Default execution without `--trajectory` evaluates empty telemetry, records `unmeasured=True`, and fails closed honestly. Pass `--trajectory <path>` with trajectory JSON to score agent runs, or `--smoke-synthetic` (requiring `--stub-signer`) for hermetic plumbing tests. By default, partial step coverage with zero drift is compliant; pass `--require-step-coverage` to enforce 100% planned step coverage as a strict gate. It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
 
-Recorded evaluators can optionally attach a finite numeric `intent_score` to an event with a non-negative integer `step`. The drift curve exposes these values separately as `intent_scores`, for example `[{"step_index": 0, "intent_score": 0.8}, {"step_index": 2, "intent_score": 0.1}]`, sorted by step (preserving event order for scores at the same step). Missing or invalid scores are omitted; runs without scores expose an empty list. These are projections of recorded output only: no evaluator is called, and the hard step measurements, hard aggregates, step coverage, score, and threshold outcome remain independent of the intent values.
+Recorded evaluators can optionally attach a finite numeric `intent_score` to an event with a non-negative integer `step`. The drift curve exposes these values separately as `intent_scores`, for example `[{"step_index": 0, "intent_score": 0.8}, {"step_index": 2, "intent_score": 0.1}]`, sorted by step (preserving event order for scores at the same step). Missing or invalid scores are omitted. Runs without scores expose an empty list. Hard measurements, coverage, and the threshold outcome are independent of intent values.
+
+To produce one score in a Python benchmark, pass `intent_scorer=score` to
+`GoalDriftReplayAdapter`. Once per task, `score(task, events, diff)` receives
+copies of the task and events, plus the diff text. Return a mapping such as
+`{"step": 2, "intent_score": 0.8}`. The adapter attaches the value to the
+first event at that step without an `intent_score` field. An exception,
+invalid score, or unavailable step produces a warning with the task ID.
+Default runs use recorded events directly, and receipt replay reads stored
+scores without calling the scorer.
 
 ### Recorded intent calibration
 

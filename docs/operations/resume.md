@@ -5,11 +5,8 @@ want to pick up from the last successful step instead of restarting.
 
 ## Overview
 
-`bernstein resume <task-id>` loads the per-task checkpoint written by
-the orchestrator after every successful step transition, validates it,
-bumps `resume_count`, fires the `task.resume` lifecycle event, and
-hands control back so the orchestrator can re-spawn the task from the
-next step boundary.
+`bernstein resume <task-id>` loads and validates the task checkpoint,
+increments `resume_count`, and writes a local resume signal.
 
 v1 scope is **local-only**. Out of scope: cross-machine resume,
 distributed checkpoint storage, resuming across role-definition
@@ -27,24 +24,44 @@ bernstein resume TASK_ID
   [--dry-run]                  validate, bump resume_count, print plan; do not re-spawn
   [--override-interpreter]     resume even though adapter/model moved since suspend
   [--override-observations]    resume even though source bytes moved since suspend
-  [--discard]                  drop checkpoint first to run fresh instead of continuing
+  [--discard]                  discard the agent checkpoint before preparing the resume
 ```
 
-Re-spawn is dispatched by writing a signal file under
-`.sdd/runtime/resume/`. The worker watching that directory atomically
-claims it. If no worker is running, the signal persists until
-`bernstein run` starts and picks it up.
+Each signal is published with an atomic rename under `.sdd/runtime/resume/`.
+Readers see a complete request even if a later write is interrupted. A queued signal
+confirms the file write only; it is not proof that a worker ran.
+
+The durable request and its outcome live in a companion
+`.sdd/runtime/resume/<task-id>.requests.json` file. The signal keeps its existing
+fields (so older readers still work) and adds `request_id` and `source_digest`.
+`request_id` is derived from the attempt-identifying checkpoint fields, excluding
+`resume_count` and `updated_at`, so repeating the CLI command for the same
+interrupted attempt reuses the same id without bumping `resume_count` again. A newer
+checkpoint mints a distinct id. Requests move `queued -> claimed -> resumed` and
+the state survives restarts: a worker claims before running and records the
+outcome afterwards. Legacy signals without a `request_id` are read as
+unacknowledged wake-up hints and gain the new structure on the next publish.
+`runtime_acknowledged` is `true` only when `resumed` is recorded for the exact
+`request_id` the command reported.
+
+`bernstein ledger resume` uses the same companion records. Its request ids are
+derived from `(run_id, task_id, last task-level ledger transition)`, so repeated
+resumes with no worker in between keep the same id, run-level `KIND_RUN_RESUMED`
+nonces do not change it, and completed tasks are not requested. Its JSON adds a
+`resume_requests` list with one `task_id`, `request_id`, `source_digest`,
+`run_id`, `dispatch_status` and `runtime_acknowledged` per frontier task.
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Resume prepared (and, unless `--dry-run`, dispatched) |
+| 0 | Resume prepared (and, unless `--dry-run`, signal queued) |
+| 1 | I/O error while preparing the resume or writing the signal |
 | 2 | No checkpoint on disk for `task_id` |
-| 3 | Checkpoint corrupt or failed schema validation |
+| 3 | Invalid checkpoint data, or multiple agent checkpoints match an explicit `--discard` |
 | 4 | `task.resume` lifecycle hook failed |
 | 5 | Grant mismatch — role narrowed, task reassigned, or parent cancelled |
-| 6 | Observations moved — discard and respawn, or `--override-observations` |
+| 6 | Observations moved since the agent checkpoint was written |
 
 ## Checkpoint layout
 
@@ -83,11 +100,8 @@ Dry-run a resume plan to inspect the recovery state:
 bernstein resume task-9f3a --dry-run
 ```
 
-A successful dry run still prepares the resume: it persists an incremented
-`resume_count` and prints the plan. It returns before writing the resume
-signal, so this invocation does not request a worker start. This command is
-therefore not a read-only way to inspect a checkpoint; previewing consumes a
-resume count.
+A successful dry run persists an incremented `resume_count` and prints
+the plan. It returns before writing the resume signal.
 
 Resume from a specific workdir (e.g. a fleet supervisor host):
 
@@ -95,11 +109,25 @@ Resume from a specific workdir (e.g. a fleet supervisor host):
 bernstein resume task-9f3a --workdir /srv/bernstein/project-alpha
 ```
 
-Resume and capture the plan for an automation:
+Capture the local resume result for automation:
 
 ```bash
 bernstein resume task-9f3a --json > /tmp/resume-9f3a.json
 ```
+
+Stdout contains one JSON object. `dispatch_status` is `queued` after
+writing a signal (`claimed` or `resumed` once a worker advances that request)
+and `not_dispatched` if no signal was written.
+`signal_paths` lists the files written by this invocation.
+`runtime_acknowledged` is `false` while the request is `queued` or left
+`claimed`, and `true` only once a worker records `resumed` for the
+`request_id` in this report. A refusal or write failure
+includes an `error` field and a nonzero exit status. With `--discard`,
+`checkpoint_discarded` reports whether the agent checkpoint was removed.
+A deletion or lookup I/O error stops the command before it increments
+`resume_count` or queues a signal. A missing agent checkpoint allows
+the task resume to proceed. If multiple agents have checkpoints for the
+same task, `--discard` exits with code 3 and preserves them all.
 
 ## Troubleshooting
 
@@ -111,6 +139,12 @@ was wiped. The only recovery is a fresh run.
 `.sdd/runtime/checkpoints/<task-id>/checkpoint.json` and run the task
 fresh, or fix the file by hand if you know what drifted.
 
-**Resume "dispatched" but nothing happens.** No worker is consuming
-`.sdd/runtime/resume/`. Start `bernstein run` (or the relevant worker)
-and the signal will be claimed.
+**Observations moved (exit 6).** Use `bernstein run --fresh` to start a
+new session. To continue from the saved task step and adapter session,
+`bernstein resume <task-id> --discard` removes the agent checkpoint.
+`--override-observations` keeps it and accepts the changed bytes.
+
+**Resume signal queued.** Check `signal_paths` for the file written by
+the command and `request_id` for the attempt. The companion
+`<task-id>.requests.json` shows `queued` until a worker claims and resumes it;
+re-run the CLI command later to see `runtime_acknowledged: true`.

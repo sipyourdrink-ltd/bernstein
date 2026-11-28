@@ -174,3 +174,28 @@ def test_malformed_line_error_names_its_line_number(tmp_path: Path) -> None:
         read_samples(series_path)
 
     assert "line 3" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("field", ["open_prs", "churn_lines", "open_issues"])
+def test_read_samples_names_text_counter_and_line(tmp_path: Path, field: str) -> None:
+    """A text value in an integer counter is an error that names the field and its line (#8025)."""
+    import json
+
+    valid = {"observed_at": 0.0, "commits_per_min": 0.0, "open_prs": 2, "churn_lines": 0, "open_issues": 3}
+    series_path = tmp_path / "series.jsonl"
+    series_path.write_text(json.dumps(valid) + "\n" + json.dumps({**valid, field: "three"}) + "\n")
+
+    with pytest.raises(RepositoryFlowSeriesError) as exc_info:
+        read_samples(series_path)
+
+    assert "line 2" in str(exc_info.value)
+    assert field in str(exc_info.value)
+
+
+def test_integer_only_series_still_round_trips(tmp_path: Path) -> None:
+    sample = RepositoryFlowSample(
+        observed_at=1700000000.0, commits_per_min=1.5, open_prs=10, churn_lines=500, open_issues=5
+    )
+    series_path = tmp_path / "flow.jsonl"
+    append_sample(series_path, sample)
+    assert read_samples(series_path) == [sample]

@@ -6,9 +6,10 @@ import json
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
-from bernstein.cli.main import plan
+from bernstein.cli.main import cli, plan
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -117,3 +118,44 @@ def test_plan_empty_task_list() -> None:
         result = runner.invoke(plan, [])
     assert result.exit_code == 0
     assert "No tasks found" in result.output
+
+
+def test_plan_graph_renders_the_task_graph() -> None:
+    graph = {
+        "nodes": [
+            {"id": "prepare", "title": "Prepare input", "status": "done"},
+            {"id": "render", "title": "Render figure", "status": "open"},
+        ],
+        "edges": [{"from": "prepare", "to": "render"}],
+        "critical_path": ["prepare", "render"],
+        "critical_path_minutes": 10,
+    }
+    with patch("bernstein.cli.task_cmd.server_get", return_value=graph) as server_get:
+        result = CliRunner().invoke(cli, ["plan", "--graph"])
+
+    assert result.exit_code == 0, result.output
+    server_get.assert_called_once_with("/tasks/graph")
+    assert "Task Dependency Graph" in result.output
+    assert "Prepare input" in result.output
+    assert "Render figure" in result.output
+    assert "Critical path: prepare → render" in result.output
+    assert "Estimated duration: 10 min" in result.output
+
+
+@pytest.mark.parametrize("state", [None, "active", "completed", "blocked"])
+def test_plan_ls_filters_managed_plans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str | None) -> None:
+    plan_names = {"active": "ongoing", "completed": "finished", "blocked": "waiting"}
+    for bucket, name in plan_names.items():
+        folder = tmp_path / "plans" / bucket
+        folder.mkdir(parents=True)
+        (folder / f"{name}.yaml").write_text(f"name: {name}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    args = ["plan", "ls"]
+    if state is not None:
+        args.extend(["--state", state])
+    result = CliRunner().invoke(cli, args)
+
+    assert result.exit_code == 0, result.output
+    for bucket, name in plan_names.items():
+        assert (name in result.output) == (state is None or state == bucket)

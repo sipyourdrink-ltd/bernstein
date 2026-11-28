@@ -197,6 +197,58 @@ to `agency` and `priority` to `50`. The Pydantic `CatalogEntry` default for
 `priority` is `100`. The `60` in the example sets an explicit priority.
 `agent_catalog` is a legacy optional path to a single Agency catalog.
 
+### Quality gates in a run seed
+
+In `bernstein.yaml`, the run seed parser reads these `quality_gates` settings
+into `QualityGatesConfig`. The defaults apply when a
+`quality_gates` mapping omits the corresponding key.
+
+| Key | YAML type | Runtime default |
+| --- | --- | --- |
+| `mutation_testing` | Boolean | `false` |
+| `mutation_command` | String | `"uv run mutmut run"` |
+| `mutation_threshold` | Number (minimum mutation score as a fraction) | `0.50` |
+| `mutation_timeout_s` | Integer (seconds) | `600` |
+| `large_file_check` | Boolean | `false` |
+| `large_file_threshold` | Integer (lines) | `500` |
+| `migration_reversibility_check` | Boolean | `false` |
+| `test_expansion` | Boolean | `false` |
+
+For example, this seed enables the large-file and mutation gates, warns on
+changed files longer than 400 lines, and sets the minimum mutation score to 75%.
+
+```yaml
+goal: Check changed files
+quality_gates:
+  large_file_check: true
+  large_file_threshold: 400
+  mutation_testing: true
+  mutation_threshold: 0.75
+```
+
+`intent_verification` is a nested mapping. Its defaults are shown below.
+Set `enabled: true` inside this mapping to enable the intent check.
+
+```yaml
+goal: Configure intent verification
+quality_gates:
+  intent_verification:
+    enabled: false
+    model: "google/gemini-flash-1.5"
+    provider: "openrouter"
+    max_diff_chars: 8000
+    max_tokens: 256
+    block_on_no: true
+    block_on_partial: false
+    fork_from_context: null
+```
+
+The seed parser checks the types before a run starts. For example, each of
+`mutation_timeout_s: true`, `test_expansion: 1` and `intent_verification: true`
+under `quality_gates` raises a `SeedError` naming the field. See the
+[quality pipeline](../architecture/quality-pipeline.md) for the conditions
+under which each gate runs.
+
 ---
 
 ### 1.1) Run overrides: the untracked overlay
@@ -336,6 +388,8 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
 | `BERNSTEIN_STALL_THRESHOLD_S` | Override the manager-stall deadline (see §4.2 below). Takes precedence over the `tuning.orchestrator.stalled_manager_threshold_s` yaml key. |
 | `BERNSTEIN_MAX_TURNS` | Override the SDK turn ceiling for the openai_agents runner (see §4.1). Takes precedence over `tuning.agent.max_turns`. |
+| `BERNSTEIN_COMPLETION_CHECKS` | Operator-owned JSON object mapping executable completion check IDs to argv arrays. For example, `{"unit":["pytest","-q","tests/unit"]}`. A task declares `{"type":"test_passes","value":"unit"}`. Unknown IDs are rejected at API admission and fail during verification if already stored. |
+| `BERNSTEIN_COMPLETION_CHECK_IMAGE` | Installed Docker or Podman image containing the approved test tools. Checks run without network access, with a read-only task checkout and writable `/tmp`. Missing isolation fails the signal. |
 | `BERNSTEIN_SIGNAL_TIMEOUT_S` | Timeout in seconds for each janitor `test_passes` completion signal. **Default `120`.** Read at each check; integer values below `1` are clamped to `1`, and invalid values fall back to `120`. For example, set `BERNSTEIN_SIGNAL_TIMEOUT_S=300` in the orchestrator environment for a slower check. Timeout logs include the effective limit. Prefer fast signals scoped to the package or files changed by the task over project-wide gates. |
 | `BERNSTEIN_JANITOR_FUZZY_PATHS` | Opt-in fuzzy matching for `path_exists` completion signals. **Default `0` (off)**: exact-path matching is unchanged - the check means exactly the path written in the plan. Set to `1` to enable a fuzzy fallback on a literal miss: a pattern derived from the basename (`**/<stem>*<suffix>`) so a manager-guessed path (e.g. `packages/db/test/foo.test.ts`) can match a worker's repo-idiomatic path (e.g. `packages/db/src/__tests__/foo.test.ts`). A fuzzy match logs a WARNING naming the matched path. Explicit glob syntax written in the criterion itself (`*`, `?`, `[`) is always honored, regardless of this flag. See [TROUBLESHOOTING.md #21](TROUBLESHOOTING.md#21-janitor-path_exists-fails-on-a-correctly-placed-file-acceptance-path-mismatch). |
 | `BERNSTEIN_JANITOR_REOPEN_MAX` | Max janitor-reopen cycles per task before a janitor-FAILed task is permanently failed instead of reopened under the same id. **Default `2`.** A non-numeric value logs a warning and falls back to the default; negative values are clamped to `0` (fail immediately, never reopen). |

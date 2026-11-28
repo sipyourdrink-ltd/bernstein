@@ -263,6 +263,18 @@ class ActionCache:
             return None
         return _coerce_record(self._store.get(digest))
 
+    def records_for_run(self, run_id: str) -> list[ActionRecord]:
+        """Read validated entries for this run without mutating the store."""
+        records = []
+        for path, _size, _atime in self._store._iter_entries():
+            try:
+                record = _coerce_record(self._store.read_entry(path))
+            except (OSError, TypeError, ValueError, RecursionError):
+                continue
+            if record is not None and record.run_id == run_id:
+                records.append(record)
+        return records
+
     def record(
         self,
         *,
@@ -294,7 +306,7 @@ class ActionCache:
         if self._mode in ("replay", "off"):
             return rec
         digest = derive_key(model_id=model_id, prompt=prompt, tool_name=tool_name, tool_args=tool_args)
-        self._store.put(digest, rec)
+        self._store.put(digest, asdict(rec))
         return rec
 
     def get_or_call(
@@ -333,18 +345,24 @@ class ActionCache:
 
 
 def _coerce_record(raw: Any) -> ActionRecord | None:
-    """Best-effort coercion of a stored payload into an :class:`ActionRecord`.
-
-    MemoStore round-trips via ``pickle`` so we usually get the original
-    dataclass back.  We still defensively check the version to reject
-    payloads from older schemas.
-    """
-    if isinstance(raw, ActionRecord):
-        if raw.version != _RECORD_VERSION:
-            logger.debug("action_cache: skipping record with version=%s", raw.version)
-            return None
-        return raw
-    return None
+    """Validate the version and reconstruct an action record from plain data."""
+    if not isinstance(raw, dict) or type(raw.get("version")) is not int or raw["version"] != _RECORD_VERSION:
+        return None
+    if any(not isinstance(raw.get(key), str) for key in ("model_id", "prompt", "output_text")):
+        return None
+    if any(raw.get(key) is not None and not isinstance(raw[key], str) for key in ("tool_name", "run_id")):
+        return None
+    if any(raw.get(key) is not None and not isinstance(raw[key], dict) for key in ("tool_args", "tool_results")):
+        return None
+    if any(type(raw.get(key)) not in (int, float) for key in ("cost_usd", "timestamp")):
+        return None
+    counts = raw.get("tokens")
+    if not isinstance(counts, dict) or any(type(value) is not int for value in counts.values()):
+        return None
+    try:
+        return ActionRecord(**{**raw, "tokens": TokenCounts(**counts)})
+    except TypeError:
+        return None
 
 
 # ---------------------------------------------------------------------------

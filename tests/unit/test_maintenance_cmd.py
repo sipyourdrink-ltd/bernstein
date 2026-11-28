@@ -37,6 +37,13 @@ def _write_task_record(path: Path, *, task_id: str, status: str, assigned_agent:
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def test_history_help_describes_recorded_file_ownership() -> None:
+    result = CliRunner().invoke(cli, ["history", "--help"])
+
+    assert result.exit_code == 0
+    assert "Show archived tasks that list FILE_PATH as an owned file." in " ".join(result.output.split())
+
+
 def test_history_filters_archive_by_owned_file(tmp_path: Path) -> None:
     archive_path = tmp_path / ".sdd" / "archive" / "tasks.jsonl"
     archive_path.parent.mkdir(parents=True, exist_ok=True)

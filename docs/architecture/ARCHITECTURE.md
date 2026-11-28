@@ -2,7 +2,7 @@
 
 ## Overview
 
-Bernstein is the open-source governance layer for AI agents, built around a deterministic scheduler. You declare what you want, the control plane schedules it, short-lived agents execute in per-task git worktrees, and a janitor verifies the output before anything lands. Artifact-mode tasks, which complete on a signed lineage receipt rather than a commit, get an isolated plain directory under `.sdd/workspaces/` instead - see [the artifact contract](../operations/artifacts.md).
+Bernstein is an open-source governance layer for AI agents, built around a deterministic scheduler. You declare what you want, the control plane schedules it, short-lived agents execute in per-task git worktrees, and a janitor verifies the output before anything lands. Artifact-mode tasks, which complete on a signed lineage receipt rather than a commit, get an isolated plain directory under `.sdd/workspaces/` instead - see [the artifact contract](../operations/artifacts.md).
 
 The orchestrator is **deterministic Python** - no model in the coordination loop. Every scheduling decision, every retry, every spawn is auditable code, not a model response, so the same plan replays to a byte-identical task graph.
 
@@ -370,7 +370,7 @@ Two first-party surfaces sit on top of the REST API. The Textual TUI (`src/berns
 |----------|-----|
 | Short-lived agents | No persistent processes to manage. Spawn per task batch, exit when done. No "sleep" problem. |
 | File-based state | `.sdd/` is git-friendly, inspectable, recoverable. No hidden databases. |
-| Deterministic orchestrator | Scheduling is code, not LLM. Predictable, auditable, testable. |
+| Deterministic scheduler | Scheduling is code, not LLM. Predictable, auditable, testable. |
 | Agent-agnostic | Works with any CLI agent. No vendor lock-in. |
 | Git worktree isolation | Main branch never dirty. Each agent works on its own branch. |
 | Janitor verification | Concrete signals, not trust. Tests must pass, files must exist. |

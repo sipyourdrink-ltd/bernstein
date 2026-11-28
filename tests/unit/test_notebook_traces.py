@@ -181,6 +181,20 @@ class TestParseNotebookFromDict:
 # --- TestDiffNotebooks ---
 
 
+def test_notebook_diff_records_cell_type_change() -> None:
+    path = "example.ipynb"
+    code = parse_notebook_from_dict(
+        {"cells": [{"cell_type": "code", "metadata": {}, "source": "42", "execution_count": None, "outputs": []}]},
+        path,
+    )
+    markdown = parse_notebook_from_dict({"cells": [{"cell_type": "markdown", "metadata": {}, "source": "42"}]}, path)
+
+    assert diff_notebooks(markdown, markdown) == []
+    assert diff_notebooks(code, markdown) == [
+        NotebookEditEvent(path=path, action="replace", cell_index=0, cell_type="markdown", source="42", old_source="42")
+    ]
+
+
 class TestDiffNotebooks:
     def test_detects_replace(self, notebook_snapshot: NotebookSnapshot, modified_snapshot: NotebookSnapshot) -> None:
         events = diff_notebooks(notebook_snapshot, modified_snapshot)

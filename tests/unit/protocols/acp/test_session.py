@@ -66,3 +66,26 @@ def test_snapshot_includes_acp_source() -> None:
         assert entry["role"] == "qa"
 
     asyncio.run(_run())
+
+
+def test_session_v1_turn_lifecycle_and_cancel() -> None:
+    session = ACPSession(session_id="sess-1", cwd="/work")
+    assert session.has_active_turn is False
+    assert session.request_cancel() is False
+
+    ev1 = session.begin_turn()
+    assert session.has_active_turn is True
+    assert session.turn_count == 1
+    assert ev1.is_set() is False
+    assert session.request_cancel() is True
+    assert ev1.is_set() is True
+
+    session.end_turn()
+    assert session.has_active_turn is False
+
+    # Idle cancel before next turn must not cancel the subsequent turn.
+    assert session.request_cancel() is False
+    ev2 = session.begin_turn()
+    assert ev2.is_set() is False
+    assert session.turn_count == 2
+    session.end_turn()

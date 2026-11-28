@@ -2,8 +2,9 @@
 # appear; version updates never run, which left dependabot-auto-merge.yml
 # with nothing to act on. Updates are weekly and grouped so the maintainer
 # sees one PR per ecosystem, not one per package; patch/minor groups are
-# auto-enqueued by .github/workflows/dependabot-auto-merge.yml and gated by
-# the same merge-queue CI as any other change.
+# armed by .github/workflows/dependabot-auto-merge.yml (on GITHUB_TOKEN) and
+# manually enqueued by a maintainer once required checks are green (#6845),
+# gated by the same merge-queue CI as any other change.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -57,5 +58,9 @@ updates:
       # letting a bump edit it.
       - dependency-name: "mkdocs-redirects"
         versions: [">=1.2.3"]
+      # Hold agent-manifest at 0.12.x until 0.15 compatibility is checked.
+      # pyproject.toml and agent-manifest-conformance.yml pin 0.12.0.
+      - dependency-name: "agent-manifest"
+        versions: [">=0.13"]
     # Majors stay individual PRs for a human decision.
     open-pull-requests-limit: 10

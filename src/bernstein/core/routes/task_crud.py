@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import subprocess
-import time
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -15,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from starlette.responses import StreamingResponse
 
 from bernstein.core.administrative_runs import AdministrativeRunStatus
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, DirectChannel, SignalActionFailure
@@ -33,7 +31,6 @@ from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.store import RoleMismatchError
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
-from bernstein.core.routes._sse import SSE_RESPONSES
 from bernstein.core.security.auth_middleware import agent_task_scope, enforce_agent_task_scope_for_ids
 from bernstein.core.security.path_containment import (
     PathContainmentError,
@@ -46,8 +43,6 @@ from bernstein.core.security.sanitize import sanitize_log
 # __getattr__ defers the `app` creation, so the module body (class defs)
 # loads without triggering create_app().
 from bernstein.core.server import (
-    AgentKillResponse,
-    AgentLogsResponse,
     BatchClaimRequest,
     BatchClaimResponse,
     BatchCreateRequest,
@@ -78,7 +73,6 @@ from bernstein.core.server import (
     TaskSelfCreate,
     TaskStore,
     TaskWaitForSubtasksRequest,
-    read_log_tail,
     task_to_response,
 )
 from bernstein.core.task_store import ArchiveRecord, EmptyCompletionError, SnapshotEntry
@@ -108,10 +102,10 @@ logger = logging.getLogger(__name__)
 _DRAINING_DETAIL = "Server is draining -- no new claims accepted"
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
-    from bernstein.core.models import Task
+    from bernstein.core.models import NodeInfo, Task
     from bernstein.core.tenanting import TenantRegistry
 
 router = APIRouter()
@@ -214,6 +208,71 @@ def _checked_claim_session(claimed_by_session: str | None) -> str | None:
             sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _checked_node_id(node_id: str | None) -> str | None:
+    """Return *node_id* once it is a usable opaque identifier.
+
+    Same boundary rule as :func:`_checked_claim_session`: the value only
+    keys a registry lookup, but a malformed one is refused with the
+    request's own 422 rather than silently matching nothing.
+
+    Args:
+        node_id: The raw query value, if any.
+
+    Returns:
+        The value, unchanged.
+
+    Raises:
+        HTTPException: 422 if the value is not a single safe identifier.
+    """
+    if not node_id:
+        return node_id
+    try:
+        return validate_path_segment(node_id, label="node_id")
+    except PathContainmentError as exc:
+        logger.warning(
+            "claim rejected: node_id=%s reason=%s",
+            for_log(str(node_id)),
+            sanitize_log(str(exc)),
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _resolve_claiming_node(
+    request: Request,
+    *,
+    claimed_by_session: str | None,
+    node_id: str | None,
+) -> NodeInfo | None:
+    """Find the registered cluster node behind a claim, if this server knows it.
+
+    The cluster registry assigns each node an ID at registration, and that
+    ID is not the parent orchestrator session a claim records as its owner.
+    A claiming client therefore names its registered node explicitly via
+    the ``node_id`` parameter; older clients that only send
+    ``claimed_by_session`` are matched on that value (the ``bernstein
+    worker`` loop passes its node ID there). The lookup keys on the
+    presented identifiers, never on the URL the request arrived on, so a
+    deployment serving the registry and the task server under separate
+    URLs resolves the same node (#7853).
+
+    A claimant this server's registry does not know - an older client, a
+    single-host run with no registration, or a node registered with a
+    separate registry deployment - resolves to ``None`` and the claim
+    proceeds unchecked: the health gate can only judge a node the server
+    can see.
+    """
+    registry = getattr(request.app.state, "node_registry", None)
+    if registry is None:
+        return None
+    if node_id:
+        node = registry.get(node_id)
+        if node is not None:
+            return node
+    if claimed_by_session:
+        return registry.get(claimed_by_session)
+    return None
 
 
 def _get_gate_report_path(request: Request, task_id: str) -> Path:
@@ -554,6 +613,47 @@ def _fetch_remote_agent_branch(
             )
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("fetch_remote_agent_branch: %s: %s", for_log(agent_branch), type(exc).__name__)
+
+
+def _compute_repo_root_commit(workdir: Path) -> str | None:
+    """Compute a workspace's true git root commit off the event loop.
+
+    Shallow clones report their shallow boundary rather than the true root,
+    so return ``None`` when the checkout is shallow rather than advertising
+    an unstable boundary SHA.
+    """
+    from bernstein.core.git.git_basic import run_git
+
+    with suppress(Exception):
+        shallow = run_git(["rev-parse", "--is-shallow-repository"], workdir)
+        if shallow.ok and shallow.stdout.strip().lower() == "true":
+            return None
+        result = run_git(["rev-list", "--max-parents=0", "HEAD"], workdir)
+        if result.ok:
+            roots = sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+            return roots[0] if roots else None
+    return None
+
+
+async def _repo_root_commit(request: Request) -> str | None:
+    """Return the central workspace's repository identity (its root commit).
+
+    Stamped on claim responses (``GET /tasks/next/{role}``) so a worker node
+    can refuse a claim addressed to a repository its workspace does not hold
+    (#6538). Computed once in a worker thread and cached on ``app.state`` so
+    git traversal never blocks the async event loop. A repository with
+    several roots (merged unrelated histories) yields the sorted-first, the
+    same rule the worker applies, so both sides agree.
+
+    Returns ``None`` when the central workspace has no resolvable full git
+    history (or is a shallow clone); the worker treats a missing identity as
+    "not advertised" and skips the check.
+    """
+    state = request.app.state
+    if not hasattr(state, "repo_root_commit"):
+        workdir = _get_workdir(request)
+        state.repo_root_commit = await asyncio.to_thread(_compute_repo_root_commit, workdir)
+    return state.repo_root_commit  # type: ignore[no-any-return]
 
 
 def _run_auto_commit_pre_complete(
@@ -1398,6 +1498,7 @@ async def next_task(
     request: Request,
     claimed_by_session: str | None = None,
     parent_session_id: str | None = None,
+    node_id: str | None = None,
 ) -> TaskResponse:
     """Claim the next available task for *role*.
 
@@ -1408,6 +1509,10 @@ async def next_task(
     created under that coordinator session.  Workers belonging to a
     coordinator should always pass their coordinator's session ID here
     to avoid stealing tasks from other namespaces.
+
+    Pass ``node_id`` to name the cluster node the claim is made for, so
+    the health gate judges the registered node even when the recorded
+    owner is a parent session ID (see :func:`_resolve_claiming_node`).
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
         raise HTTPException(
@@ -1415,6 +1520,7 @@ async def next_task(
             detail=_DRAINING_DETAIL,
         )
     claimed_by_session = _checked_claim_session(claimed_by_session)
+    node_id = _checked_node_id(node_id)
     agent_role = _caller_agent_role(request)
     if agent_role is not None and role != agent_role:
         raise HTTPException(
@@ -1425,12 +1531,18 @@ async def next_task(
     # The caller names no task, so the path gate has nothing to check; a
     # task-scoped agent token is instead limited to its own tasks in the
     # candidate query, so a task outside its scope is never chosen.
+    tenant_scope = _resolve_request_tenant_scope(request)
+    allowed_tasks = agent_task_scope(request)
+    # A pull reports a slot that may have opened since the last heartbeat.
+    worker = _resolve_claiming_node(request, claimed_by_session=claimed_by_session, node_id=node_id)
+    if worker is not None and not worker.can_accept_work:
+        raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     task = await store.claim_next(
         role,
-        tenant_id=_resolve_request_tenant_scope(request),
+        tenant_id=tenant_scope,
         claimed_by_session=claimed_by_session,
         parent_session_id=parent_session_id,
-        task_ids=agent_task_scope(request),
+        task_ids=allowed_tasks,
     )
     if task is None:
         logger.info(
@@ -1441,7 +1553,12 @@ async def next_task(
         )
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     _record_claim_receipt(request, task, "next")
-    return task_to_response(task)
+    response = task_to_response(task)
+    # Remote execution (#6538): stamp the run's repository identity so the
+    # claiming worker can refuse the task when its own workspace is a
+    # checkout of a different repository.
+    response.repo_root_commit = await _repo_root_commit(request)
+    return response
 
 
 @router.post("/tasks/claim-batch", responses={503: {"description": "Server is draining"}})
@@ -1490,7 +1607,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
     "/tasks/{task_id}/claim",
     responses={
         404: {"description": "Task not found"},
-        409: {"description": "Version conflict or invalid state"},
+        409: {"description": "Version conflict, invalid state, or claiming node not accepting work"},
         503: {"description": "Server is draining"},
     },
 )
@@ -1499,6 +1616,7 @@ async def claim_task(
     request: Request,
     expected_version: int | None = None,
     claimed_by_session: str | None = None,
+    node_id: str | None = None,
 ) -> TaskResponse:
     """Claim a specific task by ID.
 
@@ -1507,6 +1625,12 @@ async def claim_task(
 
     Pass ``claimed_by_session`` to record which parent orchestrator
     session owns this claim.
+
+    Pass ``node_id`` to name the registered cluster node the claim is
+    made for. A node the registry knows but that cannot accept work
+    (unhealthy telemetry, cordoned, draining, offline) is refused with
+    409 until it recovers; the parent session stays the recorded claim
+    owner either way (#7853).
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
         raise HTTPException(
@@ -1514,6 +1638,31 @@ async def claim_task(
             detail=_DRAINING_DETAIL,
         )
     claimed_by_session = _checked_claim_session(claimed_by_session)
+    node_id = _checked_node_id(node_id)
+    # The by-ID path must not be a way around the pull path's health
+    # gate: a claimant the registry knows is refused while it cannot
+    # accept work, and claims again once it reports recovery. An unknown
+    # claimant (older client, single-host run) is not gated - see
+    # _resolve_claiming_node. 409 is the endpoint's "invalid state"
+    # answer and the one refusal the orchestrator's claim retry loop
+    # already treats as "leave the task open and retry later".
+    claiming_node = _resolve_claiming_node(request, claimed_by_session=claimed_by_session, node_id=node_id)
+    if claiming_node is not None and not claiming_node.can_accept_work:
+        logger.info(
+            "task.claim 409: node not accepting work: node=%s status=%s health=%s claimed_by_session=%s",
+            for_log(claiming_node.id),
+            claiming_node.status.value,
+            for_log(claiming_node.health),
+            for_log(str(claimed_by_session)),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Node '{claiming_node.id}' is not accepting work "
+                f"(status={claiming_node.status.value}, health={claiming_node.health}); "
+                "claim refused until the node recovers"
+            ),
+        )
     with start_span("task.claim", {"task.id": task_id}):
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)
@@ -1944,7 +2093,10 @@ async def reopen_task(task_id: str, body: TaskReopenRequest, request: Request) -
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
-        task = await store.reopen(task_id, body.reason)
+        if body.dispatch_tier is None:
+            task = await store.reopen(task_id, body.reason)
+        else:
+            task = await store.reopen(task_id, body.reason, dispatch_tier=body.dispatch_tier)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
@@ -2684,99 +2836,6 @@ def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> 
     ts = store.heartbeat(agent_id, body.role, body.status)
     sse_bus.publish("agent_update", json.dumps({"agent_id": agent_id, "status": body.status}))
     return HeartbeatResponse(agent_id=agent_id, acknowledged=True, server_ts=ts)
-
-
-@router.get(
-    "/agents/{session_id}/logs",
-    responses={404: {"description": "No log file for session"}},
-)
-def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> AgentLogsResponse:
-    """Return log file content for a session.
-
-    Args:
-        session_id: Agent session ID.
-        tail_bytes: If > 0, return only the last N bytes of the log.
-    """
-    runtime_dir = _get_runtime_dir(request)
-    log_path = runtime_dir / f"{session_id}.log"
-    if not log_path.exists():
-        raise HTTPException(status_code=404, detail=f"No log file for session '{session_id}'")
-    size = log_path.stat().st_size
-    offset = max(0, size - tail_bytes) if tail_bytes > 0 else 0
-    content = read_log_tail(log_path, offset)
-    return AgentLogsResponse(session_id=session_id, content=content, size=size)
-
-
-@router.post("/agents/{session_id}/kill")
-def agent_kill(session_id: str, request: Request) -> AgentKillResponse:
-    """Request that an agent session be killed.
-
-    Writes a ``.kill`` signal file that the orchestrator picks up on
-    its next tick.
-    """
-    runtime_dir = _get_runtime_dir(request)
-    sse_bus = _get_sse_bus(request)
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    (runtime_dir / f"{session_id}.kill").write_text(str(time.time()))
-    sse_bus.publish(
-        "session_kill",
-        json.dumps({"session_id": session_id}),
-    )
-    return AgentKillResponse(session_id=session_id, kill_requested=True)
-
-
-@router.get("/agents/{session_id}/stream", response_class=StreamingResponse, responses=SSE_RESPONSES)
-def agent_stream(session_id: str, request: Request) -> StreamingResponse:
-    """SSE stream of live log output for a session."""
-    runtime_dir = _get_runtime_dir(request)
-    log_path = runtime_dir / f"{session_id}.log"
-
-    async def _generate() -> AsyncGenerator[str, None]:
-        yield f"data: {json.dumps({'connected': True, 'session_id': session_id})}\n\n"
-
-        offset = 0
-        idle_ticks = 0
-        max_idle = 60
-
-        while True:
-            if await request.is_disconnected():
-                return
-
-            if not log_path.exists():
-                idle_ticks += 1
-                if idle_ticks >= max_idle:
-                    yield f"data: {json.dumps({'done': True, 'reason': 'no_log_file'})}\n\n"
-                    return
-                await asyncio.sleep(0.5)
-                continue
-
-            size = log_path.stat().st_size
-            if size <= offset:
-                idle_ticks += 1
-                if idle_ticks >= max_idle:
-                    yield f"data: {json.dumps({'done': True, 'reason': 'idle'})}\n\n"
-                    return
-                await asyncio.sleep(0.5)
-                continue
-
-            chunk = read_log_tail(log_path, offset)
-            offset = size
-            idle_ticks = 0
-            for line in chunk.splitlines():
-                if line.strip():
-                    yield f"data: {json.dumps({'line': line})}\n\n"
-
-            await asyncio.sleep(0.5)
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 # ---------------------------------------------------------------------------

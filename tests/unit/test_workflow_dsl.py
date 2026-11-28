@@ -1481,3 +1481,51 @@ class TestUnreachableNodes:
         assert len(first) == len(second)
         for left, right in zip(first, second, strict=True):
             assert left == right
+
+    def test_converging_publish_unblocks_when_alternate_rework_branch_was_not_taken(self) -> None:
+        """A converging node must not stay PENDING on an untaken conditional rework branch."""
+        dag = WorkflowDAG(
+            definition=WorkflowDefinition(
+                name="converge",
+                phases=(
+                    WorkflowPhase(name="fix"),
+                    WorkflowPhase(name="verify"),
+                    WorkflowPhase(name="publish"),
+                ),
+            ),
+            nodes=(
+                DAGNode(id="check", phase="verify", role="qa"),
+                DAGNode(id="rework", phase="fix", role="backend"),
+                DAGNode(id="reverify", phase="verify", role="qa"),
+                DAGNode(id="publish", phase="publish", role="docs"),
+            ),
+            edges=(
+                DAGEdge(source="check", target="rework", condition=ConditionExpr(raw="status == 'failed'")),
+                DAGEdge(source="rework", target="reverify"),
+                DAGEdge(source="check", target="publish", condition=ConditionExpr(raw="status == 'done'")),
+                DAGEdge(source="reverify", target="publish", condition=ConditionExpr(raw="status == 'done'")),
+            ),
+        )
+        executor = DAGExecutor(dag)
+
+        # Happy path: check passed -> rework/reverify branch never runs, publish is ready immediately.
+        happy = {"check": _task("check", role="qa", status=TaskStatus.DONE)}
+        assert executor.ready_nodes(happy) == ["publish"]
+        assert executor.materialize_unreachable(happy) == []
+
+        # Failure path: check failed -> rework is ready; publish stays pending until reverify passes.
+        rework = {"check": _task("check", role="qa", status=TaskStatus.FAILED)}
+        assert executor.ready_nodes(rework) == ["rework"]
+        assert executor.materialize_unreachable(rework) == []
+
+        rework["rework"] = _task("rework", role="backend", status=TaskStatus.DONE)
+        assert executor.ready_nodes(rework) == ["reverify"]
+
+        rework["reverify"] = _task("reverify", role="qa", status=TaskStatus.DONE)
+        assert executor.ready_nodes(rework) == ["publish"]
+
+        # Failed reverify -> publish stays blocked and materializes unreachable.
+        failed_reverify = dict(rework)
+        failed_reverify["reverify"] = _task("reverify", role="qa", status=TaskStatus.FAILED)
+        assert executor.ready_nodes(failed_reverify) == []
+        assert executor.materialize_unreachable(failed_reverify) == ["publish"]

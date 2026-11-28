@@ -92,6 +92,22 @@ class TestBuildRoutinePrompt:
         for i in range(3):
             assert f"Task {i}" in prompt
 
+    def test_prompt_marks_dependent_scenarios_as_sequenced(self) -> None:
+        recipe = ScenarioRecipe(
+            scenario_id="seq",
+            name="Sequenced",
+            description="Ordered steps",
+            tags=("ops",),
+            tasks=(
+                ScenarioTaskTemplate(id="first", title="First", description="d1", role="devops"),
+                ScenarioTaskTemplate(id="second", title="Second", description="d2", role="qa", depends_on=("first",)),
+            ),
+        )
+        prompt = build_routine_prompt(recipe, "http://x:8052")
+        assert "respecting declared task dependencies" in prompt
+        assert "parallel tasks" not in prompt
+        assert "depends_on: `first`" in prompt
+
 
 class TestBuildMcpConfig:
     def test_mcp_config_has_required_fields(self) -> None:

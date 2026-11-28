@@ -1,0 +1,42 @@
+# Deliverable-driven vendor security & compliance due-diligence workflow.
+name: vendor-due-diligence
+version: "1.0.0"
+
+phases:
+  - name: intake
+    allowed_roles: [architect, manager]
+  - name: investigate
+  - name: synthesize
+    allowed_roles: [security, docs]
+
+nodes:
+  scope-integration-boundary:
+    phase: intake
+    role: architect
+    description: "Document intended data sensitivity, network boundary, and deployment mode"
+    estimated_minutes: 20
+
+  inspect-egress-and-auth:
+    phase: investigate
+    role: security
+    description: "Audit credential storage, network egress endpoints, and sandbox containment"
+    estimated_minutes: 40
+    depends_on:
+      - scope-integration-boundary
+
+  inspect-provenance-and-licences:
+    phase: investigate
+    role: analyst
+    description: "Check release signatures, transitive dependencies, licences, and CVE SLA"
+    estimated_minutes: 30
+    depends_on:
+      - scope-integration-boundary
+
+  publish-assessment-decision:
+    phase: synthesize
+    role: security
+    description: "Produce the signed vendor risk verdict and required policy constraints"
+    estimated_minutes: 25
+    depends_on:
+      - inspect-egress-and-auth
+      - inspect-provenance-and-licences

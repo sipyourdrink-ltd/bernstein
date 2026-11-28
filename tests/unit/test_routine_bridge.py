@@ -170,6 +170,84 @@ class TestEstimateMinutes:
         )
         assert estimate_minutes(many_roles) < estimate_minutes(single_role)
 
+    def test_sequenced_chain_uses_critical_path_not_parallel_discount(self) -> None:
+        sequenced = ScenarioRecipe(
+            scenario_id="chain",
+            name="Chain",
+            description="",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(
+                    id="step-1",
+                    title="Step 1",
+                    description="",
+                    role="devops",
+                    scope="small",
+                    complexity="low",
+                ),
+                ScenarioTaskTemplate(
+                    id="step-2",
+                    title="Step 2",
+                    description="",
+                    role="devops",
+                    scope="large",
+                    complexity="medium",
+                    depends_on=("step-1",),
+                ),
+                ScenarioTaskTemplate(
+                    id="step-3",
+                    title="Step 3",
+                    description="",
+                    role="security",
+                    scope="small",
+                    complexity="low",
+                    depends_on=("step-2",),
+                ),
+            ),
+        )
+        # 15 + 75 + 15 = 105 minutes on the critical path despite 2 distinct roles.
+        assert estimate_minutes(sequenced) == 105
+
+    def test_diamond_dag_uses_longest_branch_plus_join(self) -> None:
+        diamond = ScenarioRecipe(
+            scenario_id="diamond",
+            name="Diamond",
+            description="",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(id="a", title="A", description="", role="devops", scope="small", complexity="low"),
+                ScenarioTaskTemplate(
+                    id="b",
+                    title="B",
+                    description="",
+                    role="backend",
+                    scope="large",
+                    complexity="low",
+                    depends_on=("a",),
+                ),
+                ScenarioTaskTemplate(
+                    id="c",
+                    title="C",
+                    description="",
+                    role="qa",
+                    scope="small",
+                    complexity="low",
+                    depends_on=("a",),
+                ),
+                ScenarioTaskTemplate(
+                    id="d",
+                    title="D",
+                    description="",
+                    role="security",
+                    scope="small",
+                    complexity="low",
+                    depends_on=("b", "c"),
+                ),
+            ),
+        )
+        # a (15) + max(b=65, c=15) + d (15) = 95 minutes.
+        assert estimate_minutes(diamond) == 95
+
 
 class TestRoutineBridgeInvoke:
     def test_invoke_unknown_raises(self, tmp_path: Path) -> None:
@@ -253,6 +331,61 @@ class TestSpawnScenarioTasks:
     def test_spawn_rejects_non_callable(self) -> None:
         with pytest.raises(TypeError):
             spawn_scenario_tasks([], poster=42)  # type: ignore[arg-type]
+
+    def test_spawn_orders_and_resolves_template_dependencies(self) -> None:
+        recipe = ScenarioRecipe(
+            scenario_id="ordered",
+            name="Ordered",
+            description="desc",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(id="verify", title="Verify", description="v", role="qa", depends_on=("restore",)),
+                ScenarioTaskTemplate(id="restore", title="Restore", description="r", role="devops"),
+                ScenarioTaskTemplate(
+                    id="audit",
+                    title="Audit",
+                    description="a",
+                    role="security",
+                    depends_on=("verify",),
+                ),
+            ),
+        )
+        payloads = build_task_payloads(recipe)
+        assert [p.template_id for p in payloads] == ["restore", "verify", "audit"]
+
+        calls: list[dict[str, Any]] = []
+
+        def fake_poster(_path: str, body: dict[str, Any]) -> dict[str, Any]:
+            calls.append(body)
+            return {"id": f"task-{len(calls)}"}
+
+        ids = spawn_scenario_tasks(payloads, poster=fake_poster)
+        assert ids == ["task-1", "task-2", "task-3"]
+        assert "depends_on" not in calls[0]
+        assert calls[1]["depends_on"] == ["task-1"]
+        assert calls[2]["depends_on"] == ["task-2"]
+
+    def test_spawn_skips_dependents_when_upstream_fails(self) -> None:
+        recipe = ScenarioRecipe(
+            scenario_id="ordered-fail",
+            name="Ordered Fail",
+            description="desc",
+            tags=(),
+            tasks=(
+                ScenarioTaskTemplate(id="step1", title="Step 1", description="s1", role="devops"),
+                ScenarioTaskTemplate(id="step2", title="Step 2", description="s2", role="qa", depends_on=("step1",)),
+            ),
+        )
+        payloads = build_task_payloads(recipe)
+        posted_titles: list[str] = []
+
+        def failing_poster(_path: str, body: dict[str, Any]) -> dict[str, Any]:
+            posted_titles.append(str(body["title"]))
+            raise RuntimeError("server rejected step1")
+
+        ids = spawn_scenario_tasks(payloads, poster=failing_poster)
+        assert ids == []
+        assert posted_titles == ["Step 1"]
 
 
 class TestRoutineBridgeProvision:

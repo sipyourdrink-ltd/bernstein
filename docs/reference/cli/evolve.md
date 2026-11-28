@@ -8,6 +8,12 @@
 - **`bernstein evolve status`** - show the evolution history table.
 - **`bernstein evolve export [OUTPUT]`** - write a static HTML or Markdown report.
 
+`bernstein evolve review` shows evidence for pending proposals. Rollback
+results, when present, are recorded separately by the upgrade executor;
+see the [self-evolution decision record](../../decisions/003-self-evolution.md#component-4-execution-engine)
+for rollback outcomes and the on-disk receipts. Reviewing a proposal does
+not apply or roll back an upgrade.
+
 `bernstein evolve run` needs an initialised workspace. In a directory with no `.sdd/`, it exits before starting rather than creating state behind your back.
 
 ## Exporting a report
@@ -23,6 +29,13 @@ bernstein evolve export evolution-summary --format markdown --dir sample-project
 ```
 
 If the selected project has no recorded evolution cycles, the command exits with status 1 and does not write a report.
+
+## How the test pass trend counts cycles
+
+`bernstein evolve status` and both `evolve export` formats read the same per-cycle test counts, so the "Tests: first → last (+delta)" summary and the test-count sparkline follow one rule: a cycle contributes to the trend only when it recorded at least one test outcome.
+
+- A cycle with one or more failing tests and zero passing tests contributes a zero-pass sample. It appears as a dip in the sparkline and can move the first/last totals and the delta.
+- A cycle that ran no tests at all (zero passes and zero failures) is excluded from the trend; it neither flattens the sparkline nor counts as zero passes.
 
 ## The run-ledger to draft to issue contour
 

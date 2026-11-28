@@ -2,8 +2,9 @@
 
 Release history lives in ``docs/release-notes/``, one ``vX.Y.Z.md`` page per
 tagged version. ``fetch_release_notes()`` retrieves the page for the installed
-version from a remote URL with a timeout, falling back to the newest page in a
-local ``docs/release-notes/`` directory when the network is unavailable.
+version from a remote URL with a timeout. When the network is unavailable, an
+installed prerelease can use a local page for its version. The general fallback is the
+newest stable page in ``docs/release-notes/``.
 """
 
 from __future__ import annotations
@@ -95,14 +96,15 @@ def fetch_release_notes(
     Returns:
         Release-notes text, or an error message if unavailable.
     """
-    remote_url = url or release_notes_url()
+    version = installed_version() if not url else None
+    remote_url = url or release_notes_url(version)
     # Try remote fetch
     content = _fetch_remote(remote_url)
     if content is not None:
         return content
 
     # Fallback to local files
-    local = _find_local_changelog(workdir or Path.cwd())
+    local = _find_local_changelog(workdir or Path.cwd(), version=version)
     if local is not None:
         return local
 
@@ -132,15 +134,45 @@ def _fetch_remote(url: str) -> str | None:
         return None
 
 
-def _find_local_changelog(workdir: Path) -> str | None:
-    """Read the newest local release-notes page, or a pointer document.
+def _read_prerelease_notes(notes_dir: Path, version: str) -> str | None:
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        installed = Version(version)
+    except InvalidVersion:
+        return None
+    if not installed.is_prerelease:
+        return None
+
+    # Build backends may normalize the installed version. Prefer an exact
+    # filename, then read equivalent filenames in a predictable order.
+    exact_name = f"v{version}.md"
+    for path in sorted(notes_dir.glob("v*.md"), key=lambda entry: (entry.name != exact_name, entry.name)):
+        try:
+            if Version(path.stem[1:]) == installed:
+                return path.read_text(encoding="utf-8")
+        except InvalidVersion:
+            continue
+        except (OSError, UnicodeError):
+            logger.debug("Local prerelease notes unreadable: %s", path)
+    return None
+
+
+def _find_local_changelog(workdir: Path, *, version: str | None = None) -> str | None:
+    """Read local notes for a prerelease, the latest stable release, or a pointer.
 
     Args:
         workdir: Project root directory.
+        version: Installed version when fetching notes for this installation.
 
     Returns:
         File contents, or None if nothing readable was found.
     """
+    if version:
+        prerelease = _read_prerelease_notes(workdir / _RELEASE_NOTES_DIR, version)
+        if prerelease is not None:
+            return prerelease
+
     latest = latest_release_notes_path(workdir)
     if latest is not None:
         try:
@@ -166,7 +198,7 @@ def format_for_terminal(raw: str, max_lines: int = 100) -> str:
 
     Args:
         raw: Raw release-notes markdown text.
-        max_lines: Maximum lines to return.
+        max_lines: Maximum content lines to display before a truncation marker.
 
     Returns:
         Formatted string suitable for console printing.
@@ -174,10 +206,11 @@ def format_for_terminal(raw: str, max_lines: int = 100) -> str:
     lines: list[str] = []
     for line in raw.splitlines():
         # Strip markdown heading markers, keep the text
-        stripped = re.sub(r"^#+\s*", "", line)
-        if stripped.strip():
-            lines.append(stripped.rstrip())
+        stripped = re.sub(r"^#+\s*", "", line).rstrip()
+        if not stripped:
+            continue
         if len(lines) >= max_lines:
             lines.append("... (truncated)")
             break
+        lines.append(stripped)
     return "\n".join(lines)

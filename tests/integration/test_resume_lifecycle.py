@@ -16,6 +16,7 @@ surface directly (CLI runner + the storage + adapter contract).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,7 @@ from bernstein.adapters._contract import (
     resume_capability,
 )
 from bernstein.adapters.base import CLIAdapter
+from bernstein.cli.commands.ledger_cmd import ledger_group
 from bernstein.cli.commands.resume_cmd import (
     EXIT_CORRUPT,
     EXIT_NO_CHECKPOINT,
@@ -38,12 +40,23 @@ from bernstein.core.lifecycle.hooks import HookRegistry, LifecycleEvent
 from bernstein.core.persistence.resume_prompt import build_resume_context
 from bernstein.core.persistence.task_resume import (
     CHECKPOINT_FILENAME,
+    ResumeDispatchStatus,
     TaskResumeCheckpoint,
     checkpoint_dir_for,
     load_checkpoint,
+    load_resume_request,
+    read_resume_requests,
+    resume_request_acknowledged,
     save_checkpoint,
     scratchpad_sha256,
 )
+from bernstein.core.persistence.work_ledger import (
+    KIND_RUN_OPEN,
+    KIND_TASK_SCHEDULED,
+    WorkLedger,
+    run_ledger_dir,
+)
+from bernstein.core.run_service.supervisor import advance_run, resume_checkpoint_request
 
 
 @pytest.fixture()
@@ -51,6 +64,41 @@ def project_root(tmp_path: Path) -> Path:
     """Standalone project root with the runtime tree pre-created."""
     (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
     return tmp_path
+
+
+@pytest.mark.parametrize("source", ["checkpoint", "ledger"])
+def test_failed_signal_replacement_preserves_previous_request(
+    source: str, project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task_id = "in-flight"
+    if source == "checkpoint":
+        save_checkpoint(project_root, TaskResumeCheckpoint(task_id=task_id, adapter="mock"))
+        command, args = resume_cmd, [task_id]
+    else:
+        run_id = "recovery"
+        ledger = WorkLedger.open(run_ledger_dir(project_root / ".sdd", run_id))
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id=task_id)
+        ledger.close()
+        command, args = ledger_group, ["resume", run_id]
+    args.extend(["--workdir", str(project_root), "--json"])
+    runner = CliRunner()
+    first = runner.invoke(command, args)
+    assert first.exit_code == 0, first.output
+    signal = Path(json.loads(first.stdout)["signal_paths"][0])
+    previous = signal.read_bytes()
+    replace = os.replace
+
+    def interrupt_publish(staging: str | Path, destination: str | Path) -> None:
+        if Path(destination) == signal:
+            assert json.loads(Path(staging).read_bytes())["task_id"] == task_id
+            raise OSError("interrupted before publishing the signal")
+        replace(staging, destination)
+
+    monkeypatch.setattr(os, "replace", interrupt_publish)
+    second = runner.invoke(command, args)
+    assert second.exit_code == 1, second.output
+    assert "interrupted before publishing" in json.loads(second.stdout)["error"]
+    assert signal.read_bytes() == previous
 
 
 def _simulate_step_transitions(
@@ -288,3 +336,153 @@ def test_resume_context_block_is_safe_to_prepend(project_root: Path) -> None:
     assert block.startswith("## Resume context")
     assert "only-step" in block
     assert "some pad content" in block
+
+
+# ---------------------------------------------------------------------------
+# Deterministic requests and real runtime acknowledgement (#7854)
+# ---------------------------------------------------------------------------
+
+
+def _resume_json(workdir: Path, task_id: str) -> dict[str, object]:
+    result = CliRunner().invoke(resume_cmd, [task_id, "--workdir", str(workdir), "--json"])
+    assert result.exit_code == EXIT_OK, result.output
+    return json.loads(result.stdout)
+
+
+def test_queued_then_worker_consumed_reports_real_acknowledgement(project_root: Path) -> None:
+    _simulate_step_transitions(project_root, task_id="e2e", completed_steps=["step-1"], scratchpad_text="")
+    queued = _resume_json(project_root, "e2e")
+    request_id = str(queued["request_id"])
+    assert queued["dispatch_status"] == ResumeDispatchStatus.QUEUED.value
+    assert queued["runtime_acknowledged"] is False
+
+    ran: list[str] = []
+    consumed = resume_checkpoint_request(project_root, "e2e", lambda: ran.append("resumed"))
+    assert consumed is not None
+    assert consumed.request_id == request_id
+    assert consumed.dispatch_status == ResumeDispatchStatus.RESUMED.value
+    assert ran == ["resumed"]
+    assert resume_request_acknowledged(project_root, "e2e", request_id) is True
+
+    repeated = _resume_json(project_root, "e2e")
+    assert repeated["dispatch_status"] == ResumeDispatchStatus.RESUMED.value
+    assert repeated["runtime_acknowledged"] is True
+    assert repeated["resume_count"] == 1
+    assert load_checkpoint(project_root, "e2e").resume_count == 1
+
+
+def test_newer_checkpoint_mints_a_distinct_request_id(project_root: Path) -> None:
+    _simulate_step_transitions(project_root, task_id="newer", completed_steps=["step-1"], scratchpad_text="")
+    first = _resume_json(project_root, "newer")
+    first_id = str(first["request_id"])
+
+    checkpoint = load_checkpoint(project_root, "newer")
+    checkpoint.last_completed_step_id = "step-2"
+    checkpoint.trace_cursor += 256
+    save_checkpoint(project_root, checkpoint)
+    second = _resume_json(project_root, "newer")
+
+    assert second["request_id"] != first_id
+    assert load_checkpoint(project_root, "newer").resume_count == 2
+    records = read_resume_requests(project_root, "newer")
+    assert {record.request_id for record in records} == {first_id, second["request_id"]}
+    first_record = load_resume_request(project_root, "newer", first_id)
+    assert first_record is not None
+    assert first_record.dispatch_status == ResumeDispatchStatus.QUEUED.value
+
+
+def test_supervisor_restart_recovers_a_claimed_request(project_root: Path) -> None:
+    run_id = "recovery-run"
+    ledger = WorkLedger.open(run_ledger_dir(project_root / ".sdd", run_id))
+    ledger.append(kind=KIND_RUN_OPEN, payload={"run_id": run_id})
+    ledger.append(kind=KIND_TASK_SCHEDULED, task_id="crash-task")
+    ledger.close()
+
+    queued = json.loads(
+        CliRunner().invoke(ledger_group, ["resume", run_id, "--workdir", str(project_root), "--json"]).stdout
+    )
+    assert queued["runtime_acknowledged"] is False
+    request_id = str(queued["resume_requests"][0]["request_id"])
+
+    ran: list[str] = []
+    advance_run(
+        project_root,
+        run_id,
+        stop_after=1,
+        stop_phase="started",
+        task_runner=lambda task_id: ran.append(task_id),
+    )
+    assert ran == []
+    interrupted = load_resume_request(project_root, "crash-task", request_id)
+    assert interrupted is not None
+    assert interrupted.dispatch_status == ResumeDispatchStatus.CLAIMED.value
+    assert resume_request_acknowledged(project_root, "crash-task", request_id) is False
+
+    advance_run(project_root, run_id, task_runner=lambda task_id: ran.append(task_id))
+    assert ran == ["crash-task"]
+    final = load_resume_request(project_root, "crash-task", request_id)
+    assert final is not None
+    assert final.dispatch_status == ResumeDispatchStatus.RESUMED.value
+    assert resume_request_acknowledged(project_root, "crash-task", request_id) is True
+
+
+def test_supervisor_stop_after_completed_acknowledges_finished_task(project_root: Path) -> None:
+    run_id = "partial-complete-run"
+    ledger = WorkLedger.open(run_ledger_dir(project_root / ".sdd", run_id))
+    ledger.append(kind=KIND_RUN_OPEN, payload={"run_id": run_id})
+    ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t1")
+    ledger.append(kind=KIND_TASK_SCHEDULED, task_id="t2")
+    ledger.close()
+
+    queued = json.loads(
+        CliRunner().invoke(ledger_group, ["resume", run_id, "--workdir", str(project_root), "--json"]).stdout
+    )
+    requests_by_task = {str(item["task_id"]): str(item["request_id"]) for item in queued["resume_requests"]}
+
+    ran: list[str] = []
+    state = advance_run(
+        project_root,
+        run_id,
+        stop_after=1,
+        stop_phase="completed",
+        task_runner=lambda task_id: ran.append(task_id),
+    )
+    assert ran == ["t1"]
+    assert state.completed_tasks == ["t1"]
+
+    t1_record = load_resume_request(project_root, "t1", requests_by_task["t1"])
+    assert t1_record is not None
+    assert t1_record.dispatch_status == ResumeDispatchStatus.RESUMED.value
+    assert resume_request_acknowledged(project_root, "t1", requests_by_task["t1"]) is True
+
+    t2_record = load_resume_request(project_root, "t2", requests_by_task["t2"])
+    assert t2_record is not None
+    assert t2_record.dispatch_status == ResumeDispatchStatus.QUEUED.value
+    assert resume_request_acknowledged(project_root, "t2", requests_by_task["t2"]) is False
+
+
+def test_supervisor_advance_run_does_not_claim_another_runs_request(project_root: Path) -> None:
+    for rid in ("run-a", "run-b"):
+        ledger = WorkLedger.open(run_ledger_dir(project_root / ".sdd", rid))
+        ledger.append(kind=KIND_RUN_OPEN, payload={"run_id": rid})
+        ledger.append(kind=KIND_TASK_SCHEDULED, task_id="shared-task")
+        ledger.close()
+
+    queued_a = json.loads(
+        CliRunner().invoke(ledger_group, ["resume", "run-a", "--workdir", str(project_root), "--json"]).stdout
+    )
+    request_a = str(queued_a["resume_requests"][0]["request_id"])
+
+    # Advancing run-b with the same task_id must leave run-a's resume request queued.
+    advance_run(project_root, "run-b")
+    after_b = load_resume_request(project_root, "shared-task", request_a)
+    assert after_b is not None
+    assert after_b.dispatch_status == ResumeDispatchStatus.QUEUED.value
+    assert resume_request_acknowledged(project_root, "shared-task", request_a) is False
+
+    # Advancing run-a consumes and acknowledges run-a's request.
+    advance_run(project_root, "run-a")
+    after_a = load_resume_request(project_root, "shared-task", request_a)
+    assert after_a is not None
+    assert after_a.dispatch_status == ResumeDispatchStatus.RESUMED.value
+    assert resume_request_acknowledged(project_root, "shared-task", request_a) is True

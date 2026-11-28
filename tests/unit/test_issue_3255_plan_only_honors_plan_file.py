@@ -104,6 +104,7 @@ def _run_impl_environment() -> Any:
     with contextlib.ExitStack() as stack:
         for patcher in (
             patch.object(run_bootstrap, "print_startup_banner"),
+            patch.object(run_bootstrap, "_abort_if_no_cli_adapter"),
             patch.object(run_bootstrap, "_propagate_env_flags"),
             patch.object(run_bootstrap, "_sovereign_config_snapshot", return_value=None),
             patch.object(run_bootstrap, "_install_profile_network_policy"),

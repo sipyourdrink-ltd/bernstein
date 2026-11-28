@@ -244,6 +244,39 @@ class MemoStats:
     bytes_used: int = 0
 
 
+_CACHE_FORMAT = b"bernstein-memo-json:1\n"
+
+
+def _encode_value(value: Any) -> Any:
+    if value is None or type(value) in (bool, int, float, str):
+        return value
+    if type(value) is bytes:
+        return ["bytes", value.hex()]
+    if type(value) in (list, tuple):
+        return [type(value).__name__, [_encode_value(item) for item in value]]
+    if type(value) is dict:
+        return ["dict", [[_encode_value(key), _encode_value(item)] for key, item in value.items()]]
+    raise TypeError(f"unsupported memo value type: {type(value).__name__}")
+
+
+def _decode_value(value: Any) -> Any:
+    if value is None or type(value) in (bool, int, float, str):
+        return value
+    if not isinstance(value, list) or len(value) != 2:
+        raise ValueError("invalid memo value")
+    kind, payload = value
+    if kind == "bytes" and isinstance(payload, str):
+        return bytes.fromhex(payload)
+    if isinstance(payload, list):
+        if kind == "list":
+            return [_decode_value(item) for item in payload]
+        if kind == "tuple":
+            return tuple(_decode_value(item) for item in payload)
+        if kind == "dict":
+            return {_decode_value(key): _decode_value(item) for key, item in payload}
+    raise ValueError("unknown memo value type")
+
+
 class MemoStore:
     """Disk-backed content-addressed memo store with size-based LRU.
 
@@ -281,9 +314,8 @@ class MemoStore:
                 self._misses += 1
             return None
         try:
-            data = path.read_bytes()
-            value = pickle.loads(data)
-        except (OSError, pickle.UnpicklingError, EOFError, ValueError) as exc:
+            value = self.read_entry(path)
+        except (OSError, TypeError, ValueError, RecursionError) as exc:
             logger.debug("memo: failed to load %s: %s", path, exc)
             # Self-heal: drop the bad entry so the next put repopulates it.
             with contextlib.suppress(OSError):
@@ -297,6 +329,16 @@ class MemoStore:
         with self._lock:
             self._hits += 1
         return value
+
+    def read_entry(self, path: Path) -> Any:
+        """Decode one entry without updating access time or eviction state."""
+        with path.open("rb") as entry:
+            if entry.read(len(_CACHE_FORMAT)) != _CACHE_FORMAT:
+                raise ValueError("unsupported memo format")
+            payload = entry.read(self._max_bytes + 1)
+        if len(payload) > self._max_bytes:
+            raise ValueError("memo value is larger than the store")
+        return _decode_value(json.loads(payload))
 
     def put(self, digest: bytes, value: Any) -> None:
         """Persist *value* under *digest*; evict if size cap exceeded.
@@ -312,9 +354,9 @@ class MemoStore:
         path = self._path_for(digest)
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            payload = pickle.dumps(value, protocol=5)
-        except (pickle.PicklingError, TypeError) as exc:
-            logger.debug("memo: cannot pickle value for %s: %s", digest.hex()[:12], exc)
+            payload = _CACHE_FORMAT + json.dumps(_encode_value(value), separators=(",", ":")).encode("utf-8")
+        except (TypeError, ValueError, RecursionError) as exc:
+            logger.debug("memo: cannot encode value for %s: %s", digest.hex()[:12], exc)
             return
         tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         try:

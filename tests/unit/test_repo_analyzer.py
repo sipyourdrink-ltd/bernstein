@@ -177,3 +177,18 @@ def test_analyze_min_score_exit(tmp_path: Path) -> None:
         ["--path", str(tmp_path), "--min-score", "0.0", "--json"],
     )
     assert result.exit_code == 0
+
+
+def test_test_file_counts_ignore_checkout_ancestors(tmp_path: Path) -> None:
+    """A `tests` folder above the analyzed root does not make its files tests (#8056)."""
+    counts = {}
+    for parent in ("examples", "tests"):
+        root = tmp_path / parent / "demo"
+        (root / "tests").mkdir(parents=True)
+        (root / "library.py").write_text("answer = 42\n", encoding="utf-8")
+        (root / "tests" / "helpers.py").write_text("x: int = 1\n", encoding="utf-8")
+        (root / "test_api.py").write_text("def test_ok() -> None: pass\n", encoding="utf-8")
+        counts[parent] = analyze_repo(root).test_files
+
+    # The inner `tests/helpers.py` and `test_api.py` count under either parent; `library.py` never does.
+    assert counts == {"examples": 2, "tests": 2}

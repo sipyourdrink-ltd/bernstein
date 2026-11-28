@@ -471,6 +471,37 @@ and holds it to the same standard, and asserts the discovered set of lanes
 exactly, so a widened matcher cannot quietly demand a PAT of a lane that
 only reads pull requests.
 
+#### Dependabot auto-merge and manual queue entry (#6845)
+
+`.github/workflows/dependabot-auto-merge.yml` runs on Dependabot `pull_request`
+events with `secrets.GITHUB_TOKEN` and arms auto-merge only for ready
+`version-update:semver-patch` and `version-update:semver-minor` updates
+(including the patch/minor groups in `.github/dependabot.yml`); major updates
+(`version-update:semver-major`) and Draft PRs are skipped (#6758). As observed
+on #6770, #6800, and #6813, auto-merge enabled by `github-actions[bot]` under
+`GITHUB_TOKEN` does not advance the PR into the merge queue even after every
+required check (`CI gate`, `quorum`, and any applicable bundle checks) is
+green; the PR waits until a maintainer clears the bot-owned auto-merge and
+enqueues it under their own credentials.
+
+We deliberately keep manual enqueueing rather than storing a write-capable PAT
+or GitHub App token in Dependabot secrets. On a ready patch/minor Dependabot
+PR, `dependabot-auto-merge.yml` has already enabled auto-merge as
+`github-actions[bot]`: a second `gh pr merge <number> --auto` is a silent
+no-op that leaves `github-actions[bot]` as the enabler, and the GitHub UI shows
+**Disable auto-merge** instead of **Merge when ready**. Disable the bot
+auto-merge first, then re-arm or enqueue under a maintainer identity (omit
+`--squash` / `--merge`; the merge queue owns the merge method):
+
+```sh
+gh pr merge <number> --disable-auto && gh pr merge <number> --auto
+```
+
+In the GitHub UI, click **Disable auto-merge** first, then **Merge when
+ready**. A single `gh pr merge <number> --auto` (or **Merge when ready**
+directly) applies only when auto-merge is still off (for example, on major
+Dependabot PRs that the workflow skips).
+
 ### What the pool actually spends
 
 The free-tier public-repo ceiling is 20 concurrent jobs, so the budget
@@ -493,8 +524,9 @@ the durable fix for that is the merge queue (see *Concurrency policy*).
 Advisory lanes are kept cheap instead of removed:
 `pr-observability-summary` runs only on PRs labelled `deep-review`,
 `dependabot-auto-merge` gates its only job on the Dependabot user id
-and never arms a Draft (its `ready_for_review` event brings the update
-back through the same gates),
+and never arms a Draft (its `ready_for_review` event brings the update back
+through the same gates; queue entry remains manual because the workflow stays
+on `GITHUB_TOKEN`, see #6845),
 `pr-policy` and `pr-labels` are consolidated single-job lanes, and the
 vulture / refurb / perflint jobs run weekly rather than per PR.
 
@@ -724,3 +756,26 @@ Docker image, rather than assuming that every action tag has a published image.
 `tests/unit/test_trufflehog_workflow_yaml.py` checks extraction and the grouping
 barrier as well as equality of the scanner and wrapper versions. A pending
 companion update must be resolved before a scanner bump can land.
+
+## crate-ci/typos version
+
+The spelling job and deterministic auto-heal installation use the same typos v1.52.0 commit. The spelling scan keeps its default read-only mode, and auto-heal retains its strategy condition and explicit `write_changes: false` input.
+
+The action is pinned to `4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85`. Its upstream `v1.52.0` tag resolves to that commit.
+
+## peter-evans/create-pull-request version
+
+The topology healer, weekly and continuous coverage ratchets, observability snapshot and major/minor release bump use create-pull-request v8.1.2. Their branch names, token selection, inputs and permissions stay as configured. This action uses Node.js 24 on the existing Ubuntu runners.
+
+The action is pinned to `15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8`. Its upstream `v8.1.2` tag resolves to that commit.
+
+## reviewdog/action-actionlint version
+
+The Workflow lint job runs `reviewdog/action-actionlint` v1.83.0 on Ubuntu.
+The [release tag](https://github.com/reviewdog/action-actionlint/releases/tag/v1.83.0)
+resolves to commit `a7d35aaf8c309203a4ae861d32b7bd490baa7bf3`.
+Its [action metadata](https://github.com/reviewdog/action-actionlint/blob/a7d35aaf8c309203a4ae861d32b7bd490baa7bf3/action.yml)
+pins the Docker image by digest. To reproduce the workflow lint locally, use
+[kjanat/actionlint v1.17.0](https://github.com/kjanat/actionlint/releases/tag/v1.17.0)
+and pass `-shellcheck=` to disable embedded ShellCheck. The job reports findings
+through reviewdog's `github-check` reporter with `level` and `fail_level` set to `error`.

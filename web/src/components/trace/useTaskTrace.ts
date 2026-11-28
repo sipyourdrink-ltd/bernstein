@@ -71,7 +71,7 @@ export function useTaskTrace(taskId: string, enabled: boolean): UseTaskTraceStat
           cursor: String(nextCursor),
         });
         const resp: TraceTimelineResponse = await apiGet<TraceTimelineResponse>(
-          `/dashboard/tasks/${encodeURIComponent(taskId)}/trace?${params.toString()}`,
+          `/tasks/${encodeURIComponent(taskId)}/trace?${params.toString()}`,
         );
         if (firstResponse == null) firstResponse = resp;
         all.push(...resp.events);

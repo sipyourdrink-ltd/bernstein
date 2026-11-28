@@ -106,6 +106,11 @@ def _build_units(source: str, tree: ast.Module) -> list[_Unit]:
     cursor = 1
     for node in tree.body:
         node_start = node.lineno
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.decorator_list:
+            node_start = node.decorator_list[0].lineno
+            # A parenthesized decorator expression can start below its opening @.
+            while node_start > cursor and not lines[node_start - 1].lstrip().startswith("@"):
+                node_start -= 1
         node_end = node.end_lineno or node.lineno
         if node_start > cursor:
             units.append(

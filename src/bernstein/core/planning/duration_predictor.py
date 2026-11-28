@@ -17,60 +17,22 @@ Prediction API::
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import math
-import pickle
+import struct
 import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# HMAC helpers - prevent deserialization of tampered pickle files
-# ---------------------------------------------------------------------------
-
-# Key is derived from the hostname so the HMAC is machine-local.
-# This is NOT a secret-key scheme - it guards against *accidental*
-# injection from a different repo or user, not a determined attacker.
-_HMAC_KEY: bytes = hashlib.sha256(f"bernstein-duration-predictor-{__name__}".encode()).digest()
-
-
-def _model_hmac_path(model_path: Path) -> Path:
-    """Return the sibling ``.hmac`` file for a model path."""
-    return model_path.with_suffix(".hmac")
-
-
-def _compute_hmac(data: bytes) -> str:
-    """Compute an HMAC-SHA256 hex digest for *data*."""
-    return hmac.new(_HMAC_KEY, data, hashlib.sha256).hexdigest()
-
-
-def _write_model_hmac(data: bytes, model_path: Path) -> None:
-    """Write an HMAC digest file alongside the model."""
-    _model_hmac_path(model_path).write_text(_compute_hmac(data))
-
-
-def _verify_model_hmac(data: bytes, model_path: Path) -> bool:
-    """Return True if the HMAC file matches *data*.
-
-    Returns True (permissive) when no HMAC file exists yet - this
-    handles the migration case for models saved before HMAC was added.
-    """
-    hmac_path = _model_hmac_path(model_path)
-    if not hmac_path.exists():
-        return True  # legacy model, no HMAC written yet
-    expected = hmac_path.read_text().strip()
-    return hmac.compare_digest(expected, _compute_hmac(data))
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -241,6 +203,102 @@ class TaskFeatureExtractor:
 # ---------------------------------------------------------------------------
 
 
+_MODEL_FORMAT = 1
+_MAX_MODEL_BYTES = 512 * 1024
+_FEATURE_COUNT = 9
+_ESTIMATOR_COUNT = 100
+_TREE_DEPTH = 4
+
+
+def _finite_number(value: Any) -> float:
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise ValueError("invalid numeric model parameter")
+    return float(value)
+
+
+@dataclass(frozen=True)
+class _PredictionTree:
+    nodes: tuple[tuple[int, float, int, int], ...]
+
+    @classmethod
+    def from_data(cls, data: Any) -> _PredictionTree:
+        if not isinstance(data, list) or not 1 <= len(data) < 2 ** (_TREE_DEPTH + 1):
+            # A completely full depth-four tree has 31 nodes.
+            raise ValueError("invalid prediction tree size")
+        nodes = []
+        for index, row in enumerate(data):
+            if not isinstance(row, list) or len(row) != 4:
+                raise ValueError("invalid prediction node")
+            feature, value, left, right = row
+            if any(type(item) is not int for item in (feature, left, right)):
+                raise ValueError("invalid prediction node index")
+            if feature == -1:
+                if (left, right) != (-1, -1):
+                    raise ValueError("invalid prediction leaf")
+            elif not (0 <= feature < _FEATURE_COUNT and index < left < right < len(data)):
+                raise ValueError("invalid prediction branch")
+            nodes.append((feature, _finite_number(value), left, right))
+        return cls(tuple(nodes))
+
+    def predict(self, features: list[float]) -> float:
+        index = 0
+        while True:
+            feature, value, left, right = self.nodes[index]
+            if feature == -1:
+                return value
+            index = left if features[feature] <= value else right
+
+
+@dataclass(frozen=True)
+class _DurationModel:
+    initial: float
+    learning_rate: float
+    trees: tuple[_PredictionTree, ...]
+
+    @classmethod
+    def from_data(cls, data: Any) -> _DurationModel:
+        trees = data["trees"]
+        if not isinstance(trees, list) or len(trees) != _ESTIMATOR_COUNT:
+            raise ValueError("invalid estimator count")
+        return cls(
+            _finite_number(data["initial"]),
+            _finite_number(data["learning_rate"]),
+            tuple(_PredictionTree.from_data(tree) for tree in trees),
+        )
+
+    def predict(self, batch: list[list[float]]) -> list[float]:
+        output = []
+        for features in batch:
+            # sklearn's tree comparison uses float32 feature values.
+            features = list(struct.unpack("9f", struct.pack("9f", *features)))
+            prediction = self.initial
+            for tree in self.trees:
+                prediction += self.learning_rate * tree.predict(features)
+            output.append(prediction)
+        return output
+
+
+def _export_model(regressor: Any) -> dict[str, Any]:
+    trees = []
+    for estimator in regressor.estimators_[:, 0]:
+        tree = estimator.tree_
+        nodes = []
+        for index in range(tree.node_count):
+            left = int(tree.children_left[index])
+            if left == -1:
+                nodes.append([-1, float(tree.value[index, 0, 0]), -1, -1])
+            else:
+                nodes.append(
+                    [int(tree.feature[index]), float(tree.threshold[index]), left, int(tree.children_right[index])]
+                )
+        trees.append(nodes)
+    return {
+        "initial": float(regressor.init_.constant_[0, 0]),
+        "learning_rate": float(regressor.learning_rate),
+        "trees": trees,
+    }
+
+
 class DurationPredictor:
     """ML-based task duration predictor with cold-start fallback.
 
@@ -260,53 +318,42 @@ class DurationPredictor:
         self._models_dir = models_dir
         self._models_dir.mkdir(parents=True, exist_ok=True)
         self._training_path = models_dir / "duration_training.jsonl"
-        self._model_path = models_dir / "duration_predictor.pkl"
-        self._meta_path = models_dir / "duration_predictor_meta.json"
+        self._model_path = models_dir / "duration_predictor.json"
         self._extractor = TaskFeatureExtractor()
-        self._model: Any = None
+        self._model: _DurationModel | None = None
         self._trained_on_n: int = 0
         self._load_model()
 
     # -- model persistence ---------------------------------------------------
 
     def _load_model(self) -> None:
-        """Load a previously trained model from disk if one exists.
-
-        The model file is verified with an HMAC digest stored alongside
-        it (``*.hmac``) to prevent deserialization of tampered payloads.
-        """
-        if not self._model_path.exists():
-            return
+        """Load a versioned data-only model. Legacy artifacts are ignored."""
         try:
-            raw = self._model_path.read_bytes()
-            if not _verify_model_hmac(raw, self._model_path):
-                logger.warning("Duration predictor HMAC mismatch - refusing to load")
-                return
-            self._model = pickle.loads(raw)  # HMAC-verified local file
-            if self._meta_path.exists():
-                meta = json.loads(self._meta_path.read_text())
-                self._trained_on_n = int(meta.get("trained_on_n", 0))
-            logger.debug("Duration predictor loaded (%d training samples)", self._trained_on_n)
-        except Exception as exc:
-            logger.warning("Failed to load duration predictor: %s", exc)
-            self._model = None
-            self._trained_on_n = 0
-
-    def _save_model(self, n_samples: int) -> None:
-        """Persist the trained model and metadata to disk.
-
-        Writes an HMAC digest file next to the model so that
-        :meth:`_load_model` can verify integrity before unpickling.
-
-        Args:
-            n_samples: Number of training samples used.
-        """
-        try:
-            raw = pickle.dumps(self._model)
-            self._model_path.write_bytes(raw)
-            _write_model_hmac(raw, self._model_path)
-            self._meta_path.write_text(json.dumps({"trained_on_n": n_samples, "trained_at": time.time()}))
+            with self._model_path.open("rb") as model_file:
+                raw = model_file.read(_MAX_MODEL_BYTES + 1)
+            if len(raw) > _MAX_MODEL_BYTES:
+                raise ValueError("duration model is too large")
+            document = json.loads(raw)
+            if not isinstance(document, dict) or type(document.get("version")) is not int:
+                raise ValueError("invalid duration model format")
+            if document["version"] != _MODEL_FORMAT:
+                raise ValueError("unsupported duration model format")
+            n_samples = document["trained_on_n"]
+            if type(n_samples) is not int or n_samples < MIN_TRAIN_SAMPLES:
+                raise ValueError("invalid training sample count")
+            self._model = _DurationModel.from_data(document)
             self._trained_on_n = n_samples
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+            logger.warning("Failed to load duration predictor: %s", exc)
+
+    def _save_model(self, n_samples: int, data: dict[str, Any]) -> None:
+        """Atomically persist metadata and prediction data together."""
+        try:
+            write_atomic_json(
+                self._model_path, {"version": _MODEL_FORMAT, "trained_on_n": n_samples, **data}, indent=None
+            )
         except OSError as exc:
             logger.warning("Failed to save duration predictor: %s", exc)
 
@@ -448,15 +495,17 @@ class DurationPredictor:
 
         try:
             gbr = GradientBoostingRegressor(
-                n_estimators=100,
-                max_depth=4,
+                n_estimators=_ESTIMATOR_COUNT,
+                max_depth=_TREE_DEPTH,
                 learning_rate=0.1,
                 subsample=0.8,
                 random_state=42,
             )
             gbr.fit(X, y)
-            self._model = gbr
-            self._save_model(len(records))
+            data = _export_model(gbr)
+            self._model = _DurationModel.from_data(data)
+            self._trained_on_n = len(records)
+            self._save_model(len(records), data)
             logger.info("Duration predictor retrained on %d samples", len(records))
         except Exception as exc:
             logger.warning("Duration predictor training failed: %s", exc)

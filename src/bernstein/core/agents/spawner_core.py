@@ -3077,14 +3077,15 @@ class AgentSpawner:
         is used. Model-name inference applies only when nothing is pinned
         anywhere.
         """
+        adapter_pinned = bool(getattr(self, "_adapter_pinned", False))
         logger.debug(
             "_infer_adapter_name_for_provider: provider_name=%r model=%r current_adapter=%r adapter_pinned=%r",
             provider_name,
             model,
             self._adapter.name(),
-            self._adapter_pinned,
+            adapter_pinned,
         )
-        if self._adapter_pinned:
+        if adapter_pinned:
             resolved = adapter_name_for_provider(provider_name, "") if provider_name else None
             if resolved is not None:
                 logger.info(
@@ -3118,7 +3119,7 @@ class AgentSpawner:
         # ``CachingAdapter``, which is not itself registered, so re-resolving
         # here reports a registered adapter as unregistered and falls back to
         # the display name -- the exact defect this path fixes (#5348).
-        fallback = self._adapter_registry_name
+        fallback = getattr(self, "_adapter_registry_name", None)
         if fallback is None:
             logger.warning(
                 "_infer_adapter_name_for_provider: no registry match for provider_name=%r model=%r; "
@@ -3537,10 +3538,10 @@ class AgentSpawner:
         # inject an unexpected type into the manifest.
         role_sampling_before = derived.copy()
         temperature = role_policy.get("temperature")
-        if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        if isinstance(temperature, int | float) and not isinstance(temperature, bool):
             derived["temperature"] = float(temperature)
         top_p = role_policy.get("top_p")
-        if isinstance(top_p, (int, float)) and not isinstance(top_p, bool):
+        if isinstance(top_p, int | float) and not isinstance(top_p, bool):
             derived["top_p"] = float(top_p)
         top_k = role_policy.get("top_k")
         if isinstance(top_k, int) and not isinstance(top_k, bool):
@@ -4686,18 +4687,22 @@ class AgentSpawner:
         )
 
         self._notify_cost_anomaly_spawn(tasks, model_config)
-        provider_for_rate_limit = provider_name or self._adapter.name()
-        try:
-            self._spawn_rate_limiter.acquire(provider_for_rate_limit)
-        except SpawnRateLimitExceeded as exc:
-            logger.warning(
-                "Spawn rate limit exceeded for provider '%s' -- retry in %.1fs",
-                exc.provider,
-                exc.retry_after_s,
-            )
-            raise SpawnError(
-                f"Spawn rate limit exceeded for provider '{exc.provider}'. Retry after {exc.retry_after_s:.1f}s."
-            ) from exc
+        effective_adapter_name = self._infer_adapter_name_for_provider(provider_name, model_config.model)
+        provider_for_rate_limit = provider_name or effective_adapter_name
+        # Local mock spawns simulate orchestration without calling external APIs;
+        # only skip burst rate limiting when the resolved spawn target itself is mock.
+        if effective_adapter_name != "mock" and provider_for_rate_limit != "mock":
+            try:
+                self._spawn_rate_limiter.acquire(provider_for_rate_limit)
+            except SpawnRateLimitExceeded as exc:
+                logger.warning(
+                    "Spawn rate limit exceeded for provider '%s' -- retry in %.1fs",
+                    exc.provider,
+                    exc.retry_after_s,
+                )
+                raise SpawnError(
+                    f"Spawn rate limit exceeded for provider '{exc.provider}'. Retry after {exc.retry_after_s:.1f}s."
+                ) from exc
 
         # Check catalog for a specialist agent before building from templates
         role = tasks[0].role
@@ -5621,6 +5626,8 @@ class AgentSpawner:
                                 _extra_spawn_kwargs["task_id"] = tasks[0].id
                             if "task_title" in _spawn_params:
                                 _extra_spawn_kwargs["task_title"] = tasks[0].title
+                            if "task_titles" in _spawn_params:
+                                _extra_spawn_kwargs["task_titles"] = [t.title for t in tasks]
                             # Issue #1797: hand the attested attachments to the
                             # adapter. Only passed when something was declared,
                             # so an unattached spawn calls exactly the argument
@@ -6213,6 +6220,8 @@ class AgentSpawner:
             _resume_extra["task_id"] = tasks[0].id
         if "task_title" in _resume_params:
             _resume_extra["task_title"] = tasks[0].title
+        if "task_titles" in _resume_params:
+            _resume_extra["task_titles"] = [t.title for t in tasks]
         if _resume_attachments is not None:
             if "multimodal_context" not in _resume_params:
                 raise AttachmentDispatchError(

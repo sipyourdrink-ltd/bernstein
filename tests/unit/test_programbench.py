@@ -25,6 +25,24 @@ from bernstein.benchmark.programbench import (
     save_results,
 )
 
+
+@pytest.fixture(autouse=True)
+def isolated_benchmark_fixture(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """Execute only the literal fixture programs in a test process."""
+    import subprocess
+    import sys
+
+    from bernstein.benchmark import programbench
+
+    def run_fixture(_image, argv, *, input_data, timeout):
+        return subprocess.run(
+            [sys.executable, *argv[1:]], input=input_data, capture_output=True, timeout=timeout, check=False
+        )
+
+    if "runtime_unavailable_fails_without_local_fallback" not in request.node.name:
+        monkeypatch.setattr(programbench, "run_isolated", run_fixture)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -315,6 +333,16 @@ class TestHarness:
         h1 = ProgramBenchHarness(workdir=tmp_path, sample=3, seed=42)
         h2 = ProgramBenchHarness(workdir=tmp_path, sample=3, seed=42)
         assert [t.task_id for t in h1.filter_tasks(tasks)] == [t.task_id for t in h2.filter_tasks(tasks)]
+
+    def test_runtime_unavailable_fails_without_local_fallback(self, tmp_path: Path, monkeypatch) -> None:
+        import shutil
+
+        monkeypatch.setattr(shutil, "which", lambda _executable: None)
+        harness = ProgramBenchHarness(workdir=tmp_path)
+        task = _task(setup="x = 5", asserts=["x == 5"])
+        passed, total, error = harness.evaluate_asserts(task, "")
+        assert (passed, total) == (0, 1)
+        assert error is not None and "isolated runtime" in error
 
     def test_evaluate_asserts_all_pass(self, tmp_path: Path) -> None:
         h = ProgramBenchHarness(workdir=tmp_path)

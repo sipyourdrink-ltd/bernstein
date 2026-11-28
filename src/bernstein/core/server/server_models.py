@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.quality.completion_check_policy import approved_check
 from bernstein.core.security.tenanting import is_valid_tenant_id
 from bernstein.core.tasks.models import CompletionSignalType, DispatchTier
 from bernstein.core.tasks.task_store import ProgressEntry
@@ -28,7 +29,13 @@ class CompletionSignalSchema(BaseModel):
     """Pydantic schema for a single completion signal in API requests."""
 
     type: _SIGNAL_TYPE
-    value: str
+    value: str = Field(description="Signal input. For test_passes, an operator-approved check identifier.")
+
+    @model_validator(mode="after")
+    def validate_executable_check(self) -> Self:
+        if self.type == "test_passes" and approved_check(self.value) is None:
+            raise ValueError("test_passes requires an operator-approved check identifier")
+        return self
 
 
 # input-size caps for TaskCreate (prevents OOM via 200MB descriptions).
@@ -414,6 +421,12 @@ class TaskResponse(BaseModel):
     # Claim owner: the session or cluster worker node id that claimed the task,
     # so a cluster view can place in-flight tasks under the node running them.
     claimed_by_session: str | None = None
+    # Remote execution (#6538): claim responses (GET /tasks/next/{role}) stamp
+    # the central's repository identity - its root commit - so a worker node
+    # can refuse a claim addressed to a repository its workspace does not
+    # hold. None everywhere else, and on claims from a central whose
+    # workspace has no resolvable git history.
+    repo_root_commit: str | None = None
     # Retry bookkeeping: typed fields are the single source of truth.
     retry_count: int = 0
     max_retries: int = 3
@@ -493,6 +506,14 @@ class TaskReopenRequest(BaseModel):
     """Body for POST /tasks/{task_id}/reopen."""
 
     reason: str = ""
+    dispatch_tier: DispatchTier | None = None
+
+    @field_validator("dispatch_tier", mode="before", json_schema_input_type=DispatchTier)
+    @classmethod
+    def _reject_null_tier(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("dispatch_tier cannot be null; omit it to preserve the current tier")
+        return value
 
     @field_validator("reason")
     @classmethod
@@ -940,6 +961,10 @@ class NodeCapacitySchema(BaseModel):
     active_agents: int = 0
     gpu_available: bool = False
     supported_models: list[str] = Field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+    disk_free_mb: int | None = Field(default=None, ge=0)
+    mem_used_pct: float | None = Field(default=None, ge=0, le=100)
+    mesh_rtt_ms: float | None = Field(default=None, ge=0)
+    platform: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class NodeRegisterRequest(BaseModel):

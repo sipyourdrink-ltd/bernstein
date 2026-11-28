@@ -1,0 +1,42 @@
+# Contract-first multi-module refactor with isolated parallel implementation lanes.
+name: multi-module-refactor
+version: "1.0.0"
+
+phases:
+  - name: design
+    allowed_roles: [architect]
+  - name: execute
+  - name: integrate
+    allowed_roles: [qa, reviewer]
+
+nodes:
+  define-interface-contract:
+    phase: design
+    role: architect
+    description: "Write the target types, invariants, and exclusive file boundaries per lane"
+    estimated_minutes: 30
+
+  refactor-core-module:
+    phase: execute
+    role: backend
+    description: "Migrate core module implementation behind the agreed contract"
+    estimated_minutes: 45
+    depends_on:
+      - define-interface-contract
+
+  refactor-cli-and-adapters:
+    phase: execute
+    role: backend
+    description: "Update CLI and adapter callers in disjoint files to the new contract"
+    estimated_minutes: 45
+    depends_on:
+      - define-interface-contract
+
+  integration-and-review-gate:
+    phase: integrate
+    role: reviewer
+    description: "Verify cross-module integration tests, typecheck, and zero leftover shims"
+    estimated_minutes: 30
+    depends_on:
+      - refactor-core-module
+      - refactor-cli-and-adapters

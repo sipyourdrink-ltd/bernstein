@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from packaging.utils import canonicalize_version
 
 from bernstein.cli.release_notes import (
     _fetch_remote,
@@ -45,6 +46,13 @@ def project_with_release_notes(tmp_path: Path) -> Path:
         (notes / name).write_text(body, encoding="utf-8")
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\npointer\n", encoding="utf-8")
     return tmp_path
+
+
+@pytest.fixture()
+def project_with_prerelease_notes(project_with_release_notes: Path) -> Path:
+    notes = project_with_release_notes / "docs" / "release-notes"
+    (notes / "v4.0.0-rc1.md").write_text("# v4.0.0-rc1\n- release candidate\n", encoding="utf-8")
+    return project_with_release_notes
 
 
 # --- TestFetchRemote ---
@@ -136,6 +144,63 @@ class TestFetchReleaseNotes:
             result = fetch_release_notes(workdir=project_with_release_notes)
         assert "newest release" in result
 
+    @pytest.mark.parametrize("version", ["4.0.0-rc1", "4.0.0rc1"])
+    def test_offline_prerelease_matches_equivalent_notes(
+        self, project_with_prerelease_notes: Path, version: str
+    ) -> None:
+        with (
+            patch("bernstein.cli.release_notes.installed_version", return_value=version),
+            patch("bernstein.cli.release_notes._fetch_remote", return_value=None),
+        ):
+            result = fetch_release_notes(workdir=project_with_prerelease_notes)
+        assert "release candidate" in result
+
+    def test_offline_prerelease_prefers_exact_filename(self, project_with_prerelease_notes: Path) -> None:
+        notes = project_with_prerelease_notes / "docs" / "release-notes"
+        (notes / "v4.0.0rc1.md").write_text("# Exact release candidate\n", encoding="utf-8")
+        with (
+            patch("bernstein.cli.release_notes.installed_version", return_value="4.0.0rc1"),
+            patch("bernstein.cli.release_notes._fetch_remote", return_value=None),
+        ):
+            result = fetch_release_notes(workdir=project_with_prerelease_notes)
+        assert result == "# Exact release candidate\n"
+
+    @pytest.mark.parametrize("stable_page_exists", [True, False])
+    def test_offline_unreadable_prerelease_uses_stable_or_pointer(
+        self, project_with_prerelease_notes: Path, stable_page_exists: bool
+    ) -> None:
+        notes = project_with_prerelease_notes / "docs" / "release-notes"
+        (notes / "v4.0.0-rc1.md").write_bytes(b"\xff")
+        if not stable_page_exists:
+            (notes / "v3.9.0.md").unlink()
+            (notes / "v3.12.0.md").unlink()
+        with (
+            patch("bernstein.cli.release_notes.installed_version", return_value="4.0.0-rc1"),
+            patch("bernstein.cli.release_notes._fetch_remote", return_value=None),
+        ):
+            result = fetch_release_notes(workdir=project_with_prerelease_notes)
+        assert ("newest release" if stable_page_exists else "pointer") in result
+
+    def test_offline_override_url_uses_stable_notes(self, project_with_prerelease_notes: Path) -> None:
+        with (
+            patch("bernstein.cli.release_notes.installed_version", return_value="4.0.0-rc1"),
+            patch("bernstein.cli.release_notes._fetch_remote", return_value=None) as fetch,
+        ):
+            result = fetch_release_notes(url="https://example.com/notes", workdir=project_with_prerelease_notes)
+        fetch.assert_called_once_with("https://example.com/notes")
+        assert "newest release" in result
+
+    @pytest.mark.parametrize("version", ["3.9.0", "4.0.0-rc2"])
+    def test_offline_without_matching_prerelease_uses_latest_stable(
+        self, project_with_prerelease_notes: Path, version: str
+    ) -> None:
+        with (
+            patch("bernstein.cli.release_notes.installed_version", return_value=version),
+            patch("bernstein.cli.release_notes._fetch_remote", return_value=None),
+        ):
+            result = fetch_release_notes(workdir=project_with_prerelease_notes)
+        assert "newest release" in result
+
     def test_falls_back_to_local(self, project_with_changelog: Path) -> None:
         with patch("bernstein.cli.release_notes._fetch_remote", return_value=None):
             result = fetch_release_notes(workdir=project_with_changelog)
@@ -146,22 +211,21 @@ class TestFetchReleaseNotes:
             result = fetch_release_notes(workdir=tmp_path)
         assert "not available" in result or "release notes" in result.lower()
 
-    def test_served_notes_mention_the_current_version(self) -> None:
-        """Offline, the served page is the one for the version this tree declares.
-
-        The expected version is read from the package metadata rather than
-        written into the test, so a version bump that ships without its
-        release-notes page fails here instead of silently serving the previous
-        release as if it were current.
-        """
+    def test_served_notes_match_the_current_version(self) -> None:
+        """Offline notes use the installed version, including normalized metadata."""
         version = installed_version()
         latest = latest_release_notes_path(_REPO_ROOT)
         with patch("bernstein.cli.release_notes._fetch_remote", return_value=None):
             served = fetch_release_notes(workdir=_REPO_ROOT)
-        assert version in served, (
-            f"no release-notes page mentions version {version}; "
-            f"newest page is {latest.name if latest else 'missing'}. "
-            f"Add docs/release-notes/v{version}.md with the version bump."
+        normalized = canonicalize_version(version)
+        matching_pages = (
+            page
+            for page in (_REPO_ROOT / "docs" / "release-notes").glob("v*.md")
+            if canonicalize_version(page.stem[1:]) == normalized
+        )
+        assert any(page.read_text(encoding="utf-8") == served for page in matching_pages), (
+            f"the release-notes page for version {version} was not served; "
+            f"newest stable page is {latest.name if latest else 'missing'}."
         )
 
 
@@ -187,3 +251,16 @@ class TestFormatForTerminal:
         lines = formatted.splitlines()
         # Non-empty lines only
         assert all(line.strip() for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("one\ntwo", "one\ntwo"),
+        ("one\ntwo\n \t\n\n", "one\ntwo"),
+        ("one\ntwo\n\nthree", "one\ntwo\n... (truncated)"),
+    ],
+    ids=["exact-fit", "trailing-blanks", "one-more-line"],
+)
+def test_release_notes_exact_limit_has_no_marker(raw: str, expected: str) -> None:
+    assert format_for_terminal(raw, max_lines=2) == expected

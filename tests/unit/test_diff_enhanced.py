@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+from pathlib import Path
+from unittest.mock import call, patch
+
 from bernstein.cli.diff_cmd import (
     FileDiffStat,
     ResolvedDiff,
@@ -38,6 +43,42 @@ class TestDiffCmd:
         result = runner.invoke(cli, ["diff", "--help"])
         assert "--raw" in result.output
 
+    def test_raw_diff_matches_git_patch(self, tmp_path: Path) -> None:
+        def git(*args: str, patch_bytes: bytes | None = None) -> bytes:
+            return subprocess.run(
+                ["git", *args], cwd=tmp_path, input=patch_bytes, capture_output=True, check=True
+            ).stdout
+
+        git("init", "-b", "main")
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@example.org")
+        git("config", "commit.gpgsign", "false")
+        git("config", "core.autocrlf", "false")
+        git("commit", "--allow-empty", "-m", "Initial commit")
+        git("switch", "-c", "agent/example")
+        (tmp_path / "change.txt").write_bytes(b"[bold]" + b"x" * 110 + b"\r\ntext: \xff  \n")
+        git("add", "change.txt")
+        git("commit", "-m", "Add the example")
+        git("switch", "main")
+        runtime = tmp_path / ".sdd" / "runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "agents.json").write_text(
+            json.dumps({"agents": [{"id": "example", "task_ids": ["item"]}]}), encoding="utf-8"
+        )
+
+        runner = CliRunner()
+        args = ["diff", "item", "--workdir", str(tmp_path)]
+        result = runner.invoke(cli, [*args, "--raw"], env={"COLUMNS": "32"})
+
+        assert result.exit_code == 0, result.exception
+        assert result.stdout_bytes == git("diff", "main...agent/example")
+        git("apply", "--check", "-", patch_bytes=result.stdout_bytes)
+
+        formatted = runner.invoke(cli, args)
+        assert formatted.exit_code == 0, formatted.exception
+        assert "Task: item" in formatted.stdout
+        assert "File Summary" in formatted.stdout
+
     def test_diff_compare_flag(self) -> None:
         runner = CliRunner()
         result = runner.invoke(cli, ["diff", "--help"])
@@ -47,6 +88,33 @@ class TestDiffCmd:
         runner = CliRunner()
         result = runner.invoke(cli, ["diff", "--help"])
         assert "--base" in result.output
+
+    def test_diff_compare_uses_requested_base_and_prints_stats(self, tmp_path: Path) -> None:
+        left = ResolvedDiff(
+            diff_text="diff --git a/left.txt b/left.txt\n--- /dev/null\n+++ b/left.txt\n@@ -0,0 +1 @@\n+left change\n",
+            source_label="",
+            stat_text="left.txt | 1 +",
+        )
+        right = ResolvedDiff(
+            diff_text="diff --git a/right.txt b/right.txt\n--- /dev/null\n+++ b/right.txt\n@@ -0,0 +1 @@\n+right change\n",
+            source_label="",
+            stat_text="right.txt | 1 +",
+        )
+
+        with patch("bernstein.cli.commands.diff_cmd.resolve_diff", side_effect=[left, right]) as resolve:
+            result = CliRunner().invoke(
+                cli, ["diff", "--compare", "left", "right", "--base", "example", "--stat", "--workdir", str(tmp_path)]
+            )
+
+        assert result.exit_code == 0, result.output
+        assert resolve.call_args_list == [
+            call("left", tmp_path.resolve(), [], "example"),
+            call("right", tmp_path.resolve(), [], "example"),
+        ]
+        assert "left.txt | 1 +" in result.stdout
+        assert "right.txt | 1 +" in result.stdout
+        assert "left change" not in result.stdout
+        assert "right change" not in result.stdout
 
 
 class TestResolvedDiff:

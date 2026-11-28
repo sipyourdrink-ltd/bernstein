@@ -25,7 +25,11 @@ from bernstein.core.protocols.acp.handlers import (
     ACPHandlerRegistry,
     PromptResult,
 )
-from bernstein.core.protocols.acp.schema import ACP_PROTOCOL_VERSION, validate_response
+from bernstein.core.protocols.acp.schema import (
+    ACP_PROTOCOL_VERSION,
+    ACP_V1_PROTOCOL_VERSION,
+    validate_response,
+)
 from bernstein.core.protocols.acp.session import ACPSessionStore
 from bernstein.core.protocols.acp.transport import StdioAcpTransport
 
@@ -147,6 +151,9 @@ def test_conformance_vector(fixture: Path) -> None:
 
 
 def test_handshake_returns_negotiated_protocol_version() -> None:
-    """The handshake fixture pins the version we report."""
-    responses = _replay(FIXTURE_DIR / "handshake.jsonl")
-    assert responses[0]["result"]["protocolVersion"] == ACP_PROTOCOL_VERSION
+    """Pin negotiated protocol versions for both ACP v1 and legacy handshakes."""
+    v1_responses = _replay(FIXTURE_DIR / "v1_handshake.jsonl")
+    assert v1_responses[0]["result"]["protocolVersion"] == ACP_V1_PROTOCOL_VERSION
+
+    legacy_responses = _replay(FIXTURE_DIR / "handshake.jsonl")
+    assert legacy_responses[0]["result"]["protocolVersion"] == ACP_PROTOCOL_VERSION

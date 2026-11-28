@@ -1,7 +1,7 @@
 """Persist and read the auto-generated run Bearer token (issue #2794).
 
 When the launcher starts a server without an operator-configured
-``BERNSTEIN_AUTH_TOKEN`` it auto-generates an ephemeral token. Historically
+``BERNSTEIN_AUTH_TOKEN`` it mints a bearer token and stores it for reuse. Historically
 that token lived only in the launcher process environment, so any CLI monitor
 invoked from a *different* shell (``status``/``recap``/``checkpoint``) or the
 TUI poller could not authenticate and the server answered ``401`` - which the
@@ -24,6 +24,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import stat
+import sys
 from pathlib import Path
 
 from bernstein.core.defaults import SDD_AUTH_TOKEN
@@ -90,8 +92,32 @@ def persist_run_auth_token(workdir: Path, token: str) -> Path | None:
     return target
 
 
+def _is_safe_token_file_stat(st: os.stat_result, path: Path) -> bool:
+    """Return True when *st* describes a regular file safely scoped to the current user."""
+    if not stat.S_ISREG(st.st_mode):
+        logger.warning("Refusing non-regular auth token file: %s", path)
+        return False
+    if sys.platform != "win32":
+        if st.st_mode & 0o077:
+            logger.warning(
+                "Refusing auth token file with group/other permissions (%04o): %s",
+                stat.S_IMODE(st.st_mode),
+                path,
+            )
+            return False
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():
+            logger.warning(
+                "Refusing auth token file owned by uid %d (expected %d): %s",
+                st.st_uid,
+                os.getuid(),
+                path,
+            )
+            return False
+    return True
+
+
 def read_run_auth_token(workdir: Path | None = None) -> str | None:
-    """Read the persisted run token, if present.
+    """Read the persisted run token, if present and safely owned/scoped.
 
     Args:
         workdir: Project root to resolve the token file against. Defaults to
@@ -100,12 +126,34 @@ def read_run_auth_token(workdir: Path | None = None) -> str | None:
 
     Returns:
         The stripped token string, or ``None`` when the file is absent,
-        empty, or unreadable.
+        empty, unreadable, a symlink/non-regular file, or has unsafe
+        permissions/ownership.
     """
     path = run_auth_token_path(workdir if workdir is not None else Path.cwd())
     try:
-        token = path.read_text(encoding="utf-8").strip()
+        st = os.lstat(path)
     except OSError:
+        return None
+    if not _is_safe_token_file_stat(st, path):
+        return None
+
+    open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), open_flags)
+    except OSError:
+        return None
+    try:
+        fst = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        return None
+    if not _is_safe_token_file_stat(fst, path):
+        os.close(fd)
+        return None
+    try:
+        with os.fdopen(fd, encoding="utf-8") as handle:
+            token = handle.read(8192).strip()
+    except (OSError, UnicodeDecodeError):
         return None
     return token or None
 

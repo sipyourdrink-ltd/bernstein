@@ -1,0 +1,22 @@
+name: release-readiness
+description: "Pre-release audit across changelog fragments, dependency health, and smoke tests."
+version: "1.0.0"
+nodes:
+  - id: surface-and-docs-check
+    agent: docs
+    prompt: |
+      Verify changelog/release-note coverage and documentation accuracy for
+      target release: {goal}
+  - id: security-preflight
+    agent: security
+    prompt: |
+      Audit dependency lockfiles, advisories, and secret/permission hygiene for
+      target release: {goal}
+    fresh_context: true
+  - id: smoke-check
+    depends_on: [surface-and-docs-check, security-preflight]
+    agent: qa
+    prompt: |
+      Run clean-install and rollback smoke checks and summarize release
+      sign-off readiness for: {goal}
+    timeout_seconds: 2400

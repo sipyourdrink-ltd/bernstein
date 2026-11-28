@@ -11,3 +11,8 @@ max_agents: 2
 
 # Demo budget cap ($2 per cycle should be plenty for 4 simple tasks).
 budget: "$2.00"
+
+# Declare the demo's actual merge-gate policy so run_started journals
+# gate_config and `bernstein trace export` can compute policy.bundle_hash.
+quality_gates:
+  enabled: false

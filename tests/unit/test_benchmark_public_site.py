@@ -190,7 +190,6 @@ def test_public_docs_guard_banned_claims_absent() -> None:
     banned, source = _resolve_public_docs_denylist()
     public_docs = [
         _REPO_ROOT / "docs" / "benchmarks" / "leaderboard.html",
-        _REPO_ROOT / "docs" / "blog" / "multi-agent-benchmark.md",
         _REPO_ROOT / "benchmarks" / "README.md",
     ]
 

@@ -99,3 +99,28 @@ def test_malformed_frame_mid_lifecycle_is_refused(tmp_path: Path) -> None:
     rows = [r for r in load_events(journal.path).events if r.get("event") == "acp_event"]
     assert len(rows) == 1
     assert journal.verify().chain_consistent
+
+
+def test_run_acp_channel_dual_compatible_with_v1_frames(tmp_path: Path) -> None:
+    v1_frames: list[dict] = [
+        {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1, "agentCapabilities": {}}},
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "s-v1",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": "done"},
+                },
+            },
+        },
+        {"jsonrpc": "2.0", "id": 2, "result": {"stopReason": "end_turn"}},
+    ]
+    journal = EventJournal("kilo-v1", tmp_path)
+    result = run_acp_channel(_lines(v1_frames), journal=journal, session_id="kilo-v1")
+    assert result.ok is True
+    assert result.terminal is True
+    assert result.stop_reason == "end_turn"
+    assert result.event_count == len(v1_frames)
+    assert journal.verify().chain_consistent

@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from bernstein.core.file_discovery import (
     clear_caches,
     file_tree,
@@ -28,6 +29,18 @@ def test_file_tree_uses_git_ls_files_and_caches_results(tmp_path: Path) -> None:
     assert first == "src/a.py\nsrc/b.py"
     assert second == first
     mock_ls.assert_called_once_with(tmp_path)
+
+
+@pytest.mark.parametrize("limits", [(3, 1), (1, 3)], ids=["large-first", "small-first"])
+def test_file_tree_cache_respects_each_requested_line_limit(tmp_path: Path, limits: tuple[int, int]) -> None:
+    for filename in ("one", "two", "three"):
+        (tmp_path / filename).touch()
+
+    with patch("bernstein.core.knowledge.file_discovery._gc_ls_files", return_value=[]) as ls_files:
+        listings = {limit: file_tree(tmp_path, max_lines=limit).splitlines() for limit in limits}
+
+    assert listings == {1: ["one", "... (2 more files)"], 3: ["one", "three", "two"]}
+    ls_files.assert_called_once_with(tmp_path)
 
 
 def test_file_tree_falls_back_to_walk_and_skips_ignored_paths(tmp_path: Path) -> None:

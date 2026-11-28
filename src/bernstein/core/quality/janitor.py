@@ -322,10 +322,14 @@ def evaluate_signal(
                 lineage_store=lineage_store,
             )
         case "test_passes":
-            command = _resolve_branch_check_command(signal.value, workdir)
-            command = _resolve_test_path_command(command, workdir)
-            ok = _check_test_passes(command, workdir)
-            return ok, "exit 0" if ok else "non-zero exit"
+            from bernstein.core.quality.completion_check_policy import approved_check
+
+            command = approved_check(signal.value)
+            if command is None:
+                return False, "test_passes requires an operator-approved check identifier"
+            resolved = _resolve_test_path_argv(_resolve_branch_check_argv(command, workdir), workdir)
+            ok = _check_test_passes(resolved, workdir)
+            return ok, "exit 0" if ok else "check failed or isolation unavailable"
         case "file_contains":
             ok = _check_file_contains(signal.value, workdir)
             if ok:
@@ -2141,6 +2145,20 @@ def _resolve_branch_ref(expected: str, workdir: Path) -> tuple[str | None, list[
     return None, branches
 
 
+def _resolve_branch_check_argv(argv: list[str], workdir: Path) -> list[str]:
+    """Resolve a recognized git check's ref without reinterpreting other arguments."""
+    if argv[:3] != ["git", "rev-parse", "--verify"] and argv[:3] != ["git", "log", "-1"]:
+        return argv
+    if len(argv) < 4 or argv[-1].startswith("-") or argv[-1] in _SPECIAL_REFS or "--" in argv:
+        return argv
+    expected = argv[-1]
+    resolved, branches = _resolve_branch_ref(expected, workdir)
+    logger.info(
+        "janitor acceptance check: ref %r resolved to %r in %s (branches: %s)", expected, resolved, workdir, branches
+    )
+    return [*argv[:-1], resolved] if resolved else argv
+
+
 def _resolve_branch_check_command(command: str, workdir: Path) -> str:
     """Rewrite a branch-check ``test_passes`` command to the ref that actually exists.
 
@@ -2224,25 +2242,29 @@ def _resolve_test_path_command(command: str, workdir: Path) -> str:
         resolvable missing test path replaced by the path that does exist.
     """
     try:
-        tokens = shlex.split(command)
+        argv = shlex.split(command)
     except ValueError:
-        # Unbalanced quotes: not the janitor's to repair. Run it verbatim.
         return command
+    resolved = _resolve_test_path_argv(argv, workdir)
+    return shlex.join(resolved) if resolved != argv else command
 
-    resolved_command = command
-    for token in tokens:
+
+def _resolve_test_path_argv(argv: list[str], workdir: Path) -> list[str]:
+    """Resolve each uniquely moved test path within its original argument."""
+    resolved = argv.copy()
+    for index, token in enumerate(argv[1:], start=1):
         if token.startswith("-"):
             continue
         # ``path::node_id`` selects one test inside a file; only the path half
         # is a filesystem claim, and the node id must survive the rewrite.
-        declared = token.split("::", 1)[0]
+        declared, separator, node_id = token.partition("::")
         if not declared.endswith(".py") or (workdir / declared).exists():
             continue
         parts = Path(declared).parts
         # Search only under the declared top-level directory (``tests``), never
         # from the project root: a bare or dot-relative filename would walk the
         # virtualenv and could match a file in an installed package.
-        if len(parts) < 2 or parts[0] in (".", "..") or Path(declared).is_absolute():
+        if len(parts) < 2 or ".." in parts or Path(declared).is_absolute():
             continue
         root = workdir / parts[0]
         if not root.is_dir():
@@ -2268,8 +2290,8 @@ def _resolve_test_path_command(command: str, workdir: Path) -> str:
             workdir,
             actual,
         )
-        resolved_command = resolved_command.replace(declared, actual)
-    return resolved_command
+        resolved[index] = actual + separator + node_id
+    return resolved
 
 
 def _signal_timeout_s() -> int:
@@ -2280,27 +2302,24 @@ def _signal_timeout_s() -> int:
         return 120
 
 
-def _check_test_passes(command: str, workdir: Path) -> bool:
-    """Run a shell command and check for exit code 0.
+def _check_test_passes(command: list[str], workdir: Path) -> bool:
+    """Run an operator-approved argv in an isolated, read-only checkout."""
+    from bernstein.core.sandbox.isolated_process import IsolationUnavailable, readonly_bind, run_isolated
 
-    Args:
-        command: Shell command to execute (e.g. "pytest tests/unit/test_foo.py -x").
-        workdir: Working directory for the subprocess.
+    image = os.environ.get("BERNSTEIN_COMPLETION_CHECK_IMAGE")
+    if not image:
+        logger.warning("janitor test_passes unavailable: configure an isolated check image")
+        return False
 
-    Returns:
-        True if exit code is 0.
-    """
     timeout_s = _signal_timeout_s()
     try:
-        # SECURITY: shell=True required because janitor commands are internally
-        # constructed test invocations (e.g. "pytest tests/...") that may use shell
-        # features; not user input.
-        result = subprocess.run(
+        result = run_isolated(
+            image,
             command,
-            shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
-            cwd=workdir,
-            capture_output=True,
+            input_data=b"",
             timeout=timeout_s,
+            workdir="/workspace",
+            mounts=(readonly_bind(workdir, "/workspace"),),
         )
         if result.returncode != 0:
             logger.warning("janitor test_passes FAIL: exit=%d", result.returncode)
@@ -2308,8 +2327,8 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
     except subprocess.TimeoutExpired:
         logger.warning("janitor test_passes TIMEOUT: timeout=%ss", timeout_s)
         return False
-    except OSError as exc:
-        logger.warning("janitor test_passes ERROR: error_type=%s", type(exc).__name__)
+    except IsolationUnavailable:
+        logger.warning("janitor test_passes unavailable: isolated runner failed")
         return False
 
 
