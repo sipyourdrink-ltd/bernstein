@@ -517,7 +517,7 @@ These commands answer different questions:
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--since DURATION` | all | Only include runs started in the last DURATION (`45m`, `6h`, `2d`). |
+| `--since DURATION` | all | Only include runs started in the last DURATION (`45m`, `6h`, `2d`; a bare number is seconds). A malformed, non-finite (`nan`, `inf`) or negative duration is a usage error that names `--since`. |
 | `--workdir PATH` | `.` | Project root. |
 | `--json` | off | Emit stable machine-readable rows instead of the table. |
 
