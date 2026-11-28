@@ -120,7 +120,8 @@ def _build_summary_text(
     cost_spent: float,
 ) -> str:
     """Build human-readable summary text from event data."""
-    if not events:
+    # Quiet only when nothing at all was recorded: usage with no task events is not quiet (#8029).
+    if not events and not api_records and cost_spent <= 0:
         return "Nothing happened while you were away -- quiet period."
     parts = [f"- {completed_tasks} task{'s' if completed_tasks != 1 else ''} completed"]
     if failed_tasks:
@@ -129,6 +130,8 @@ def _build_summary_text(
         parts.append(f"- {len(api_records)} API calls recorded")
     if cost_spent > 0:
         parts.append(f"- Estimated cost: ${cost_spent:.4f}")
+    if not events:
+        return "Since you were away:\n" + "\n".join(parts)
     details = "".join(f"  - {event}\n" for event in events)
     return "Since you were away:\n" + "\n".join(parts) + "\n\nDetails:\n" + details
 

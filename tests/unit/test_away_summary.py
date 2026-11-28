@@ -403,3 +403,21 @@ class TestFormatAwayReport:
         report = format_away_report(summary)
         assert "Task x completed" in report
         assert "Task y completed" in report
+
+
+def test_away_summary_reports_usage_without_task_events(tmp_path: Path) -> None:
+    """A period with recorded usage and no task events is not a quiet period (#8029)."""
+    metrics = tmp_path / ".sdd" / "metrics"
+    metrics.mkdir(parents=True)
+    (metrics / "api_usage_1970-01-01.jsonl").write_text('{"timestamp":10,"labels":{"cost_usd":0.25}}\n')
+
+    summary = generate_away_summary(0, tmp_path)
+
+    assert summary.cost_spent == pytest.approx(0.25)
+    assert "quiet period" not in summary.summary_text
+    assert "1 API calls recorded" in summary.summary_text
+    assert "$0.2500" in summary.summary_text
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert generate_away_summary(0, empty).summary_text == "Nothing happened while you were away -- quiet period."
