@@ -224,3 +224,21 @@ class TestFormatContextBreakdown:
         # Other categories should not appear if they have 0 tokens
         assert "RAG" not in output
         assert "Lessons" not in output
+
+
+def test_context_counts_repeated_task_sections() -> None:
+    """Two headings of one category both count; the first was overwritten and fell to ``other`` (#8031)."""
+    from unittest.mock import patch
+
+    from bernstein.tui import context_tokens
+
+    def words(text: str) -> int:
+        return len(text.split())
+
+    with patch.object(context_tokens, "count_tokens", side_effect=words):
+        result = context_tokens.analyze_context("## Task\nfirst\n## Tools\nlist\n## Goal\nsecond")
+        assert (result.task_description, result.tools, result.other, result.total) == (6, 3, 0, 9)
+
+        # Text before the first heading still counts as other.
+        lead = context_tokens.analyze_context("preface words\n## Task\nfirst\n## Goal\nsecond")
+        assert (lead.task_description, lead.other, lead.total) == (6, 2, 8)
