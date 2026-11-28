@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import signal
 from pathlib import Path
 from unittest.mock import patch
 
 import bernstein.cli.stop_cmd as stop_cmd_module
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import (
@@ -26,9 +26,9 @@ from bernstein.cli.main import (
 
 
 class TestWriteShutdownSignals:
-    def test_writes_signal_files_for_each_agent(self, tmp_path: Path) -> None:
+    def test_writes_signal_files_for_each_agent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Creates SHUTDOWN files under signals/{id}/ for each agent."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         runtime = tmp_path / ".sdd" / "runtime"
         runtime.mkdir(parents=True)
         agents = {"agents": [{"id": "agent-1"}, {"id": "agent-2"}]}
@@ -43,15 +43,15 @@ class TestWriteShutdownSignals:
             content = sig_file.read_text()
             assert "test stop" in content
 
-    def test_returns_empty_when_no_agents_json(self, tmp_path: Path) -> None:
+    def test_returns_empty_when_no_agents_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns empty list when agents.json does not exist."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         result = write_shutdown_signals()
         assert result == []
 
-    def test_skips_agents_without_id(self, tmp_path: Path) -> None:
+    def test_skips_agents_without_id(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Agents missing the 'id' field are silently skipped."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         runtime = tmp_path / ".sdd" / "runtime"
         runtime.mkdir(parents=True)
         agents = {"agents": [{"id": ""}, {"id": "good-agent"}]}
@@ -60,9 +60,9 @@ class TestWriteShutdownSignals:
         result = write_shutdown_signals()
         assert result == ["good-agent"]
 
-    def test_handles_malformed_json(self, tmp_path: Path) -> None:
+    def test_handles_malformed_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Gracefully returns empty on malformed agents.json."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         runtime = tmp_path / ".sdd" / "runtime"
         runtime.mkdir(parents=True)
         (runtime / "agents.json").write_text("{bad json")
@@ -77,9 +77,9 @@ class TestWriteShutdownSignals:
 
 
 class TestReturnClaimedToOpen:
-    def test_moves_claimed_files_to_open(self, tmp_path: Path) -> None:
+    def test_moves_claimed_files_to_open(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Files in claimed/ are moved back to open/."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         claimed = tmp_path / ".sdd" / "backlog" / "claimed"
         open_dir = tmp_path / ".sdd" / "backlog" / "open"
         claimed.mkdir(parents=True)
@@ -94,9 +94,9 @@ class TestReturnClaimedToOpen:
         assert (open_dir / "101-other-task.yaml").exists()
         assert not list(claimed.glob("*.md"))
 
-    def test_removes_duplicates_in_closed(self, tmp_path: Path) -> None:
+    def test_removes_duplicates_in_closed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Files whose number exists in closed/ are deleted, not moved."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         claimed = tmp_path / ".sdd" / "backlog" / "claimed"
         open_dir = tmp_path / ".sdd" / "backlog" / "open"
         closed = tmp_path / ".sdd" / "backlog" / "closed"
@@ -113,9 +113,9 @@ class TestReturnClaimedToOpen:
         assert not (claimed / "100-task.yaml").exists()  # deleted
         assert not (open_dir / "100-task.yaml").exists()  # not moved
 
-    def test_removes_duplicates_in_done(self, tmp_path: Path) -> None:
+    def test_removes_duplicates_in_done(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Files whose number exists in done/ are deleted, not moved."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         claimed = tmp_path / ".sdd" / "backlog" / "claimed"
         open_dir = tmp_path / ".sdd" / "backlog" / "open"
         done = tmp_path / ".sdd" / "backlog" / "done"
@@ -131,15 +131,15 @@ class TestReturnClaimedToOpen:
         assert count == 0
         assert not (claimed / "200-build-api.yaml").exists()
 
-    def test_returns_zero_when_no_claimed_dir(self, tmp_path: Path) -> None:
+    def test_returns_zero_when_no_claimed_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns 0 when claimed/ directory doesn't exist."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         count = return_claimed_to_open()
         assert count == 0
 
-    def test_creates_open_dir_if_missing(self, tmp_path: Path) -> None:
+    def test_creates_open_dir_if_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Creates open/ directory if it doesn't exist."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         claimed = tmp_path / ".sdd" / "backlog" / "claimed"
         claimed.mkdir(parents=True)
         (claimed / "300-new-task.yaml").write_text("# Task")
@@ -194,9 +194,9 @@ class TestSaveSessionOnStop:
 
 
 class TestRecoverOrphanedClaims:
-    def test_delegates_toreturn_claimed_to_open(self, tmp_path: Path) -> None:
+    def test_delegates_toreturn_claimed_to_open(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """recover_orphaned_claims just calls return_claimed_to_open."""
-        os.chdir(tmp_path)
+        monkeypatch.chdir(tmp_path)
         claimed = tmp_path / ".sdd" / "backlog" / "claimed"
         claimed.mkdir(parents=True)
         (claimed / "400-orphan.md").write_text("# Orphaned")
@@ -253,8 +253,10 @@ class TestKillPidHard:
 
 
 class TestHardStopFallbacks:
-    def test_collect_pids_from_supervisor_state_kills_server_when_pid_file_is_missing(self, tmp_path: Path) -> None:
-        os.chdir(tmp_path)
+    def test_collect_pids_from_supervisor_state_kills_server_when_pid_file_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
         runtime = tmp_path / ".sdd" / "runtime"
         runtime.mkdir(parents=True)
         (runtime / "supervisor_state.json").write_text(
@@ -278,8 +280,10 @@ class TestHardStopFallbacks:
 
         mock_kill.assert_called_once_with(4321, "Task server", killed)
 
-    def test_collect_repo_processes_targets_repo_owned_runtime_processes(self, tmp_path: Path) -> None:
-        os.chdir(tmp_path)
+    def test_collect_repo_processes_targets_repo_owned_runtime_processes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
         snapshots = [
             stop_cmd_module._ProcessSnapshot(  # pyright: ignore[reportPrivateUsage]
                 pid=10,

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
 from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
@@ -81,7 +82,7 @@ def _make_spawner(workdir: Path) -> AgentSpawner:
 # ---------------------------------------------------------------------------
 
 
-def test_render_auth_section_absolutises_relative_path(tmp_path: Path) -> None:
+def test_render_auth_section_absolutises_relative_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A relative ``token_path`` must be rewritten to absolute in the prompt.
 
     Without this guarantee the agent's ``cat`` command resolves the path
@@ -91,7 +92,7 @@ def test_render_auth_section_absolutises_relative_path(tmp_path: Path) -> None:
     # cwd is set to tmp_path so we can construct a relative path that
     # resolves under tmp_path/.sdd/...
     monkey_cwd = tmp_path
-    os.chdir(monkey_cwd)
+    monkeypatch.chdir(monkey_cwd)
     relative = Path(".sdd/runtime/agent_tokens/manager-abc12345.token")
     assert not relative.is_absolute()
 
@@ -195,7 +196,9 @@ def test_issue_agent_token_file_mode_is_0600(tmp_path: Path) -> None:
     assert mode == 0o600, f"Expected 0600, got {oct(mode)}"
 
 
-def test_auth_section_in_prompt_resolves_when_agent_cwd_is_worktree(tmp_path: Path) -> None:
+def test_auth_section_in_prompt_resolves_when_agent_cwd_is_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """End-to-end: prompt-embedded path resolves to a real file from a worktree.
 
     Simulates the manager agent's runtime: ``cat $TOKEN_PATH`` is
@@ -226,5 +229,5 @@ def test_auth_section_in_prompt_resolves_when_agent_cwd_is_worktree(tmp_path: Pa
     # absolute path still reads back the token.
     worktree_dir = project_root / ".sdd" / "worktrees" / "manager-ccccdddd"
     worktree_dir.mkdir(parents=True)
-    os.chdir(worktree_dir)
+    monkeypatch.chdir(worktree_dir)
     assert token_path.read_text() == "live-token-bytes"
