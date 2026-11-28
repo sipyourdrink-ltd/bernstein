@@ -104,10 +104,15 @@ validity nor a stored verdict is mistaken for the other.
 Closure does not prove that journaled claims are true, that effects bypassing
 Bernstein were observed, or that an HMAC key holder was honest. It proves that
 the authenticated chain contains a terminal statement for a specific verified
-state anchor and no later retained event for that run. Governed tool calls now
-also write `toolcall.effect` after the connector returns (#6270 slice 1);
-`verify-audit-receipt` does not yet close the decision → dispatch → effect
-triple (slice 2). `LineageGate`, external identity, result-bundle
+state anchor and no later retained event for that run. Governed tool calls write `toolcall.effect` after the connector returns, and
+both `verify-audit-receipt` and `bernstein-verify-receipt` report per-attestation
+decision → dispatch → effect closure, `retry_of` linkage, and bounded streaming
+offline `effect_digest` recomputation (16 MiB payload cap) when `--effects-dir`
+is supplied (#6270). Both verifiers enforce the request-id contract that
+JSON-RPC `request_id` values on `toolcall.attestation` are present, non-blank,
+and unique per `scope_id` (by raw JSON value, across initial calls and retries)
+and fail closed on outside-range `retry_of` links when the receipt range starts
+at genesis. `LineageGate`, external identity, result-bundle
 attestation, revocation, and transparency publication remain separate
 boundaries. Closure reuses the existing audit key and receipt formats; it
 creates no new key lifecycle.

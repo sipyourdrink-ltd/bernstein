@@ -75,10 +75,18 @@ bound to that intent digest (`record_toolcall_effect`, same shape as
 `record_automation_action`: digest, dispatch handle, attestation handle,
 outcome). Fields are `effect_digest`, `outcome` (`ok` / `error` / `timeout` /
 `partial`), and `duration_ms`. A missing or failed effect write is
-"dispatched, effect unobserved", never success. Completeness still comes
-from the pre-dispatch pair only; slice 2 adds the verifier triple.
+"dispatched, effect unobserved", never success. When `effects_dir` is
+configured on `NativeToolCallEvidenceProvider`, it also persists the exact
+preimage bytes under `<effects_dir>/<intent_sha256>.effect` so
+`verify-audit-receipt` (`tools/verify_audit_receipt.py`) and
+`bernstein-verify-receipt` (`verify_cli/bernstein_verify_receipt/`) can
+recompute `effect_digest` offline via `--effects-dir`. Pre-effect chains still
+verify and report `effect unobserved`. A retry is a second `ToolCallIntent`
+with its own `request_id` linked to the prior attempt's `intent_digest` by
+`retry_of` (leaving one-attestation-one-dispatch intact), and both verifiers
+report the retry link alongside the per-attestation triple status.
 Production `bernstein gateway start` still constructs `MCPGateway`
-without `attestation_interlock`: the native writer is opt-in, and slice 1
+without `attestation_interlock`: the native writer is opt-in, and this change
 does not turn the CLI proxy into an always-on interlock.
 
 Canonical form of `effect_digest`: SHA-256 of the connector's JSON-RPC
@@ -93,14 +101,24 @@ response the host did not read off the wire (a direct `after_dispatch`
 caller without `received`) falls back to compact JSON
 (`separators=(",", ":")`, `ensure_ascii=False`, no `sort_keys`).
 
-Verification path: no Bernstein record holds the received line today. The
-effect event keeps only `effect_digest`, and the WAL keeps the parsed
-`result` / `error`, which cannot reproduce the original bytes. Slice 1
-therefore binds what the host saw. The digest can be checked only against an
-independent capture of the connector's output, never recomputed from the run's
-artifacts. Slice 2 must persist the received line (for example
-content-addressed beside the WAL entry) before the verifier can recompute
-`effect_digest` offline.
+Verification path: both `tools/verify_audit_receipt.py` and
+`verify_cli/bernstein_verify_receipt/verify.py` validate each
+`toolcall.attestation -> toolcall.enforced_dispatch -> toolcall.effect` triple
+in embedded receipt events, fail closed on broken bindings or duplicate
+dispatches, and — when `--effects-dir` is supplied — stream-hash
+`<effects_dir>/<intent_sha256>.effect` in fixed-size chunks (capped at 16 MiB
+per payload) to recompute every `effect_digest` and fail the effect leg on any
+missing, non-regular (symlink, directory, FIFO, device), oversized, or tampered
+payload. Without `--effects-dir`, chain bindings and `retry_of` links are
+verified and missing effect records read as `"dispatched, effect unobserved"`,
+never as closed success. Request-id contract: offline verification requires
+`request_id` on every `toolcall.attestation` to be present and non-blank
+(missing, `null`, empty, or whitespace-only values fail closed) and unique per
+`scope_id` (compared by raw JSON value across initial calls and retries);
+transports that multiplex multiple clients through one gateway must assign
+distinct `scope_id` values per client session or ensure non-colliding
+`request_id` values within the shared scope. An outside-range `retry_of` fails
+closed on receipts whose range starts at genesis.
 
 With a run identity, lineage signer, and journal-head reader configured, the
 native provider additionally creates a versioned, JCS-canonicalized Ed25519

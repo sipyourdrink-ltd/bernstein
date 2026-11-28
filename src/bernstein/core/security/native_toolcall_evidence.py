@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import hashlib
 import json
+import math
+import os
+import re
+import stat
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.identity import jws_header_kid
@@ -26,8 +34,7 @@ from bernstein.core.security.toolcall_identity import (
 from bernstein.core.security.toolcall_interlock import (
     ToolCallIntent,
     VerifiedDispatchEvidence,
-    canonical_effect_digest,
-    effect_digest_for_connector_response,
+    _effect_preimage_for_connector_response,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -35,6 +42,114 @@ if TYPE_CHECKING:
 
     from bernstein.core.security.audit import ChainScanCursor
     from bernstein.core.security.identity_spawn_anchor import AnchoredRunIdentity
+
+_SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
+_EFFECT_COMPARE_CHUNK_BYTES = 64 * 1024
+_HARDLINK_UNSUPPORTED_ERRNOS = frozenset(
+    {
+        errno.EPERM,
+        errno.EOPNOTSUPP,
+        getattr(errno, "ENOTSUP", errno.EOPNOTSUPP),
+        errno.EXDEV,
+        errno.EMLINK,
+    }
+)
+
+
+def _intent_fields(intent: ToolCallIntent) -> dict[str, str]:
+    """Return validated non-empty intent fields, omitting unset optional ``retry_of``."""
+    fields: dict[str, str] = {}
+    for key, value in asdict(intent).items():
+        if key == "retry_of" and value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("tool-call intent fields must be non-empty")
+        fields[key] = value
+    return fields
+
+
+def _verify_existing_effect_target(target: Path, intent_digest: str, preimage: bytes) -> None:
+    """Confirm an existing effect artifact is a regular file with identical bytes."""
+    lstat_res = os.lstat(target)
+    if stat.S_ISLNK(lstat_res.st_mode):
+        raise ValueError(f"refusing to write effect payload through symlink: {target}")
+    if not stat.S_ISREG(lstat_res.st_mode):
+        raise ValueError(f"refusing to overwrite non-regular effect payload target: {target}")
+    flags = (
+        getattr(os, "O_RDONLY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    fd = os.open(target, flags)
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            fstat_res = os.fstat(handle.fileno())
+            if not stat.S_ISREG(fstat_res.st_mode):
+                raise ValueError(f"refusing to overwrite non-regular effect payload target: {target}")
+            if (fstat_res.st_dev, fstat_res.st_ino) != (lstat_res.st_dev, lstat_res.st_ino):
+                raise ValueError(f"effect payload target changed between stat and open: {target}")
+            if fstat_res.st_size != len(preimage):
+                raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
+            offset = 0
+            while True:
+                chunk = handle.read(_EFFECT_COMPARE_CHUNK_BYTES)
+                if not chunk:
+                    break
+                end = offset + len(chunk)
+                if end > len(preimage) or chunk != preimage[offset:end]:
+                    raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
+                offset = end
+            if offset != len(preimage):
+                raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
+    except BaseException:
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        raise
+
+
+def _write_effect_payload(effects_dir: Path, intent_digest: str, preimage: bytes) -> Path:
+    """Atomically publish the exact effect preimage bytes keyed by intent digest without clobbering."""
+    match = _SHA256_PREFIXED_RE.match(intent_digest)
+    if match is None:
+        raise ValueError(f"cannot persist effect payload for malformed intent_digest: {intent_digest!r}")
+    effects_dir.mkdir(parents=True, exist_ok=True)
+    target = effects_dir / f"{match.group(1)}.effect"
+    fd, tmp_name = tempfile.mkstemp(prefix=".effect-", suffix=".tmp", dir=str(effects_dir))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(preimage)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp_name, target)
+        except FileExistsError:
+            _verify_existing_effect_target(target, intent_digest, preimage)
+        except OSError as exc:
+            if exc.errno not in _HARDLINK_UNSUPPORTED_ERRNOS:
+                raise
+            excl_flags = (
+                getattr(os, "O_WRONLY", 0)
+                | getattr(os, "O_CREAT", 0)
+                | getattr(os, "O_EXCL", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_BINARY", 0)
+            )
+            try:
+                excl_fd = os.open(target, excl_flags, 0o600)
+            except FileExistsError:
+                _verify_existing_effect_target(target, intent_digest, preimage)
+            else:
+                with os.fdopen(excl_fd, "wb") as excl_handle:
+                    excl_handle.write(preimage)
+                    excl_handle.flush()
+                    os.fsync(excl_handle.fileno())
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+    return target
 
 
 def _content_ref(kind: str, payload: dict[str, str]) -> str:
@@ -63,6 +178,7 @@ class NativeToolCallEvidenceProvider:
     signer: ToolCallIdentitySigner | None = None
     run_journal_head: Callable[[], str] | None = None
     clock_ns: Callable[[], int] = time.time_ns
+    effects_dir: Path | None = None
     _cursor: ChainScanCursor | None = field(init=False, default=None)
     _anchor_events: list[Any] = field(init=False, default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     _call_indices: list[int] = field(init=False, default_factory=list)  # pyright: ignore[reportUnknownVariableType]
@@ -141,13 +257,14 @@ class NativeToolCallEvidenceProvider:
 
     async def prepare_dispatch(self, intent: ToolCallIntent) -> VerifiedDispatchEvidence:
         """Append attestation and admission markers before dispatch is allowed."""
-        fields = asdict(intent)
-        if any(not value.strip() for value in fields.values()):
-            raise ValueError("tool-call intent fields must be non-empty")
-
+        fields = _intent_fields(intent)
+        if intent.retry_of is not None and _SHA256_PREFIXED_RE.match(intent.retry_of) is None:
+            raise ValueError("tool-call retry_of must match ^sha256:[0-9a-f]{64}\\Z")
         intent_digest = intent.digest()
+        if intent.retry_of is not None and intent.retry_of == intent_digest:
+            raise ValueError("tool-call retry_of cannot reference itself")
         if self._identity_enabled():
-            return self._prepare_identity_dispatch(intent, intent_digest)
+            return self._prepare_identity_dispatch(intent, intent_digest, fields)
         attestation_ref = _content_ref(
             "bernstein.toolcall.attestation",
             {"intent_digest": intent_digest, **fields},
@@ -184,7 +301,12 @@ class NativeToolCallEvidenceProvider:
             intent_digest=intent_digest,
         )
 
-    def _prepare_identity_dispatch(self, intent: ToolCallIntent, intent_digest: str) -> VerifiedDispatchEvidence:
+    def _prepare_identity_dispatch(
+        self,
+        intent: ToolCallIntent,
+        intent_digest: str,
+        intent_fields: dict[str, str],
+    ) -> VerifiedDispatchEvidence:
         identity = self.run_identity
         signer = self.signer
         journal_head_reader = self.run_journal_head
@@ -239,7 +361,7 @@ class NativeToolCallEvidenceProvider:
             common: dict[str, Any] = {
                 "attestation_ref": attestation_ref,
                 "intent_digest": intent_digest,
-                **asdict(intent),
+                **intent_fields,
                 "run_id": identity.run_id,
                 "agent_id": identity.agent_id,
                 "call_index": call_index,
@@ -285,10 +407,12 @@ class NativeToolCallEvidenceProvider:
         """Append ``toolcall.effect`` bound to the same intent digest (#6270)."""
         if evidence.intent_digest != intent.digest():
             raise ValueError("effect evidence is bound to a different tool-call intent")
-        if patch is not None:
-            effect_digest = canonical_effect_digest(patch)
-        else:
-            effect_digest = effect_digest_for_connector_response(response, received)
+        if isinstance(duration_ms, bool) or not math.isfinite(duration_ms) or duration_ms < 0:
+            raise ValueError("tool-call effect duration_ms must be finite and >= 0")
+        preimage = _effect_preimage_for_connector_response(response, received, patch=patch)
+        effect_digest = "sha256:" + hashlib.sha256(preimage).hexdigest()
+        if self.effects_dir is not None:
+            _write_effect_payload(Path(self.effects_dir), evidence.intent_digest, preimage)
         event = record_toolcall_effect(
             chain=self.chain,
             intent_digest=evidence.intent_digest,

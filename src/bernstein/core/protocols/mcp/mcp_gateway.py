@@ -597,7 +597,7 @@ class MCPGateway:
         record = self._anchor_proxied_call(method, params)
 
         if self._settlement is not None and method == "tools/call":
-            response = await self._maybe_settle(message, params, response)
+            response = await self._maybe_settle(message, params, response, prior_prepared=prepared)
 
         if method == "tools/call" and record and self._journal and "error" not in response:
             meta = params.get("_meta", {})
@@ -634,6 +634,8 @@ class MCPGateway:
         method: str,
         params: dict[str, Any],
         req_id: Any,
+        *,
+        retry_of: str | None = None,
     ) -> tuple[Any, Any] | None:
         """Cross the attestation interlock before live connector I/O."""
         if method != "tools/call" or self._attestation_interlock is None:
@@ -648,6 +650,7 @@ class MCPGateway:
             request_id=req_id,
             span_id=request_span_id(message),
             arguments=params.get("arguments", {}),
+            retry_of=retry_of,
         )
         evidence = await self._attestation_interlock.before_dispatch(intent)
         return intent, evidence
@@ -695,7 +698,12 @@ class MCPGateway:
         return response, (time.monotonic() - t0) * 1000.0
 
     async def _maybe_settle(
-        self, message: dict[str, Any], params: dict[str, Any], response: dict[str, Any]
+        self,
+        message: dict[str, Any],
+        params: dict[str, Any],
+        response: dict[str, Any],
+        *,
+        prior_prepared: tuple[Any, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the x402 settlement flow when a proxied call answers with a 402.
 
@@ -730,7 +738,17 @@ class MCPGateway:
         retried = build_retry_request(message, pre.payment_ref)
         retried_id = retried.get("id")
         retried_params: dict[str, Any] = retried.get("params") or {}
-        retried_prepared = await self._prepare_tool_dispatch(retried, "tools/call", retried_params, retried_id)
+        retry_of = prior_prepared[0].digest() if prior_prepared is not None and prior_prepared[1] is not None else None
+        if retry_of is not None:
+            retried_prepared = await self._prepare_tool_dispatch(
+                retried,
+                "tools/call",
+                retried_params,
+                f"{retried_id}:retry",
+                retry_of=retry_of,
+            )
+        else:
+            retried_prepared = await self._prepare_tool_dispatch(retried, "tools/call", retried_params, retried_id)
         try:
             settled, latency_ms = await self._send_request(retried, retried_id)
         except TimeoutError:
