@@ -235,6 +235,10 @@ def test_spawn_check_receives_authoritative_model_before_launch(
     spawner._shutdown_event = None
     spawner._agent_failure_timestamps = {}
     spawner._adapter = SimpleNamespace(name=lambda: "claude", is_rate_limited=lambda: False)
+    spawner._adapter_pinned = False
+    spawner._adapter_registry_name = "claude"
+    spawner._runtime_bridge = None
+    spawner._in_process = None
     spawner._adapter_health = SimpleNamespace(is_healthy=lambda _name: True)
     spawner._preflight_posture_drift = lambda: None
     spawner._apply_provider_availability = lambda _role, _task, policy: policy

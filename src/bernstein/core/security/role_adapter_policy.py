@@ -4,8 +4,8 @@ The existing per-role tool deny-list (``claude_permission_profiles.py``)
 operates at the *tool* granularity ("backend role can't run ``Bash``")
 but cannot say "security role cannot spawn the cloud-LLM
 ``claude_routine`` adapter". This module adds the missing layer: a role
-→ allow-list of adapters, enforced at the adapter-spawn site
-(``bernstein.adapters.registry.get_adapter``).
+→ allow-list of adapters, enforced at the dispatch boundaries in
+``AgentSpawner``.
 
 Default semantics - back-compat:
 
@@ -34,21 +34,35 @@ from __future__ import annotations
 
 import json
 import logging
+import stat
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from bernstein.core.security.audit import AuditLog
+
+    AuditLogArg = AuditLog | Callable[[], AuditLog | None] | None
 
 logger = logging.getLogger(__name__)
 
 #: Audit event type emitted when a deny is enforced. Shipped as a constant so
 #: log analysers can grep for it without recompiling.
 ADAPTER_DENY_EVENT_TYPE: str = "role.adapter.denied"
+
+
+class PolicyFileCorrupt(RuntimeError):
+    """Raised when a policy file exists but cannot be read or parsed.
+
+    Subclasses :exc:`RuntimeError` rather than :exc:`OSError` so generic I/O
+    handlers cannot accidentally swallow a fail-closed corrupt-policy signal.
+    Distinct from the not-found case (which returns the permit-all default) so
+    callers on the security-enforcement path can fail closed rather than
+    silently lifting all restrictions.
+    """
 
 
 class RoleAdapterDenied(RuntimeError):
@@ -58,12 +72,16 @@ class RoleAdapterDenied(RuntimeError):
     consistently.
     """
 
-    def __init__(self, role: str, adapter: str, *, allowed: tuple[str, ...]) -> None:
+    def __init__(
+        self, role: str, adapter: str, *, allowed: tuple[str, ...], reason: str = "not in role allow-list"
+    ) -> None:
         self.role = role
         self.adapter = adapter
         self.allowed = allowed
+        self.reason = reason
         msg = (
-            f"role {role!r} is not allowed to spawn adapter {adapter!r}; allowed adapters: {sorted(allowed) or 'none'}"
+            f"role {role!r} is not allowed to spawn adapter {adapter!r}; "
+            f"allowed adapters: {sorted(allowed) or 'none'}; reason: {reason}"
         )
         super().__init__(msg)
 
@@ -160,26 +178,46 @@ DEFAULT_POLICY_PATH: Path = Path(".sdd/security/role_adapter_policy.json")
 
 
 def load_policy_file(path: Path = DEFAULT_POLICY_PATH) -> RolePolicy:
-    """Load a policy from disk; return the empty policy when no file exists.
+    """Load a policy from disk; return the empty (permit-all) policy when no file exists.
 
     Args:
         path: JSON file with the ``{role: [adapter, ...]}`` shape.
 
     Returns:
-        A :class:`RolePolicy`. An unreadable / malformed file logs a warning
-        and falls back to the empty policy so a corrupt config never bricks
-        the orchestrator.
+        A :class:`RolePolicy`. Returns the empty policy when the file does not
+        exist — that means no restrictions were ever configured.
+
+    Raises:
+        PolicyFileCorrupt: When the file *exists* but is not a readable regular
+            file containing an object whose values are lists of strings.
+            "Missing" and "unreadable" are different security postures: missing
+            means no policy was set; unreadable means a policy *was* set and we
+            cannot enforce it — callers on the spawn path should fail closed.
     """
-    if not path.is_file():
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError as exc:
+        # A dangling symlink is configured but unusable, not an absent policy.
+        if path.is_symlink():
+            raise PolicyFileCorrupt(f"role_adapter_policy: policy file {path} is a dangling symlink") from exc
         return RolePolicy()
+    except OSError as exc:
+        raise PolicyFileCorrupt(f"role_adapter_policy: policy file {path} cannot be inspected: {exc}") from exc
+    if not stat.S_ISREG(mode):
+        raise PolicyFileCorrupt(f"role_adapter_policy: policy file {path} is not a regular file")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("role_adapter_policy: failed to load %s - %s", path, exc)
-        return RolePolicy()
+    except (OSError, ValueError) as exc:
+        raise PolicyFileCorrupt(
+            f"role_adapter_policy: policy file {path} exists but cannot be read or parsed: {exc}"
+        ) from exc
     if not isinstance(data, dict):
-        logger.warning("role_adapter_policy: %s does not contain a JSON object", path)
-        return RolePolicy()
+        raise PolicyFileCorrupt(f"role_adapter_policy: policy file {path} does not contain a JSON object")
+    for role, allowed in data.items():
+        if not isinstance(allowed, list) or any(not isinstance(adapter, str) for adapter in allowed):
+            raise PolicyFileCorrupt(
+                f"role_adapter_policy: policy file {path}: role {role!r} must contain a list of adapter strings"
+            )
     return RolePolicy.from_dict(data)
 
 
@@ -199,7 +237,7 @@ def enforce(
     role: str,
     adapter: str,
     *,
-    audit_log: AuditLog | None = None,
+    audit_log: AuditLogArg = None,
     actor: str = "orchestrator",
     policy: RolePolicy | None = None,
 ) -> None:
@@ -210,7 +248,8 @@ def enforce(
             etc.). Free-form string - unrecognised roles use the optional
             ``*`` default, or remain unrestricted when it is absent.
         adapter: Adapter id (e.g. ``claude``, ``aider``, ``mock``).
-        audit_log: Optional :class:`AuditLog`. When provided, a deny emits a
+        audit_log: Optional :class:`AuditLog` or zero-arg factory returning one.
+            When provided, a factory is invoked only on deny to emit a
             ``role.adapter.denied`` event into the HMAC chain.
         actor: Audit-event actor field. Defaults to ``"orchestrator"``.
         policy: Override the global policy (useful in tests).
@@ -222,10 +261,30 @@ def enforce(
     if effective.is_allowed(role, adapter):
         return
 
-    allowed = effective.allowed_for(role)
-    if audit_log is not None:
+    deny(role, adapter, allowed=effective.allowed_for(role), audit_log=audit_log, actor=actor)
+
+
+def deny(
+    role: str,
+    adapter: str,
+    *,
+    allowed: tuple[str, ...] = (),
+    reason: str = "not in role allow-list",
+    audit_log: AuditLogArg = None,
+    actor: str = "orchestrator",
+) -> NoReturn:
+    """Record a refusal and raise even if the audit sink is unavailable."""
+    resolved_log: AuditLog | None = None
+    if callable(audit_log):
         try:
-            audit_log.log(
+            resolved_log = audit_log()
+        except Exception as exc:
+            logger.warning("role_adapter_policy: audit unavailable; policy still enforced: %s", exc)
+    else:
+        resolved_log = audit_log
+    if resolved_log is not None:
+        try:
+            resolved_log.log(
                 ADAPTER_DENY_EVENT_TYPE,
                 actor,
                 "adapter",
@@ -234,12 +293,12 @@ def enforce(
                     "role": role,
                     "adapter": adapter,
                     "allowed_adapters": list(allowed),
-                    "reason": "not in role allow-list",
+                    "reason": reason,
                 },
             )
         except Exception as exc:
             logger.warning("role_adapter_policy: audit emit failed for %s/%s - %s", role, adapter, exc)
-    raise RoleAdapterDenied(role=role, adapter=adapter, allowed=allowed)
+    raise RoleAdapterDenied(role=role, adapter=adapter, allowed=allowed, reason=reason)
 
 
 def check(role: str, adapter: str, *, policy: RolePolicy | None = None) -> bool:
