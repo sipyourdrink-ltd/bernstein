@@ -84,7 +84,9 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: "26"
+          # Pin Node 24 on the self-hosted VPS runner: Node 26 fails with exit
+          # 127 during setup-node verification on the VPS container image.
+          node-version: "24"
 
       - uses: ./.github/actions/bootstrap
 

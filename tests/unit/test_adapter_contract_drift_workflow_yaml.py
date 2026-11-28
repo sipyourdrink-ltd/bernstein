@@ -293,3 +293,38 @@ def test_the_merge_queue_trigger_is_recognised_however_it_is_spelled(bullet: str
     normalised = _normalise(bullet)
     assert "merge group" in normalised or "merge queue" in normalised
     assert not PR_CLAIM.search(normalised), "a merge-queue bullet must not read as a PR claim"
+
+
+VPS_NODE_WORKFLOWS = (
+    ".github/workflows/adapter-contract-drift.yml",
+    ".github/workflows/adapter-conformance-canary.yml",
+)
+
+
+@pytest.mark.parametrize("rel_path", VPS_NODE_WORKFLOWS)
+def test_self_hosted_vps_workflows_pin_node_24(rel_path: str) -> None:
+    """Self-hosted VPS runner container fails Node 26 with exit 127; keep on Node 24."""
+    doc = yaml.safe_load((REPO_ROOT / rel_path).read_text(encoding="utf-8"))
+    setup_node_versions = [
+        str(step.get("with", {}).get("node-version", "")).strip()
+        for job in doc["jobs"].values()
+        if isinstance(job, dict)
+        for step in job.get("steps", [])
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/setup-node@")
+    ]
+    assert setup_node_versions == ["24"], f"{rel_path}: expected Node 24 pin on VPS runner, got {setup_node_versions}"
+
+
+def test_renovate_caps_node_only_in_self_hosted_vps_workflows() -> None:
+    """Renovate must hold Node below 25 strictly for the two self-hosted VPS workflows."""
+    config = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
+    rules = config.get("packageRules", [])
+    matching = [
+        rule
+        for rule in rules
+        if set(rule.get("matchFileNames", ())) == set(VPS_NODE_WORKFLOWS)
+        and "github-actions" in rule.get("matchManagers", ())
+        and {"node", "actions/node-versions"} <= set(rule.get("matchPackageNames", ()))
+    ]
+    assert len(matching) == 1, f"expected one VPS Node cap packageRule in renovate.json, found {len(matching)}"
+    assert matching[0].get("allowedVersions") == "<25"
