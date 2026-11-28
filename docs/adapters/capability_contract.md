@@ -179,6 +179,28 @@ executable stub through the actual worker also checks native values, both
 aliases, and the CLI default. The stub proves setting delivery, not live
 provider enforcement.
 
+### openai_agents
+
+The `openai_agents` runner sends the manifest's `effort` as the Responses
+API's `reasoning.effort`, through `ModelSettings(reasoning=Reasoning(effort=...))`
+(#8076). `normal` maps to `medium`; `none`, `minimal`, `low`, `medium`,
+`high`, `xhigh` and `max` pass through. Unknown strings raise `ValueError`
+before the call.
+
+The effort is sent only when all of these hold. Otherwise the request carries
+no `reasoning` field and the provider default applies, as before:
+
+- the run uses the default OpenAI endpoint (no `base_url`, and no council role);
+- the model name starts with `o1`, `o3`, `o4`, `gpt-5` or `gpt-6` (other models,
+  such as `gpt-4.1`, reject the parameter, and the manifest's effort defaults
+  to `high`);
+- the installed SDK's `ModelSettings` has a `reasoning` field.
+
+The runner log records `reasoning effort=<value>` for each run that sends it.
+`tests/unit/adapters/test_openai_agents_reasoning_effort.py` checks every value
+against the request kwargs, the log line, the refusal of an unknown value, and
+the three cases that send nothing.
+
 ## Shipped adapter declarations
 
 | Adapter | Resume | Dangerous mode | Event channel |
