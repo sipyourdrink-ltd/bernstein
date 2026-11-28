@@ -17,6 +17,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.eval.bench.admission_subject import AdmissionSubject
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
@@ -199,8 +201,9 @@ DEFAULT_LAMBDA = 0.5
 #: per-task resource metrics (``tokens`` / ``cost_usd`` / ``duration_seconds``),
 #: which are omitted rather than zero-filled when the harness did not report
 #: them — a reader must know which of the two shapes it is holding before it
-#: can tell "no cost recorded" from "cost was zero".
-BUNDLE_SCHEMA_VERSION = 2
+#: can tell "no cost recorded" from "cost was zero". Version 3 adds the
+#: optional signed admission_subject with explicit model/task-class bindings.
+BUNDLE_SCHEMA_VERSION = 3
 
 
 def harness_fingerprint(scheduler_config: Mapping[str, Any]) -> str:
@@ -266,8 +269,12 @@ class SubmissionBundle:
     # field existed, so the hash of an old bundle still recomputes to its
     # stored value — same backward-compatibility rule as `holdout_hash`.
     schema_version: int = BUNDLE_SCHEMA_VERSION
+    # v3: explicitly attributed model and task classes, hashed before signing.
+    admission_subject: AdmissionSubject | None = None
 
     def __post_init__(self) -> None:
+        if self.admission_subject is not None and self.schema_version != 3:
+            raise ValueError("admission_subject requires bundle schema_version 3")
         # If caller didn't supply a fingerprint, derive it now — same
         # emit-time contract as TaskResult.stored_receipt_hash.
         if not self.harness_fingerprint:
@@ -372,6 +379,8 @@ class SubmissionBundle:
             "scheduler_config": self.scheduler_config,
             "task_results": [r.to_dict() for r in self.task_results],
         }
+        if self.admission_subject is not None:
+            payload_dict["admission_subject"] = self.admission_subject.to_dict()
         if self.holdout_hash:
             payload_dict["holdout_hash"] = self.holdout_hash
         # Absent means the default, so the payload is an injective function of the value.
@@ -454,6 +463,8 @@ class SubmissionBundle:
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
         }
+        if self.admission_subject is not None:
+            d["admission_subject"] = self.admission_subject.to_dict()
         if self.holdout_hash:
             d["holdout_hash"] = self.holdout_hash
         if self.schema_version > 1:
@@ -522,7 +533,10 @@ class SubmissionBundle:
             # A bundle with no declared version is a version-1 bundle. Do not
             # default it to the current version: that would add the key to the
             # recomputed hash payload and break its stored hash.
-            schema_version=int(raw.get("schema_version", 1)),
+            schema_version=raw.get("schema_version", 1),
+            admission_subject=(
+                AdmissionSubject.from_dict(raw["admission_subject"]) if "admission_subject" in raw else None
+            ),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:

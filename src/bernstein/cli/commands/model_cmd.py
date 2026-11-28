@@ -217,3 +217,71 @@ def impact_cmd(model_ref: str, as_json: bool) -> None:
                 and entry.model_ref.model_reported != entry.model_ref.model_requested
             ):
                 click.echo(f"    (requested {entry.model_ref.model_requested}, got {entry.model_ref.model_reported})")
+
+
+@model_group.command("admit")
+@click.argument("model_ref")
+@click.option("--bundle", "bundle_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
+@click.option("--suite", required=True, help="Operator-qualified suite name or JSON file (not read from bundle).")
+@click.option("--task-class", "task_classes", multiple=True, required=True, help="Requested admission scope.")
+@click.option(
+    "--qualified-task-class",
+    "qualified_classes",
+    multiple=True,
+    required=True,
+    help="Task classes the operator qualifies this suite for, independent of bundle claims.",
+)
+@click.option("--trusted-key", "trusted_keys", multiple=True, required=True, help="FINGERPRINT=PUBLIC_PEM_PATH.")
+@click.option("--admitted-by", required=True, help="Identity of the human operator recording admission.")
+@click.option("--expires-at", required=True, help="Required UTC expiry: YYYY-MM-DDTHH:MM:SS.ffffffZ.")
+def admit_cmd(
+    model_ref: str,
+    bundle_path: Path,
+    suite: str,
+    task_classes: tuple[str, ...],
+    qualified_classes: tuple[str, ...],
+    trusted_keys: tuple[str, ...],
+    admitted_by: str,
+    expires_at: str,
+) -> None:
+    """Record an operator admission only after offline evidence qualification.
+
+    Exits 0 after appending the event, 1 on invalid or unqualified evidence.
+    This is an explicit human/operator action, never an automatic admission.
+    Legacy bundles remain verifiable with bench verify but cannot qualify here.
+    """
+    from bernstein.core.routing.model_registry import record_model_admission
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.eval.bench.bench_cli import _get_suite, _load_trusted_keys, _resolve_adapter
+    from bernstein.eval.bench.bundle import SubmissionBundle
+    from bernstein.eval.bench.model_admission import ModelAdmissionEvidence
+
+    try:
+        provider, model, version = _parse_model_ref(model_ref)
+        suite_obj = _get_suite(suite)
+        evidence = ModelAdmissionEvidence(
+            bundle=SubmissionBundle.load(bundle_path),
+            suite=suite_obj,
+            adapter=_resolve_adapter(suite_obj),
+            trusted_keys=_load_trusted_keys(trusted_keys),
+            qualified_task_classes=qualified_classes,
+        )
+        # Qualify before creating any audit/key state. The event writer repeats
+        # this check immediately before the append; no stored MATCH is trusted.
+        evidence.verify(provider=provider, model=model, version=version, task_classes=task_classes)
+        chain = AuditChainStore(AUDIT_DIR, key=load_or_create_audit_key())
+        event = record_model_admission(
+            chain=chain,
+            provider=provider,
+            model=model,
+            version=version,
+            task_classes=task_classes,
+            admitted_by=admitted_by,
+            expires_at=expires_at,
+            evidence=evidence,
+            require_verified_evidence=True,
+        )
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Admitted {event.resource_id}; evidence {event.details['evidence_ref']}")

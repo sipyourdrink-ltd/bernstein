@@ -272,6 +272,12 @@ def _load_trusted_keys(entries: tuple[str, ...]) -> dict[str, bytes]:
 @click.option("--out", default="bundle.json", show_default=True, help="Output path for the submission bundle.")
 @click.option("--scheduler", default="default", show_default=True, help="Scheduler name to embed in the bundle.")
 @click.option(
+    "--admission-subject",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Versioned JSON model_ref/task-class subject to bind before signing; not an admission.",
+)
+@click.option(
     "--stub-signer",
     is_flag=True,
     default=False,
@@ -389,6 +395,7 @@ def bench_run(
     repo: str = "",
     head_sha: str = "",
     trusted_keys: tuple[str, ...] = (),
+    admission_subject: Path | None = None,
 ) -> None:
     """Execute a suite and emit a signed submission bundle.
 
@@ -400,9 +407,19 @@ def bench_run(
     reliability receipt reporting pass@1 (any attempt passed) and pass^k
     (all K attempts passed — the headline floor).
     """
+    from bernstein.eval.bench.admission_subject import AdmissionSubject
     from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.runner import BenchRunner
     from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
+
+    subject = None
+    if admission_subject is not None:
+        if reliability_k is not None:
+            raise click.ClickException("--admission-subject requires a submission bundle, not --reliability")
+        try:
+            subject = AdmissionSubject.from_dict(json.loads(admission_subject.read_text(encoding="utf-8")))
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            raise click.ClickException(f"Invalid admission subject: {exc}") from exc
 
     # Every CI output -- the SARIF report, the scorecard, the check run --
     # is computed from a submission bundle, and --reliability emits a
@@ -500,6 +517,8 @@ def bench_run(
 
     click.echo("\nRunning tasks…")
     bundle = runner.run()
+    if subject is not None:
+        bundle = replace(bundle, admission_subject=subject)
 
     signer = StubSigner() if stub_signer else AgentCardSigner()
     bundle = signer.sign(bundle)
