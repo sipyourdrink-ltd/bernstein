@@ -39,7 +39,10 @@ fields (so older readers still work) and adds `request_id` and `source_digest`.
 interrupted attempt reuses the same id without bumping `resume_count` again. A newer
 checkpoint mints a distinct id. Requests move `queued -> claimed -> resumed` and
 the state survives restarts: a worker claims before running and records the
-outcome afterwards. Legacy signals without a `request_id` are read as
+outcome afterwards. When the runner raises, the request is recorded `failed`
+instead: that is not an acknowledgement, the same `request_id` can be claimed
+again, and re-running the resume command re-queues it. A failed request is not
+picked up implicitly, so a runner that keeps failing is not retried in a loop. Legacy signals without a `request_id` are read as
 unacknowledged wake-up hints and gain the new structure on the next publish.
 `runtime_acknowledged` is `true` only when `resumed` is recorded for the exact
 `request_id` the command reported.
@@ -119,8 +122,8 @@ Stdout contains one JSON object. `dispatch_status` is `queued` after
 writing a signal (`claimed` or `resumed` once a worker advances that request)
 and `not_dispatched` if no signal was written.
 `signal_paths` lists the files written by this invocation.
-`runtime_acknowledged` is `false` while the request is `queued` or left
-`claimed`, and `true` only once a worker records `resumed` for the
+`runtime_acknowledged` is `false` while the request is `queued`, left
+`claimed` or `failed`, and `true` only once a worker records `resumed` for the
 `request_id` in this report. A refusal or write failure
 includes an `error` field and a nonzero exit status. With `--discard`,
 `checkpoint_discarded` reports whether the agent checkpoint was removed.

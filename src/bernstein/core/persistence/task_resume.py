@@ -93,6 +93,7 @@ __all__ = [
     "load_resume_request",
     "publish_resume_request",
     "read_resume_requests",
+    "record_resume_failure",
     "record_resume_outcome",
     "resume_request_acknowledged",
     "resume_request_id",
@@ -351,6 +352,9 @@ class ResumeDispatchStatus(StrEnum):
     QUEUED = "queued"
     CLAIMED = "claimed"
     RESUMED = "resumed"
+    #: The runner raised. Not an acknowledgement: the request can be claimed
+    #: again by its ``request_id`` and is re-queued when it is re-published.
+    FAILED = "failed"
 
 
 class ResumeRequestCorruptError(ValueError):
@@ -371,6 +375,7 @@ class ResumeRequestRecord:
     claimed_at: str | None = None
     resumed_at: str | None = None
     worker_id: str | None = None
+    failed_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the on-disk representation of this record."""
@@ -385,6 +390,7 @@ class ResumeRequestRecord:
             "claimed_at": self.claimed_at,
             "resumed_at": self.resumed_at,
             "worker_id": self.worker_id,
+            "failed_at": self.failed_at,
         }
 
     @classmethod
@@ -411,6 +417,7 @@ class ResumeRequestRecord:
             claimed_at=row.get("claimed_at") if isinstance(row.get("claimed_at"), str) else None,
             resumed_at=row.get("resumed_at") if isinstance(row.get("resumed_at"), str) else None,
             worker_id=row.get("worker_id") if isinstance(row.get("worker_id"), str) else None,
+            failed_at=row.get("failed_at") if isinstance(row.get("failed_at"), str) else None,
         )
 
 
@@ -591,7 +598,8 @@ def publish_resume_request(
 
     Re-publishing the same request id never regresses a ``claimed`` or
     ``resumed`` record: the CLI may confirm a queued request while a worker is
-    already handling it.
+    already handling it. A ``failed`` record is re-queued, so asking again
+    retries the attempt whose runner raised.
     """
     request_id = resume_request_id(task_id, source_digest, source=source, run_id=run_id)
     records = read_resume_requests(workdir, task_id)
@@ -608,6 +616,12 @@ def publish_resume_request(
         )
         if existing.run_id is not None:
             repeat_fields["run_id"] = existing.run_id
+        if existing.dispatch_status == ResumeDispatchStatus.FAILED.value:
+            existing = replace(existing, dispatch_status=ResumeDispatchStatus.QUEUED.value, claimed_at=None)
+            records = [existing if record.request_id == request_id else record for record in records]
+            write_resume_signal(workdir, task_id, **repeat_fields)
+            _write_records(workdir, task_id, records)
+            return existing
         write_resume_signal(workdir, task_id, **repeat_fields)
         return existing
 
@@ -646,7 +660,9 @@ def claim_resume_request(
     With no explicit ``request_id`` the newest queued request for ``source``
     and ``run_id`` (all sources/runs when omitted) is selected. Claiming an
     already-claimed record is idempotent so a restarted worker recovers from
-    the persisted record; a ``resumed`` request is never claimed twice.
+    the persisted record; a ``resumed`` request is never claimed twice. A
+    ``failed`` request is claimed again when named by ``request_id``; it is not
+    picked up implicitly, so a runner that keeps failing is not retried forever.
     """
     records = read_resume_requests(workdir, task_id)
     candidates = [
@@ -710,6 +726,35 @@ def record_resume_outcome(
     return None
 
 
+def record_resume_failure(
+    workdir: Path,
+    task_id: str,
+    request_id: str,
+    *,
+    worker_id: str | None = None,
+) -> ResumeRequestRecord | None:
+    """Record that the runner for a claimed request raised (issue #8206).
+
+    ``failed`` is not an acknowledgement. A ``resumed`` record is left as it is.
+    """
+    records = read_resume_requests(workdir, task_id)
+    for index, record in enumerate(records):
+        if record.request_id != request_id:
+            continue
+        if record.dispatch_status == ResumeDispatchStatus.RESUMED.value:
+            return record
+        failed = replace(
+            record,
+            dispatch_status=ResumeDispatchStatus.FAILED.value,
+            failed_at=_utc_now(),
+            worker_id=worker_id or record.worker_id,
+        )
+        records[index] = failed
+        _write_records(workdir, task_id, records)
+        return failed
+    return None
+
+
 def consume_resume_request(
     workdir: Path,
     task_id: str,
@@ -723,10 +768,10 @@ def consume_resume_request(
     """Claim, execute, and acknowledge one resume request.
 
     Exposed for the single-task checkpoint resume path; the supervisor uses
-    the same claim/outcome primitives around its frontier loop. An in-process
-    failure still consumed the request, so it is acknowledged before the
-    exception propagates. A hard kill leaves the record ``claimed`` for the
-    restarted worker to recover.
+    the same claim/outcome primitives around its frontier loop. A runner
+    that raises records ``failed`` before the exception propagates: the
+    attempt is not acknowledged and the request can be retried. A hard kill
+    leaves the record ``claimed`` for the restarted worker to recover.
     """
     record = claim_resume_request(
         workdir,
@@ -740,7 +785,7 @@ def consume_resume_request(
         runner()
     except Exception:
         if record is not None:
-            record_resume_outcome(workdir, task_id, record.request_id, worker_id=worker_id)
+            record_resume_failure(workdir, task_id, record.request_id, worker_id=worker_id)
         raise
     if record is None:
         return None
