@@ -19,7 +19,6 @@ import shutil
 import subprocess
 import venv
 import zipfile
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -68,7 +67,7 @@ def _make_pack(tmp_path: Path) -> Path:
     with zipfile.ZipFile(bundle, "w") as z:
         z.writestr(
             "lineage-log.jsonl",
-            json.dumps(asdict(entry), separators=(",", ":"), sort_keys=True) + "\n",
+            payload.decode("utf-8") + "\n",
         )
         z.writestr(f"signatures/{entry_hash}.jws", jws)
         z.writestr(f"agent-cards/{agent_id}.json", json.dumps(card))
