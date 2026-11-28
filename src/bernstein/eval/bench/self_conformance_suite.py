@@ -10,12 +10,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import tempfile
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
+from bernstein.core.security.key_custody import FileBasedKMSAdapter
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
 from bernstein.eval.bench.signer import AgentCardSigner
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
@@ -59,15 +59,14 @@ def _fixture_signer() -> AgentCardSigner:
     # Reproducible PUBLIC fixture material. Never used as an outer signer or
     # added to an installation trust store.
     seed = hashlib.sha256(b"PUBLIC self-conformance-bench-v1 fixture key").digest()
-    private = Ed25519PrivateKey.from_private_bytes(seed)
-    return AgentCardSigner(
-        private.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        ),
-        private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo),
-    )
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".key", delete=False) as handle:
+        handle.write(seed)
+        key_path = Path(handle.name)
+    try:
+        adapter = FileBasedKMSAdapter(key_path)
+    finally:
+        key_path.unlink(missing_ok=True)
+    return AgentCardSigner(kms_adapter=adapter)
 
 
 def _fixture_suite() -> BenchSuite:
