@@ -45,6 +45,61 @@ def test_chaos_status_shows_recorded_event(tmp_path: Path) -> None:
         assert "agent-kill" in result.output
 
 
+def _write_chaos_events(tmp_path: Path, targets: list[str]) -> None:
+    """Write one chaos event per target in the given order."""
+    log_path = tmp_path / "chaos_log.jsonl"
+    lines: list[str] = []
+    for index, target in enumerate(targets):
+        event = {
+            "scenario": "agent-kill",
+            "target": target,
+            "success": True,
+            "error": "",
+            "timestamp": time.time() + index,
+        }
+        lines.append(json.dumps(event))
+    log_path.write_text("\n".join(lines) + "\n")
+
+
+def test_chaos_status_limit_zero_shows_no_events(tmp_path: Path) -> None:
+    """A zero limit must print an empty history, not every event."""
+    _write_chaos_events(tmp_path, ["oldest", "middle", "newest"])
+
+    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
+        runner = CliRunner()
+        result = runner.invoke(chaos_group, ["status", "--limit", "0"])
+
+    assert result.exit_code == 0
+    for target in ("oldest", "middle", "newest"):
+        assert target not in result.output
+
+
+def test_chaos_status_rejects_negative_limit(tmp_path: Path) -> None:
+    """A negative limit is a usage error, not a reversed slice."""
+    _write_chaos_events(tmp_path, ["oldest", "middle", "newest"])
+
+    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
+        runner = CliRunner()
+        result = runner.invoke(chaos_group, ["status", "--limit", "-2"])
+
+    assert result.exit_code != 0
+    assert "must be zero or greater" in result.output
+
+
+def test_chaos_status_positive_limit_shows_newest_events(tmp_path: Path) -> None:
+    """A positive limit shows only the newest events."""
+    _write_chaos_events(tmp_path, ["oldest", "middle", "third", "fourth", "newest"])
+
+    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
+        runner = CliRunner()
+        result = runner.invoke(chaos_group, ["status", "--limit", "2"])
+
+    assert result.exit_code == 0
+    assert "fourth" in result.output
+    assert "newest" in result.output
+    assert "third" not in result.output
+
+
 def test_chaos_agent_kill_no_agents(tmp_path: Path) -> None:
     """Agent-kill reports gracefully when no agents are running."""
     runner = CliRunner()

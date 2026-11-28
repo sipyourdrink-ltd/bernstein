@@ -81,7 +81,8 @@ bernstein chaos status [--limit 20]
 
 Reads `.sdd/runtime/chaos/chaos_log.jsonl` and prints a table of recent
 events: timestamp, scenario, target, success/error
-(`chaos_cmd.py:139-175`).
+(`chaos_cmd.py:139-178`). `--limit` must be zero or greater; `0` prints an
+empty history.
 
 ### `slo` - read the SLO dashboard during the experiment
 
@@ -90,7 +91,7 @@ bernstein chaos slo
 ```
 
 Loads `.sdd/metrics/slos.json` and prints traffic-light status per SLO
-plus the error-budget panel (`chaos_cmd.py:178-232`).
+plus the error-budget panel (`chaos_cmd.py:181-235`).
 
 The output table contains:
 
@@ -162,9 +163,9 @@ chaos run reproducible.
   selection.
 - `cli/commands/chaos_cmd.py:73-98` - `agent-kill`.
 - `cli/commands/chaos_cmd.py:101-136` - `file-remove` with backup.
-- `cli/commands/chaos_cmd.py:139-175` - `status` (chaos log table).
-- `cli/commands/chaos_cmd.py:178-232` - `slo` (SLO dashboard).
-- `cli/commands/chaos_cmd.py:235-253` - `_record_chaos_event` (JSONL
+- `cli/commands/chaos_cmd.py:139-178` - `status` (chaos log table).
+- `cli/commands/chaos_cmd.py:181-235` - `slo` (SLO dashboard).
+- `cli/commands/chaos_cmd.py:238-256` - `_record_chaos_event` (JSONL
   append).
 - `.sdd/runtime/chaos/chaos_log.jsonl` - replayable event log.
 - `.sdd/metrics/slos.json` - SLO dashboard source consumed by
