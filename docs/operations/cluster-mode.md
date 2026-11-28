@@ -691,3 +691,22 @@ no failure reason until the first reading. Omitting a later reading preserves
 the last observed value. Local workers report free disk space for their workspace,
 platform, and memory use when available. Mesh RTT is optional. The platform string is informational. Telemetry is not
 a substitute for authentication, and does not override cordon/drain intent.
+
+## External HTTP scaling backend
+
+Integrations can explicitly construct `HTTPScalingBackend` to call an
+owner-configured fleet API. `HTTPScalingConfig.from_env()` reads
+`BERNSTEIN_SCALING_URL` and optional `BERNSTEIN_SCALING_TOKEN`; the token
+is sent as a bearer header. The default request timeout is 10 seconds.
+
+The fleet API implements `GET /api/cluster/autoscale/status`, returning
+`{"current": N, "target": N}`, and `PATCH /api/cluster/autoscale/config`,
+accepting `{"target": N}`. Missing configuration performs no HTTP calls.
+HTTP status/transport errors produce a zero status count or unsuccessful
+`ScaleResult`; a successful PATCH reports the requested target. This
+backend is not registered or enabled automatically and does not itself
+wait for a fleet to reach that target.
+
+Invalid status JSON or a non-integer/negative `current` count uses the same
+zero-count fallback. Explicit base URLs are normalized to omit a trailing
+slash before endpoint paths are appended.
