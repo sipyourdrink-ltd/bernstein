@@ -58,4 +58,7 @@ dev = [
 bernstein-verify-receipt = "bernstein_verify_receipt.__main__:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["bernstein_verify_receipt"]
+only-include = ["__init__.py", "__main__.py", "verify.py"]
+
+[tool.hatch.build.targets.wheel.sources]
+"" = "bernstein_verify_receipt"

@@ -126,6 +126,7 @@ def _run_verifier(py: Path, receipt: Path, *extra: str) -> subprocess.CompletedP
     env.pop("PYTHONPATH", None)
     return subprocess.run(
         [str(py), "-m", "bernstein_verify_receipt", "verify", str(receipt), *extra],
+        cwd=str(receipt.parent),
         capture_output=True,
         text=True,
         check=False,

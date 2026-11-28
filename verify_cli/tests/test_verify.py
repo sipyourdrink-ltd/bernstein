@@ -56,19 +56,19 @@ def _sample_entry_dict(**overrides):
 def test_jcs_canonicalise_byte_equal_to_bernstein_simple():
     d = _sample_entry_dict()
     entry = LineageEntry(**d)
-    assert jcs_canonicalise(asdict(entry)) == bernstein_canonicalise(entry)
+    assert jcs_canonicalise(d) == bernstein_canonicalise(entry)
 
 
 def test_jcs_canonicalise_byte_equal_with_parents():
     d = _sample_entry_dict(parent_hashes=["sha256:" + "1" * 64, "sha256:" + "2" * 64])
     entry = LineageEntry(**d)
-    assert jcs_canonicalise(asdict(entry)) == bernstein_canonicalise(entry)
+    assert jcs_canonicalise(d) == bernstein_canonicalise(entry)
 
 
 def test_jcs_canonicalise_byte_equal_unicode():
     d = _sample_entry_dict(artefact_path="src/файл.py", agent_id="agent:ünïcødé")
     entry = LineageEntry(**d)
-    assert jcs_canonicalise(asdict(entry)) == bernstein_canonicalise(entry)
+    assert jcs_canonicalise(d) == bernstein_canonicalise(entry)
 
 
 def test_jcs_canonicalise_independent_of_input_order():
@@ -266,7 +266,7 @@ def _build_pack(
         "protocol_version": "a2a/1.0",
     }
 
-    log_line = json.dumps(asdict(entry), separators=(",", ":"), sort_keys=True)
+    log_line = payload.decode("utf-8")
     if tamper_log:
         log_line = log_line.replace("a" * 64, "b" + "a" * 63)
 
@@ -423,7 +423,7 @@ def _canonical_entry_line() -> bytes:
 
 def _legacy_entry_line() -> bytes:
     """Pre-fix (non-canonical) bytes: ``json.dumps`` default spaced separators."""
-    return json.dumps(asdict(_v2_entry()), sort_keys=True).encode("utf-8")
+    return json.dumps(json.loads(_canonical_entry_line()), sort_keys=True).encode("utf-8")
 
 
 def test_verify_pack_v2_canonical_verifies(tmp_path):
@@ -441,9 +441,10 @@ def test_verify_pack_v2_reordered_keys_rejected(tmp_path):
     """
     # Insertion-order dump (NOT sorted) + canonical separators: same values,
     # different byte order from the canonical (sorted-key) form.
-    reordered = json.dumps(asdict(_v2_entry()), sort_keys=False, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    canonical_obj = json.loads(_canonical_entry_line())
+    reordered = json.dumps(
+        dict(reversed(list(canonical_obj.items()))), sort_keys=False, separators=(",", ":")
+    ).encode("utf-8")
     assert reordered != _canonical_entry_line()  # guard: genuinely different bytes
     bundle = _build_pack_bytes(tmp_path, log_bytes=reordered + b"\n")
     result = verify_pack(bundle)
@@ -614,14 +615,18 @@ def test_real_build_pack_log_byte_tamper_rejected(tmp_path):
     by the v2 byte-binding parse - the end-to-end #1871 guarantee."""
     from bernstein_verify.verify import _parse_log_v2
 
-    out_path, entry = _build_real_pack(tmp_path)
+    out_path, _entry = _build_real_pack(tmp_path)
 
     with zipfile.ZipFile(out_path) as zf:
         canonical_log = zf.read("lineage-log.jsonl")
 
     # Reorder keys: identical field values, different on-disk bytes.
+    canonical_obj = json.loads(canonical_log)
     reordered = (
-        json.dumps(asdict(entry), sort_keys=False, separators=(",", ":")).encode("utf-8") + b"\n"
+        json.dumps(
+            dict(reversed(list(canonical_obj.items()))), sort_keys=False, separators=(",", ":")
+        ).encode("utf-8")
+        + b"\n"
     )
     assert reordered != canonical_log  # genuinely different bytes
 
@@ -638,12 +643,13 @@ def test_bernstein_signed_entry_verifies_in_verify_cli():
     an entry signed by bernstein.core.lineage MUST verify with our
     re-implementation."""
     priv, pub = bernstein_generate_keypair()
-    entry = LineageEntry(**_sample_entry_dict())
+    wire = _sample_entry_dict()
+    entry = LineageEntry(**wire)
     payload = bernstein_canonicalise(entry)
     jws = bernstein_sign_detached(payload, priv, kid="key-001")
 
     # Now verify using ONLY bernstein_verify code
-    our_payload = jcs_canonicalise(asdict(entry))
+    our_payload = jcs_canonicalise(wire)
     assert our_payload == payload  # canonicalisation must match
     assert verify_jws_detached(our_payload, jws, pub, expected_kid="key-001") is True
 

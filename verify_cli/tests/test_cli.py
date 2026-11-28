@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -94,7 +93,7 @@ def _write_lineage_dir(root: Path, *, entries_specs: list[dict]) -> None:
         sig_path.parent.mkdir(parents=True, exist_ok=True)
         sig_path.write_text(jws)
 
-        lines.append(json.dumps(asdict(entry), separators=(",", ":"), sort_keys=True))
+        lines.append(payload.decode("utf-8"))
     log_path.write_text("\n".join(lines) + "\n")
 
 
@@ -121,7 +120,7 @@ def test_cli_pack_happy(tmp_path, runner):
     with zipfile.ZipFile(bundle, "w") as z:
         z.writestr(
             "lineage-log.jsonl",
-            json.dumps(asdict(entry), separators=(",", ":"), sort_keys=True) + "\n",
+            payload.decode("utf-8") + "\n",
         )
         z.writestr(f"signatures/{entry_hash}.jws", jws)
         z.writestr(
