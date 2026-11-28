@@ -133,6 +133,23 @@ async def run_protocol_test(
 ) -> MCPProtocolTestResult:
     """Run a bounded MCP protocol test suite against one stdio server."""
     started_at = time.monotonic()
+    if entry.is_remote:
+        duration_seconds = round(time.monotonic() - started_at, 4)
+        return MCPProtocolTestResult(
+            server_name=entry.namespaced_name,
+            transport=entry.transport or "http",
+            tool_reports=(),
+            unknown_tool_rejected=False,
+            invalid_arguments_rejected=None,
+            empty_arguments_supported=None,
+            failures=(
+                f"Protocol validation currently supports stdio entries only; "
+                f"remote transport {entry.transport!r} is not supported.",
+            ),
+            warnings=(),
+            duration_seconds=duration_seconds,
+        )
+
     failures: list[str] = []
     warnings: list[str] = []
 

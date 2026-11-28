@@ -79,6 +79,9 @@ class AdapterCapability(Enum):
     #: Adapter wires an incoming ``max_tokens`` override to a real CLI flag
     #: or SDK parameter (PR3).
     SUPPORTS_MAX_TOKENS = "supports_max_tokens"
+    #: Adapter forwards remote HTTP/SSE entries from ``mcp_config["mcpServers"]``
+    #: to the launched agent runtime (#6456).
+    SUPPORTS_REMOTE_MCP = "supports_remote_mcp"
 
 
 # Per-spawn keys in ``mcp_config`` that request sampling or endpoint
@@ -216,6 +219,75 @@ def ensure_sampling_params_supported(
         capabilities,
     )
     raise SamplingParamsRefusal(adapter_name, unsupported)
+
+
+class RemoteMCPRefusal(RuntimeError):
+    """Raised when remote HTTP/SSE MCP servers are requested for an incapable adapter.
+
+    Attributes:
+        adapter_name: The adapter that was asked.
+        server_names: Remote MCP server names present in ``mcp_config["mcpServers"]``.
+    """
+
+    def __init__(self, adapter_name: str, server_names: tuple[str, ...]) -> None:
+        self.adapter_name = adapter_name
+        self.server_names = server_names
+        super().__init__(
+            f"Adapter {adapter_name!r} does not declare the "
+            f"{AdapterCapability.SUPPORTS_REMOTE_MCP.value!r} capability "
+            f"but remote HTTP/SSE MCP servers were requested: "
+            f"{', '.join(server_names)}. Refusing to spawn instead of "
+            f"silently dropping them."
+        )
+
+
+def extract_remote_mcp_server_names(mcp_config: dict[str, Any] | None) -> tuple[str, ...]:
+    """Return names of remote HTTP/SSE entries in ``mcp_config['mcpServers']``."""
+    if not mcp_config:
+        return ()
+    servers = mcp_config.get("mcpServers")
+    if not isinstance(servers, dict):
+        return ()
+    remote_names: list[str] = []
+    for name, defn in servers.items():
+        if not isinstance(defn, dict):
+            continue
+        transport = str(defn.get("type") or defn.get("transport") or "").strip().lower()
+        if "url" in defn or transport in ("http", "streamable-http", "streamable_http", "sse"):
+            remote_names.append(str(name))
+    return tuple(remote_names)
+
+
+def ensure_remote_mcp_supported(
+    adapter: CLIAdapter,
+    mcp_config: dict[str, Any] | None,
+) -> None:
+    """Refuse remote HTTP/SSE MCP configs on adapters without ``SUPPORTS_REMOTE_MCP``.
+
+    Adapters that ignore ``mcp_config`` or only handle stdio would silently
+    drop remote servers unless refused loudly before spawn or resume.
+    """
+    remote_names = extract_remote_mcp_server_names(mcp_config)
+    if not remote_names:
+        return
+    adapter_name = adapter.name()
+    capabilities: tuple[AdapterCapability, ...] = ()
+    plugin_info = getattr(adapter, "plugin_info", None)
+    if callable(plugin_info):
+        try:
+            capabilities = plugin_info().capabilities
+        except Exception:
+            logger.warning("ensure_remote_mcp_supported: plugin_info() raised for %r", adapter_name, exc_info=True)
+            capabilities = ()
+    if AdapterCapability.SUPPORTS_REMOTE_MCP in capabilities:
+        return
+    logger.warning(
+        "ensure_remote_mcp_supported: REFUSING spawn - adapter=%r does not declare %r for remote MCP servers=%s",
+        adapter_name,
+        AdapterCapability.SUPPORTS_REMOTE_MCP.value,
+        remote_names,
+    )
+    raise RemoteMCPRefusal(adapter_name, remote_names)
 
 
 @dataclass(frozen=True)

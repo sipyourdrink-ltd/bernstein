@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
 
@@ -63,6 +64,14 @@ class CursorAdapter(CLIAdapter):
     # model account; we record under the proxy label so the panel does
     # not falsely attribute the hit to the underlying model vendor.
     rate_limit_provider = "cursor"
+
+    def plugin_info(self) -> AdapterPluginInfo:
+        """Declare built-in Cursor adapter capabilities."""
+        return AdapterPluginInfo(
+            name="cursor",
+            version="builtin",
+            capabilities=(AdapterCapability.SUPPORTS_REMOTE_MCP,),
+        )
 
     def spawn(
         self,

@@ -54,6 +54,7 @@ from bernstein.adapters.env_isolation import (
     build_filtered_env,
     record_embedded_teams_opt_in,
 )
+from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
 from bernstein.core.defaults import COST
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 from bernstein.core.platform_compat import (
@@ -1065,6 +1066,18 @@ class ClaudeCodeAdapter(CLIAdapter):
 
     def name(self) -> str:
         return "Claude Code"
+
+    def plugin_info(self) -> AdapterPluginInfo:
+        """Declare built-in Claude Code adapter capabilities."""
+        return AdapterPluginInfo(
+            name="claude",
+            version="builtin",
+            capabilities=(
+                AdapterCapability.STREAMING,
+                AdapterCapability.TOOL_USE,
+                AdapterCapability.SUPPORTS_REMOTE_MCP,
+            ),
+        )
 
     def continuation_args(self, _session_id: str) -> list[str]:
         """Return the CLI flags that re-enter the most recent Claude session.

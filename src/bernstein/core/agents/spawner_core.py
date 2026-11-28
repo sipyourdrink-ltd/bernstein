@@ -31,8 +31,11 @@ from bernstein.adapters.openclaw import API_KEY_ENV as OPENCLAW_API_KEY_ENV
 from bernstein.adapters.openclaw import resolve_openclaw_route
 from bernstein.adapters.plugin_sdk import (
     SAMPLING_PARAM_KEYS,
+    RemoteMCPRefusal,
     SamplingParamsRefusal,
+    ensure_remote_mcp_supported,
     ensure_sampling_params_supported,
+    extract_remote_mcp_server_names,
 )
 from bernstein.adapters.registry import adapter_name_for_provider, get_adapter, registry_name_for
 from bernstein.adapters.skills_injector import inject_skills
@@ -3245,6 +3248,31 @@ class AgentSpawner:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, awaitable).result()
 
+    @staticmethod
+    def _collect_requested_mcp_servers(tasks: list[Task]) -> list[str]:
+        """Collect deduplicated task-requested MCP server names preserving order."""
+        seen: set[str] = set()
+        unique_names: list[str] = []
+        for task in tasks:
+            for server_name in task.mcp_servers:
+                if server_name not in seen:
+                    seen.add(server_name)
+                    unique_names.append(server_name)
+        return unique_names
+
+    def _resolve_effective_mcp_for_tasks(self, tasks: list[Task]) -> dict[str, Any] | None:
+        """Build per-task MCP config from base config, registry, and manager."""
+        effective_mcp = self._mcp_config
+        if self._mcp_registry is not None:
+            effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
+        if self._mcp_manager is not None:
+            requested = self._collect_requested_mcp_servers(tasks) or None
+            effective_mcp = self._mcp_manager.build_mcp_config_for_task(
+                task_mcp_servers=requested,
+                base_config=effective_mcp,
+            )
+        return effective_mcp
+
     def _mcp_config_for_adapter(
         self,
         adapter: CLIAdapter,
@@ -5187,30 +5215,10 @@ class AgentSpawner:
                 if gate_policy.is_active:
                     write_policy(spawn_cwd, session_id, gate_policy)
 
-            # Build per-task MCP config: auto-detected servers merged with base config
-            effective_mcp = self._mcp_config
-            if self._mcp_registry is not None:
-                effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
-
-            # Layer MCPManager servers on top (task-requested MCP servers)
+            # Build per-task MCP config: auto-detected servers merged with base config and manager
+            effective_mcp = self._resolve_effective_mcp_for_tasks(tasks)
             if self._mcp_manager is not None:
-                # Collect MCP server names requested by tasks in this batch
-                task_server_names: list[str] = []
-                for t in tasks:
-                    task_server_names.extend(t.mcp_servers)
-                # Deduplicate while preserving order
-                seen: set[str] = set()
-                unique_names: list[str] = []
-                for n in task_server_names:
-                    if n not in seen:
-                        seen.add(n)
-                        unique_names.append(n)
-                # Pass None to get all servers when no specific ones requested
-                requested = unique_names or None
-                effective_mcp = self._mcp_manager.build_mcp_config_for_task(
-                    task_mcp_servers=requested,
-                    base_config=effective_mcp,
-                )
+                unique_names = self._collect_requested_mcp_servers(tasks)
                 # Validate that MCP servers are ready before spawning the agent.
                 # A non-ready server is logged as a warning but does not block spawn
                 # so that a single failing optional server does not halt all work.
@@ -5316,6 +5324,9 @@ class AgentSpawner:
                 )
                 if _bridge_sampling_keys:
                     raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
+                _bridge_remote_servers = extract_remote_mcp_server_names(effective_mcp)
+                if _bridge_remote_servers:
+                    raise RemoteMCPRefusal(self._runtime_bridge.name(), _bridge_remote_servers)
                 try:
                     self._notify_cost_anomaly_spawn(tasks, model_config)
                     remote_spawned = self._spawn_via_runtime_bridge(
@@ -5413,6 +5424,7 @@ class AgentSpawner:
                             raise SpawnError("OpenClaw requires its dedicated gateway credential and endpoint")
                         openclaw_endpoint = self._openclaw_host_endpoint(model_config, configured_endpoint)
                     ensure_sampling_params_supported(target_adapter, sampling_config)
+                    ensure_remote_mcp_supported(target_adapter, effective_mcp)
 
                     # Security-floor spawn preflight (#2515): refuse a
                     # below-floor adapter binary before it receives task
@@ -6216,6 +6228,13 @@ class AgentSpawner:
         # agent must attribute its output to the task it continues.
         _resume_extra: dict[str, Any] = {}
         _resume_params = inspect.signature(resume_adapter.spawn).parameters
+        resume_mcp = self._resolve_effective_mcp_for_tasks(tasks)
+        ensure_remote_mcp_supported(resume_adapter, resume_mcp)
+        if resume_mcp is not None and (
+            "mcp_config" in _resume_params
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in _resume_params.values())
+        ):
+            _resume_extra["mcp_config"] = resume_mcp
         if "task_id" in _resume_params:
             _resume_extra["task_id"] = tasks[0].id
         if "task_title" in _resume_params:
