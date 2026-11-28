@@ -353,7 +353,12 @@ _TOOL_PROBE_TIMEOUT_SECONDS = 10
 
 
 def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
-    """Run ``uv run <name> --version`` and report the result as a check dict.
+    """Run ``uv run --no-sync <name> --version`` and report the result as a check dict.
+
+    ``--no-sync`` is mandatory: ``bernstein doctor`` is a read-only diagnostic
+    probe and must never sync, mutate, or recreate the project's ``.venv``
+    (e.g., replacing a Python 3.13 virtualenv with ``.python-version``'s 3.14
+    underneath concurrent test workers or developer sessions).
 
     Every way the probe can fail to produce an answer is reported as a failed
     check rather than raised, because reporting which tools are unusable *is*
@@ -378,7 +383,7 @@ def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
     """
     try:
         result = subprocess.run(
-            ["uv", "run", name, "--version"],
+            ["uv", "run", "--no-sync", name, "--version"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -390,7 +395,7 @@ def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
             "name": name,
             "ok": "False",
             "detail": f"probe timed out after {_TOOL_PROBE_TIMEOUT_SECONDS}s",
-            "fix": f"Re-run when the host is less loaded, or check 'uv run {name} --version' by hand",
+            "fix": f"Re-run when the host is less loaded, or check 'uv run --no-sync {name} --version' by hand",
         }
     except FileNotFoundError:
         return {

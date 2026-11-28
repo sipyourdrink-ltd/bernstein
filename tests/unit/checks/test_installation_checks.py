@@ -262,7 +262,7 @@ def test_ci_probe_without_target_is_not_measurable(
     monkeypatch.setattr("bernstein.core.ci_fix.check_test_dependencies", real_test_dependencies)
 
     def probe(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        if command[2] == tool:
+        if tool in command:
             return subprocess.CompletedProcess(command, 2, stdout="", stderr=f"{tool}: executable not found")
         return subprocess.CompletedProcess(command, 0, stdout="1.0", stderr="")
 

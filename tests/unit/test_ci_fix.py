@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,8 @@ from bernstein.core.ci_fix import (
     parse_failures,
     write_ci_fix_task,
 )
+
+from bernstein.core.quality.ci_fix import _check_tool_version
 
 
 class TestParseFailures:
@@ -235,6 +238,57 @@ class TestCheckTestDependencies:
         assert len(checks) == 3
         assert all(check["ok"] == "False" for check in checks)
         assert all(check["fix"] for check in checks)
+
+    def test_probe_passes_no_sync_flag(self) -> None:
+        """Read-only doctor probes must invoke ``uv run --no-sync``."""
+        seen_cmds: list[list[str]] = []
+
+        def fake_run(cmd: list[str], **_kwargs: object) -> Mock:
+            seen_cmds.append(list(cmd))
+            return Mock(returncode=0, stdout="1.0.0\n", stderr="")
+
+        with patch("bernstein.core.quality.ci_fix.subprocess.run", side_effect=fake_run):
+            checks = check_test_dependencies()
+
+        assert all(check["ok"] == "True" for check in checks)
+        assert seen_cmds == [
+            ["uv", "run", "--no-sync", "ruff", "--version"],
+            ["uv", "run", "--no-sync", "pytest", "--version"],
+            ["uv", "run", "--no-sync", "pyright", "--version"],
+        ]
+
+    @pytest.mark.skipif(shutil.which("uv") is None, reason="uv binary not found on PATH")
+    def test_probe_does_not_sync_or_recreate_existing_venv(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Probing a tool in a Python project must not sync or replace an existing ``.venv``."""
+        proj = tmp_path / "project"
+        proj.mkdir()
+        (proj / "pyproject.toml").write_text(
+            '[project]\nname = "doctor-probe-guard"\nversion = "0.1.0"\n'
+            'requires-python = ">=3.12"\n'
+            'dependencies = ["nonexistent-doctor-sync-guard==99.99.99"]\n',
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["uv", "venv", "--python", sys.executable, str(proj / ".venv")],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        sentinel = proj / ".venv" / ".doctor-sentinel"
+        sentinel.write_text("keep", encoding="utf-8")
+
+        monkeypatch.chdir(proj)
+        monkeypatch.delenv("UV_NO_SYNC", raising=False)
+        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+        monkeypatch.setenv("UV_OFFLINE", "1")
+
+        row = _check_tool_version("python")
+
+        assert row["ok"] == "True", row
+        assert sentinel.is_file(), ".venv was recreated during a read-only doctor probe"
 
 
 # ---------------------------------------------------------------------------
