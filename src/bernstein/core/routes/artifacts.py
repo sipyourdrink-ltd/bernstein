@@ -7,7 +7,7 @@
 The health route deliberately owns **no** projection logic. It parses the query
 string, hands the parsed values to
 :func:`bernstein.core.lineage.artifact_health.artifact_health_json`, and returns
-those bytes verbatim. ``bernstein artifact health --json`` calls the same
+those bytes verbatim. ``bernstein artifact health --output-json`` calls the same
 function with the same arguments, so the two surfaces do not merely agree --
 they cannot differ, because there is only one implementation and only one
 serialiser. An operator can pin a verdict from the dashboard and recompute it
