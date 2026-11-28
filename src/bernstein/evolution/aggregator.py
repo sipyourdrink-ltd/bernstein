@@ -669,6 +669,8 @@ class MetricsAggregator:
 
         state.n_observations += 1
         state.current_value = _ewma_update(state.current_value, value, lambda_)
+        # The state names the factor its value was just computed with, not the first call's (#8030).
+        state.lambda_ = lambda_
 
         if sigma is not None and state.n_observations >= MIN_SAMPLES_EWMA:
             width, _ = _ewma_control_limits(sigma, lambda_, state.n_observations)
