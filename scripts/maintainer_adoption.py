@@ -153,7 +153,7 @@ class Declaration:
 class Ledger:
     declarations: tuple[Declaration, ...]
     revoked_heads: frozenset[tuple[str, int, str]]
-    trusted_commit: str
+    pinned_commit_sha: str
 
     def find(self, subject: Subject) -> Declaration | None:
         if subject.revocation_key in self.revoked_heads:
@@ -161,7 +161,7 @@ class Ledger:
         return next((row for row in reversed(self.declarations) if row.subject == subject), None)
 
 
-def replay(snapshots: Iterable[tuple[str, bytes]], *, trusted_commit: str) -> Ledger:
+def replay(snapshots: Iterable[tuple[str, bytes]], *, pinned_commit_sha: str) -> Ledger:
     """Require append-only accepted snapshots and replay permanent revocations.
 
     Snapshot order is the protected default branch's first-parent history.
@@ -228,7 +228,7 @@ def replay(snapshots: Iterable[tuple[str, bytes]], *, trusted_commit: str) -> Le
             else:
                 raise ValueError("unsupported declaration operation")
         previous = content
-    return Ledger(tuple(declarations), frozenset(revoked), trusted_commit)
+    return Ledger(tuple(declarations), frozenset(revoked), pinned_commit_sha)
 
 
 def _git(repo: Path, *args: str) -> bytes:
@@ -261,16 +261,16 @@ def _git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def load_ledger(repo: Path, trusted_commit: str) -> Ledger:
+def load_ledger(repo: Path, pinned_commit_sha: str) -> Ledger:
     """Read accepted history only; no network, candidate checkout or comment input."""
-    if not _SHA.fullmatch(trusted_commit):
+    if not _SHA.fullmatch(pinned_commit_sha):
         raise ValueError("an exact trusted default-branch commit is required")
     current = _git(repo, "rev-parse", "--verify", f"{TRUSTED_DEFAULT_REF}^{{commit}}").decode("ascii").strip()
-    if trusted_commit != current:
+    if pinned_commit_sha != current:
         raise ValueError("pin differs from the trusted default-branch snapshot")
     if _git(repo, "rev-parse", "--is-shallow-repository").strip() != b"false":
         raise ValueError("complete accepted declaration history is required")
-    _git(repo, "cat-file", "-e", f"{trusted_commit}^{{commit}}")
+    _git(repo, "cat-file", "-e", f"{pinned_commit_sha}^{{commit}}")
     commits = _git(
         repo,
         "log",
@@ -279,7 +279,7 @@ def load_ledger(repo: Path, trusted_commit: str) -> Ledger:
         "--reverse",
         f"--max-count={_MAX_REVISIONS + 1}",
         "--format=%H",
-        trusted_commit,
+        pinned_commit_sha,
         "--",
         LEDGER_PATH,
     )
@@ -296,22 +296,22 @@ def load_ledger(repo: Path, trusted_commit: str) -> Ledger:
                 raise ValueError("declaration ledger exceeds inspection size bound")
             yield commit, _git(repo, "show", f"{commit}:{LEDGER_PATH}")
 
-    return replay(snapshots(), trusted_commit=trusted_commit)
+    return replay(snapshots(), pinned_commit_sha=pinned_commit_sha)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
-    parser.add_argument("--trusted-commit", required=True)
+    parser.add_argument("--trusted-commit", dest="pinned_commit_sha", required=True)
     args = parser.parse_args()
     try:
-        ledger = load_ledger(args.repo, args.trusted_commit)
+        ledger = load_ledger(args.repo, args.pinned_commit_sha)
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         parser.exit(1, f"declaration evidence unavailable: {exc}\n")
     print(
         json.dumps(
             {
-                "trusted_commit": ledger.trusted_commit,
+                "trusted_commit": ledger.pinned_commit_sha,
                 "declarations": len(ledger.declarations),
                 "revoked_heads": len(ledger.revoked_heads),
                 "grants_merge_authority": False,

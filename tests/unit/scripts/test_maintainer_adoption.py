@@ -63,7 +63,7 @@ def line(adoption, row):
 
 def test_immutable_declaration_binds_subject_and_report_content(adoption):
     row = record(adoption)
-    ledger = adoption.replay([("1" * 40, line(adoption, row))], trusted_commit="1" * 40)
+    ledger = adoption.replay([("1" * 40, line(adoption, row))], pinned_commit_sha="1" * 40)
     subject = adoption.Subject.parse(row["payload"]["subject"])
     declaration = ledger.find(subject)
     assert declaration.declaration_id == row["record_id"]
@@ -81,7 +81,7 @@ def test_accepted_declaration_bytes_cannot_be_replaced(adoption, mutation):
         "reformat": b" " + original,
     }[mutation]
     with pytest.raises(ValueError, match="prefix"):
-        adoption.replay([("1" * 40, original), ("2" * 40, changed)], trusted_commit="2" * 40)
+        adoption.replay([("1" * 40, original), ("2" * 40, changed)], pinned_commit_sha="2" * 40)
 
 
 def test_revocation_is_permanent_and_old_declaration_remains(adoption):
@@ -91,17 +91,17 @@ def test_revocation_is_permanent_and_old_declaration_remains(adoption):
         adoption, {"declaration_id": row["record_id"], "reason": "Maintainer withdrew adoption"}, operation="revoke"
     )
     current = original + line(adoption, revocation)
-    ledger = adoption.replay([("1" * 40, original), ("2" * 40, current)], trusted_commit="2" * 40)
+    ledger = adoption.replay([("1" * 40, original), ("2" * 40, current)], pinned_commit_sha="2" * 40)
     assert len(ledger.declarations) == 1
     assert ledger.find(adoption.Subject.parse(row["payload"]["subject"])) is None
     with pytest.raises(ValueError, match="prefix"):
-        adoption.replay([("1" * 40, original), ("2" * 40, current), ("3" * 40, original)], trusted_commit="3" * 40)
+        adoption.replay([("1" * 40, original), ("2" * 40, current), ("3" * 40, original)], pinned_commit_sha="3" * 40)
     replacement = payload(adoption)
     replacement["subject"]["base_sha"] = "e" * 40
     with pytest.raises(ValueError, match="revoked head"):
         adoption.replay(
             [("2" * 40, current), ("3" * 40, current + line(adoption, record(adoption, replacement)))],
-            trusted_commit="3" * 40,
+            pinned_commit_sha="3" * 40,
         )
 
 
@@ -124,20 +124,20 @@ def test_invalid_review_evidence_never_qualifies(adoption, case):
     elif case == "security-empty":
         data["security_tests"] = report(adoption, "security-1", checks=[])
     with pytest.raises(ValueError):
-        adoption.replay([("1" * 40, line(adoption, record(adoption, data)))], trusted_commit="1" * 40)
+        adoption.replay([("1" * 40, line(adoption, record(adoption, data)))], pinned_commit_sha="1" * 40)
 
 
 def test_noncanonical_duplicate_and_unknown_version_fail_closed(adoption):
     row = record(adoption)
     bad = json.dumps(row).encode() + b"\n"
     with pytest.raises(ValueError):
-        adoption.replay([("1" * 40, bad)], trusted_commit="1" * 40)
+        adoption.replay([("1" * 40, bad)], pinned_commit_sha="1" * 40)
     duplicate = line(adoption, row)
     with pytest.raises(ValueError, match="duplicate"):
-        adoption.replay([("1" * 40, duplicate + duplicate)], trusted_commit="1" * 40)
+        adoption.replay([("1" * 40, duplicate + duplicate)], pinned_commit_sha="1" * 40)
     row["schema"] = "bernstein.maintainer-adoption.v99"
     with pytest.raises(ValueError):
-        adoption.replay([("1" * 40, line(adoption, row))], trusted_commit="1" * 40)
+        adoption.replay([("1" * 40, line(adoption, row))], pinned_commit_sha="1" * 40)
 
 
 def git(repo, *args):
@@ -206,16 +206,16 @@ def test_repository_identity_is_canonical_for_revocation_and_direct_lookup(adopt
     original = line(adoption, row)
     subject = adoption.Subject(repository, 42, "a" * 40, "b" * 40, "c" * 64)
     assert subject.repository == "team/project"
-    assert adoption.replay([("1" * 40, original)], trusted_commit="1" * 40).find(subject)
+    assert adoption.replay([("1" * 40, original)], pinned_commit_sha="1" * 40).find(subject)
     revoked = original + line(
         adoption, record(adoption, {"declaration_id": row["record_id"], "reason": "Withdrawn"}, operation="revoke")
     )
-    ledger = adoption.replay([("2" * 40, revoked)], trusted_commit="2" * 40)
+    ledger = adoption.replay([("2" * 40, revoked)], pinned_commit_sha="2" * 40)
     assert ledger.find(subject) is None
     changed = payload(adoption)
     changed["subject"].update(repository=repository, base_sha="d" * 40, policy_sha256="e" * 64)
     with pytest.raises(ValueError, match="revoked head"):
-        adoption.replay([("3" * 40, revoked + line(adoption, record(adoption, changed)))], trusted_commit="3" * 40)
+        adoption.replay([("3" * 40, revoked + line(adoption, record(adoption, changed)))], pinned_commit_sha="3" * 40)
 
 
 @pytest.mark.parametrize("override", [False, True])
@@ -298,9 +298,9 @@ def test_streaming_rejects_invalid_prefix_before_loading_later_snapshots(adoptio
 
     replay = adoption.replay
 
-    def consume(snapshots, *, trusted_commit):
+    def consume(snapshots, *, pinned_commit_sha):
         assert not isinstance(snapshots, (list, tuple)) and not reads
-        return replay(snapshots, trusted_commit=trusted_commit)
+        return replay(snapshots, pinned_commit_sha=pinned_commit_sha)
 
     monkeypatch.setattr(adoption, "_git", fake_git)
     monkeypatch.setattr(adoption, "replay", consume)
@@ -313,11 +313,11 @@ def test_history_limits_reject_excess_instead_of_truncating(adoption, tmp_path, 
     original = line(adoption, record(adoption))
     monkeypatch.setattr(adoption, "_MAX_HISTORY_BYTES", len(original) * 2 - 1)
     with pytest.raises(ValueError, match="inspection bound"):
-        adoption.replay(iter([("1" * 40, original), ("2" * 40, original)]), trusted_commit="2" * 40)
+        adoption.replay(iter([("1" * 40, original), ("2" * 40, original)]), pinned_commit_sha="2" * 40)
     monkeypatch.setattr(adoption, "_MAX_HISTORY_BYTES", len(original) * 10)
     monkeypatch.setattr(adoption, "_MAX_REVISIONS", 2)
     with pytest.raises(ValueError, match="inspection bound"):
-        adoption.replay(iter([(str(i) * 40, original) for i in (1, 2, 3)]), trusted_commit="3" * 40)
+        adoption.replay(iter([(str(i) * 40, original) for i in (1, 2, 3)]), pinned_commit_sha="3" * 40)
 
     def fake_git(repo, *args):
         if args[0] == "rev-parse":
@@ -342,3 +342,18 @@ def test_unsupported_offline_git_capability_fails_closed(adoption, tmp_path, mon
     monkeypatch.setattr(adoption.subprocess, "run", unsupported)
     with pytest.raises(ValueError, match="history unavailable"):
         adoption.load_ledger(tmp_path, "1" * 40)
+
+
+def test_cli_main_prints_summary(adoption, tmp_path, monkeypatch, capsys):
+    git(tmp_path, "init", "--initial-branch=main")
+    git(tmp_path, "config", "user.name", "Fixture")
+    git(tmp_path, "config", "user.email", "fixture@example.invalid")
+    head = commit(tmp_path, line(adoption, record(adoption)), adoption)
+    monkeypatch.setattr(sys, "argv", ["maintainer_adoption.py", "--repo", str(tmp_path), "--trusted-commit", head])
+    adoption.main()
+    assert json.loads(capsys.readouterr().out) == {
+        "declarations": 1,
+        "grants_merge_authority": False,
+        "revoked_heads": 0,
+        "trusted_commit": head,
+    }
