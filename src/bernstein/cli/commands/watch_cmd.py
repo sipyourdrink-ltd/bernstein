@@ -75,10 +75,27 @@ def _matches_glob(path: Path, workdir: Path, glob_pattern: str | None) -> bool:
     if not glob_pattern:
         return True
     try:
-        rel = str(path.relative_to(workdir))
+        rel = path.relative_to(workdir).as_posix()
     except ValueError:
-        rel = str(path)
-    return fnmatch.fnmatch(rel, glob_pattern)
+        rel = path.as_posix()
+    return any(fnmatch.fnmatch(rel, variant) for variant in _double_star_variants(glob_pattern))
+
+
+_DOUBLE_STAR = "**/"
+
+
+def _double_star_variants(pattern: str) -> set[str]:
+    """Return *pattern* with each ``**/`` segment kept or removed, in every combination.
+
+    ``fnmatch`` lets ``*`` cross ``/``, so ``src/**/*.py`` already matches one or more directories
+    between ``src`` and the file. It did not match zero: ``src/root.py`` was missed (#7875). Removing a
+    ``**/`` segment is its zero-directory case. A pattern without ``**/`` is returned unchanged.
+    """
+    head, sep, tail = pattern.partition(_DOUBLE_STAR)
+    if not sep:
+        return {pattern}
+    rest = _double_star_variants(tail)
+    return {f"{head}{sep}{r}" for r in rest} | {f"{head}{r}" for r in rest}
 
 
 def _query_open_tasks() -> list[dict[str, Any]]:
