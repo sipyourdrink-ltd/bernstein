@@ -2376,10 +2376,14 @@ class AgentSpawner:
         defer_cleanup: bool = False,
     ) -> MergeResult | None:
         """Terminate and wait on the subprocess for a completed agent."""
+        # Reaping may itself terminate a live process after work has completed.
+        # Preserve the execution outcome before cleanup replaces its exit code.
+        execution_succeeded = session.status != "dead" and not session.abort_reason and session.exit_code in (None, 0)
+        retain_output = bool(session.model_call_id)
         result = _reap_completed_agent(
             session,
             skip_merge=skip_merge,
-            defer_cleanup=defer_cleanup,
+            defer_cleanup=defer_cleanup or retain_output,
             runtime_bridge=self._runtime_bridge,
             run_bridge_call_fn=self._run_bridge_call,
             container_mgr=self._container_mgr,
@@ -2400,15 +2404,24 @@ class AgentSpawner:
             merge_queue=self._merge_queue,
             quality_gate_config=self._quality_gate_config,
         )
-        # Artifact-mode session (issue #2996): no worktree, so the merge path
-        # above was a structural no-op; remove the plain workspace directory
-        # unless the caller asked to keep it for inspection.
-        if not defer_cleanup:
-            cleanup_artifact_workspace(session.id, artifact_workdirs=self._artifact_workdirs)
-        # Reap-time write-boundary sweep (#2793): keep the operator checkout
-        # clean after a planning agent exits. Best-effort; never fails a reap.
-        with suppress(Exception):
-            self._sweep_manager_write_boundary(session)
+        try:
+            if isinstance(getattr(self, "_workdir", None), Path):
+                from bernstein.core.cost.model_call_ledger import finalize_session_model_call
+
+                finalize_session_model_call(
+                    self._workdir / ".sdd",
+                    session,
+                    execution_succeeded=execution_succeeded,
+                )
+        finally:
+            if not defer_cleanup:
+                # The process is stopped and its output is durable before either
+                # worktree or artifact workspace cleanup removes the source log.
+                if retain_output:
+                    self._merge_and_cleanup_worktree(session, skip_merge=True)
+                cleanup_artifact_workspace(session.id, artifact_workdirs=self._artifact_workdirs)
+            with suppress(Exception):
+                self._sweep_manager_write_boundary(session)
         return result
 
     def update_trace_outcome(self, session_id: str, outcome: str) -> None:
@@ -3617,24 +3630,45 @@ class AgentSpawner:
         """
         if self._runtime_bridge is None:
             return False
-        bridge_status: AgentStatus = self._run_bridge_call(
-            self._runtime_bridge.spawn(
-                SpawnRequest(
-                    agent_id=session.id,
-                    image="openclaw-agent",
-                    command=[],
-                    prompt=prompt,
-                    workdir=str(spawn_cwd),
-                    timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-                    log_path=str(preferred_log_path),
-                    role=session.role,
-                    model=model_config.model,
-                    effort=model_config.effort,
-                    labels={"session_id": session.id},
+        from bernstein.core.cost.model_call_ledger import begin_adapter_call, finalize_session_model_call
+
+        record = begin_adapter_call(
+            self._workdir / ".sdd",
+            adapter=self._runtime_bridge,
+            capability_id=f"agent.{session.role}" if session.role else "agent.spawn",
+            adapter_id=self._runtime_bridge.name(),
+            model=model_config.model,
+            parameters={
+                "effort": model_config.effort,
+                "timeout_seconds": session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+            },
+            input_text=prompt,
+            journal_entry_id=session.task_ids[0] if session.task_ids else "",
+        )
+        session.model_call_id = record.id
+        try:
+            bridge_status: AgentStatus = self._run_bridge_call(
+                self._runtime_bridge.spawn(
+                    SpawnRequest(
+                        agent_id=session.id,
+                        image="openclaw-agent",
+                        command=[],
+                        prompt=prompt,
+                        workdir=str(spawn_cwd),
+                        timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                        log_path=str(preferred_log_path),
+                        role=session.role,
+                        model=model_config.model,
+                        effort=model_config.effort,
+                        labels={"session_id": session.id},
+                    )
                 )
             )
-        )
+        except BaseException as exc:
+            finalize_session_model_call(self._workdir / ".sdd", session, error=f"{type(exc).__name__}: {exc}")
+            raise
         if not isinstance(bridge_status, object):
+            finalize_session_model_call(self._workdir / ".sdd", session, error="bridge did not accept spawn")
             return False
         session.runtime_backend = self._runtime_bridge.name()
         session.pid = None
@@ -5529,6 +5563,45 @@ class AgentSpawner:
 
                     # Policy refusal is outside every adapter retry handler:
                     # failure to authorize or audit B cannot select C instead.
+                    from bernstein.core.cost.model_call_ledger import (
+                        begin_adapter_call,
+                        finalize_session_model_call,
+                    )
+
+                    spawned_in_process = self._in_process is not None and self._backend == AgentBackend.IN_PROCESS
+                    direct_spawn = not (
+                        spawned_in_process
+                        or self._sandbox_session_routing_active()
+                        or self._sandbox is not None
+                        or self._container_mgr is not None
+                    )
+                    # Only direct subprocess spawns currently consume retry budgets.
+                    _budget_mult = (
+                        max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks) if direct_spawn else 1.0
+                    )
+                    _resolved_spawn_params: dict[str, Any] = {
+                        "effort": model_config.effort,
+                        "timeout_seconds": session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                        "task_scope": max_scope
+                        if not spawned_in_process and not self._sandbox_session_routing_active()
+                        else "medium",
+                        "budget_multiplier": _budget_mult,
+                    }
+                    _spawn_call_record = (
+                        begin_adapter_call(
+                            self._workdir / ".sdd",
+                            adapter=target_adapter,
+                            capability_id=f"agent.{session.role}" if session.role else "agent.spawn",
+                            adapter_id=adapter_name,
+                            model=model_config.model,
+                            parameters=_resolved_spawn_params,
+                            input_text=prompt,
+                            journal_entry_id=tasks[0].id if tasks else "",
+                        )
+                        if isinstance(getattr(self, "_workdir", None), Path)
+                        else None
+                    )
+                    session.model_call_id = _spawn_call_record.id if _spawn_call_record is not None else ""
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
                         self._notify_cost_anomaly_spawn(tasks, model_config)
@@ -5593,9 +5666,6 @@ class AgentSpawner:
                                 system_addendum=style_addendum,
                             )
                         else:
-                            # Extract budget_multiplier from task metadata
-                            # (set by retry logic when previous attempt hit budget cap).
-                            _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
                             # Explicit per-task max_turns override (Task.max_turns):
                             # thread it to the adapter as explicit_max_turns, but
                             # only when its spawn() signature accepts the
@@ -5655,8 +5725,8 @@ class AgentSpawner:
                                 session_id=session_id,
                                 mcp_config=attempt_mcp,
                                 timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-                                task_scope=max_scope,
-                                budget_multiplier=_budget_mult,
+                                task_scope=_resolved_spawn_params["task_scope"],
+                                budget_multiplier=_resolved_spawn_params["budget_multiplier"],
                                 system_addendum=style_addendum,
                                 **_extra_spawn_kwargs,
                             )
@@ -5677,6 +5747,12 @@ class AgentSpawner:
                             session.endpoint_base_url = openclaw_endpoint
                         break
                     except RateLimitError as exc:
+                        if _spawn_call_record is not None and isinstance(getattr(self, "_workdir", None), Path):
+                            finalize_session_model_call(
+                                self._workdir / ".sdd",
+                                session,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         self._adapter_health.record_failure(adapter_name)
                         logger.warning(
@@ -5699,6 +5775,12 @@ class AgentSpawner:
                         except RouterError:
                             provider_name = None
                     except Exception as exc:
+                        if _spawn_call_record is not None and isinstance(getattr(self, "_workdir", None), Path):
+                            finalize_session_model_call(
+                                self._workdir / ".sdd",
+                                session,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
                         categorized = classify_spawn_error(exc, provider=provider_name)
                         # Re-derive the failure reason from the runner's own
                         # per-session log instead of trusting str(exc), which
@@ -6272,7 +6354,25 @@ class AgentSpawner:
                 raise SpawnError(
                     f"Cannot hand preserved worktree {preserved_path} to resume session {session_id}: {exc}"
                 ) from exc
+        from bernstein.core.cost.model_call_ledger import begin_adapter_call, finalize_session_model_call
+
         try:
+            record = begin_adapter_call(
+                self._workdir / ".sdd",
+                adapter=resume_adapter,
+                capability_id=f"agent.{session.role}" if session.role else "agent.spawn",
+                adapter_id=resume_adapter.name(),
+                model=model_config.model,
+                parameters={
+                    "effort": model_config.effort,
+                    "timeout_seconds": session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                    "task_scope": resume_scope,
+                    "budget_multiplier": 1.0,
+                },
+                input_text=prompt,
+                journal_entry_id=tasks[0].id,
+            )
+            session.model_call_id = record.id
             result = resume_adapter.spawn(
                 prompt=prompt,
                 workdir=worktree_path,
@@ -6283,7 +6383,8 @@ class AgentSpawner:
                 system_addendum=_resume_addendum,
                 **_resume_extra,
             )
-        except BaseException:
+        except BaseException as exc:
+            finalize_session_model_call(self._workdir / ".sdd", session, error=f"{type(exc).__name__}: {exc}")
             if owner is not None and worktree_path != preserved_path:
                 try:
                     owner.adopt(worktree_path, preserved_path.name)
@@ -7617,6 +7718,9 @@ class AgentSpawner:
                 abort_detail=detail,
                 finish_reason="kill_requested",
             )
+        from bernstein.core.cost.model_call_ledger import finalize_session_model_call
+
+        finalize_session_model_call(self._workdir / ".sdd", session, error=session.abort_detail or detail)
         try:
             TeamStateStore(self._workdir / ".sdd").on_kill(session.id)
         except Exception as _ts_exc:

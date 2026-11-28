@@ -1799,6 +1799,38 @@ def model_call_group() -> None:
     """Model call ledger operations: invoke with reuse, replay records."""
 
 
+def _resolve_invokable_adapter(adapter_id: str) -> Any | None:
+    """Return a registered adapter implementing direct ``invoke()``, or ``None``."""
+    from bernstein.adapters.base import CLIAdapter
+    from bernstein.adapters.registry import get_adapter
+
+    try:
+        adapter = get_adapter(adapter_id)
+    except Exception:
+        return None
+    if type(adapter).invoke is CLIAdapter.invoke:
+        return None
+    return adapter
+
+
+def _fail_closed_model_call(replay: bool = False) -> None:
+    hint = (
+        "  record = ledger.replay(record_id, call=lambda: 'mock output')"
+        if replay
+        else "  record = ledger.invoke(capability_id=..., call=lambda: 'mock output', ...)"
+    )
+    console.print(
+        "[red]Error: Real adapter invocation requires a running agent session.[/red]\n"
+        "[yellow]This command is test scaffolding only. Real adapter calls must go through[/yellow]\n"
+        "[yellow]the orchestrator, which manages adapter lifecycle and session state.[/yellow]\n\n"
+        "[blue]For testing with mock adapters, use the ModelCallLedger library API directly:[/blue]\n"
+        "  from bernstein.core.cost.model_call_ledger import ModelCallLedger\n"
+        "  ledger = ModelCallLedger(Path(sdd_dir))\n"
+        f"{hint}"
+    )
+    raise click.Abort
+
+
 @model_call_group.command("invoke", hidden=True)
 @click.option("--sdd-dir", "sdd_dir", type=str, required=True, help="Path to .sdd directory.")
 @click.option("--capability-id", type=str, required=True, help="Capability making the call.")
@@ -1822,46 +1854,103 @@ def model_call_invoke(
     journal_entry_id: str,
     reuse_identical: bool,
 ) -> None:
-    """Test scaffolding: invoke adapter and write ledger record.
+    """Invoke a registered direct-invoke adapter and write a ledger record.
 
-    This command is test scaffolding only. Real adapter invocation requires
-    a running agent session via the orchestrator. Use the ModelCallLedger
-    library API directly for testing with mock adapters.
+    Fails closed when ``adapter_id`` is not a registered adapter implementing
+    direct :meth:`CLIAdapter.invoke`.
     """
-    # Fail closed: no real adapter session available in standalone CLI context
-    console.print(
-        "[red]Error: Real adapter invocation requires a running agent session.[/red]\n"
-        "[yellow]This command is test scaffolding only. Real adapter calls must go through[/yellow]\n"
-        "[yellow]the orchestrator, which manages adapter lifecycle and session state.[/yellow]\n\n"
-        "[blue]For testing with mock adapters, use the ModelCallLedger library API directly:[/blue]\n"
-        "  from bernstein.core.cost.model_call_ledger import ModelCallLedger\n"
-        "  ledger = ModelCallLedger(Path(sdd_dir))\n"
-        "  record = ledger.invoke(capability_id=..., call=lambda: 'mock output', ...)"
-    )
-    raise click.Abort
+    from bernstein.core.cost.model_call_ledger import ModelCallLedger
+
+    adapter = _resolve_invokable_adapter(adapter_id)
+    if adapter is None:
+        _fail_closed_model_call(replay=False)
+        return
+
+    try:
+        parsed_params = json.loads(parameters)
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"Invalid --parameters JSON: {exc}") from exc
+    if not isinstance(parsed_params, dict):
+        raise click.ClickException("--parameters must decode to a JSON object")
+
+    ledger = ModelCallLedger(Path(sdd_dir))
+    try:
+        record = ledger.invoke_adapter(
+            adapter=adapter,
+            capability_id=capability_id,
+            adapter_id=adapter_id,
+            model=model,
+            model_version=model_version or None,
+            parameters=parsed_params,
+            parameter_schema_version=parameter_schema_version,
+            input_text=input_text,
+            journal_entry_id=journal_entry_id,
+            reuse_identical=reuse_identical,
+        )
+    except NotImplementedError:
+        _fail_closed_model_call(replay=False)
+        return
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(json.dumps(record.to_dict(), sort_keys=True))
 
 
 @model_call_group.command("replay", hidden=True)
 @click.option("--sdd-dir", "sdd_dir", type=str, required=True, help="Path to .sdd directory.")
 @click.option("--record-id", type=str, required=True, help="ID of the record to replay.")
 def model_call_replay(sdd_dir: str, record_id: str) -> None:
-    """Test scaffolding: re-execute a stored call and write a new linked record.
+    """Re-execute a stored call via its registered adapter and write a linked record.
 
-    This command is test scaffolding only. Real adapter invocation requires
-    a running agent session via the orchestrator. Use the ModelCallLedger
-    library API directly for testing with mock adapters.
+    Fails closed when the stored record is unknown or its adapter does not
+    support direct :meth:`CLIAdapter.invoke`.
     """
-    # Fail closed: no real adapter session available in standalone CLI context
-    console.print(
-        "[red]Error: Real adapter invocation requires a running agent session.[/red]\n"
-        "[yellow]This command is test scaffolding only. Real adapter calls must go through[/yellow]\n"
-        "[yellow]the orchestrator, which manages adapter lifecycle and session state.[/yellow]\n\n"
-        "[blue]For testing with mock adapters, use the ModelCallLedger library API directly:[/blue]\n"
-        "  from bernstein.core.cost.model_call_ledger import ModelCallLedger\n"
-        "  ledger = ModelCallLedger(Path(sdd_dir))\n"
-        "  record = ledger.replay(record_id, call=lambda: 'mock output')"
-    )
-    raise click.Abort
+    from bernstein.core.cost.model_call_ledger import ModelCallLedger
+
+    ledger = ModelCallLedger(Path(sdd_dir))
+    original = ledger.get_record(record_id)
+    if original is None:
+        raise click.ClickException(f"Model call record {record_id!r} not found")
+
+    adapter = _resolve_invokable_adapter(original.adapter_id)
+    if adapter is None:
+        _fail_closed_model_call(replay=True)
+        return
+
+    try:
+        replayed = ledger.replay_adapter(record_id, adapter=adapter)
+    except NotImplementedError:
+        _fail_closed_model_call(replay=True)
+        return
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    assert replayed is not None
+    click.echo(json.dumps(replayed.to_dict(), sort_keys=True))
+
+
+@model_call_group.command("list", hidden=True)
+@click.option("--sdd-dir", "sdd_dir", type=str, required=True, help="Path to .sdd directory.")
+@click.option("--limit", type=int, default=100, show_default=True, help="Maximum records to return.")
+def model_call_list(sdd_dir: str, limit: int) -> None:
+    """List persisted model call ledger records as JSON."""
+    from bernstein.core.cost.model_call_ledger import ModelCallLedger
+
+    records = ModelCallLedger(Path(sdd_dir)).list_records(limit=limit)
+    click.echo(json.dumps([r.to_dict() for r in records], sort_keys=True))
+
+
+@model_call_group.command("show", hidden=True)
+@click.option("--sdd-dir", "sdd_dir", type=str, required=True, help="Path to .sdd directory.")
+@click.option("--record-id", type=str, required=True, help="ID of the record to inspect.")
+def model_call_show(sdd_dir: str, record_id: str) -> None:
+    """Show a single model call ledger record as JSON."""
+    from bernstein.core.cost.model_call_ledger import ModelCallLedger
+
+    record = ModelCallLedger(Path(sdd_dir)).get_record(record_id)
+    if record is None:
+        raise click.ClickException(f"Model call record {record_id!r} not found")
+    click.echo(json.dumps(record.to_dict(), sort_keys=True))
 
 
 cost_cmd.add_command(model_call_group, "model-call")

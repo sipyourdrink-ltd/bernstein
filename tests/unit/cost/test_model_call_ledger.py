@@ -294,3 +294,44 @@ class TestCostJoin:
     def test_cost_row_model_call_id_defaults_to_empty(self) -> None:
         priced = price_model_usage("gpt-5-mini", input_tokens=1_000, output_tokens=100)
         assert priced.model_call_id == ""
+
+
+def test_stale_finish_snapshot_cannot_overwrite_terminal_call(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    running = ledger.begin_call(capability_id="test", adapter_id="fake", model="fake")
+    first = ledger.finish_call(running, output_text="original output")
+    with pytest.raises(InvalidStatusTransitionError):
+        ledger.finish_call(running, error="late callback")
+    assert _ledger(tmp_path).get_record(running.id) == first
+
+
+def test_separate_cached_ledgers_preserve_first_terminal_result(tmp_path: Path) -> None:
+    first = _ledger(tmp_path)
+    running = first.begin_call(capability_id="test", adapter_id="fake", model="fake")
+    second = _ledger(tmp_path)
+    assert second.get_record(running.id) == running
+    terminal = first.finalize_call(running.id, output_text="first result")
+    assert second.finalize_call(running.id, error="late callback") == terminal
+    assert _ledger(tmp_path).get_record(running.id) == terminal
+
+
+def test_concurrent_finalizers_commit_only_one_terminal_row(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    running = _ledger(tmp_path).begin_call(capability_id="test", adapter_id="fake", model="fake")
+    barrier = Barrier(2)
+
+    def finalize(output: str):
+        ledger = _ledger(tmp_path)
+        assert ledger.get_record(running.id) == running
+        barrier.wait(timeout=5)
+        return ledger.finalize_call(running.id, output_text=output)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(finalize, output) for output in ("one", "two")]
+        results = [future.result(timeout=10) for future in futures]
+    assert results[0] == results[1]
+    rows = [json.loads(line) for line in _ledger(tmp_path).path.read_text().splitlines()]
+    terminal_rows = [r for r in rows if r.get("record", {}).get("status") == "succeeded"]
+    assert len(terminal_rows) == 1

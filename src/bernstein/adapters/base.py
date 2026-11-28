@@ -17,7 +17,7 @@ import time
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from bernstein.adapters.http_429_classifier import HTTP429Classification, classify_429
 from bernstein.core.lineage.artifact_events import emit_production_event
@@ -605,6 +605,25 @@ class CLIAdapter(ABC):
     #: the dispatch loop falls back to plain process-exit detection.
     supports_session_log_watch: bool = False
 
+    #: Declared parameter schema version and JSON Schema for parameters passed
+    #: to :meth:`invoke` or resolved during agent spawning. Subclasses may
+    #: override to tighten accepted keys, types, or bounds.
+    parameter_schema_version: str = "1.0"
+    parameter_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "effort": {"type": "string"},
+            "timeout_seconds": {"type": ["integer", "number"], "minimum": 0},
+            "temperature": {"type": "number", "minimum": 0.0, "maximum": 2.0},
+            "max_tokens": {"type": "integer", "minimum": 1},
+            "task_scope": {"type": "string"},
+            "budget_multiplier": {"type": "number", "minimum": 0.0},
+        },
+        "additionalProperties": True,
+    }
+    #: Optional provider version string for the active model.
+    model_version: str = ""
+
     #: Per-adapter strategy declaration across the four axes defined in
     #: :mod:`bernstein.adapters._contract` - resume, dangerous-mode,
     #: event-channel, and output-mode. Left ``None`` here so the canonical
@@ -1141,6 +1160,48 @@ class CLIAdapter(ABC):
         # Default no-op implementation. Adapters that support direct
         # model invocation should override this method.
         return ""
+
+    def model_version_for(self, model: str) -> str:
+        """Return the resolved provider version string for *model*, if known."""
+        del model
+        return self.model_version
+
+    def validate_parameters(self, parameters: dict[str, Any] | None) -> dict[str, Any]:
+        """Validate *parameters* against :attr:`parameter_schema` and return a copy."""
+        import jsonschema
+
+        normalized = dict(parameters or {})
+        try:
+            jsonschema.validate(instance=normalized, schema=self.parameter_schema)
+        except jsonschema.ValidationError as exc:
+            raise ValueError(f"Invalid parameters for adapter {self.name()!r}: {exc.message}") from exc
+        return normalized
+
+    def invoke_recorded(
+        self,
+        *,
+        ledger: Any,
+        capability_id: str,
+        model: str,
+        input_text: str,
+        parameters: dict[str, Any] | None = None,
+        model_version: str | None = None,
+        journal_entry_id: str = "",
+        reuse_identical: bool = False,
+    ) -> Any:
+        """Validate parameters, call :meth:`invoke`, and record in *ledger*."""
+        return ledger.invoke_adapter(
+            adapter=self,
+            capability_id=capability_id,
+            model=model,
+            input_text=input_text,
+            parameters=parameters,
+            adapter_id=self.name(),
+            model_version=model_version,
+            parameter_schema_version=self.parameter_schema_version,
+            journal_entry_id=journal_entry_id,
+            reuse_identical=reuse_identical,
+        )
 
     def detect_tier(self) -> ApiTierInfo | None:
         """Detect the current API tier and remaining quota.
