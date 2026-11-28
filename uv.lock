@@ -23,6 +23,19 @@ conflicts = [[
 overrides = [{ name = "pyjwt", specifier = ">=2.14" }]
 
 [[package]]
+name = "agent-client-protocol"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/36/d3b373c96fbfe5dd76ad70b25826b2017cf5ffe61df2a19d85e5947c0d0c/agent_client_protocol-1.1.0.tar.gz", hash = "sha256:1ef6932a0d95aed6bed4fc9680ce78f3d552780b7fe4704722a177a1ea445040", size = 204148, upload-time = "2026-11-26T00:49:55.969Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/d1/2566083a7bd351a19a68c767974167271c4cdb754443c3137fe14653deb2/agent_client_protocol-1.1.0-py3-none-any.whl", hash = "sha256:41c0860f28eee5dcc32c1e22d451008eb8280872dad5f938360a252021e52fd1", size = 134977, upload-time = "2026-11-26T00:49:54.504Z" },
+]
+
+[[package]]
 name = "agent-manifest"
 version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -566,6 +579,7 @@ azure = [
     { name = "azure-storage-blob" },
 ]
 dev = [
+    { name = "agent-client-protocol" },
     { name = "agentrust-trace-tests" },
     { name = "bandit" },
     { name = "beartype" },
@@ -689,6 +703,7 @@ voice = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "agent-client-protocol" },
     { name = "bandit" },
     { name = "beartype" },
     { name = "boto3-stubs" },
@@ -739,6 +754,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-client-protocol", marker = "extra == 'dev'", specifier = ">=1.1" },
     { name = "agent-manifest", extras = ["cli"], marker = "extra == 'manifest'", specifier = "==0.12.0" },
     { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.11,<0.12" },
     { name = "agentrust-trace-tests", marker = "extra == 'dev'", specifier = ">=0.6,<0.7" },
@@ -854,6 +870,7 @@ provides-extras = ["dev", "grpc", "voice", "k8s", "spiffe", "ml", "browser", "gr
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "agent-client-protocol", specifier = ">=1.1" },
     { name = "bandit", specifier = ">=1.8" },
     { name = "beartype", specifier = ">=0.21" },
     { name = "boto3-stubs", specifier = ">=1.44.0" },

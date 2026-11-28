@@ -80,6 +80,9 @@ on:
       # RPM works at all, and `install-smoke-rpm` is its covering test
       # (#3558). A spec-only diff must run CI.
       - "!packaging/rpm/**"
+      # packaging/acp-registry is NOT ignored: `acp-conformance` validates
+      # agent.json and icon.svg against upstream registry rules.
+      - "!packaging/acp-registry/**"
       - "Formula/**"
       # Deployment & infra configs
       - "deploy/**"

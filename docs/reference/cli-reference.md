@@ -1760,7 +1760,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 | `bernstein listen` | Voice control (experimental). | `cli/commands/voice_cmd.py` |
 | `bernstein install-hooks` | Install git hooks. | `cli/commands/advanced_cmd.py:448` |
 | `bernstein ab-test` | A/B model comparison. | `cli/commands/ab_test_cmd.py:14` |
-| `bernstein acp serve` | Run an ACP server. | `cli/commands/acp_cmd.py:33` |
+| `bernstein acp serve` | Run an ACP server. | `cli/commands/acp_cmd.py:114` |
 | `bernstein scaffold "<prompt>"` | Bootstrap a project from a prompt. | `cli/commands/scaffold_cmd.py` |
 | `bernstein test` | Run automated resilience tests. | `cli/commands/test_cmd.py:13` |
 | `bernstein wiki build` | Render `WIKI.md` from the AST symbol graph. | `cli/commands/wiki_cmd.py` |
@@ -1808,8 +1808,11 @@ verify` recomputes both and rejects a description whose diff has since changed.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--stdio/--no-stdio` | `--stdio` | Serve over POSIX stdio (line-delimited JSON-RPC), the IDE embedding transport. |
-| `--http HOST:PORT` | off | Serve over HTTP on HOST:PORT (e.g. `:8062` or `127.0.0.1:8062`). Overrides `--stdio` when both are supplied. |
-| `--server-url URL` | `http://localhost:8052` | URL of the running Bernstein task server. |
+| `--http HOST:PORT` | off | Serve over HTTP/SSE on a loopback `HOST:PORT` (e.g. `:8062` or `127.0.0.1:8062`); non-loopback binds are refused. Overrides `--stdio` when both are supplied. |
+| `--server-url URL` | `BERNSTEIN_SERVER_URL` (unset if empty) on `--stdio`; `BERNSTEIN_SERVER_URL` or `http://localhost:8052` on `--http` | Forward tasks to an external Bernstein task server URL instead of the embedded workspace runner. Local `auth_headers()` are attached on `--stdio` only, never for HTTP peers. |
+| `--cli ADAPTER` | auto-detect | Adapter CLI for embedded workspace execution (or `--setup` verification). |
+| `--setup` | off | Verify local CLI adapter availability on `PATH` for ACP terminal authentication and exit (`0` ready, `1` missing; does not verify provider credentials). |
+| `--allow-embedded-http` | off | Allow the embedded workspace runner on `--http` (loopback binds only; requires `--http` and cannot be combined with CLI `--server-url`; an exported `BERNSTEIN_SERVER_URL` is ignored, not rejected). |
 
 #### `bernstein fingerprint`
 

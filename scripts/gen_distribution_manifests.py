@@ -2,12 +2,13 @@
 """Regenerate the distribution manifests from ``pyproject.toml`` (#2369).
 
 The MCP registry manifest (``server.json``), the plugin manifest
-(``.plugin/plugin.json``), and the Agent Plugins 1.0.0 root manifests
-(``plugin.json``, ``mcp.json``, #3540) and the citation metadata
-(``CITATION.cff``, #3571) are release artifacts: their version
-fields must track the package version, and the release workflow - not hand
-edits - is their single source. This script is a deterministic projection: given the
-same ``pyproject.toml`` and manifest inputs it produces byte-identical
+(``.plugin/plugin.json``), the Agent Plugins 1.0.0 root manifests
+(``plugin.json``, ``mcp.json``, #3540), the citation metadata
+(``CITATION.cff``, #3571), and the ACP registry manifest
+(``packaging/acp-registry/bernstein/agent.json``) are release artifacts: their
+version fields must track the package version, and the release workflow - not
+hand edits - is their single source. This script is a deterministic projection:
+given the same ``pyproject.toml`` and manifest inputs it produces byte-identical
 outputs, so CI can diff instead of trusting a human.
 
 Usage::
@@ -52,6 +53,7 @@ MCP_JSON = REPO / ".mcp.json"
 ROOT_PLUGIN_JSON = REPO / "plugin.json"
 ROOT_MCP_JSON = REPO / "mcp.json"
 CITATION_CFF = REPO / "CITATION.cff"
+ACP_REGISTRY_AGENT_JSON = REPO / "packaging" / "acp-registry" / "bernstein" / "agent.json"
 SKILLS_DIR = REPO / "skills"
 
 #: Every file this script writes, as repository-relative POSIX strings.
@@ -63,7 +65,7 @@ SKILLS_DIR = REPO / "skills"
 #: test and :func:`main` read.
 #:
 #: ``.mcp.json`` is deliberately absent: it is an INPUT, read to project
-#: ``mcp.json``. Six paths are declared above and only five are written, which
+#: ``mcp.json``. Seven paths are declared above and only six are written, which
 #: is exactly the distinction a hand-kept list gets wrong.
 GENERATED_MANIFESTS: Final[tuple[str, ...]] = (
     "server.json",
@@ -71,6 +73,7 @@ GENERATED_MANIFESTS: Final[tuple[str, ...]] = (
     "plugin.json",
     "mcp.json",
     "CITATION.cff",
+    "packaging/acp-registry/bernstein/agent.json",
 )
 
 #: Top-level ``CITATION.cff`` keys this script owns. Anchored to the start of a
@@ -158,6 +161,21 @@ def render_plugin_json(version: str) -> str:
     """Return the canonical ``.plugin/plugin.json`` payload for *version*."""
     data = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))
     data["version"] = version
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def render_acp_registry_agent_json(version: str) -> str:
+    """Return the canonical ``packaging/acp-registry/bernstein/agent.json`` payload for *version*."""
+    data = json.loads(ACP_REGISTRY_AGENT_JSON.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        msg = "packaging/acp-registry/bernstein/agent.json must be a JSON object"
+        raise ManifestValidationError(msg)
+    dist = data.get("distribution")
+    if not isinstance(dist, dict) or not isinstance(dist.get("uvx"), dict):
+        msg = "packaging/acp-registry/bernstein/agent.json must contain a distribution.uvx object"
+        raise ManifestValidationError(msg)
+    data["version"] = version
+    dist["uvx"]["package"] = f"bernstein=={version}"
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -354,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
                 CITATION_CFF.read_text(encoding="utf-8") if CITATION_CFF.is_file() else "",
                 today=release_date(),
             ),
+            ACP_REGISTRY_AGENT_JSON: render_acp_registry_agent_json(version),
         }
     except ManifestValidationError as exc:
         # Schema-invalid projections must fail generation and --check alike,

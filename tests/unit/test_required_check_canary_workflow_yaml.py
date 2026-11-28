@@ -503,6 +503,7 @@ _MERGE_GROUP_NEEDS = {
     "beartype": {"result": "success"},
     "pyright-strict-zone": {"result": "success"},
     "adapter-integration": {"result": "success"},
+    "acp-conformance": {"result": "success"},
     "adapter-integration-macos": {"result": "skipped"},  # if: != merge_group
     "test": {"result": "success"},
     "test-macos": {"result": "skipped"},  # if: != merge_group

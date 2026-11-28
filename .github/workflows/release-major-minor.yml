@@ -185,6 +185,7 @@ jobs:
             plugin.json
             mcp.json
             CITATION.cff
+            packaging/acp-registry/bernstein/agent.json
           commit-message: "release: v${{ steps.bump.outputs.new }}"
           committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
           author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
