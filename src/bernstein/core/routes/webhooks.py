@@ -13,6 +13,15 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
+from bernstein.core.routes._trigger_gate import (
+    DirectTriggerGate,
+    gate_direct_trigger,
+    record_direct_trigger_fire,
+    release_direct_trigger_reservation,
+)
+from bernstein.core.routes._trigger_gate import (
+    get_trigger_manager as _get_trigger_manager,
+)
 from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.server import (
     TaskCreate,
@@ -28,8 +37,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from bernstein.core.models import TriggerEvent
     from bernstein.core.orchestration.trigger_manager import TriggerGateResult, TriggerManager
+    from bernstein.core.tasks.models import TriggerEvent
     from bernstein.core.trigger_sources.receipt import TriggerAdmission
 
 logger = logging.getLogger(__name__)
@@ -499,17 +508,82 @@ def _handle_comment(event: Any) -> list[dict[str, Any]]:
     return [review_task] if review_task is not None else []
 
 
-def _handle_workflow_run(event: Any, store: TaskStore, tenant_id: str) -> list[dict[str, Any]] | JSONResponse:
-    """Map a GitHub ``workflow_run/completed`` event to task payloads.
+def _suppressed_github_response(event: Any, gate: TriggerGateResult) -> JSONResponse:
+    """Return the standard GitHub webhook suppression response for a denied trigger gate."""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "event_type": event.event_type,
+            "action": event.action,
+            "tasks_created": 0,
+            "task_ids": [],
+            "skipped_reason": f"trigger_suppressed ({gate.trigger_name}: {gate.reason})",
+        },
+    )
 
-    Returns a JSONResponse early when the retry cap is reached.
+
+def _scalar_id_text(value: object) -> str:
+    """Return a non-empty string for int/str identifiers, rejecting bools and containers."""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _workflow_run_trigger_event(event: Any, *, tenant_id: str = "") -> TriggerEvent:
+    """Normalize a parsed GitHub ``workflow_run`` webhook event into a ``TriggerEvent``.
+
+    Populates the fields ``_matches_github_workflow_run`` and ``compute_dedup_key``
+    read: ``source="github_workflow_run"``, ``repo``, ``branch``, ``sha``, ``sender``,
+    and ``metadata`` (``conclusion``, ``workflow_name``, ``run_url``,
+    ``workflow_run_id``, ``run_attempt``, and tenant-scoped ``cooldown_scope``).
+    """
+    from bernstein.core.tasks.models import TriggerEvent
+
+    payload: dict[str, Any] = event.payload
+    raw_run = payload.get("workflow_run")
+    run: dict[str, Any] = raw_run if isinstance(raw_run, dict) else {}
+    workflow_name = _first_text(run.get("name"))
+    conclusion = _first_text(run.get("conclusion"))
+    run_url = _first_text(run.get("html_url"))
+    metadata: dict[str, Any] = {
+        "conclusion": conclusion,
+        "workflow_name": workflow_name,
+        "run_url": run_url,
+        "workflow_run_id": _scalar_id_text(run.get("id")),
+        "run_attempt": _scalar_id_text(run.get("run_attempt")),
+    }
+    if tenant_id:
+        metadata["cooldown_scope"] = hashlib.sha256(tenant_id.encode()).hexdigest()
+    return TriggerEvent(
+        source="github_workflow_run",
+        raw_payload=payload,
+        repo=event.repo_full_name,
+        branch=_first_text(run.get("head_branch")),
+        sha=_first_text(run.get("head_sha")),
+        sender=event.sender,
+        message=f"Workflow '{workflow_name}' {conclusion}".strip() if workflow_name else conclusion,
+        metadata=metadata,
+    )
+
+
+def _handle_workflow_run(
+    event: Any, store: TaskStore, tenant_id: str, request: Request
+) -> tuple[list[dict[str, Any]], DirectTriggerGate | None] | JSONResponse:
+    """Map a GitHub ``workflow_run/completed`` event to task payloads, governed by ``triggers.yaml``.
+
+    Returns a JSONResponse early when the retry cap is reached or when a
+    matching ``github_workflow_run`` trigger suppresses the run.
     """
     from bernstein.github_app.ci_router import MAX_CI_RETRIES
     from bernstein.github_app.mapper import workflow_run_to_task
 
     run: dict[str, Any] = event.payload.get("workflow_run", {})
     if run.get("conclusion") != "failure":
-        return []
+        return [], None
 
     head_branch: str = run.get("head_branch", "")
     retry_count = _count_ci_fix_attempts(store, head_branch, tenant_id)
@@ -531,33 +605,37 @@ def _handle_workflow_run(event: Any, store: TaskStore, tenant_id: str) -> list[d
                 "skipped_reason": f"max_retries_reached ({retry_count}/{MAX_CI_RETRIES})",
             },
         )
-    return list(workflow_run_to_task(event, retry_count=retry_count))
+    task_payloads = list(workflow_run_to_task(event, retry_count=retry_count))
+    if not task_payloads:
+        return task_payloads, None
 
-
-def _get_trigger_manager(request: Request) -> TriggerManager | None:
-    """Return a ``TriggerManager`` scoped to this install's ``.sdd`` dir.
-
-    Returns ``None`` when there is nowhere to load ``triggers.yaml`` from (no
-    ``.sdd`` layout on ``request.app.state``, mirroring ``_bridge_paths``
-    above) or when no ``triggers.yaml`` is configured - the transparent
-    pass-through case must not create ``TriggerManager``'s runtime state
-    directory for installs that never opted into trigger rules, the same way
-    ``bernstein triggers list`` skips construction when the file is absent.
-    """
-    from bernstein.core.orchestration.trigger_manager import TriggerManager
-    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
-
-    sdd_dir = getattr(request.app.state, "sdd_dir", None)
-    if sdd_dir is None:
-        return None
-    try:
-        (sdd_dir / "config" / "triggers.yaml").stat()
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except OSError:
-        # Let the manager report unavailable policy and suppress mapped tasks.
-        pass
-    return TriggerManager(sdd_dir, quarantine_store=DeclarationQuarantineStore(sdd_dir.parent))
+    workflow_name = _first_text(run.get("name")) or "CI"
+    pending = gate_direct_trigger(
+        request,
+        _workflow_run_trigger_event(event, tenant_id=tenant_id),
+        summary=f"workflow_run {workflow_name} on {head_branch} by {event.sender}",
+        reconcile_dedup=True,
+    )
+    if pending is None:
+        return task_payloads, None
+    if pending.gate.suppressed:
+        if pending.policy_unavailable:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        f"GitHub trigger policy unavailable ({pending.gate.trigger_name}: {pending.gate.reason})"
+                    ),
+                },
+            )
+        if pending.unconfirmed_dedup:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "GitHub workflow_run delivery outcome is unconfirmed"},
+            )
+        record_direct_trigger_fire(pending)
+        return _suppressed_github_response(event, pending.gate)
+    return task_payloads, pending
 
 
 def _push_trigger_event(event: Any) -> Any:
@@ -591,7 +669,7 @@ def _push_trigger_event(event: Any) -> Any:
     )
 
 
-def _handle_push(event: Any, request: Request) -> tuple[list[dict[str, Any]], TriggerGateResult | None] | JSONResponse:
+def _handle_push(event: Any, request: Request) -> tuple[list[dict[str, Any]], DirectTriggerGate | None] | JSONResponse:
     """Map a GitHub ``push`` event to task payloads, governed by ``triggers.yaml``.
 
     ``triggers.yaml`` cooldown/dedup/filter rules for ``source: github_push``
@@ -601,8 +679,8 @@ def _handle_push(event: Any, request: Request) -> tuple[list[dict[str, Any]], Tr
     all - this is a transparent pass-through: a task is created for every
     push, exactly as before this gate existed.
 
-    Returns ``(task_payloads, gate)`` where ``gate`` is the
-    :class:`TriggerGateResult` to record a fire against once the task is
+    Returns ``(task_payloads, pending_gate)`` where ``pending_gate`` is the
+    :class:`DirectTriggerGate` to record a fire against once the task is
     created, or ``None`` when no trigger governs this event. Returns a
     ``JSONResponse`` directly when a matching trigger suppresses the push.
     """
@@ -612,30 +690,21 @@ def _handle_push(event: Any, request: Request) -> tuple[list[dict[str, Any]], Tr
     if not task_payloads:
         return task_payloads, None
 
-    mgr = _get_trigger_manager(request)
-    if mgr is None:
+    pending = gate_direct_trigger(
+        request,
+        _push_trigger_event(event),
+        summary=f"push to {event.payload.get('ref', '')} by {event.sender}",
+    )
+    if pending is None:
         return task_payloads, None
-
-    gate = mgr.gate_direct_task(_push_trigger_event(event))
-    if gate.trigger_name is None:
-        return task_payloads, None
-    if gate.suppressed:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "event_type": event.event_type,
-                "action": event.action,
-                "tasks_created": 0,
-                "task_ids": [],
-                "skipped_reason": f"trigger_suppressed ({gate.trigger_name}: {gate.reason})",
-            },
-        )
-    return task_payloads, gate
+    if pending.gate.suppressed:
+        return _suppressed_github_response(event, pending.gate)
+    return task_payloads, pending
 
 
 def _dispatch_github_event(
     event: Any, store: TaskStore, tenant_id: str, request: Request
-) -> tuple[list[dict[str, Any]], TriggerGateResult | None] | JSONResponse:
+) -> tuple[list[dict[str, Any]], DirectTriggerGate | None] | JSONResponse:
     """Route a parsed GitHub webhook event to the appropriate handler."""
     match (event.event_type, event.action):
         case ("issues", "opened"):
@@ -647,10 +716,7 @@ def _dispatch_github_event(
         case ("push", _):
             return _handle_push(event, request)
         case ("workflow_run", "completed"):
-            result = _handle_workflow_run(event, store, tenant_id)
-            if isinstance(result, JSONResponse):
-                return result
-            return result, None
+            return _handle_workflow_run(event, store, tenant_id, request)
     return [], None
 
 
@@ -736,30 +802,25 @@ async def github_webhook(request: Request) -> JSONResponse:
     result = _dispatch_github_event(event, store, tenant_id, request)
     if isinstance(result, JSONResponse):
         return result
-    task_payloads, gate = result
+    task_payloads, pending_gate = result
 
     # Create tasks in the store
     created_ids: list[str] = []
     tenant_id = request_tenant_id(request)
-    for payload in task_payloads:
-        task = await store.create(TaskCreate(**payload, tenant_id=tenant_id))
-        created_ids.append(task.id)
+    try:
+        for payload in task_payloads:
+            task = await store.create(TaskCreate(**payload, tenant_id=tenant_id))
+            created_ids.append(task.id)
+    except Exception:
+        if pending_gate is not None and not created_ids:
+            release_direct_trigger_reservation(pending_gate)
+        raise
 
-    if gate is not None and created_ids:
-        # A triggers.yaml rule matched and passed conditions for this push
-        # (see _handle_push) - record the fire so the next push's cooldown
-        # and dedup checks see it via gate_direct_task.
-        assert gate.trigger_name is not None
-        assert gate.dedup_key is not None
-        mgr = _get_trigger_manager(request)
-        if mgr is not None:
-            mgr.record_fire(
-                trigger_name=gate.trigger_name,
-                source="github_push",
-                task_id=created_ids[0],
-                dedup_key=gate.dedup_key,
-                summary=f"push to {event.payload.get('ref', '')} by {event.sender}",
-            )
+    if pending_gate is not None and created_ids:
+        # A triggers.yaml rule matched and passed conditions for this delivery
+        # - record the fire under the matched trigger source so subsequent
+        # cooldown and dedup checks see it via gate_direct_task.
+        record_direct_trigger_fire(pending_gate, task_id=created_ids[0])
 
     return JSONResponse(
         status_code=200,

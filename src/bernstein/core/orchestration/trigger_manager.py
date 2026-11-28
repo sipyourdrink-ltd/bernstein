@@ -292,13 +292,29 @@ def _matches_github_workflow_run(event: TriggerEvent, trigger: TriggerConfig) ->
     return event.metadata.get("workflow_name") not in exclude_workflow_names
 
 
+_SLACK_MENTION_RE = re.compile(r"<@[UW][A-Z0-9]+(?:\|[^>]*)?>")
+
+
+def _has_slack_mention(event: TriggerEvent) -> bool:
+    """Return True if *event* mentions the configured Slack bot or ``@bernstein``."""
+    message = event.message or ""
+    if not message:
+        return False
+    if "@bernstein" in message:
+        return True
+    bot_user_id = event.metadata.get("bot_user_id")
+    if isinstance(bot_user_id, str) and bot_user_id:
+        return f"<@{bot_user_id}>" in message
+    return bool(_SLACK_MENTION_RE.search(message))
+
+
 def _matches_slack(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     """Filter logic for slack triggers."""
     filters = trigger.filters
     channels = filters.get("channels", [])
     if channels and event.metadata.get("channel") not in channels:
         return False
-    if filters.get("mention_required") and event.message and "@bernstein" not in event.message:
+    if filters.get("mention_required") and not _has_slack_mention(event):
         return False
     msg_pattern = filters.get("message_pattern")
     return not (msg_pattern and event.message and not re.search(msg_pattern, event.message))
@@ -360,6 +376,39 @@ def compute_dedup_key(trigger_name: str, event: TriggerEvent) -> str:
         parts.append(event.metadata["request_path"])
     if event.source == "gitlab_webhook" and event.metadata.get("delivery_identity"):
         parts.append(event.metadata["delivery_identity"])
+    if event.source == "slack":
+        tenant_scope = event.metadata.get("cooldown_scope") or event.metadata.get("tenant_id")
+        if isinstance(tenant_scope, str) and tenant_scope:
+            parts.append(tenant_scope)
+        team_id = event.metadata.get("team_id")
+        if isinstance(team_id, str) and team_id:
+            parts.append(team_id)
+        event_id = event.metadata.get("event_id")
+        slack_ts = event.metadata.get("slack_ts")
+        if isinstance(event_id, str) and event_id:
+            parts.append(f"event_id:{event_id}")
+        elif isinstance(slack_ts, str) and slack_ts:
+            parts.append(f"ts:{slack_ts}")
+    if event.source == "github_workflow_run":
+        tenant_scope = event.metadata.get("cooldown_scope") or event.metadata.get("tenant_id")
+        if isinstance(tenant_scope, str) and tenant_scope:
+            parts.append(tenant_scope)
+        if event.repo:
+            parts.append(event.repo)
+        run_id = event.metadata.get("workflow_run_id")
+        if isinstance(run_id, (int, str)) and not isinstance(run_id, bool) and str(run_id):
+            parts.append(f"run:{run_id}")
+            run_attempt = event.metadata.get("run_attempt")
+            attempt_str = (
+                str(run_attempt)
+                if isinstance(run_attempt, (int, str)) and not isinstance(run_attempt, bool) and str(run_attempt)
+                else "1"
+            )
+            parts.append(f"attempt:{attempt_str}")
+        else:
+            workflow_name = event.metadata.get("workflow_name")
+            if isinstance(workflow_name, str) and workflow_name:
+                parts.append(f"workflow:{workflow_name}")
     # For sources without a unique key (cron, file_watch), use a 60s bucket
     if event.source in ("cron", "file_watch"):
         bucket = str(int(event.timestamp) // 60)
@@ -720,6 +769,16 @@ class TriggerManager:
             self._save_dedup_cache()
             return True, expiry
 
+    def release_dedup_reservation(self, dedup_key: str, expected_expiry: float) -> bool:
+        """Release *dedup_key* only when the ledger still holds *expected_expiry*."""
+        with self._dedup_lock():
+            self._load_dedup_cache()
+            if self._dedup_cache.get(dedup_key) != expected_expiry:
+                return False
+            del self._dedup_cache[dedup_key]
+            self._save_dedup_cache()
+            return True
+
     # -- Cron state ---------------------------------------------------------
 
     def _load_cron_state(self) -> None:
@@ -869,7 +928,11 @@ class TriggerManager:
         ):
             return "header filters require authenticated headers"
 
-        scope = event.metadata.get("cooldown_scope") if event.source in {"gitlab_webhook", "webhook"} else None
+        scope = (
+            event.metadata.get("cooldown_scope")
+            if event.source in {"gitlab_webhook", "webhook", "slack", "github_workflow_run"}
+            else None
+        )
         reason = self._check_cooldown(
             trigger.name, conditions, scope=scope, strict=bool(event.metadata.get("webhook_headers_unverified"))
         )
@@ -1113,7 +1176,7 @@ class TriggerManager:
             # governance now applies to this event.
             dedup_key = compute_dedup_key(trigger.name, event)
             dedup_expires_at = None
-            if event.source in {"gitlab_webhook", "webhook"}:
+            if event.source in {"gitlab_webhook", "webhook", "slack", "github_workflow_run"}:
                 # A reserved delivery is reconciled even when cooldown history is unavailable.
                 with self._dedup_lock():
                     self._load_dedup_cache()
