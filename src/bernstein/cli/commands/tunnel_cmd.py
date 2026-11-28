@@ -12,14 +12,12 @@ Subcommands:
 
 from __future__ import annotations
 
-import os
-import signal
-
 import click
 
 from bernstein.cli.helpers import console
 from bernstein.core.tunnels.drivers import register_default_drivers
-from bernstein.core.tunnels.protocol import ProviderNotAvailable
+from bernstein.core.tunnels.process_guard import terminate_tunnel_process_with_reason
+from bernstein.core.tunnels.protocol import ProviderNotAvailable, TunnelHandle
 from bernstein.core.tunnels.registry import TunnelRegistry
 
 _PROVIDER_CHOICES = ["auto", "cloudflared", "ngrok", "bore", "tailscale"]
@@ -34,29 +32,6 @@ def _build_registry() -> TunnelRegistry:
     reg = TunnelRegistry()
     register_default_drivers(reg)
     return reg
-
-
-def _sigterm_pid(pid: int) -> bool:
-    """Send ``SIGTERM`` to ``pid``; return ``True`` if the syscall succeeded.
-
-    Args:
-        pid: Target process id.  Ignored if ``<= 0``.
-
-    Returns:
-        ``True`` if the signal was delivered, ``False`` otherwise.
-    """
-    if pid <= 0:
-        return False
-    try:
-        # We only ever SIGTERM PIDs we wrote into tunnels.json ourselves,
-        # so the signal target is always a tunnel process we own
-        # (Sonar python:S4828).
-        os.kill(pid, signal.SIGTERM)  # NOSONAR python:S4828
-    except OSError:
-        # ProcessLookupError is a subclass of OSError - catching both
-        # would be redundant (Sonar python:S5713).
-        return False
-    return True
 
 
 @click.group("tunnel")
@@ -111,6 +86,24 @@ def list_cmd() -> None:
         console.print(f"{h.name:<24} {h.port:>6} {h.provider:<12} {h.public_url:<48} {h.pid:>7}")
 
 
+def _stop_one_tunnel(reg: TunnelRegistry, handle: TunnelHandle) -> None:
+    """Terminate *handle* if safe, remove it from *reg*, and print the outcome."""
+    _signaled, reason = terminate_tunnel_process_with_reason(handle, providers=reg.providers())
+    reg.destroy(handle.name)
+    if reason == "unreadable_cmdline":
+        console.print(
+            f"[yellow]Removed[/yellow] {handle.name} ({handle.provider}) from registry; "
+            f"did not signal pid {handle.pid} because its command line could not be read."
+        )
+    elif reason == "cmdline_mismatch":
+        console.print(
+            f"[yellow]Removed[/yellow] {handle.name} ({handle.provider}) from registry; "
+            f"did not signal pid {handle.pid} (process identity did not match {handle.provider})."
+        )
+    else:
+        console.print(f"[yellow]Stopped[/yellow] {handle.name} ({handle.provider})")
+
+
 @tunnel_group.command("stop")
 @click.argument("name", required=False)
 @click.option("--all", "stop_all", is_flag=True, default=False, help="Stop every active tunnel.")
@@ -125,9 +118,7 @@ def stop_cmd(name: str | None, stop_all: bool) -> None:
             console.print("[dim]No active tunnels to stop.[/dim]")
             return
         for h in handles:
-            _sigterm_pid(h.pid)
-            reg.destroy(h.name)
-            console.print(f"[yellow]Stopped[/yellow] {h.name} ({h.provider})")
+            _stop_one_tunnel(reg, h)
         return
     # Single tunnel
     assert name is not None
@@ -135,6 +126,4 @@ def stop_cmd(name: str | None, stop_all: bool) -> None:
     if handle is None:
         console.print(f"[red]No tunnel named '{name}'.[/red]")
         raise SystemExit(1)
-    _sigterm_pid(handle.pid)
-    reg.destroy(handle.name)
-    console.print(f"[yellow]Stopped[/yellow] {handle.name} ({handle.provider})")
+    _stop_one_tunnel(reg, handle)

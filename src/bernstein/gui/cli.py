@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import signal
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -145,13 +144,19 @@ def _start_tunnel(port: int, provider: str) -> TunnelHandle:
 
 def _stop_tunnel(name: str) -> None:
     """Stop a previously started tunnel by name; idempotent on missing."""
+    from bernstein.core.tunnels.process_guard import terminate_tunnel_process_with_reason
+
     reg = _build_tunnel_registry()
     handle = reg.get(name)
     if handle is None:
         return
-    with contextlib.suppress(OSError):
-        # OSError swallowed: the tunnel process may already be gone.
-        os.kill(handle.pid, signal.SIGTERM)
+    _signaled, reason = terminate_tunnel_process_with_reason(handle, providers=reg.providers())
+    if reason == "unreadable_cmdline":
+        click.echo(
+            f"Warning: removed tunnel '{handle.name}' ({handle.provider}) from registry; "
+            f"did not signal pid {handle.pid} because its command line could not be read.",
+            err=True,
+        )
     reg.destroy(name)
 
 

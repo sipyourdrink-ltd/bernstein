@@ -319,12 +319,18 @@ def test_serve_unconfigured_non_loopback_and_tunnel_never_auto_mint(
             raise NotImplementedError
 
         def start(self, port: int, name: str) -> TunnelHandle:
-            return TunnelHandle(name=name, provider="cloudflared", port=port, public_url="https://t.example", pid=1)
+            return TunnelHandle(name=name, provider="cloudflared", port=port, public_url="https://t.example", pid=0)
 
         def stop(self, name: str) -> None:
             return None
 
     monkeypatch.setattr(gui_cli, "PASSPHRASE_FILE", tmp_path / "passphrase")
+    killed_pids: list[tuple[int, int]] = []
+
+    def _record_kill(pid: int, sig: int) -> None:
+        killed_pids.append((pid, sig))
+
+    monkeypatch.setattr(os, "kill", _record_kill)
 
     def _build_reg() -> Any:
         reg = TunnelRegistry(state_path=tmp_path / "tunnels.json")
@@ -338,6 +344,7 @@ def test_serve_unconfigured_non_loopback_and_tunnel_never_auto_mint(
     )
     assert res_tunnel.exit_code == 0, res_tunnel.output
     assert not os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    assert killed_pids == []
 
     import webbrowser
 

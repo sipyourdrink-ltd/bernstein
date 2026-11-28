@@ -13,11 +13,10 @@ into the existing wrapper.
 from __future__ import annotations
 
 import logging
-import os
-import signal
 from typing import TYPE_CHECKING
 
 from bernstein.core.tunnels.drivers import register_default_drivers
+from bernstein.core.tunnels.process_guard import terminate_tunnel_process
 from bernstein.core.tunnels.protocol import (
     ProviderNotAvailable,
     TunnelHandle,
@@ -135,13 +134,7 @@ class TunnelBridge:
         handle = reg.get(name)
         if handle is None:
             return False
-        if handle.pid > 0:
-            try:
-                # We only ever SIGTERM PIDs we wrote into tunnels.json
-                # ourselves (Sonar python:S4828).
-                os.kill(handle.pid, signal.SIGTERM)  # NOSONAR python:S4828
-            except OSError as exc:
-                logger.debug("SIGTERM to tunnel pid %d failed: %s", handle.pid, exc)
+        terminate_tunnel_process(handle, providers=reg.providers())
         return reg.destroy(name)
 
     def list(self) -> list[TunnelHandle]:

@@ -54,18 +54,21 @@ def stop_active_tunnels() -> int:
     """
     try:
         from bernstein.core.tunnels.drivers import register_default_drivers
+        from bernstein.core.tunnels.process_guard import terminate_tunnel_process_with_reason
         from bernstein.core.tunnels.registry import TunnelRegistry
     except ImportError:
         return 0
     reg = TunnelRegistry()
     register_default_drivers(reg)
+    providers = reg.providers()
     count = 0
     for handle in reg.list_active():
-        if handle.pid > 0:
-            with contextlib.suppress(OSError, ProcessLookupError):
-                # PID comes from our own tunnels.json - target is always
-                # a tunnel process we started (Sonar python:S4828).
-                os.kill(handle.pid, signal.SIGTERM)  # NOSONAR python:S4828
+        _signaled, reason = terminate_tunnel_process_with_reason(handle, providers=providers)
+        if reason == "unreadable_cmdline":
+            console.print(
+                f"[yellow]Removed tunnel {handle.name} ({handle.provider}) from registry; "
+                f"did not signal pid {handle.pid} because its command line could not be read.[/yellow]"
+            )
         reg.destroy(handle.name)
         count += 1
     return count

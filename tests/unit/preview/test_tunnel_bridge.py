@@ -114,3 +114,70 @@ def test_close_returns_false_for_unknown_tunnel(tmp_path: Path) -> None:
     cf = _FakeProvider("cloudflared")
     bridge = _bridge_with(cf, state_path=tmp_path / "tunnels.json")
     assert bridge.close("nope") is False
+
+
+def test_close_skips_guarded_and_reused_pids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``TunnelBridge.close`` must skip pid=1, self, tailscale, and unrelated live PIDs."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    state_path = tmp_path / "tunnels.json"
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        state_path.write_text(
+            json.dumps(
+                {
+                    "tunnels": [
+                        {
+                            "name": "init",
+                            "provider": "cloudflared",
+                            "port": 5173,
+                            "public_url": "https://a.example",
+                            "pid": 1,
+                        },
+                        {
+                            "name": "self",
+                            "provider": "cloudflared",
+                            "port": 5174,
+                            "public_url": "https://b.example",
+                            "pid": os.getpid(),
+                        },
+                        {
+                            "name": "reused",
+                            "provider": "cloudflared",
+                            "port": 5175,
+                            "public_url": "https://c.example",
+                            "pid": proc.pid,
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        cf = _FakeProvider("cloudflared")
+        bridge = _bridge_with(cf, state_path=state_path)
+        sent: list[tuple[int, int]] = []
+        real_kill = os.kill
+
+        def spy_kill(pid: int, sig: int) -> None:
+            if sig != 0:
+                sent.append((pid, sig))
+            if sig == 0:
+                real_kill(pid, sig)
+
+        with monkeypatch.context() as mp:
+            mp.setattr(os, "kill", spy_kill)
+            for name in ("init", "self", "reused"):
+                assert bridge.close(name) is True
+        assert sent == [], f"TunnelBridge.close must not SIGTERM guarded/reused PIDs, sent={sent}"
+        assert proc.poll() is None
+        assert TunnelRegistry(state_path=state_path).list_active() == []
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
