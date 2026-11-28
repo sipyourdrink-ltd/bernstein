@@ -99,7 +99,7 @@ jobs:
       idempotent_skip: ${{ steps.idempotency.outputs.skip }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -299,7 +299,7 @@ jobs:
       HAS_TRIGGERING_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN != '' }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
