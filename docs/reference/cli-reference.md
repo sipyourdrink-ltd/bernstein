@@ -468,6 +468,10 @@ A subcommand group; defaults to `bernstein logs tail`.
 
 `bernstein logs` (no subcommand) is equivalent to `bernstein logs tail`.
 
+`--lines N` (default 50) prints the last N stored lines first. `--lines 0`
+prints no stored line; with `--follow`, only lines appended after following
+starts are printed. A negative count is a usage error.
+
 #### `bernstein recap`
 
 | Flag | Default | Meaning |

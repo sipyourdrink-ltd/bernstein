@@ -37,6 +37,16 @@ def _find_agent_logs(runtime_dir: Path, agent_id: str | None) -> list[Path]:
     return sorted(log_list, key=lambda p: p.stat().st_mtime)
 
 
+def _last_lines(text: str, count: int) -> list[str]:
+    """Return the last *count* lines of *text*; zero returns none.
+
+    ``splitlines()[-count:]`` is the whole list for a count of zero, because ``-0`` is ``0`` (#7872).
+    """
+    if count <= 0:
+        return []
+    return text.splitlines()[-count:]
+
+
 # ---------------------------------------------------------------------------
 # Group
 # ---------------------------------------------------------------------------
@@ -65,7 +75,14 @@ def logs_group() -> None:
 @logs_group.command("tail")
 @click.option("--follow", "-f", is_flag=True, default=False, help="Stream log output in real-time.")
 @click.option("--agent", "-a", default=None, help="Filter by agent session ID (partial match).")
-@click.option("--lines", "-n", default=50, show_default=True, help="Lines to show without --follow.")
+@click.option(
+    "--lines",
+    "-n",
+    default=50,
+    show_default=True,
+    type=click.IntRange(min=0),
+    help="Stored lines to print first, newest last. 0 prints none; with --follow, only new lines follow.",
+)
 @click.option(
     "--runtime-dir",
     default=".sdd/runtime",
@@ -92,13 +109,13 @@ def logs_tail(follow: bool, agent: str | None, lines: int, runtime_dir: str) -> 
 
     if not follow:
         text = log_path.read_text(errors="replace")
-        tail_lines = text.splitlines()[-lines:]
+        tail_lines = _last_lines(text, lines)
         console.print("\n".join(tail_lines) or "[dim](empty)[/dim]")
         return
 
     try:
         existing = log_path.read_text(errors="replace")
-        context = existing.splitlines()[-lines:]
+        context = _last_lines(existing, lines)
         if context:
             console.print("\n".join(context))
         offset = log_path.stat().st_size
