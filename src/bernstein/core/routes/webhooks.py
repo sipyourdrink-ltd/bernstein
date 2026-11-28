@@ -17,6 +17,7 @@ from bernstein.core.routes._trigger_gate import (
     DirectTriggerGate,
     gate_direct_trigger,
     record_direct_trigger_fire,
+    release_direct_trigger_reservation,
 )
 from bernstein.core.routes._trigger_gate import (
     get_trigger_manager as _get_trigger_manager,
@@ -521,12 +522,24 @@ def _suppressed_github_response(event: Any, gate: TriggerGateResult) -> JSONResp
     )
 
 
-def _workflow_run_trigger_event(event: Any) -> TriggerEvent:
+def _scalar_id_text(value: object) -> str:
+    """Return a non-empty string for int/str identifiers, rejecting bools and containers."""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _workflow_run_trigger_event(event: Any, *, tenant_id: str = "") -> TriggerEvent:
     """Normalize a parsed GitHub ``workflow_run`` webhook event into a ``TriggerEvent``.
 
     Populates the fields ``_matches_github_workflow_run`` and ``compute_dedup_key``
-    read: ``source="github_workflow_run"``, ``branch``, ``sha``, ``sender``, and
-    ``metadata`` (``conclusion``, ``workflow_name``, ``run_url``).
+    read: ``source="github_workflow_run"``, ``repo``, ``branch``, ``sha``, ``sender``,
+    and ``metadata`` (``conclusion``, ``workflow_name``, ``run_url``,
+    ``workflow_run_id``, ``run_attempt``, and tenant-scoped ``cooldown_scope``).
     """
     from bernstein.core.tasks.models import TriggerEvent
 
@@ -536,6 +549,15 @@ def _workflow_run_trigger_event(event: Any) -> TriggerEvent:
     workflow_name = _first_text(run.get("name"))
     conclusion = _first_text(run.get("conclusion"))
     run_url = _first_text(run.get("html_url"))
+    metadata: dict[str, Any] = {
+        "conclusion": conclusion,
+        "workflow_name": workflow_name,
+        "run_url": run_url,
+        "workflow_run_id": _scalar_id_text(run.get("id")),
+        "run_attempt": _scalar_id_text(run.get("run_attempt")),
+    }
+    if tenant_id:
+        metadata["cooldown_scope"] = hashlib.sha256(tenant_id.encode()).hexdigest()
     return TriggerEvent(
         source="github_workflow_run",
         raw_payload=payload,
@@ -544,11 +566,7 @@ def _workflow_run_trigger_event(event: Any) -> TriggerEvent:
         sha=_first_text(run.get("head_sha")),
         sender=event.sender,
         message=f"Workflow '{workflow_name}' {conclusion}".strip() if workflow_name else conclusion,
-        metadata={
-            "conclusion": conclusion,
-            "workflow_name": workflow_name,
-            "run_url": run_url,
-        },
+        metadata=metadata,
     )
 
 
@@ -594,12 +612,28 @@ def _handle_workflow_run(
     workflow_name = _first_text(run.get("name")) or "CI"
     pending = gate_direct_trigger(
         request,
-        _workflow_run_trigger_event(event),
+        _workflow_run_trigger_event(event, tenant_id=tenant_id),
         summary=f"workflow_run {workflow_name} on {head_branch} by {event.sender}",
+        reconcile_dedup=True,
     )
     if pending is None:
         return task_payloads, None
     if pending.gate.suppressed:
+        if pending.policy_unavailable:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        f"GitHub trigger policy unavailable ({pending.gate.trigger_name}: {pending.gate.reason})"
+                    ),
+                },
+            )
+        if pending.unconfirmed_dedup:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "GitHub workflow_run delivery outcome is unconfirmed"},
+            )
+        record_direct_trigger_fire(pending)
         return _suppressed_github_response(event, pending.gate)
     return task_payloads, pending
 
@@ -773,9 +807,14 @@ async def github_webhook(request: Request) -> JSONResponse:
     # Create tasks in the store
     created_ids: list[str] = []
     tenant_id = request_tenant_id(request)
-    for payload in task_payloads:
-        task = await store.create(TaskCreate(**payload, tenant_id=tenant_id))
-        created_ids.append(task.id)
+    try:
+        for payload in task_payloads:
+            task = await store.create(TaskCreate(**payload, tenant_id=tenant_id))
+            created_ids.append(task.id)
+    except Exception:
+        if pending_gate is not None and not created_ids:
+            release_direct_trigger_reservation(pending_gate)
+        raise
 
     if pending_gate is not None and created_ids:
         # A triggers.yaml rule matched and passed conditions for this delivery

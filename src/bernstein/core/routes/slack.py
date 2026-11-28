@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any
@@ -254,16 +255,23 @@ async def slack_events(request: Request) -> JSONResponse:
     if bot_user_id and f"<@{bot_user_id}>" not in text:
         return JSONResponse(status_code=200, content={"ok": True})
 
-    trigger_event = normalize_slack_message(payload)
-
     # Strip mention from task text
     clean_text = text.replace(f"<@{bot_user_id}>", "").strip() if bot_user_id else text.strip()
 
     if clean_text:
-        from bernstein.core.routes._trigger_gate import gate_direct_trigger, record_direct_trigger_fire
+        from bernstein.core.routes._trigger_gate import (
+            gate_direct_trigger,
+            record_direct_trigger_fire,
+            release_direct_trigger_reservation,
+        )
         from bernstein.core.server import TaskCreate, TaskStore
 
         store: TaskStore = request.app.state.store  # type: ignore[attr-defined]
+        tenant_id = request_tenant_id(request)
+        trigger_event = normalize_slack_message(payload)
+        trigger_event.metadata["cooldown_scope"] = hashlib.sha256(tenant_id.encode()).hexdigest()
+        if bot_user_id:
+            trigger_event.metadata["bot_user_id"] = bot_user_id
         slack_context = {
             "channel": event.get("channel", ""),
             "user": trigger_event.sender,
@@ -276,14 +284,31 @@ async def slack_events(request: Request) -> JSONResponse:
             priority=1,
             scope="small",
             slack_context=slack_context,
-            tenant_id=request_tenant_id(request),
+            tenant_id=tenant_id,
         )
         pending_gate = gate_direct_trigger(
             request,
             trigger_event,
             summary=f"slack message in {slack_context['channel']} by {trigger_event.sender}",
+            reconcile_dedup=True,
         )
         if pending_gate is not None and pending_gate.gate.suppressed:
+            if pending_gate.policy_unavailable:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": (
+                            "Slack trigger policy unavailable "
+                            f"({pending_gate.gate.trigger_name}: {pending_gate.gate.reason})"
+                        ),
+                    },
+                )
+            if pending_gate.unconfirmed_dedup:
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Slack delivery outcome is unconfirmed"},
+                )
+            record_direct_trigger_fire(pending_gate)
             return JSONResponse(
                 status_code=200,
                 content={
@@ -293,7 +318,12 @@ async def slack_events(request: Request) -> JSONResponse:
                     ),
                 },
             )
-        task = await store.create(task_create)
+        try:
+            task = await store.create(task_create)
+        except Exception:
+            if pending_gate is not None:
+                release_direct_trigger_reservation(pending_gate)
+            raise
         if pending_gate is not None:
             record_direct_trigger_fire(pending_gate, task_id=task.id)
         from bernstein.core.security.sanitize import sanitize_log as _sl
