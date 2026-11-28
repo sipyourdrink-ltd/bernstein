@@ -473,7 +473,7 @@ A subcommand group; defaults to `bernstein logs tail`.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--archive PATH` | none | Read task counts and recorded costs from a local JSONL archive (typically `.sdd/archive/tasks.jsonl`). |
-| `--since DURATION` | none | Build the report from workspace files instead of the task server (`45m`, `6h`, `2d`; a bare number is minutes). |
+| `--since DURATION` | none | Build the report from workspace files instead of the task server (`45m`, `6h`, `2d`; a bare number is minutes). A done or failed task in `.sdd/runtime/tasks.jsonl` counts when its `completed_at` (or, on an older row, `timestamp`) falls inside the period; a row with neither is not counted. |
 | `--workdir PATH` | `.` | Project root, used with `--since`. |
 | `--as-json` | off | Emit raw JSON. |
 
