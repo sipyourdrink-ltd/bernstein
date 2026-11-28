@@ -91,7 +91,9 @@ def plan_show(plan_id: str) -> None:
     if found is None:
         console.print(f"[red]No plan with id {plan_id!r} found.[/red]")
         raise SystemExit(1)
-    console.print(f"[dim]# state: {found.state.value}[/dim]")
-    console.print(f"[dim]# path:  {found.path}[/dim]")
-    console.print()
-    console.print(found.path.read_text())
+    # Plain text, not Rich: Rich read `[bold]` in a YAML value as markup and wrapped long lines and
+    # the path, so the printed body was not the stored body (#7956).
+    click.echo(f"# state: {found.state.value}")
+    click.echo(f"# path:  {found.path}")
+    click.echo()
+    click.echo(found.path.read_text(), nl=False)
