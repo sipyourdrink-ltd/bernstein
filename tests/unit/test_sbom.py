@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from bernstein.core.sbom import (
@@ -568,3 +569,134 @@ def test_scan_result_to_dict_structure() -> None:
     assert d["highest_severity"] == "high"
     assert len(d["findings"]) == 1
     assert d["findings"][0]["vuln_id"] == "CVE-001"
+
+
+def test_collect_python_packages_emits_one_component_per_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A distribution visible from two ``sys.path`` entries is one component.
+
+    ``importlib.metadata.distributions()`` yields a distribution once per
+    path it is found on (a user-site install beside a venv, a PYTHONPATH
+    overlay). CycloneDX requires ``components`` to be unique, so the second
+    sighting must be dropped rather than emitted as a duplicate.
+    """
+    import importlib.metadata
+
+    from bernstein.core.security.sbom import _collect_python_packages
+
+    class _Meta(dict):
+        def get(self, key: str, default: str = "") -> str:  # type: ignore[override]
+            return dict.get(self, key, default)
+
+    class _Dist:
+        def __init__(self, name: str, version: str) -> None:
+            self.metadata = _Meta(Name=name, Version=version, Summary=f"{name} summary", License="MIT")
+
+    sightings = [_Dist("pip", "26.2.1"), _Dist("requests", "2.28.0"), _Dist("pip", "26.2.1")]
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda: iter(sightings))
+
+    components = _collect_python_packages()
+
+    assert [c.purl for c in components] == ["pkg:pypi/pip@26.2.1", "pkg:pypi/requests@2.28.0"]
+    assert len({c.purl for c in components}) == len(components)
+
+
+@pytest.mark.parametrize("failed_key", ["Summary", "License"])
+@pytest.mark.parametrize("faulty_first", [True, False], ids=["faulty-first", "healthy-first"])
+def test_collect_python_packages_keeps_first_successful_sighting(
+    monkeypatch: pytest.MonkeyPatch, failed_key: str, faulty_first: bool
+) -> None:
+    """An unreadable sighting must not hide a healthy copy of the same purl."""
+    import importlib.metadata
+
+    from bernstein.core.security.sbom import _collect_python_packages
+
+    class _Meta(dict[str, str]):
+        fail_on: str | None = None
+
+        def get(self, key: str, default: str = "") -> str:  # type: ignore[override]
+            if key == self.fail_on:
+                raise OSError("synthetic metadata read failure")
+            return dict.get(self, key, default)
+
+    class _Dist:
+        def __init__(self, name: str, version: str, summary: str, license_val: str, fail_on: str | None = None) -> None:
+            self.metadata = _Meta(Name=name, Version=version, Summary=summary, License=license_val)
+            self.metadata.fail_on = fail_on
+
+    faulty = _Dist("probe-pkg", "1.0", "unreadable summary", "UNKNOWN", failed_key)
+    healthy = _Dist("probe-pkg", "1.0", "healthy summary", "MIT")
+    sightings = [faulty, healthy] if faulty_first else [healthy, faulty]
+    sightings = [
+        _Dist("", "1.0", "missing name", "MIT"),
+        _Dist("probe-pkg", "", "missing version", "MIT"),
+        *sightings,
+        _Dist("other-pkg", "1.0", "sibling summary", "BSD-3-Clause"),
+        _Dist("probe-pkg", "2.0", "other version summary", "Apache-2.0"),
+        _Dist("probe-pkg", "1.0", "later duplicate summary", "Apache-2.0"),
+    ]
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda: iter(sightings))
+
+    components = _collect_python_packages()
+
+    assert [(c.purl, c.description, c.licenses) for c in components] == [
+        ("pkg:pypi/other-pkg@1.0", "sibling summary", ["BSD-3-Clause"]),
+        ("pkg:pypi/probe-pkg@1.0", "healthy summary", ["MIT"]),
+        ("pkg:pypi/probe-pkg@2.0", "other version summary", ["Apache-2.0"]),
+    ]
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"Name": "", "Version": "1.0"},
+        {"Name": "probe-pkg", "Version": ""},
+        {"Name": None, "Version": "1.0"},
+        {"Name": "probe-pkg", "Version": None},
+        {"raise_on": "Name"},
+        {"raise_on": "Version"},
+    ],
+    ids=["empty-name", "empty-version", "none-name", "none-version", "name-read-fails", "version-read-fails"],
+)
+def test_collect_python_packages_skips_malformed_identity_without_reserving_it(
+    monkeypatch: pytest.MonkeyPatch, malformed: dict[str, Any]
+) -> None:
+    """An entry with no usable name/version is skipped and reserves nothing.
+
+    It must not appear as a component, and it must not stop the healthy
+    sighting of the same package after it from being collected.
+    """
+    import importlib.metadata
+
+    from bernstein.core.security.sbom import _collect_python_packages
+
+    class _Meta(dict[str, Any]):
+        raise_on: str | None = None
+
+        def __getitem__(self, key: str) -> Any:
+            if key == self.raise_on:
+                raise OSError("synthetic metadata read failure")
+            return dict.get(self, key)
+
+        def get(self, key: str, default: Any = "") -> Any:  # type: ignore[override]
+            return dict.get(self, key, default)
+
+    class _Dist:
+        def __init__(self, fields: dict[str, Any]) -> None:
+            raise_on = fields.pop("raise_on", None)
+            base = {"Name": "probe-pkg", "Version": "1.0", "Summary": "malformed", "License": "UNKNOWN"}
+            self.metadata = _Meta({**base, **fields})
+            self.metadata.raise_on = raise_on
+
+    sightings = [
+        _Dist(dict(malformed)),
+        _Dist({"Summary": "healthy summary", "License": "MIT"}),
+        _Dist({"Name": "other-pkg", "Summary": "sibling summary", "License": "BSD-3-Clause"}),
+    ]
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda: iter(sightings))
+
+    components = _collect_python_packages()
+
+    assert [(c.purl, c.description, c.licenses) for c in components] == [
+        ("pkg:pypi/other-pkg@1.0", "sibling summary", ["BSD-3-Clause"]),
+        ("pkg:pypi/probe-pkg@1.0", "healthy summary", ["MIT"]),
+    ]
