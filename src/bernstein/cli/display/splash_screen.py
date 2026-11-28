@@ -427,7 +427,7 @@ class SplashRenderer:
         )
 
         if d.goal_preview:
-            goal = d.goal_preview[: min(60, self.width - 20)]
+            goal = d.goal_preview[: min(60, max(0, self.width - 20))]
             self.add_line(f"  {'':>11}  [{C_DIM}]Goal: {goal}[/{C_DIM}]")
 
         self.add_blank()
