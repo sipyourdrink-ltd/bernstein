@@ -51,7 +51,7 @@ jobs:
         language: [python]
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -59,17 +59,17 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
         with:
           languages: ${{ matrix.language }}
           queries: +security-extended
           config-file: .github/codeql/codeql-config.yml
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        uses: github/codeql-action/autobuild@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
         env:
           # The only way to load an unpublished model pack that lives in this
           # repository. `packs:` in the config file resolves names through the

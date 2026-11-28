@@ -83,7 +83,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c  # v2.23.0
         with:
           egress-policy: audit
       - name: Checkout
@@ -94,7 +94,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           enable-cache: true
       - name: Install Semgrep (isolated env)
@@ -144,7 +144,7 @@ jobs:
             semgrep.sarif > semgrep.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4
         with:
           sarif_file: semgrep.filtered.sarif
           category: semgrep-ce
@@ -169,7 +169,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c  # v2.23.0
         with:
           egress-policy: audit
       - name: Checkout
@@ -199,7 +199,7 @@ jobs:
             trivy-iac.sarif > trivy-iac.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4
         with:
           sarif_file: trivy-iac.filtered.sarif
           category: trivy-iac
@@ -237,7 +237,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c  # v2.23.0
         with:
           egress-policy: audit
       - name: Checkout
@@ -245,7 +245,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           enable-cache: true
       - name: Install vulture (isolated env)
@@ -273,7 +273,7 @@ jobs:
             vulture.sarif > vulture.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4
         with:
           sarif_file: vulture.filtered.sarif
           category: vulture
@@ -302,7 +302,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c  # v2.23.0
         with:
           egress-policy: audit
       - name: Checkout
@@ -310,7 +310,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           enable-cache: true
       - name: Install refurb (isolated env)
@@ -355,7 +355,7 @@ jobs:
           FILTER
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4
         with:
           sarif_file: refurb.filtered.sarif
           category: refurb
@@ -385,7 +385,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c  # v2.23.0
         with:
           egress-policy: audit
       - name: Checkout
@@ -393,7 +393,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           enable-cache: true
       - name: Install perflint (isolated env)
@@ -424,7 +424,7 @@ jobs:
             perflint.sarif > perflint.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4
         with:
           sarif_file: perflint.filtered.sarif
           category: perflint
