@@ -50,7 +50,7 @@ async def test_unknown_node_heartbeat_returns_410(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_persist_env_override_survives_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    persist = tmp_path / "persist" / "nodes.json"
+    persist = tmp_path / "persist" / "nodes.db"
     monkeypatch.setenv("BERNSTEIN_NODES_PERSIST_PATH", str(persist))
 
     app1 = _cluster_app(tmp_path / "a")

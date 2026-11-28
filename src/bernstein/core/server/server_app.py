@@ -1093,7 +1093,7 @@ def create_app(
     _runtime_dir = jsonl_path.parent
     _nodes_persist: Path | None = None
     if _runtime_dir.name == "runtime" and _runtime_dir.parent.name == ".sdd":
-        _nodes_persist = _runtime_dir / "nodes.json"
+        _nodes_persist = _runtime_dir / "nodes.db"
     # Explicit override: always persist the node registry at this path so
     # registered nodes survive a server restart regardless of runtime layout.
     _nodes_persist_env = os.environ.get("BERNSTEIN_NODES_PERSIST_PATH", "").strip()

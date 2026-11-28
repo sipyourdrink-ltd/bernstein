@@ -11,7 +11,6 @@ server.
 
 from __future__ import annotations
 
-import json
 import logging
 import operator
 import shutil
@@ -21,30 +20,32 @@ import threading
 import time
 from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
-from pathlib import Path  # noqa: TC003 - used at runtime in _load_persisted/_save
+from pathlib import Path  # noqa: TC003 - used at runtime
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from bernstein.core.models import (
-    ClusterConfig,
-    NodeCapacity,
-    NodeInfo,
-    NodeStatus,
-)
 from bernstein.core.observability import prometheus as _metrics
-from bernstein.core.persistence.atomic_write import write_atomic_json
 from bernstein.core.protocols.cluster import cluster_audit as _audit
 from bernstein.core.protocols.cluster.cluster_tls import (
     TLSConfig,
     build_httpx_client_kwargs,
 )
 from bernstein.core.protocols.cluster.shard_ring import NodeShardStorage
+from bernstein.core.protocols.cluster.sqlite_node_store import SQLiteNodeStore
+from bernstein.core.tasks.models import (
+    ClusterConfig,
+    NodeCapacity,
+    NodeInfo,
+    NodeStatus,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
 
 logger = logging.getLogger(__name__)
+
+_HEARTBEAT_PERSIST_INTERVAL_S = 30.0
 
 
 def local_worker_capacity(workdir: Path, capacity: NodeCapacity) -> NodeCapacity:
@@ -78,73 +79,72 @@ class NodeRegistry:
         )
         self._config = config
         self._persist_path = persist_path
+        self._store: SQLiteNodeStore | None = None
+        self._last_persisted: dict[str, float] = {}
         self._mutation_lock = threading.RLock()
         if persist_path is not None:
+            self._open_store(persist_path)
             self._load_persisted()
 
     @property
     def config(self) -> ClusterConfig:
         return self._config
 
+    def _open_store(self, persist_path: Path) -> None:
+        db_path = persist_path.with_suffix(".db") if persist_path.suffix == ".json" else persist_path
+        legacy = db_path.with_suffix(".json")
+        try:
+            self._store = SQLiteNodeStore(db_path)
+            if legacy.exists() and self._store.count() == 0:
+                self._store.migrate_from_json(legacy)
+        except Exception as exc:
+            logger.warning("Failed to open node store: %s", exc)
+            self._store = None
+
     def _load_persisted(self) -> None:
-        """Load nodes from disk, marking all as OFFLINE until heartbeat."""
-        if self._persist_path is None or not self._persist_path.exists():
+        """Load nodes from the store; operator-set statuses survive, the rest start OFFLINE."""
+        if self._store is None:
             return
         try:
-            data = json.loads(self._persist_path.read_text())
-            for entry in data:
-                node = NodeInfo(
-                    id=entry["id"],
-                    name=entry.get("name", ""),
-                    url=entry.get("url", ""),
-                    capacity=NodeCapacity(
-                        disk_free_mb=entry.get("disk_free_mb"),
-                        mem_used_pct=entry.get("mem_used_pct"),
-                        mesh_rtt_ms=entry.get("mesh_rtt_ms"),
-                        platform=entry.get("platform"),
-                        max_agents=entry.get("max_agents", 6),
-                        supported_models=entry.get("supported_models", ["sonnet", "opus", "haiku"]),
-                    ),
-                    health=entry.get("health", "ok"),
-                    unhealthy_since=entry.get("unhealthy_since"),
-                    status=NodeStatus.OFFLINE,  # Always start offline
-                    last_heartbeat=0.0,
-                    registered_at=entry.get("registered_at", 0.0),
-                    labels=entry.get("labels", {}),
-                    cell_ids=entry.get("cell_ids", []),
-                )
+            for node in self._store.list_nodes():
+                if node.status not in _OPERATOR_INTENT_STATUSES:
+                    node.status = NodeStatus.OFFLINE
+                node.last_heartbeat = 0.0
                 self._nodes[node.id] = node
-            logger.info("Loaded %d persisted nodes (all marked OFFLINE)", len(self._nodes))
+            logger.info("Loaded %d persisted nodes", len(self._nodes))
         except Exception as exc:
             logger.warning("Failed to load persisted nodes: %s", exc)
 
-    def _save(self) -> None:
-        """Publish a full registry snapshot while the caller holds the mutation lock."""
-        if self._persist_path is None:
+    def _persist(self, node: NodeInfo) -> None:
+        """Write one node row while the caller holds the mutation lock."""
+        if self._store is None:
             return
         try:
-            data: list[dict[str, Any]] = [
-                {
-                    "id": node.id,
-                    "name": node.name,
-                    "url": node.url,
-                    "max_agents": node.capacity.max_agents,
-                    "disk_free_mb": node.capacity.disk_free_mb,
-                    "mem_used_pct": node.capacity.mem_used_pct,
-                    "mesh_rtt_ms": node.capacity.mesh_rtt_ms,
-                    "platform": node.capacity.platform,
-                    "health": node.health,
-                    "unhealthy_since": node.unhealthy_since,
-                    "supported_models": node.capacity.supported_models,
-                    "registered_at": node.registered_at,
-                    "labels": node.labels,
-                    "cell_ids": node.cell_ids,
-                }
-                for node in self._nodes.values()
-            ]
-            write_atomic_json(self._persist_path, data)
+            self._store.upsert(node)
+            self._last_persisted[node.id] = time.time()
         except Exception as exc:
-            logger.warning("Failed to persist node registry: %s", exc)
+            logger.warning("Failed to persist node %s: %s", node.id, exc)
+
+    def _persist_many(self, nodes: list[NodeInfo]) -> None:
+        """Write several node rows in one transaction while holding the mutation lock."""
+        if self._store is None or not nodes:
+            return
+        try:
+            self._store.upsert_many(nodes)
+            now = time.time()
+            for node in nodes:
+                self._last_persisted[node.id] = now
+        except Exception as exc:
+            logger.warning("Failed to persist %d nodes: %s", len(nodes), exc)
+
+    def _persist_delete(self, node_id: str) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.delete(node_id)
+            self._last_persisted.pop(node_id, None)
+        except Exception as exc:
+            logger.warning("Failed to delete node %s: %s", node_id, exc)
 
     def register(self, node: NodeInfo) -> NodeInfo:
         """Register or re-register a node.
@@ -167,7 +167,7 @@ class NodeRegistry:
                 existing.labels = node.labels or existing.labels
                 existing.cell_ids = node.cell_ids or existing.cell_ids
                 logger.info("Re-registered node %s (%s)", node.id, node.name)
-                self._save()
+                self._persist(existing)
                 self._sync_node_count_metrics()
                 return existing
 
@@ -177,7 +177,7 @@ class NodeRegistry:
             self._update_capacity(node, node.capacity)
             self._nodes[node.id] = node
             logger.info("Registered new node %s (%s) at %s", node.id, node.name, node.url)
-            self._save()
+            self._persist(node)
             self._sync_node_count_metrics()
             _audit.record_node_registered(
                 node.id,
@@ -196,8 +196,14 @@ class NodeRegistry:
         mem_used_pct: float | None = None,
         mesh_rtt_ms: float | None = None,
         platform: str | None = None,
+        persist: bool = True,
     ) -> NodeInfo | None:
-        """Record worker telemetry and evaluate scheduling health."""
+        """Record worker telemetry and evaluate scheduling health.
+
+        The row is rewritten when status or health/telemetry readings change,
+        or when the previous write is older than ``_HEARTBEAT_PERSIST_INTERVAL_S``.
+        With ``persist=False`` the caller persists the touched rows itself.
+        """
         with self._mutation_lock:
             node = self._nodes.get(node_id)
             if node is None:
@@ -215,8 +221,12 @@ class NodeRegistry:
             cap.mesh_rtt_ms = mesh_rtt_ms if mesh_rtt_ms is not None else cap.mesh_rtt_ms
             cap.platform = platform if platform is not None else cap.platform
             readings_changed = self._update_capacity(node, cap)
-            if status_flipped or readings_changed:
-                self._save()
+            if persist and (
+                status_flipped
+                or readings_changed
+                or node.last_heartbeat - self._last_persisted.get(node.id, 0.0) >= _HEARTBEAT_PERSIST_INTERVAL_S
+            ):
+                self._persist(node)
             if status_flipped:
                 self._sync_node_count_metrics()
             _metrics.record_heartbeat("accepted")
@@ -261,7 +271,7 @@ class NodeRegistry:
         with self._mutation_lock:
             removed = self._nodes.pop(node_id, None) is not None
             if removed:
-                self._save()
+                self._persist_delete(node_id)
                 self._sync_node_count_metrics()
                 _audit.record_node_left(node_id, reason="unregistered")
             return removed
@@ -274,7 +284,7 @@ class NodeRegistry:
                 return None
             node.status = NodeStatus.CORDONED
             logger.info("Cordoned node %s (%s)", node.id, node.name)
-            self._save()
+            self._persist(node)
             self._sync_node_count_metrics()
             _audit.record_node_cordoned(node.id)
             return node
@@ -288,7 +298,8 @@ class NodeRegistry:
             if node.status in (NodeStatus.CORDONED, NodeStatus.DRAINING):
                 node.status = NodeStatus.ONLINE
                 logger.info("Uncordoned node %s (%s)", node.id, node.name)
-                self._save()
+                self._persist(node)
+                self._sync_node_count_metrics()
             return node
 
     def start_drain(self, node_id: str) -> NodeInfo | None:
@@ -299,7 +310,7 @@ class NodeRegistry:
                 return None
             node.status = NodeStatus.DRAINING
             logger.info("Started draining node %s (%s)", node.id, node.name)
-            self._save()
+            self._persist(node)
             self._sync_node_count_metrics()
             _audit.record_node_drained(node.id)
             return node
@@ -330,14 +341,13 @@ class NodeRegistry:
             nodes = [n for n in nodes if n.status == status]
         return nodes
 
-    def mark_stale(self) -> list[NodeInfo]:
+    def mark_stale(self, timeout_s: float | None = None) -> list[NodeInfo]:
         """Mark nodes that haven't heartbeated within timeout as offline.
 
         Returns the list of nodes that were marked offline.
         """
         with self._mutation_lock:
-            time.time()
-            timeout = self._config.node_timeout_s
+            timeout = self._config.node_timeout_s if timeout_s is None else timeout_s
             stale: list[NodeInfo] = []
             for node in self._nodes.values():
                 if node.status == NodeStatus.ONLINE and not node.is_alive(timeout):
@@ -345,6 +355,7 @@ class NodeRegistry:
                     stale.append(node)
                     logger.warning("Node %s (%s) marked offline - no heartbeat for %ds", node.id, node.name, timeout)
                     _audit.record_node_left(node.id, reason="timeout")
+            self._persist_many(stale)
             if stale:
                 self._sync_node_count_metrics()
             return stale
@@ -403,8 +414,7 @@ class NodeRegistry:
                 affinity = sum(1 for k, v in preferred_labels.items() if node.labels.get(k) == v)
             return (affinity, node.capacity.available_slots)
 
-        candidates.sort(key=score, reverse=True)
-        return candidates[0]
+        return max(candidates, key=score)
 
     def cluster_summary(self) -> dict[str, Any]:
         """Build a summary of the cluster state."""
