@@ -212,7 +212,7 @@ Miksi aikatauluttaja on toteutettu puhtaalla Pythonilla ja mitä kompromisseja s
 Kustannusseurannan `can_spawn()`-tarkistus palauttaa arvon `False`, kun korjatut kokonaiskulut saavuttavat budjetille asetetun pysäytysrajan tai ylittävät sen, vaikka uusia tokeneita ei olisi raportoitu. Uudelleenkäynnistyksen jälkeen pelkistä tallennetuista tokenimääristä ei voi päätellä tietylle agentin, tehtävän ja mallin yhdistelmälle aiemmin raportoitua tarkkaa kokonaiskustannusta.
 
 ### arkipäiväiset komennot
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:b1ed81e59b08" -->
 
 ```bash
 cd your-project
@@ -227,6 +227,8 @@ Jos irrotetun SSH-ajon tehtävä päättyy nollasta poikkeavaan paluukoodiin, se
 
 Koko operaattoripinta (PR-automaatio, aikataulut, chat-sillat, autofix-taustaprosessi) löytyy sivulta [operaattorin komennot](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
+Komentosilmukka jatkuu viimeisestä tarkistuspisteestä alkuperäisen iteraatiorajan puitteissa. Jos komento on voitu suorittaa tai ehto tarkistaa ilman tallennettua tulosta, ajon jatkaminen keskeytyy. Jatkaminen keskeytyy myös, jos tarkistuspiste puuttuu ja silmukka on voinut jo alkaa. Tarkista vaikutukset ennen uuden ajon aloittamista.
+
 `bernstein workflow` ajaa deklaratiivisia YAML DAG -rakenteita, jotka koostuvat agentti-, komento- ja silmukkasolmuista - tukien keskeytyneiden ajojen jatkamista:
 
 ```bash
@@ -234,7 +236,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Ajon tila tallennetaan tarkistuspisteenä hakemistoon `.sdd/runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Siivoussolmut voivat asettaa arvon `always_run: true` suoritettavaksi komento- tai jakeluvirheen jälkeen muuttamatta keskeytettyä ajoa onnistuneeksi (agentin valmistumisen portitusta seurataan tiketissä [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
+Ajon tila tallennetaan tarkistuspisteenä hakemistoon `runs/<run_id>/` jokaisessa solmussa. Jatkaminen vahvistaa manifestin tiivisteen ajon alussa, joten spesifikaatiomuutos hylätään sen sijaan, että eri manifesti suoritettaisiin hiljaisesti. Siivoussolmut voivat asettaa arvon `always_run: true` suoritettavaksi komento- tai jakeluvirheen jälkeen muuttamatta keskeytettyä ajoa onnistuneeksi (agentin valmistumisen portitusta seurataan tiketissä [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Katso [workflow-manifestit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Anna jatkettaessa sama `-g`-arvo uudelleen, jotta `{goal}` korvataan keskeneräisten solmujen kehotteissa.
 
 `bernstein compliance controls` näyttää kunkin kontrollin testikokoelmat ja viimeisimmän täydellisen mittauksen, jos sellainen on saatavilla. [Vertailutestien kattavuus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

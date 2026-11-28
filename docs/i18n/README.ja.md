@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 訂正後の累計支出が予算に設定した停止しきい値に達するか、それを上回ると、新しいトークンの報告がなくても、コスト追跡モジュールの `can_spawn()` は `False` を返します。再起動後、保存されたトークン数だけでは、特定のエージェント、タスク、モデルの組み合わせについて以前報告された正確な累計費用を復元できません。
 
 ### 日常のコマンド
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:b1ed81e59b08" -->
 
 ```bash
 cd your-project
@@ -227,6 +227,8 @@ bernstein stop                    # graceful shutdown with drain
 
 オペレーター向けの全機能（PR 自動化、スケジュール、チャットブリッジ、autofix デーモン）は[オペレーターコマンド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)にある。
 
+コマンドループは元の反復回数の上限を保ったまま、最後のチェックポイントから再開します。コマンドの実行や条件の評価が行われた可能性があり、その結果が保存されていない場合は、再開処理が停止します。ループがすでに始まっていた可能性がある場合は、チェックポイントが欠けていても再開処理が停止します。新しい実行を始める前に、その影響を確認してください。
+
 `bernstein workflow` はエージェント / コマンド / ループのノードから成る宣言的 YAML DAG を実行し、中断した実行の再開にも対応する:
 
 ```bash
@@ -234,7 +236,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-実行状態はノードごとに `.sdd/runs/<run_id>/` にチェックポイントされる。再開は実行開始時にマニフェストのダイジェストを検証するので、仕様が変わっていれば、別のマニフェストを黙って実行するのではなく拒否される。クリーンアップノードは `always_run: true` を設定でき、コマンド失敗またはディスパッチ失敗の後に、中止された実行を成功に変えることなく実行される（エージェント完了ゲーティングは [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) で追跡されている）。[ワークフローマニフェスト](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) を参照。 再開時にも同じ `-g` の値を指定し、未完了ノードのプロンプト内の `{goal}` を置換する。
+実行状態はノードごとに `runs/<run_id>/` にチェックポイントされる。再開は実行開始時にマニフェストのダイジェストを検証するので、仕様が変わっていれば、別のマニフェストを黙って実行するのではなく拒否される。クリーンアップノードは `always_run: true` を設定でき、コマンド失敗またはディスパッチ失敗の後に、中止された実行を成功に変えることなく実行される（エージェント完了ゲーティングは [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639) で追跡されている）。[ワークフローマニフェスト](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) を参照。 再開時にも同じ `-g` の値を指定し、未完了ノードのプロンプト内の `{goal}` を置換する。
 
 `bernstein compliance controls` は、各統制項目のベンチマークスイートと、利用可能な場合は最新の完全な測定結果を表示します。 [ベンチマークのカバレッジ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
