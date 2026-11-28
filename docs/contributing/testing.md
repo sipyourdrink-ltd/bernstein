@@ -42,6 +42,22 @@ expected failures cover dependency release before acceptance. A sixth covers
 worker dispatch when the runner has no completion authority. The passing controls check the fixture and
 dispatch failures.
 
+## Interrupted workflow loops and goal changes
+
+`tests/integration/test_workflow_resume_loop_and_goal.py` runs the workflow
+CLI in a child process and stops it after the first loop predicate or before
+the unfinished goal-dependent node starts. The resume command then reads the
+persisted run. The loop test counts real shell writes against the original
+two-iteration limit. [#7855](https://github.com/sipyourdrink-ltd/bernstein/issues/7855)
+
+The goal test keeps a completed command and observes the task prompt at the
+next agent dispatch. A same-goal control verifies that the fixture reaches
+this boundary. The changed-goal case allows either restoration of the
+original input or an explicit refusal. [#7856](https://github.com/sipyourdrink-ltd/bernstein/issues/7856)
+
+Run `uv run pytest -q --runxfail tests/integration/test_workflow_resume_loop_and_goal.py`
+to see the current extra shell write and the replacement goal in the prompt.
+
 ## Tool ↔ bug-class matrix
 
 | Tool                        | Bug class                                                         | When                |
