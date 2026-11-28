@@ -132,10 +132,14 @@ def _hint_body(category: ErrorCategory, context: HintContext | None) -> tuple[st
             "",
         )
     if category is ErrorCategory.MODEL_UNREACHABLE:
-        provider = _ctx_get(context, "provider", "the model provider")
+        provider = _ctx_get(context, "provider")
+        target = provider or "the model provider"
+        command = "bernstein doctor extended"
+        if provider.isascii() and provider.isalpha():
+            command = f"{command} --provider {provider}"
         return (
-            f"Could not reach `{provider}`. Check network or set `BERNSTEIN_OFFLINE=1` to use the mock adapter.",
-            "BERNSTEIN_OFFLINE=1 bernstein run",
+            f"Could not reach `{target}`. Check the network with the extended doctor.",
+            command,
         )
     if category is ErrorCategory.TIMEOUT:
         adapter = _ctx_get(context, "adapter", "the adapter")
@@ -175,7 +179,8 @@ def _hint_body(category: ErrorCategory, context: HintContext | None) -> tuple[st
     repo = _ctx_get(context, "repo", "chernistry/bernstein")
     return (
         f"Unhandled error. Run with `--verbose` and file at https://github.com/{repo}/issues with the trace.",
-        "bernstein run --verbose",
+        # `--verbose` is a group option, so it goes before the subcommand.
+        "bernstein --verbose run",
     )
 
 
