@@ -25,21 +25,20 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import re
 import secrets
 import shlex
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import builtins
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from bernstein.core.preview.command_discovery import (
     DiscoveredCommand,
@@ -72,6 +71,20 @@ PREVIEW_STATE_FILE = PREVIEW_STATE_DIR / "state.json"
 DEFAULT_AUDIT_DIR = Path(".sdd/audit")
 
 DEFAULT_EXPIRE_SECONDS = 4 * 3600  # 4 hours, per the ticket.
+
+#: Maximum difference allowed between the spawn-time and teardown-time
+#: ``psutil.Process.create_time()`` readings for the same process on non-Linux
+#: platforms (or legacy Linux state lacking ``process_start_ticks``).
+#: Deliberately tight and fail-closed: long-lived in-process callers on macOS
+#: may see a larger shift after host sleep adjusts ``kern.boottime`` and will
+#: skip signaling rather than risk signaling a recycled PID. On Linux,
+#: :attr:`PreviewState.process_start_ticks` binds directly to immutable
+#: ``/proc/<pid>/stat`` field 22 ticks so ``/proc/stat`` ``btime`` integer-second
+#: NTP adjustments cannot cause false mismatches.
+_PROCESS_START_TIME_TOLERANCE_SECONDS = 0.05
+
+#: Root of Linux procfs; overridable in tests so host ``/proc`` is never probed.
+_PROC_ROOT = Path("/proc")
 
 #: Map of duration suffixes recognised by ``--expire`` parsing.
 _DURATION_UNITS: dict[str, int] = {
@@ -157,6 +170,14 @@ class PreviewState:
         expires_at_epoch: Unix timestamp at which the share URL expires.
         process_pid: PID of the dev-server process tree leader.
         created_at_epoch: When the preview was created.
+        container_name: Isolated container name when backed by a container runtime.
+        process_start_time: ``psutil.Process.create_time()`` captured at spawn
+            to bind :attr:`process_pid` to the process instance across sessions,
+            or ``None`` when ``psutil`` is unavailable or for container-backed
+            or legacy state records.
+        process_start_ticks: Linux ``/proc/<pid>/stat`` field 22 monotonic
+            ``starttime`` ticks captured at spawn (immune to ``btime`` NTP
+            shifts), or ``None`` on non-Linux hosts or legacy state records.
     """
 
     preview_id: str
@@ -174,6 +195,8 @@ class PreviewState:
     process_pid: int
     created_at_epoch: float = field(default_factory=time.time)
     container_name: str | None = None
+    process_start_time: float | None = None
+    process_start_ticks: int | None = None
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when *now* is past :attr:`expires_at_epoch`."""
@@ -340,6 +363,12 @@ class PreviewManager:
         self._audit = audit_log
         self._runner = runner or ContainerDevServerRunner()
         self._clock: Clock = clock or _SystemClock()
+        self._last_skipped_pids: builtins.list[tuple[str, int, str]] = []
+
+    @property
+    def last_skipped_pids(self) -> tuple[tuple[str, int, str], ...]:
+        """Return ``(preview_id, pid, reason)`` tuples skipped by the last stop/reap call."""
+        return tuple(self._last_skipped_pids)
 
     # ------------------------------------------------------------------
     # Public API
@@ -407,6 +436,8 @@ class PreviewManager:
         preview_id = f"prv-{secrets.token_hex(4)}"
 
         run_handle = self._runner.spawn(command=chosen.command, cwd=cwd)
+        process_start_time = _read_process_create_time(run_handle.pid)
+        process_start_ticks = _read_linux_process_start_ticks(run_handle.pid)
         try:
             port = _await_port(run_handle, timeout_seconds=port_probe_timeout)
         except Exception as exc:
@@ -455,6 +486,8 @@ class PreviewManager:
             ),
             process_pid=run_handle.pid,
             container_name=run_handle.container_name,
+            process_start_time=process_start_time,
+            process_start_ticks=process_start_ticks,
             created_at_epoch=active_clock.now(),
         )
         try:
@@ -506,6 +539,7 @@ class PreviewManager:
             ``True`` if a preview was stopped, ``False`` if no record
             matched.
         """
+        self._last_skipped_pids = []
         state = self._store.get(preview_id)
         if state is None:
             return False
@@ -514,6 +548,7 @@ class PreviewManager:
 
     def stop_all(self) -> int:
         """Stop every active preview. Returns the number stopped."""
+        self._last_skipped_pids = []
         states = self._store.list()
         for state in states:
             self._teardown(state, reason="all")
@@ -529,6 +564,7 @@ class PreviewManager:
         Returns:
             Count of previews torn down.
         """
+        self._last_skipped_pids = []
         ts = now if now is not None else self._clock.now()
         reaped = 0
         for state in self._store.list():
@@ -549,6 +585,8 @@ class PreviewManager:
         """Close the tunnel, kill the dev server, drop the record, audit."""
         with contextlib.suppress(Exception):
             self._tunnel.close(state.tunnel_name)
+        pid_signal_status: str | None = None
+        pid_signal_reason: str | None = None
         if state.container_name is not None:
             try:
                 runtime = runtime_executable(state.sandbox_backend)
@@ -558,23 +596,41 @@ class PreviewManager:
                 raise PreviewError(
                     "Preview container cleanup could not be confirmed. Retry stop after restoring the runtime."
                 )
-        elif state.process_pid > 0:
-            with contextlib.suppress(ProcessLookupError, OSError):
-                # SIGTERM the dev server's process group so child
-                # processes die too. Sandbox-managed PIDs are always
-                # ones we spawned (Sonar python:S4828).
-                _terminate_pid(state.process_pid)  # NOSONAR python:S4828
+        # Integer 0 is the no-host-PID sentinel from DevServerHandle(0, ...)
+        # (e.g. container-backed or synthetic handles); route bools, negatives,
+        # PID 1, and live host PIDs through the fail-closed guard.
+        elif isinstance(state.process_pid, bool) or state.process_pid != 0:
+            signaled, pid_reason = _terminate_pid(
+                state.process_pid,
+                expected_start_time=state.process_start_time,
+                expected_start_ticks=state.process_start_ticks,
+            )  # NOSONAR python:S4828
+            pid_signal_status = "signaled" if signaled else "skipped"
+            pid_signal_reason = pid_reason
+            if not signaled:
+                self._last_skipped_pids.append((state.preview_id, state.process_pid, pid_reason))
+                logger.warning(
+                    "Skipping termination of preview %s PID %r (%s); cleaning up state",
+                    state.preview_id,
+                    state.process_pid,
+                    pid_reason,
+                )
         self._store.remove(state.preview_id)
         record_preview_stopped(provider=state.tunnel_provider, sandbox=state.sandbox_backend)
+        audit_details: dict[str, Any] = {
+            "reason": reason,
+            "tunnel_provider": state.tunnel_provider,
+            "sandbox_backend": state.sandbox_backend,
+        }
+        if pid_signal_status is not None and pid_signal_reason is not None:
+            audit_details["process_pid"] = state.process_pid
+            audit_details["process_signal_status"] = pid_signal_status
+            audit_details["process_signal_reason"] = pid_signal_reason
         self._record_audit(
             "preview.stop",
             actor="bernstein.preview",
             resource_id=state.preview_id,
-            details={
-                "reason": reason,
-                "tunnel_provider": state.tunnel_provider,
-                "sandbox_backend": state.sandbox_backend,
-            },
+            details=audit_details,
         )
 
     def _record_audit(
@@ -843,15 +899,205 @@ def _normalise_auth(mode: AuthMode | str) -> AuthMode:
         raise PreviewError(f"unknown auth mode: {mode!r}") from exc
 
 
-def _terminate_pid(pid: int) -> None:
-    """SIGTERM *pid*'s process group, falling back to the bare pid."""
-    if pid <= 0:
-        return
-    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-        return
-    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+def _import_psutil() -> Any | None:
+    """Lazily import ``psutil``; return ``None`` on minimal installs without it."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    return psutil
+
+
+def _is_valid_target_pid(pid: object) -> TypeGuard[int]:
+    """Return ``True`` when *pid* is an integer ``> 1`` and not a ``bool``."""
+    return not isinstance(pid, bool) and isinstance(pid, int) and pid > 1
+
+
+def _is_valid_start_time(value: Any) -> TypeGuard[int | float]:
+    """Return ``True`` when *value* is a finite positive timestamp (not ``bool``)."""
+    return (
+        not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value) and float(value) > 0.0
+    )
+
+
+def _is_valid_start_ticks(value: Any) -> TypeGuard[int]:
+    """Return ``True`` when *value* is a positive integer tick count (not ``bool``)."""
+    return not isinstance(value, bool) and isinstance(value, int) and value > 0
+
+
+def _parse_linux_proc_stat_start_ticks(raw: bytes, *, expected_pid: int) -> int | None:
+    """Extract field 22 (``starttime`` ticks) from a Linux ``/proc/<pid>/stat`` payload."""
+    lpar = raw.find(b"(")
+    rpar = raw.rfind(b")")
+    if lpar <= 0 or rpar <= lpar:
+        return None
+    pid_bytes = raw[:lpar].strip()
+    if not pid_bytes.isdigit() or int(pid_bytes) != expected_pid:
+        return None
+    # Everything after the final ')' starts at field 3 (state); field 22 (starttime) is index 19.
+    fields = raw[rpar + 1 :].split()
+    if len(fields) <= 19:
+        return None
+    raw_ticks = fields[19]
+    if not raw_ticks.isdigit():
+        return None
+    ticks = int(raw_ticks)
+    return ticks if ticks > 0 else None
+
+
+def _read_linux_process_start_ticks(pid: object) -> int | None:
+    """Return ``/proc/<pid>/stat`` field 22 ticks on Linux (or when ``_PROC_ROOT`` is overridden)."""
+    if not _is_valid_target_pid(pid):
+        return None
+    if _PROC_ROOT.as_posix() == "/proc" and not sys.platform.startswith("linux"):
+        return None
+    try:
+        raw = (_PROC_ROOT / str(pid) / "stat").read_bytes()
+    except OSError:
+        return None
+    return _parse_linux_proc_stat_start_ticks(raw, expected_pid=pid)
+
+
+def _read_linux_process_start_ticks_checked(pid: int) -> tuple[int | None, str | None]:
+    """Read live Linux ``starttime`` ticks and classify missing vs unreadable errors."""
+    if _PROC_ROOT.as_posix() == "/proc" and not sys.platform.startswith("linux"):
+        return None, "unreadable_start_ticks"
+    try:
+        raw = (_PROC_ROOT / str(pid) / "stat").read_bytes()
+    except (FileNotFoundError, ProcessLookupError):
+        return None, "not_alive"
+    except OSError:
+        return None, "unreadable_start_ticks"
+    ticks = _parse_linux_proc_stat_start_ticks(raw, expected_pid=pid)
+    if ticks is None:
+        return None, "unreadable_start_ticks"
+    return ticks, None
+
+
+def _read_process_create_time(pid: object) -> float | None:
+    """Return ``psutil.Process(pid).create_time()`` or ``None`` if unavailable/unreadable."""
+    if not _is_valid_target_pid(pid):
+        return None
+    psutil_mod = _import_psutil()
+    if psutil_mod is None:
+        return None
+    try:
+        created = psutil_mod.Process(pid).create_time()
+    except (psutil_mod.Error, OSError):
+        return None
+    if not _is_valid_start_time(created):
+        return None
+    return float(created)
+
+
+def _terminate_pid(
+    pid: object,
+    expected_start_time: object = None,
+    expected_start_ticks: object = None,
+) -> tuple[bool, str]:
+    """Fail-closed SIGTERM for a persisted preview dev-server PID.
+
+    Refuses invalid/bool/init PIDs (``<= 1``), our own PID, any PID sharing
+    our process group (or with ``pgid <= 1``), and any PID whose live start
+    identity cannot be verified against *expected_start_ticks* (Linux
+    ``/proc/<pid>/stat`` field 22) or *expected_start_time*
+    (``psutil.Process(pid).create_time()``). When ``psutil`` is not installed
+    and no kernel start-tick token is recorded, fails closed with
+    ``"psutil_unavailable"``.
+
+    Returns:
+        ``(signaled, reason)`` where *signaled* is ``True`` only when
+        ``SIGTERM`` was delivered.
+    """
+    if not _is_valid_target_pid(pid):
+        return False, "invalid_pid"
+    if pid == os.getpid():
+        return False, "self_pid"
+
+    own_pgid: int | None = None
+    getpgrp = getattr(os, "getpgrp", None)
+    if getpgrp is not None:
+        try:
+            own_pgid = int(getpgrp())
+        except OSError:
+            return False, "unreadable_pgid"
+        if pid == own_pgid:
+            return False, "own_process_group"
+
+    if expected_start_ticks is not None:
+        if not _is_valid_start_ticks(expected_start_ticks):
+            return False, "invalid_start_ticks"
+        expected_ticks: int | None = expected_start_ticks
+    else:
+        expected_ticks = None
+
+    if expected_start_time is not None:
+        if not _is_valid_start_time(expected_start_time):
+            return False, "invalid_start_time"
+        expected_time: float | None = float(expected_start_time)
+    else:
+        expected_time = None
+
+    if expected_ticks is None and expected_time is None:
+        return False, "missing_start_time"
+
+    target_pgid: int | None = None
+    getpgid = getattr(os, "getpgid", None)
+    if getpgid is not None:
+        try:
+            target_pgid = int(getpgid(pid))
+        except ProcessLookupError:
+            return False, "not_alive"
+        except OSError:
+            return False, "unreadable_pgid"
+        if own_pgid is not None and target_pgid == own_pgid:
+            return False, "own_process_group"
+        if target_pgid <= 1:
+            return False, "unsafe_process_group"
+
+    if expected_ticks is not None:
+        actual_ticks, ticks_err = _read_linux_process_start_ticks_checked(pid)
+        if ticks_err is not None or actual_ticks is None:
+            return False, ticks_err or "unreadable_start_ticks"
+        if actual_ticks != expected_ticks:
+            return False, "start_time_mismatch"
+    else:
+        if expected_time is None:
+            return False, "missing_start_time"
+        psutil_mod = _import_psutil()
+        if psutil_mod is None:
+            return False, "psutil_unavailable"
+        try:
+            actual_start_time = psutil_mod.Process(pid).create_time()
+        except psutil_mod.NoSuchProcess:
+            return False, "not_alive"
+        except (psutil_mod.Error, OSError):
+            return False, "unreadable_start_time"
+
+        if not _is_valid_start_time(actual_start_time):
+            return False, "unreadable_start_time"
+        if abs(float(actual_start_time) - expected_time) > _PROCESS_START_TIME_TOLERANCE_SECONDS:
+            return False, "start_time_mismatch"
+
+    # Signal the process group only when the verified PID is its group leader
+    # (already verified > 1 and distinct from our own process group).
+    killpg = getattr(os, "killpg", None)
+    if target_pgid is not None and target_pgid == pid and killpg is not None:
+        try:
+            killpg(target_pgid, signal.SIGTERM)
+            return True, "signaled"
+        except ProcessLookupError:
+            return False, "not_alive"
+        except OSError:
+            return False, "signal_failed"
+
+    try:
         os.kill(pid, signal.SIGTERM)
+        return True, "signaled"
+    except ProcessLookupError:
+        return False, "not_alive"
+    except OSError:
+        return False, "signal_failed"
 
 
 def _default_token_secret() -> str:
