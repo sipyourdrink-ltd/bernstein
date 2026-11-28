@@ -60,17 +60,6 @@ def _load_quorum_check() -> ModuleType:
 qc = _load_quorum_check()
 
 
-def approvals_needed(pr: Any) -> tuple[int, int]:
-    """(total, core) approvals a contributor change needs, as in the quorum check.
-
-    Same rule as `quorum_check.evaluate` (charter, section 3): three with two
-    core over 400 changed lines or on a sensitive path, otherwise two with one.
-    """
-    large = pr.changed_lines > qc.THIRD_APPROVAL_LINES
-    sensitive = any(word in path for path in pr.paths for word in qc.SENSITIVE_WORDS)
-    return (3, 2) if (large or sensitive) else (2, 1)
-
-
 def plan_requests(
     pr: Any,
     roster: Any,
@@ -78,39 +67,33 @@ def plan_requests(
     load: dict[str, int],
     *,
     per_reviewer_cap: int = OPEN_REQUESTS_PER_REVIEWER,
+    owners: list[tuple[str, list[str]]] | None = None,
+    now: datetime | None = None,
 ) -> list[str]:
     """Who to ask for a review on this pull request, in order. Empty means nobody."""
-    if pr.is_draft or pr.author in roster.automation:
+    if owners is None:
+        owners = qc.load_codeowners(str(Path(__file__).resolve().parents[1]))
+    demand = qc.evaluate(pr, roster, owners, now or datetime.now(UTC)).pending_quorum
+    if demand is None:
         return []
-    if pr.author == qc.GITHUB_ACTIONS_BOT:
-        return []
-    if pr.author == roster.maintainer and (not pr.commit_authors_complete or not qc.outside_commit_authors(pr, roster)):
+
+    may_approve = demand.eligible - {roster.maintainer}
+    core = roster.core_for(pr.paths)
+    pending = requested & may_approve
+    missing_total = demand.total - len(pending)
+    missing_core = demand.core - len(pending & core)
+    if missing_total <= 0 and missing_core <= 0:
         return []
 
     standing = qc.standing_reviews(pr.reviews)
-    holders = roster.quorum_holders | {roster.maintainer}
-    if any(r.state == "CHANGES_REQUESTED" and login in holders for login, r in standing.items()):
-        return []
-
-    may_approve = roster.quorum_holders - {roster.maintainer} - {pr.author} - pr.contributors
-    approving = {login for login, r in standing.items() if r.state == "APPROVED" and r.commit_id == pr.head_sha}
-    approving &= may_approve
-    need_total, need_core = approvals_needed(pr)
-    core = roster.core_for(pr.paths)
-    pending = requested & may_approve
-    missing_total = need_total - len(approving) - len(pending)
-    missing_core = need_core - len(approving & core) - len(pending & core)
-    if missing_total <= 0:
-        return []
-
-    reviewed_at_head = {login for login, r in standing.items() if r.commit_id == pr.head_sha}
+    reviewed_at_head = {login for login, review in standing.items() if pr.is_current(review.commit_id)}
     candidates = sorted(
         (login for login in may_approve - requested - reviewed_at_head if load.get(login, 0) < per_reviewer_cap),
         key=lambda login: (load.get(login, 0), login),
     )
     picks: list[str] = []
     for login in [c for c in candidates if c in core]:
-        if missing_core <= 0 or len(picks) >= missing_total:
+        if missing_core <= 0:
             break
         picks.append(login)
         missing_core -= 1
@@ -188,10 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         if not needs_a_look(raw, roster):
             continue
         pr = qc.fetch_pull_request(args.repo, number)
-        if qc.evaluate(pr, roster, owners, now).passed:
-            continue
         requested = {(r.get("login") or "") for r in raw.get("requested_reviewers") or []}
-        picks = plan_requests(pr, roster, requested, load)[:budget]
+        picks = plan_requests(pr, roster, requested, load, owners=owners, now=now)[:budget]
         if not picks:
             continue
         names = ", ".join(f"@{login}" for login in picks)

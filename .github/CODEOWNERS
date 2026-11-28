@@ -38,6 +38,8 @@
 
 # Manifests and lockfiles outside the root, for the same reason as
 # /pyproject.toml and /uv.lock above (charter, s4).
+/docs/requirements.in @chernistry
+/docs/requirements.txt @chernistry
 /sdk/python/pyproject.toml @chernistry
 /sdk/python/uv.lock @chernistry
 /sdk/typescript/package-lock.json @chernistry

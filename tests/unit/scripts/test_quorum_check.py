@@ -90,6 +90,158 @@ def _evaluate(qc: ModuleType, roster, pr):
     return qc.evaluate(pr, roster, OWNERS, NOW)
 
 
+@pytest.mark.parametrize(
+    "paths,labels",
+    [
+        (["README.md", "docs/images/example.svg", "nested/AGENTS.md"], frozenset()),
+        (["src/bernstein/cli/example.py"], frozenset({"size/s"})),
+    ],
+)
+def test_small_unprotected_change_needs_one_non_core_approval(qc, roster, paths, labels):
+    pr = _pr(qc, paths=paths, reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = labels
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed, verdict.summary()
+    assert "1 approval, no core reviewer required" in verdict.requirements[0].text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/README.md",
+        "security/README.md",
+        "src/bernstein/core/example.md",
+        "release/README.md",
+        "releases/README.md",
+        "docs/release-notes/example.md",
+        "scripts/build_copr_srpm.py",
+        "scripts/gen_distribution_manifests.py",
+        "scripts/wait_for_pypi_visibility.py",
+        "scripts/build_airgap_wheelhouse.py",
+        "scripts/sign_airgap_wheelhouse.sh",
+        "scripts/copr_build_watch.py",
+        "scripts/rpm_install_smoke.sh",
+        "packaging/rpm/bernstein.spec",
+        "packaging/homebrew/bernstein.rb",
+        "packages/vscode/CHANGELOG.md",
+        "Formula/bernstein.rb",
+        "server.json",
+        "plugin.json",
+        ".plugin/plugin.json",
+        "CITATION.cff",
+        "docker/requirements-build.in",
+        "docker/requirements-build.txt",
+        "scripts/build_packages.sh",
+        "scripts/safe-push-main.sh",
+        "scripts/check_compatibility.py",
+        "scripts/render_docker_mcp_catalog.py",
+        "scripts/bump_version.py",
+        "scripts/rotate_release_notes.py",
+        "scripts/format_release_notes.py",
+        "scripts/publish_required_check.py",
+        "src/bernstein/security.py",
+        "src/bernstein/sandbox.py",
+        "src/bernstein/audit.py",
+        "GOVERNANCE.md",
+        "MAINTAINERS.md",
+        "AGENTS.md",
+        "SECURITY.md",
+        "docs/governance/example.md",
+        "docs/decisions/example.md",
+        "src/bernstein/adapters/example.py",
+        "pyproject.toml",
+        "uv.lock",
+        "CHANGELOG.md",
+    ],
+)
+def test_small_label_cannot_relax_reserved_paths(qc, roster, path):
+    pr = _pr(qc, paths=[path], reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = frozenset({"size/s"})
+    verdict = qc.evaluate(pr, roster, qc.load_codeowners(str(REPO_ROOT)), NOW)
+    assert not verdict.passed
+    assert not any("no core reviewer required" in req.text for req in verdict.requirements)
+
+
+@pytest.mark.parametrize("labels", [frozenset(), frozenset({"size/xs"}), frozenset({"size/m"})])
+def test_only_exact_small_label_relaxes_non_docs(qc, roster, labels):
+    pr = _pr(qc, paths=["web/example.ts"], reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = labels
+    assert not _evaluate(qc, roster, pr).passed
+
+
+@pytest.mark.parametrize("case", ["none", "stranger", "author", "pusher", "stale", "dismissed", "objection"])
+def test_small_change_preserves_approval_integrity(qc, roster, case):
+    login = {"stranger": "stranger", "author": "outsider"}.get(case, "comm1")
+    reviews = (
+        []
+        if case == "none"
+        else [
+            _review(
+                qc, login, "DISMISSED" if case == "dismissed" else "APPROVED", sha="old" if case == "stale" else HEAD
+            )
+        ]
+    )
+    if case == "objection":
+        reviews.append(_review(qc, "core1", "CHANGES_REQUESTED"))
+    contributors = {"outsider", "comm1"} if case == "pusher" else {"outsider"}
+    pr = _pr(qc, paths=["README.md"], reviews=reviews, contributors=contributors)
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_401_line_docs_change_needs_one_ordinary_approval(qc, roster):
+    pr = _pr(qc, paths=["README.md"], changed_lines=401, reviews=[_review(qc, "comm1", "APPROVED")])
+    assert _evaluate(qc, roster, pr).passed
+
+
+@pytest.mark.parametrize(
+    "paths,docs_only",
+    [
+        (["docs/getting-started/first-run.md", "docs/assets/logo-dark.svg", "docs/assets/webui-agents.png"], True),
+        (["docs/script.js"], False),
+        (["docs/overrides/main.html"], False),
+        (["docs/requirements.txt"], False),
+        (["docs/guide.md", "docs/requirements.in"], False),
+        (["docs/script.js", "docs/guide.md"], False),
+        (["docs/reference/openapi.json"], False),
+    ],
+)
+def test_large_docs_site_changes_classify_all_paths_by_role(qc, roster, paths, docs_only):
+    pr = _pr(qc, paths=paths, changed_lines=401, reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = frozenset({"size/s"})
+    assert _evaluate(qc, roster, pr).passed is docs_only
+    pr.reviews.extend([_review(qc, "core1", "APPROVED"), _review(qc, "core2", "APPROVED")])
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_stale_small_label_cannot_lower_quorum_on_large_code(qc, roster):
+    pr = _pr(qc, paths=["web/example.ts"], changed_lines=401, reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = frozenset({"size/s"})
+    pr.reviews.append(_review(qc, "core1", "APPROVED"))
+    assert not _evaluate(qc, roster, pr).passed
+    pr.reviews.append(_review(qc, "comm2", "APPROVED"))
+    assert not _evaluate(qc, roster, pr).passed
+    pr.reviews[-1] = _review(qc, "core2", "APPROVED")
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_docs_only_does_not_erase_maintainer_or_split_requirement(qc, roster):
+    pr = _pr(qc, paths=["docs/example.md"], changed_lines=1001, reviews=[_review(qc, "comm1", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.requirements[0].met
+    assert not verdict.passed
+    assert "maintainer approval or a split" in verdict.requirements[1].text
+
+
+@pytest.mark.parametrize(
+    "paths,complete", [([], True), (["README.md"], False), (["README.md", ".github/old.md"], True)]
+)
+def test_small_exception_requires_complete_safe_paths(qc, roster, paths, complete):
+    pr = _pr(qc, paths=paths, reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = frozenset({"size/s"})
+    pr.paths_complete = complete
+    assert not _evaluate(qc, roster, pr).passed
+
+
 # --- the ordinary contributor path -----------------------------------------
 
 
@@ -739,7 +891,7 @@ def test_retired_sprint_window_requires_two_approvals(qc: ModuleType, roster, at
 
 @pytest.mark.parametrize(
     ("changed_lines", "paths"),
-    [(401, ["README.md"]), (12, ["src/bernstein/core/security/auth.py"])],
+    [(401, ["web/example.ts"]), (12, ["src/bernstein/core/security/auth.py"])],
     ids=["large", "sensitive"],
 )
 def test_retired_sprint_window_keeps_three_approvals_and_two_core(
@@ -820,11 +972,17 @@ def test_the_window_applies_to_the_workflows_that_invoke_the_check(qc: ModuleTyp
     used to merge under ordinary rules. Editing the script's *contents* needed
     three days; editing whether the script ran at all needed none.
     """
-    for path in (".github/workflows/quorum.yml", ".github/workflows/quorum-rerun.yml"):
+    for path in (
+        ".github/workflows/quorum.yml",
+        ".github/workflows/quorum-rerun.yml",
+        ".github/workflows/pr-labels.yml",
+    ):
         pr = _pr(qc, author="owner", contributors={"owner"}, paths=[path], pushed_hours_ago=2)
         verdict = _evaluate(qc, roster, pr)
         assert not verdict.passed, path
         assert path in verdict.requirements[0].text, path
+        assert not qc.evaluate(pr, roster, OWNERS, pr.last_push + timedelta(hours=72, microseconds=-1)).passed
+        assert qc.evaluate(pr, roster, OWNERS, pr.last_push + timedelta(hours=72)).passed
 
 
 def test_an_unrelated_workflow_edit_is_not_held_for_three_days(qc: ModuleType, roster) -> None:
@@ -1208,6 +1366,141 @@ class FakeGitHub:
 
 def _fetch(qc: ModuleType, fake: FakeGitHub):
     return qc.fetch_pull_request(REPO, 1, api=fake)
+
+
+@pytest.mark.parametrize(
+    "counts,complete",
+    [
+        ({"changed_files": 1}, True),
+        ({"changed_files": 2}, False),
+        ({}, False),
+        ({"changed_files": None}, False),
+        ({"changed_files": "1"}, False),
+        ({"changed_files": 1.0}, False),
+        ({"changed_files": True}, False),
+        ({"changed_files": -1}, False),
+    ],
+)
+def test_fetch_reads_live_size_label_and_file_completeness(qc, roster, counts, complete):
+    fake = FakeGitHub(
+        commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)],
+        compares={},
+        paths=["web/example.ts"],
+        reviews=[_raw_review("comm1", SHA_A)],
+    )
+
+    def api(*args):
+        result = fake(*args)
+        if args[1] == f"repos/{REPO}/pulls/1":
+            result["labels"] = [{"name": "size/s"}, {"name": "area/cli"}]
+            result.update(counts)
+        return result
+
+    pr = qc.fetch_pull_request(REPO, 1, api=api)
+    assert pr.labels == frozenset({"size/s", "area/cli"})
+    assert pr.paths_complete is complete
+    assert _evaluate(qc, roster, pr).passed is complete
+
+
+def _fetch_labeled_file(qc, record, lines):
+    fake = FakeGitHub(commits=[_raw_commit(SHA_A, "outsider", hours_ago=1)], compares={})
+
+    def api(*args):
+        if args[1] == f"repos/{REPO}/pulls/1/files":
+            return [record]
+        result = fake(*args)
+        if args[1] == f"repos/{REPO}/pulls/1":
+            result.update(changed_files=1, additions=lines, deletions=0, labels=[{"name": "size/s"}])
+        return result
+
+    return qc.fetch_pull_request(REPO, 1, api=api)
+
+
+@pytest.mark.parametrize(
+    "old,new,eligible",
+    [
+        ("docs/old.md", "docs/new.md", True),
+        (".github/old.md", "docs/new.md", False),
+        ("docs/script.js", "docs/new.md", False),
+        ("docs/old.md", "docs/requirements.txt", False),
+    ],
+)
+def test_rename_counts_as_one_file_and_checks_both_paths(qc, roster, old, new, eligible):
+    pr = _fetch_labeled_file(qc, {"filename": new, "previous_filename": old, "status": "renamed"}, 401)
+    pr.reviews = [_review(qc, "comm1", "APPROVED", sha=SHA_A)]
+    assert pr.paths_complete
+    assert pr.paths == [new, old]
+    assert _evaluate(qc, roster, pr).passed is eligible
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        {"filename": "docs/guide.md"},
+        {"filename": "docs/guide.md", "previous_filename": ""},
+        {"filename": "docs/guide.md", "previous_filename": None},
+        {"previous_filename": "docs/guide.md"},
+        {"filename": "", "previous_filename": "docs/guide.md"},
+    ],
+)
+@pytest.mark.parametrize("lines,needed", [(10, (2, 1)), (401, (3, 2))])
+def test_missing_rename_endpoint_withholds_relief(qc, roster, names, lines, needed):
+    pr = _fetch_labeled_file(qc, {"status": "renamed", **names}, lines)
+    assert not pr.paths_complete
+    assert pr.paths == ["docs/guide.md"]
+    demand = _evaluate(qc, roster, pr).pending_quorum
+    assert (demand.total, demand.core) == needed
+    pr.reviews = [_review(qc, "comm1", "APPROVED", sha=SHA_A)]
+    assert not _evaluate(qc, roster, pr).passed
+
+
+@pytest.mark.parametrize("path", ["docs/requirements.in", "docs/requirements.txt"])
+@pytest.mark.parametrize("change", ["modified", "renamed-from", "renamed-to"])
+@pytest.mark.parametrize("lines", [10, 401])
+def test_docs_build_dependencies_require_ordinary_quorum_and_their_owner(qc, path, change, lines):
+    after_sprint = datetime(2026, 11, 24, tzinfo=UTC)
+    roster = qc.load_roster(str(REPO_ROOT), after_sprint.date())
+    owners = qc.load_codeowners(str(REPO_ROOT))
+    assert qc.owners_for(path, owners) == (["chernistry"], True)
+    record = {"status": "modified", "filename": path}
+    if change != "modified":
+        old, new = (path, "docs/guide.md") if change == "renamed-from" else ("docs/guide.md", path)
+        record = {"status": "renamed", "filename": new, "previous_filename": old}
+    pr = _fetch_labeled_file(qc, record, lines)
+    assert pr.paths_complete
+    ordinary = min(roster.committers)
+    core1, core2 = sorted(roster.core_reviewers)[:2]
+    demand = qc.evaluate(pr, roster, owners, after_sprint).pending_quorum
+    assert (demand.total, demand.core) == ((2, 1) if lines == 10 else (3, 2))
+    reviewers = [ordinary, core1] if lines == 10 else [ordinary, core1, core2]
+    pr.reviews = [_review(qc, login, "APPROVED", sha=SHA_A) for login in reviewers]
+    verdict = qc.evaluate(pr, roster, owners, after_sprint)
+    assert not verdict.passed and verdict.pending_quorum is None
+    assert any(path in req.text and not req.met for req in verdict.requirements)
+    pr.reviews[-1] = _review(qc, roster.maintainer, "APPROVED", sha=SHA_A)
+    assert qc.evaluate(pr, roster, owners, after_sprint).passed
+    pr.contributors.add(roster.maintainer)
+    assert not qc.evaluate(pr, roster, owners, after_sprint).passed
+
+
+def test_incomplete_rename_keeps_known_dependency_owner_requirement(qc):
+    as_of = datetime(2026, 11, 24, tzinfo=UTC)
+    roster = qc.load_roster(str(REPO_ROOT), as_of.date())
+    owners = qc.load_codeowners(str(REPO_ROOT))
+    pr = _fetch_labeled_file(qc, {"status": "renamed", "filename": "docs/requirements.in"}, 10)
+    pr.reviews = [_review(qc, login, "APPROVED", sha=SHA_A) for login in sorted(roster.core_reviewers)[:2]]
+    verdict = qc.evaluate(pr, roster, owners, as_of)
+    assert not pr.paths_complete
+    assert not verdict.passed and verdict.pending_quorum is None
+    assert any("docs/requirements.in" in req.text and not req.met for req in verdict.requirements)
+
+
+def test_removing_size_label_restores_ordinary_quorum(qc, roster):
+    pr = _pr(qc, paths=["web/example.ts"], reviews=[_review(qc, "comm1", "APPROVED")])
+    pr.labels = frozenset({"size/s"})
+    assert _evaluate(qc, roster, pr).passed
+    pr.labels = frozenset()
+    assert not _evaluate(qc, roster, pr).passed
 
 
 def _merged_main(*, merger: str = "owner", neutral: bool = True, reviews: list[dict] | None = None) -> FakeGitHub:

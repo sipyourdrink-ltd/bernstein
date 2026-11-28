@@ -157,7 +157,7 @@ def test_the_check_still_answers_for_every_event_that_can_gate_a_merge() -> None
     assert isinstance(pull_request, dict)
     types = pull_request.get("types")
     assert isinstance(types, list)
-    assert {"opened", "synchronize", "reopened", "ready_for_review"} <= set(types)
+    assert {"opened", "synchronize", "reopened", "ready_for_review", "labeled", "unlabeled"} <= set(types)
     assert "paths" not in pull_request and "paths-ignore" not in pull_request, (
         "the review question is asked whatever the pull request touches"
     )

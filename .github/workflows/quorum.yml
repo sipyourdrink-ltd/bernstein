@@ -35,7 +35,7 @@ name: quorum
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
   # An approval is not a `pull_request` event. Without this trigger the check
   # is never recomputed after somebody reviews, so a pull request that has
   # just earned its quorum keeps the red check it was given before the
