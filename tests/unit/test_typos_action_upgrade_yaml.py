@@ -1,4 +1,4 @@
-"""Caller compatibility for crate-ci/typos v1.52.0."""
+"""Caller compatibility for crate-ci/typos v1.52.2."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = "crate-ci/typos"
-PIN = "4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85"
+PIN = "276087d9a4f06398b3e04825487805e2d7375888"
 WORKFLOWS = ("auto-heal.yml", "ci.yml")
 
 
