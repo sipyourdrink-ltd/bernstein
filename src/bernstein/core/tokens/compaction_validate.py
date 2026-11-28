@@ -57,6 +57,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from bernstein.core.tokens.failed_action_retention import split_retained_blocks
+from bernstein.core.verify_result import CheckOutcome as ValidatorVerdict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -142,21 +143,6 @@ class FencedBlock:
     info: str
     fence_char: str
     start_line: int
-
-
-@dataclass(frozen=True, slots=True)
-class ValidatorVerdict:
-    """Outcome of one validator over a ``(pre, post)`` pair.
-
-    Attributes:
-        name: Validator name (one of :data:`VALIDATOR_NAMES`).
-        passed: Whether the summary satisfied the invariant.
-        detail: Human-readable evidence for a failure; empty on pass.
-    """
-
-    name: str
-    passed: bool
-    detail: str = ""
 
 
 @dataclass(frozen=True, slots=True)

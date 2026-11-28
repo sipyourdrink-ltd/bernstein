@@ -19,7 +19,7 @@ requires. Unknown ordinal values fail closed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.interop.a2a_card import (
@@ -27,6 +27,7 @@ from bernstein.core.interop.a2a_card import (
     card_public_key_fingerprint,
     verify_capability_card,
 )
+from bernstein.core.verify_result import FailuresResult as PolicyVerdict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -91,14 +92,6 @@ class PolicyRequirements:
     max_cost_cap_usd: float
     min_redaction_tier: str
     min_sandbox_profile: str
-
-
-@dataclass(frozen=True)
-class PolicyVerdict:
-    """Outcome of a policy-requirements check against a peer card."""
-
-    ok: bool
-    failures: list[str] = field(default_factory=list)
 
 
 def _rank(order: Mapping[str, int], value: str) -> int | None:
