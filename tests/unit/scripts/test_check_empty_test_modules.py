@@ -142,3 +142,36 @@ def test_repository_has_no_unexcused_empty_test_modules(check_module: ModuleType
         "out of pytest's python_files patterns, or add a reasoned ALLOWLIST "
         "entry:\n  " + "\n  ".join(f"{rel}: 0 collected" for rel in report.empty)
     )
+
+
+def test_class_with_constructor_collects_no_items(check_module: ModuleType, tmp_path: Path) -> None:
+    """pytest does not collect a ``Test`` class with ``__init__``; the static count must agree (#8057)."""
+    constructor_only = _write(
+        tmp_path / "test_listing.py",
+        """
+        class TestListing:
+            def __init__(self):
+                pass
+
+            def test_row(self):
+                pass
+        """,
+    )
+    assert check_module.ast_defined_test_count(constructor_only.read_text(encoding="utf-8")) == 0
+    assert check_module.collected_test_count(constructor_only, cwd=tmp_path) == 0
+
+    with_standalone = _write(
+        tmp_path / "test_listing_and_row.py",
+        constructor_only.read_text(encoding="utf-8") + "\n\ndef test_standalone():\n    pass\n",
+    )
+    assert check_module.collected_test_count(with_standalone, cwd=tmp_path) == 1
+
+    plain = _write(
+        tmp_path / "test_plain_class.py",
+        """
+        class TestPlain:
+            def test_row(self):
+                pass
+        """,
+    )
+    assert check_module.ast_defined_test_count(plain.read_text(encoding="utf-8")) == 1
