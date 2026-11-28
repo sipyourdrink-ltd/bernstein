@@ -275,7 +275,9 @@ class AbandonmentLedger:
         except OSError as exc:
             logger.warning("Failed to read abandonment ledger: %s", exc)
             return []
-        for line in raw.splitlines():
+        # Split on LF only. `splitlines()` also splits on U+2028 and U+2029, which `json.dumps(...,
+        # ensure_ascii=False)` writes inside a string, so one row became two invalid halves (#7960).
+        for line in raw.split("\n"):
             stripped = line.strip()
             if not stripped:
                 continue
