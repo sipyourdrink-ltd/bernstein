@@ -58,7 +58,11 @@ declaration.
 
 Policy binding covers the reader, charter, roster, CODEOWNERS, quorum and queue
 scripts, privileged check publisher, quorum workflows and this custody
-contract. The ledger itself is excluded to avoid a digest self-reference.
+contract. The policy digest hashes the pinned Git blob objects from the
+accepted default-branch commit via `git ls-tree` and `git cat-file`, never
+working-tree files, so candidate checkouts, `--no-checkout` clones and CRLF
+line-ending settings produce identical digests. The ledger itself is excluded
+to avoid a digest self-reference.
 
 ## Offline inspection
 

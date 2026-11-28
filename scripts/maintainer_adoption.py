@@ -16,7 +16,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -54,15 +54,56 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
-def policy_digest(root: Path) -> str:
-    """Bind every policy and publication input, without a ledger self-reference."""
-    return digest({name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in POLICY_PATHS})
+def policy_digest(repo: Path, pinned_commit_sha: str) -> str:
+    """Bind every policy and publication Git blob at the pinned default-branch commit."""
+    current = _resolve_trusted_commit(repo, pinned_commit_sha)
+    raw_tree = _git(repo, "ls-tree", "-l", "-z", current, "--", *POLICY_PATHS)
+    entries: dict[str, tuple[str, int]] = {}
+    total_bytes = 0
+    for item in raw_tree.split(b"\x00"):
+        if not item:
+            continue
+        header_bytes, sep, path_bytes = item.partition(b"\t")
+        if not sep:
+            raise ValueError("invalid policy tree entry")
+        parts = header_bytes.decode("ascii").split()
+        if len(parts) != 4:
+            raise ValueError("invalid policy tree entry")
+        mode, obj_type, blob_sha, size_text = parts
+        path = path_bytes.decode("utf-8")
+        if mode not in ("100644", "100755") or obj_type != "blob" or not _SHA.fullmatch(blob_sha):
+            raise ValueError("policy entry must be a regular Git blob")
+        try:
+            size = int(size_text)
+        except ValueError as exc:
+            raise ValueError("policy entry must be a regular Git blob") from exc
+        if size < 0 or size > _MAX_BYTES:
+            raise ValueError("policy blob exceeds inspection size bound")
+        total_bytes += size
+        if total_bytes > _MAX_HISTORY_BYTES:
+            raise ValueError("policy tree exceeds inspection size bound")
+        if path in entries:
+            raise ValueError("duplicate policy tree entry")
+        entries[path] = (blob_sha, size)
+    if set(entries) != set(POLICY_PATHS):
+        raise ValueError("pinned commit is missing required policy files")
+    digests: dict[str, str] = {}
+    for name in POLICY_PATHS:
+        blob_sha, expected_size = entries[name]
+        blob_bytes = _git(repo, "cat-file", "blob", blob_sha)
+        if len(blob_bytes) != expected_size:
+            raise ValueError("policy blob size mismatch")
+        digests[name] = hashlib.sha256(blob_bytes).hexdigest()
+    return digest(digests)
 
 
 def _object(value: Any, keys: set[str]) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != keys:
+    if not isinstance(value, dict):
         raise ValueError("exact declaration schema required")
-    return value
+    mapping = cast("dict[str, Any]", value)
+    if set(mapping) != keys:
+        raise ValueError("exact declaration schema required")
+    return mapping
 
 
 def _identifier(value: Any) -> str:
@@ -93,18 +134,19 @@ class Subject:
     policy_sha256: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.repository, str) or not re.fullmatch(
-            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repository
-        ):
+        repo_value = cast("object", self.repository)
+        if not isinstance(repo_value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo_value):
             raise ValueError("invalid declaration repository")
         if type(self.pull_request) is not int or self.pull_request <= 0:
             raise ValueError("invalid declaration pull request")
-        if any(not isinstance(value, str) or not _SHA.fullmatch(value) for value in (self.base_sha, self.head_sha)):
+        commit_values = (cast("object", self.base_sha), cast("object", self.head_sha))
+        if any(not isinstance(value, str) or not _SHA.fullmatch(value) for value in commit_values):
             raise ValueError("invalid declaration commit")
-        if not isinstance(self.policy_sha256, str) or not _DIGEST.fullmatch(self.policy_sha256):
+        policy_value = cast("object", self.policy_sha256)
+        if not isinstance(policy_value, str) or not _DIGEST.fullmatch(policy_value):
             raise ValueError("invalid declaration policy digest")
         # GitHub repository identity is case-insensitive, including direct API use.
-        object.__setattr__(self, "repository", self.repository.casefold())
+        object.__setattr__(self, "repository", repo_value.casefold())
 
     @classmethod
     def parse(cls, value: Any) -> Subject:
@@ -126,10 +168,12 @@ def _report(value: Any, subject: Subject, *, security: bool = False) -> str:
         raise ValueError("invalid report content digest")
     if row["findings"] != []:
         raise ValueError("unresolved report findings remain blocking")
-    checks = row["checks"]
+    raw_checks = row["checks"]
+    if not isinstance(raw_checks, list):
+        raise ValueError("bounded executed security checks required")
+    checks = cast("list[Any]", raw_checks)
     if (
-        not isinstance(checks, list)
-        or len(checks) > 100
+        len(checks) > 100
         or any(not isinstance(check, str) or not check.strip() or len(check) > 4000 for check in checks)
         or (security and not checks)
     ):
@@ -195,12 +239,18 @@ def replay(snapshots: Iterable[tuple[str, bytes]], *, pinned_commit_sha: str) ->
             if row["operation"] == "adopt":
                 payload = _object(row["payload"], {"subject", "producer_execution_ids", "reviews", "security_tests"})
                 subject = Subject.parse(payload["subject"])
-                producers = payload["producer_execution_ids"]
-                if not isinstance(producers, list) or not 1 <= len(producers) <= 64:
+                raw_producers = payload["producer_execution_ids"]
+                if not isinstance(raw_producers, list):
+                    raise ValueError("producer execution identities required")
+                producers = cast("list[Any]", raw_producers)
+                if not 1 <= len(producers) <= 64:
                     raise ValueError("producer execution identities required")
                 producer_ids = frozenset(_identifier(value) for value in producers)
-                reviews = payload["reviews"]
-                if len(producer_ids) != len(producers) or not isinstance(reviews, list) or not 2 <= len(reviews) <= 8:
+                raw_reviews = payload["reviews"]
+                if not isinstance(raw_reviews, list):
+                    raise ValueError("two distinct independent reviews required")
+                reviews = cast("list[Any]", raw_reviews)
+                if len(producer_ids) != len(producers) or not 2 <= len(reviews) <= 8:
                     raise ValueError("two distinct independent reviews required")
                 reviewers = tuple(_report(value, subject) for value in reviews)
                 security_id = _report(payload["security_tests"], subject, security=True)
@@ -261,16 +311,22 @@ def _git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def load_ledger(repo: Path, pinned_commit_sha: str) -> Ledger:
-    """Read accepted history only; no network, candidate checkout or comment input."""
+def _resolve_trusted_commit(repo: Path, pinned_commit_sha: str) -> str:
+    """Verify the caller pin against ``refs/remotes/origin/main`` and return Git's resolved SHA."""
     if not _SHA.fullmatch(pinned_commit_sha):
         raise ValueError("an exact trusted default-branch commit is required")
     current = _git(repo, "rev-parse", "--verify", f"{TRUSTED_DEFAULT_REF}^{{commit}}").decode("ascii").strip()
-    if pinned_commit_sha != current:
+    if not _SHA.fullmatch(current) or pinned_commit_sha != current:
         raise ValueError("pin differs from the trusted default-branch snapshot")
     if _git(repo, "rev-parse", "--is-shallow-repository").strip() != b"false":
         raise ValueError("complete accepted declaration history is required")
-    _git(repo, "cat-file", "-e", f"{pinned_commit_sha}^{{commit}}")
+    _git(repo, "cat-file", "-e", f"{current}^{{commit}}")
+    return current
+
+
+def load_ledger(repo: Path, pinned_commit_sha: str) -> Ledger:
+    """Read accepted history only; no network, candidate checkout or comment input."""
+    current = _resolve_trusted_commit(repo, pinned_commit_sha)
     commits = _git(
         repo,
         "log",
@@ -279,7 +335,7 @@ def load_ledger(repo: Path, pinned_commit_sha: str) -> Ledger:
         "--reverse",
         f"--max-count={_MAX_REVISIONS + 1}",
         "--format=%H",
-        pinned_commit_sha,
+        current,
         "--",
         LEDGER_PATH,
     )
@@ -296,7 +352,7 @@ def load_ledger(repo: Path, pinned_commit_sha: str) -> Ledger:
                 raise ValueError("declaration ledger exceeds inspection size bound")
             yield commit, _git(repo, "show", f"{commit}:{LEDGER_PATH}")
 
-    return replay(snapshots(), pinned_commit_sha=pinned_commit_sha)
+    return replay(snapshots(), pinned_commit_sha=current)
 
 
 def main() -> None:
