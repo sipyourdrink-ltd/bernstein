@@ -76,6 +76,25 @@ as an unpriced row in cost reports.
 
 ## Usage in plan.yaml
 
+For `gpt-5-mini` and `gpt-5-mini-2025-08-07`, a completion limit supplied
+through `max_tokens` is sent as `max_completion_tokens` when a per-role
+`base_url` selects Chat Completions. The standard Responses route continues
+to use `max_output_tokens`; other custom-endpoint models retain `max_tokens`.
+Set an output limit through `role_model_policy.<role>.max_tokens`, a mode
+profile's `max_tokens`, or the per-spawn `mcp_config`. When none supplies a
+limit, the adapter leaves it to the provider. `ModelConfig.max_tokens` is a
+routing budget and is no longer used as an implicit output limit, including
+its `200000` default. An explicitly configured output limit of `200000` is
+still forwarded.
+
+Mode-profile `temperature` and `top_p` defaults are omitted for the two GPT-5
+mini IDs above; the `temperature` default is also omitted for `kimi-k2.5`.
+Other models retain their profile defaults. Explicit per-role and per-spawn
+sampling settings remain unchanged on custom endpoints, even when equal to a
+profile default; the provider still validates those settings. The standard
+GPT-5 mini Responses route continues to omit `temperature` and `top_p` as in
+[#6975](https://github.com/sipyourdrink-ltd/bernstein/pull/6975).
+
 ```yaml
 stages:
   - name: implement

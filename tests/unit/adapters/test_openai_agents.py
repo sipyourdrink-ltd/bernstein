@@ -394,7 +394,7 @@ class TestSpawnCommand:
         assert manifest["base_url"] == "http://localhost:8000/v1"
         assert manifest["api_key_env"] == "OPENROUTER_API_KEY"
 
-    def test_manifest_max_tokens_falls_back_to_model_config(self, tmp_path: Path) -> None:
+    def test_manifest_does_not_use_routing_budget_as_output_cap(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()
         proc_mock = _make_popen_mock(pid=1017)
         with patch(
@@ -411,8 +411,9 @@ class TestSpawnCommand:
         manifest = json.loads(
             (tmp_path / ".sdd" / "runtime" / "oai-s6b.manifest.json").read_text(),
         )
-        # No mcp_config max_tokens -> model_config value is the fallback.
-        assert manifest["max_tokens"] == 4096
+        # An output cap must come from the role/mode or per-spawn settings,
+        # not the routing budget, even if that budget has a non-default value.
+        assert "max_tokens" not in manifest
 
     def test_manifest_omits_absent_sampling_fields(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()

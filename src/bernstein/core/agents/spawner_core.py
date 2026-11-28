@@ -3481,6 +3481,7 @@ class AgentSpawner:
             sorted(role_policy.keys()),
         )
         derived: dict[str, Any] = {}
+        profile_sampling: set[str] = set()
 
         # Mode-profile sampling params (lowest precedence). Wiring these here
         # is what makes a ModeProfile's sampling params actually reach the
@@ -3512,6 +3513,7 @@ class AgentSpawner:
                 derived["top_k"] = profile.top_k
             if profile.max_tokens is not None:
                 derived["max_tokens"] = profile.max_tokens
+            profile_sampling.update(derived)
             logger.debug(
                 "_apply_sampling_overrides: mode-profile %r contributed sampling keys=%s",
                 profile.name,
@@ -3540,15 +3542,19 @@ class AgentSpawner:
         temperature = role_policy.get("temperature")
         if isinstance(temperature, int | float) and not isinstance(temperature, bool):
             derived["temperature"] = float(temperature)
+            profile_sampling.discard("temperature")
         top_p = role_policy.get("top_p")
         if isinstance(top_p, int | float) and not isinstance(top_p, bool):
             derived["top_p"] = float(top_p)
+            profile_sampling.discard("top_p")
         top_k = role_policy.get("top_k")
         if isinstance(top_k, int) and not isinstance(top_k, bool):
             derived["top_k"] = top_k
+            profile_sampling.discard("top_k")
         max_tokens = role_policy.get("max_tokens")
         if isinstance(max_tokens, int) and not isinstance(max_tokens, bool):
             derived["max_tokens"] = max_tokens
+            profile_sampling.discard("max_tokens")
         extra_params = role_policy.get("extra_params")
         if isinstance(extra_params, dict) and extra_params:
             derived["extra_params"] = extra_params
@@ -3587,6 +3593,11 @@ class AgentSpawner:
                 filled[key] = value
             else:
                 skipped_operator_set[key] = merged[key]
+        if gate_adapter_name == "openai_agents":
+            # Preserve provenance through the MCP merge: an explicit setting
+            # equal to a mode default is still an operator choice. The adapter
+            # may omit incompatible defaults without dropping that choice.
+            merged["_mode_sampling_params"] = sorted(profile_sampling.intersection(filled))
         logger.info(
             "_apply_sampling_overrides: role=%r gate_adapter=%r (provider_name=%r) folded_keys=%s "
             "into runner manifest%s",
