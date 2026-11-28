@@ -490,6 +490,7 @@ def verified_tool_call_ids(
 
     * exactly one verified run identity anchor binds its tool-signing key;
     * the attestation's identity envelope verifies against that frozen key;
+    * the envelope's signed run journal head equals the anchored head;
     * identity call indices for that run are contiguous in chain order;
     * the attestation occupies the chain predecessor its signed record names;
     * exactly one later, adjacent enforced-dispatch marker consumes the same
@@ -580,6 +581,10 @@ def verified_tool_call_ids(
             if (
                 record.call_index != expected_index
                 or record.identity_anchor_ref != anchor_ref
+                # The writer refuses to sign once the journal head moves, but the
+                # projection must not take that on trust: the verdict walk checks
+                # the signed head against the anchor, and so does this (#7013).
+                or record.run_journal_head != anchor.get("run_journal_head")
                 or record.prev_chain_digest != payload.get("prev_chain_digest")
                 or (event_prev and record.prev_chain_digest != event_prev)
                 or any(payload.get(key) != value for key, value in bindings.items())
