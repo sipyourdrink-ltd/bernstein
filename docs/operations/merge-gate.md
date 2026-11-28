@@ -8,7 +8,7 @@ steps required to enable each layer.
 
 | Layer | Workflow | Trigger | What it does | Failure mode |
 |---|---|---|---|---|
-| 1. Pre-merge autosync | `.github/workflows/pr-policy.yml` (autosync steps) | `pull_request` (acts on `opened, synchronize, ready_for_review`) | Runs `bernstein agents-md sync` and `ruff format`, pushes any drift back to the PR head | Mirror docs go stale and `Repo hygiene` / `docs-drift` fail post-merge |
+| 1. Pre-merge autosync | `pr-policy.yml` and `pr-publish.yml` | `pull_request` (acts on `opened, synchronize, ready_for_review`) | Runs `bernstein agents-md sync` and `ruff format`, pushes any drift back to the PR head | Mirror docs go stale and `Repo hygiene` / `docs-drift` fail post-merge |
 | 2. Main-red guard | `.github/workflows/pr-policy.yml` (main-red-guard step) | `pull_request` (PRs targeting `main`) | Warns when the most recent completed CI run on main is red and main HEAD still pins the failing SHA | A red main keeps absorbing fresh PR merges instead of being repaired |
 | 3. Merge queue + `merge_group:` CI | GitHub-native + `.github/workflows/ci.yml` | `merge_group:` | Re-runs the full CI suite on the combined branch GitHub computes for the queued merge group | Cancelled-by-newer-push races: "green CI" never matches the SHA that actually merges |
 | 4. Nightly drift sweep | `.github/workflows/nightly-drift-sweep.yml` | `schedule: 13 6 * * *` + `workflow_dispatch:` | Opens a sync PR when overnight drift accumulated on main | Drift from fork PRs / `skip-autosync` PRs / autosync failures piles up between PR pushes |
@@ -24,11 +24,17 @@ A single rapid burst of auto-merges flipped `main` red because:
 
 Each layer fixes one of those four holes.
 
-## Required setup (post-merge, operator steps)
+## Operator setup
 
-### 1. Provision `BERNSTEIN_AUTOSYNC_TOKEN` (optional but recommended)
+### 1. Provision `BERNSTEIN_AUTOSYNC_TOKEN` for autosync
 
-The auto-amend push (the autosync steps in `pr-policy.yml`) and the nightly sweep in `nightly-drift-sweep.yml` both prefer a named token over `GITHUB_TOKEN`. Without the named token everything still works, but amend commits authored by `GITHUB_TOKEN` will NOT trigger downstream workflow runs on the source PR (GitHub recursion protection). That means the PR's CI checks will appear stuck on the previous SHA until something else pushes to the branch.
+The read-only `Compute autosync drift` job regenerates mirrors and runs Ruff on the PR head. The default-branch `pr-publish.yml` workflow requires `BERNSTEIN_AUTOSYNC_TOKEN` to update the same PR branch. This makes downstream checks run on the new commit. The writer uses a bare Git index and accepts the update only while the branch still points at the measured SHA. An independent read-only job reproduces the entire patch with the default branch's locked generator, Ruff and the repository's nested Ruff configurations. PRs that change effective Ruff settings require a local regeneration. The publisher checks the live PR and branch again immediately before the update. A clean run needs no writer.
+
+Autosync accepts text patches up to 64 KiB for generated mirrors and existing Python, stub and notebook files in visible directories. For larger changes, trees containing symlinks or submodules, changes that the trusted tools cannot reproduce, other paths, or protected head branches, run `bernstein agents-md sync --workdir .`, `ruff check . --fix --unsafe-fixes` and `ruff format .` locally and commit the result.
+
+Before enabling the publisher, restrict the `automation` environment to the default **branch** using selected deployment branches and tags. Allow only that branch and leave the tag list empty. Store the named credential only in this environment. Remove any repository-level copy and any organization-secret grant to this repository. The release workflow also uses this environment for its named token.
+
+Restrict pushes that change `.github/workflows/**` on same-repository branches to trusted workflow maintainers, or require untrusted contributors to use forks with read-only tokens. Repository default token permissions and review at merge time alone allow same-repository workflow authors to request broader permissions during a PR run. Verify these host settings before rollout.
 
 Choose one of the following:
 
@@ -38,7 +44,7 @@ Choose one of the following:
    - `contents: write`
    - `pull-requests: write`
    - `metadata: read` (default)
-2. Store under repo secrets as `BERNSTEIN_AUTOSYNC_TOKEN`.
+2. Store in the restricted `automation` environment as `BERNSTEIN_AUTOSYNC_TOKEN`.
 3. Set a 90-day expiry and a reminder to rotate.
 
 **Option B: GitHub App (production-grade).**
@@ -47,7 +53,7 @@ Choose one of the following:
    - `contents: write`
    - `pull-requests: write`
 2. Install the App on this repo.
-3. Store the App's installation token under repo secrets as `BERNSTEIN_AUTOSYNC_TOKEN`. Provision an installation-token rotator workflow (Action Marketplace has community options) since installation tokens expire hourly.
+3. Store the App's installation token in the restricted `automation` environment as `BERNSTEIN_AUTOSYNC_TOKEN`. Provision an installation-token rotator workflow (Action Marketplace has community options) since installation tokens expire hourly.
 
 ### 2. Enable the merge queue on `main`
 
@@ -97,7 +103,7 @@ Notes:
 
 ### 4. Verify the layers work end to end
 
-1. Open a PR that intentionally diverges `AGENTS.md` from canonical IR. Confirm the `PR policy` job runs the autosync steps and amends the PR head with a regen commit.
+1. Open a PR that intentionally diverges `AGENTS.md` from canonical IR. Confirm `Compute autosync drift` succeeds and the publishing workflow adds a regeneration commit to the PR head.
 2. Cause `ci.yml` on main to fail (e.g. force-push a known-bad commit to a sandbox branch, then merge with admin override). Open a fresh PR. Confirm the main-red-guard step in `PR policy` emits a warning and job summary pointing at the failing SHA.
 3. Trigger the nightly sweep manually via `gh workflow run nightly-drift-sweep.yml`. Confirm it either no-ops (no drift) or opens a sweep PR labelled `automated`.
 4. Queue two PRs via auto-merge. Confirm each one gets its own merge-group CI run via the `merge_group:` trigger, and that `main` advances to the exact SHA the queue tested. The queue is configured with `max_entries_to_merge: 1` so one PR lands per push; see [merge-queue.md](merge-queue.md) for why.

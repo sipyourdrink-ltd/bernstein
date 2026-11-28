@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -52,9 +53,12 @@ def _load_observe(path: Path) -> dict[str, Any]:
 
 
 def _render_header(pr: str, branch: str, summary: dict[str, int]) -> list[str]:
+    # Git branch names may contain backticks. Fence the complete literal.
+    fence = "`" * (1 + max((len(run) for run in re.findall(r"`+", branch)), default=0))
+    literal = f"{fence} {branch} {fence}" if "`" in branch else f"{fence}{branch}{fence}"
     line = (
         f"**bernstein doctor observe** for PR #{pr}"
-        + (f" (`{branch}`)" if branch else "")
+        + (f" ({literal})" if branch else "")
         + f": ok={summary.get('ok', 0)}, warn={summary.get('warn', 0)}, "
         f"fail={summary.get('fail', 0)}, error={summary.get('error', 0)}, "
         f"skipped={summary.get('skipped', 0)}"
@@ -128,6 +132,70 @@ def _build_markdown(payload: dict[str, Any], pr: str, branch: str) -> str:
         "for backend setup notes._"
     )
     return "\n".join(lines) + "\n"
+
+
+def _publication_scalar(value: object) -> str:
+    if value is not None and not isinstance(value, (str, int, float, bool)):
+        raise ValueError("Unexpected observation field type")
+    # Preserve visible punctuation without letting a field add Markdown, HTML,
+    # a mention, a table cell or a new line to the bot's comment.
+    return "".join(c if c.isalnum() or c in " .,-" else f"&#{ord(c)};" for c in str(value) if c.isprintable())
+
+
+def render_publication(raw: bytes, number: int, branch: str) -> bytes:
+    """Render bounded observation data with the trusted comment template."""
+    if len(raw) > 65536:
+        raise ValueError("Observation exceeds 64 KiB")
+    try:
+        parsed: Any = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        parsed = {"summary": {"error": 1}, "_parse_error": str(exc)}
+
+    def fields(row: dict[str, Any], names: tuple[str, ...]) -> dict[str, str]:
+        return {key: _publication_scalar(row[key]) for key in names if key in row}
+
+    def invalid_shape(detail: str) -> dict[str, Any]:
+        return {"summary": {"error": 1}, "_parse_error": detail}
+
+    observed: dict[str, Any]
+    if not isinstance(parsed, dict):
+        observed = invalid_shape(f"expected JSON object, got {type(parsed).__name__}")
+    else:
+        observed = parsed
+        raw_summary: Any = observed.get("summary")
+        raw_backends: Any = observed.get("backends")
+        if raw_summary is not None and not isinstance(raw_summary, dict):
+            observed = invalid_shape(f"expected object for summary, got {type(raw_summary).__name__}")
+        elif raw_backends is not None and (
+            not isinstance(raw_backends, list) or any(not isinstance(item, dict) for item in raw_backends)
+        ):
+            observed = invalid_shape("expected list of objects for backends")
+        elif isinstance(raw_backends, list) and any(
+            (metrics := item.get("metrics")) is not None
+            and (not isinstance(metrics, list) or any(not isinstance(metric, dict) for metric in metrics))
+            for item in raw_backends
+        ):
+            observed = invalid_shape("expected list of objects for backend metrics")
+
+    summary_row: dict[str, Any] = observed.get("summary") or {}
+    backend_rows: list[dict[str, Any]] = observed.get("backends") or []
+    clean: dict[str, Any] = {
+        "summary": fields(summary_row, ("ok", "warn", "fail", "error", "skipped")),
+        "backends": [],
+    }
+    for backend in backend_rows:
+        row: dict[str, Any] = fields(backend, ("backend", "status", "detail"))
+        metric_rows: list[dict[str, Any]] = backend.get("metrics") or []
+        row["metrics"] = [
+            fields(metric, ("name", "value", "delta", "threshold", "threshold_status")) for metric in metric_rows
+        ]
+        clean["backends"].append(row)
+    if "_parse_error" in observed:
+        clean["_parse_error"] = _publication_scalar(observed["_parse_error"])
+    body = _build_markdown(clean, str(number), branch).encode()
+    if len(body) > 48 * 1024:
+        raise ValueError("Rendered comment exceeds 48 KiB")
+    return body
 
 
 def main(argv: list[str] | None = None) -> int:

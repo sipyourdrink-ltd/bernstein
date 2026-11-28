@@ -11,6 +11,8 @@ This page documents which GitHub Actions workflows own each release entrypoint.
 
 Update this table whenever a release workflow is added, renamed, or moved.
 
+The major/minor release check requires a successful `CI gate`. It identifies failed PR publication suites by the `pr-publish.yml` workflow identity because GitHub attaches their `workflow_run` checks to the default-branch SHA. Other completed failures on the release commit still block release.
+
 ## Release Workflow Ownership
 
 | Workflow | Name | Triggers | Owns | Handoff |

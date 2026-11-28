@@ -1,4 +1,7 @@
 name: PR observability summary
+# Manual runs have no PR association in workflow_run. The publisher accepts
+# this number only from a dispatch of the default branch.
+run-name: PR observability summary for ${{ github.event.pull_request.number || inputs.pr_number }}
 
 on:
   pull_request:
@@ -21,13 +24,13 @@ permissions:
 
 jobs:
   summary:
-    name: Sticky observability comment
+    name: Build observability summary
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       checks: read
       contents: read
-      pull-requests: write
+      pull-requests: read
       security-events: read
     # Opt-in on PRs: the observability fan-out only runs when the PR carries
     # the 'deep-review' label, so ordinary PR pushes skip it. The manual
@@ -50,10 +53,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Inline the pinned bootstrap inputs so no local action is resolved from the PR.
       - name: Set up uv
-        uses: ./.github/actions/bootstrap
-        with:
+        id: setup_uv
+        continue-on-error: true
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with: &uv-inputs
+          version: '0.13.9'
+          enable-cache: false
           python-version: '3.13'
+
+      - name: Retry uv setup after a transient failure
+        if: steps.setup_uv.outcome == 'failure'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with: *uv-inputs
 
       - name: Install bernstein
         run: |
@@ -62,7 +75,7 @@ jobs:
       - name: Run doctor observe (JSON)
         id: observe
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -78,7 +91,7 @@ jobs:
         # required contexts themselves.
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
@@ -94,7 +107,6 @@ jobs:
           exit "$rc"
 
       - name: Build PR summary markdown
-        id: build
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
           PR_BRANCH: ${{ github.event.pull_request.head.ref || '' }}
@@ -105,27 +117,20 @@ jobs:
             --pr "$PR_NUMBER" \
             --branch "$PR_BRANCH" \
             --out .ci/observability/pr_summary.md
-          {
-            echo 'body<<OBSERVABILITY_EOF'
-            cat .ci/observability/pr_summary.md
-            echo 'OBSERVABILITY_EOF'
-          } >> "$GITHUB_OUTPUT"
 
       - name: Append summary to job step summary
-        # Always surface the report in the job summary. Fork PRs run with a
-        # read-only GITHUB_TOKEN, so the sticky-comment step below 403s and
-        # is skipped; the step summary keeps the observability report
-        # visible regardless of who opened the PR.
         run: cat .ci/observability/pr_summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Post sticky comment
-        # Skip on fork PRs: their GITHUB_TOKEN is read-only and the comment
-        # API returns 403. workflow_dispatch and same-repo PRs keep the
-        # sticky comment.
+      - name: Check observation size
         if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88  # v3.0.5
+        run: test "$(wc -c < .ci/observability/observe.json)" -le 65536
+
+      - name: Hand observations to the comment publisher
+        if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          number: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
-          header: bernstein-observability
-          message: ${{ steps.build.outputs.body }}
+          name: pr-observations-${{ github.run_attempt }}
+          path: .ci/observability/observe.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
