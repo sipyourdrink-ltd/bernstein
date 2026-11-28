@@ -83,6 +83,7 @@ from bernstein.core.models import Scope, Task, TaskStatus
 from bernstein.core.orchestration.activity import ActivityKind
 from bernstein.core.planning.recovery_receipt import DEFAULT_JOURNAL_TAIL
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
+from bernstein.core.tasks.artifacts import ARTIFACT_SPEC_KEY, ArtifactSpec, ArtifactSpecError, parse_artifact_spec
 from bernstein.core.tasks.lifecycle import (
     DEPENDENCY_BLOCKED_STATUSES,
     SUCCESSFUL_TASK_STATUSES,
@@ -347,6 +348,7 @@ class DAGNode:
         retry: Optional retry/loop configuration.
         activity_kind: The agent modality (research/data/ops/browser).
             None means coding (the default scheduling path).
+        artifact_spec: The output contract inherited by materialized tasks.
     """
 
     id: str
@@ -356,6 +358,7 @@ class DAGNode:
     estimated_minutes: int = 30
     retry: RetryPolicy | None = None
     activity_kind: ActivityKind | None = None
+    artifact_spec: ArtifactSpec = field(default_factory=ArtifactSpec)
 
 
 @dataclass(frozen=True)
@@ -401,17 +404,23 @@ class WorkflowDAG:
     def definition_hash(self) -> str:
         """SHA-256 hash covering both phases and DAG structure."""
         phase_hash = self.definition.definition_hash()
+        default_spec = ArtifactSpec.default()
+        nodes = []
+        for node in self.nodes:
+            payload: dict[str, object] = {
+                "id": node.id,
+                "phase": node.phase,
+                "role": node.role,
+                "activity_kind": node.activity_kind.value if node.activity_kind else None,
+            }
+            # Preserve historical hashes for workflows with the default contract.
+            if node.artifact_spec != default_spec:
+                payload[ARTIFACT_SPEC_KEY] = node.artifact_spec.to_dict()
+            nodes.append(payload)
+
         dag_payload = json.dumps(
             {
-                "nodes": [
-                    {
-                        "id": n.id,
-                        "phase": n.phase,
-                        "role": n.role,
-                        "activity_kind": n.activity_kind.value if n.activity_kind else None,
-                    }
-                    for n in self.nodes
-                ],
+                "nodes": nodes,
                 "edges": [
                     {
                         "source": e.source,
@@ -482,7 +491,7 @@ def parse_workflow_yaml(path: Path) -> WorkflowDAG:
         msg = "'nodes' must be a non-empty mapping"
         raise DSLError(msg)
 
-    nodes = _parse_nodes(nodes_raw)
+    nodes = _parse_nodes(nodes_raw, path=path)
     edges = _parse_edges_from_nodes(nodes_raw)
 
     definition = WorkflowDefinition(name=name, phases=phases, version=version)
@@ -533,7 +542,7 @@ def _parse_phases(raw: list[Any]) -> tuple[WorkflowPhase, ...]:
     return tuple(phases)
 
 
-def _parse_nodes(raw: dict[str, Any]) -> tuple[DAGNode, ...]:
+def _parse_nodes(raw: dict[str, Any], *, path: Path) -> tuple[DAGNode, ...]:
     """Parse DAG node definitions from YAML."""
     nodes: list[DAGNode] = []
     for node_id, spec in raw.items():
@@ -569,6 +578,13 @@ def _parse_nodes(raw: dict[str, Any]) -> tuple[DAGNode, ...]:
                 msg = f"nodes.{node_id}.activity: unknown kind {activity_raw!r}, expected one of [{valid}]"
                 raise DSLError(msg) from None
 
+        artifact_spec = ArtifactSpec.default()
+        if ARTIFACT_SPEC_KEY in spec:
+            try:
+                artifact_spec = parse_artifact_spec(spec[ARTIFACT_SPEC_KEY])
+            except ArtifactSpecError as exc:
+                raise DSLError(f"{path}: nodes.{node_id}.{exc}") from exc
+
         nodes.append(
             DAGNode(
                 id=node_id,
@@ -578,6 +594,7 @@ def _parse_nodes(raw: dict[str, Any]) -> tuple[DAGNode, ...]:
                 estimated_minutes=int(spec.get("estimated_minutes", 30)),
                 retry=retry,
                 activity_kind=activity_kind,
+                artifact_spec=artifact_spec,
             )
         )
 
@@ -697,7 +714,7 @@ def validate_dag(dag: WorkflowDAG) -> ValidationResult:
     Checks:
         1. No cycles in the unconditional edge subgraph.
         2. All nodes are reachable from at least one root.
-        3. Node phases exist in the workflow definition.
+        3. Node phases exist and allow the declared roles.
         4. No backward phase dependencies on unconditional edges.
         5. All edge source/target node IDs exist.
         6. Condition expressions parse correctly.
@@ -722,11 +739,18 @@ def validate_dag(dag: WorkflowDAG) -> ValidationResult:
     if result.errors:
         return result  # Can't proceed with broken references.
 
-    # Check node phases.
+    # Check node phases and their role restrictions.
+    phases_by_name = {phase.name: phase for phase in dag.definition.phases}
     for node in dag.nodes:
-        if node.phase not in phase_names:
+        phase = phases_by_name.get(node.phase)
+        if phase is None:
             result.errors.append(
                 f"Node {node.id!r} references unknown phase {node.phase!r}; known phases: {phase_names}"
+            )
+        elif phase.allowed_roles and node.role not in phase.allowed_roles:
+            result.errors.append(
+                f"Node {node.id!r} uses role {node.role!r} which is not allowed in phase {node.phase!r}; "
+                f"allowed roles: {sorted(phase.allowed_roles)}"
             )
 
     if result.errors:
@@ -1186,6 +1210,7 @@ class DAGExecutor:
             status=TaskStatus.BLOCKED_BY_FAILED_DEP,
             depends_on=sorted(edge.source for edge in incoming),
             created_at=time.time(),
+            artifact_spec=node.artifact_spec,
         )
         task.terminal_reason = "blocked_by_failed_dependency"
         task.metadata[SKIPPED_EDGES_METADATA_KEY] = [
@@ -1316,6 +1341,7 @@ class DAGExecutor:
             status=TaskStatus.OPEN,
             depends_on=dep_ids,
             created_at=time.time(),
+            artifact_spec=node.artifact_spec,
         )
 
         if source_task is None:
