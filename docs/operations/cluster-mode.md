@@ -416,6 +416,30 @@ worker releases the claim back to the pool via `POST /tasks/{id}/release`
 (`WorkerLoop._release_task`), so the task returns to `open` and another node
 can pick it up instead of being stranded in `claimed` (#3018).
 
+**A remote worker completes a task.** The worker posts its output as an
+artifact (`POST /tasks/{id}/artifacts`, key `diff` for a `code_diff` task
+or the declared output key for an artifact-mode task) and then calls
+`POST /tasks/{id}/complete`. The host has no session for that task, so the
+alive-exit janitor pass materialises the newest verified artifact as the
+branch `agent/remote-<task>-v<n>` and grades the merged tree through the
+same merge preview a local agent gets (#6611). On PASS the verdict pass
+checks the branch out at `.sdd/worktrees/remote-<task>-v<n>`, registers it
+under a synthetic session named after the branch, and runs the verification
+gates a local agent's work meets (quality gates, rule enforcement,
+cross-model review, formal verification) on that tree. Then come the approval
+gate and the merge through the spawner merge path, so the merge queue, the
+default-branch guard, the blast-radius ceiling, the signed file scope, the
+quality gates, landed provenance and the push all apply. On success it
+closes the task, seals its evidence, records `task_merged` in the run journal
+and removes the worktree and the branch. A failed checkout, a merge with no
+result or a non-conflict merge failure takes the same bounded reopen budget
+as a local agent (`BERNSTEIN_JANITOR_REOPEN_MAX`) and keeps the branch; a
+conflict creates a resolver task. An approval hold keeps the worktree and the
+branch (in PR mode the pull request is opened from them); remove them once
+the hold is resolved. A completion with no posted
+artifact is graded on the run checkout and fails honestly, with the log line
+`remote completion without a posted artifact`.
+
 ## Observability for cluster health
 
 ### Topology at a glance: `bernstein cluster status` / `nodes`
