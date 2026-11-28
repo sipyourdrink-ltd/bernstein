@@ -837,6 +837,7 @@ _ROLE_POLICY_KEYS: tuple[str, ...] = (
 # ``role_model_policy.<role>.max_tokens`` was rejected at parse time with
 # "unknown keys: max_tokens" (parser/schema divergence fixed here).
 _ROLE_POLICY_INT_KEYS: tuple[str, ...] = ("max_tokens",)
+_ROLE_POLICY_BOOL_KEYS: tuple[str, ...] = ("fix_proof",)
 
 # ``response_style`` declares the per-role response-style profile
 # (``verbose``/``balanced``/``terse``) applied at spawn time (see
@@ -876,7 +877,7 @@ _ROLE_POLICY_TIER_MODELS_KEY = "tier_models"
 # One parsed ``role_model_policy.<role>`` setting. ``tier_models`` is spelled
 # out separately from ``dict[str, object]``: dict is invariant in its value
 # type, so the narrower parse result is not assignable to the wider member.
-_RolePolicyValue = str | int | float | list[dict[str, str | int]] | dict[str, str] | dict[str, object]
+_RolePolicyValue = str | int | float | bool | list[dict[str, str | int]] | dict[str, str] | dict[str, object]
 
 # Endpoint fields that the ``endpoint`` profile reference pins; setting any of
 # them inline alongside ``endpoint`` is a conflict (the profile is the single
@@ -1127,6 +1128,14 @@ def _parse_single_role_policy(
     if "cli" in normalized and "provider" not in normalized:
         normalized["provider"] = normalized["cli"]
 
+    for key in _ROLE_POLICY_BOOL_KEYS:
+        val = settings.get(key)
+        if val is None:
+            continue
+        if not isinstance(val, bool):
+            raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a bool")
+        normalized[key] = val
+
     raw_style = settings.get(_ROLE_POLICY_STYLE_KEY)
     if raw_style is not None:
         from bernstein.core.agents.response_style import RESPONSE_STYLES
@@ -1210,6 +1219,7 @@ def _parse_single_role_policy(
     allowed_keys = (
         set(_ROLE_POLICY_KEYS)
         | set(_ROLE_POLICY_INT_KEYS)
+        | set(_ROLE_POLICY_BOOL_KEYS)
         | {
             _ROLE_POLICY_COUNCIL_KEY,
             _ROLE_POLICY_STYLE_KEY,
@@ -1978,6 +1988,13 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         behavior_probe_gate_timeout_s=_qg_int("behavior_probe_gate_timeout_s", 300),
         behavior_probe_max_callables=_qg_int("behavior_probe_max_callables", 12),
         behavior_probe_max_probes_per_callable=_qg_int("behavior_probe_max_probes_per_callable", 6),
+        fix_proof=_qg_bool("fix_proof", False),
+        fix_proof_repeats=_qg_int("fix_proof_repeats", 2),
+        fix_proof_timeout_s=_qg_int("fix_proof_timeout_s", 120),
+        fix_proof_command=_qg_str("fix_proof_command", ""),
+        fix_proof_regression_command=_qg_str("fix_proof_regression_command", ""),
+        fix_proof_regression_paths=_qg_str_list("fix_proof_regression_paths", []),
+        fix_proof_roles=_qg_str_list("fix_proof_roles", []),
         # The seventeen fields below were the remainder of #6615: documented in
         # docs/architecture/quality-pipeline.md, accepted by the schema, and never
         # read, so ``mutation_testing: true`` or ``dep_audit: true`` in a seed
@@ -2703,6 +2720,18 @@ def _parse_seed(path: Path, *, apply_tuning: bool, mapping: dict[str, object] | 
     test_agent = _parse_test_agent(data.get("test_agent"))
     model_policy = _parse_model_policy(data.get("model_policy"))
     quality_gates = _parse_quality_gates(data.get("quality_gates"))
+    if role_model_policy:
+        policy_fix_proof_roles = [
+            role
+            for role, entry in role_model_policy.items()
+            if isinstance(entry, dict) and entry.get("fix_proof") is True
+        ]
+        if policy_fix_proof_roles:
+            if quality_gates is None:
+                quality_gates = QualityGatesConfig(fix_proof_roles=policy_fix_proof_roles)
+            else:
+                merged_roles = list(dict.fromkeys([*quality_gates.fix_proof_roles, *policy_fix_proof_roles]))
+                quality_gates.fix_proof_roles = merged_roles
     formal_verification = _parse_formal_verification(data.get("formal_verification"))
     secrets = _parse_secrets(data.get("secrets"))
     key_rotation = _parse_key_rotation(data.get("key_rotation"))

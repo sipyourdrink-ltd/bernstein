@@ -81,6 +81,7 @@ VALID_GATE_NAMES = frozenset(
         "test_expansion",
         "agent_test_mutation",
         "behavior_probe",
+        "fix_proof",
         # "cross_task_collusion" is intentionally NOT listed here. #6282
         # added it to this set on main, but `run_cross_task_gate` is only
         # ever called directly from the eval harness
@@ -423,6 +424,7 @@ _DEFAULT_GATE_SPECS: list[tuple[str, str, bool, str]] = [
     # their own signatures. Heavy (one subprocess per probe) and
     # crash-level only, so it ships off and advisory; graduate on evidence.
     ("behavior_probe", "behavior_probe", False, "python_changed"),
+    ("fix_proof", "fix_proof", True, "any_changed"),
 ]
 
 

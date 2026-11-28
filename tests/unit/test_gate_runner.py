@@ -747,6 +747,7 @@ def test_every_valid_gate_name_is_dispatchable(tmp_path: Path) -> None:
         "_run_integration_test_gen_gate",
         "_run_review_rubric_gate",
         "_run_behavior_probe_gate",
+        "_run_fix_proof_gate",
     ]
     for name in sync_handler_names:
         setattr(runner, name, _sync_stub)

@@ -26,12 +26,7 @@ from bernstein.core.quality.gate_pipeline import (
     COMMAND_ERROR_PREFIX as _COMMAND_ERROR_PREFIX,
 )
 from bernstein.core.quality.gate_pipeline import (
-    NO_PYTHON_FILES as _NO_PYTHON_FILES,
-)
-from bernstein.core.quality.gate_pipeline import (
-    TIMED_OUT_PREFIX as _TIMED_OUT_PREFIX,
-)
-from bernstein.core.quality.gate_pipeline import (
+    INCONCLUSIVE_REASONS,
     VALID_GATE_NAMES,
     GatePipelineStep,
     GateReport,
@@ -39,6 +34,12 @@ from bernstein.core.quality.gate_pipeline import (
     VerificationScope,
     build_default_pipeline,
     normalize_gate_condition,
+)
+from bernstein.core.quality.gate_pipeline import (
+    NO_PYTHON_FILES as _NO_PYTHON_FILES,
+)
+from bernstein.core.quality.gate_pipeline import (
+    TIMED_OUT_PREFIX as _TIMED_OUT_PREFIX,
 )
 
 # Explicitly re-exported: `gate_plugins` and other callers import `GateResult`
@@ -154,6 +155,11 @@ class GateRunner:
         self._changed_files_resolved = resolved_changed_files is not None
         changed_files = sorted(resolved_changed_files or [])
         pipeline = self._resolve_pipeline()
+        if self._config.pipeline is None and not any(s.name == "fix_proof" for s in pipeline):
+            from bernstein.core.quality.fix_proof import is_bug_fix_task, is_fix_proof_enabled
+
+            if is_bug_fix_task(task) and is_fix_proof_enabled(self._config, task):
+                pipeline = [*pipeline, GatePipelineStep(name="fix_proof", required=True, condition="any_changed")]
 
         # Run auto_format steps first (they modify files) before parallel gates.
         format_steps = [s for s in pipeline if s.name == "auto_format"]
@@ -544,6 +550,7 @@ class GateRunner:
             "integration_test_gen": lambda s, t, rd, _cf: self._run_integration_test_gen_gate(s, t, rd),
             "review_rubric": lambda s, t, rd, _cf: self._run_review_rubric_gate(s, t, rd),
             "behavior_probe": lambda s, _t, rd, cf: self._run_behavior_probe_gate(s, rd, cf),
+            "fix_proof": lambda s, t, rd, cf: self._run_fix_proof_gate(s, t, rd, cf),
         }
         async_fn = _async_gates.get(step.name)
         if async_fn is not None:
@@ -1328,6 +1335,89 @@ class GateRunner:
             metadata=metadata,
         )
 
+    async def _run_fix_proof_gate(
+        self,
+        step: GatePipelineStep,
+        task: Task,
+        run_dir: Path,
+        _changed_files: list[str],
+    ) -> GateResult:
+        from bernstein.core.quality.fix_proof import is_bug_fix_task, is_fix_proof_enabled, run_fix_proof
+
+        if not is_bug_fix_task(task):
+            return self._skipped(step, "Task is not a bug-fix task.")
+        if self._config.pipeline is None and not is_fix_proof_enabled(self._config, task):
+            return self._skipped(step, "fix_proof is disabled for this role/plan.")
+        if task.metadata.get("fix_proof") is False:
+            return self._skipped(step, "fix_proof explicitly disabled by task metadata.")
+
+        proof_cmd = step.command_override or self._config.fix_proof_command
+        try:
+            receipt = await asyncio.to_thread(
+                run_fix_proof,
+                task=task,
+                workdir=self._workdir,
+                run_dir=run_dir,
+                base_ref=self._base_ref,
+                repeats=self._config.fix_proof_repeats,
+                timeout_s=self._config.fix_proof_timeout_s,
+                proof_command=proof_cmd,
+                regression_command=self._config.fix_proof_regression_command,
+                regression_paths=self._config.fix_proof_regression_paths,
+                flaky_min_runs=self._config.flaky_min_runs,
+                flaky_threshold=self._config.flaky_threshold,
+            )
+        except Exception as exc:
+            logger.warning("fix_proof gate failed unexpectedly: %s", exc)
+            return GateResult(
+                name=step.name,
+                status="inconclusive",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=f"fix_proof execution error: {exc}",
+                metadata={},
+                reason="runner-died-before-output",
+            )
+
+        status: GateStatus = receipt.verdict
+        reason_code: str | None = None
+        if status == "inconclusive":
+            candidate = receipt.inconclusive_code or "evidence-missing"
+            reason_code = candidate if candidate in INCONCLUSIVE_REASONS else "evidence-missing"
+        blocked = step.required and status in {"fail", "inconclusive"}
+        metadata: dict[str, Any] = {
+            "fix_proof_receipt": receipt.to_dict(),
+            "receipt_hash": receipt.receipt_hash,
+            "lineage_entry_hash": receipt.lineage_entry_hash,
+            "trees": dict(receipt.trees),
+            "base_tree_id": receipt.base_tree_id,
+            "proof_node_ids": list(receipt.proof_node_ids),
+            "regression_node_ids": list(receipt.regression_node_ids),
+            "proof_failure_ids": list(receipt.proof_failure_ids),
+            "regression_ids": list(receipt.regression_ids),
+            "verdict": receipt.verdict,
+        }
+        scope = VerificationScope(
+            oracle_id="fix_proof",
+            kind="fix_proof",
+            checked=receipt.proof_node_ids + receipt.regression_node_ids,
+            cannot_check=(),
+        )
+        return GateResult(
+            name=step.name,
+            status=status,
+            required=step.required,
+            blocked=blocked,
+            cached=False,
+            duration_ms=0,
+            details=receipt.reason,
+            metadata=metadata,
+            reason=reason_code,
+            scope=scope,
+        )
+
     async def _run_review_rubric_gate(
         self,
         step: GatePipelineStep,
@@ -1951,7 +2041,7 @@ class GateRunner:
     ) -> str | None:
         if step.name not in VALID_GATE_NAMES:
             return None
-        if step.name in {"coverage_delta", "complexity_check", "merge_conflict", "test_expansion"}:
+        if step.name in {"coverage_delta", "complexity_check", "merge_conflict", "test_expansion", "fix_proof"}:
             return None
         if step.name == "tests" and self._config.flaky_detection:
             return None

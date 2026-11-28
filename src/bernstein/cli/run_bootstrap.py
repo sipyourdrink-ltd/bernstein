@@ -912,6 +912,9 @@ def _generate_default_yaml(project_type: str) -> str:
         "cli: auto  # Bernstein picks the best agent per task",
         "team: auto",
         'budget: "$10"',
+        "",
+        "quality_gates:",
+        "  fix_proof: true",
     ]
     constraints = _default_constraints_for(project_type)
     if constraints:
