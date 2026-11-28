@@ -8,6 +8,7 @@ the active configuration file path.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import click
@@ -19,14 +20,26 @@ from bernstein.cli.helpers import console
 # ---------------------------------------------------------------------------
 
 _SEED_FILENAMES = ("bernstein.yaml", "bernstein.yml")
+_SEED_PATH_ENV = "BERNSTEIN_SEED_PATH"
 
 
 def resolve_config_path() -> Path | None:
-    """Find the bernstein.yaml config file in the current directory.
+    """Find the seed config file that a run in the current directory would load.
+
+    ``BERNSTEIN_SEED_PATH`` comes first when it names an existing file, through the seed resolver
+    itself, so this reports the file the resolver selects (#7958). It reported ``bernstein.yaml``
+    while the resolver selected the override.
 
     Returns:
         Path to the config file, or None if not found.
     """
+    if os.environ.get(_SEED_PATH_ENV, "").strip():
+        # Imported here: this module loads with the CLI, and the seed module is not needed otherwise.
+        from bernstein.core.config.seed import resolve_seed_path
+
+        selected = resolve_seed_path(Path.cwd())
+        if selected.is_file():
+            return selected
     for name in _SEED_FILENAMES:
         p = Path.cwd() / name
         if p.is_file():

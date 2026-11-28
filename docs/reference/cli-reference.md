@@ -1648,7 +1648,10 @@ systemd / launchd unit installer.
 
 Print the project and workspace configuration paths in the current directory.
 Use `--json` to return the two paths and the working directory as JSON. A
-configuration file that is missing appears as `null`.
+configuration file that is missing appears as `null`. When
+`BERNSTEIN_SEED_PATH` names an existing file, that file is the reported
+config file, the same one the seed resolver selects; otherwise it is
+`bernstein.yaml` or `bernstein.yml` in the current directory.
 
 ---
 
