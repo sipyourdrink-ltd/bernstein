@@ -212,7 +212,7 @@ Por qué el planificador es Python puro y a qué se renuncia con ello: [por qué
 La comprobación `can_spawn()` del módulo de seguimiento de costes devuelve `False` cuando el gasto acumulado corregido alcanza o supera el umbral de parada configurado para el presupuesto, aunque no se haya informado de nuevos tokens. Tras un reinicio, los contadores de tokens guardados no bastan para reconstruir el coste acumulado exacto que se había comunicado para una combinación concreta de agente, tarea y modelo.
 
 ### comandos cotidianos
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:85f90687f750" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-El estado de ejecución guarda un punto de control en `.sdd/runs/<run_id>/` en cada nodo. La reanudación valida la huella del manifiesto al inicio de la ejecución, de modo que un cambio de especificación se rechaza en lugar de ejecutar silenciosamente un manifiesto diferente. Los nodos de limpieza pueden establecer `always_run: true` para ejecutarse tras un fallo de comando o de despacho sin convertir una ejecución abortada en un éxito (el control de finalización de agentes se rastrea en [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Consulta [manifiestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Al reanudar, vuelve a indicar el mismo valor de `-g` para sustituir `{goal}` en los prompts de los nodos pendientes.
+Los comandos directos de workflow guardan los puntos de control en `runs/<run_id>/`, relativo al directorio de trabajo actual. Al reanudar se comprueba la huella del manifiesto original. Si la huella del objetivo está registrada, pasa el valor exacto de `-g` que usaste al inicio, incluso con `-m`. Puedes omitir `-g` si el objetivo original estaba vacío o si ninguna instrucción de agente pendiente de una ejecución antigua puede usar `{goal}`. [manifiestos de workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) Los nodos de limpieza pueden establecer `always_run: true` para ejecutarse tras un fallo de comando o de despacho sin convertir una ejecución abortada en un éxito (el control de finalización de agentes se rastrea en [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)).
 
 `bernstein compliance controls` muestra las pruebas de cada control y la última medición completa disponible. [Cobertura de las pruebas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

@@ -212,7 +212,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 Перевірка `can_spawn()` у модулі обліку витрат повертає `False`, коли сукупні витрати після коригування досягають заданого порога зупинки за бюджетом або перевищують його, навіть якщо про нові токени не повідомляли. Після перезапуску самих лише збережених лічильників токенів недостатньо, щоб відновити точну суму витрат, раніше зазначену для конкретної комбінації агента, завдання й моделі.
 
 ### повсякденні команди
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:85f90687f750" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-Контрольні точки запуску потрапляють у `.sdd/runs/<run_id>/` на кожному вузлі. Відновлення перевіряє хеш маніфесту на початку запуску, тож змінена специфікація відхиляється, а не мовчки виконується інший маніфест. Вузли очищення можуть задавати `always_run: true`, щоб виконуватися після збою команди або диспетчеризації, не перетворюючи перерваний запуск на успішний (гейтинг завершення агента відстежується в [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Дивіться [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Під час відновлення знову передайте те саме значення `-g`, щоб підставити його замість `{goal}` у промпти незавершених вузлів.
+Прямі команди workflow зберігають контрольні точки в `runs/<run_id>/` відносно поточного робочого каталогу. Під час відновлення перевіряється хеш початкового маніфесту. Якщо хеш цілі записано, передайте точне початкове значення `-g`, зокрема й з `-m`. Можна опустити `-g`, якщо початкова ціль була порожньою або якщо в старому запуску жоден із решти промптів агента не може використати `{goal}`. [маніфести workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) Вузли очищення можуть задавати `always_run: true`, щоб виконуватися після збою команди або диспетчеризації, не перетворюючи перерваний запуск на успішний (гейтинг завершення агента відстежується в [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)).
 
 `bernstein compliance controls` показує набори тестів для кожного контролю та останній повний результат вимірювання, якщо він є. [Покриття тестами](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 

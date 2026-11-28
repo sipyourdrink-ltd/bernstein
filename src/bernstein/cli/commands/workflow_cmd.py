@@ -410,7 +410,13 @@ def _run_dsl_cmd(path: Path, *, dry_run: bool, console: Any) -> None:
 
 @workflow_group.command("resume")
 @click.argument("run_id")
-@click.option("-g", "--goal", default="", help="Goal text substituted into {goal} placeholders.")
+@click.option(
+    "-g",
+    "--goal",
+    default="",
+    help="Exact original goal for a bound run. "
+    "Omit it if the original goal was empty or for older goal-independent runs.",
+)
 @click.option(
     "-m",
     "--manifest",
@@ -424,19 +430,22 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
 
     Re-resolves the original manifest, validates its spec digest against
     the snapshot recorded at run start, and re-enters the DAG at the
-    first non-completed node.
+    first non-completed node. Checkpoints live in runs/<run_id>/ relative
+    to the current working directory.
 
     \b
     Example:
       bernstein workflow run idea-to-pr -g "Add JWT auth"  # prints run_id
       bernstein workflow resume <run_id> -g "Add JWT auth"
-      bernstein workflow resume <run_id> -m ./my-flow.yaml
+      bernstein workflow resume <run_id> -m ./my-flow.yaml -g "Add JWT auth"
     """
     from rich.console import Console
     from rich.table import Table
 
     from bernstein.core.workflows import NodeStatus, WorkflowRunError, WorkflowRunner, WorkflowSpecError
     from bernstein.core.workflows.workflow_runner import (
+        SPEC_SNAPSHOT_FILE,
+        STATE_DIR_RELPATH,
         load_spec_snapshot,
         run_complete_marker_exists,
     )
@@ -457,9 +466,10 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
     snapshot = load_spec_snapshot(workdir, run_id)
     if snapshot is None:
         console.print(
-            f"[bold red]No workflow run state for run_id {run_id!r} under {workdir / '.sdd/runs'}.[/bold red]"
+            f"[bold red]No workflow run state for run_id {run_id!r} under {workdir / STATE_DIR_RELPATH}. "
+            f"{SPEC_SNAPSHOT_FILE} is missing or unreadable.[/bold red]"
         )
-        console.print("Start a new run with `bernstein workflow run` first.")
+        console.print("Restore the original snapshot or start a new run with `bernstein workflow run`.")
         raise SystemExit(1)
 
     # Re-resolve the manifest: prefer --manifest, then the stored source path/name.
@@ -543,6 +553,8 @@ def resume_cmd(run_id: str, goal: str, manifest_arg: str | None) -> None:
 )
 def run_cmd(name_or_path: str, goal: str, dry_run: bool) -> None:
     """Execute a YAML workflow manifest.
+
+    Checkpoints live in runs/<run_id>/ relative to the current working directory.
 
     \b
     Resolves the manifest by name (against bundled + user-installed dirs)

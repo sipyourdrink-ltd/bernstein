@@ -212,7 +212,7 @@ Waarom de planner in puur Python is geschreven en welke afwegingen daarbij horen
 De controle `can_spawn()` van de kostenregistratie geeft `False` terug wanneer de gecorrigeerde totale uitgaven de ingestelde stopgrens voor het budget bereiken of overschrijden, ook als er geen nieuwe tokens zijn gemeld. Na een herstart zijn de opgeslagen tokenaantallen alleen niet voldoende om de exacte cumulatieve kosten te reconstrueren die eerder voor een bepaalde combinatie van agent, taak en model zijn gemeld.
 
 ### dagelijkse commando's
-<!-- l10n: en="everyday commands" hash="sha256:db85124a3e75" -->
+<!-- l10n: en="everyday commands" hash="sha256:85f90687f750" -->
 
 ```bash
 cd your-project
@@ -234,7 +234,7 @@ bernstein workflow run idea-to-pr -g "Add JWT auth"   # prints run_id
 bernstein workflow resume <run_id> -g "Add JWT auth" # picks up at the first non-completed node
 ```
 
-De runstatus wordt bij elk knooppunt als checkpoint onder `.sdd/runs/<run_id>/` vastgelegd. Hervatten valideert de manifest-digest bij de start van de run, zodat een wijziging van de specificatie wordt geweigerd in plaats van stilzwijgend een ander manifest uit te voeren. Opruimknooppunten kunnen `always_run: true` instellen om na een commando- of dispatchfout uit te voeren zonder een afgebroken run in een succes te veranderen (gating voor agentvoltooiing wordt bijgehouden in [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)). Zie [workflow-manifesten](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md). Geef bij het hervatten opnieuw dezelfde `-g`-waarde op, zodat `{goal}` wordt vervangen in de prompts van onvoltooide knooppunten.
+De directe workflowopdrachten bewaren checkpoints in `runs/<run_id>/`, relatief aan de huidige werkmap. Bij hervatten wordt de digest van het oorspronkelijke manifest gecontroleerd. Geef exact de oorspronkelijke waarde van `-g` op als de digest van het doel is vastgelegd, ook bij gebruik van `-m`. Je kunt `-g` weglaten als het oorspronkelijke doel leeg was of als bij een oudere run geen resterende agentprompt `{goal}` kan gebruiken. [workflow-manifesten](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflows.md) Opruimknooppunten kunnen `always_run: true` instellen om na een commando- of dispatchfout uit te voeren zonder een afgebroken run in een succes te veranderen (gating voor agentvoltooiing wordt bijgehouden in [#6639](https://github.com/sipyourdrink-ltd/bernstein/issues/6639)).
 
 `bernstein compliance controls` toont per controle de testsuites en de laatste volledige meting, indien beschikbaar. [Benchmarkdekking](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/compliance/regulator-mapped-packs.md#cli-inspection)
 
