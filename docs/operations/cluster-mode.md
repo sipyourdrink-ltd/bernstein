@@ -396,11 +396,14 @@ watch for nodes with `available_slots == max_agents` despite
 `active_agents == 0` and a non-zero pending task count.
 
 **Server restart with active workers.** `NodeRegistry` optionally persists
-to a JSON file (`persist_path` in `cluster.py:50-81`). On startup all
-loaded nodes are marked `OFFLINE` until they heartbeat
-(`cluster.py:72-76`); fresh tokens are still valid (JWT secret survives the
-restart). Workers detect eviction via HTTP 404 on heartbeat and re-register
-via `_register_with_retry()` (`worker_cmd.py:260-270`).
+to a SQLite WAL database (`.sdd/runtime/nodes.db` via `persist_path` in
+`cluster.py` and `sqlite_node_store.py`). On startup operator-set `cordoned`
+and `draining` statuses are preserved and all other loaded nodes start
+`OFFLINE` until they heartbeat; if a legacy `nodes.json` sits next to an
+empty `nodes.db`, its entries are imported once and archived as
+`nodes.json.migrated`. Fresh tokens remain valid (JWT secret survives the
+restart). Workers detect eviction via HTTP 410 (or 404 on older servers) on
+heartbeat and re-register via `_register_with_retry()` (`worker_cmd.py`).
 
 **Worker holds a stale token after revocation.** The next mutating call
 returns 401. The worker does *not* automatically renew - issue a fresh
@@ -606,6 +609,7 @@ that work:
 | -------------------------------- | ------------------------------------------------------------------------------- |
 | Cluster routes                   | `src/bernstein/core/routes/task_cluster.py`                                     |
 | NodeRegistry, persistence        | `src/bernstein/core/protocols/cluster/cluster.py`                               |
+| SQLite WAL node store            | `src/bernstein/core/protocols/cluster/sqlite_node_store.py`                     |
 | JWT cluster auth                 | `src/bernstein/core/protocols/cluster/cluster_auth.py`                          |
 | Task-stealing policy             | `src/bernstein/core/protocols/cluster/cluster.py:340-393`                       |
 | Worker CLI                       | `src/bernstein/cli/commands/worker_cmd.py`                                      |
@@ -647,6 +651,25 @@ whitespace, ASCII control characters, query or fragment. A path prefix is allowe
 an integer from 1 to 1024; booleans, floats and numeric strings are rejected.
 Invalid values fail config loading, including direct `ClusterConfig` construction
 (the runtime `shards` value is a tuple of ID/URL pairs).
+
+### SQLite WAL node store and legacy JSON migration
+
+At 2,000 nodes, rewriting a flat JSON snapshot on every heartbeat or node
+transition becomes an `O(N)` bottleneck. `NodeRegistry` persists node records
+in `.sdd/runtime/nodes.db` (or the path set in `BERNSTEIN_NODES_PERSIST_PATH`)
+through `SQLiteNodeStore` in WAL mode:
+
+- Registration, cordon, uncordon, drain, and telemetry-changing heartbeats
+  write only the touched row via a single-row `UPSERT`; steady-state
+  unchanged heartbeats coalesce disk writes to a 30-second interval, and
+  `mark_stale()` updates timed-out rows in a single transaction.
+- Operator-set `cordoned` and `draining` statuses survive central restarts;
+  all other persisted nodes reload as `offline` until their next heartbeat.
+- Passing a `.json` `persist_path` maps to the sibling `.db` file, and if a
+  legacy `nodes.json` sits next to an empty `nodes.db` on startup, its entries
+  (including persisted health readings) are imported once and `nodes.json` is
+  atomically renamed to `nodes.json.migrated`.
+
 
 This partitions storage inside one process and makes no distributed-scaling
 guarantee. Ring membership is fixed for that registry's lifetime; restart reloads

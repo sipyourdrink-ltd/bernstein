@@ -8,9 +8,10 @@ identity lookup, scheduling, stale marking and persistence scan all partitions.
 There is no duplicate aggregate node store. The ring and URL map use the same
 configured shard IDs.
 
-The default empty shard tuple retains the existing single dictionary. The flat
-node persistence format is unchanged: loading inserts each record into its
-current owner and starts it OFFLINE as before. Configured iteration follows shard
+The default empty shard tuple retains the existing single dictionary. Persistence
+uses the shared SQLite node table (`SQLiteNodeStore`): loading inserts each
+record into its current owner, keeping operator-set `cordoned`/`draining`
+statuses and starting other nodes `OFFLINE` as before. Configured iteration follows shard
 configuration order, then partition insertion order. This may change tie ordering
 only for installations that opt in.
 

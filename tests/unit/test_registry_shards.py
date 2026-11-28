@@ -182,15 +182,18 @@ def test_routes_use_owner_for_registration_heartbeat_and_mutations(
 
 
 def test_partition_reload_aggregation_and_stale(tmp_path: Path) -> None:
+    import sqlite3
+
     config = ClusterConfig(shards=SHARDS, node_timeout_s=1)
-    path = tmp_path / "nodes.json"
+    path = tmp_path / "nodes.db"
     registry = NodeRegistry(config, persist_path=path)
     for number in range(30):
         registry.register(NodeInfo(id=f"node-{number}", name=f"worker-{number}", url=f"http://worker-{number}"))
     assert registry.online_count() == 30
     assert registry.total_capacity() == 180
     assert registry.cluster_summary()["total_nodes"] == 30
-    assert isinstance(json.loads(path.read_text()), list)
+    with sqlite3.connect(str(path)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 30
     restored = NodeRegistry(config, persist_path=path)
     assert len(restored.list_nodes(NodeStatus.OFFLINE)) == 30
     assert isinstance(restored._nodes, NodeShardStorage)

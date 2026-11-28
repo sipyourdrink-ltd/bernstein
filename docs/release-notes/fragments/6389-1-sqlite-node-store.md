@@ -1,0 +1,1 @@
+Replace full-file `nodes.json` cluster registry rewrites with a WAL-mode SQLite store (`nodes.db`), preserving operator `cordoned`/`draining` state across restarts and automatically migrating an existing sibling `nodes.json` to `nodes.json.migrated`.

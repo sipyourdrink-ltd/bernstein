@@ -1,6 +1,5 @@
 """Tests for cluster node heartbeat health telemetry endpoints."""
 
-import json
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
@@ -155,15 +154,16 @@ def test_concurrent_heartbeats_survive_restart(tmp_path, monkeypatch, same_worke
 
             monkeypatch.setattr(NodeInfo, "__setattr__", assign_capacity)
         else:
-            # Pause after snapshot creation and before publication to disk.
-            encode = json.dumps
+            # Pause before the touched row is written to the SQLite store.
+            assert registry._store is not None
+            upsert = registry._store.upsert
 
-            def encode_snapshot(value, **kwargs):
-                if isinstance(value, list) and value and value[0].get("disk_free_mb") == 4096 and not paused.is_set():
+            def upsert_row(node):
+                if node.capacity.disk_free_mb == 4096 and not paused.is_set():
                     pause_first()
-                return encode(value, **kwargs)
+                upsert(node)
 
-            monkeypatch.setattr(json, "dumps", encode_snapshot)
+            monkeypatch.setattr(registry._store, "upsert", upsert_row)
 
         def report(node, reading):
             response = client.post(f"/cluster/nodes/{node}/heartbeat", json={"capacity": reading})
@@ -182,7 +182,7 @@ def test_concurrent_heartbeats_survive_restart(tmp_path, monkeypatch, same_worke
             older.result(timeout=10)
             newer.result(timeout=10)
 
-    restored = NodeRegistry(registry.config, persist_path=tmp_path / ".sdd" / "runtime" / "nodes.json")
+    restored = NodeRegistry(registry.config, persist_path=tmp_path / ".sdd" / "runtime" / "nodes.db")
     assert restored.get(first).capacity.disk_free_mb == 4096
     assert restored.get(second).capacity.mem_used_pct == 91
 

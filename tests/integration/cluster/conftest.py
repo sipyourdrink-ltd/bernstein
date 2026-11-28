@@ -510,7 +510,7 @@ def _start_central(
     env["BERNSTEIN_BIND_HOST"] = "127.0.0.1"
     env["PYTHONUNBUFFERED"] = "1"
     # Persist node registry to a known path so restart-from-disk is testable.
-    # The server auto-detects ``.sdd/runtime/nodes.json`` from the jsonl path,
+    # The server auto-detects ``.sdd/runtime/nodes.db`` from the jsonl path,
     # so we set up the directory layout it expects.
     runtime_dir = nodes_json.parent
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -553,7 +553,7 @@ def two_node_cluster(tmp_path: Path) -> Iterator[ClusterHandle]:
     workdir = tmp_path
     sdd_runtime = workdir / ".sdd" / "runtime"
     sdd_runtime.mkdir(parents=True, exist_ok=True)
-    nodes_json = sdd_runtime / "nodes.json"
+    nodes_json = sdd_runtime / "nodes.db"
     central_log = workdir / "central.log"
     worker_log = workdir / "worker.log"
     cluster_secret = secrets.token_urlsafe(32)
@@ -594,9 +594,7 @@ def two_node_cluster(tmp_path: Path) -> Iterator[ClusterHandle]:
                 except Exception:
                     failure_diag["status"] = "unavailable"
                 try:
-                    failure_diag["nodes_json"] = (
-                        nodes_json.read_text(encoding="utf-8") if nodes_json.exists() else "<missing>"
-                    )
+                    failure_diag["nodes_json"] = "<present>" if nodes_json.exists() else "<missing>"
                 except OSError:
                     failure_diag["nodes_json"] = "<read-error>"
                 try:
