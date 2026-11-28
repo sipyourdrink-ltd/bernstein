@@ -105,18 +105,20 @@ Verification path: both `tools/verify_audit_receipt.py` and
 `verify_cli/bernstein_verify_receipt/verify.py` validate each
 `toolcall.attestation -> toolcall.enforced_dispatch -> toolcall.effect` triple
 in embedded receipt events, fail closed on broken bindings or duplicate
-dispatches, and — when `--effects-dir` is supplied — recompute every
-`effect_digest` from `<effects_dir>/<intent_sha256>.effect` and fail the effect
-leg on any missing, non-regular (symlink, directory, FIFO, device), or tampered
+dispatches, and — when `--effects-dir` is supplied — stream-hash
+`<effects_dir>/<intent_sha256>.effect` in fixed-size chunks (capped at 16 MiB
+per payload) to recompute every `effect_digest` and fail the effect leg on any
+missing, non-regular (symlink, directory, FIFO, device), oversized, or tampered
 payload. Without `--effects-dir`, chain bindings and `retry_of` links are
 verified and missing effect records read as `"dispatched, effect unobserved"`,
-never as closed success. Request-id uniqueness contract: offline verification
-requires JSON-RPC `request_id` values to be unique per `scope_id` (compared by
-raw JSON value across initial calls and retries); transports that multiplex
-multiple clients through one gateway must assign distinct `scope_id` values per
-client session or ensure non-colliding `request_id` values within the shared
-scope. An outside-range `retry_of` fails closed on receipts whose range starts
-at genesis.
+never as closed success. Request-id contract: offline verification requires
+`request_id` on every `toolcall.attestation` to be present and non-blank
+(missing, `null`, empty, or whitespace-only values fail closed) and unique per
+`scope_id` (compared by raw JSON value across initial calls and retries);
+transports that multiplex multiple clients through one gateway must assign
+distinct `scope_id` values per client session or ensure non-colliding
+`request_id` values within the shared scope. An outside-range `retry_of` fails
+closed on receipts whose range starts at genesis.
 
 With a run identity, lineage signer, and journal-head reader configured, the
 native provider additionally creates a versioned, JCS-canonicalized Ed25519

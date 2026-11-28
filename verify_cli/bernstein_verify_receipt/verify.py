@@ -61,6 +61,8 @@ TOOLCALL_EFFECT_EVENT = "toolcall.effect"
 TOOLCALL_EFFECT_OUTCOMES = frozenset({"ok", "error", "timeout", "partial"})
 _SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
 _GENESIS_PREV_HMAC = "0" * 64
+MAX_EFFECT_FILE_BYTES = 16 * 1024 * 1024  # 16 MiB ceiling for one .effect payload
+_EFFECT_READ_CHUNK_BYTES = 64 * 1024  # 64 KiB streaming chunk size
 
 # Key-trust notes returned by ``_resolve_public_key``. Only a key pinned out of
 # band proves who signed the receipt; the embedded key proves only that the
@@ -537,12 +539,15 @@ def verify_transparency(
     )
 
 
-def _read_regular_effect_file(
+def _hash_regular_effect_file(
     effects_dir: Path,
     digest_hex: str,
     intent_digest: str,
-) -> tuple[bytes | None, str | None]:
-    """Read ``<effects_dir>/<digest_hex>.effect`` rejecting symlinks and non-regular files."""
+    *,
+    max_bytes: int = MAX_EFFECT_FILE_BYTES,
+    chunk_size: int = _EFFECT_READ_CHUNK_BYTES,
+) -> tuple[str | None, str | None]:
+    """Stream-hash ``<effects_dir>/<digest_hex>.effect`` with a byte cap."""
     artifact_path = effects_dir / f"{digest_hex}.effect"
     intent_short = intent_digest[:19]
     try:
@@ -597,7 +602,27 @@ def _read_regular_effect_file(
                     "effect payload in --effects-dir changed between stat and open for intent "
                     f"{intent_short}",
                 )
-            return handle.read(), None
+            if fstat_res.st_size > max_bytes:
+                return (
+                    None,
+                    f"effect payload in --effects-dir exceeds maximum size ({max_bytes} bytes) "
+                    f"for intent {intent_short}",
+                )
+            hasher = hashlib.sha256()
+            total_read = 0
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                total_read += len(chunk)
+                if total_read > max_bytes:
+                    return (
+                        None,
+                        f"effect payload in --effects-dir exceeds maximum size ({max_bytes} bytes) "
+                        f"for intent {intent_short}",
+                    )
+                hasher.update(chunk)
+            return f"sha256:{hasher.hexdigest()}", None
     except OSError as exc:
         if fd >= 0:
             with contextlib.suppress(OSError):
@@ -646,9 +671,10 @@ def verify_toolcall_effects(
     Pre-effect chains (with no ``toolcall.effect`` rows, or no tool-call events
     at all) remain valid and report ``effect unobserved``. Broken bindings,
     duplicate dispatches/effects, malformed records, invalid ``retry_of`` links,
-    or tampered/missing payload artifacts under ``effects_dir`` fail the effect
-    leg. Duplicate-request detection enforces the contract that JSON-RPC
-    ``request_id`` values are unique per ``scope_id`` (keyed by raw JSON value).
+    or tampered/missing/oversized payload artifacts under ``effects_dir`` fail
+    the effect leg. Request-id validation enforces the contract that JSON-RPC
+    ``request_id`` values are present, non-blank, and unique per ``scope_id``
+    (keyed by raw JSON value).
     """
     events = receipt.get("events")
     if not isinstance(events, list):
@@ -717,7 +743,11 @@ def verify_toolcall_effects(
                 errors.append(msg)
                 per_ref_errors.setdefault(att_ref, []).append(msg)
 
-            if req_id_key is not None:
+            if req_id_key is None:
+                msg = f"toolcall.attestation missing or blank request_id for {att_ref[:19]}"
+                errors.append(msg)
+                per_ref_errors.setdefault(att_ref, []).append(msg)
+            else:
                 scope_req_key = (scope_id, req_id_key)
                 if scope_req_key in seen_scope_requests:
                     msg = (
@@ -880,10 +910,10 @@ def verify_toolcall_effects(
                         f"({intent_digest[:19]})"
                     )
                 else:
-                    raw_bytes, read_err = _read_regular_effect_file(
+                    recomputed, read_err = _hash_regular_effect_file(
                         effects_dir, match.group(1), intent_digest
                     )
-                    if read_err is not None or raw_bytes is None:
+                    if read_err is not None or recomputed is None:
                         eff_errs.append(
                             read_err
                             or (
@@ -891,16 +921,13 @@ def verify_toolcall_effects(
                                 f"{intent_digest[:19]}"
                             )
                         )
+                    elif recomputed != effect_digest:
+                        eff_errs.append(
+                            f"effect_digest mismatch for intent {intent_digest[:19]}: "
+                            f"recomputed {recomputed[:19]} != recorded {effect_digest[:19]}"
+                        )
                     else:
-                        digest_hex = hashlib.sha256(raw_bytes).hexdigest()
-                        recomputed = f"sha256:{digest_hex}"
-                        if recomputed != effect_digest:
-                            eff_errs.append(
-                                f"effect_digest mismatch for intent {intent_digest[:19]}: "
-                                f"recomputed {recomputed[:19]} != recorded {effect_digest[:19]}"
-                            )
-                        else:
-                            payload_verified = True
+                        payload_verified = True
 
             if eff_errs:
                 errors.extend(eff_errs)

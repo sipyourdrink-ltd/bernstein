@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from bernstein.core.security.identity_spawn_anchor import AnchoredRunIdentity
 
 _SHA256_PREFIXED_RE = re.compile(r"^sha256:([0-9a-f]{64})\Z")
+_EFFECT_COMPARE_CHUNK_BYTES = 64 * 1024
 _HARDLINK_UNSUPPORTED_ERRNOS = frozenset(
     {
         errno.EPERM,
@@ -89,14 +90,24 @@ def _verify_existing_effect_target(target: Path, intent_digest: str, preimage: b
                 raise ValueError(f"refusing to overwrite non-regular effect payload target: {target}")
             if (fstat_res.st_dev, fstat_res.st_ino) != (lstat_res.st_dev, lstat_res.st_ino):
                 raise ValueError(f"effect payload target changed between stat and open: {target}")
-            existing = handle.read()
+            if fstat_res.st_size != len(preimage):
+                raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
+            offset = 0
+            while True:
+                chunk = handle.read(_EFFECT_COMPARE_CHUNK_BYTES)
+                if not chunk:
+                    break
+                end = offset + len(chunk)
+                if end > len(preimage) or chunk != preimage[offset:end]:
+                    raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
+                offset = end
+            if offset != len(preimage):
+                raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
     except BaseException:
         if fd >= 0:
             with contextlib.suppress(OSError):
                 os.close(fd)
         raise
-    if existing != preimage:
-        raise FileExistsError(f"refusing to overwrite existing effect payload for {intent_digest}")
 
 
 def _write_effect_payload(effects_dir: Path, intent_digest: str, preimage: bytes) -> Path:

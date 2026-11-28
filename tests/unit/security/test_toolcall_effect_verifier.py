@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import hashlib
 import importlib.util
 import io
 import json
@@ -1165,17 +1166,18 @@ async def test_s2r_effects_dir_rejects_fifo_without_hanging(
 
 
 @pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
-def test_s2r_sa_read_regular_effect_file_flags_inode_identity_and_oserror(
+def test_s2r_sa_hash_regular_effect_file_flags_inode_identity_oserror_and_streaming_cap(
     tmp_path: Path,
     verifier_kind: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S2-R + S-a: lstat before open, O_NONBLOCK|O_BINARY flags, fstat (dev, ino) check, and OSError handling."""
+    """S2-R + S-a + S1: lstat before open, open flags, (dev, ino) check, OSError, and streaming byte cap."""
     verifier = _load_verifier(verifier_kind)
     digest_hex = "a" * 64
     intent_digest = f"sha256:{digest_hex}"
     target = tmp_path / f"{digest_hex}.effect"
     target.write_bytes(b"payload")
+    expected_digest = "sha256:" + hashlib.sha256(b"payload").hexdigest()
 
     # 1. Verify open flags include O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_BINARY (each via getattr).
     seen_flags: list[int] = []
@@ -1186,8 +1188,8 @@ def test_s2r_sa_read_regular_effect_file_flags_inode_identity_and_oserror(
         return real_open(path, flags, *args, **kwargs)
 
     monkeypatch.setattr(verifier.os, "open", _recording_open)
-    data, err = verifier._read_regular_effect_file(tmp_path, digest_hex, intent_digest)
-    assert err is None and data == b"payload"
+    recomputed, err = verifier._hash_regular_effect_file(tmp_path, digest_hex, intent_digest)
+    assert err is None and recomputed == expected_digest
     expected_flags = (
         getattr(os, "O_RDONLY", 0)
         | getattr(os, "O_NOFOLLOW", 0)
@@ -1205,23 +1207,42 @@ def test_s2r_sa_read_regular_effect_file_flags_inode_identity_and_oserror(
             self.st_mode = stat.S_IFREG | 0o600
             self.st_dev = base.st_dev
             self.st_ino = base.st_ino + 1
+            self.st_size = base.st_size
 
     def _swapped_fstat(fd: int) -> _SwappedStat:
         return _SwappedStat(real_fstat(fd))
 
     monkeypatch.setattr(verifier.os, "fstat", _swapped_fstat)
-    data_swap, err_swap = verifier._read_regular_effect_file(tmp_path, digest_hex, intent_digest)
-    assert data_swap is None and err_swap is not None
+    recomputed_swap, err_swap = verifier._hash_regular_effect_file(tmp_path, digest_hex, intent_digest)
+    assert recomputed_swap is None and err_swap is not None
     monkeypatch.undo()
 
-    # 3. Verify OSError during fdopen/read produces a clean error instead of raising.
+    # 3. Verify streaming cap still fails closed if file grows past st_size during chunked reads.
+    class _ZeroSizeStat:
+        def __init__(self, base: os.stat_result) -> None:
+            self.st_mode = base.st_mode
+            self.st_dev = base.st_dev
+            self.st_ino = base.st_ino
+            self.st_size = 0
+
+    def _zero_size_fstat(fd: int) -> _ZeroSizeStat:
+        return _ZeroSizeStat(real_fstat(fd))
+
+    monkeypatch.setattr(verifier.os, "fstat", _zero_size_fstat)
+    recomputed_cap, err_cap = verifier._hash_regular_effect_file(
+        tmp_path, digest_hex, intent_digest, max_bytes=4, chunk_size=2
+    )
+    assert recomputed_cap is None and err_cap is not None and "exceeds maximum size" in err_cap
+    monkeypatch.undo()
+
+    # 4. Verify OSError during fdopen/read produces a clean error instead of raising.
     def _failing_fdopen(fd: int, *args: Any, **kwargs: Any) -> Any:
         os.close(fd)
         raise OSError("simulated read error")
 
     monkeypatch.setattr(verifier.os, "fdopen", _failing_fdopen)
-    data_err, err_read = verifier._read_regular_effect_file(tmp_path, digest_hex, intent_digest)
-    assert data_err is None and err_read is not None and "simulated read error" in err_read
+    recomputed_err, err_read = verifier._hash_regular_effect_file(tmp_path, digest_hex, intent_digest)
+    assert recomputed_err is None and err_read is not None and "simulated read error" in err_read
 
 
 def test_sd_write_effect_payload_links_without_os_replace_and_refuses_clobber_or_symlink(
@@ -1335,3 +1356,176 @@ def test_n5_duplicate_request_id_keys_on_raw_json_value(verifier_kind: str) -> N
     check_dup, _ = verifier.verify_toolcall_effects(duplicate_int_receipt)
     assert check_dup.ok is False
     assert "duplicate request_id" in check_dup.detail
+
+
+_MISSING_REQUEST_ID = object()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+@pytest.mark.parametrize(
+    ("bad_request_id", "case_label"),
+    [
+        (_MISSING_REQUEST_ID, "missing"),
+        (None, "null"),
+        ("", "empty"),
+        ("   ", "whitespace"),
+    ],
+    ids=["missing", "null", "empty", "whitespace"],
+)
+@pytest.mark.parametrize("is_retry", [False, True], ids=["initial", "retry"])
+async def test_b1_missing_or_blank_request_id_fails_closed(
+    tmp_path: Path,
+    verifier_kind: str,
+    bad_request_id: Any,
+    case_label: str,
+    is_retry: bool,
+) -> None:
+    """B1: missing, null, empty, or whitespace request_id must fail closed on initial calls and retries."""
+    audit_dir = tmp_path / "audit"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain)
+
+    retry_of: str | None = None
+    if is_retry:
+        prior = _intent(request_id="init-1", span_id="span-b1-prior")
+        prior_ev = await provider.prepare_dispatch(prior)
+        await provider.record_effect(
+            prior,
+            prior_ev,
+            response={"jsonrpc": "2.0", "id": "init-1", "error": {"code": 402, "message": "payment required"}},
+            duration_ms=1.0,
+            outcome="error",
+        )
+        retry_of = prior.digest()
+
+    att_ref = "sha256:" + ("e" * 64)
+    intent_digest = "sha256:" + ("d" * 64)
+    details: dict[str, Any] = {
+        "attestation_ref": att_ref,
+        "intent_digest": intent_digest,
+        "scope_id": "scope:run-1:agent-1",
+        "server_name": "filesystem",
+        "method": "tools/call",
+        "tool_name": "read_file",
+        "span_id": f"span-b1-{case_label}",
+        "args_digest": "sha256:" + ("c" * 64),
+    }
+    if bad_request_id is not _MISSING_REQUEST_ID:
+        details["request_id"] = bad_request_id
+    if retry_of is not None:
+        details["retry_of"] = retry_of
+
+    chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_ATTESTATION,
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id="scope:run-1:agent-1",
+        details=details,
+    )
+    disp = chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_ENFORCED_DISPATCH,
+        actor="bernstein.toolcall-interlock",
+        resource_type="toolcall_scope",
+        resource_id="scope:run-1:agent-1",
+        details={"attestation_ref": att_ref, "intent_digest": intent_digest},
+    )
+    record_toolcall_effect(
+        chain=chain,
+        intent_digest=intent_digest,
+        effect_digest=canonical_effect_digest({"ok": True}),
+        outcome="ok",
+        duration_ms=1.0,
+        attestation_ref=att_ref,
+        dispatch_ref="hmac:" + disp.hmac,
+        resource_id="scope:run-1:agent-1",
+    )
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    rc, out = _run_verifier(verifier_kind, receipt_path, "--public-key", str(pub_path))
+    assert rc == 1, out
+    assert "OVERALL: FAIL" in out
+    assert "[FAIL] toolcall_effects" in out
+    assert "missing or blank request_id" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier_kind", ["tools", "verify_cli"])
+async def test_s1_oversized_sparse_effect_file_fails_closed(
+    tmp_path: Path,
+    verifier_kind: str,
+) -> None:
+    """S1: an effect payload above the verifier byte cap fails closed cleanly without reading the full file."""
+    audit_dir = tmp_path / "audit"
+    effects_dir = tmp_path / "effects"
+    chain = AuditChainStore(audit_dir, key=_HMAC_KEY)
+    provider = NativeToolCallEvidenceProvider(chain, effects_dir=effects_dir)
+
+    intent = _intent(request_id=97, span_id="span-s1-sparse")
+    raw = b'{"jsonrpc":"2.0","id":97,"result":{"ok":true}}'
+    ev = await provider.prepare_dispatch(intent)
+    await provider.record_effect(intent, ev, response=json.loads(raw), duration_ms=1.2, outcome="ok", received=raw)
+
+    # Replace with a sparse file 1 byte above the 16 MiB cap (zero disk blocks allocated).
+    artifact = _artifact_file(effects_dir, intent.digest())
+    artifact.unlink()
+    with artifact.open("wb") as handle:
+        handle.truncate(16 * 1024 * 1024 + 1)
+
+    receipt_path, pub_path = _export_receipt(audit_dir, tmp_path / "out")
+    proc = _run_verifier_subprocess(
+        verifier_kind,
+        receipt_path,
+        "--public-key",
+        str(pub_path),
+        "--effects-dir",
+        str(effects_dir),
+        timeout=5.0,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "OVERALL: FAIL" in proc.stdout
+    assert "[FAIL] toolcall_effects" in proc.stdout
+    assert "exceeds maximum size" in proc.stdout.lower()
+    assert "effect_digest mismatch" not in proc.stdout.lower()
+    assert "Traceback" not in proc.stdout + proc.stderr
+
+
+def test_s1_verify_existing_effect_target_short_circuits_on_size_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S1: _verify_existing_effect_target checks fstat st_size against len(preimage) before reading."""
+    intent_digest = "sha256:" + ("9" * 64)
+    target = tmp_path / f"{'9' * 64}.effect"
+    with target.open("wb") as handle:
+        handle.truncate(32 * 1024 * 1024)
+
+    read_calls = 0
+    real_fdopen = os.fdopen
+
+    class _CountingHandle:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def __enter__(self) -> _CountingHandle:
+            self._inner.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            return self._inner.__exit__(*args)
+
+        def fileno(self) -> int:
+            return int(self._inner.fileno())
+
+        def read(self, size: int = -1) -> bytes:
+            nonlocal read_calls
+            read_calls += 1
+            return bytes(self._inner.read(size))
+
+    def _wrapping_fdopen(fd: int, *args: Any, **kwargs: Any) -> _CountingHandle:
+        return _CountingHandle(real_fdopen(fd, *args, **kwargs))
+
+    monkeypatch.setattr(native_evidence_mod.os, "fdopen", _wrapping_fdopen)
+    with pytest.raises(FileExistsError, match="existing effect payload"):
+        native_evidence_mod._verify_existing_effect_target(target, intent_digest, b"short-payload")  # pyright: ignore[reportPrivateUsage]
+    assert read_calls == 0

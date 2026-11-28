@@ -5,9 +5,10 @@
 validate per-attestation `toolcall.attestation -> toolcall.enforced_dispatch ->
 toolcall.effect` triples and `retry_of` links without importing `bernstein.*`.
 When `--effects-dir` is passed (backed by `NativeToolCallEvidenceProvider`'s
-optional `effects_dir` payload store), both verifiers recompute every recorded
-`effect_digest` from `<intent_sha256>.effect` and fail the effect leg on any
-missing or tampered response or diff. Pre-effect chains and dispatched calls
+optional `effects_dir` payload store), both verifiers stream-hash
+`<intent_sha256>.effect` (bounded at 16 MiB) to recompute every recorded
+`effect_digest` and fail the effect leg on any missing, non-regular, oversized,
+or tampered response or diff. Pre-effect chains and dispatched calls
 without an effect row still verify and report `effect unobserved` rather than
 success. `ToolCallIntent` now accepts an optional `retry_of` intent digest
 (wired on `MCPGateway`'s x402 retry path with a distinct intent `request_id`),
