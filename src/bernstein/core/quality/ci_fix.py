@@ -74,7 +74,9 @@ _FILE_RE = re.compile(r"src/\S+\.py")
 
 
 def _detect_ruff_lint(log_lower: str, log: str) -> bool:
-    return "ruff check" in log_lower or bool(re.search(r"E\d{3}|W\d{3}|F\d{3}|RUF\d{3}", log))
+    # Evidence of a failure: a rule code, or Ruff's "Found N errors" summary. The command text
+    # ``ruff check`` alone appears in every log that ran the step, including a passing one (#8028).
+    return bool(re.search(r"E\d{3}|W\d{3}|F\d{3}|RUF\d{3}", log) or re.search(r"\bfound \d+ errors?\b", log_lower))
 
 
 def _detect_ruff_format(log_lower: str, _log: str) -> bool:
