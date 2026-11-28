@@ -5152,15 +5152,17 @@ def _enqueue_alive_exit_janitor_pass(
 
     Returns:
         The future tracking the verification result, or None if the
-        task has no completion signals (a no-op enqueue; a subsequent
-        process_completed_tasks iteration can still process it as
-        auto-verified).
+        task has no completion signals and no cluster-node claim (a no-op
+        enqueue; a subsequent process_completed_tasks iteration can still
+        process it as auto-verified).
     """
     # An artifact-mode task is enqueued even with no declared signals: its
     # completion identity *is* the signed receipt this pass records, so
     # skipping the pass would leave the task with nothing to complete on
-    # (issue #2608). A signal-less coding task keeps the auto-verify default.
-    if not task.completion_signals and not is_artifact_mode(task):
+    # (issue #2608). A signal-less coding task keeps the auto-verify default,
+    # unless a cluster node claimed it: that completion must still show a
+    # posted artifact before it can pass (issue #6611).
+    if not task.completion_signals and not is_artifact_mode(task) and not task.claimed_by_node:
         logger.info(
             "janitor: enqueued pass task=%s session=%s role=%s reason=%s "
             "no_completion_signals=true (will be marked verified by default)",
@@ -5203,6 +5205,17 @@ def _enqueue_alive_exit_janitor_pass(
         preview_branch = _ingest_remote_completion(orch, task)
         if preview_branch is not None:
             session_id = f"remote-{task.id}"
+        elif task.claimed_by_node:
+            # The server recorded at claim time that a registered node owns
+            # this task, and that node posted nothing verifiable. Grading the
+            # run checkout instead would pass it on whatever bytes an earlier
+            # run left at the declared output path.
+            failure = (
+                f"artifact_missing_remote: task {task.id} was completed by cluster node "
+                f"{task.claimed_by_node} without a verified posted artifact"
+            )
+            logger.warning("janitor: %s", failure)
+            return _JanitorSyncFuture((False, [failure]))
     preview_setup = _preview_setup(orch) if preview_branch is not None else None
     if executor is None:
         # Defensive: if the orchestrator has no executor we still want a

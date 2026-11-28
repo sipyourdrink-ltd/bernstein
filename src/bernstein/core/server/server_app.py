@@ -308,6 +308,7 @@ def task_to_response(task: Task) -> TaskResponse:
         version=task.version,
         parent_session_id=task.parent_session_id,
         claimed_by_session=task.claimed_by_session,
+        claimed_by_node=task.claimed_by_node,
         # expose typed retry bookkeeping so clients read the
         # single source of truth rather than regex-ing the title.
         retry_count=task.retry_count,

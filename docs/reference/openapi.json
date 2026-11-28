@@ -24039,6 +24039,17 @@
             ],
             "title": "Claimed By Session"
           },
+          "claimed_by_node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By Node"
+          },
           "repo_root_commit": {
             "anyOf": [
               {

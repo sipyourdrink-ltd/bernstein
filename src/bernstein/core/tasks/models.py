@@ -587,6 +587,9 @@ class Task:
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
     claimed_by_session: str | None = None  # Parent orchestrator session that claimed this task
+    # Registered cluster node that owns the claim, stamped by the server at
+    # claim time; None for a local claim. Survives the node unregistering (#6611).
+    claimed_by_node: str | None = None
     parent_session_id: str | None = None  # Coordinator session that created/owns this task (namespace scope)
     execution_mode: str | None = None  # "batch" → delegate to Claude Code /batch skill
     verification_count: int = 0  # Number of verification steps run at completion
@@ -707,6 +710,7 @@ class Task:
             "progress_log": list(self.progress_log),
             "version": self.version,
             "claimed_by_session": self.claimed_by_session,
+            "claimed_by_node": self.claimed_by_node,
             "parent_session_id": self.parent_session_id,
             "execution_mode": self.execution_mode,
             "verification_count": self.verification_count,
@@ -843,6 +847,7 @@ class Task:
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
             claimed_by_session=raw.get("claimed_by_session"),
+            claimed_by_node=raw.get("claimed_by_node"),
             parent_session_id=raw.get("parent_session_id"),
             execution_mode=raw.get("execution_mode"),
             verification_count=raw.get("verification_count", 0),

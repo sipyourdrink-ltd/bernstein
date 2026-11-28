@@ -421,6 +421,10 @@ class TaskResponse(BaseModel):
     # Claim owner: the session or cluster worker node id that claimed the task,
     # so a cluster view can place in-flight tasks under the node running them.
     claimed_by_session: str | None = None
+    # Registered cluster node that owns the claim, recorded at claim time
+    # (#6611). None for a local claim, including an orchestrator that names
+    # its own node only for the health gate.
+    claimed_by_node: str | None = None
     # Remote execution (#6538): claim responses (GET /tasks/next/{role}) stamp
     # the central's repository identity - its root commit - so a worker node
     # can refuse a claim addressed to a repository its workspace does not

@@ -174,6 +174,8 @@ class TaskRecord(TypedDict):
     completed_at: float | None
     closed_at: float | None
     claimed_by_session: str | None
+    # Optional for records written before claim-time node provenance (#6611).
+    claimed_by_node: NotRequired[str | None]
     parent_session_id: str | None
     subtask_wait_started_at: float | None
     parent_context: str | None
@@ -905,6 +907,7 @@ class TaskStore:
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.claimed_at = record.get("claimed_at", task.claimed_at)
                     task.claimed_by_session = record.get("claimed_by_session", task.claimed_by_session)
+                    task.claimed_by_node = record.get("claimed_by_node", task.claimed_by_node)
                     task.result_summary = record.get("result_summary", task.result_summary)
                     if isinstance(version := record.get("version"), int):
                         task.version = version
@@ -982,6 +985,7 @@ class TaskStore:
                 )
                 task.claimed_at = None
                 task.claimed_by_session = None
+                task.claimed_by_node = None
                 self._index_add(task)
                 self._record_release_receipt(
                     task,
@@ -1041,6 +1045,7 @@ class TaskStore:
                 )
                 task.claimed_at = None
                 task.claimed_by_session = None
+                task.claimed_by_node = None
                 task.version += 1
                 self._index_add(task)
                 self._record_release_receipt(
@@ -1382,6 +1387,7 @@ class TaskStore:
             "completed_at": task.completed_at,
             "closed_at": task.closed_at,
             "claimed_by_session": task.claimed_by_session,
+            "claimed_by_node": task.claimed_by_node,
             "parent_session_id": task.parent_session_id,
             "subtask_wait_started_at": task.subtask_wait_started_at,
             # The parent agent's context summary is what ties a subtask back to
@@ -2306,6 +2312,7 @@ class TaskStore:
         claimed_by_session: str | None = None,
         parent_session_id: str | None = None,
         task_ids: Collection[str] | None = None,
+        claimed_by_node: str | None = None,
     ) -> Task | None:
         """Claim the highest-priority open task for *role*.
 
@@ -2325,6 +2332,9 @@ class TaskStore:
                 claim-next route passes a task-scoped caller's scope here so
                 an out-of-scope task is never chosen.  Skipped candidates stay
                 queued for callers whose scope includes them.
+            claimed_by_node: Registered cluster node that owns the claim, or
+                None for a local claim (#6611). Recorded with the claim so the
+                provenance outlives the node's registration.
 
         Returns:
             The claimed Task, or None if nothing is available.
@@ -2389,6 +2399,7 @@ class TaskStore:
             transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_next")
             task.claimed_at = time.time()
             task.claimed_by_session = claimed_by_session
+            task.claimed_by_node = claimed_by_node
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
@@ -2400,6 +2411,7 @@ class TaskStore:
         expected_version: int | None = None,
         agent_role: str | None = None,
         claimed_by_session: str | None = None,
+        claimed_by_node: str | None = None,
     ) -> Task:
         """Claim a specific task by ID with optional optimistic locking and role matching.
 
@@ -2416,6 +2428,8 @@ class TaskStore:
             expected_version: If set, CAS - reject if task.version != this.
             agent_role: If set, reject if task.role != agent_role.
             claimed_by_session: Parent orchestrator session ID to record as claim owner.
+            claimed_by_node: Registered cluster node that owns the claim, or
+                None for a local claim (#6611).
 
         Returns:
             The claimed Task.
@@ -2456,6 +2470,7 @@ class TaskStore:
             transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_by_id")
             task.claimed_at = time.time()
             task.claimed_by_session = claimed_by_session
+            task.claimed_by_node = claimed_by_node
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
@@ -2468,6 +2483,7 @@ class TaskStore:
         agent_role: str | None = None,
         claimed_by_session: str | None = None,
         tenant_id: str | None = None,
+        claimed_by_node: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """Atomically claim multiple tasks by ID with optional role matching.
 
@@ -2486,6 +2502,8 @@ class TaskStore:
                 The check runs inside the lock so the authorization decision
                 is atomic with the claim, eliminating a TOCTOU race against
                 concurrent deletes or tenant rewrites.
+            claimed_by_node: Registered cluster node that owns the claims, or
+                None for a local claim (#6611).
 
         Returns:
             A tuple of (claimed_ids, failed_ids).
@@ -2518,6 +2536,7 @@ class TaskStore:
                 task.claimed_at = time.time()
                 task.assigned_agent = agent_id
                 task.claimed_by_session = claimed_by_session
+                task.claimed_by_node = claimed_by_node
                 task.version += 1
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
@@ -2969,6 +2988,7 @@ class TaskStore:
                 task.dispatch_tier = dispatch_tier
             task.claimed_at = None
             task.claimed_by_session = None
+            task.claimed_by_node = None
             task.assigned_agent = None
             task.completed_at = None
             task.result_summary = None
@@ -3032,6 +3052,7 @@ class TaskStore:
             )
             task.claimed_at = None
             task.claimed_by_session = None
+            task.claimed_by_node = None
             task.assigned_agent = None
             task.version += 1
             self._index_add(task)
@@ -3824,6 +3845,7 @@ class TaskStore:
                 self._index_add(task)
             task.claimed_at = None  # Clear claim timestamp on force-claim
             task.claimed_by_session = None  # Clear ownership on force-claim
+            task.claimed_by_node = None
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             self._record_release_receipt(task, snapshot, release_path="force_claim", reason="force_claim")

@@ -275,6 +275,21 @@ def _resolve_claiming_node(
     return None
 
 
+def _claim_owner_node(request: Request, claimed_by_session: str | None) -> str | None:
+    """Return the registered cluster node that owns a claim, or None (#6611).
+
+    A ``bernstein worker`` records its node id as the claim owner
+    (``claimed_by_session``). An orchestrator records its own session id
+    there and may name its registered node only through ``node_id`` for the
+    health gate, so ``node_id`` alone never makes a claim remote. The answer
+    is stored on the task with the claim, so the janitor can tell a remote
+    completion from a local one without asking the registry later, after a
+    cleanly exiting worker has already unregistered.
+    """
+    owner = _resolve_claiming_node(request, claimed_by_session=claimed_by_session, node_id=None)
+    return owner.id if owner is not None else None
+
+
 def _get_gate_report_path(request: Request, task_id: str) -> Path:
     return _get_runtime_dir(request) / "gates" / f"{task_id}.json"
 
@@ -1543,6 +1558,7 @@ async def next_task(
         claimed_by_session=claimed_by_session,
         parent_session_id=parent_session_id,
         task_ids=allowed_tasks,
+        claimed_by_node=_claim_owner_node(request, claimed_by_session),
     )
     if task is None:
         logger.info(
@@ -1587,6 +1603,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
             agent_role=_caller_agent_role(request),
             claimed_by_session=claim_session,
             tenant_id=tenant_id,
+            claimed_by_node=_claim_owner_node(request, claim_session),
         )
         if failed:
             logger.warning(
@@ -1678,6 +1695,7 @@ async def claim_task(
                 expected_version=expected_version,
                 agent_role=_caller_agent_role(request),
                 claimed_by_session=claimed_by_session,
+                claimed_by_node=_claim_owner_node(request, claimed_by_session),
             )
         except KeyError:
             logger.warning(
