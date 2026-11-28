@@ -80,3 +80,6 @@
 /scripts/quorum_check.py @chernistry
 /scripts/queue_hygiene.py @chernistry
 /renovate.json @chernistry
+
+# Immutable declaration custody is maintainer-controlled.
+/scripts/maintainer_adoption.py @chernistry
