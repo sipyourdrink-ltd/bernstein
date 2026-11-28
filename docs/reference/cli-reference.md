@@ -392,7 +392,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein runs report` | Classified outcomes from the run ledger. | `cli/commands/runs_cmd.py:50` |
 | `bernstein runs scorecard RUN_ID` | Build or verify one run's scorecard. | `cli/commands/runs_cmd.py:171` |
 | `bernstein runs helpers RUN_ID` | Agent-written helpers captured for a run. | `cli/commands/runs_cmd.py` |
-| `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
+| `bernstein report commits` | Per-run git diff stats. The table follows the terminal width and writes no colour when redirected; `--json` gives the same totals. | `cli/commands/status_cmd.py:1232` |
 | `bernstein report` | Print a run summary in Markdown. | `cli/commands/report_cmd.py:17` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |

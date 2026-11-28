@@ -254,12 +254,8 @@ def collect_commit_stats(
 # ---------------------------------------------------------------------------
 
 
-def _make_table(result: CommitStatsResult) -> str:
-    """Return a Rich-formatted table string.
-
-    This is a separate pure function so tests can verify formatting without
-    invoking ``console.print``.
-    """
+def _build_table(result: CommitStatsResult) -> Any:
+    """Return the Rich ``Table`` for *result*, or the error markup when it carries an error."""
     from rich.table import Table
 
     if result.error:
@@ -288,7 +284,18 @@ def _make_table(result: CommitStatsResult) -> str:
         f"[bold][red]-{result.total_lines_deleted}[/red][/bold]",
     )
 
-    # Render to string (no console needed)
+    return table
+
+
+def _make_table(result: CommitStatsResult) -> str:
+    """Return a Rich-formatted table string.
+
+    This is a separate pure function so tests can verify formatting without
+    invoking ``console.print``.
+    """
+    table = _build_table(result)
+    if isinstance(table, str):
+        return table
     buf = StringIO()
     console = Console(file=buf, force_terminal=True, width=120)
     console.print(table)
@@ -296,8 +303,12 @@ def _make_table(result: CommitStatsResult) -> str:
 
 
 def render_commit_stats(result: CommitStatsResult) -> None:
-    """Print commit stats to stdout using Rich."""
+    """Print commit stats to stdout using Rich.
+
+    The ``Table`` itself is printed, so the real console decides the width and whether to write
+    colour. Printing the pre-rendered string of :func:`_make_table` wrote terminal escape bytes into
+    redirected output and wrapped its 120-column lines at 80 (#7947).
+    """
     from bernstein.cli.helpers import console
 
-    output = _make_table(result)
-    console.print(output)
+    console.print(_build_table(result))
